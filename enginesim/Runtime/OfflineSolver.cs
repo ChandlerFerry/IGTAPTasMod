@@ -84,7 +84,8 @@ namespace IGTAP.EngineSim
             List<InputTick> _bestInputs;
             SimSnapshot[] _bestStates;
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
-            int _sharedVersion;
+            int _sharedVersion, _maxTimedLength;
+            static readonly double ProgressBias = double.Parse(Environment.GetEnvironmentVariable("IGTAP_PB") ?? "10", System.Globalization.CultureInfo.InvariantCulture);
 
             public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds)
             {
@@ -105,6 +106,9 @@ namespace IGTAP.EngineSim
                     if (_bestInputs == null || _rng.NextDouble() < .5) Explore();
                     else Optimize();
                 }
+                string dump = Environment.GetEnvironmentVariable("IGTAP_DUMP");
+                if (dump != null) System.IO.File.WriteAllLines(dump + "-" + Thread.CurrentThread.Name + ".txt",
+                    _archive.Select(p => $"{p.Key} {p.Value.State?.Position.x} {p.Value.State?.Position.y} {p.Value.Length} {p.Value.Picks}"));
             }
 
             void AdoptShared()
@@ -144,7 +148,14 @@ namespace IGTAP.EngineSim
                 Try(RandomBurst(chosen.Source.Take(chosen.Length).ToList()), "explore", chosen.State);
             }
 
-            static double Weight(long key, Cell cell) { return (key < 0 ? 3.0 : 1.0) / Math.Sqrt(cell.Picks + 1); }
+            // Before the first finish, timed cells reached later (earliest arrival tick, i.e. further along the course) weigh
+            // more, so exploration pushes the frontier of long courses instead of re-rolling the well-covered start.
+            double Weight(long key, Cell cell)
+            {
+                double w = key < 0 ? 3.0 : 1.0;
+                if (key < 0 && _bestInputs == null && _maxTimedLength > 0) w *= 1 + ProgressBias * Math.Pow((double)cell.Length / _maxTimedLength, 4);
+                return w / Math.Sqrt(cell.Picks + 1);
+            }
 
             List<InputTick> RandomBurst(List<InputTick> inputs)
             {
@@ -328,7 +339,9 @@ namespace IGTAP.EngineSim
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
                 SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
                 if (states != null && state != null) states[tick] = state;
-                if (better) _archive[key] = new Cell { Source = inputs, Length = tick, State = state };
+                if (!better) return;
+                _archive[key] = new Cell { Source = inputs, Length = tick, State = state };
+                if (key < 0 && tick > _maxTimedLength) _maxTimedLength = tick;
             }
         }
     }
