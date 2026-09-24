@@ -296,12 +296,14 @@ namespace IGTAP.EngineSim
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
                     courseScript active = _sim.TimingCourse();
-                    bool timing = active != null;
+                    // A bonus course has no course timer; its runs are timed in ticks from the run start.
+                    bool timing = _sim.TargetFinish.w > 0f || active != null;
                     long key = CellKey(_sim.Player.transform.m_Position, timing);
                     bool losing = false;
-                    if (timing)
+                    float elapsed = _sim.TargetFinish.w > 0f ? tick * _sim.World.FixedDeltaTime
+                        : active == null ? -1f : Simulation.CourseTime(active);
+                    if (elapsed >= 0f)
                     {
-                        float elapsed = Simulation.CourseTime(active);
                         if (elapsed > _best) losing = true;
                         if (cut && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
                         if (arrivals != null && !arrivals.ContainsKey(key)) arrivals[key] = elapsed;

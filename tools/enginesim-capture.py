@@ -19,6 +19,9 @@ import urllib.request
 API = "http://127.0.0.1:17426"
 CAPS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash"}
 CATEGORIES = [(1, "wjdash"), (1, "wj"), (1, "none"), (2, "wjdash"), (2, "wj"), (3, "wjdash")]
+# The course of a category route is its courses.json id or name ("bonus1_WJ 13.56").
+COURSES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\courses.json"
+COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
 
 
 def call(path, body=None, method="POST"):
@@ -68,11 +71,12 @@ def main():
     if mode == "routes":
         state = call("/api/state", method="GET")
         for route in state["routes"]:
-            m = re.match(r"^(\d+)_(NO_WJ|WJDASH|WJ) ([\d.]+)$", route["name"])
-            if not m:
+            m = re.match(r"^([^_\s]+)_(NO_WJ|WJDASH|WJ) ([\d.]+)$", route["name"])
+            if not m or m.group(1) not in COURSE_IDS:
                 continue
+            course = COURSE_IDS[m.group(1)]
             name = "route-c" + m.group(1) + "-" + CAPS[m.group(2)] + "-" + m.group(3)
-            r = trace({"course": int(m.group(1)), "capabilities": CAPS[m.group(2)], "routeId": route["id"], "name": name})
+            r = trace({"course": course, "capabilities": CAPS[m.group(2)], "routeId": route["id"], "name": name})
             print(name, {k: v for k, v in r.items() if k != "path"})
     elif mode == "random":
         count = int(sys.argv[2]) if len(sys.argv) > 2 else 3
