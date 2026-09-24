@@ -1,0 +1,9 @@
+.actionCard {
+  grid-template-columns: 34px minmax(180px, 1fr) 110px 42px 110px 58px 70px;
+}
+
+@media (max-width: 1000px) {
+  .actionCard {
+    grid-template-columns: 30px 1fr 100px 35px 90px;
+  }
+}

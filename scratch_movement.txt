@@ -1,0 +1,2612 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using Steamworks;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.Rendering.Universal;
+
+public class Movement : SaveableObject
+{
+	public enum placesToStart
+	{
+		NORMAL,
+		Course2,
+		Course3,
+		Course4,
+		Course5,
+		Area2,
+		Area2Atom,
+		area2c3,
+		infMoney,
+		a2c5
+	}
+
+	public enum cutsceneModes
+	{
+		none,
+		dash,
+		deathFreeze,
+		longfall,
+		spring
+	}
+
+	private enum groundTypes
+	{
+		Metal,
+		Mossy
+	}
+
+	[Serializable]
+	private struct SerializedUpgradeDict
+	{
+		public globalStats.globalUpgradeSet _Key;
+
+		public double _Value;
+
+		public SerializedUpgradeDict(globalStats.globalUpgradeSet newKey, double newValue)
+		{
+			_Key = newKey;
+			_Value = newValue;
+		}
+	}
+
+	[Serializable]
+	private struct SerializedCurrencyDict
+	{
+		public globalStats.Currencies _Key;
+
+		public double _Value;
+
+		public SerializedCurrencyDict(globalStats.Currencies newKey, double newValue)
+		{
+			_Key = newKey;
+			_Value = newValue;
+		}
+	}
+
+	private struct SaveObject
+	{
+		public Vector2 _respawnPoint;
+
+		public bool _dashUnlocked;
+
+		public int _maxDashes;
+
+		public bool _wallJumpUnlocked;
+
+		public bool _airJumpUnlocked;
+
+		public int _maxAirJumps;
+
+		public List<SerializedCurrencyDict> _currencies;
+
+		public List<SerializedUpgradeDict> _globalUpgradeDict;
+
+		public Vector2 _camPos;
+
+		public float _camSize;
+
+		public bool _blockSwapUnlocked;
+
+		public bool _isBlueActive;
+
+		public bool _lightActive;
+
+		public float _lightRadius;
+
+		public int _currentZone;
+
+		public globalStats.area1states _area1State;
+
+		public List<int> _visitedTeleporters;
+
+		public bool _omniDashUnlocked;
+
+		public bool _zone2cleared;
+
+		public double _vmanScore;
+
+		public SaveObject(Vector2 position, Vector2 respawnPoint, bool dashUnlocked, int maxDashes, bool wallJumpUnlocked, bool airJumpUnlocked, int maxAirJumps, List<SerializedUpgradeDict> globalUpgradeDict, List<SerializedCurrencyDict> currencies, Vector2 camPos, float camSize, bool blockSwapUnlocked, bool isBlueActive, bool lightActive, float lightRadius, int currentZone, globalStats.area1states area1State, List<int> visitedTeleporters, bool omnidashUnlocked, bool zone2cleared, double vmanScore)
+		{
+			_respawnPoint = respawnPoint;
+			_dashUnlocked = dashUnlocked;
+			_maxDashes = maxDashes;
+			_wallJumpUnlocked = wallJumpUnlocked;
+			_airJumpUnlocked = airJumpUnlocked;
+			_maxAirJumps = maxAirJumps;
+			_globalUpgradeDict = globalUpgradeDict;
+			_currencies = currencies;
+			_camPos = camPos;
+			_camSize = camSize;
+			_blockSwapUnlocked = blockSwapUnlocked;
+			_isBlueActive = isBlueActive;
+			_lightActive = lightActive;
+			_lightRadius = lightRadius;
+			_currentZone = currentZone;
+			_area1State = area1State;
+			_visitedTeleporters = visitedTeleporters;
+			_omniDashUnlocked = omnidashUnlocked;
+			_zone2cleared = zone2cleared;
+			_vmanScore = vmanScore;
+		}
+	}
+
+	private Rigidbody2D body;
+
+	[SerializeField]
+	private bool isOnMainMenu;
+
+	[SerializeField]
+	private placesToStart DEBUG_startingCourse;
+
+	public Vector2 MoveAxis;
+
+	public Light2D personalLight;
+
+	[SerializeField]
+	private GameObject globalLight;
+
+	private SpriteRenderer sr;
+
+	private bool canStepUpThisFrame;
+
+	public float runSpeed = 2000f;
+
+	public float jumpForce = 6000f;
+
+	public float maxCoyoteFrames = 3f;
+
+	public float maxWallCoyoteFrames;
+
+	public float gravity = 9.8f;
+
+	public float maxDownwardsSpeed = 2000f;
+
+	public float PostMaxDownwardsSpeedDrag;
+
+	private float timeInAir;
+
+	private float heightOfLastJumpStart;
+
+	private bool recentlyJumped;
+
+	[Header("Wall jump")]
+	public float wallJumpMovementLockFrames = 0.1f;
+
+	public float wallJumpForce = 300f;
+
+	private Vector2 wallJumpFacing;
+
+	public float wallJumpDirection;
+
+	public float wallJumpMovementLockRemaining;
+
+	public int wallJumpsLeft;
+
+	public int maxWallJumps;
+
+	public int maxWallSlideSpeed;
+
+	public int wallSlideFriction;
+
+	private float finalWallClingTimeLeft;
+
+	public float finalWallClingTime;
+
+	private bool isFinalWallClingActive;
+
+	private bool emitWallSlideParticlesThisFrame;
+
+	[Header("Air jump")]
+	public float airJumpForce;
+
+	public int maxAirJumps;
+
+	public int airJumpsLeft;
+
+	[Header("Dash")]
+	private bool dashBuffer;
+
+	[SerializeField]
+	private float dashSpeed;
+
+	[SerializeField]
+	private float dashFrames = 10f;
+
+	private float dashFramesRemaining;
+
+	[SerializeField]
+	private float defaultDashCooldown = 0.1f;
+
+	public bool dashActive;
+
+	public float dashCooldown;
+
+	private bool wallBouncePossible;
+
+	[SerializeField]
+	public int maxAirDashes;
+
+	public int airDashesLeft;
+
+	private Vector2 dashDirection;
+
+	private bool WaitingForDashInput;
+
+	[SerializeField]
+	private float dashTimeStopTime;
+
+	public bool hitDashResetterWhileInCurrentDash;
+
+	private Vector2 preDashMomentum;
+
+	public float DashDroopIntensityOverTime = 3f;
+
+	public float DashDroopBaseline = 0.5f;
+
+	[SerializeField]
+	private float dashBoostMin;
+
+	[SerializeField]
+	private float dashBoostMax;
+
+	[SerializeField]
+	private float dashBoostUpwards;
+
+	[Header("Unlocks")]
+	public bool wallJumpUnlocked;
+
+	public bool doubleJumpUnlocked;
+
+	public bool dashUnlocked;
+
+	public bool blockSwapUnlocked;
+
+	public bool omniDashUnlocked;
+
+	public AudioSource audioSource;
+
+	public AudioClip[] bigJumpSFX;
+
+	public AudioClip[] smallJumpSFX;
+
+	public AudioClip[] dashSFX;
+
+	public AudioClip[] airJumpSFX;
+
+	public AudioClip[] deathSFX;
+
+	public AudioClip MetalSlideSFX;
+
+	public AudioClip GrassSlideSFX;
+
+	public float endPosition;
+
+	public bool GamePaused;
+
+	private bool isDead;
+
+	public cutsceneModes cutsceneMode;
+
+	private InputAction moveAction;
+
+	private InputAction jumpAction;
+
+	private InputAction jumpAction2;
+
+	private InputAction dashAction;
+
+	private InputAction dashAction2;
+
+	private InputAction resetAction;
+
+	public bool onGround = true;
+
+	public bool OnWall;
+
+	public bool touchingSideOfMovingBlock;
+
+	private float coyoteFrames;
+
+	private float wallCoyoteFrames;
+
+	private float wallCoyoteDir;
+
+	private float movingPlatformCoyote;
+
+	[Header("Dash collider stats")]
+	[SerializeField]
+	private BoxCollider2D normalCollider;
+
+	[SerializeField]
+	private Vector2 defaultColliderSize;
+
+	[SerializeField]
+	private Vector2 defaultColliderOffset;
+
+	[SerializeField]
+	private Vector2 dashColliderSize;
+
+	[SerializeField]
+	private Vector2 dashColliderOffset;
+
+	public bool facingRight = true;
+
+	public Animator animator;
+
+	public cameraMover cam;
+
+	private bool canHyper;
+
+	private float lastHyperY = 100000000f;
+
+	public Vector2 momentum;
+
+	public Vector2 Velocity;
+
+	public Vector2 movingPlatformVelocity;
+
+	[Header("Momentum")]
+	[SerializeField]
+	private float dashJumpMagnitude;
+
+	[SerializeField]
+	private float hyperJumpMagnitude;
+
+	[SerializeField]
+	private float hyperJumpHeightMod;
+
+	[SerializeField]
+	private float momentumDecay;
+
+	private float lastAppliedMomentum;
+
+	[SerializeField]
+	private float MovingOppositeMomentumDecay;
+
+	[SerializeField]
+	private float flatMomentumDecay;
+
+	[Header("Wallbounce")]
+	[SerializeField]
+	private Vector2 wallBounceMagnitude;
+
+	[SerializeField]
+	private float wallBounceMovementLock;
+
+	[Header("Dashbounce")]
+	[SerializeField]
+	private float dashBounceMagnitude;
+
+	private int DashBounceFrames;
+
+	[Header("Afterimages")]
+	private Stack<SpriteRenderer> inactiveAfterimages = new Stack<SpriteRenderer>();
+
+	private List<SpriteRenderer> activeAfterimages = new List<SpriteRenderer>();
+
+	[SerializeField]
+	private float afterimageMomentumMagnitudeRequired;
+
+	[SerializeField]
+	private float afterimageFrequency;
+
+	[SerializeField]
+	private float afterimageLifetime;
+
+	private float timeSinceLastAfterimage;
+
+	[SerializeField]
+	private Color[] afterimageColors;
+
+	private List<float> afterimageTimeAlive = new List<float>();
+
+	[SerializeField]
+	private float jumpApexSpeedBonus;
+
+	[SerializeField]
+	private float jumpApexAntiGrav;
+
+	[SerializeField]
+	private bool atJumpApex;
+
+	[SerializeField]
+	private float fastFallMod;
+
+	private bool jumpBuffer;
+
+	private bool MostRecentUpwardsMoveWasNormalJump;
+
+	[Header("Respawn points")]
+	public Vector2 respawnPoint = new Vector2(0f, 0f);
+
+	public Vector2 courseResetPoint = Vector2.zero;
+
+	public bool isRespawningAtCheckpoints = true;
+
+	[Header("BlockSwapper")]
+	[SerializeField]
+	private colouredBlockSwapper blockSwapper;
+
+	public bool isBlueActiveOnRespawn;
+
+	public float longfallMult;
+
+	[SerializeField]
+	public pauseMenuScript pauseMenu;
+
+	[SerializeField]
+	private LayerMask groundRaycastLayer;
+
+	[SerializeField]
+	private LayerMask blockingGroundRaycastLayer;
+
+	[Header("Light Upgrades")]
+	[SerializeField]
+	public float lightRadius;
+
+	[SerializeField]
+	public bool lightActive;
+
+	[Header("SweatingEffect")]
+	[SerializeField]
+	private ParticleSystem sweatParticles;
+
+	private bool Sweating;
+
+	public float framesSinceLastDash;
+
+	[SerializeField]
+	private ParticleSystem metalLandParticles;
+
+	[SerializeField]
+	private ParticleSystem grassLandParticles;
+
+	[SerializeField]
+	private ParticleSystem metalWallParticles;
+
+	[SerializeField]
+	private ParticleSystem grassWallParticles;
+
+	private groundTypes currentGroundType;
+
+	private bool init = true;
+
+	private bool jumpCutBuffer;
+
+	public PlatformMover currentlyTouchedMovingPlatform;
+
+	public PlatformMover lastTouchedMovingPlatform;
+
+	private Queue<Vector2> platformMomentumHistory = new Queue<Vector2>(7);
+
+	[SerializeField]
+	private float maxPlatformMomentumInherited;
+
+	private float movingPlatformInheritCooldown;
+
+	private float MaxMovingPlatformInheritCd = 0.5f;
+
+	private Vector2 lastInheritedPlatformV;
+
+	private List<Collider2D> collidingBodies = new List<Collider2D>(100);
+
+	[SerializeField]
+	private float squishDistance;
+
+	private int framesSquished;
+
+	private bool squishedThisFrame;
+
+	[SerializeField]
+	private int SquishGraceFrames;
+
+	[SerializeField]
+	private float framesToReachTopSpeed = 2f;
+
+	private float tiredSoundCooldown;
+
+	[SerializeField]
+	private StepUpAnimationScript stepUpAnim;
+
+	private int ach_boingboing;
+
+	private int reverseCurrent = 10;
+
+	[SerializeField]
+	private int movingPlatformMomentumCoyoteFrames = 7;
+
+	private void Start()
+	{
+		if (isOnMainMenu)
+		{
+			if (Singleton<globalStats>.Instance.currentA1State == globalStats.area1states.Overgrown)
+			{
+				Camera.main.orthographicSize = 1200f;
+				Camera.main.transform.position += new Vector3(0f, 650f);
+			}
+			base.transform.parent.gameObject.SetActive(value: false);
+			return;
+		}
+		if (init)
+		{
+			if (globalStats.placesToStartOverride != placesToStart.NORMAL)
+			{
+				DEBUG_startingCourse = globalStats.placesToStartOverride;
+				globalStats.placesToStartOverride = placesToStart.NORMAL;
+			}
+			blockSwapper.swapBlocks(BlueActive: true);
+			switch (DEBUG_startingCourse)
+			{
+			case placesToStart.infMoney:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 1E+300;
+				globalStats.currencyLookup[globalStats.Currencies.GreenPower] = 1E+300;
+				globalStats.currencyLookup[globalStats.Currencies.AtomicPower] = 1E+300;
+				globalStats.currencyLookup[globalStats.Currencies.CloneDust] = 1E+300;
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 100;
+				dashUnlocked = true;
+				maxAirDashes = 100;
+				omniDashUnlocked = true;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.zipMoversUnlocked] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.unlockJiggleDrops] = 100.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.moreRefreshOrbs] = 100.0;
+				blockSwapUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.NORMAL:
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 0.0;
+				if (!VmanScript.isCurrentlyVman)
+				{
+					Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track1);
+					PlayerPrefs.SetInt("ActiveMusic", 1);
+					PlayerPrefs.Save();
+				}
+				else
+				{
+					Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Vman);
+					cam.camSize = 752f;
+				}
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.Course2:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 2000.0;
+				respawnPoint = new Vector2(4333f, 1885f);
+				wallJumpUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.Course3:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track2);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 2000000.0;
+				respawnPoint = new Vector2(9249f, 6966f);
+				wallJumpUnlocked = true;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 2.0;
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.Course4:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track2);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 2000000000000.0;
+				respawnPoint = new Vector2(19863f, 10545f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 5.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				cam.camSize = 752f;
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.Course5:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area1Track2);
+				blockSwapper.swapBlocks(BlueActive: false);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 1E+18;
+				respawnPoint = new Vector2(-1053f, -180f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 6.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				cam.camSize = 752f;
+				Singleton<ZoneLoader>.Instance.activeZone = 1;
+				break;
+			case placesToStart.Area2:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area2Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 2000000000000.0;
+				respawnPoint = new Vector2(16740f, 5000f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				blockSwapUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 2;
+				lightActive = true;
+				personalLight.pointLightOuterRadius = lightRadius;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 8.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneBigness] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneFastness] = 1.0;
+				cam.camSize = 752f;
+				break;
+			case placesToStart.Area2Atom:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area2Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 2000000000000.0;
+				respawnPoint = new Vector2(19945f, 0f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				blockSwapUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 2;
+				lightActive = true;
+				personalLight.pointLightOuterRadius = lightRadius;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 8.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneBigness] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneFastness] = 1.0;
+				cam.camSize = 752f;
+				break;
+			case placesToStart.area2c3:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area2Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 0.0;
+				globalStats.currencyLookup[globalStats.Currencies.GreenPower] = 10000.0;
+				globalStats.currencyLookup[globalStats.Currencies.AtomicPower] = 1000000.0;
+				respawnPoint = new Vector2(19945f, 0f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				blockSwapUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 2;
+				lightActive = true;
+				personalLight.pointLightOuterRadius = lightRadius;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 8.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneBigness] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneFastness] = 1.0;
+				cam.camSize = 752f;
+				break;
+			case placesToStart.a2c5:
+				Singleton<MusicPlayer>.Instance.JumpToNewMusic(MusicPlayer.AUDIO_ID.Area2Track1);
+				globalStats.currencyLookup[globalStats.Currencies.Cash] = 0.0;
+				globalStats.currencyLookup[globalStats.Currencies.GreenPower] = 10000.0;
+				globalStats.currencyLookup[globalStats.Currencies.AtomicPower] = 1000000.0;
+				respawnPoint = new Vector2(19945f, 0f);
+				wallJumpUnlocked = true;
+				doubleJumpUnlocked = true;
+				maxAirJumps = 1;
+				dashUnlocked = true;
+				maxAirDashes = 1;
+				blockSwapUnlocked = true;
+				Singleton<ZoneLoader>.Instance.activeZone = 2;
+				lightActive = true;
+				personalLight.pointLightOuterRadius = lightRadius;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cashPerLoop] = 8.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.cloneMult] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneBigness] = 1.0;
+				globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.maxCloneFastness] = 1.0;
+				cam.camSize = 752f;
+				break;
+			}
+		}
+		sr = base.transform.Find("Sprite").GetComponent<SpriteRenderer>();
+		SpriteRenderer[] componentsInChildren = base.transform.parent.Find("Afterimages").GetComponentsInChildren<SpriteRenderer>();
+		foreach (SpriteRenderer spriteRenderer in componentsInChildren)
+		{
+			inactiveAfterimages.Push(spriteRenderer);
+			spriteRenderer.gameObject.SetActive(value: false);
+		}
+		Singleton<ZoneLoader>.Instance.LoadZone(Singleton<ZoneLoader>.Instance.activeZone, force: true);
+		if (Singleton<ZoneLoader>.Instance.activeZone == 2 && Singleton<globalStats>.Instance.currentA1State == globalStats.area1states.tripBreaker)
+		{
+			Singleton<globalStats>.Instance.currentA1State = globalStats.area1states.normal;
+		}
+		personalLight.enabled = lightActive;
+		base.transform.position = respawnPoint;
+		cam.newTarget(base.gameObject, cam.defaultoffset, newIsAutoMode: true, Vector2.zero);
+		body = GetComponent<Rigidbody2D>();
+		moveAction = InputSystem.actions.FindAction("Move");
+		jumpAction = InputSystem.actions.FindAction("Jump");
+		jumpAction2 = InputSystem.actions.FindAction("Jump2");
+		dashAction = InputSystem.actions.FindAction("Dash");
+		dashAction2 = InputSystem.actions.FindAction("Dash2");
+		resetAction = InputSystem.actions.FindAction("QuickReset");
+		animator = base.transform.Find("Sprite").GetComponent<Animator>();
+		LandingSquashStretch();
+		Singleton<globalStats>.Instance.UpdateRpCap();
+		SteamUserStats.StoreStats();
+		Time.timeScale = globalStats.baseGameSpeed;
+	}
+
+	private void Update()
+	{
+		if (!pauseMenu.menuOpen && !GamePaused)
+		{
+			if (dashAction.WasPressedThisFrame() || dashAction2.WasPressedThisFrame())
+			{
+				dashBuffer = true;
+				CancelInvoke("cancelDashBuffer");
+				Invoke("cancelDashBuffer", 0.12f);
+			}
+			if (jumpAction.WasPressedThisFrame() || jumpAction2.WasPressedThisFrame())
+			{
+				jumpBuffer = true;
+				CancelInvoke("cancelJumpBuffer");
+				CancelInvoke("cancelJumpCutBuffer");
+				cancelJumpCutBuffer();
+				if (cutsceneMode == cutsceneModes.dash)
+				{
+					Invoke("cancelJumpBuffer", 0.2f);
+				}
+				else
+				{
+					Invoke("cancelJumpBuffer", 0.12f);
+				}
+			}
+			if (jumpAction.WasReleasedThisFrame() || jumpAction2.WasReleasedThisFrame())
+			{
+				jumpCutBuffer = true;
+				CancelInvoke("cancelJumpCutBuffer");
+				Invoke("cancelJumpCutBuffer", 0.26f);
+			}
+			if (resetAction.WasPressedThisFrame() && !GamePaused)
+			{
+				respawn(manuallyTriggered: true);
+			}
+		}
+		HandleAfterimages();
+		float num = 10f;
+		float num2 = 0f;
+		if (cutsceneMode == cutsceneModes.dash)
+		{
+			num2 = 2f;
+			num += 10f;
+		}
+		Vector2 vector;
+		Vector2 vector2;
+		Vector2 origin;
+		Vector2 origin2;
+		if (facingRight)
+		{
+			vector = base.transform.position + new Vector3(24f, num);
+			vector2 = base.transform.position + new Vector3(27f + num2, num);
+			origin = base.transform.position + new Vector3(15f, 19f);
+			origin2 = base.transform.position + new Vector3(15f, -18f);
+		}
+		else
+		{
+			vector = base.transform.position + new Vector3(-24f, num);
+			vector2 = base.transform.position + new Vector3(-27f - num2, num);
+			origin = base.transform.position + new Vector3(-15f, 19f);
+			origin2 = base.transform.position + new Vector3(-15f, -18f);
+		}
+		Debug.DrawRay(vector, wallJumpFacing * (6f + num2), Color.red);
+		Debug.DrawRay(vector2, Vector2.down * (33f + num), Color.red);
+		RaycastHit2D raycastHit2D = Physics2D.Raycast(vector, wallJumpFacing, 6f + num2, groundRaycastLayer);
+		RaycastHit2D raycastHit2D2 = Physics2D.Raycast(vector2, Vector2.down, 33f + num, groundRaycastLayer);
+		RaycastHit2D raycastHit2D3 = Physics2D.Raycast(origin2, wallJumpFacing, 14f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D4 = Physics2D.Raycast(origin, wallJumpFacing, 14f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D5 = ((!onGround && !dashActive) ? raycastHit2D3 : raycastHit2D);
+		if (dashFramesRemaining != dashFrames && (bool)raycastHit2D2 && !raycastHit2D5 && !raycastHit2D4 && Mathf.Abs(Velocity.x) > runSpeed * 10f / 2f && body.linearVelocityY < 10f)
+		{
+			Vector2 vector3 = default(Vector2);
+			vector3.y = raycastHit2D2.point.y + defaultColliderSize.y + defaultColliderOffset.y;
+			if (vector3.y > base.transform.position.y)
+			{
+				Vector3 position = base.transform.position;
+				base.transform.position = new Vector2(base.transform.position.x, vector3.y - 38f);
+				stepUpAnim.onSteppedUp(position - base.transform.position);
+			}
+		}
+		if (!WaitingForDashInput)
+		{
+			return;
+		}
+		MoveAxis = NormaliseInput(moveAction.ReadValue<Vector2>());
+		if (MoveAxis != Vector2.zero && (omniDashUnlocked || MoveAxis.x != 0f))
+		{
+			dashDirection = MoveAxis;
+			if (!omniDashUnlocked)
+			{
+				dashDirection.y = 0f;
+			}
+			if (onGround && dashDirection.y < 0f)
+			{
+				dashDirection.y = 0f;
+			}
+			dashDirection.Normalize();
+		}
+	}
+
+	private void FixedUpdate()
+	{
+		if (GamePaused)
+		{
+			GamePaused = false;
+		}
+		if (!isDead)
+		{
+			squishedThisFrame = false;
+			foreach (Collider2D collidingBody in collidingBodies)
+			{
+				if (normalCollider.Distance(collidingBody).distance < squishDistance)
+				{
+					squishedThisFrame = true;
+					Debug.Log("Squish");
+				}
+				else if (!onGround)
+				{
+					_ = (double)normalCollider.Distance(collidingBody).distance;
+					_ = -0.5;
+				}
+			}
+			if (squishedThisFrame)
+			{
+				framesSquished++;
+				if (framesSquished > SquishGraceFrames)
+				{
+					onDeath();
+				}
+			}
+			else
+			{
+				framesSquished = 0;
+			}
+		}
+		MoveAxis = NormaliseInput(moveAction.ReadValue<Vector2>());
+		if (!dashActive || !(dashDirection.y < 0f))
+		{
+			if (Velocity.y + momentum.y < -850f)
+			{
+				cam.NewPlayersetOffset(new Vector3(0f, 620f + Mathf.Clamp((Velocity.y + momentum.y) * 0.92f, -1600f, 100000000f)));
+			}
+			else if (Velocity.y + momentum.y < -150f && !OnWall && !onGround)
+			{
+				cam.NewPlayersetOffset(new Vector3(0f, cam.defaultoffset.y + (Velocity.y + momentum.y) / 3.3f, 0f));
+			}
+			else
+			{
+				cam.NewPlayersetOffset(cam.defaultoffset);
+			}
+		}
+		if (dashCooldown > -1f)
+		{
+			dashCooldown -= Time.fixedDeltaTime;
+		}
+		if (tiredSoundCooldown > -1f)
+		{
+			tiredSoundCooldown -= Time.fixedDeltaTime;
+		}
+		if (movingPlatformInheritCooldown > -1f)
+		{
+			movingPlatformInheritCooldown -= Time.fixedDeltaTime;
+		}
+		if (DashBounceFrames > -1)
+		{
+			DashBounceFrames--;
+		}
+		Vector2 vector;
+		Vector2 vector2;
+		Vector2 vector3;
+		Vector2 vector4;
+		Vector2 vector5;
+		Vector2 vector6;
+		Vector2 vector7;
+		if (facingRight)
+		{
+			vector = base.transform.position + new Vector3(-15f, -18f);
+			vector2 = base.transform.position + new Vector3(-9f, -18f);
+			vector3 = base.transform.position + new Vector3(25f, -18f);
+			vector4 = base.transform.position + new Vector3(21f, -18f);
+			vector5 = base.transform.position + new Vector3(6f, -18f);
+			vector6 = base.transform.position + new Vector3(15f, 19f);
+			vector7 = base.transform.position + new Vector3(15f, -18f);
+			wallJumpFacing = Vector2.right;
+		}
+		else
+		{
+			vector = base.transform.position + new Vector3(15f, -18f);
+			vector2 = base.transform.position + new Vector3(9f, -18f);
+			vector3 = base.transform.position + new Vector3(-25f, -18f);
+			vector4 = base.transform.position + new Vector3(-21f, -18f);
+			vector5 = base.transform.position + new Vector3(-6f, -18f);
+			vector6 = base.transform.position + new Vector3(-15f, 19f);
+			vector7 = base.transform.position + new Vector3(-15f, -18f);
+			wallJumpFacing = Vector2.left;
+		}
+		Debug.DrawRay(vector, Vector2.down * 23f, Color.green);
+		Debug.DrawRay(vector3, Vector2.down * 23f, Color.green);
+		Debug.DrawRay(vector5, Vector2.down * 23f, Color.green);
+		Debug.DrawRay(vector2, Vector2.down * 23f, Color.blue);
+		Debug.DrawRay(vector4, Vector2.down * 23f, Color.blue);
+		RaycastHit2D raycastHit2D = Physics2D.Raycast(vector, Vector2.down, 22f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D2 = Physics2D.Raycast(vector2, Vector2.down, 22f, blockingGroundRaycastLayer);
+		RaycastHit2D raycastHit2D3 = Physics2D.Raycast(vector3, Vector2.down, 22f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D4 = Physics2D.Raycast(vector4, Vector2.down, 22f, blockingGroundRaycastLayer);
+		RaycastHit2D raycastHit2D5 = Physics2D.Raycast(vector5, Vector2.down, 22f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D6 = Physics2D.Raycast(vector, Vector2.down, 5f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D7 = Physics2D.Raycast(vector3, Vector2.down, 5f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D8 = Physics2D.Raycast(vector, Vector2.down, -25f, groundRaycastLayer);
+		RaycastHit2D raycastHit2D9 = Physics2D.Raycast(vector3, Vector2.down, -25f, groundRaycastLayer);
+		float num = 0f;
+		if (currentlyTouchedMovingPlatform != null || dashActive)
+		{
+			num = 3f;
+		}
+		Debug.DrawRay(vector7, wallJumpFacing * 12f, Color.green);
+		Debug.DrawRay(vector6, wallJumpFacing * 12f, Color.green);
+		RaycastHit2D raycastHit2D10 = Physics2D.Raycast(vector7, wallJumpFacing, 12f + num, groundRaycastLayer);
+		RaycastHit2D raycastHit2D11 = Physics2D.Raycast(vector6, wallJumpFacing, 12f + num, groundRaycastLayer);
+		RaycastHit2D raycastHit2D12 = Physics2D.Raycast(vector7, wallJumpFacing, 12f + num, blockingGroundRaycastLayer);
+		RaycastHit2D raycastHit2D13 = Physics2D.Raycast(vector6, wallJumpFacing, 12f + num, blockingGroundRaycastLayer);
+		if (((bool)raycastHit2D6 || (bool)raycastHit2D7) && !raycastHit2D8 && !raycastHit2D9 && currentlyTouchedMovingPlatform == null)
+		{
+			base.transform.position += new Vector3(0f, 10f, 0f);
+		}
+		if ((raycastHit2D5.collider != null && raycastHit2D2.collider == null && raycastHit2D4.collider == null) || (raycastHit2D.collider != null && raycastHit2D2.collider == null) || (raycastHit2D3.collider != null && raycastHit2D4.collider == null && Velocity.y < 200f))
+		{
+			if ((!touchingSideOfMovingBlock || !currentlyTouchedMovingPlatform) && !recentlyJumped)
+			{
+				if (raycastHit2D.collider != null)
+				{
+					if (raycastHit2D.collider.CompareTag("Ground"))
+					{
+						touchedSolidGround(touchedGround: true);
+					}
+					else
+					{
+						touchedMossyGround(touchedGround: true);
+					}
+				}
+				else if (raycastHit2D3.collider != null)
+				{
+					if (raycastHit2D3.collider.CompareTag("Ground"))
+					{
+						touchedSolidGround(touchedGround: true);
+					}
+					else
+					{
+						touchedMossyGround(touchedGround: true);
+					}
+				}
+				else if (raycastHit2D5.collider != null)
+				{
+					if (raycastHit2D5.collider.CompareTag("Ground"))
+					{
+						touchedSolidGround(touchedGround: true);
+					}
+					else
+					{
+						touchedMossyGround(touchedGround: true);
+					}
+				}
+				Velocity.y = 0f;
+				onGround = true;
+				OnWall = false;
+				coyoteFrames = maxCoyoteFrames;
+				DisableAllWallslideParticles();
+			}
+		}
+		else if (((raycastHit2D10.collider != null && raycastHit2D12.collider == null) || (raycastHit2D11.collider != null && raycastHit2D13.collider == null)) && !onGround && (Velocity.y <= 200f || dashActive) && wallJumpUnlocked && wallJumpDirection == 0f)
+		{
+			if (raycastHit2D10.collider != null)
+			{
+				emitWallSlideParticlesThisFrame = true;
+				if (raycastHit2D10.collider.CompareTag("Ground"))
+				{
+					touchedSolidGround(touchedGround: false);
+				}
+				else
+				{
+					touchedMossyGround(touchedGround: false);
+				}
+			}
+			else if (raycastHit2D11.collider != null)
+			{
+				emitWallSlideParticlesThisFrame = false;
+				if (raycastHit2D11.collider.CompareTag("Ground"))
+				{
+					touchedSolidGround(touchedGround: false);
+				}
+				else
+				{
+					touchedMossyGround(touchedGround: false);
+				}
+			}
+			bool flag = false;
+			if (wallBouncePossible && jumpBuffer)
+			{
+				MostRecentUpwardsMoveWasNormalJump = false;
+				normalCollider.offset = defaultColliderOffset;
+				normalCollider.size = defaultColliderSize;
+				cutsceneMode = cutsceneModes.none;
+				endDash(capVerticalV: false);
+				SpecialWallJump(1f, wallBounceMovementLock, Vector2.up * wallBounceMagnitude.y);
+				addMomentum(new Vector2(0f - wallJumpDirection, 0f), wallBounceMagnitude.x);
+				flag = true;
+			}
+			else if (cutsceneMode == cutsceneModes.dash && dashDirection.y <= 0f)
+			{
+				normalCollider.offset = defaultColliderOffset;
+				normalCollider.size = defaultColliderSize;
+				cutsceneMode = cutsceneModes.none;
+				OnWall = true;
+				endDash();
+				if (framesSinceLastDash > dashBoostMin && framesSinceLastDash < dashBoostMax && jumpBuffer)
+				{
+					MostRecentUpwardsMoveWasNormalJump = false;
+					SpecialWallJump(0.6f, 1f, base.transform.up * dashBoostUpwards);
+					flag = true;
+				}
+			}
+			if (!flag && Velocity.y <= 200f)
+			{
+				momentum = Vector2.zero;
+				if (wallJumpsLeft == 0 && !isFinalWallClingActive)
+				{
+					wallJumpsLeft = -1;
+					outOfWallJumpsCling();
+				}
+				ApplyWallslideFriction(1f);
+				onGround = false;
+				OnWall = true;
+				wallCoyoteFrames = maxWallCoyoteFrames;
+				wallCoyoteDir = base.transform.localScale.x;
+			}
+		}
+		else if (wallCoyoteFrames > 0f && OnWall)
+		{
+			wallCoyoteFrames -= 50f * Time.fixedDeltaTime;
+			ApplyWallslideFriction(0.7f);
+		}
+		else
+		{
+			if (wallJumpsLeft < 0 && isFinalWallClingActive)
+			{
+				outOfWallJumpsCling();
+			}
+			coyoteFrames -= 50f * Time.fixedDeltaTime;
+			wallCoyoteFrames -= 50f * Time.fixedDeltaTime;
+			if (coyoteFrames < 0f && onGround)
+			{
+				onGround = false;
+				normalCollider.offset = dashColliderOffset;
+				normalCollider.size = dashColliderSize;
+			}
+			if (wallCoyoteFrames < 0f && OnWall)
+			{
+				OnWall = false;
+				normalCollider.offset = dashColliderOffset;
+				normalCollider.size = dashColliderSize;
+				ParticleSystem.EmissionModule emission = metalWallParticles.emission;
+				emission.rateOverTime = 0f;
+				emission = grassWallParticles.emission;
+				emission.rateOverTime = 0f;
+			}
+		}
+		float num2 = 1f;
+		if ((double)MoveAxis.y < -0.6 && body.linearVelocityY < 300f)
+		{
+			num2 = 1.4f;
+		}
+		timeInAir += Time.fixedDeltaTime;
+		if (Velocity.y < -75f && !OnWall && !onGround)
+		{
+			Velocity.y -= 50f * Time.fixedDeltaTime * gravity * fastFallMod * num2;
+		}
+		else if (!isFinalWallClingActive)
+		{
+			Velocity.y -= 50f * Time.fixedDeltaTime * gravity * num2;
+		}
+		else
+		{
+			finalWallClingTimeLeft -= Time.fixedDeltaTime;
+			if (finalWallClingTimeLeft < 0f)
+			{
+				outOfWallJumpsCling();
+			}
+		}
+		if (Velocity.y < (0f - maxDownwardsSpeed) * 8f * num2 && cutsceneMode != cutsceneModes.longfall)
+		{
+			Velocity.y = Mathf.Lerp(Velocity.y, (0f - maxDownwardsSpeed) * 8f * num2, PostMaxDownwardsSpeedDrag);
+		}
+		if (Velocity.y < 200f && Velocity.y > -50f && !OnWall && !onGround)
+		{
+			Velocity.y += 50f * Time.fixedDeltaTime * jumpApexAntiGrav;
+			atJumpApex = true;
+		}
+		else
+		{
+			atJumpApex = false;
+		}
+		framesSinceLastDash += 1f;
+		if (isDead)
+		{
+			cutsceneMode = cutsceneModes.deathFreeze;
+		}
+		if (dashActive && dashFramesRemaining <= 0f)
+		{
+			endDash();
+		}
+		if (dashFramesRemaining > -1f)
+		{
+			dashFramesRemaining -= 1f;
+		}
+		if (cutsceneMode == cutsceneModes.none)
+		{
+			if (!pauseMenu.menuOpen)
+			{
+				getPlayerControlledInput();
+				determineSpriteDirection();
+			}
+		}
+		else if (cutsceneMode == cutsceneModes.dash)
+		{
+			if (WaitingForDashInput)
+			{
+				WaitingForDashInput = false;
+			}
+			if (onGround && dashDirection.y < 0f)
+			{
+				if (dashDirection.y == -1f)
+				{
+					endDash();
+					DashBounceFrames = 4;
+				}
+				else
+				{
+					dashDirection.y = 0f;
+					dashDirection.Normalize();
+					framesSinceLastDash = 0f;
+					dashFramesRemaining += 3f;
+					canHyper = true;
+				}
+			}
+			else if (dashDirection.y > 0f && dashDirection.x != 0f && (raycastHit2D10.collider != null || raycastHit2D11.collider != null) && wallJumpUnlocked)
+			{
+				dashDirection.x = 0f;
+				dashDirection.Normalize();
+				if (framesSinceLastDash < dashBoostMax * 1.4f)
+				{
+					wallBouncePossible = true;
+				}
+			}
+			Vector2 vector8 = dashDirection;
+			if (dashDirection.y > 0f)
+			{
+				vector8.y = Mathf.Lerp(0f, dashDirection.y, DashDroopBaseline + DashDroopIntensityOverTime * (dashFrames - framesSinceLastDash));
+			}
+			Velocity = vector8 * dashSpeed * 10f;
+			CheckForSuperJump();
+			determineSpriteDirection();
+		}
+		else if (cutsceneMode == cutsceneModes.deathFreeze)
+		{
+			Velocity.x = 0f;
+			Velocity.y = 0f;
+			momentum = Vector2.zero;
+		}
+		else if (cutsceneMode == cutsceneModes.longfall)
+		{
+			Velocity.x = 0f;
+			Velocity.y -= 50f * Time.fixedDeltaTime * gravity / 2f;
+			if (Velocity.y < (0f - longfallMult) * maxDownwardsSpeed * 10f)
+			{
+				Velocity.y = (0f - longfallMult) * maxDownwardsSpeed * 10f;
+			}
+		}
+		else if (cutsceneMode == cutsceneModes.spring)
+		{
+			Velocity.x = wallJumpDirection;
+			determineSpriteDirection();
+			if (dashBuffer && dashCooldown < 0f && airDashesLeft > 0 && dashUnlocked)
+			{
+				cutsceneMode = cutsceneModes.none;
+			}
+		}
+		if (cutsceneMode == cutsceneModes.deathFreeze)
+		{
+			animator.speed = 1f;
+			animator.SetInteger("Animation", 7);
+		}
+		else if (dashActive && !OnWall)
+		{
+			animator.speed = 1f;
+			animator.SetInteger("Animation", 6);
+		}
+		else if (OnWall)
+		{
+			animator.speed = 1f;
+			base.transform.localScale = new Vector2(wallCoyoteDir, base.transform.localScale.y);
+			animator.SetInteger("Animation", 3);
+		}
+		else if (!onGround && Velocity.y > 0f)
+		{
+			animator.speed = 1f;
+			animator.SetInteger("Animation", 5);
+		}
+		else if (!onGround && Velocity.y < 0f)
+		{
+			animator.speed = 1f;
+			if (animator.GetInteger("Animation") == 3)
+			{
+				playSFX("");
+			}
+			animator.SetInteger("Animation", 2);
+		}
+		else if (onGround && Velocity.x != 0f)
+		{
+			animator.speed = 0.1f + Mathf.Abs(Velocity.x / (runSpeed * 10f) * 0.9f);
+			animator.SetInteger("Animation", 1);
+		}
+		else
+		{
+			animator.speed = 1f;
+			animator.SetInteger("Animation", 0);
+		}
+		momentum = Vector2.Lerp(momentum, new Vector2(0f, 0f), Time.fixedDeltaTime * momentumDecay);
+		if (momentum.x > 0f)
+		{
+			momentum -= new Vector2(flatMomentumDecay, 0f);
+			if (momentum.x < 0f)
+			{
+				momentum.x = 0f;
+			}
+		}
+		else if (momentum.x < 0f)
+		{
+			momentum += new Vector2(flatMomentumDecay, 0f);
+			if (momentum.x > 0f)
+			{
+				momentum.x = 0f;
+			}
+		}
+		if (momentum.y > 0f)
+		{
+			momentum -= new Vector2(0f, flatMomentumDecay * Time.fixedDeltaTime);
+			if (momentum.y < 0f)
+			{
+				momentum.y = 0f;
+			}
+		}
+		else if (momentum.y < 0f)
+		{
+			momentum += new Vector2(0f, flatMomentumDecay * Time.fixedDeltaTime);
+			if (momentum.y > 0f)
+			{
+				momentum.y = 0f;
+			}
+		}
+		if (!onGround && !OnWall)
+		{
+			FallingSquashStretch();
+		}
+		CalcMovingPlatformVelocity();
+		if (!squishedThisFrame)
+		{
+			body.linearVelocity = Velocity + momentum + movingPlatformVelocity;
+		}
+		else
+		{
+			body.linearVelocity = movingPlatformVelocity;
+		}
+	}
+
+	private void ApplyWallslideFriction(float speedMult)
+	{
+		if (cutsceneMode != cutsceneModes.longfall && !isFinalWallClingActive)
+		{
+			if ((double)MoveAxis.y < -0.6)
+			{
+				speedMult *= 1.5f;
+			}
+			else if ((double)MoveAxis.y > 0.6)
+			{
+				speedMult *= 0.35f;
+			}
+			if (wallJumpsLeft > 0)
+			{
+				Velocity.y += 50f * Time.fixedDeltaTime * (gravity - (float)wallSlideFriction);
+				if (Velocity.y < (float)(-maxWallSlideSpeed) * speedMult * 0.8f)
+				{
+					Velocity.y = Mathf.Lerp(Velocity.y, (float)(-maxWallSlideSpeed) * speedMult, PostMaxDownwardsSpeedDrag);
+				}
+			}
+			else
+			{
+				Velocity.y += 50f * Time.fixedDeltaTime * (gravity - (float)(wallSlideFriction + 2));
+			}
+		}
+		if (!OnWall && wallJumpsLeft > 0)
+		{
+			Velocity.y = Mathf.Clamp(Velocity.y, -150f * speedMult, 0f);
+		}
+	}
+
+	private void CalcMovingPlatformVelocity()
+	{
+		if (currentlyTouchedMovingPlatform != null && (onGround || OnWall))
+		{
+			movingPlatformCoyote = maxWallCoyoteFrames;
+			if (OnWall)
+			{
+				Velocity.y = Mathf.Lerp(Velocity.y, 0f, 0.2f);
+			}
+			movingPlatformVelocity = currentlyTouchedMovingPlatform.linearV;
+			if (platformMomentumHistory.Count == movingPlatformMomentumCoyoteFrames)
+			{
+				platformMomentumHistory.Dequeue();
+			}
+			platformMomentumHistory.Enqueue(movingPlatformVelocity);
+			if (movingPlatformVelocity.y < 0f && !OnWall)
+			{
+				movingPlatformVelocity *= new Vector2(1f, 1.2f);
+			}
+			if (OnWall)
+			{
+				if ((base.gameObject.transform.localScale.x < 0f && movingPlatformVelocity.x < 0f) || (base.gameObject.transform.localScale.x > 0f && movingPlatformVelocity.x > 0f))
+				{
+					movingPlatformVelocity *= new Vector2(2f, 1f);
+				}
+				else
+				{
+					movingPlatformVelocity *= new Vector2(0.9f, 1f);
+				}
+			}
+			if (touchingSideOfMovingBlock)
+			{
+				if ((facingRight && movingPlatformVelocity.x < 0f) || (!facingRight && movingPlatformVelocity.x > 0f))
+				{
+					movingPlatformVelocity = Vector2.zero;
+				}
+				else if (onGround)
+				{
+					movingPlatformVelocity = Vector2.zero;
+				}
+			}
+		}
+		else
+		{
+			if (movingPlatformCoyote > -1f)
+			{
+				movingPlatformCoyote -= 1f;
+			}
+			movingPlatformVelocity = Vector2.zero;
+			if (platformMomentumHistory.Count == movingPlatformMomentumCoyoteFrames)
+			{
+				platformMomentumHistory.Dequeue();
+			}
+			platformMomentumHistory.Enqueue(movingPlatformVelocity);
+		}
+	}
+
+	private void CheckForSuperJump(bool isDashBounce = false)
+	{
+		if (DashBounceFrames > 0 || (canHyper && framesSinceLastDash < 4f) || !jumpBuffer || !onGround)
+		{
+			return;
+		}
+		MovingPlatformMomentumInherit(Vector2.zero);
+		cutsceneMode = cutsceneModes.none;
+		jumpBuffer = false;
+		CancelInvoke("cancelJumpBuffer");
+		coyoteFrames = 0f;
+		onGround = false;
+		base.transform.position = (base.transform.position += new Vector3(0f, 2f));
+		recentlyJumped = true;
+		Invoke("endRecentJump", 0.03f);
+		playSFX("bigJump");
+		JumpingSquashStretch();
+		if (currentGroundType == groundTypes.Metal)
+		{
+			metalLandParticles.Emit(8);
+		}
+		else if (currentGroundType == groundTypes.Mossy)
+		{
+			grassLandParticles.Emit(6);
+		}
+		normalCollider.offset = dashColliderOffset;
+		normalCollider.size = dashColliderSize;
+		if (canHyper)
+		{
+			MostRecentUpwardsMoveWasNormalJump = false;
+			Velocity.y = jumpForce * hyperJumpHeightMod;
+			if (MoveAxis.x > 0f)
+			{
+				addMomentum(Vector2.right, hyperJumpMagnitude);
+			}
+			else if (MoveAxis.x < 0f)
+			{
+				addMomentum(Vector2.left, hyperJumpMagnitude);
+			}
+			if (Mathf.Sign(preDashMomentum.x) == Mathf.Sign(dashDirection.x))
+			{
+				if (base.transform.position.y < lastHyperY - 4f)
+				{
+					momentum.x += preDashMomentum.x;
+					Debug.Log("Did an ultra!");
+				}
+				TimeStop(0.05f);
+			}
+			lastHyperY = base.transform.position.y;
+		}
+		else
+		{
+			MostRecentUpwardsMoveWasNormalJump = true;
+			Velocity.y = jumpForce;
+			if (MoveAxis.x > 0f)
+			{
+				addMomentum(Vector2.right, dashJumpMagnitude);
+			}
+			else if (MoveAxis.x < 0f)
+			{
+				addMomentum(Vector2.left, dashJumpMagnitude);
+			}
+			else
+			{
+				addMomentum(new Vector2(dashDirection.x, 0f), dashJumpMagnitude);
+			}
+		}
+	}
+
+	public void MovingPlatformMomentumInherit(Vector2 linearV, bool triggeredByJump = true)
+	{
+		if (currentlyTouchedMovingPlatform == null && movingPlatformCoyote <= 0f)
+		{
+			return;
+		}
+		Vector2 vector = Vector2.zero;
+		if (triggeredByJump)
+		{
+			movingPlatformCoyote = -1f;
+			float num = -9999999f;
+			foreach (Vector2 item in platformMomentumHistory)
+			{
+				if (item.magnitude > num)
+				{
+					num = item.magnitude;
+					vector = item;
+				}
+			}
+		}
+		else
+		{
+			vector = linearV;
+		}
+		if (movingPlatformInheritCooldown > 0f)
+		{
+			if (lastInheritedPlatformV.sqrMagnitude > vector.sqrMagnitude)
+			{
+				return;
+			}
+			momentum -= lastInheritedPlatformV;
+			lastInheritedPlatformV = Vector2.zero;
+		}
+		momentum += vector;
+		lastInheritedPlatformV = vector;
+		movingPlatformInheritCooldown = MaxMovingPlatformInheritCd;
+		if (currentlyTouchedMovingPlatform != null)
+		{
+			if (triggeredByJump)
+			{
+				currentlyTouchedMovingPlatform.MakeIntangible();
+			}
+			currentlyTouchedMovingPlatform = null;
+		}
+		else if (triggeredByJump)
+		{
+			lastTouchedMovingPlatform.MakeIntangible();
+		}
+	}
+
+	private Vector2 NormaliseInput(Vector2 MoveAxis)
+	{
+		if ((double)MoveAxis.x > 0.8)
+		{
+			MoveAxis.x = 1f;
+		}
+		else if ((double)MoveAxis.x < -0.8)
+		{
+			MoveAxis.x = -1f;
+		}
+		else if ((double)MoveAxis.x > 0.4 && (double)Mathf.Abs(MoveAxis.y) > 0.3)
+		{
+			MoveAxis.x = 1f;
+		}
+		else if ((double)MoveAxis.x < -0.4 && (double)Mathf.Abs(MoveAxis.y) > 0.3)
+		{
+			MoveAxis.x = -1f;
+		}
+		else if ((double)Mathf.Abs(MoveAxis.x) < 0.3)
+		{
+			MoveAxis.x = 0f;
+		}
+		if ((double)MoveAxis.y > 0.4)
+		{
+			MoveAxis.y = 1f;
+		}
+		else if ((double)MoveAxis.y < -0.4)
+		{
+			MoveAxis.y = -1f;
+		}
+		else
+		{
+			MoveAxis.y = 0f;
+		}
+		return MoveAxis;
+	}
+
+	private void SpecialWallJump(float directionMagnitudeMod, float durationMult, Vector2 momentumToAdd)
+	{
+		MovingPlatformMomentumInherit(Vector2.zero);
+		jumpBuffer = false;
+		CancelInvoke("cancelJumpBuffer");
+		MostRecentUpwardsMoveWasNormalJump = false;
+		wallJumpsLeft--;
+		wallCoyoteFrames = 0f;
+		OnWall = false;
+		wallJumpDirection = (0f - base.transform.localScale.x) * directionMagnitudeMod;
+		Velocity.x = runSpeed * wallJumpDirection * 10f;
+		base.transform.position += new Vector3(wallJumpDirection, 1f);
+		Velocity.y = wallJumpForce;
+		wallJumpMovementLockRemaining = wallJumpMovementLockFrames * durationMult;
+		momentum += momentumToAdd;
+		playSFX("smallJump");
+		JumpingSquashStretch();
+		normalCollider.offset = dashColliderOffset;
+		normalCollider.size = dashColliderSize;
+		if (currentGroundType == groundTypes.Metal)
+		{
+			metalWallParticles.transform.localPosition = new Vector2(metalWallParticles.transform.localPosition.x, 0f);
+			ParticleSystem.EmissionModule emission = metalWallParticles.emission;
+			emission.rateOverTime = 0f;
+			metalWallParticles.Emit(8);
+		}
+		else if (currentGroundType == groundTypes.Mossy)
+		{
+			grassWallParticles.transform.localPosition = new Vector2(grassWallParticles.transform.localPosition.x, 0f);
+			ParticleSystem.EmissionModule emission2 = grassWallParticles.emission;
+			emission2.rateOverTime = 0f;
+			grassWallParticles.Emit(10);
+		}
+	}
+
+	private void getPlayerControlledInput()
+	{
+		if (dashBuffer && dashCooldown < 0f && dashUnlocked && !(wallJumpMovementLockRemaining < wallJumpMovementLockFrames - 5f))
+		{
+			CancelInvoke("cancelDashBuffer");
+			Invoke("cancelDashBuffer", 0.06f);
+		}
+		if (dashBuffer && dashCooldown < 0f && dashUnlocked && wallJumpMovementLockRemaining < wallJumpMovementLockFrames - 5f)
+		{
+			if (airDashesLeft > 0)
+			{
+				if (blockSwapUnlocked)
+				{
+					swapBlocks();
+				}
+				dashBuffer = false;
+				CancelInvoke("cancelDashBuffer");
+				TimeStop(dashTimeStopTime);
+				dashFramesRemaining = dashFrames;
+				if (MoveAxis == Vector2.zero || (!omniDashUnlocked && MoveAxis.x == 0f))
+				{
+					dashDirection = new Vector2(facingRight ? 1 : (-1), 0f);
+					WaitingForDashInput = true;
+				}
+				else
+				{
+					dashDirection = MoveAxis;
+					if (Math.Abs(dashDirection.x) < 1f && (double)Math.Abs(dashDirection.y) >= 0.4)
+					{
+						dashDirection.x = 0f;
+					}
+					if (!omniDashUnlocked)
+					{
+						dashDirection.y = 0f;
+					}
+					if (onGround && dashDirection.y < 0f)
+					{
+						dashDirection.y = 0f;
+					}
+					dashDirection.Normalize();
+				}
+				if (OnWall && wallCoyoteFrames == maxWallCoyoteFrames)
+				{
+					facingRight = !facingRight;
+					dashDirection.x = (facingRight ? 1 : (-1));
+					Debug.Log(OnWall);
+					Debug.Log(wallCoyoteFrames + " " + maxWallCoyoteFrames);
+					wallCoyoteFrames = 0f;
+				}
+				preDashMomentum = momentum;
+				momentum = Vector2.zero;
+				if (dashDirection.y > 0f)
+				{
+					recentlyJumped = true;
+					Invoke("endRecentJump", 0.03f);
+				}
+				framesSinceLastDash = 0f;
+				wallJumpDirection = 0f;
+				cutsceneMode = cutsceneModes.dash;
+				base.transform.position += (Vector3)dashDirection * -20f;
+				Velocity = dashDirection * dashSpeed * 10f;
+				airDashesLeft--;
+				dashActive = true;
+				dashCooldown = 100f;
+				playSFX("dash");
+				wallJumpMovementLockRemaining = -1f;
+			}
+			else if (currentGroundType == groundTypes.Mossy && tiredSoundCooldown < 0f)
+			{
+				tiredSoundCooldown = 0.2f;
+			}
+			return;
+		}
+		MoveLeftAndRight();
+		if (MostRecentUpwardsMoveWasNormalJump && jumpCutBuffer && Velocity.y < 580f && Velocity.y > 150f)
+		{
+			Velocity.y = 50f;
+			if (wallJumpMovementLockRemaining > 0f)
+			{
+				wallJumpMovementLockRemaining = 0f;
+			}
+		}
+		if (jumpBuffer && onGround)
+		{
+			MovingPlatformMomentumInherit(Vector2.zero);
+			MostRecentUpwardsMoveWasNormalJump = true;
+			jumpBuffer = false;
+			CancelInvoke("cancelJumpBuffer");
+			coyoteFrames = 0f;
+			onGround = false;
+			base.transform.position = (base.transform.position += new Vector3(0f, 5f));
+			Velocity.y = jumpForce;
+			recentlyJumped = true;
+			Invoke("endRecentJump", 0.03f);
+			playSFX("bigJump");
+			JumpingSquashStretch();
+			if (currentGroundType == groundTypes.Metal)
+			{
+				metalLandParticles.Emit(4);
+			}
+			else if (currentGroundType == groundTypes.Mossy)
+			{
+				grassLandParticles.Emit(3);
+			}
+			normalCollider.offset = dashColliderOffset;
+			normalCollider.size = dashColliderSize;
+			if (DashBounceFrames > 0)
+			{
+				addMomentum(Vector2.up, dashBounceMagnitude);
+				addMomentum(new Vector2(1f, 0f), momentum.x * 0.05f);
+				MostRecentUpwardsMoveWasNormalJump = false;
+			}
+		}
+		else if (jumpBuffer && (OnWall || wallCoyoteFrames > 0f))
+		{
+			if (wallJumpsLeft > 0 && wallJumpUnlocked)
+			{
+				MostRecentUpwardsMoveWasNormalJump = true;
+				if (framesSinceLastDash > dashBoostMin && framesSinceLastDash < dashBoostMax)
+				{
+					SpecialWallJump(0.6f, 0.6f, Vector2.up * dashBoostUpwards);
+					return;
+				}
+				MovingPlatformMomentumInherit(Vector2.zero);
+				BoxCollider2D boxCollider2D = normalCollider;
+				boxCollider2D.excludeLayers = (int)boxCollider2D.excludeLayers + LayerMask.GetMask("Ground");
+				Invoke("reEnableNormalCollider", 0.01f);
+				jumpBuffer = false;
+				CancelInvoke("cancelJumpBuffer");
+				wallJumpsLeft--;
+				wallCoyoteFrames = 0f;
+				OnWall = false;
+				base.transform.position += new Vector3(wallJumpDirection, 1f);
+				wallJumpDirection = 0f - base.gameObject.transform.localScale.x;
+				Velocity.y = wallJumpForce;
+				wallJumpMovementLockRemaining = wallJumpMovementLockFrames;
+				Velocity.x = runSpeed * wallJumpDirection * 10f;
+				JumpingSquashStretch();
+				normalCollider.offset = dashColliderOffset;
+				normalCollider.size = dashColliderSize;
+				if (currentGroundType == groundTypes.Metal)
+				{
+					playSFX("smallJump");
+					ParticleSystem.EmissionModule emission = metalWallParticles.emission;
+					emission.rateOverTime = 0f;
+					metalWallParticles.Emit(3);
+				}
+				else if (currentGroundType == groundTypes.Mossy)
+				{
+					Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.GrassFootstep, 1f, 0.15f);
+					playSFX("");
+					ParticleSystem.EmissionModule emission2 = grassWallParticles.emission;
+					emission2.rateOverTime = 0f;
+					grassWallParticles.Emit(3);
+				}
+			}
+			else if (wallJumpUnlocked && currentGroundType == groundTypes.Mossy && tiredSoundCooldown < 0f)
+			{
+				tiredSoundCooldown = 0.2f;
+			}
+		}
+		else
+		{
+			if (!jumpBuffer || !doubleJumpUnlocked || onGround || !(wallCoyoteFrames < maxWallCoyoteFrames))
+			{
+				return;
+			}
+			if (airJumpsLeft > 0)
+			{
+				if ((MostRecentUpwardsMoveWasNormalJump && Velocity.y < 200f) || (!MostRecentUpwardsMoveWasNormalJump && Velocity.y < 700f))
+				{
+					MostRecentUpwardsMoveWasNormalJump = true;
+					jumpBuffer = false;
+					CancelInvoke("cancelJumpBuffer");
+					airJumpsLeft--;
+					if (Velocity.y < 0f)
+					{
+						Velocity.y = 0f;
+					}
+					Velocity.y += airJumpForce;
+					Velocity.y = Mathf.Lerp(Velocity.y, airJumpForce, 0.5f);
+					playSFX("airJump");
+					JumpingSquashStretch();
+					normalCollider.offset = dashColliderOffset;
+					normalCollider.size = dashColliderSize;
+				}
+			}
+			else if (maxAirJumps > 0 && currentGroundType == groundTypes.Mossy && tiredSoundCooldown < 0f)
+			{
+				tiredSoundCooldown = 0.2f;
+			}
+		}
+	}
+
+	private void MoveLeftAndRight()
+	{
+		if (wallJumpMovementLockRemaining < 0f)
+		{
+			wallJumpDirection = 0f;
+			if (momentum.x > 0f && MoveAxis.x < 0f)
+			{
+				momentum.x -= MovingOppositeMomentumDecay;
+			}
+			else if (momentum.x < 0f && MoveAxis.x > 0f)
+			{
+				momentum.x += MovingOppositeMomentumDecay;
+			}
+			if (MoveAxis.x != 0f)
+			{
+				Velocity.x += MoveAxis.x * runSpeed * 10f / framesToReachTopSpeed;
+				if (Mathf.Sign(Velocity.x) != Mathf.Sign(MoveAxis.x))
+				{
+					Velocity.x += MoveAxis.x * runSpeed * 10f / framesToReachTopSpeed;
+				}
+				if (atJumpApex)
+				{
+					Velocity.x += jumpApexSpeedBonus * MoveAxis.x * 10f;
+				}
+			}
+			else
+			{
+				if (Velocity.x > 0f)
+				{
+					Velocity.x -= runSpeed * 10f / framesToReachTopSpeed;
+				}
+				else if (Velocity.x < 0f)
+				{
+					Velocity.x += runSpeed * 10f / framesToReachTopSpeed;
+				}
+				if (Mathf.Abs(Velocity.x) < runSpeed * 10f / framesToReachTopSpeed)
+				{
+					Velocity.x = 0f;
+				}
+			}
+			if (Velocity.x > runSpeed * 10f)
+			{
+				Velocity.x = 1f * runSpeed * 10f;
+			}
+			else if (Velocity.x < (0f - runSpeed) * 10f)
+			{
+				Velocity.x = -1f * runSpeed * 10f;
+			}
+		}
+		else
+		{
+			Velocity.x = wallJumpDirection * runSpeed * 10f;
+			wallJumpMovementLockRemaining -= 1f;
+		}
+	}
+
+	private void reEnableNormalCollider()
+	{
+		BoxCollider2D boxCollider2D = normalCollider;
+		boxCollider2D.excludeLayers = (int)boxCollider2D.excludeLayers - LayerMask.GetMask("Ground");
+	}
+
+	private void endRecentJump()
+	{
+		recentlyJumped = false;
+	}
+
+	private void determineSpriteDirection()
+	{
+		if (Velocity.x > 0f)
+		{
+			base.gameObject.transform.localScale = new Vector3(1f, 1f);
+			facingRight = true;
+		}
+		else if (Velocity.x < 0f)
+		{
+			base.gameObject.transform.localScale = new Vector3(-1f, 1f);
+			facingRight = false;
+		}
+	}
+
+	private void playSFX(string SFXcode)
+	{
+		switch (SFXcode)
+		{
+		case "bigJump":
+			audioSource.clip = bigJumpSFX[UnityEngine.Random.Range(0, bigJumpSFX.Length)];
+			audioSource.loop = false;
+			break;
+		case "smallJump":
+			audioSource.clip = bigJumpSFX[UnityEngine.Random.Range(0, bigJumpSFX.Length)];
+			audioSource.loop = false;
+			break;
+		case "land":
+			audioSource.loop = false;
+			audioSource.clip = null;
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.MetalLand, 1f, 0.15f);
+			break;
+		case "grassLand":
+			audioSource.loop = false;
+			audioSource.clip = null;
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.GrassFootstep, 1f, 0.15f);
+			break;
+		case "wallSlide":
+			audioSource.clip = MetalSlideSFX;
+			audioSource.time = UnityEngine.Random.Range(0f, audioSource.clip.length);
+			audioSource.loop = true;
+			break;
+		case "grassWallSlide":
+			audioSource.clip = GrassSlideSFX;
+			audioSource.time = UnityEngine.Random.Range(0f, audioSource.clip.length);
+			audioSource.loop = true;
+			break;
+		case "dash":
+			audioSource.clip = dashSFX[UnityEngine.Random.Range(0, dashSFX.Length)];
+			audioSource.loop = false;
+			break;
+		case "airJump":
+			audioSource.clip = airJumpSFX[UnityEngine.Random.Range(0, airJumpSFX.Length)];
+			audioSource.loop = false;
+			break;
+		case "death":
+			audioSource.clip = deathSFX[UnityEngine.Random.Range(0, deathSFX.Length)];
+			audioSource.loop = false;
+			break;
+		default:
+			audioSource.clip = null;
+			break;
+		}
+		audioSource.pitch = 1f + UnityEngine.Random.Range(-0.15f, 0.15f);
+		audioSource.Play();
+	}
+
+	private void outOfWallJumpsCling()
+	{
+		if (isFinalWallClingActive)
+		{
+			isFinalWallClingActive = false;
+			return;
+		}
+		isFinalWallClingActive = true;
+		finalWallClingTimeLeft = finalWallClingTime;
+		Velocity.y = 0f;
+	}
+
+	public void startedCourse()
+	{
+		if (blockSwapUnlocked)
+		{
+			blockSwapper.swapBlocks(BlueActive: true);
+		}
+	}
+
+	private void HandleAfterimages()
+	{
+		if ((momentum.magnitude > afterimageMomentumMagnitudeRequired && body.linearVelocity.magnitude > 400f) || body.linearVelocityY < 0f - 10f * maxDownwardsSpeed - 1f || dashActive)
+		{
+			if (dashActive)
+			{
+				timeSinceLastAfterimage += Time.deltaTime * body.linearVelocity.magnitude;
+			}
+			else
+			{
+				timeSinceLastAfterimage += Time.deltaTime * body.linearVelocity.magnitude;
+			}
+			if (timeSinceLastAfterimage > afterimageFrequency)
+			{
+				timeSinceLastAfterimage = 0f;
+				SpriteRenderer spriteRenderer = inactiveAfterimages.Pop();
+				spriteRenderer.sprite = sr.sprite;
+				spriteRenderer.gameObject.SetActive(value: true);
+				spriteRenderer.transform.position = base.transform.position;
+				spriteRenderer.transform.localScale = base.transform.localScale;
+				afterimageTimeAlive.Add(0f);
+				activeAfterimages.Add(spriteRenderer);
+			}
+		}
+		List<int> list = new List<int>();
+		for (int i = 0; i < activeAfterimages.Count; i++)
+		{
+			afterimageTimeAlive[i] += Time.deltaTime / afterimageLifetime;
+			SpriteRenderer spriteRenderer2 = activeAfterimages[i];
+			Color color = Color.Lerp(afterimageColors[0], afterimageColors[1], afterimageTimeAlive[i]);
+			if (afterimageTimeAlive[i] >= 1f)
+			{
+				list.Add(i);
+			}
+			spriteRenderer2.color = color;
+		}
+		foreach (int item in list)
+		{
+			try
+			{
+				activeAfterimages[item].gameObject.SetActive(value: false);
+				inactiveAfterimages.Push(activeAfterimages[item]);
+				activeAfterimages.RemoveAt(item);
+				afterimageTimeAlive.RemoveAt(item);
+			}
+			catch
+			{
+			}
+		}
+		list.Clear();
+	}
+
+	private void endDash(bool capVerticalV = true)
+	{
+		if (!hitDashResetterWhileInCurrentDash)
+		{
+			if (airDashesLeft == 0)
+			{
+				dashCooldown = defaultDashCooldown;
+			}
+			else if (onGround)
+			{
+				dashCooldown = defaultDashCooldown;
+			}
+			else
+			{
+				dashCooldown = 0.02f;
+			}
+		}
+		else
+		{
+			hitDashResetterWhileInCurrentDash = false;
+			dashCooldown = 0.02f;
+			TimeStop(0.06f);
+		}
+		if (dashDirection.y > 0f)
+		{
+			MostRecentUpwardsMoveWasNormalJump = false;
+			if (capVerticalV)
+			{
+				Velocity *= 0.35f;
+			}
+		}
+		else if (Velocity.y < 10f)
+		{
+			Velocity.y = 10f;
+		}
+		if (cutsceneMode == cutsceneModes.dash)
+		{
+			if ((Mathf.Sign(preDashMomentum.x) == Mathf.Sign(dashDirection.x) && dashDirection.y <= 0f) || dashDirection.y == -1f)
+			{
+				momentum.x += preDashMomentum.x * 0.95f;
+				TimeStop(0.05f);
+			}
+			if (Mathf.Sign(preDashMomentum.y) == Mathf.Sign(dashDirection.y) && dashDirection.y != 0f)
+			{
+				momentum.y += preDashMomentum.y * 0.95f;
+				TimeStop(0.05f);
+			}
+		}
+		cutsceneMode = cutsceneModes.none;
+		dashActive = false;
+		canHyper = false;
+		wallBouncePossible = false;
+		if (OnWall)
+		{
+			PlayWallSlideSfx(currentGroundType);
+		}
+	}
+
+	private void PlayWallSlideSfx(groundTypes ground)
+	{
+		switch (ground)
+		{
+		case groundTypes.Metal:
+			playSFX("wallSlide");
+			break;
+		case groundTypes.Mossy:
+			playSFX("grassWallSlide");
+			break;
+		}
+	}
+
+	public void onDeath()
+	{
+		if (SteamManager.Initialized)
+		{
+			SteamUserStats.SetAchievement("ACH_DIE");
+			SteamUserStats.GetStat("Deaths", out int pData);
+			SteamUserStats.SetStat("Deaths", pData + 1);
+			if (pData + 1 == 100)
+			{
+				SteamUserStats.SetAchievement("ACH_DIE_100");
+			}
+			else if (pData + 1 == 500)
+			{
+				SteamUserStats.SetAchievement("ACH_DIE_500");
+			}
+			SteamUserStats.StoreStats();
+		}
+		if (cutsceneMode == cutsceneModes.dash)
+		{
+			endDash();
+		}
+		if (cutsceneMode == cutsceneModes.spring)
+		{
+			CancelInvoke("cancelSpringCutscene");
+		}
+		playSFX("death");
+		isDead = true;
+		cutsceneMode = cutsceneModes.deathFreeze;
+		Invoke("deathRespawn", 0.6f);
+		animator.SetInteger("Animation", 7);
+	}
+
+	private void deathRespawn()
+	{
+		respawn(manuallyTriggered: false);
+	}
+
+	private void respawn(bool manuallyTriggered)
+	{
+		if (blockSwapUnlocked)
+		{
+			blockSwapper.swapBlocks(isBlueActiveOnRespawn);
+		}
+		if (!isRespawningAtCheckpoints || manuallyTriggered)
+		{
+			if (courseResetPoint == Vector2.zero)
+			{
+				base.transform.position = respawnPoint + (Vector2)Singleton<FloatingOrigin>.Instance.currentOrigin;
+			}
+			else
+			{
+				base.transform.position = courseResetPoint;
+				courseResetPoint = Vector2.zero;
+			}
+		}
+		else
+		{
+			base.transform.position = respawnPoint + (Vector2)Singleton<FloatingOrigin>.Instance.currentOrigin;
+		}
+		base.transform.position += new Vector3(0f, -12f);
+		onGround = true;
+		CancelInvoke("respawn");
+		playSFX("");
+		isDead = false;
+		cutsceneMode = cutsceneModes.none;
+		normalCollider.size = defaultColliderSize;
+		normalCollider.offset = defaultColliderOffset;
+		animator.transform.localScale = new Vector2(1f, 1f);
+		animator.transform.localPosition = Vector2.zero;
+		base.transform.eulerAngles = Vector3.zero;
+		Velocity = Vector2.zero;
+		momentum = Vector2.zero;
+		movingPlatformVelocity = Vector2.zero;
+		cam.playerRespawned(base.transform.position);
+	}
+
+	public void ReEvaluateSweatingState()
+	{
+		if (currentGroundType != groundTypes.Metal)
+		{
+			if (wallJumpsLeft == maxWallJumps)
+			{
+				Sweating = false;
+				sweatParticles.Stop();
+			}
+			else
+			{
+				Sweating = true;
+				sweatParticles.Play();
+			}
+		}
+	}
+
+	private void touchedSolidGround(bool touchedGround)
+	{
+		ach_boingboing = 0;
+		airJumpsLeft = maxAirJumps;
+		airDashesLeft = maxAirDashes;
+		wallJumpsLeft = maxWallJumps;
+		currentGroundType = groundTypes.Metal;
+		if (Sweating)
+		{
+			Sweating = false;
+			sweatParticles.Stop();
+		}
+		if (!onGround && touchedGround)
+		{
+			if (audioSource.clip == MetalSlideSFX || audioSource.clip == GrassSlideSFX)
+			{
+				audioSource.clip = null;
+			}
+			if (cutsceneMode != cutsceneModes.deathFreeze)
+			{
+				if (timeInAir > 0.8f)
+				{
+					playSFX("land");
+					float num = heightOfLastJumpStart - base.transform.position.y;
+					if (num > -150f)
+					{
+						int count = Mathf.Min(5 + (int)num / 75, 20);
+						metalLandParticles.Emit(count);
+					}
+				}
+				PlayFootstep();
+			}
+			LandingSquashStretch();
+			normalCollider.offset = defaultColliderOffset;
+			normalCollider.size = defaultColliderSize;
+		}
+		else if (onGround && touchedGround)
+		{
+			if ((cutsceneMode == cutsceneModes.none || !dashActive) && DashBounceFrames <= 0)
+			{
+				momentum = new Vector2(momentum.x * 0.75f, momentum.y);
+				lastHyperY = base.transform.position.y;
+			}
+		}
+		else if (!touchedGround)
+		{
+			if (!OnWall && !touchedGround && !dashActive)
+			{
+				PlayWallSlideSfx(currentGroundType);
+			}
+			if (emitWallSlideParticlesThisFrame)
+			{
+				if (grassWallParticles.emission.rateOverTime.constant != 0f)
+				{
+					ParticleSystem.EmissionModule emission = grassWallParticles.emission;
+					emission.rateOverTime = 0f;
+				}
+				float num2 = Velocity.y / (float)(-maxWallSlideSpeed) * 30f;
+				ParticleSystem.EmissionModule emission2 = metalWallParticles.emission;
+				emission2.rateOverTime = num2;
+			}
+			else
+			{
+				ParticleSystem.EmissionModule emission3 = metalWallParticles.emission;
+				emission3.rateOverTime = 0f;
+			}
+		}
+		timeInAir = 0f;
+		heightOfLastJumpStart = base.transform.position.y;
+	}
+
+	private void touchedMossyGround(bool touchedGround)
+	{
+		ach_boingboing = 0;
+		currentGroundType = groundTypes.Mossy;
+		if (!Sweating && wallJumpsLeft != maxWallJumps)
+		{
+			Sweating = true;
+			sweatParticles.Play();
+		}
+		if (!onGround && touchedGround)
+		{
+			if (audioSource.clip == MetalSlideSFX || audioSource.clip == GrassSlideSFX)
+			{
+				audioSource.clip = null;
+			}
+			if (cutsceneMode != cutsceneModes.deathFreeze)
+			{
+				if (timeInAir > 0.8f)
+				{
+					playSFX("grassLand");
+					float num = heightOfLastJumpStart - base.transform.position.y;
+					if (num > -150f)
+					{
+						int count = Mathf.Min(4 + (int)num / 65, 16);
+						grassLandParticles.Emit(count);
+					}
+				}
+				else
+				{
+					PlayFootstep();
+				}
+			}
+			LandingSquashStretch();
+			normalCollider.offset = defaultColliderOffset;
+			normalCollider.size = defaultColliderSize;
+		}
+		else if (onGround && touchedGround)
+		{
+			if ((cutsceneMode == cutsceneModes.none || !dashActive) && DashBounceFrames <= 0)
+			{
+				momentum = new Vector2(momentum.x * 0.85f, momentum.y);
+				lastHyperY = base.transform.position.y;
+			}
+		}
+		else if (!touchedGround)
+		{
+			if (!OnWall && !touchedGround && !dashActive)
+			{
+				PlayWallSlideSfx(currentGroundType);
+			}
+			if (emitWallSlideParticlesThisFrame)
+			{
+				if (metalWallParticles.emission.rateOverTime.constant != 0f)
+				{
+					ParticleSystem.EmissionModule emission = metalWallParticles.emission;
+					emission.rateOverTime = 0f;
+				}
+				float num2 = Mathf.Max(Velocity.y / (float)(-maxWallSlideSpeed) * 25f - 7f, 0f);
+				ParticleSystem.EmissionModule emission2 = grassWallParticles.emission;
+				emission2.rateOverTime = num2;
+			}
+			else
+			{
+				ParticleSystem.EmissionModule emission3 = grassWallParticles.emission;
+				emission3.rateOverTime = 0f;
+			}
+		}
+		timeInAir = 0f;
+		heightOfLastJumpStart = base.transform.position.y;
+	}
+
+	public void DoReverseCurrentAch(int courseNumber)
+	{
+		if (courseNumber == reverseCurrent)
+		{
+			reverseCurrent--;
+			if (reverseCurrent == 0 && SteamManager.Initialized)
+			{
+				SteamUserStats.SetAchievement("ACH_COURSE_BACKWARDS");
+				SteamUserStats.StoreStats();
+				reverseCurrent = 10;
+			}
+		}
+		else
+		{
+			reverseCurrent = 10;
+		}
+	}
+
+	private void LandingSquashStretch()
+	{
+		StartCoroutine(IE_Land());
+		IEnumerator IE_Land()
+		{
+			Transform animSprite = animator.transform;
+			Vector2 initialScale = animSprite.localScale;
+			Vector2 targetScale = new Vector2(animSprite.localScale.y * 1.2f, animSprite.localScale.x * 0.9f) * 1f;
+			float durationMult = 2f + 60f * (initialScale.y - 0.9f);
+			float i = Time.deltaTime * durationMult;
+			while (i < 1f)
+			{
+				i += Time.deltaTime * durationMult;
+				animSprite.localScale = Vector2.Lerp(initialScale, targetScale, i);
+				animSprite.localPosition = new Vector3(0f, (animSprite.localScale.y - 1f) * 50f);
+				yield return new WaitForEndOfFrame();
+			}
+			i = 0f;
+			while (i < 1f)
+			{
+				i += Time.deltaTime * durationMult;
+				animSprite.localScale = Vector2.Lerp(targetScale, Vector2.one, i);
+				animSprite.localPosition = new Vector3(0f, (animSprite.localScale.y - 1f) * 50f);
+				yield return new WaitForEndOfFrame();
+			}
+			animSprite.localScale = new Vector2(1f, 1f);
+			animSprite.localPosition = Vector2.zero;
+		}
+	}
+
+	private void FallingSquashStretch()
+	{
+		if (Velocity.y < 0f)
+		{
+			float num = 300f;
+			float num2 = 0.0028f;
+			float num3 = Mathf.Sqrt(Mathf.Max(0f - Velocity.y - num, 0f));
+			num3 *= num2;
+			animator.transform.localScale = new Vector2(1f - num3, 1f + num3);
+		}
+	}
+
+	private void JumpingSquashStretch()
+	{
+		StartCoroutine(IE_Jump());
+		IEnumerator IE_Jump()
+		{
+			Vector2 initialScale = new Vector2(0.78f, 1.19f);
+			float i = 0f;
+			while (i < 1f)
+			{
+				i += Time.deltaTime * 8.2f;
+				animator.transform.localScale = Vector2.Lerp(initialScale, Vector2.one, i);
+				yield return new WaitForEndOfFrame();
+			}
+			animator.transform.localScale = Vector2.one;
+		}
+	}
+
+	public void TimeStop(float duration)
+	{
+		StartCoroutine(IE_TimeStop());
+		IEnumerator IE_TimeStop()
+		{
+			Time.timeScale = 0f;
+			float i = 0f;
+			while (i <= duration)
+			{
+				i += Time.unscaledDeltaTime;
+				yield return new WaitForEndOfFrame();
+			}
+			if (!pauseMenu.menuOpen)
+			{
+				Time.timeScale = globalStats.baseGameSpeed;
+			}
+		}
+	}
+
+	private void cancelJumpBuffer()
+	{
+		jumpBuffer = false;
+		if (tiredSoundCooldown > 0f)
+		{
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.mossTiredSound, 0.7f, 0.1f);
+		}
+	}
+
+	private void cancelDashBuffer()
+	{
+		dashBuffer = false;
+		if (tiredSoundCooldown > 0f)
+		{
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.mossTiredSound, 0.7f, 0.1f);
+		}
+	}
+
+	private void cancelJumpCutBuffer()
+	{
+		jumpCutBuffer = false;
+	}
+
+	public void addMomentum(Vector2 direction, float magnitude)
+	{
+		momentum += 10f * direction * magnitude;
+	}
+
+	private void DisableAllWallslideParticles()
+	{
+		if (grassWallParticles.emission.rateOverTime.constant != 0f || metalWallParticles.emission.rateOverTime.constant != 0f)
+		{
+			ParticleSystem.EmissionModule emission = grassWallParticles.emission;
+			emission.rateOverTime = 0f;
+			emission = metalWallParticles.emission;
+			emission.rateOverTime = 0f;
+		}
+	}
+
+	public void hitSpring(float upForce, float strength, float movementLock, Vector2 up)
+	{
+		if (cutsceneMode == cutsceneModes.dash)
+		{
+			endDash();
+		}
+		cutsceneMode = cutsceneModes.spring;
+		if (up == Vector2.up || up == Vector2.down)
+		{
+			cutsceneMode = cutsceneModes.none;
+		}
+		else
+		{
+			Invoke("cancelSpringCutscene", movementLock);
+		}
+		if (OnWall)
+		{
+			ParticleSystem.EmissionModule emission = metalWallParticles.emission;
+			emission.rateOverTime = 0f;
+			emission = grassWallParticles.emission;
+			emission.rateOverTime = 0f;
+			playSFX("");
+		}
+		ach_boingboing++;
+		if (SteamManager.Initialized && ach_boingboing == 10)
+		{
+			SteamUserStats.SetAchievement("ACH_SPRING");
+			SteamUserStats.StoreStats();
+			bool pbAchieved = false;
+			SteamUserStats.GetAchievement("ACH_SPRING", out pbAchieved);
+			Debug.Log("achievement unlocked: " + pbAchieved);
+		}
+		MostRecentUpwardsMoveWasNormalJump = false;
+		onGround = false;
+		OnWall = false;
+		recentlyJumped = true;
+		Invoke("endRecentJump", 0.03f);
+		airDashesLeft = maxAirDashes;
+		airJumpsLeft = maxAirJumps;
+		wallJumpsLeft = maxWallJumps;
+		base.transform.position += (Vector3)up * 10f;
+		addMomentum(Vector2.up, upForce / 4f);
+		addMomentum(new Vector2(up.x * 1.6f, up.y / 4f), strength);
+		Velocity = new Vector2(0f, upForce * 9f + up.y * strength * 3f);
+		wallJumpDirection = up.x;
+		normalCollider.offset = dashColliderOffset;
+		normalCollider.size = dashColliderSize;
+	}
+
+	public void PlayFootstep()
+	{
+		if (currentGroundType == groundTypes.Metal)
+		{
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.MetalFootstep, 0.25f, 0.15f);
+		}
+		else if (currentGroundType == groundTypes.Mossy)
+		{
+			Singleton<Audio>.Instance.PlayAudio(Audio.AUDIO_ID.GrassFootstep, 0.25f, 0.15f);
+		}
+	}
+
+	private void cancelSpringCutscene()
+	{
+		cutsceneMode = cutsceneModes.none;
+	}
+
+	public void swapBlocks()
+	{
+		blockSwapper.swapBlocks(!blockSwapper.isBlueActive);
+	}
+
+	public bool ToggleCheckpointUse()
+	{
+		isRespawningAtCheckpoints = !isRespawningAtCheckpoints;
+		return isRespawningAtCheckpoints;
+	}
+
+	private void OnCollisionEnter2D(Collision2D collision)
+	{
+		collidingBodies.Add(collision.collider);
+	}
+
+	private void OnCollisionStay2D(Collision2D collision)
+	{
+		if (collision.GetContact(0).normal == new Vector2(0f, 1f))
+		{
+			if (recentlyJumped)
+			{
+				return;
+			}
+			Velocity.y = 0f;
+			momentum.y = 0f;
+		}
+		if (collision.GetContact(0).normal == new Vector2(0f, -1f))
+		{
+			Velocity.y = 0f;
+			momentum.y = 0f;
+		}
+	}
+
+	private void OnCollisionExit2D(Collision2D collision)
+	{
+		collidingBodies.Remove(collision.collider);
+	}
+
+	public override void save(string folder)
+	{
+		List<SerializedUpgradeDict> list = new List<SerializedUpgradeDict>();
+		IList values = Enum.GetValues(typeof(globalStats.globalUpgradeSet));
+		for (int i = 0; i < values.Count; i++)
+		{
+			globalStats.globalUpgradeSet globalUpgradeSet = (globalStats.globalUpgradeSet)values[i];
+			list.Add(new SerializedUpgradeDict(globalUpgradeSet, globalStats.globalUpgradeDict[globalUpgradeSet]));
+		}
+		List<SerializedCurrencyDict> list2 = new List<SerializedCurrencyDict>();
+		IList values2 = Enum.GetValues(typeof(globalStats.Currencies));
+		for (int j = 0; j < values2.Count; j++)
+		{
+			globalStats.Currencies currencies = (globalStats.Currencies)values[j];
+			list2.Add(new SerializedCurrencyDict(currencies, globalStats.currencyLookup[currencies]));
+		}
+		string contents = JsonUtility.ToJson(new SaveObject(base.transform.position, respawnPoint, dashUnlocked, maxAirDashes, wallJumpUnlocked, doubleJumpUnlocked, maxAirJumps, list, list2, cam.transform.position, UnityEngine.Object.FindAnyObjectByType<cameraMover>().camSize, blockSwapUnlocked, blockSwapper.isBlueActive, lightActive, lightRadius, Singleton<ZoneLoader>.Instance.activeZone, Singleton<globalStats>.Instance.currentA1State, Singleton<globalStats>.Instance.visitedTeleporters, omniDashUnlocked, Singleton<globalStats>.Instance.Zone2toZone1PathOpen, Singleton<globalStats>.Instance.vmanScore));
+		File.WriteAllText(Application.persistentDataPath + folder + "/playerdatatemp.txt", contents);
+		File.Delete(Application.persistentDataPath + folder + "/playerdata.txt");
+		File.Move(Application.persistentDataPath + folder + "/playerdatatemp.txt", Application.persistentDataPath + folder + "/playerdata.txt");
+	}
+
+	public override void load(string folder)
+	{
+		try
+		{
+			SaveObject saveObject = JsonUtility.FromJson<SaveObject>(File.ReadAllText(Application.persistentDataPath + folder + "/playerdata.txt"));
+			respawnPoint = saveObject._respawnPoint;
+			dashUnlocked = saveObject._dashUnlocked;
+			maxAirDashes = saveObject._maxDashes;
+			wallJumpUnlocked = saveObject._wallJumpUnlocked;
+			doubleJumpUnlocked = saveObject._airJumpUnlocked;
+			maxAirJumps = saveObject._maxAirJumps;
+			blockSwapUnlocked = saveObject._blockSwapUnlocked;
+			omniDashUnlocked = saveObject._omniDashUnlocked;
+			Singleton<globalStats>.Instance.Zone2toZone1PathOpen = saveObject._zone2cleared;
+			if (blockSwapUnlocked)
+			{
+				blockSwapper.swapBlocks(BlueActive: true);
+			}
+			else
+			{
+				blockSwapper.swapBlocks(saveObject._isBlueActive);
+			}
+			Singleton<globalStats>.Instance.currentA1State = saveObject._area1State;
+			Singleton<globalStats>.Instance.visitedTeleporters = saveObject._visitedTeleporters;
+			for (int i = 0; i < saveObject._globalUpgradeDict.Count; i++)
+			{
+				SerializedUpgradeDict serializedUpgradeDict = saveObject._globalUpgradeDict[i];
+				if (globalStats.globalUpgradeDict.ContainsKey(serializedUpgradeDict._Key))
+				{
+					globalStats.globalUpgradeDict[serializedUpgradeDict._Key] = serializedUpgradeDict._Value;
+				}
+			}
+			for (int j = 0; j < saveObject._currencies.Count; j++)
+			{
+				SerializedCurrencyDict serializedCurrencyDict = saveObject._currencies[j];
+				if (globalStats.currencyLookup.ContainsKey(serializedCurrencyDict._Key))
+				{
+					globalStats.currencyLookup[serializedCurrencyDict._Key] = serializedCurrencyDict._Value;
+				}
+			}
+			Singleton<globalStats>.Instance.UpdateVmanScore(saveObject._vmanScore);
+			if (!isOnMainMenu)
+			{
+				cam.setup(respawnPoint, saveObject._camSize);
+				Singleton<ZoneLoader>.Instance.activeZone = saveObject._currentZone;
+				if (Singleton<ZoneLoader>.Instance.activeZone == 0)
+				{
+					Singleton<ZoneLoader>.Instance.activeZone = 1;
+				}
+				init = false;
+			}
+		}
+		catch (Exception ex)
+		{
+			Debug.Log("Player loading failed! " + ex);
+		}
+	}
+}
+You are not using the latest version of the tool, please update.
+Latest version is '11.1.0.9782' (yours is '9.1.0.7988')
