@@ -32,14 +32,26 @@ namespace IGTAP.EngineSim.Cli
                         // path <start-trace> <route.json>: where the course timer starts/stops along a route.
                         var (sim, _, _) = Open(args[1]);
                         using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
-                        var inputs = route.RootElement.GetProperty("ticks").EnumerateArray().Select(t => new InputTick
+                        JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
+                        var inputs = list.EnumerateArray().Select(t => new InputTick
                         {
                             x = t.GetProperty("x").GetSingle(), held = t.GetProperty("held").GetBoolean(), press = t.GetProperty("press").GetBoolean(),
                             release = t.GetProperty("release").GetBoolean(), dash = t.GetProperty("dash").GetBoolean(), dashJump = t.GetProperty("dashJump").GetInt32(),
                         }).ToList();
                         bool was = false;
+                        var bf = BindingFlags.Instance | BindingFlags.NonPublic;
+                        FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
+                            onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
+                        spikeScript[] spikes = sim.World.All<spikeScript>();
+                        FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, onStep: st =>
                         {
+                            // Spike stays (spikeScript.counter > 0): the game kills when counter > graceFrames, or at once while dashing.
+                            foreach (spikeScript s in spikes)
+                                if ((int)counter.GetValue(s) > 0)
+                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x:0},{s.transform.position.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
+                                        + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
+                                        + $" player {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
                             if (timing != was || st % 25 == 0)
                                 Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0} timing {timing}"
