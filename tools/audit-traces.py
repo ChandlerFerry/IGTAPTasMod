@@ -55,7 +55,10 @@ def main():
     paths = [Path(p) for p in sys.argv[1:]] or sorted(p for p in TRACES.glob("*.json") if not p.name.endswith(".world.json"))
     bad = 0
     for path in paths:
-        found = violations(json.loads(path.read_text()))
+        trace = json.loads(path.read_text(encoding="utf-8"))
+        if "ticks" not in trace or "inputs" not in trace:
+            continue  # not a trace (e.g. a world probe)
+        found = violations(trace)
         bad += bool(found)
         print(f"{path.name:36} {'VIOLATES ' + '; '.join(found[:3]) if found else 'ok'}")
     sys.exit(1 if bad else 0)

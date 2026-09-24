@@ -5,7 +5,9 @@ Every time a solver found a "huge improvement" so far, it was breaking one of th
 suspected exploit of our own tooling until proven otherwise.
 
 1. **Right course.** The run starts the course's timer at its start gate and stops it at that course's end gate.
-   Finishing another course never counts (`BeforeCourseFinish`, `Simulation.TargetCourse`).
+   Finishing another course never counts (`BeforeCourseFinish`, `Simulation.TargetCourse`). A flying start is allowed:
+   the time counts from the last start-gate crossing, so a route may loop back and re-enter the start gate at speed
+   (user decision 2026-09-24).
 2. **Right unlocks.** Wall jump / dash are exactly the category's (`NO_WJ`: neither, `WJ`: wall jump, `WJDASH`: both)
    on every tick, in turbo, offline, and in playback.
 3. **Inputs behave like real presses.** Injected jump/dash presses and releases must do exactly what `Movement.Update`
