@@ -19,7 +19,18 @@ namespace IGTAPTasMod
     // only when the game timed it (start gate -> real end); middle checkpoints are irrelevant.
     public sealed partial class TasPlugin
     {
-        public sealed class CourseDef { public int id; public float x; public float y; }
+        public sealed class CourseDef
+        {
+            public int id;
+            // Category routes are "<course>_<CAPS> <time>"; a named course ("bonus1") takes its name as the course.
+            public string name;
+            public float x, y;
+            // A bonus course has no start/stop gates: its run finishes when the player touches this box (the
+            // reward's buy trigger) and is timed in ticks from the run start. Zero size = a gated course.
+            public float endX, endY, endW, endH;
+            [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
+            [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
+        }
 
         sealed class SolverTick
         {
@@ -97,11 +108,14 @@ namespace IGTAPTasMod
                 if (File.Exists(CoursesPath)) { _courses = JsonConvert.DeserializeObject<List<CourseDef>>(File.ReadAllText(CoursesPath)); return; }
             }
             catch (Exception ex) { Logger.LogWarning("courses.json rejected: " + ex.Message); }
-            // Quick-restart points; the game places the player 12 px below.
+            // Start points (quick restarts for 1-3); the game places the player 12 px below. bonus1 has no gates:
+            // runs start in the course 2 secret shaft and finish on the free secret box at the corridor's end.
             _courses = new List<CourseDef> {
                 new CourseDef { id = 1, x = 2241f, y = -292f },
                 new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f },
-                new CourseDef { id = 3, x = 9505f, y = 6967.01465f } };
+                new CourseDef { id = 3, x = 9505f, y = 6967.01465f },
+                new CourseDef { id = 4, name = "bonus1", x = 7392.427f, y = 2807.015f,
+                    endX = 5239.43f, endY = 681f, endW = 127.5f, endH = 6f } };
             SaveCourses();
         }
 
@@ -139,7 +153,8 @@ namespace IGTAPTasMod
             _archive.Clear(); _solverSeeds.Clear(); _solverLog.Clear();
             _rng = new System.Random();
             // Every route already made for this course seeds the search, whatever category it was made for.
-            foreach (MacroDefinition route in _library.macros.Where(m => m.name.StartsWith(course + "_")))
+            string courseToken = _courses.Find(c => c.id == course).Token;
+            foreach (MacroDefinition route in _library.macros.Where(m => m.name.StartsWith(courseToken + "_")))
                 if (route.steps.All(s => s.type == MacroStepType.RawInput)) _solverSeeds.Enqueue(ToTicks(route.steps));
             _solverSeeds.Enqueue(new List<SolverTick>());
             _solverRunning = true;
@@ -152,7 +167,10 @@ namespace IGTAPTasMod
         bool CourseLoaded()
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
-            if (ZonesSettled() && _solverCourses.Any(c => c.courseNumber == _solverCourse && c.isActiveAndEnabled)) return true;
+            CourseDef target = _courses.Find(c => c.id == _solverCourse);
+            // A bonus course has no courseScript of its own; settled zones are all its runs need.
+            if (ZonesSettled() && (target != null && target.HasFinish
+                || _solverCourses.Any(c => c.courseNumber == _solverCourse && c.isActiveAndEnabled))) return true;
             RestoreRouteStart(new MacroDefinition { name = _solverCourse + "_" });
             _solverStatus = "Loading course " + _solverCourse;
             return false;
@@ -485,9 +503,13 @@ namespace IGTAPTasMod
                         if (tick == lastTick) return;
                         lastTick = tick;
                         courseScript active = _solverCourses.FirstOrDefault(c => c != null && c.courseNumber == _solverCourse && CourseTrackingFlag.GetValue(c) is bool tracking && tracking);
-                        bool timing = active != null;
+                        // A bonus course has no course timer; its runs are timed in ticks from the run start.
+                        bool timing = course.HasFinish || active != null;
                         long key = CellKey(player.transform.position, timing);
-                        if (timing && CourseCurrentPathTimeField.GetValue(active) is float elapsed)
+                        float elapsed = -1f;
+                        if (course.HasFinish) elapsed = tick * Time.fixedDeltaTime;
+                        else if (timing && CourseCurrentPathTimeField.GetValue(active) is float pathTime) elapsed = pathTime;
+                        if (elapsed >= 0f)
                         {
                             // Already slower than the best finish: nothing later in this run can matter.
                             if (elapsed > _solverBest) losing = true;
@@ -538,7 +560,7 @@ namespace IGTAPTasMod
         // The only place a category route is saved. False (and nothing saved) when the route breaks a rule.
         bool SaveSolverRoute(List<SolverTick> inputs, float time)
         {
-            string category = _solverCourse + "_" + CapabilityLabels[_solverCaps];
+            string category = _courses.Find(c => c.id == _solverCourse).Token + "_" + CapabilityLabels[_solverCaps];
             string violation = RouteViolation(inputs, time);
             if (violation != null)
             {
@@ -557,7 +579,7 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^(\d+_(?:NO_WJ|WJDASH|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
 
         // Keeps only the fastest "<course>_<CAPS> <time>" route per category; favorites are never removed. True if any was removed.
         bool PruneSlowerRoutes()

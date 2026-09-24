@@ -93,7 +93,7 @@ namespace IGTAP.EngineSim
             _playerColliders = Player.GetComponents<BoxCollider2D>();
             Engine.AttemptEnded += (success, reason, step, ticks) =>
             {
-                _finished = success && reason == "Course finish detected";
+                _finished = success && (reason == "Course finish detected" || reason == MacroEngine.RewardFinishReason);
                 _finishTime = Engine.AuthoritativeCompletionTime;
                 _endReason = reason;
             };
@@ -123,6 +123,25 @@ namespace IGTAP.EngineSim
             if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse)) Engine.CompleteFromGame("Course finish detected", time);
         }
 
+        // The bonus course's reward box (endX, endY, endW, endH) as a world rect the player's colliders may touch.
+        bool TouchesReward()
+        {
+            float x0 = TargetFinish.x - TargetFinish.w / 2f, x1 = TargetFinish.x + TargetFinish.w / 2f;
+            float y0 = TargetFinish.y - TargetFinish.h / 2f, y1 = TargetFinish.y + TargetFinish.h / 2f;
+            foreach (BoxCollider2D box in _playerColliders)
+            {
+                if (!box.enabled) continue;
+                // PhysicsWorld's player-box geometry: offset and size in lossy scale around the transform.
+                Vector3 scale = box.transform.m_LossyScale;
+                Vector3 center = Player.transform.m_Position;
+                center.x += box.offset.x * scale.x;
+                center.y += box.offset.y * scale.y;
+                float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
+                if (center.x + hx > x0 && center.x - hx < x1 && center.y + hy > y0 && center.y - hy < y1) return true;
+            }
+            return false;
+        }
+
         internal void Touch(MonoBehaviour script)
         {
             if (script == Player || script is courseScript || !_touched.Add(script)) return;
@@ -131,6 +150,9 @@ namespace IGTAP.EngineSim
 
         // The course a run is scored on (the trace's course); 0 accepts any. Finishing another course is not a finish.
         public int TargetCourse;
+
+        // The bonus course's reward box (the trace's "finish": endX, endY, endW, endH); zero size = a gated course.
+        public (float x, float y, float w, float h) TargetFinish;
 
         public courseScript TimingCourse()
         {
@@ -279,6 +301,9 @@ namespace IGTAP.EngineSim
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 Physics.Simulate(World.FixedDeltaTime);
                 _update();
+                // TasPlugin.TryRewardFinish: a bonus run finishes on its reward box (no end gate), in run ticks.
+                if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
+                    Engine.CompleteFromGame(MacroEngine.RewardFinishReason, Engine.RunTicks * World.FixedDeltaTime);
                 stepped++;
                 onStep?.Invoke(stepped - 1);
                 if (!Engine.IsRunning) continue;
