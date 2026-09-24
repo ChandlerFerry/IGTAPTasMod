@@ -40,6 +40,8 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 ## Solver
 
 - **Seeds:** every route whose name starts with `<course>_`, plus an empty route.
+- **Wider categories:** a route is valid in every category with more unlocks (NO_WJ ⊂ WJ ⊂ WJDASH), so the offline
+  `solve` submits each best to its own category and every wider one; a wider category is never slower than a narrower.
 - **Explore (Go-Explore):** archive keyed by 48 px map cell × "course timer running", each cell keeping the earliest input
   prefix that reached it. Pick a cell (rarely picked first, timed cells ×3), resume there, append a random 1–3 chunk burst
   (stick −1/0/1, jump with hold, dash if allowed; superbounce offline).

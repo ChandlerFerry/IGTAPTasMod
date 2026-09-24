@@ -215,14 +215,19 @@ port's `c0 + beta * (c - c0)` rounds differently).
 
 ## Known gaps / next suspects
 
-- Two residual tick-level diffs remain in the 23-trace suite (all [MATCH] at
-  result level; 21/23 are tick-identical): `rand-c1-wj-0` tick 262 (forced
-  velocity `y: -21` vs `-20.9999905`) and `rand-c2-wjdash-1` tick 79 (position
-  `x` 1-ulp `4074.37524` vs `4074.37549`). The manifold generators
+- `b2TestOverlap(shape...)` (the trigger overlap test) used `10 * linearSlop`
+  (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
+  still got `OnTriggerStay2D` (the `rand-c3-wjdash-2` tick 33 `courseResetPoint`
+  residue). Fixed.
+- Remaining residues in the 2026-09-24 corpus are all on a death tick, in a
+  wall/floor corner (`rand-c2-wjdash-2` 90, `rand-c3-wjdash-0` 99,
+  `rand-c3-wjdash-2` 121): not GJK/TOI, but the order of a collider pair's
+  contacts in `Collision2D` (`OnCollisionStay2D` reads `GetContact(0).normal`).
+  Offline lists Box2D's newest contact first (the floor); Unity lists the wall
+  first. The manifold generators
   (`b2CollidePolygons`, `b2CollidePolygonAndCircle`, `b2CollideCircles`),
   `b2ClipSegmentToLine` and `b2Sweep` were verified expression-order-literal
-  against v2.4.1; the remaining suspects are the unported GJK/TOI lineage (see
-  table above) and `b2DynamicTree`/broadphase pair ordering.
+  against v2.4.1.
 - The manifold generators (`src/Collision/Colliders/PolygonAndPolygonCollider.cs`,
   the inline circle/edge-circle colliders in the contact classes) are the base
   port's rewrites and were **not** yet verified expression-order-against-C++. They
