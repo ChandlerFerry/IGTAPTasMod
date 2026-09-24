@@ -177,6 +177,7 @@ namespace IGTAP.EngineSim
         void Rebuild(ColliderState s)
         {
             if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
+            else _movers = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
             b2Body body = s.Body?.Body ?? _ground;
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
@@ -492,6 +493,21 @@ namespace IGTAP.EngineSim
         int[] _seen;
         int _stamp, _cellsX, _cellsY;
         float _gridX, _gridY;
+        // Other bodies' fixtures by collider layer; rebuilt when their fixtures change (Rebuild, LoadState).
+        List<(b2Fixture fixture, ColliderState state)>[] _movers;
+        static readonly List<(b2Fixture, ColliderState)> NoMovers = new List<(b2Fixture, ColliderState)>();
+
+        void BuildMovers()
+        {
+            _movers = new List<(b2Fixture, ColliderState)>[32];
+            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
+                if (body.Type() != b2BodyType.Static)
+                    for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
+                    {
+                        var s = (ColliderState)f.UserData;
+                        (_movers[s.Layer] ??= new List<(b2Fixture, ColliderState)>()).Add((f, s));
+                    }
+        }
 
         // Static colliders' shapes on a grid of their bounding boxes (grown by a unit so float rounding in a shape test
         // can't reach past them). Static geometry is fixed during runs (b2WorldState's contract); rebuilt if it changes.
@@ -560,15 +576,14 @@ namespace IGTAP.EngineSim
                     found = s.State;
                     count++;
                 }
-            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
-                if (body.Type() != b2BodyType.Static)
-                    for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
-                    {
-                        var s = (ColliderState)f.UserData;
-                        if (!Accept(s, layerMask)) continue;
-                        for (int c = 0; c < f.m_proxyCount; c++)
-                            if (f.TestPoint(p)) { found = s; count++; }
-                    }
+            if (_movers == null) BuildMovers();
+            for (uint layers = (uint)layerMask; layers != 0; layers &= layers - 1)
+                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)] ?? NoMovers)
+                {
+                    if (!Accept(s, layerMask)) continue;
+                    for (int c = 0; c < f.m_proxyCount; c++)
+                        if (f.TestPoint(p)) { found = s; count++; }
+                }
             if (count <= 1) return found;
             _inside.Reset(p, layerMask);
             _b2.QueryAABB(_inside, new b2AABB { lowerBound = p, upperBound = p });
@@ -596,15 +611,14 @@ namespace IGTAP.EngineSim
                         ref StaticShape s = ref _static[i];
                         if (Accept(s.State, layerMask) && RayHit(s.Fixture, s.Child, s.State, input) && ++count > 1) return false;
                     }
-            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
-                if (body.Type() != b2BodyType.Static)
-                    for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
-                    {
-                        var s = (ColliderState)f.UserData;
-                        if (!Accept(s, layerMask)) continue;
-                        for (int c = 0; c < f.m_proxyCount; c++)
-                            if (RayHit(f, c, s, input) && ++count > 1) return false;
-                    }
+            if (_movers == null) BuildMovers();
+            for (uint layers = (uint)layerMask; layers != 0; layers &= layers - 1)
+                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)] ?? NoMovers)
+                {
+                    if (!Accept(s, layerMask)) continue;
+                    for (int c = 0; c < f.m_proxyCount; c++)
+                        if (RayHit(f, c, s, input) && ++count > 1) return false;
+                }
             return true;
         }
 
@@ -814,6 +828,7 @@ namespace IGTAP.EngineSim
         {
             var s = (PhysicsSnapshot)snapshot;
             if (s.World != null) _b2.LoadState(s.World);
+            _movers = null;
             foreach (ColliderState c in _player.Colliders) c.Fixtures.Clear();
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
             _player.TransformDirty = s.TransformDirty;
