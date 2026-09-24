@@ -286,12 +286,15 @@ namespace IGTAP.EngineSim
             from ??= _start;
             if (from.Tick >= inputs.Count) from = _start;
             Restore(from);
-            Engine.Resume(from.Engine, ToSteps(inputs, from.Tick));
+            int step = from.Tick;
+            while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
+            Engine.Resume(from.Engine, ToSteps(inputs, step), from.Tick - step);
             _finished = false;
             _finishTime = 0f;
             _endReason = null;
             int maxTicks = inputs.Count - from.Tick + extraTicks;
-            int idleTicks = 0, lastTick = -1, stepped = 0;
+            // The run `from` came from already reported its tick (ticks mid-dash take no input, so RunTicks can stay put).
+            int idleTicks = 0, lastTick = from.Tick > 0 ? from.Tick : -1, stepped = 0;
             bool stop = false;
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
@@ -325,6 +328,11 @@ namespace IGTAP.EngineSim
             };
         }
 
+        static bool Merges(InputTick previous, InputTick k)
+        {
+            return !k.press && !k.release && !k.dash && previous.x == k.x && previous.held == k.held;
+        }
+
         // TasPlugin.ToSteps: consecutive identical ticks merge into one raw-input step.
         public static List<MacroStep> ToSteps(IReadOnlyList<InputTick> ticks, int from)
         {
@@ -334,7 +342,7 @@ namespace IGTAP.EngineSim
             {
                 InputTick k = ticks[i];
                 MacroStep last = steps.Count > 0 ? steps[steps.Count - 1] : null;
-                if (last != null && !k.press && !k.release && !k.dash && last.rawMoveX == k.x && last.rawJumpHeld == k.held)
+                if (last != null && Merges(ticks[i - 1], k))
                 {
                     last.durationTicks++;
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);

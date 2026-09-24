@@ -116,14 +116,16 @@ namespace IGTAPTasMod
         public object[] CaptureState() { return FieldState.Capture(this); }
 
         // Continues a captured run with new remaining inputs, as if they had followed the captured prefix all along.
-        public void Resume(object[] state, List<MacroStep> remaining)
+        // `remaining` starts with the whole step the run is in, `elapsedTicks` of which already ran: re-entering it
+        // would redo its press/release (e.g. release a dash-jump's jump that the step keeps held until it ends).
+        public void Resume(object[] state, List<MacroStep> remaining, int elapsedTicks)
         {
             FieldState.Restore(this, state);
             _steps = Expand(remaining);
             NormalizeFrameTiming(_steps);
             _stepIndex = 0;
-            _elapsedMs = 0f;
-            _elapsedTicks = 0;
+            _elapsedMs = elapsedTicks * Time.fixedDeltaTime * 1000f;
+            _elapsedTicks = elapsedTicks;
             _wallJumpTriggered = false;
             _finishWaitTicks = 0;
         }
