@@ -67,6 +67,7 @@ namespace IGTAP.EngineSim
         {
             public List<InputTick> Source;
             public int Length, Picks;
+            public float Rank;
             public SimSnapshot State;
         }
 
@@ -84,8 +85,15 @@ namespace IGTAP.EngineSim
             List<InputTick> _bestInputs;
             SimSnapshot[] _bestStates;
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
-            int _sharedVersion, _maxTimedLength;
-            static readonly double ProgressBias = double.Parse(Environment.GetEnvironmentVariable("IGTAP_PB") ?? "10", System.Globalization.CultureInfo.InvariantCulture);
+            int _sharedVersion;
+            float _maxTimedRank;
+            // Ground/wall contact per tick of the last from-start evaluation, and the ticks where the best route's contact
+            // changes (lands, leaves a ledge, touches or leaves a wall): where coyote, buffered and wall jumps live.
+            byte[] _flags;
+            List<int> _bestEdges = new List<int>();
+            static readonly System.Reflection.FieldInfo OnGroundField = typeof(Movement).GetField("onGround", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            static readonly System.Reflection.FieldInfo OnWallField = typeof(Movement).GetField("OnWall", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            static readonly bool Moves = Environment.GetEnvironmentVariable("IGTAP_MOVES") != "0";
 
             public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds)
             {
@@ -106,9 +114,6 @@ namespace IGTAP.EngineSim
                     if (_bestInputs == null || _rng.NextDouble() < .5) Explore();
                     else Optimize();
                 }
-                string dump = Environment.GetEnvironmentVariable("IGTAP_DUMP");
-                if (dump != null) System.IO.File.WriteAllLines(dump + "-" + Thread.CurrentThread.Name + ".txt",
-                    _archive.Select(p => $"{p.Key} {p.Value.State?.Position.x} {p.Value.State?.Position.y} {p.Value.Length} {p.Value.Picks}"));
             }
 
             void AdoptShared()
@@ -130,6 +135,7 @@ namespace IGTAP.EngineSim
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
+                _bestEdges = Edges(_flags);
             }
 
             void Explore()
@@ -148,12 +154,12 @@ namespace IGTAP.EngineSim
                 Try(RandomBurst(chosen.Source.Take(chosen.Length).ToList()), "explore", chosen.State);
             }
 
-            // Before the first finish, timed cells reached later (earliest arrival tick, i.e. further along the course) weigh
+            // Before the first finish, timed cells reached later on the course timer (further along the course) weigh
             // more, so exploration pushes the frontier of long courses instead of re-rolling the well-covered start.
             double Weight(long key, Cell cell)
             {
                 double w = key < 0 ? 3.0 : 1.0;
-                if (key < 0 && _bestInputs == null && _maxTimedLength > 0) w *= 1 + ProgressBias * Math.Pow((double)cell.Length / _maxTimedLength, 4);
+                if (key < 0 && _bestInputs == null && _maxTimedRank > 0) w *= 1 + 10 * Math.Pow(cell.Rank / _maxTimedRank, 4);
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
@@ -215,8 +221,67 @@ namespace IGTAP.EngineSim
                     ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
                         "superbounce", "superbounce", "superbounce" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert" };
+                if (Moves) kinds = kinds.Concat(_dash ? new[] { "edgejump", "edgejump", "retime", "shift", "edgedash", "dashshift" } : new[] { "edgejump", "edgejump", "retime", "shift" }).ToArray();
+                List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press).ToList();
                 switch (kinds[_rng.Next(kinds.Length)])
                 {
+                    // Jump a few ticks around a contact change: the last coyote tick off a ledge (maxCoyoteFrames), a wall
+                    // jump in the wall-coyote window (maxWallCoyoteFrames), or a press buffered before landing / touching a wall.
+                    case "edgejump":
+                    {
+                        if (_bestEdges.Count == 0) return;
+                        int at = Math.Max(0, Math.Min(n - 1, _bestEdges[_rng.Next(_bestEdges.Count)] + _rng.Next(-8, 3)));
+                        Hop(t, at, new[] { 1, 2, 3, 5, 8, 12, 16 }[_rng.Next(7)]);
+                        if (_rng.NextDouble() < .5) Cut(t, at + _rng.Next(1, 25), _rng.Next(1, 10));
+                        break;
+                    }
+                    // Move a release by a tick or three: the jump cut (Velocity.y 150-580 -> 50) and the wall-jump lock
+                    // cancel it gives depend on the exact release tick.
+                    case "retime":
+                    {
+                        if (presses.Count == 0) return;
+                        int q = presses[_rng.Next(presses.Count)];
+                        int hold = ReleaseOf(t, q) - q + new[] { -3, -2, -1, 1, 2, 3 }[_rng.Next(6)];
+                        int next = presses.FirstOrDefault(i => i > q);
+                        if (next > q) hold = Math.Min(hold, next - q - 1);
+                        if (hold < 1) return;
+                        ClearHop(t, q);
+                        Hop(t, q, hold);
+                        break;
+                    }
+                    // Move a whole press (and its hold) by a tick or three.
+                    case "shift":
+                    {
+                        if (presses.Count == 0) return;
+                        int q = presses[_rng.Next(presses.Count)];
+                        int hold = ReleaseOf(t, q) - q;
+                        int to = q + new[] { -3, -2, -1, 1, 2, 3 }[_rng.Next(6)];
+                        if (to < 0 || to >= n) return;
+                        ClearHop(t, q);
+                        Hop(t, to, hold);
+                        break;
+                    }
+                    // Dash on a contact change: off a ledge, or on the wall-touch tick, where the dash reverses away from
+                    // the wall (getPlayerControlledInput: OnWall && wallCoyoteFrames == maxWallCoyoteFrames flips facing).
+                    case "edgedash":
+                    {
+                        if (_bestEdges.Count == 0) return;
+                        int at = Math.Max(0, Math.Min(n - 1, _bestEdges[_rng.Next(_bestEdges.Count)] + _rng.Next(-3, 3)));
+                        InputTick k = t[at]; k.dash = true; k.x = _rng.NextDouble() < .5 ? -1f : 1f; k.dashJump = _rng.NextDouble() < .3 ? _rng.Next(1, 7) : 0; t[at] = k;
+                        if (_rng.NextDouble() < .5) Cut(t, at + _rng.Next(1, 25), _rng.Next(1, 15));
+                        break;
+                    }
+                    case "dashshift":
+                    {
+                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
+                        if (dashes.Count == 0) return;
+                        int q = dashes[_rng.Next(dashes.Count)], to = q + new[] { -2, -1, 1, 2 }[_rng.Next(4)];
+                        if (to < 0 || to >= n) return;
+                        InputTick src = t[q], k = t[to];
+                        k.dash = true; k.dashJump = src.dashJump; t[to] = k;
+                        src.dash = false; src.dashJump = 0; t[q] = src;
+                        break;
+                    }
                     case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
                     case "insert":
                         float x = new[] { -1f, 0f, 1f }[_rng.Next(3)];
@@ -254,9 +319,9 @@ namespace IGTAP.EngineSim
                         break;
                     case "nojump":
                     {
-                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
-                        if (presses.Count == 0) return;
-                        int q = presses[_rng.Next(presses.Count)];
+                        List<int> actions = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
+                        if (actions.Count == 0) return;
+                        int q = actions[_rng.Next(actions.Count)];
                         InputTick k = t[q]; k.press = k.dash = false; k.dashJump = 0; t[q] = k;
                         break;
                     }
@@ -281,10 +346,13 @@ namespace IGTAP.EngineSim
                 bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _);
                 if (from != null && _rng.Next(100) == 0)
                 {
+                    // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
+                    // fires inside the replayed prefix (a loop route revisiting a cell), which the branch never sees.
+                    bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
-                    bool again = Evaluate(inputs, null, null, null, mode == "optimize", out float replay, out _);
+                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _);
                     Interlocked.Increment(ref _owner.BranchChecks);
-                    if (again == finished && Math.Abs(replay - time) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
+                    if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
                 if (!finished) return;
@@ -297,6 +365,7 @@ namespace IGTAP.EngineSim
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
+                _bestEdges = Edges(_flags);
                 _owner.Offer(replayed, _bestInputs, mode);
             }
 
@@ -304,8 +373,11 @@ namespace IGTAP.EngineSim
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
                 out float time, out int finishTick)
             {
+                if (states != null) _flags = new byte[states.Length];
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
+                    if (states != null && tick < _flags.Length)
+                        _flags[tick] = (byte)(((bool)OnGroundField.GetValue(_sim.Player) ? 1 : 0) | ((bool)OnWallField.GetValue(_sim.Player) ? 2 : 0));
                     courseScript active = _sim.TimingCourse();
                     bool timing = active != null;
                     long key = CellKey(_sim.Player.transform.m_Position, timing);
@@ -315,9 +387,11 @@ namespace IGTAP.EngineSim
                         float elapsed = Simulation.CourseTime(active);
                         if (elapsed > _best) losing = true;
                         if (cut && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
-                        if (arrivals != null && !arrivals.ContainsKey(key)) arrivals[key] = elapsed;
+                        // The best route's last time in each cell: a loop route revisits cells, and cutting at the first
+                        // visit would cut the best route itself once a mutation resumes past it.
+                        if (arrivals != null) arrivals[key] = elapsed;
                     }
-                    FileCell(inputs, Math.Min(tick, inputs.Count), key, states);
+                    FileCell(inputs, Math.Min(tick, inputs.Count), key, timing ? Simulation.CourseTime(active) : tick * .02f, states);
                     return !losing;
                 });
                 Interlocked.Increment(ref _owner.Runs);
@@ -327,21 +401,50 @@ namespace IGTAP.EngineSim
                 return result.Finished;
             }
 
+            static List<int> Edges(byte[] flags)
+            {
+                var edges = new List<int>();
+                for (int i = 2; i < flags.Length; i++) if (flags[i] != flags[i - 1]) edges.Add(i);
+                return edges;
+            }
+
+            // The press/hold run starting at q: returns the tick of its release (or the list end).
+            static int ReleaseOf(List<InputTick> t, int q)
+            {
+                int r = q + 1;
+                while (r < t.Count && t[r].held && !t[r].press && !t[r].release) r++;
+                return r;
+            }
+
+            static void ClearHop(List<InputTick> t, int q)
+            {
+                int r = ReleaseOf(t, q);
+                for (int i = q; i <= Math.Min(r, t.Count - 1); i++)
+                {
+                    InputTick k = t[i];
+                    if (i > q && k.press) break;
+                    k.held = false; k.release = false; if (i == q) k.press = false;
+                    t[i] = k;
+                }
+            }
+
             static long CellKey(Vector3 position, bool timing)
             {
                 long key = ((long)Mathf.FloorToInt(position.x / CellSize) << 24) ^ (Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF);
                 return timing ? -1 - Math.Abs(key) : key;
             }
 
-            void FileCell(List<InputTick> inputs, int tick, long key, SimSnapshot[] states)
+            // A cell keeps its earliest arrival: by course time once the timer runs (dash ticks consume no input but still
+            // cost 0.02 s each), by input tick before it.
+            void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
-                bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Length > tick;
+                bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
                 SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
                 if (states != null && state != null) states[tick] = state;
                 if (!better) return;
-                _archive[key] = new Cell { Source = inputs, Length = tick, State = state };
-                if (key < 0 && tick > _maxTimedLength) _maxTimedLength = tick;
+                _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };
+                if (key < 0 && rank > _maxTimedRank) _maxTimedRank = rank;
             }
         }
     }
