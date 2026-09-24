@@ -79,7 +79,7 @@ namespace IGTAP.EngineSim.Cli
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
             }
-            solver.Stop();
+            solver.Stop(); if (Environment.GetEnvironmentVariable("IGTAP_DUMP") != null) Thread.Sleep(3000);
             Console.WriteLine("Done. Best " + solver.Shared.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s");
             return 0;
         }
