@@ -61,7 +61,7 @@ namespace Box2D
             b2SimplexCache cache = new b2SimplexCache();
             cache.count = 0;
             b2Distance(out b2DistanceOutput output, ref cache, in input);
-            return output.distance < 10.0f * b2Settings.linearSlop;
+            return output.distance < 10.0f * b2Settings.FLT_EPSILON;
         }
     }
 
