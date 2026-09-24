@@ -28,7 +28,7 @@ namespace Box2D
         /// <summary>Compute the closest points between two shapes (GJK). Warm start via <paramref name="cache"/>.</summary>
         public static void b2Distance(out b2DistanceOutput output, ref b2SimplexCache cache, in b2DistanceInput input)
         {
-            b2Contact.Distance(out output, cache, in input);
+            b2Contact.Distance(out output, ref cache, in input);
         }
 
         /// <summary>Compute the upper bound on time before two shapes penetrate (swept separating axis).</summary>
