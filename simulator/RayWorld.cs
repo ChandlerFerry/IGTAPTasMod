@@ -20,7 +20,7 @@ sealed class RayWorld
         if (currentPath != modelPath) { Current = Load(modelPath); currentPath = modelPath; }
     }
 
-    public static RayWorld Load(string modelPath, bool includeTriggers = true)
+    public static RayWorld Load(string modelPath)
     {
         var world = new RayWorld();
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(modelPath));
@@ -30,7 +30,6 @@ sealed class RayWorld
             int layer = layerElement.GetInt32();
             if ((1 << layer & (GroundMask | BlockingMask)) == 0
                 || c.TryGetProperty("enabled", out JsonElement enabled) && !enabled.GetBoolean()) continue;
-            if (!includeTriggers && c.GetProperty("trigger").GetBoolean()) continue;
             string type = c.GetProperty("colliderType").GetString() ?? "";
             float[] points = c.GetProperty("points").EnumerateArray().Select(p => p.GetSingle()).ToArray();
             int[] starts = c.GetProperty("pathStarts").EnumerateArray().Select(p => p.GetInt32()).ToArray();
@@ -144,9 +143,7 @@ sealed class RayWorld
     // ray-validate <model.json> <diagnostics.json|dir>... : compare r1..r13 against oracle-recorded probes.
     public static int Validate(string[] args)
     {
-        foreach (bool triggers in new[] { true, false })
-        {
-            RayWorld world = Load(args[0], triggers);
+        RayWorld world = Load(args[0]);
             var files = args.Skip(1).SelectMany(a => Directory.Exists(a) ? Directory.GetFiles(a, "*.diagnostics.json") : [a]).ToArray();
             int ticks = 0; int[] wrongHit = new int[13], wrongDistance = new int[13];
             var examples = new List<string>();
@@ -170,9 +167,8 @@ sealed class RayWorld
                     }
                 }
             }
-            Console.WriteLine($"triggers={triggers} ticks={ticks} wrongHit=[{string.Join(',', wrongHit)}] wrongDistance=[{string.Join(',', wrongDistance)}]");
-            foreach (string e in examples) Console.WriteLine("  " + e);
-        }
+        Console.WriteLine($"ticks={ticks} wrongHit=[{string.Join(',', wrongHit)}] wrongDistance=[{string.Join(',', wrongDistance)}]");
+        foreach (string e in examples) Console.WriteLine("  " + e);
         return 0;
     }
 }

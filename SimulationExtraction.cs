@@ -19,7 +19,6 @@ namespace IGTAPTasMod
     [Serializable]
     public sealed class SimulationCollider
     {
-        public int instanceId;
         public string name;
         public string tag;
         public int layer;
@@ -33,7 +32,6 @@ namespace IGTAPTasMod
         public float rotation;
         public List<float> points = new List<float>();
         public List<int> pathStarts = new List<int>();
-        public List<string> components = new List<string>();
     }
 
     [Serializable]
@@ -73,16 +71,13 @@ namespace IGTAPTasMod
                 if (collider == null || !collider.gameObject.activeInHierarchy) continue;
                 Bounds bounds = collider.bounds;
                 SimulationCollider item = new SimulationCollider {
-                    instanceId = collider.GetInstanceID(), name = HierarchyName(collider.transform),
+                    name = HierarchyName(collider.transform),
                     tag = SafeTag(collider), layer = collider.gameObject.layer,
                     colliderType = collider.GetType().Name, enabled = collider.enabled,
                     trigger = collider.isTrigger, centerX = bounds.center.x, centerY = bounds.center.y,
                     sizeX = bounds.size.x, sizeY = bounds.size.y,
                     rotation = collider.transform.eulerAngles.z
                 };
-                Component[] components = collider.GetComponents<Component>();
-                foreach (Component component in components)
-                    if (component != null) item.components.Add(component.GetType().FullName ?? component.GetType().Name);
                 PolygonCollider2D polygon = collider as PolygonCollider2D;
                 if (polygon != null)
                 {
@@ -140,7 +135,7 @@ namespace IGTAPTasMod
                     catch { continue; }
                     string encoded;
                     if (!TryEncode(value, out encoded)) continue;
-                    destination.Add(new SimulationScalar { name = field.Name, type = field.FieldType.FullName, value = encoded });
+                    destination.Add(new SimulationScalar { name = field.Name, value = encoded });
                 }
             }
             destination.Sort((left, right) => string.CompareOrdinal(left.name, right.name));

@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 
 static class OfflineSuite
 {
-    sealed record Shape(string Name, string Tag, bool Trigger, string Type, float CenterX, float CenterY,
+    sealed record Shape(string Name, bool Trigger, float CenterX, float CenterY,
         float SizeX, float SizeY, float[] Points, int[] PathStarts);
     sealed record Options(string Model, string Routes, string Route, string Output, int Radius,
         long MaxEvaluations, int Beam, int Top, string? Recording, string? Result, bool AllowScreening);
@@ -614,8 +614,8 @@ static class OfflineSuite
         {
             float[] points = item.GetProperty("points").EnumerateArray().Select(value => value.GetSingle()).ToArray();
             int[] starts = item.GetProperty("pathStarts").EnumerateArray().Select(value => value.GetInt32()).ToArray();
-            result.Add(new Shape(item.GetProperty("name").GetString() ?? "", item.GetProperty("tag").GetString() ?? "",
-                item.GetProperty("trigger").GetBoolean(), item.GetProperty("colliderType").GetString() ?? "",
+            result.Add(new Shape(item.GetProperty("name").GetString() ?? "",
+                item.GetProperty("trigger").GetBoolean(),
                 item.GetProperty("centerX").GetSingle(), item.GetProperty("centerY").GetSingle(),
                 item.GetProperty("sizeX").GetSingle(), item.GetProperty("sizeY").GetSingle(), points, starts));
         }

@@ -3,10 +3,11 @@ using System.Collections.Generic;
 
 namespace IGTAPTasMod
 {
+    // Bundle is kept in the enum so existing serialized numeric action types retain their meaning.
     public enum MacroStepType { Move, Jump, Dash, Wait, WallJump, Bundle, RawInput }
-    public enum InferenceConfidence { NotInferred, Low, Medium, High }
-    public enum ActionEndCondition { Duration, FixedTicks, GroundContact, WallContact, WallCoyote, JumpApex, Falling, VelocityYAbove, VelocityYBelow, PositionXAbove, PositionXBelow, PositionYAbove, PositionYBelow, DashReady, JumpReady }
-    public enum ActionTimeoutPolicy { AbortAttempt, ContinueToNextAction, RetryAction }
+    // ponytail: only FixedTicks is produced; Duration survives for load-time migration.
+    public enum ActionEndCondition { Duration, FixedTicks }
+    public enum ActionTimeoutPolicy { AbortAttempt }
 
     [Serializable]
     public sealed class MacroStep
@@ -22,15 +23,9 @@ namespace IGTAPTasMod
         // travel direction, while this is the horizontal input held after launch. 2 means
         // automatic behavior (hold the travel direction).
         public int wallJumpHoldDirection = 2;
-        public string bundleId = "";
-        public string bundleName = "";
-        public Dictionary<string, string> bundleOverrides = new Dictionary<string, string>();
-        public InferenceConfidence inferenceConfidence;
         public ActionEndCondition endCondition = ActionEndCondition.FixedTicks;
         public int durationTicks = 5;
         public int timeoutTicks = 60;
-        public float conditionValue;
-        public ActionTimeoutPolicy timeoutPolicy;
         // Exact recorded-input playback. RawInput is appended to the enum so existing
         // serialized numeric action types retain their meaning.
         public float rawMoveX;
@@ -46,11 +41,8 @@ namespace IGTAPTasMod
             return new MacroStep { id = Guid.NewGuid().ToString("N"), enabled = enabled,
                 label = label, type = type, durationMs = durationMs,
                 timeoutMs = timeoutMs, direction = direction, wallJumpHoldDirection = wallJumpHoldDirection,
-                bundleId = bundleId, bundleName = bundleName,
-                bundleOverrides = new Dictionary<string, string>(bundleOverrides ?? new Dictionary<string, string>()),
-                inferenceConfidence = inferenceConfidence, endCondition = endCondition,
+                endCondition = endCondition,
                 durationTicks = durationTicks, timeoutTicks = timeoutTicks,
-                conditionValue = conditionValue, timeoutPolicy = timeoutPolicy,
                 rawMoveX = rawMoveX, rawMoveY = rawMoveY,
                 rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
                 rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
@@ -74,17 +66,6 @@ namespace IGTAPTasMod
     }
 
     [Serializable]
-    public sealed class BundleDefinition
-    {
-        public string id = Guid.NewGuid().ToString("N");
-        public string name = "New bundle";
-        public int version = 1;
-        public List<BundleParameterDefinition> parameters = new List<BundleParameterDefinition>();
-        public List<BundleActionTemplate> actions = new List<BundleActionTemplate>();
-        public List<MacroStep> steps = new List<MacroStep>();
-    }
-
-    [Serializable]
     public sealed class MacroLibrary
     {
         // favorite is an additive, backward-compatible field; keep schema 8 so existing
@@ -92,40 +73,13 @@ namespace IGTAPTasMod
         public const int CurrentSchemaVersion = 8;
         public int schemaVersion = CurrentSchemaVersion;
         public int selectedIndex;
-        public int selectedBundleIndex;
         public List<MacroDefinition> macros = new List<MacroDefinition>();
-        public List<BundleDefinition> bundles = new List<BundleDefinition>();
-
-        public static MacroLibrary CreateDefault()
-        {
-            MacroDefinition macro = new MacroDefinition { name = "Walljump route" };
-            macro.steps.Add(new MacroStep { label = "Run right", type = MacroStepType.Move, durationTicks = 20, direction = 1 });
-            macro.steps.Add(new MacroStep { label = "Ground jump right", type = MacroStepType.Jump, durationTicks = 18, direction = 1 });
-            macro.steps.Add(new MacroStep { label = "Walljump right", type = MacroStepType.WallJump, durationTicks = 20, timeoutTicks = 60, direction = 1 });
-            macro.steps.Add(new MacroStep { label = "Walljump left", type = MacroStepType.WallJump, durationTicks = 20, timeoutTicks = 60, direction = -1 });
-            macro.steps.Add(new MacroStep { label = "Hop delay", type = MacroStepType.Wait, durationTicks = 1, direction = -1 });
-            macro.steps.Add(new MacroStep { label = "Little hop left", type = MacroStepType.Jump, durationTicks = 2, direction = -1 });
-            macro.steps.Add(new MacroStep { label = "Rollout left", type = MacroStepType.Move, durationTicks = 25, direction = -1 });
-
-            BundleDefinition right = new BundleDefinition { name = "Walljump right" };
-            right.steps.Add(new MacroStep { label = "Walljump right", type = MacroStepType.WallJump, durationTicks = 20, timeoutTicks = 60, direction = 1 });
-            BundleDefinition left = new BundleDefinition { name = "Walljump left" };
-            left.steps.Add(new MacroStep { label = "Walljump left", type = MacroStepType.WallJump, durationTicks = 20, timeoutTicks = 60, direction = -1 });
-
-            MacroLibrary library = new MacroLibrary();
-            library.macros.Add(macro);
-            library.bundles.Add(right);
-            library.bundles.Add(left);
-            return library;
-        }
     }
 
     [Serializable]
     public sealed class RawTickSample
     {
         public long tick;
-        public float fixedTime;
-        public float unscaledTime;
         public float moveX;
         public float moveY;
         public bool jumpPressed;
@@ -137,18 +91,10 @@ namespace IGTAPTasMod
         public float positionY;
         public float velocityX;
         public float velocityY;
-        public float momentumX;
-        public float momentumY;
         public bool onGround;
         public bool onWall;
         public float wallCoyoteFrames;
         public float wallSide;
-        public int airJumpsLeft;
-        public int airDashesLeft;
-        public bool dashActive;
-        public bool atJumpApex;
-        public bool isDead;
-        public string movementMode;
     }
 
     [Serializable]
@@ -200,12 +146,6 @@ namespace IGTAPTasMod
     {
         public const int CurrentSchemaVersion = 1;
         public int schemaVersion = CurrentSchemaVersion;
-        public float windowX = 62f;
-        public float windowY = 24f;
-        public float windowWidth = 1040f;
-        public float windowHeight = 700f;
-        public string selectedView = "routes";
-        public bool ghostVisible = true;
         public bool autoOpenWebStudio = true;
     }
 }

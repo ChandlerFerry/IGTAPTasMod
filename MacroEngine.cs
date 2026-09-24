@@ -52,12 +52,6 @@ namespace IGTAPTasMod
         private long _runTicks;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
-        private int _furthestAction;
-        private float _peakY;
-        private float _finalX;
-        private float _finalY;
-        private float _minimumX;
-        private float _maximumX;
         private bool _hasProgressSample;
         private string _startStateFingerprint;
         private float _authoritativeCompletionTime;
@@ -67,18 +61,11 @@ namespace IGTAPTasMod
         private readonly List<string> _earlyTrace = new List<string>();
 
         public bool IsRunning { get { return _steps != null; } }
-        public bool IsWaitingForStable { get { return IsRunning && _waitingForStable; } }
         public int StepIndex { get { return _stepIndex; } }
         public long RunTicks { get { return _runTicks; } }
         public string ActiveMacroId { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
-        public int FurthestAction { get { return _furthestAction; } }
-        public float PeakY { get { return _hasProgressSample ? _peakY : 0f; } }
-        public float FinalX { get { return _hasProgressSample ? _finalX : 0f; } }
-        public float FinalY { get { return _hasProgressSample ? _finalY : 0f; } }
-        public float MinimumX { get { return _hasProgressSample ? _minimumX : 0f; } }
-        public float MaximumX { get { return _hasProgressSample ? _maximumX : 0f; } }
         public string StartStateFingerprint { get { return _startStateFingerprint; } }
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
         public long CourseStartRunTick { get { return _courseStartRunTick; } }
@@ -97,7 +84,7 @@ namespace IGTAPTasMod
                 Status = "Cannot run an empty macro";
                 return;
             }
-            _steps = Expand(macro.steps, library);
+            _steps = Expand(macro.steps);
             NormalizeFrameTiming(_steps);
             _macroName = macro.name;
             ActiveMacroId = macro.id;
@@ -120,10 +107,6 @@ namespace IGTAPTasMod
             _runTicks = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
-            _furthestAction = 0;
-            _peakY = _minimumX = float.MaxValue;
-            _maximumX = float.MinValue;
-            _finalX = _finalY = 0f;
             _hasProgressSample = false;
             _startStateFingerprint = null;
             _authoritativeCompletionTime = 0f;
@@ -262,9 +245,6 @@ namespace IGTAPTasMod
             _elapsedTicks++;
             if (ShouldEnd(movement, step))
                 Advance(movement, step.type == MacroStepType.Jump);
-            else if (step.endCondition != ActionEndCondition.Duration && step.endCondition != ActionEndCondition.FixedTicks
-                && _elapsedTicks >= Mathf.Max(1, step.timeoutTicks))
-                HandleTimeout(movement, step);
         }
 
         private void RunWallJump(Movement movement, MacroStep step)
@@ -381,28 +361,11 @@ namespace IGTAPTasMod
             if (AttemptEnded != null) AttemptEnded(true, "Timeline complete", -1, _runTicks);
         }
 
-        private static List<MacroStep> Expand(List<MacroStep> source, MacroLibrary library)
+        private static List<MacroStep> Expand(List<MacroStep> source)
         {
             List<MacroStep> result = new List<MacroStep>();
-            List<ParameterizedBundleDefinition> definitions = BuildBundleDefinitions(library);
             foreach (MacroStep step in source)
-            {
-                if (!step.enabled) continue;
-                if (step.type != MacroStepType.Bundle)
-                {
-                    result.Add(step.Copy());
-                    continue;
-                }
-                BundleDefinition found = library.bundles.Find(b => (!string.IsNullOrEmpty(step.bundleId) && b.id == step.bundleId) || b.name == step.bundleName);
-                if (found == null) continue;
-                BundleExpansionResult expansion = ParameterizedBundleExpander.Expand(found.id, definitions, step.bundleOverrides);
-                if (!expansion.Success)
-                {
-                    TasPlugin.Log.LogError("Bundle expansion failed for " + found.name + ": " + string.Join("; ", expansion.Errors.ToArray()));
-                    continue;
-                }
-                foreach (MacroStep child in expansion.Steps) if (child.enabled) result.Add(child);
-            }
+                if (step.enabled && step.type != MacroStepType.Bundle) result.Add(step.Copy());
             return result;
         }
 
@@ -424,34 +387,6 @@ namespace IGTAPTasMod
                     : Mathf.Max(1, Mathf.RoundToInt(step.timeoutMs / (float)tickMs));
                 step.timeoutMs = step.timeoutTicks * tickMs;
             }
-        }
-
-        private static List<ParameterizedBundleDefinition> BuildBundleDefinitions(MacroLibrary library)
-        {
-            List<ParameterizedBundleDefinition> result = new List<ParameterizedBundleDefinition>();
-            foreach (BundleDefinition bundle in library.bundles)
-            {
-                ParameterizedBundleDefinition definition = new ParameterizedBundleDefinition {
-                    id = bundle.id, name = bundle.name, version = bundle.version,
-                    parameters = bundle.parameters ?? new List<BundleParameterDefinition>()
-                };
-                int actionCount = Mathf.Max(bundle.actions == null ? 0 : bundle.actions.Count, bundle.steps == null ? 0 : bundle.steps.Count);
-                for (int i = 0; i < actionCount; i++)
-                {
-                    BundleActionTemplate template = bundle.actions != null && i < bundle.actions.Count
-                        ? bundle.actions[i] : new BundleActionTemplate();
-                    MacroStep step = bundle.steps != null && i < bundle.steps.Count ? bundle.steps[i] : template.step;
-                    template.step = step;
-                    if (step != null && step.type == MacroStepType.Bundle)
-                    {
-                        BundleDefinition nested = library.bundles.Find(b => (!string.IsNullOrEmpty(step.bundleId) && b.id == step.bundleId) || b.name == step.bundleName);
-                        template.nestedBundleId = nested == null ? step.bundleId : nested.id;
-                    }
-                    definition.actions.Add(template);
-                }
-                result.Add(definition);
-            }
-            return result;
         }
 
         private static bool IsWallJumpAvailable(Movement movement)
@@ -512,13 +447,6 @@ namespace IGTAPTasMod
                     "WD" + ReadFloat(WallJumpDirectionField, movement).ToString("0.###", CultureInfo.InvariantCulture)
                 });
             }
-            _finalX = position.x;
-            _finalY = position.y;
-            _peakY = Mathf.Max(_peakY, position.y);
-            _minimumX = Mathf.Min(_minimumX, position.x);
-            _maximumX = Mathf.Max(_maximumX, position.x);
-            int reached = _steps == null ? _furthestAction : Mathf.Clamp(_stepIndex + 1, 0, _steps.Count);
-            _furthestAction = Math.Max(_furthestAction, reached);
         }
 
         private static void NormalizeQuickRestartState(Movement movement)
@@ -539,9 +467,8 @@ namespace IGTAPTasMod
 
             Component body = movement.GetComponent("Rigidbody2D");
             if (body == null) return;
-            SetVectorMember(body, "linearVelocity", Vector2.zero);
-            SetVectorMember(body, "velocity", Vector2.zero);
-            SetFloatMember(body, "angularVelocity", 0f);
+            Rigidbody2D rb = body as Rigidbody2D;
+            if (rb != null) { rb.linearVelocity = Vector2.zero; rb.velocity = Vector2.zero; rb.angularVelocity = 0f; }
         }
 
         private void PinSynchronizationPosition(Movement movement)
@@ -553,31 +480,7 @@ namespace IGTAPTasMod
             Physics2D.SyncTransforms();
         }
 
-        private static void SetVectorMember(object instance, string name, Vector2 value)
-        {
-            Type type = instance.GetType();
-            FieldInfo field = AccessTools.Field(type, name);
-            PropertyInfo property = field == null ? AccessTools.Property(type, name) : null;
-            try
-            {
-                if (field != null && field.FieldType == typeof(Vector2)) field.SetValue(instance, value);
-                else if (property != null && property.CanWrite && property.PropertyType == typeof(Vector2)) property.SetValue(instance, value, null);
-            }
-            catch { }
-        }
 
-        private static void SetFloatMember(object instance, string name, float value)
-        {
-            Type type = instance.GetType();
-            FieldInfo field = AccessTools.Field(type, name);
-            PropertyInfo property = field == null ? AccessTools.Property(type, name) : null;
-            try
-            {
-                if (field != null && field.FieldType == typeof(float)) field.SetValue(instance, value);
-                else if (property != null && property.CanWrite && property.PropertyType == typeof(float)) property.SetValue(instance, value, null);
-            }
-            catch { }
-        }
 
         private static bool ReadBool(FieldInfo field, object instance)
         {
@@ -611,46 +514,10 @@ namespace IGTAPTasMod
 
         private bool ShouldEnd(Movement movement, MacroStep step)
         {
-            Vector2 velocity = ReadVector(VelocityField, movement);
-            Vector3 position = movement.transform.position;
-            switch (step.endCondition)
-            {
-                case ActionEndCondition.FixedTicks: return _elapsedTicks >= Mathf.Max(1, step.durationTicks);
-                case ActionEndCondition.GroundContact: return ReadBool(OnGroundField, movement);
-                case ActionEndCondition.WallContact: return ReadBool(OnWallField, movement);
-                case ActionEndCondition.WallCoyote: return ReadFloat(WallCoyoteField, movement) > 0f;
-                case ActionEndCondition.JumpApex: return ReadBool(AtApexField, movement);
-                case ActionEndCondition.Falling: return velocity.y < 0f;
-                case ActionEndCondition.VelocityYAbove: return velocity.y >= step.conditionValue;
-                case ActionEndCondition.VelocityYBelow: return velocity.y <= step.conditionValue;
-                case ActionEndCondition.PositionXAbove: return position.x >= step.conditionValue;
-                case ActionEndCondition.PositionXBelow: return position.x <= step.conditionValue;
-                case ActionEndCondition.PositionYAbove: return position.y >= step.conditionValue;
-                case ActionEndCondition.PositionYBelow: return position.y <= step.conditionValue;
-                case ActionEndCondition.DashReady: return ReadFloat(DashCooldownField, movement) < 0f && ReadInt(AirDashesField, movement) > 0;
-                case ActionEndCondition.JumpReady: return ReadBool(OnGroundField, movement) || ReadFloat(CoyoteField, movement) > 0f || ReadInt(AirJumpsField, movement) > 0;
-                default: return _elapsedMs >= Mathf.Max(0, step.durationMs);
-            }
+            return step.endCondition == ActionEndCondition.FixedTicks
+                ? _elapsedTicks >= Mathf.Max(1, step.durationTicks)
+                : _elapsedMs >= Mathf.Max(0, step.durationMs);
         }
 
-        private void HandleTimeout(Movement movement, MacroStep step)
-        {
-            if (step.timeoutPolicy == ActionTimeoutPolicy.ContinueToNextAction)
-                Advance(movement, step.type == MacroStepType.Jump || step.type == MacroStepType.WallJump);
-            else if (step.timeoutPolicy == ActionTimeoutPolicy.RetryAction)
-            {
-                _elapsedMs = 0f;
-                _elapsedTicks = 0;
-                _wallJumpTriggered = false;
-            }
-            else Fail(movement, "Condition timeout (" + step.endCondition + ")");
-        }
-
-        private static int ReadInt(FieldInfo field, object instance)
-        {
-            if (field == null) return 0;
-            object value = field.GetValue(instance);
-            return value is int ? (int)value : 0;
-        }
     }
 }

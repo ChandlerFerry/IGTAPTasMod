@@ -37,7 +37,6 @@ sealed class SimState
     public int WallLock = -1;
     public float WallJumpDirection;
     public float WallCoyoteDirection;
-    public bool FallingFromEdge;
     public bool StepUpPending;
     public int JumpBuffer, JumpCut, RecentlyJumped;
     public bool JumpHeld;
@@ -51,7 +50,6 @@ sealed class SimState
     public int LandingMask;
     public int WallJumpCount;
 
-    public SimState Clone() => (SimState)MemberwiseClone();
 }
 
 sealed class FastSimulator
@@ -88,7 +86,7 @@ sealed class FastSimulator
     {
         var s = CreateState();
         int startTick = -1, finishTick = -1;
-        bool startOverlap = false, finishOverlap = false;
+        bool finishOverlap = false;
         for (int tick = 0; tick < inputs.Count + 80; tick++)
         {
             InputFrame input = tick < inputs.Count ? inputs[tick] : new InputFrame(0, false, false, false);
@@ -104,7 +102,6 @@ sealed class FastSimulator
                 finishTick = tick + 2;
                 if (!continueAfterFinish) break;
             }
-            startOverlap = nowStart;
             finishOverlap = nowFinish;
             if (s.Y < -1000f) break;
         }
@@ -114,9 +111,6 @@ sealed class FastSimulator
     public SimState CreateState() => new() { X = initialX, Y = initialY, PeakY = initialY,
         AirDashesLeft = physics.InitialAirDashes, DashCooldown = physics.InitialDashCooldown };
     public void Advance(SimState state, InputFrame input) => Step(state, input);
-    public bool Intersects(SimState state, Gate gate, float padding = 0f) => Overlaps(state, gate, padding);
-    public Gate StartGate => start;
-    public Gate FinishGate => finish;
 
     void Step(SimState s, InputFrame input)
     {
@@ -198,7 +192,6 @@ sealed class FastSimulator
             s.LandingMask |= LandingBit(support.Y);
             s.Grounded = true;
             s.CoyoteFrames = physics.CoyoteFrames;
-            s.FallingFromEdge = false;
             s.OnWall = false;
             s.WallJumpsLeft = physics.MaxWallJumps;
             s.AirDashesLeft = physics.MaxAirDashes;
@@ -215,7 +208,6 @@ sealed class FastSimulator
             // collider/gravity) until maxCoyoteFrames has counted below zero.
             // This matters when the route walks off the final platform.
             s.CoyoteFrames--;
-            s.FallingFromEdge = true;
             if (s.CoyoteFrames < 0) s.Grounded = false;
         }
         bool detectedStepUp;
@@ -252,7 +244,6 @@ sealed class FastSimulator
             s.OnWall = true;
             s.WallCoyoteFrames = physics.WallCoyoteFrames;
             s.WallCoyoteDirection = wallContact.X > s.X ? -1f : 1f;
-            s.FallingFromEdge = false;
         }
         else if (!s.Grounded)
         {
@@ -334,7 +325,6 @@ sealed class FastSimulator
             s.JumpBuffer = 0;
             s.Grounded = false;
             s.CoyoteFrames = -1;
-            s.FallingFromEdge = false;
             s.RecentlyJumped = 2;
             // A jump on the step after a ledge-corner landing, once the body
             // has moved over the ledge top, first depenetrates the normal
@@ -359,7 +349,6 @@ sealed class FastSimulator
             s.Grounded = false;
             s.OnWall = false;
             s.WallCoyoteFrames = 0;
-            s.FallingFromEdge = false;
             s.WallJumpDirection = s.WallCoyoteDirection != 0f
                 ? s.WallCoyoteDirection : s.FacingRight ? -1f : 1f;
             // The Transform nudge is visible vertically in the authoritative
@@ -395,7 +384,6 @@ sealed class FastSimulator
             s.Y += 11f;
             s.Grounded = true;
             s.CoyoteFrames = physics.CoyoteFrames;
-            s.FallingFromEdge = false;
             s.OnWall = false;
             s.WallJumpsLeft = physics.MaxWallJumps;
             s.AirDashesLeft = physics.MaxAirDashes;
@@ -459,7 +447,6 @@ sealed class FastSimulator
             s.VY = -physics.Gravity;
             s.Grounded = true;
             s.CoyoteFrames = physics.CoyoteFrames;
-            s.FallingFromEdge = false;
             s.WallJumpsLeft = physics.MaxWallJumps;
             s.AirDashesLeft = physics.MaxAirDashes;
             s.LandingMask |= LandingBit(ledgeCorner.Y2);
@@ -481,7 +468,6 @@ sealed class FastSimulator
                 s.OnWall = true;
                 s.WallCoyoteFrames = physics.WallCoyoteFrames;
                 s.WallCoyoteDirection = resolvedWall.X > s.X ? -1f : 1f;
-                s.FallingFromEdge = false;
                 if (resolvedWall.RefillsJumps)
                 {
                     s.WallJumpsLeft = physics.MaxWallJumps;
@@ -514,7 +500,6 @@ sealed class FastSimulator
                 s.Grounded = true;
                 s.CoyoteFrames = physics.CoyoteFrames;
                 s.AirDashesLeft = physics.MaxAirDashes;
-                s.FallingFromEdge = false;
                 nextY = landing.Y - NormalOffsetY + NormalHalfHeight;
                 // Native Rigidbody traces retain one gravity increment while
                 // resting on a platform. Keeping -gravity here makes the
@@ -1061,30 +1046,14 @@ class Program
             }));
             return 0;
         }
-        if (args.Length > 0 && args[0] == "plan")
-            return AutonomousPlanner.Run(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "refine-plan")
-            return PlanRefiner.Run(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "salvage-plan")
-            return PlanSalvager.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "suite")
             return OfflineSuite.Run(args.Skip(1).ToArray());
         if (args.Length > 0 && args[0] == "self-test")
         {
             int prior = OfflineSuite.SelfTest();
             if (prior != 0) return prior;
-            prior = Loader.SelfTest();
-            if (prior != 0) return prior;
-            return SolverAudit.SelfTest();
+            return Loader.SelfTest();
         }
-        if (args.Length > 0 && args[0] == "audit-plan")
-            return SolverAudit.Run(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "audit-reference")
-            return SolverAudit.Reference(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "screen-plan")
-            return SolverAudit.Screen(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "compare-trace")
-            return SolverAudit.CompareTraceRun(args.Skip(1).ToArray());
         if (args.Length == 5 && args[0] == "ray-probe")
         {
             float?[] probes = RayWorld.Load(args[1]).Probes(float.Parse(args[2]), float.Parse(args[3]), bool.Parse(args[4]));
@@ -1093,25 +1062,6 @@ class Program
         }
         if (args.Length > 1 && args[0] == "ray-validate")
             return RayWorld.Validate(args.Skip(1).ToArray());
-        if (args.Length > 0 && args[0] == "mutate-plan")
-            return PlanMutator.Run(args.Skip(1).ToArray());
-        if (args.Length >= 4 && args[0] == "route-search")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            var routeSimulator = CreateSimulator(routeEnvironment);
-            Search(routeSimulator, Loader.Route(args[2], args[3]), args.Length >= 5 ? int.Parse(args[4]) : 1_000_000);
-            return 0;
-        }
-        if (args.Length >= 4 && args[0] == "route-run")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            var routeSimulator = CreateSimulator(routeEnvironment);
-            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
-            int[] durations = steps.Select(step => step.Duration).ToArray();
-            SimResult routeResult = routeSimulator.Run(BuildFrames(steps, durations, -1, -1, 0));
-            Console.WriteLine($"finish={routeResult.Finished} startTick={routeResult.StartTick} finishTick={routeResult.FinishTick} courseTicks={routeResult.CourseTicks} final=({routeResult.X:0.##},{routeResult.Y:0.##}) peakY={routeResult.PeakY:0.##} landings=0x{routeResult.LandingMask:X} wallJumps={routeResult.WallJumpCount}");
-            return routeResult.Finished ? 0 : 1;
-        }
         if (args.Length >= 7 && args[0] == "route-trace")
         {
             // route-trace <model> <routes> <route> <native-result> <fromTick> <toTick>: per-tick sim vs native.
@@ -1140,111 +1090,6 @@ class Program
                 $"firstWithin2px={OfflineSuite.FirstHazardTick(args[1], traceEnvironment.viewport, fullTrace, 2)}");
             return 0;
         }
-        if (args.Length >= 5 && args[0] == "route-compare")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(args[4]));
-            string traceText = document.RootElement.GetProperty("earlyTrace").GetString() ?? "";
-            var routeTruth = OfflineSuite.ParseAttemptTrace(traceText);
-            var routeSimulator = routeTruth.Count > 0
-                ? new FastSimulator(routeEnvironment.surfaces, routeEnvironment.ceilings, routeEnvironment.walls,
-                    routeEnvironment.start, routeEnvironment.finish, routeEnvironment.physics,
-                    routeTruth[0].x, routeTruth[0].y)
-                : CreateSimulator(routeEnvironment);
-            var routePredicted = new List<(float x, float y, float vx, float vy, bool ground)>();
-            routeSimulator.Run(BuildFrames(steps, steps.Select(step => step.Duration).ToArray(), -1, -1, 0), routePredicted,
-                continueAfterFinish: true);
-            int routeCount = Math.Min(routeTruth.Count, routePredicted.Count);
-            for (int i = 0; i < routeCount; i++)
-            {
-                double dx = routeTruth[i].x - routePredicted[i].x, dy = routeTruth[i].y - routePredicted[i].y;
-                double error = Math.Sqrt(dx * dx + dy * dy);
-                if (error >= .5 || i % 20 == 0)
-                    Console.WriteLine($"t={i} err={error:0.###} true=({routeTruth[i].x:0.###},{routeTruth[i].y:0.###}) sim=({routePredicted[i].x:0.###},{routePredicted[i].y:0.###}) vtrue=({routeTruth[i].vx:0.###},{routeTruth[i].vy:0.###}) vsim=({routePredicted[i].vx:0.###},{routePredicted[i].vy:0.###}) ground={routeTruth[i].ground}/{routePredicted[i].ground}");
-            }
-            return 0;
-        }
-        if (args.Length >= 6 && args[0] == "turn-grid")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            var routeSimulator = CreateSimulator(routeEnvironment);
-            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
-            int rightStep = int.Parse(args[4]), leftStep = int.Parse(args[5]);
-            int[] baseline = steps.Select(step => step.Duration).ToArray();
-            int requiredMask = routeSimulator.Run(BuildFrames(steps, baseline, -1, -1, 0)).LandingMask;
-            var winners = new List<SearchWinner>();
-            for (int right = 1; right <= baseline[rightStep] + 8; right++)
-                for (int left = 1; left <= baseline[leftStep] + 8; left++)
-                    for (int heldDelta = -6; heldDelta <= 6; heldDelta++)
-                    {
-                        int[] durations = (int[])baseline.Clone();
-                        durations[rightStep] = right;
-                        durations[leftStep] = left;
-                        int heldStep = leftStep + 2;
-                        if (heldStep < durations.Length) durations[heldStep] = Math.Max(1, baseline[heldStep] + heldDelta);
-                        SimResult turnResult = routeSimulator.Run(BuildFrames(steps, durations, -1, -1, 0));
-                        if (turnResult.Finished && (turnResult.LandingMask & requiredMask) == requiredMask)
-                            winners.Add(new SearchWinner(turnResult.CourseTicks, durations, -1, -1, 0, turnResult));
-                    }
-            foreach (SearchWinner winner in winners.OrderBy(item => item.Ticks)
-                .ThenBy(item => item.Durations.Select((duration, index) => Math.Abs(duration - baseline[index])).Sum()).Take(30))
-                Console.WriteLine($"TURN ticks={winner.Ticks} durations={string.Join(',', winner.Durations)} final=({winner.Result.X:0.##},{winner.Result.Y:0.##})");
-            return 0;
-        }
-        if (args.Length >= 9 && args[0] == "quad-grid")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            var routeSimulator = CreateSimulator(routeEnvironment);
-            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
-            int[] indices = [int.Parse(args[4]), int.Parse(args[5]), int.Parse(args[6]), int.Parse(args[7])];
-            int radius = int.Parse(args[8]);
-            int[] baseline = steps.Select(step => step.Duration).ToArray();
-            int requiredMask = routeSimulator.Run(BuildFrames(steps, baseline, -1, -1, 0)).LandingMask;
-            var winners = new List<SearchWinner>();
-            int[] durations = (int[])baseline.Clone();
-            for (int a = Math.Max(1, baseline[indices[0]] - radius); a <= baseline[indices[0]] + radius; a++)
-                for (int b = Math.Max(1, baseline[indices[1]] - radius); b <= baseline[indices[1]] + radius; b++)
-                    for (int c = Math.Max(1, baseline[indices[2]] - radius); c <= baseline[indices[2]] + radius; c++)
-                        for (int d = Math.Max(1, baseline[indices[3]] - radius); d <= baseline[indices[3]] + radius; d++)
-                        {
-                            durations[indices[0]] = a; durations[indices[1]] = b;
-                            durations[indices[2]] = c; durations[indices[3]] = d;
-                            SimResult gridResult = routeSimulator.Run(BuildFrames(steps, durations, -1, -1, 0));
-                            if (gridResult.Finished && (gridResult.LandingMask & requiredMask) == requiredMask)
-                                winners.Add(new SearchWinner(gridResult.CourseTicks, (int[])durations.Clone(), -1, -1, 0, gridResult));
-                        }
-            foreach (SearchWinner winner in winners.OrderBy(item => item.Ticks)
-                .ThenBy(item => item.Durations.Select((duration, index) => Math.Abs(duration - baseline[index])).Sum()).Take(50))
-                Console.WriteLine($"QUAD ticks={winner.Ticks} cost={winner.Durations.Select((duration, index) => Math.Abs(duration - baseline[index])).Sum()} durations={string.Join(',', winner.Durations)} final=({winner.Result.X:0.##},{winner.Result.Y:0.##})");
-            return 0;
-        }
-        if (args.Length >= 4 && args[0] == "analog-grid")
-        {
-            var routeEnvironment = Loader.Environment(args[1]);
-            var routeSimulator = CreateSimulator(routeEnvironment);
-            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
-            int[] durations = steps.Select(step => step.Duration).ToArray();
-            InputFrame[] baselineFrames = BuildFrames(steps, durations, -1, -1, 0);
-            SimResult baselineResult = routeSimulator.Run(baselineFrames);
-            int requiredMask = baselineResult.LandingMask;
-            var improvements = new List<(int ticks, int frame, float x, SimResult result)>();
-            for (int frame = 0; frame < baselineFrames.Length; frame++)
-                for (int xi = -20; xi <= 20; xi++)
-                {
-                    float x = xi / 20f;
-                    if (MathF.Abs(x - baselineFrames[frame].X) < .001f) continue;
-                    InputFrame[] trial = (InputFrame[])baselineFrames.Clone();
-                    trial[frame] = trial[frame] with { X = x };
-                    SimResult trialResult = routeSimulator.Run(trial);
-                    if (trialResult.Finished && (trialResult.LandingMask & requiredMask) == requiredMask && trialResult.CourseTicks < baselineResult.CourseTicks)
-                        improvements.Add((trialResult.CourseTicks, frame, x, trialResult));
-                }
-            Console.WriteLine($"ANALOG baseline={baselineResult.CourseTicks} tested={baselineFrames.Length * 40:N0} improvements={improvements.Count:N0}");
-            foreach (var item in improvements.OrderBy(item => item.ticks).ThenBy(item => item.frame).Take(50))
-                Console.WriteLine($"ANALOG ticks={item.ticks} frame={item.frame} x={item.x:0.00} final=({item.result.X:0.##},{item.result.Y:0.##})");
-            return 0;
-        }
         if (args.Length < 2) { Console.Error.WriteLine("Usage: IGTAP.FastSim <model.json> <recording.json>"); return 2; }
         var environment = Loader.Environment(args[0]);
         List<InputFrame> inputs = Loader.Recording(args[1], out var truth);
@@ -1266,12 +1111,6 @@ class Program
         Console.WriteLine($"finish={result.Finished} startTick={result.StartTick} finishTick={result.FinishTick} courseTicks={result.CourseTicks} final=({result.X:0.##},{result.Y:0.##}) peakY={result.PeakY:0.##} landings=0x{result.LandingMask:X}");
         for (int i = 0; i < count; i += 25)
             Console.WriteLine($"t={i,3} true=({truth[i].x,8:0.##},{truth[i].y,7:0.##}) sim=({predicted[i].x,8:0.##},{predicted[i].y,7:0.##}) g={truth[i].ground}/{predicted[i].ground}");
-        if (args.Length >= 5 && args[2] == "--search")
-            Search(simulator, Loader.Route(args[3], args[4]), args.Length >= 6 ? int.Parse(args[5]) : 1_000_000);
-        if (args.Length >= 5 && args[2] == "--local-search")
-            LocalSearch(simulator, Loader.Route(args[3], args[4]), args.Length >= 6 ? int.Parse(args[5]) : 10_000_000);
-        if (args.Length >= 5 && args[2] == "--hop-grid")
-            HopGrid(simulator, Loader.Route(args[3], args[4]));
         return 0;
     }
 
@@ -1279,131 +1118,8 @@ class Program
         environment.ceilings, environment.walls, environment.start, environment.finish, environment.physics,
         environment.initialX, environment.initialY);
 
-    static void HopGrid(FastSimulator simulator, List<Loader.RouteStep> steps)
-    {
-        int[] durations = steps.Select(s => s.Duration).ToArray();
-        int finalRun = Enumerable.Range(0, steps.Count).Last(i => steps[i].Duration >= 8 && MathF.Abs(steps[i].X) > .01f
-            && !steps[i].Press && !steps[i].Held && !steps[i].Release);
-        SimResult baseline = simulator.Run(BuildFrames(steps, durations, -1, -1, 0));
-        Console.WriteLine($"HOPGRID baseline={baseline.CourseTicks} step={finalRun} duration={durations[finalRun]}");
-        var results = new List<SearchWinner>();
-        for (int tick = 0; tick < durations[finalRun]; tick++)
-            for (int hold = 0; hold <= Math.Min(12, durations[finalRun] - tick); hold++)
-            {
-                SimResult result = simulator.Run(BuildFrames(steps, durations, finalRun, tick, hold));
-                if (result.Finished && (result.LandingMask & 0x1F) == 0x1F && result.PeakY is >= 465f and <= 490f)
-                    results.Add(new SearchWinner(result.CourseTicks, durations, finalRun, tick, hold, result));
-            }
-        foreach (SearchWinner result in results.GroupBy(r => r.HopTick).Select(g => g.OrderBy(r => r.Ticks).ThenBy(r => r.HopHold).First()).OrderBy(r => r.HopTick))
-            Console.WriteLine($"HOP ticks={result.Ticks} time={result.Ticks * .02:0.000} at={result.HopTick} hold={result.HopHold} final=({result.Result.X:0.##},{result.Result.Y:0.##}) peak={result.Result.PeakY:0.##}");
-    }
 
-    static void LocalSearch(FastSimulator simulator, List<Loader.RouteStep> steps, int iterations)
-    {
-        int[] variableSteps = Enumerable.Range(1, steps.Count - 1).Where(i => steps[i].Duration > 1).ToArray();
-        int[] baseline = steps.Select(s => s.Duration).ToArray();
-        int finalRun = Enumerable.Range(0, steps.Count).Last(i => steps[i].Duration >= 8 && MathF.Abs(steps[i].X) > .01f
-            && !steps[i].Press && !steps[i].Held && !steps[i].Release);
-        SimResult baselineResult = simulator.Run(BuildFrames(steps, baseline, -1, -1, 0));
-        Console.WriteLine($"LOCAL baseline ticks={baselineResult.CourseTicks} mask=0x{baselineResult.LandingMask:X} peak={baselineResult.PeakY:0.##} finalRun={finalRun}");
 
-        var candidates = new ConcurrentDictionary<string, SearchWinner>();
-        long plausible = 0;
-        Parallel.For(0, iterations, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-            () => new Random(unchecked(Environment.TickCount * 397 ^ Thread.CurrentThread.ManagedThreadId)),
-            (iteration, _, random) =>
-            {
-                int[] durations = (int[])baseline.Clone();
-                foreach (int index in variableSteps)
-                {
-                    if (random.NextDouble() >= .55) continue;
-                    int radius = index == finalRun ? 3 : 2;
-                    int delta;
-                    do delta = random.Next(-radius, radius + 1); while (delta == 0);
-                    durations[index] = Math.Max(1, baseline[index] + delta);
-                }
-
-                int hopStep = -1, hopTick = -1, hopHold = 0;
-                if (random.NextDouble() < .55)
-                {
-                    hopStep = finalRun;
-                    // Bias toward the platform edge and the falling half of the final run.
-                    hopTick = random.Next(Math.Max(0, durations[finalRun] / 3), durations[finalRun]);
-                    hopHold = random.Next(0, Math.Min(10, durations[finalRun] - hopTick) + 1);
-                }
-
-                SimResult result = simulator.Run(BuildFrames(steps, durations, hopStep, hopTick, hopHold));
-                if (!result.Finished || (result.LandingMask & 0x1F) != 0x1F || result.PeakY < 465f || result.PeakY > 490f)
-                    return random;
-                Interlocked.Increment(ref plausible);
-                int changeCost = durations.Select((d, i) => Math.Abs(d - baseline[i])).Sum() + (hopStep >= 0 ? 2 : 0);
-                string key = $"{result.CourseTicks}:{changeCost}:{string.Join(',', durations)}:{hopStep}:{hopTick}:{hopHold}";
-                candidates.TryAdd(key, new SearchWinner(result.CourseTicks, durations, hopStep, hopTick, hopHold, result));
-                return random;
-            }, _ => { });
-
-        SearchWinner[] best = candidates.Values
-            .Where(v => v.Ticks <= baselineResult.CourseTicks)
-            .OrderBy(v => v.Ticks)
-            .ThenBy(v => v.Durations.Select((d, i) => Math.Abs(d - baseline[i])).Sum() + (v.HopStep >= 0 ? 2 : 0))
-            .Take(500)
-            .ToArray();
-        Console.WriteLine($"searched={iterations:N0} plausible={plausible:N0} retained={best.Length:N0}");
-        foreach (SearchWinner item in best.Take(20))
-            Console.WriteLine($"LOCAL ticks={item.Ticks} time={item.Ticks * .02:0.000} hopStep={item.HopStep} hopTick={item.HopTick} hold={item.HopHold} durations={string.Join(',', item.Durations)} peak={item.Result.PeakY:0.##}");
-        string path = Path.Combine(AppContext.BaseDirectory, "fastsim-local.json");
-        File.WriteAllText(path, JsonSerializer.Serialize(best, new JsonSerializerOptions { WriteIndented = true }));
-        Console.WriteLine("local=" + path);
-    }
-
-    sealed record SearchWinner(int Ticks, int[] Durations, int HopStep, int HopTick, int HopHold, SimResult Result);
-
-    static void Search(FastSimulator simulator, List<Loader.RouteStep> steps, int iterations)
-    {
-        int[] variableSteps = Enumerable.Range(0, steps.Count).Where(i => steps[i].Duration > 1).ToArray();
-        int[] hopSteps = Enumerable.Range(0, steps.Count).Where(i => steps[i].Duration >= 8 && MathF.Abs(steps[i].X) > .01f
-            && !steps[i].Press && !steps[i].Held && !steps[i].Release).ToArray();
-        int[] baseline = steps.Select(s => s.Duration).ToArray();
-        int requiredLandingMask = simulator.Run(BuildFrames(steps, baseline, -1, -1, 0)).LandingMask;
-        SearchWinner? winner = null;
-        var frontier = new ConcurrentDictionary<int, SearchWinner>();
-        object winnerLock = new();
-        long successes = 0;
-        var options = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
-        Parallel.For(0, iterations, options, () => new Random(unchecked(Environment.TickCount * 397 ^ Thread.CurrentThread.ManagedThreadId)),
-            (iteration, _, random) =>
-            {
-                int[] durations = (int[])baseline.Clone();
-                foreach (int index in variableSteps)
-                {
-                    int radius = index >= steps.Count - 6 ? 8 : 5;
-                    durations[index] = Math.Max(1, baseline[index] + random.Next(-radius, radius + 1));
-                }
-                int hopStep = random.NextDouble() < .20 ? -1 : hopSteps[random.Next(hopSteps.Length)];
-                int hopTick = hopStep < 0 ? -1 : random.Next(durations[hopStep]);
-                int hopHold = hopStep < 0 ? 0 : random.Next(0, Math.Min(15, durations[hopStep] - hopTick) + 1);
-                InputFrame[] frames = BuildFrames(steps, durations, hopStep, hopTick, hopHold);
-                SimResult result = simulator.Run(frames);
-                if (!result.Finished || (result.LandingMask & requiredLandingMask) != requiredLandingMask) return random;
-                Interlocked.Increment(ref successes);
-                frontier.TryAdd(result.CourseTicks, new SearchWinner(result.CourseTicks, (int[])durations.Clone(), hopStep, hopTick, hopHold, result));
-                lock (winnerLock)
-                {
-                    if (winner == null || result.CourseTicks < winner.Ticks)
-                    {
-                        winner = new SearchWinner(result.CourseTicks, durations, hopStep, hopTick, hopHold, result);
-                        Console.WriteLine($"leader iter={iteration} ticks={result.CourseTicks} time={result.CourseTicks * .02:0.000} hopStep={hopStep} hopTick={hopTick} hold={hopHold} durations={string.Join(',', durations)}");
-                    }
-                }
-                return random;
-            }, _ => { });
-        Console.WriteLine($"searched={iterations:N0} successes={successes:N0}");
-        if (winner != null)
-            Console.WriteLine($"WINNER ticks={winner.Ticks} time={winner.Ticks * .02:0.000} hopStep={winner.HopStep} hopTick={winner.HopTick} hold={winner.HopHold} durations={string.Join(',', winner.Durations)} final=({winner.Result.X:0.##},{winner.Result.Y:0.##})");
-        string frontierPath = Path.Combine(AppContext.BaseDirectory, "fastsim-frontier.json");
-        File.WriteAllText(frontierPath, JsonSerializer.Serialize(frontier.Values.OrderBy(v => v.Ticks), new JsonSerializerOptions { WriteIndented = true }));
-        Console.WriteLine("frontier=" + frontierPath);
-    }
 
     static InputFrame[] BuildFrames(List<Loader.RouteStep> steps, int[] durations, int hopStep, int hopTick, int hopHold)
     {

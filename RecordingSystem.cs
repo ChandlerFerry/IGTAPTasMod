@@ -17,13 +17,6 @@ namespace IGTAPTasMod
         private static readonly FieldInfo WallCoyote = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
         private static readonly FieldInfo WallSide = AccessTools.Field(typeof(Movement), "wallCoyoteDir");
         private static readonly FieldInfo Velocity = AccessTools.Field(typeof(Movement), "Velocity");
-        private static readonly FieldInfo Momentum = AccessTools.Field(typeof(Movement), "momentum");
-        private static readonly FieldInfo AirJumps = AccessTools.Field(typeof(Movement), "airJumpsLeft");
-        private static readonly FieldInfo AirDashes = AccessTools.Field(typeof(Movement), "airDashesLeft");
-        private static readonly FieldInfo DashActive = AccessTools.Field(typeof(Movement), "dashActive");
-        private static readonly FieldInfo AtApex = AccessTools.Field(typeof(Movement), "atJumpApex");
-        private static readonly FieldInfo IsDead = AccessTools.Field(typeof(Movement), "isDead");
-        private static readonly FieldInfo CutsceneMode = AccessTools.Field(typeof(Movement), "cutsceneMode");
         private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
         private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
 
@@ -96,22 +89,17 @@ namespace IGTAPTasMod
             InputAction jumpAction = Read<InputAction>(JumpAction, movement);
             InputAction dashAction = Read<InputAction>(DashAction, movement);
             Vector2 velocity = Read<Vector2>(Velocity, movement);
-            Vector2 momentum = Read<Vector2>(Momentum, movement);
             Vector3 position = movement.transform.position;
             Current.samples.Add(new RawTickSample {
-                tick = _tick++, fixedTime = Time.fixedTime, unscaledTime = Time.unscaledTime,
+                tick = _tick++,
                 moveX = movement.MoveAxis.x, moveY = movement.MoveAxis.y,
                 jumpPressed = jump && !_lastJump, jumpHeld = jumpAction != null ? jumpAction.IsPressed() : jump && !cut,
                 jumpReleased = cut && !_lastCut, dashPressed = dash && !_lastDash,
                 dashHeld = dashAction != null ? dashAction.IsPressed() : dash,
                 positionX = position.x, positionY = position.y,
                 velocityX = velocity.x, velocityY = velocity.y,
-                momentumX = momentum.x, momentumY = momentum.y,
                 onGround = Read<bool>(OnGround, movement), onWall = Read<bool>(OnWall, movement),
-                wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement),
-                airJumpsLeft = Read<int>(AirJumps, movement), airDashesLeft = Read<int>(AirDashes, movement),
-                dashActive = Read<bool>(DashActive, movement), atJumpApex = Read<bool>(AtApex, movement),
-                isDead = Read<bool>(IsDead, movement), movementMode = ReadObject(CutsceneMode, movement)
+                wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement)
             });
             _lastJump = jump;
             _lastCut = cut;
@@ -123,12 +111,6 @@ namespace IGTAPTasMod
             if (field == null) return default(T);
             object value = field.GetValue(instance);
             return value is T ? (T)value : default(T);
-        }
-
-        private static string ReadObject(FieldInfo field, object instance)
-        {
-            object value = field == null ? null : field.GetValue(instance);
-            return value == null ? "unknown" : value.ToString();
         }
     }
 
@@ -282,7 +264,7 @@ namespace IGTAPTasMod
 
         private static string Label(RawTickSample sample)
         {
-            string movement = sample.moveX < -0.01f ? "←" : sample.moveX > 0.01f ? "→" : "neutral";
+            string movement = sample.moveX < -0.01f ? "left" : sample.moveX > 0.01f ? "right" : "neutral";
             if (sample.jumpPressed && sample.jumpReleased) return "Exact " + movement + " jump press/release";
             if (sample.jumpPressed) return "Exact " + movement + " jump press";
             if (sample.jumpReleased) return "Exact " + movement + " jump release";
@@ -290,6 +272,7 @@ namespace IGTAPTasMod
             if (sample.jumpHeld) return "Exact " + movement + " jump held";
             return "Exact " + movement;
         }
+    }
 
         private static int Direction(float value) { return value < -0.25f ? -1 : value > 0.25f ? 1 : 0; }
     }
