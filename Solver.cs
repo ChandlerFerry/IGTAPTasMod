@@ -152,10 +152,23 @@ namespace IGTAPTasMod
         bool CourseLoaded()
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
-            if (_solverCourses.Any(c => c.courseNumber == _solverCourse && c.isActiveAndEnabled)) return true;
+            if (ZonesSettled() && _solverCourses.Any(c => c.courseNumber == _solverCourse && c.isActiveAndEnabled)) return true;
             RestoreRouteStart(new MacroDefinition { name = _solverCourse + "_" });
             _solverStatus = "Loading course " + _solverCourse;
             return false;
+        }
+
+        static readonly FieldInfo AllZonesField = AccessTools.Field(typeof(ZoneLoader), "allZones");
+
+        // ZoneLoader.LoadZone applies a zone two frames after it is asked (Movement.Start and /api/oracle/bootstrap
+        // both ask); until then every zone is live, and the first run after a launch died on Overgrowth spikes.
+        static bool ZonesSettled()
+        {
+            ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
+            if (loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return true;
+            for (int i = 0; i < zones.Length; i++)
+                if (zones[i] != null && zones[i].activeSelf != (i == loader.activeZone - 1)) return false;
+            return true;
         }
 
         void StopSolver(string status)
