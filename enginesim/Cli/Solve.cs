@@ -123,12 +123,36 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
+        static readonly string[] Categories = { "none", "wj", "wjdash" };
+
+        static void SubmitOther(HttpClient http, int course, string caps, float time, List<InputTick> inputs, Stopwatch clock)
+        {
+            string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                try
+                {
+                    string reply = http.PostAsync(Api + "/api/enginesim/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result
+                        .Content.ReadAsStringAsync().Result;
+                    using JsonDocument r = JsonDocument.Parse(reply);
+                    if (!r.RootElement.TryGetProperty("saved", out JsonElement saved)) { Thread.Sleep(2000); continue; }
+                    if (saved.GetBoolean()) Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {course}_{caps}");
+                    return;
+                }
+                catch (Exception) { return; }
+            }
+        }
+
         static void Confirm(int course, string caps, BlockingQueue pending, Stopwatch clock)
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             while (true)
             {
                 var (time, inputs) = pending.Take();
+                // The same inputs may be valid in the course's other categories too (a WJ route never needs dash; a WJDASH
+                // route may never dash); the gate replays them under each category's unlocks and decides.
+                foreach (string other in Categories.Where(c => c != caps))
+                    SubmitOther(http, course, other, time, inputs, clock);
                 string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
                 try
                 {

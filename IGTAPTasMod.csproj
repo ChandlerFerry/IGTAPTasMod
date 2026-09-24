@@ -31,13 +31,12 @@
   </Target>
 
   <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
+    <!-- FastSim is only run by tools/solve.py and tools/fidelity-sweep.py, from simulator\bin. -->
     <MSBuild Projects="$(MSBuildProjectDirectory)\simulator\IGTAP.FastSim.csproj"
              Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(PluginDir)" />
     <RemoveDir Directories="$(PluginDir)\IGTAPTasWeb" />
-    <RemoveDir Directories="$(PluginDir)\IGTAPFastSim" />
     <MakeDir Directories="$(PluginDir)\IGTAPTasWeb" />
-    <MakeDir Directories="$(PluginDir)\IGTAPFastSim" />
     <Copy SourceFiles="$(TargetPath)"
           DestinationFiles="$(PluginDir)\IGTAPTasMod.dll"
           SkipUnchangedFiles="false"
@@ -47,12 +46,6 @@
     </ItemGroup>
     <Copy SourceFiles="@(WebStudioFiles)"
           DestinationFolder="$(PluginDir)\IGTAPTasWeb\%(RecursiveDir)"
-          SkipUnchangedFiles="false" />
-    <ItemGroup>
-      <OfflineSimulatorFiles Include="$(MSBuildProjectDirectory)\simulator\bin\$(Configuration)\net8.0\IGTAP.FastSim.*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(OfflineSimulatorFiles)"
-          DestinationFolder="$(PluginDir)\IGTAPFastSim"
           SkipUnchangedFiles="false" />
     <Message Importance="high" Text="Deployed $(TargetPath) to $(PluginDir)\IGTAPTasMod.dll" />
   </Target>

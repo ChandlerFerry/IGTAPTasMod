@@ -364,6 +364,7 @@ namespace IGTAPTasMod
         // game's own state, so they hold however inputs are injected.
         const int JumpBufferTicks = 12;   // game: 0.12 s, 0.2 s mid-dash (10 ticks), +2 slack
         const int DashBufferTicks = 8;    // game: 0.12 s (6 ticks), +2 slack
+        const int JumpCutBufferTicks = 15; // game: 0.26 s after a release (13 ticks), +2 slack
         List<string> _audit;
 
         static bool PressNear(List<SolverTick> inputs, int tick, int window, bool jump)
@@ -377,6 +378,22 @@ namespace IGTAPTasMod
             return false;
         }
 
+        // A release is what MacroEngine.RunRawInput does on entering a step: `release`, or held -> not held
+        // (a dash-jump counts as held from its dash; ponytail: slightly lenient if the dash-jump never fires).
+        static bool ReleaseNear(List<SolverTick> inputs, int tick, int window)
+        {
+            bool held = false;
+            for (int i = 0; i < Math.Min(inputs.Count, tick + 3); i++)
+            {
+                SolverTick k = inputs[i], p = i > 0 ? inputs[i - 1] : null;
+                if (p != null && !k.press && !k.release && !k.dash && k.x == p.x && k.held == p.held) continue; // same step (ToSteps)
+                bool release = k.release || held && !k.held;
+                held = k.held || k.dash && k.dashJump > 0;
+                if (release && i - 2 <= tick && tick <= i + window) return true;
+            }
+            return false;
+        }
+
         void AuditTick(Movement player, List<SolverTick> inputs, int tick)
         {
             if (_audit.Count >= 5) return;
@@ -384,8 +401,11 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": jump buffered with no jump press within the game's buffer window");
             if (GetMovementBool(player, "dashBuffer", false) && !PressNear(inputs, tick, DashBufferTicks, false))
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
+            if (GetMovementBool(player, "jumpCutBuffer", false) && !ReleaseNear(inputs, tick, JumpCutBufferTicks))
+                _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (_solverCaps != "none")
-                || GetMovementBool(player, "dashUnlocked", false) != (_solverCaps == "wjdash"))
+                || GetMovementBool(player, "dashUnlocked", false) != (_solverCaps == "wjdash")
+                || !Equals(GetMovementField(player, "maxAirDashes"), _solverCaps == "wjdash" ? 1 : 0))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
@@ -413,12 +433,9 @@ namespace IGTAPTasMod
             CourseDef course = _courses.First(c => c.id == _solverCourse);
             Vector2 savedReset = _preservedCourseResetPoint;
             bool savedHasReset = _hasPreservedCourseResetPoint;
-            bool savedWallJump = GetMovementBool(player, "wallJumpUnlocked", true);
-            bool savedDash = GetMovementBool(player, "dashUnlocked", true);
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
-            SetMovementField(player, "wallJumpUnlocked", _solverCaps != "none");
-            SetMovementField(player, "dashUnlocked", _solverCaps == "wjdash");
+            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -477,8 +494,7 @@ namespace IGTAPTasMod
                 _engine.Quiet = false;
                 _preservedCourseResetPoint = savedReset;
                 _hasPreservedCourseResetPoint = savedHasReset;
-                SetMovementField(player, "wallJumpUnlocked", savedWallJump);
-                SetMovementField(player, "dashUnlocked", savedDash);
+                foreach (var (field, value) in savedAbilities) SetMovementField(player, field, value);
             }
             time = _silentTime;
             finishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick));

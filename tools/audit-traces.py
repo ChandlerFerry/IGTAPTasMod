@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check captured turbo traces against route rule 3 (CLAUDE.md): a buffered jump/dash needs a real press in the game's
-buffer window. Same rule as Solver.cs AuditTick. Exit code 1 if any trace violates it.
+buffer window, and a jump cut a real release in its window. Same rule as Solver.cs AuditTick. Exit code 1 if any trace
+violates it.
 
   audit-traces.py [trace.json ...]     default: every trace in the enginesim config folder
 """
@@ -9,7 +10,7 @@ import sys
 from pathlib import Path
 
 TRACES = Path(r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\enginesim")
-JUMP_WINDOW, DASH_WINDOW = 12, 8  # Solver.cs JumpBufferTicks / DashBufferTicks
+JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15  # Solver.cs JumpBufferTicks / DashBufferTicks / JumpCutBufferTicks
 
 
 def press_near(inputs, tick, window, jump):
@@ -24,6 +25,19 @@ def press_near(inputs, tick, window, jump):
     return False
 
 
+def release_near(inputs, tick, window):
+    held = False
+    for i in range(min(len(inputs), tick + 3)):
+        k, p = inputs[i], inputs[i - 1] if i else None
+        if p and not (k["press"] or k["release"] or k["dash"]) and k["x"] == p["x"] and k["held"] == p["held"]:
+            continue  # same macro step (Solver.cs ToSteps)
+        release = k["release"] or held and not k["held"]
+        held = k["held"] or k["dash"] and k["dashJump"] > 0
+        if release and i - 2 <= tick <= i + window:
+            return True
+    return False
+
+
 def violations(trace):
     found = []
     for i, t in enumerate(trace["ticks"]):
@@ -32,6 +46,8 @@ def violations(trace):
             found.append(f"tick {i}: stale jump buffer")
         if m["dashBuffer"] and not press_near(trace["inputs"], i, DASH_WINDOW, False):
             found.append(f"tick {i}: stale dash buffer")
+        if m["jumpCutBuffer"] and not release_near(trace["inputs"], i, CUT_WINDOW):
+            found.append(f"tick {i}: stale jump cut")
     return found
 
 
