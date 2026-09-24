@@ -2377,7 +2377,11 @@ namespace IGTAPTasMod
                         deterministicPhysics = result.deterministicPhysics,
                         failureReason = result.failureReason, timestampUtc = result.timestampUtc });
 
+            Movement player = FindWorldMovement();
             return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
+                // Read-only: the live unlocks, to check that playback and the tools put the save's back.
+                unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
+                    dash = GetMovementBool(player, "dashUnlocked", false) },
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
                 running = _engine.IsRunning,
