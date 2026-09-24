@@ -17,10 +17,7 @@
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />
     <Reference Include="UnityEngine" HintPath="$(ManagedDir)\UnityEngine.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(ManagedDir)\UnityEngine.CoreModule.dll" Private="false" />
-    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(ManagedDir)\UnityEngine.IMGUIModule.dll" Private="false" />
     <Reference Include="UnityEngine.Physics2DModule" HintPath="$(ManagedDir)\UnityEngine.Physics2DModule.dll" Private="false" />
-    <Reference Include="UnityEngine.JSONSerializeModule" HintPath="$(ManagedDir)\UnityEngine.JSONSerializeModule.dll" Private="false" />
-    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(ManagedDir)\UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="Unity.InputSystem" HintPath="$(ManagedDir)\Unity.InputSystem.dll" Private="false" />
     <Reference Include="Newtonsoft.Json" HintPath="$(ManagedDir)\Newtonsoft.Json.dll" Private="false" />
   </ItemGroup>

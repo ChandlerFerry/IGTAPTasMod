@@ -70,7 +70,6 @@ namespace IGTAPTasMod
     {
         public bool Success { get; internal set; }
         public string Message { get; internal set; }
-        public List<string> Warnings { get; private set; } = new List<string>();
     }
 
     public static class SectionCheckpointService
@@ -106,7 +105,7 @@ namespace IGTAPTasMod
         }
 
         public static CheckpointOperationResult Restore(Movement movement, SectionCheckpoint checkpoint,
-            int pluginSchemaVersion, bool permitFingerprintMismatch = false)
+            int pluginSchemaVersion)
         {
             CheckpointOperationResult result = new CheckpointOperationResult();
             if (movement == null || checkpoint == null) {
@@ -118,23 +117,23 @@ namespace IGTAPTasMod
                 return result;
             }
             CompatibilityFingerprint current = CreateFingerprint(movement, pluginSchemaVersion);
-            if (!current.Matches(checkpoint.fingerprint) && !permitFingerprintMismatch) {
+            if (!current.Matches(checkpoint.fingerprint)) {
                 result.Message = "Checkpoint rejected: " + current.DescribeMismatch(checkpoint.fingerprint);
                 return result;
             }
 
             Transform transform = movement.transform;
             Component body = movement.GetComponent("Rigidbody2D");
-            SetBodySimulation(body, false, result.Warnings);
+            SetBodySimulation(body, false);
             transform.position = new Vector3(checkpoint.positionX, checkpoint.positionY, checkpoint.positionZ);
             transform.rotation = new Quaternion(checkpoint.rotationX, checkpoint.rotationY, checkpoint.rotationZ, checkpoint.rotationW);
             transform.localScale = new Vector3(checkpoint.scaleX, checkpoint.scaleY, checkpoint.scaleZ);
-            RestoreMembers(movement, checkpoint.movementFields, result.Warnings);
-            if (body != null) RestoreMembers(body, checkpoint.bodyFields, result.Warnings);
-            SetBodySimulation(body, ReadBool(checkpoint.bodyFields, "simulated", true), result.Warnings);
-            Physics2DSyncTransforms();
+            RestoreMembers(movement, checkpoint.movementFields);
+            if (body != null) RestoreMembers(body, checkpoint.bodyFields);
+            SetBodySimulation(body, ReadBool(checkpoint.bodyFields, "simulated", true));
+            Physics2D.SyncTransforms();
             result.Success = true;
-            result.Message = result.Warnings.Count == 0 ? "Checkpoint restored" : "Checkpoint restored with warnings";
+            result.Message = "Checkpoint restored";
             return result;
         }
 
@@ -143,7 +142,7 @@ namespace IGTAPTasMod
             return new CompatibilityFingerprint {
                 gameVersion = Application.version ?? "",
                 assemblySha256 = HashAssembly(typeof(Movement).Assembly),
-                scene = ReadSceneName(movement),
+                scene = movement.gameObject.scene.name,
                 pluginSchemaVersion = pluginSchemaVersion
             };
         }
@@ -162,7 +161,7 @@ namespace IGTAPTasMod
             }
         }
 
-        private static void RestoreMembers(object target, Dictionary<string, SnapshotValue> values, List<string> warnings)
+        private static void RestoreMembers(object target, Dictionary<string, SnapshotValue> values)
         {
             if (values == null) return;
             Type type = target.GetType();
@@ -170,12 +169,12 @@ namespace IGTAPTasMod
                 FieldInfo field = AccessTools.Field(type, pair.Key);
                 PropertyInfo property = field == null ? AccessTools.Property(type, pair.Key) : null;
                 Type valueType = field != null ? field.FieldType : property != null && property.CanWrite ? property.PropertyType : null;
-                if (valueType == null) { warnings.Add("Missing state member: " + pair.Key); continue; }
+                if (valueType == null) continue;
                 try {
                     object decoded;
-                    if (!TryDecode(pair.Value, valueType, out decoded)) { warnings.Add("Unsupported state value: " + pair.Key); continue; }
+                    if (!TryDecode(pair.Value, valueType, out decoded)) continue;
                     if (field != null) field.SetValue(target, decoded); else property.SetValue(target, decoded, null);
-                } catch (Exception ex) { warnings.Add("Could not restore " + pair.Key + ": " + ex.GetType().Name); }
+                } catch { }
             }
         }
 
@@ -207,12 +206,12 @@ namespace IGTAPTasMod
             } catch { return false; }
         }
 
-        private static void SetBodySimulation(Component body, bool value, List<string> warnings)
+        private static void SetBodySimulation(Component body, bool value)
         {
             if (body == null) return;
             PropertyInfo property = AccessTools.Property(body.GetType(), "simulated");
             try { if (property != null && property.CanWrite) property.SetValue(body, value, null); }
-            catch (Exception ex) { warnings.Add("Could not change body simulation: " + ex.GetType().Name); }
+            catch { }
         }
 
         private static bool ReadBool(Dictionary<string, SnapshotValue> values, string key, bool fallback)
@@ -222,21 +221,7 @@ namespace IGTAPTasMod
             return values != null && values.TryGetValue(key, out value) && bool.TryParse(value.value, out parsed) ? parsed : fallback;
         }
 
-        private static void Physics2DSyncTransforms()
-        {
-            Type physics = Type.GetType("UnityEngine.Physics2D, UnityEngine.Physics2DModule");
-            MethodInfo sync = physics == null ? null : AccessTools.Method(physics, "SyncTransforms");
-            if (sync != null) sync.Invoke(null, null);
-        }
 
-        private static string ReadSceneName(Movement movement)
-        {
-            try {
-                object scene = movement.gameObject.GetType().GetProperty("scene").GetValue(movement.gameObject, null);
-                PropertyInfo name = scene.GetType().GetProperty("name");
-                return name == null ? "" : (string)name.GetValue(scene, null);
-            } catch { return ""; }
-        }
 
         private static string HashAssembly(Assembly assembly)
         {
@@ -250,231 +235,3 @@ namespace IGTAPTasMod
         private static float P(string value) { return float.Parse(value, CultureInfo.InvariantCulture); }
     }
 
-    [Flags]
-    public enum GhostMarker { None = 0, Jump = 1, Dash = 2, Contact = 4, Apex = 8, Failure = 16 }
-
-    [Serializable]
-    public sealed class GhostPoint
-    {
-        public long tick;
-        public float x;
-        public float y;
-        public float velocityX;
-        public float velocityY;
-        public GhostMarker markers;
-    }
-
-    [Serializable]
-    public sealed class GhostTrace
-    {
-        public const int CurrentSchemaVersion = 1;
-        public int schemaVersion = CurrentSchemaVersion;
-        public string routeId;
-        public string attemptId;
-        public List<GhostPoint> points = new List<GhostPoint>();
-
-        public static GhostTrace FromSamples(IEnumerable<RawTickSample> samples, string routeId = null, string attemptId = null)
-        {
-            GhostTrace trace = new GhostTrace { routeId = routeId, attemptId = attemptId };
-            if (samples == null) return trace;
-            bool wasGrounded = false, wasOnWall = false;
-            foreach (RawTickSample sample in samples) {
-                GhostMarker markers = GhostMarker.None;
-                if (sample.jumpPressed) markers |= GhostMarker.Jump;
-                if (sample.dashPressed) markers |= GhostMarker.Dash;
-                if ((!wasGrounded && sample.onGround) || (!wasOnWall && sample.onWall)) markers |= GhostMarker.Contact;
-                if (sample.atJumpApex) markers |= GhostMarker.Apex;
-                trace.points.Add(new GhostPoint { tick = sample.tick, x = sample.positionX, y = sample.positionY,
-                    velocityX = sample.velocityX, velocityY = sample.velocityY, markers = markers });
-                wasGrounded = sample.onGround; wasOnWall = sample.onWall;
-            }
-            return trace;
-        }
-    }
-
-    // LineRenderer only: no collider, rigidbody, transform writes to the player, or FixedUpdate behavior.
-    public sealed class GhostPathRenderer : MonoBehaviour
-    {
-        private LineRenderer _reference;
-        private LineRenderer _current;
-        public bool Visible { get { return gameObject.activeSelf; } set { gameObject.SetActive(value); } }
-
-        public static GhostPathRenderer Create(string name = "TAS Ghost Paths")
-        {
-            GameObject root = new GameObject(name);
-            GhostPathRenderer renderer = root.AddComponent<GhostPathRenderer>();
-            renderer._reference = renderer.CreateLine("Reference", new Color(0.1f, 0.85f, 1f, 0.8f));
-            renderer._current = renderer.CreateLine("Current", new Color(1f, 0.72f, 0.1f, 0.9f));
-            return renderer;
-        }
-
-        public void SetReference(GhostTrace trace) { SetLine(_reference, trace); }
-        public void SetCurrent(GhostTrace trace) { SetLine(_current, trace); }
-        public void Clear() { SetLine(_reference, null); SetLine(_current, null); }
-
-        private LineRenderer CreateLine(string lineName, Color color)
-        {
-            GameObject child = new GameObject(lineName);
-            child.transform.SetParent(transform, false);
-            LineRenderer line = child.AddComponent<LineRenderer>();
-            line.useWorldSpace = true;
-            line.startWidth = line.endWidth = 0.08f;
-            line.startColor = line.endColor = color;
-            line.numCapVertices = 2;
-            Shader shader = Shader.Find("Sprites/Default");
-            if (shader != null) line.material = new Material(shader);
-            return line;
-        }
-
-        private static void SetLine(LineRenderer line, GhostTrace trace)
-        {
-            if (line == null) return;
-            int count = trace == null || trace.points == null ? 0 : trace.points.Count;
-            line.positionCount = count;
-            for (int i = 0; i < count; i++) line.SetPosition(i, new Vector3(trace.points[i].x, trace.points[i].y, 0f));
-        }
-    }
-
-    public enum BundleParameterType { Integer, Float, Boolean, String }
-
-    [Serializable]
-    public sealed class BundleParameterDefinition
-    {
-        public string name;
-        public BundleParameterType type;
-        public string defaultValue;
-    }
-
-    [Serializable]
-    public sealed class BundleParameterBinding
-    {
-        public string target; // direction, durationTicks, timeoutTicks, label, or nested.<parameter>
-        public string expression; // literal or $parameterName
-    }
-
-    [Serializable]
-    public sealed class BundleActionTemplate
-    {
-        public MacroStep step = new MacroStep();
-        public string nestedBundleId;
-        public List<BundleParameterBinding> bindings = new List<BundleParameterBinding>();
-    }
-
-    [Serializable]
-    public sealed class ParameterizedBundleDefinition
-    {
-        public string id = Guid.NewGuid().ToString("N");
-        public string name = "New bundle";
-        public int version = 1;
-        public List<BundleParameterDefinition> parameters = new List<BundleParameterDefinition>();
-        public List<BundleActionTemplate> actions = new List<BundleActionTemplate>();
-    }
-
-    public sealed class BundleExpansionResult
-    {
-        public bool Success { get { return Errors.Count == 0; } }
-        public List<MacroStep> Steps { get; private set; } = new List<MacroStep>();
-        public List<string> Errors { get; private set; } = new List<string>();
-    }
-
-    public static class ParameterizedBundleExpander
-    {
-        public static BundleExpansionResult Expand(string bundleId, IEnumerable<ParameterizedBundleDefinition> bundles,
-            IDictionary<string, string> overrides = null, int maximumDepth = 32, int maximumActions = 10000)
-        {
-            BundleExpansionResult result = new BundleExpansionResult();
-            Dictionary<string, ParameterizedBundleDefinition> index = new Dictionary<string, ParameterizedBundleDefinition>();
-            if (bundles != null) foreach (ParameterizedBundleDefinition bundle in bundles)
-                if (bundle != null && !string.IsNullOrEmpty(bundle.id)) index[bundle.id] = bundle;
-            ExpandInto(bundleId, index, overrides, new List<string>(), result, maximumDepth, maximumActions);
-            if (!result.Success) result.Steps.Clear();
-            return result;
-        }
-
-        private static void ExpandInto(string id, Dictionary<string, ParameterizedBundleDefinition> index,
-            IDictionary<string, string> supplied, List<string> stack, BundleExpansionResult result, int maxDepth, int maxActions)
-        {
-            ParameterizedBundleDefinition bundle;
-            if (!index.TryGetValue(id ?? "", out bundle)) { result.Errors.Add("Bundle not found: " + id); return; }
-            int cycleAt = stack.IndexOf(id);
-            if (cycleAt >= 0) { result.Errors.Add("Bundle cycle: " + string.Join(" -> ", stack.GetRange(cycleAt, stack.Count - cycleAt).ToArray()) + " -> " + id); return; }
-            if (stack.Count >= maxDepth) { result.Errors.Add("Bundle nesting exceeds " + maxDepth); return; }
-
-            Dictionary<string, string> values = ResolveParameters(bundle, supplied, result);
-            if (!result.Success) return;
-            stack.Add(id);
-            foreach (BundleActionTemplate template in bundle.actions) {
-                if (result.Steps.Count >= maxActions) { result.Errors.Add("Expanded action count exceeds " + maxActions); break; }
-                if (!string.IsNullOrEmpty(template.nestedBundleId)) {
-                    Dictionary<string, string> nested = new Dictionary<string, string>();
-                    foreach (BundleParameterBinding binding in template.bindings)
-                        nested[StripNested(binding.target)] = Evaluate(binding.expression, values, result);
-                    ExpandInto(template.nestedBundleId, index, nested, stack, result, maxDepth, maxActions);
-                } else {
-                    MacroStep step = (template.step ?? new MacroStep()).Copy();
-                    foreach (BundleParameterBinding binding in template.bindings)
-                        Apply(step, binding.target, Evaluate(binding.expression, values, result), result);
-                    result.Steps.Add(step);
-                }
-                if (!result.Success) break;
-            }
-            stack.RemoveAt(stack.Count - 1);
-        }
-
-        private static Dictionary<string, string> ResolveParameters(ParameterizedBundleDefinition bundle,
-            IDictionary<string, string> supplied, BundleExpansionResult result)
-        {
-            Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (BundleParameterDefinition parameter in bundle.parameters) {
-                string value;
-                if (supplied == null || !supplied.TryGetValue(parameter.name, out value)) value = parameter.defaultValue;
-                if (!Validate(value, parameter.type)) result.Errors.Add("Invalid " + parameter.type + " value for " + bundle.name + "." + parameter.name);
-                else values[parameter.name] = value;
-            }
-            if (supplied != null) foreach (string key in supplied.Keys)
-                if (!values.ContainsKey(key)) result.Errors.Add("Unknown parameter " + bundle.name + "." + key);
-            return values;
-        }
-
-        private static string Evaluate(string expression, Dictionary<string, string> values, BundleExpansionResult result)
-        {
-            if (expression == null || !expression.StartsWith("$", StringComparison.Ordinal)) return expression ?? "";
-            string name = expression.Substring(1);
-            string value;
-            if (values.TryGetValue(name, out value)) return value;
-            result.Errors.Add("Unbound bundle parameter: " + name);
-            return "";
-        }
-
-        private static void Apply(MacroStep step, string target, string value, BundleExpansionResult result)
-        {
-            int number;
-            switch ((target ?? "").ToLowerInvariant()) {
-                case "direction": if (int.TryParse(value, out number)) step.direction = Mathf.Clamp(number, -1, 1); else result.Errors.Add("direction must be an integer"); break;
-                case "durationticks": if (int.TryParse(value, out number)) { step.durationTicks = Math.Max(1, number); step.endCondition = ActionEndCondition.FixedTicks; } else result.Errors.Add("durationTicks must be an integer"); break;
-                case "timeoutticks": if (int.TryParse(value, out number)) step.timeoutTicks = Math.Max(1, number); else result.Errors.Add("timeoutTicks must be an integer"); break;
-                case "durationms": if (int.TryParse(value, out number)) step.durationMs = Math.Max(0, number); else result.Errors.Add("durationMs must be an integer"); break;
-                case "timeoutms": if (int.TryParse(value, out number)) step.timeoutMs = Math.Max(1, number); else result.Errors.Add("timeoutMs must be an integer"); break;
-                case "label": step.label = value; break;
-                default: result.Errors.Add("Unsupported bundle binding target: " + target); break;
-            }
-        }
-
-        private static bool Validate(string value, BundleParameterType type)
-        {
-            int i; float f; bool b;
-            switch (type) {
-                case BundleParameterType.Integer: return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out i);
-                case BundleParameterType.Float: return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out f);
-                case BundleParameterType.Boolean: return bool.TryParse(value, out b);
-                default: return value != null;
-            }
-        }
-
-        private static string StripNested(string target)
-        {
-            const string prefix = "nested.";
-            return target != null && target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? target.Substring(prefix.Length) : target;
-        }
-    }
-}

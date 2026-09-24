@@ -7,15 +7,15 @@ import "./favorite-ui.css";
 
 const API = "http://127.0.0.1:17426/api";
 
-type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; durationMs: number; enabled: boolean; endCondition: string; rawMoveX?: number; rawMoveY?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
+type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawMoveY?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
 type Route = { id: string; name: string; favorite: boolean; hotkey: string; checkpointId: string; actions: Action[] };
-type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; durationMs: number };
-type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; stopReason: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; courseStartTick: number; actions: RecordedAction[] };
+type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
+type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
-type OfflineResult = { finished: boolean; topologyValid?: boolean; courseTicks: number; timeSeconds: number; durations: number[]; hopStep: number; hopTick: number; hopHold: number; changeCost: number; peakY: number; landingMask: number; minimumGeometryDistancePixels: number };
-type OfflineSummary = { coverage: { mode: string; radius: number; theoreticalCombinations: number; simulations: number; uniqueCandidates: number; targetEvaluationBudget: number }; validation?: { samples: number; rmsePixels: number; maxErrorPixels: number; groundAgreement: number; fidelity: string }; baseline: OfflineResult; candidates: { rank: number; candidate: OfflineResult }[] };
-type Offline = { status: string; running: boolean; exitCode?: number; routeId?: string; routeName?: string; error?: string; hasReport: boolean; summary?: OfflineSummary };
+type OfflineResult = { finished: boolean; courseTicks: number; timeSeconds: number };
+type OfflineSummary = { coverage: { mode: string; theoreticalCombinations: number; uniqueCandidates: number }; validation?: { rmsePixels: number; groundAgreement: number; fidelity: string }; baseline: OfflineResult; candidates: { rank: number; candidate: OfflineResult }[] };
+type Offline = { status: string; running: boolean; error?: string; hasReport: boolean; summary?: OfflineSummary };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean;
   selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; offline: Offline;

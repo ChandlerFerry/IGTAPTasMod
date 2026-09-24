@@ -45,18 +45,6 @@ namespace IGTAPTasMod
         private readonly List<RecordingDefinition> _recordings = new List<RecordingDefinition>();
         private readonly List<AttemptResult> _results = new List<AttemptResult>();
         private readonly List<SectionCheckpoint> _checkpoints = new List<SectionCheckpoint>();
-        private GhostPathRenderer _ghostRenderer;
-        private Rect _window = new Rect(62f, 24f, 1040f, 700f);
-        private Vector2 _libraryScroll;
-        private Vector2 _timelineScroll;
-        private bool _showEditor;
-        private bool _editingBundles;
-        private bool _viewingRecordings;
-        private bool _viewingResults;
-        private bool _viewingCheckpoints;
-        private bool _viewingSettings;
-        private int _selectedRecordingIndex;
-        private int _selectedStep = -1;
         private float _pendingCourseTime;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
@@ -67,12 +55,6 @@ namespace IGTAPTasMod
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
         private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
-        private MacroDefinition _bindingMacro;
-        private TimelineEditorState _timelineEditor;
-        private string _timelineRouteId;
-        private string _dragActionId;
-        private bool _dragResize;
-        private int _dragTickOffset;
 
         private WebStudioRequest _activeOracleRequest;
         private MacroDefinition _pendingOracleMacro;
@@ -113,10 +95,6 @@ namespace IGTAPTasMod
         private static readonly FieldInfo MovJumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
         private static readonly FieldInfo MovNormalColliderField = AccessTools.Field(typeof(Movement), "normalCollider");
 
-        private GUIStyle _windowStyle, _panelStyle, _headerStyle, _labelStyle;
-        private GUIStyle _buttonStyle, _selectedStyle, _runStyle, _dangerStyle;
-        private GUIStyle _fieldStyle, _stepStyle, _selectedStepStyle, _tabStyle, _activeTabStyle;
-        private Texture2D _solidNavy;
 
         private void Awake()
         {
@@ -1195,12 +1173,6 @@ namespace IGTAPTasMod
                 return;
             }
 
-            if (_bindingMacro != null)
-            {
-                CaptureHotkey(keyboard);
-                return;
-            }
-            if (_showEditor) return;
 
             foreach (MacroDefinition macro in _library.macros)
             {
@@ -1210,26 +1182,6 @@ namespace IGTAPTasMod
                     _engine.Run(macro, _library);
                     break;
                 }
-            }
-        }
-
-        private void CaptureHotkey(Keyboard keyboard)
-        {
-            if (keyboard.escapeKey.wasPressedThisFrame)
-            {
-                _bindingMacro = null;
-                return;
-            }
-            foreach (KeyControl key in keyboard.allKeys)
-            {
-                if (!key.wasPressedThisFrame || IsModifier(key.keyCode)) continue;
-                _bindingMacro.hotkey = key.keyCode.ToString();
-                _bindingMacro.hotkeyCtrl = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-                _bindingMacro.hotkeyShift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-                _bindingMacro.hotkeyAlt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
-                _bindingMacro = null;
-                SaveLibrary();
-                return;
             }
         }
 
@@ -1244,225 +1196,9 @@ namespace IGTAPTasMod
             return (!macro.hotkeyCtrl || ctrl) && (!macro.hotkeyShift || shift) && (!macro.hotkeyAlt || alt);
         }
 
-        private static bool IsModifier(Key key)
-        {
-            return key == Key.LeftCtrl || key == Key.RightCtrl || key == Key.LeftShift || key == Key.RightShift
-                || key == Key.LeftAlt || key == Key.RightAlt;
-        }
-
         private void OnGUI()
         {
             // Website-only UI. Intentionally draw nothing in the game.
-        }
-
-        private void DrawWindow(int id)
-        {
-            GUI.DrawTexture(new Rect(0f, 0f, _window.width, _window.height), _solidNavy, ScaleMode.StretchToFill, false);
-            GUI.Label(new Rect(0f, 5f, _window.width, 25f), "IGTAP TAS STUDIO", _headerStyle);
-            GUILayout.Space(13f);
-            GUILayout.BeginHorizontal();
-            DrawLibraryPanel();
-            GUILayout.Space(10f);
-            DrawTimelinePanel();
-            GUILayout.Space(10f);
-            DrawInspectorPanel();
-            GUILayout.EndHorizontal();
-            GUILayout.Space(8f);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(_engine.Status, _labelStyle);
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("SAVE", _buttonStyle, GUILayout.Width(90f), GUILayout.Height(32f))) SaveLibrary();
-            if (GUILayout.Button("CLOSE", _buttonStyle, GUILayout.Width(90f), GUILayout.Height(32f))) { _showEditor = false; SaveSettings(); }
-            GUILayout.EndHorizontal();
-            GUI.DragWindow(new Rect(0f, 0f, 10000f, 34f));
-        }
-
-        private void DrawLibraryPanel()
-        {
-            GUILayout.BeginVertical(_panelStyle, GUILayout.Width(220f), GUILayout.ExpandHeight(true));
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("ROUTES", IsRouteView ? _activeTabStyle : _tabStyle)) SetView("routes");
-            if (GUILayout.Button("BUNDLES", _editingBundles ? _activeTabStyle : _tabStyle)) SetView("bundles");
-            if (GUILayout.Button("RECORD", _viewingRecordings ? _activeTabStyle : _tabStyle)) SetView("recordings");
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("RESULTS", _viewingResults ? _activeTabStyle : _tabStyle)) SetView("results");
-            if (GUILayout.Button("CHECKPOINTS", _viewingCheckpoints ? _activeTabStyle : _tabStyle)) SetView("checkpoints");
-            if (GUILayout.Button("SETTINGS", _viewingSettings ? _activeTabStyle : _tabStyle)) SetView("settings");
-            GUILayout.EndHorizontal();
-            GUILayout.Space(6f);
-            _libraryScroll = GUILayout.BeginScrollView(_libraryScroll);
-            if (_viewingRecordings) DrawRecordingList(); else if (_editingBundles) DrawBundleList(); else DrawMacroList();
-            GUILayout.EndScrollView();
-            GUILayout.FlexibleSpace();
-            if (!_viewingRecordings && !_viewingResults && GUILayout.Button(_editingBundles ? "+ NEW BUNDLE" : "+ NEW ROUTE", _runStyle, GUILayout.Height(36f))) AddDefinition();
-            GUILayout.EndVertical();
-        }
-
-        private void DrawRecordingList()
-        {
-            for (int i = 0; i < _recordings.Count; i++)
-            {
-                RecordingDefinition recording = _recordings[i];
-                string text = recording.name + "\n" + recording.samples.Count + " physics frames • " + recording.semanticSteps.Count + " actions";
-                if (GUILayout.Button(text, i == _selectedRecordingIndex ? _selectedStyle : _buttonStyle, GUILayout.Height(52f))) _selectedRecordingIndex = i;
-            }
-        }
-
-        private void DrawMacroList()
-        {
-            for (int i = 0; i < _library.macros.Count; i++)
-            {
-                MacroDefinition macro = _library.macros[i];
-                if (GUILayout.Button(macro.name + "\n" + HotkeyText(macro), i == _library.selectedIndex ? _selectedStyle : _buttonStyle, GUILayout.Height(52f)))
-                { _library.selectedIndex = i; _selectedStep = -1; }
-            }
-        }
-
-        private void DrawBundleList()
-        {
-            for (int i = 0; i < _library.bundles.Count; i++)
-            {
-                if (GUILayout.Button(_library.bundles[i].name, i == _library.selectedBundleIndex ? _selectedStyle : _buttonStyle, GUILayout.Height(42f)))
-                { _library.selectedBundleIndex = i; _selectedStep = -1; }
-            }
-        }
-
-        private void DrawTimelinePanel()
-        {
-            GUILayout.BeginVertical(_panelStyle, GUILayout.Width(430f), GUILayout.ExpandHeight(true));
-            if (_viewingResults)
-            {
-                DrawResultsView();
-                GUILayout.EndVertical();
-                return;
-            }
-            if (_viewingCheckpoints)
-            {
-                DrawCheckpointsView();
-                GUILayout.EndVertical();
-                return;
-            }
-            if (_viewingSettings)
-            {
-                DrawSettingsView();
-                GUILayout.EndVertical();
-                return;
-            }
-            GUILayout.Label(_viewingRecordings ? "RECORDING PREVIEW" : _editingBundles ? "BUNDLE ACTIONS" : "ROUTE TIMELINE", _headerStyle);
-            if (_viewingRecordings)
-            {
-                DrawRecordingPreview();
-                GUILayout.EndVertical();
-                return;
-            }
-            if (!_editingBundles && SelectedMacro != null)
-            {
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("▶ RUN", _runStyle, GUILayout.Height(38f))) { BeginDeterministicPhysics(FindWorldMovement()); _engine.Run(SelectedMacro, _library); _showEditor = false; }
-                if (GUILayout.Button("↻ REPLAY", _runStyle, GUILayout.Height(38f))) ReplaySelected();
-                if (GUILayout.Button("DUPLICATE", _buttonStyle, GUILayout.Height(38f))) DuplicateMacro();
-                GUILayout.EndHorizontal();
-                GUILayout.BeginHorizontal();
-                if (!_recorder.IsRecording && GUILayout.Button("● RECORD RUN", _dangerStyle, GUILayout.Height(34f))) StartRecording();
-                if (_recorder.IsRecording && GUILayout.Button("■ STOP & CONVERT", _dangerStyle, GUILayout.Height(34f))) StopRecording("Manual stop", true);
-                GUILayout.EndHorizontal();
-                DrawVisualTimeline();
-            }
-
-            List<MacroStep> steps = CurrentSteps;
-            _timelineScroll = GUILayout.BeginScrollView(_timelineScroll);
-            if (steps != null)
-            {
-                for (int i = 0; i < steps.Count; i++) DrawTimelineRow(steps, i);
-            }
-            GUILayout.EndScrollView();
-            GUILayout.Space(5f);
-            GUILayout.Label("ADD ACTION", _headerStyle);
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("MOVE", _buttonStyle)) AddStep(MacroStepType.Move);
-            if (GUILayout.Button("JUMP", _buttonStyle)) AddStep(MacroStepType.Jump);
-            if (GUILayout.Button("WALLJUMP", _buttonStyle)) AddStep(MacroStepType.WallJump);
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("DASH", _buttonStyle)) AddStep(MacroStepType.Dash);
-            if (GUILayout.Button("WAIT", _buttonStyle)) AddStep(MacroStepType.Wait);
-            if (_library.bundles.Count > 0 && GUILayout.Button("BUNDLE", _buttonStyle)) AddStep(MacroStepType.Bundle);
-            GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
-        }
-
-        private void DrawRecordingPreview()
-        {
-            RecordingDefinition recording = SelectedRecording;
-            if (recording == null) { GUILayout.Label("No recordings yet. Select a route and choose RECORD RUN.", _labelStyle); return; }
-            GUILayout.Label(recording.name, _headerStyle);
-            GUILayout.Label(recording.samples.Count + " physics frames • " + (recording.samples.Count * recording.fixedDeltaMs / 1000f).ToString("0.000") + " s\nStopped: " + recording.stopReason, _labelStyle);
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("CREATE ROUTE", _runStyle, GUILayout.Height(36f))) CreateRouteFromRecording(recording);
-            if (GUILayout.Button("SHOW GHOST", _buttonStyle, GUILayout.Height(36f))) ShowRecordingGhost(recording);
-            if (GUILayout.Button("DELETE", _dangerStyle, GUILayout.Height(36f))) DeleteRecording(recording);
-            GUILayout.EndHorizontal();
-            _timelineScroll = GUILayout.BeginScrollView(_timelineScroll);
-            for (int i = 0; i < recording.semanticSteps.Count; i++)
-                GUILayout.Label((i + 1) + "  " + recording.semanticSteps[i].label + "\n    " + Summary(recording.semanticSteps[i]), _stepStyle, GUILayout.Height(52f));
-            GUILayout.EndScrollView();
-        }
-
-        private void DrawResultsView()
-        {
-            GUILayout.Label("ATTEMPT RESULTS", _headerStyle);
-            MacroDefinition route = SelectedMacro;
-            if (route == null) { GUILayout.Label("Select or create a route.", _labelStyle); return; }
-            _timelineScroll = GUILayout.BeginScrollView(_timelineScroll);
-            int shown = 0;
-            foreach (AttemptResult result in _results)
-            {
-                if (result.routeId != route.id) continue;
-                string outcome = result.success ? "SUCCESS" : "FAILED";
-                string detail = result.success ? result.completionTime.ToString("0.000") + " s" : result.failureReason;
-                GUILayout.Label(outcome + "  •  " + result.completionTicks + " physics frames\n" + detail, result.success ? _selectedStyle : _stepStyle, GUILayout.Height(48f));
-                shown++;
-            }
-            if (shown == 0) GUILayout.Label("No attempts recorded for this route.", _labelStyle);
-            GUILayout.EndScrollView();
-        }
-
-        private void DrawCheckpointsView()
-        {
-            GUILayout.Label("SECTION CHECKPOINTS", _headerStyle);
-            MacroDefinition route = SelectedMacro;
-            if (GUILayout.Button("CAPTURE CURRENT STATE", _runStyle, GUILayout.Height(38f))) CaptureCheckpoint();
-            _timelineScroll = GUILayout.BeginScrollView(_timelineScroll);
-            for (int checkpointIndex = 0; checkpointIndex < _checkpoints.Count; checkpointIndex++)
-            {
-                SectionCheckpoint checkpoint = _checkpoints[checkpointIndex];
-                bool assigned = route != null && route.checkpointId == checkpoint.id;
-                GUILayout.BeginVertical(assigned ? _selectedStyle : _stepStyle);
-                GUILayout.Label(checkpoint.name + (assigned ? "  •  ROUTE START" : ""), _labelStyle);
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("RESTORE", _buttonStyle)) RestoreCheckpoint(checkpoint);
-                if (route != null && GUILayout.Button(assigned ? "UNASSIGN" : "USE AS START", _buttonStyle))
-                { route.checkpointId = assigned ? "" : checkpoint.id; SaveLibrary(); }
-                if (GUILayout.Button("DELETE", _dangerStyle)) { DeleteCheckpoint(checkpoint); break; }
-                GUILayout.EndHorizontal();
-                GUILayout.EndVertical();
-                GUILayout.Space(4f);
-            }
-            GUILayout.EndScrollView();
-        }
-
-        private void DrawSettingsView()
-        {
-            GUILayout.Label("SETTINGS", _headerStyle);
-            GUILayout.Label("EMERGENCY STOP\nF8\n\nPERSISTENCE\n" + Path.GetDirectoryName(_settingsPath) + "\n\nAll action timing uses deterministic Unity physics frames. Unsupported schemas fail forward into quarantined .rejected files.", _labelStyle);
-            bool visible = _ghostRenderer != null && _ghostRenderer.Visible;
-            if (GUILayout.Button(visible ? "HIDE GHOST PATHS" : "SHOW GHOST PATHS", _buttonStyle, GUILayout.Height(36f)))
-            {
-                if (_ghostRenderer != null) _ghostRenderer.Visible = !visible;
-                _settings.ghostVisible = !visible;
-                SaveSettings();
-            }
         }
 
         private void CaptureCheckpoint()
@@ -1480,15 +1216,6 @@ namespace IGTAPTasMod
             Movement movement = FindWorldMovement();
             CheckpointOperationResult result = SectionCheckpointService.Restore(movement, checkpoint, MacroLibrary.CurrentSchemaVersion);
             if (!result.Success) Logger.LogError(result.Message); else Logger.LogInfo(result.Message);
-        }
-
-        private void DeleteCheckpoint(SectionCheckpoint checkpoint)
-        {
-            _checkpoints.Remove(checkpoint);
-            foreach (MacroDefinition route in _library.macros) if (route.checkpointId == checkpoint.id) route.checkpointId = "";
-            string path = Path.Combine(_checkpointsPath, SafeId(checkpoint.id) + ".json");
-            try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) { Logger.LogError(ex); }
-            SaveLibrary();
         }
 
         private bool RestoreRouteStart(MacroDefinition route)
@@ -1557,13 +1284,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        private void ShowRecordingGhost(RecordingDefinition recording)
-        {
-            if (_ghostRenderer == null) _ghostRenderer = GhostPathRenderer.Create();
-            _ghostRenderer.SetReference(GhostTrace.FromSamples(recording.samples, SelectedMacro == null ? null : SelectedMacro.id, recording.id));
-            _ghostRenderer.Visible = true;
-        }
-
         private void BeginDeterministicPhysics(Movement movement)
         {
             Rigidbody2D body = movement == null ? null : movement.GetComponent<Rigidbody2D>();
@@ -1586,391 +1306,6 @@ namespace IGTAPTasMod
             _deterministicBody = null;
         }
 
-        private void DrawTimelineRow(List<MacroStep> steps, int index)
-        {
-            MacroStep step = steps[index];
-            GUILayout.BeginHorizontal();
-            string text = (step.enabled ? "" : "[DISABLED] ") + (index + 1) + "   " + step.label + "\n      " + Summary(step);
-            if (GUILayout.Button(text, index == _selectedStep ? _selectedStepStyle : _stepStyle, GUILayout.Height(58f))) _selectedStep = index;
-            GUILayout.BeginVertical(GUILayout.Width(34f));
-            if (GUILayout.Button("↑", _buttonStyle, GUILayout.Width(32f)) && index > 0) { Swap(steps, index, index - 1); _selectedStep = index - 1; }
-            if (GUILayout.Button("↓", _buttonStyle, GUILayout.Width(32f)) && index < steps.Count - 1) { Swap(steps, index, index + 1); _selectedStep = index + 1; }
-            GUILayout.EndVertical();
-            GUILayout.EndHorizontal();
-            GUILayout.Space(3f);
-        }
-
-        private void DrawVisualTimeline()
-        {
-            TimelineEditorState editor = EnsureTimelineEditor();
-            if (editor == null) return;
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("UNDO", editor.CanUndo ? _buttonStyle : _tabStyle, GUILayout.Width(58f))) { editor.Undo(); CommitTimeline(); }
-            if (GUILayout.Button("REDO", editor.CanRedo ? _buttonStyle : _tabStyle, GUILayout.Width(58f))) { editor.Redo(); CommitTimeline(); }
-            if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(30f))) editor.ZoomBy(0.8f, 200f);
-            GUILayout.Label(editor.PixelsPerTick.ToString("0.0") + " px/tick", _labelStyle, GUILayout.Width(76f));
-            if (GUILayout.Button("+", _buttonStyle, GUILayout.Width(30f))) editor.ZoomBy(1.25f, 200f);
-            if (GUILayout.Button("←", _buttonStyle, GUILayout.Width(30f))) editor.PanByPixels(80f);
-            if (GUILayout.Button("→", _buttonStyle, GUILayout.Width(30f))) editor.PanByPixels(-80f);
-            GUILayout.EndHorizontal();
-
-            Rect canvas = GUILayoutUtility.GetRect(410f, 96f, GUILayout.ExpandWidth(true));
-            GUI.Box(canvas, GUIContent.none, _stepStyle);
-            Event current = Event.current;
-            List<TimelineAction> actions = editor.Document.actions;
-            actions.Sort(TimelineDocument.CompareActions);
-            for (int i = 0; i < actions.Count; i++)
-            {
-                TimelineAction action = actions[i];
-                float x = canvas.x + editor.PixelAtTick(action.startTick);
-                float width = Mathf.Max(28f, action.durationTicks * editor.PixelsPerTick);
-                Rect block = new Rect(x, canvas.y + 9f + (i % 2) * 38f, width, 32f);
-                if (block.xMax < canvas.x || block.x > canvas.xMax) continue;
-                GUI.Box(block, action.step.label, action.id == editor.SelectedActionId ? _selectedStyle : _buttonStyle);
-                if (current.type == EventType.MouseDown && current.button == 0 && block.Contains(current.mousePosition))
-                {
-                    editor.SelectedActionId = action.id;
-                    _selectedStep = i;
-                    _dragActionId = action.id;
-                    _dragResize = current.mousePosition.x >= block.xMax - 8f;
-                    _dragTickOffset = Mathf.RoundToInt(editor.TickAtPixel(current.mousePosition.x - canvas.x)) - action.startTick;
-                    editor.BeginInteraction(_dragResize ? "Resize action" : "Move action");
-                    current.Use();
-                }
-            }
-            if (!string.IsNullOrEmpty(_dragActionId) && current.type == EventType.MouseDrag)
-            {
-                TimelineAction action = editor.Document.Find(_dragActionId);
-                int tick = Mathf.RoundToInt(editor.TickAtPixel(current.mousePosition.x - canvas.x));
-                if (_dragResize) editor.PreviewResize(_dragActionId, action.startTick, tick);
-                else editor.PreviewMove(_dragActionId, tick - _dragTickOffset);
-                current.Use();
-            }
-            if (!string.IsNullOrEmpty(_dragActionId) && current.type == EventType.MouseUp)
-            {
-                editor.CommitInteraction();
-                _dragActionId = null;
-                CommitTimeline();
-                current.Use();
-            }
-        }
-
-        private TimelineEditorState EnsureTimelineEditor()
-        {
-            MacroDefinition route = SelectedMacro;
-            if (route == null) return null;
-            if (_timelineEditor != null && _timelineRouteId == route.id) return _timelineEditor;
-            if (route.timeline == null || route.timeline.actions == null || route.timeline.actions.Count == 0)
-                route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
-            _timelineEditor = new TimelineEditorState(route.timeline);
-            _timelineRouteId = route.id;
-            return _timelineEditor;
-        }
-
-        private void CommitTimeline()
-        {
-            MacroDefinition route = SelectedMacro;
-            if (route == null || _timelineEditor == null) return;
-            route.timeline = _timelineEditor.Document.Copy();
-            route.steps = route.timeline.ToSequentialSteps(Time.fixedDeltaTime * 1000f);
-            SaveLibrary();
-        }
-
-        private TimelineAction SelectedTimelineAction()
-        {
-            TimelineEditorState editor = EnsureTimelineEditor();
-            if (editor == null) return null;
-            List<TimelineAction> ordered = new List<TimelineAction>(editor.Document.actions);
-            ordered.Sort(TimelineDocument.CompareActions);
-            return _selectedStep >= 0 && _selectedStep < ordered.Count ? ordered[_selectedStep] : null;
-        }
-
-        private void SplitSelectedTimelineAction()
-        {
-            TimelineAction action = SelectedTimelineAction();
-            if (action == null || action.durationTicks < 2) return;
-            _timelineEditor.Split(action.id, action.startTick + action.durationTicks / 2);
-            CommitTimeline();
-        }
-
-        private void MergeSelectedTimelineAction()
-        {
-            TimelineAction action = SelectedTimelineAction();
-            if (action == null) return;
-            List<TimelineAction> ordered = new List<TimelineAction>(_timelineEditor.Document.actions);
-            ordered.Sort(TimelineDocument.CompareActions);
-            int index = ordered.FindIndex(a => a.id == action.id);
-            if (index >= 0 && index + 1 < ordered.Count && TimelineEditorState.CanMerge(action, ordered[index + 1]))
-            { _timelineEditor.Merge(action.id, ordered[index + 1].id); CommitTimeline(); }
-        }
-
-        private void DrawInspectorPanel()
-        {
-            GUILayout.BeginVertical(_panelStyle, GUILayout.Width(330f), GUILayout.ExpandHeight(true));
-            GUILayout.Label("INSPECTOR", _headerStyle);
-            if (_viewingResults || _viewingCheckpoints || _viewingSettings)
-            {
-                GUILayout.Label("Select a route to inspect it in the browser studio.", _labelStyle);
-                GUILayout.EndVertical();
-                return;
-            }
-            if (_viewingRecordings)
-            {
-                GUILayout.Label("Raw samples are preserved on disk. CREATE ROUTE copies the semantic actions, so the recording remains unchanged.", _labelStyle);
-                GUILayout.Space(12f);
-                GUILayout.Label("F8 always stops recording or replay, including while this window is open.", _labelStyle);
-                GUILayout.EndVertical();
-                return;
-            }
-            if (_editingBundles) DrawDefinitionName(SelectedBundle); else DrawMacroHeader();
-
-            List<MacroStep> steps = CurrentSteps;
-            if (steps == null || _selectedStep < 0 || _selectedStep >= steps.Count)
-            {
-                GUILayout.Space(20f);
-                GUILayout.Label("Select an action in the timeline to edit it.", _labelStyle);
-                GUILayout.FlexibleSpace();
-                DrawDeleteDefinition();
-                GUILayout.EndVertical();
-                return;
-            }
-
-            MacroStep step = steps[_selectedStep];
-            GUILayout.Space(10f);
-            GUILayout.Label("ACTION NAME", _headerStyle);
-            string label = GUILayout.TextField(step.label, _fieldStyle, GUILayout.Height(30f));
-            if (label != step.label) { step.label = label; SaveLibrary(); }
-            GUILayout.Space(10f);
-            GUILayout.Label("ACTION TYPE", _headerStyle);
-            DrawTypeButtons(step);
-
-            if (step.type == MacroStepType.Bundle)
-                DrawBundlePicker(step);
-            else
-                DrawActionFields(step);
-
-            GUILayout.FlexibleSpace();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button(step.enabled ? "DISABLE" : "ENABLE", _buttonStyle, GUILayout.Height(32f)))
-            {
-                TimelineAction action = _editingBundles ? null : SelectedTimelineAction();
-                if (action != null) { _timelineEditor.SetEnabled(action.id, !action.enabled); CommitTimeline(); }
-                else { step.enabled = !step.enabled; SaveLibrary(); }
-            }
-            if (GUILayout.Button("DUPLICATE", _buttonStyle, GUILayout.Height(32f)))
-            {
-                TimelineAction action = _editingBundles ? null : SelectedTimelineAction();
-                if (action != null) { _timelineEditor.Duplicate(action.id); CommitTimeline(); }
-                else { MacroStep copy = step.Copy(); steps.Insert(_selectedStep + 1, copy); _selectedStep++; SaveLibrary(); }
-            }
-            GUILayout.EndHorizontal();
-            if (!_editingBundles)
-            {
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button("SPLIT HALF", _buttonStyle, GUILayout.Height(30f))) SplitSelectedTimelineAction();
-                if (GUILayout.Button("MERGE NEXT", _buttonStyle, GUILayout.Height(30f))) MergeSelectedTimelineAction();
-                GUILayout.EndHorizontal();
-            }
-            if (GUILayout.Button("DELETE ACTION", _dangerStyle, GUILayout.Height(36f)))
-            {
-                TimelineAction action = _editingBundles ? null : SelectedTimelineAction();
-                if (action != null) { _timelineEditor.Delete(action.id); CommitTimeline(); }
-                else { steps.RemoveAt(_selectedStep); SaveLibrary(); }
-                _selectedStep = Mathf.Clamp(_selectedStep, 0, steps.Count - 1);
-            }
-            GUILayout.EndVertical();
-        }
-
-        private void DrawMacroHeader()
-        {
-            MacroDefinition macro = SelectedMacro;
-            if (macro == null) return;
-            string name = GUILayout.TextField(macro.name, _fieldStyle, GUILayout.Height(32f));
-            if (name != macro.name) { macro.name = name; SaveLibrary(); }
-            GUILayout.Space(8f);
-            GUILayout.Label("HOTKEY", _headerStyle);
-            string bindText = _bindingMacro == macro ? "PRESS A KEY…  (ESC CANCELS)" : HotkeyText(macro);
-            if (GUILayout.Button(bindText, _bindingMacro == macro ? _selectedStyle : _buttonStyle, GUILayout.Height(38f))) _bindingMacro = macro;
-            if (!string.IsNullOrEmpty(macro.hotkey) && GUILayout.Button("CLEAR HOTKEY", _buttonStyle))
-            { macro.hotkey = ""; macro.hotkeyCtrl = macro.hotkeyShift = macro.hotkeyAlt = false; SaveLibrary(); }
-        }
-
-        private void DrawDefinitionName(BundleDefinition bundle)
-        {
-            if (bundle == null) return;
-            string name = GUILayout.TextField(bundle.name, _fieldStyle, GUILayout.Height(32f));
-            if (name != bundle.name) { RenameBundle(bundle, name); SaveLibrary(); }
-        }
-
-        private void DrawTypeButtons(MacroStep step)
-        {
-            MacroStepType[] types = new[] { MacroStepType.Move, MacroStepType.Jump, MacroStepType.WallJump, MacroStepType.Dash, MacroStepType.Wait, MacroStepType.Bundle };
-            foreach (MacroStepType type in types)
-                if (GUILayout.Button(TypeName(type), step.type == type ? _selectedStyle : _buttonStyle, GUILayout.Height(29f))) { step.type = type; SaveLibrary(); }
-        }
-
-        private void DrawActionFields(MacroStep step)
-        {
-            GUILayout.Space(10f);
-            GUILayout.Label("END CONDITION", _headerStyle);
-            if (GUILayout.Button(EndConditionText(step.endCondition), _buttonStyle, GUILayout.Height(32f)))
-            { step.endCondition = NextEnum(step.endCondition); SaveLibrary(); }
-            if (step.endCondition == ActionEndCondition.Duration || step.endCondition == ActionEndCondition.FixedTicks)
-            {
-                GUILayout.Label(step.type == MacroStepType.WallJump ? "JUMP HOLD (PHYSICS FRAMES)" : "DURATION (PHYSICS FRAMES)", _headerStyle);
-                DrawIntField(value => { step.durationTicks = Mathf.Max(1, value); step.endCondition = ActionEndCondition.FixedTicks; }, step.durationTicks);
-            }
-            else
-            {
-                if (ConditionUsesValue(step.endCondition))
-                {
-                    GUILayout.Label("THRESHOLD", _headerStyle);
-                    DrawFloatField(value => step.conditionValue = value, step.conditionValue);
-                }
-                GUILayout.Label("TIMEOUT (PHYSICS FRAMES)", _headerStyle);
-                DrawIntField(value => step.timeoutTicks = value, step.timeoutTicks);
-                if (GUILayout.Button("ON TIMEOUT: " + step.timeoutPolicy.ToString().ToUpperInvariant(), _buttonStyle, GUILayout.Height(30f)))
-                { step.timeoutPolicy = NextEnum(step.timeoutPolicy); SaveLibrary(); }
-            }
-            if (step.type == MacroStepType.WallJump)
-            {
-                GUILayout.Label("WALL SEARCH TIMEOUT (PHYSICS FRAMES)", _headerStyle);
-                DrawIntField(value => step.timeoutTicks = Mathf.Max(1, value), step.timeoutTicks);
-            }
-            GUILayout.Space(10f);
-            GUILayout.Label(step.type == MacroStepType.WallJump ? "JUMP DIRECTION" : "DIRECTION", _headerStyle);
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("← LEFT", step.direction == -1 ? _selectedStyle : _buttonStyle, GUILayout.Height(36f))) { step.direction = -1; SaveLibrary(); }
-            if (GUILayout.Button("• NONE", step.direction == 0 ? _selectedStyle : _buttonStyle, GUILayout.Height(36f))) { step.direction = 0; SaveLibrary(); }
-            if (GUILayout.Button("RIGHT →", step.direction == 1 ? _selectedStyle : _buttonStyle, GUILayout.Height(36f))) { step.direction = 1; SaveLibrary(); }
-            GUILayout.EndHorizontal();
-            if (step.type == MacroStepType.WallJump)
-                GUILayout.Label("Approach direction is automatic. The jump fires only when the game reports wall contact or coyote time.", _labelStyle);
-            if (_editingBundles && GUILayout.Button("EXPOSE DURATION PARAMETER", _buttonStyle, GUILayout.Height(30f))) ExposeDurationParameter(step);
-        }
-
-        private void DrawBundlePicker(MacroStep step)
-        {
-            GUILayout.Space(10f);
-            GUILayout.Label("REUSABLE BUNDLE", _headerStyle);
-            foreach (BundleDefinition bundle in _library.bundles)
-                if (GUILayout.Button(bundle.name, step.bundleName == bundle.name ? _selectedStyle : _buttonStyle, GUILayout.Height(34f)))
-                { step.bundleId = bundle.id; step.bundleName = bundle.name; step.label = bundle.name; SaveLibrary(); }
-            BundleDefinition selected = _library.bundles.Find(b => b.id == step.bundleId || b.name == step.bundleName);
-            if (selected != null && selected.parameters != null)
-            {
-                foreach (BundleParameterDefinition parameter in selected.parameters)
-                {
-                    string value;
-                    if (step.bundleOverrides == null) step.bundleOverrides = new Dictionary<string, string>();
-                    if (!step.bundleOverrides.TryGetValue(parameter.name, out value)) value = parameter.defaultValue;
-                    GUILayout.Label(parameter.name.ToUpperInvariant(), _headerStyle);
-                    string changed = GUILayout.TextField(value ?? "", _fieldStyle, GUILayout.Height(28f));
-                    if (changed != value) { step.bundleOverrides[parameter.name] = changed; SaveLibrary(); }
-                }
-            }
-        }
-
-        private void ExposeDurationParameter(MacroStep step)
-        {
-            BundleDefinition bundle = SelectedBundle;
-            if (bundle == null) return;
-            string name = "duration" + (_selectedStep + 1) + "Frames";
-            if (bundle.parameters.Exists(p => p.name == name)) return;
-            bundle.parameters.Add(new BundleParameterDefinition { name = name, type = BundleParameterType.Integer, defaultValue = step.durationTicks.ToString() });
-            EnsureBundleTemplates(bundle);
-            if (_selectedStep >= 0 && _selectedStep < bundle.actions.Count)
-                bundle.actions[_selectedStep].bindings.Add(new BundleParameterBinding { target = "durationTicks", expression = "$" + name });
-            bundle.version++;
-            SaveLibrary();
-        }
-
-        private void EnsureBundleTemplates(BundleDefinition bundle)
-        {
-            if (bundle.actions == null) bundle.actions = new List<BundleActionTemplate>();
-            if (bundle.actions.Count == bundle.steps.Count) return;
-            bundle.actions.Clear();
-            foreach (MacroStep item in bundle.steps)
-            {
-                BundleActionTemplate template = new BundleActionTemplate { step = item.Copy() };
-                if (item.type == MacroStepType.Bundle)
-                {
-                    BundleDefinition nested = _library.bundles.Find(b => b.id == item.bundleId || b.name == item.bundleName);
-                    template.nestedBundleId = nested == null ? item.bundleId : nested.id;
-                }
-                bundle.actions.Add(template);
-            }
-        }
-
-        private void DrawIntField(Action<int> setter, int value)
-        {
-            string text = GUILayout.TextField(value.ToString(), _fieldStyle, GUILayout.Height(30f));
-            int parsed;
-            if (int.TryParse(text, out parsed) && parsed >= 0 && parsed != value) { setter(parsed); SaveLibrary(); }
-        }
-
-        private void DrawFloatField(Action<float> setter, float value)
-        {
-            string text = GUILayout.TextField(value.ToString("0.###"), _fieldStyle, GUILayout.Height(30f));
-            float parsed;
-            if (float.TryParse(text, out parsed) && !Mathf.Approximately(parsed, value)) { setter(parsed); SaveLibrary(); }
-        }
-
-        private static T NextEnum<T>(T value) where T : struct
-        {
-            Array values = Enum.GetValues(typeof(T));
-            int index = Array.IndexOf(values, value);
-            return (T)values.GetValue((index + 1) % values.Length);
-        }
-
-        private static bool ConditionUsesValue(ActionEndCondition condition)
-        {
-            return condition == ActionEndCondition.VelocityYAbove || condition == ActionEndCondition.VelocityYBelow
-                || condition == ActionEndCondition.PositionXAbove || condition == ActionEndCondition.PositionXBelow
-                || condition == ActionEndCondition.PositionYAbove || condition == ActionEndCondition.PositionYBelow;
-        }
-
-        private static string EndConditionText(ActionEndCondition condition)
-        {
-            return condition.ToString().ToUpperInvariant() + "  (CLICK TO CHANGE)";
-        }
-
-        private void DrawDeleteDefinition()
-        {
-            if (GUILayout.Button(_editingBundles ? "DELETE BUNDLE" : "DELETE ROUTE", _dangerStyle, GUILayout.Height(36f)))
-            {
-                if (_editingBundles && SelectedBundle != null)
-                {
-                    string name = SelectedBundle.name;
-                    string bundleId = SelectedBundle.id;
-                    _library.bundles.Remove(SelectedBundle);
-                    foreach (MacroDefinition macro in _library.macros)
-                        macro.steps.RemoveAll(s => s.type == MacroStepType.Bundle && (s.bundleId == bundleId || s.bundleName == name));
-                    foreach (BundleDefinition parent in _library.bundles)
-                        parent.steps.RemoveAll(s => s.type == MacroStepType.Bundle && (s.bundleId == bundleId || s.bundleName == name));
-                }
-                else if (SelectedMacro != null) _library.macros.Remove(SelectedMacro);
-                ClampSelections(); _selectedStep = -1; SaveLibrary();
-            }
-        }
-
-        private void AddDefinition()
-        {
-            if (_editingBundles) { _library.bundles.Add(new BundleDefinition()); _library.selectedBundleIndex = _library.bundles.Count - 1; }
-            else { _library.macros.Add(new MacroDefinition()); _library.selectedIndex = _library.macros.Count - 1; }
-            _selectedStep = -1; SaveLibrary();
-        }
-
-        private void AddStep(MacroStepType type)
-        {
-            List<MacroStep> steps = CurrentSteps;
-            if (steps == null) return;
-            MacroStep step = new MacroStep { type = type, label = TypeName(type) };
-            if (type == MacroStepType.WallJump) { step.durationTicks = 20; step.timeoutTicks = 60; step.direction = 1; }
-            if (type == MacroStepType.Bundle && _library.bundles.Count > 0) { step.bundleId = _library.bundles[0].id; step.bundleName = _library.bundles[0].name; step.label = step.bundleName; }
-            steps.Add(step); _selectedStep = steps.Count - 1; SaveLibrary();
-        }
-
         private void DuplicateMacro()
         {
             MacroDefinition copy = JsonConvert.DeserializeObject<MacroDefinition>(JsonConvert.SerializeObject(SelectedMacro));
@@ -1983,20 +1318,15 @@ namespace IGTAPTasMod
             if (_engine.IsRunning) _engine.Abort("Recording started");
             string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
             _recorder.Start(name);
-            _showEditor = false;
             Logger.LogInfo("Fixed-tick recording started: " + name);
         }
 
-        private void StopRecording(string reason, bool showEditor = false)
+        private void StopRecording(string reason)
         {
             RecordingDefinition recording = _recorder.Stop(reason);
             if (recording == null) return;
             _recordings.Insert(0, recording);
-            _selectedRecordingIndex = 0;
             SaveRecording(recording);
-            _viewingRecordings = true;
-            _editingBundles = false;
-            _showEditor = showEditor;
             Logger.LogInfo("Recording saved: " + recording.samples.Count + " physics frames, " + recording.semanticSteps.Count + " actions");
         }
 
@@ -2007,16 +1337,12 @@ namespace IGTAPTasMod
                 macro.steps.Add(step);
             _library.macros.Add(macro);
             _library.selectedIndex = _library.macros.Count - 1;
-            _viewingRecordings = false;
-            _editingBundles = false;
-            _selectedStep = -1;
             SaveLibrary();
         }
 
         private void DeleteRecording(RecordingDefinition recording)
         {
             _recordings.Remove(recording);
-            _selectedRecordingIndex = Mathf.Clamp(_selectedRecordingIndex, 0, Mathf.Max(0, _recordings.Count - 1));
             string path = Path.Combine(_recordingsPath, SafeId(recording.id) + ".json");
             try { if (File.Exists(path)) File.Delete(path); }
             catch (Exception ex) { Logger.LogError("Could not delete recording: " + ex.Message); }
@@ -2034,7 +1360,6 @@ namespace IGTAPTasMod
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
             _pendingReplayFirstJumpPositionOffsetX = firstJumpPositionOffsetX;
             _pendingReplayCourseStartPositionOffsetX = courseStartPositionOffsetX;
-            _showEditor = false;
         }
 
         private void SaveAttemptResult(bool success, string reason, int action, long ticks)
@@ -2071,47 +1396,13 @@ namespace IGTAPTasMod
             EndDeterministicPhysics();
         }
 
-        private void RenameBundle(BundleDefinition bundle, string newName)
-        {
-            string old = bundle.name; bundle.name = newName;
-            foreach (MacroDefinition macro in _library.macros)
-                foreach (MacroStep step in macro.steps)
-                    if (step.type == MacroStepType.Bundle && step.bundleName == old) { step.bundleName = newName; step.label = newName; }
-        }
-
-        private List<MacroStep> CurrentSteps { get { return _viewingRecordings ? null : _editingBundles ? (SelectedBundle == null ? null : SelectedBundle.steps) : (SelectedMacro == null ? null : SelectedMacro.steps); } }
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
-        private BundleDefinition SelectedBundle { get { ClampSelections(); return _library.bundles.Count == 0 ? null : _library.bundles[_library.selectedBundleIndex]; } }
-        private RecordingDefinition SelectedRecording { get { return _recordings.Count == 0 ? null : _recordings[Mathf.Clamp(_selectedRecordingIndex, 0, _recordings.Count - 1)]; } }
-        private bool IsRouteView { get { return !_editingBundles && !_viewingRecordings && !_viewingResults && !_viewingCheckpoints && !_viewingSettings; } }
-
-        private void SetView(string view)
-        {
-            _editingBundles = view == "bundles";
-            _viewingRecordings = view == "recordings";
-            _viewingResults = view == "results";
-            _viewingCheckpoints = view == "checkpoints";
-            _viewingSettings = view == "settings";
-            _settings.selectedView = view;
-            if (view != "optimizer") _selectedStep = -1;
-        }
-
         private void ClampSelections()
         {
             _library.selectedIndex = Mathf.Clamp(_library.selectedIndex, 0, Mathf.Max(0, _library.macros.Count - 1));
-            _library.selectedBundleIndex = Mathf.Clamp(_library.selectedBundleIndex, 0, Mathf.Max(0, _library.bundles.Count - 1));
         }
 
-        private static void Swap(List<MacroStep> steps, int a, int b) { MacroStep t = steps[a]; steps[a] = steps[b]; steps[b] = t; Instance.SaveLibrary(); }
         private static string TypeName(MacroStepType type) { return type == MacroStepType.WallJump ? "WALLJUMP" : type.ToString().ToUpperInvariant(); }
-        private static string DirectionText(int d) { return d < 0 ? "left" : d > 0 ? "right" : "neutral"; }
-        private static string Summary(MacroStep s)
-        {
-            string confidence = s.inferenceConfidence == InferenceConfidence.NotInferred ? "" : "  •  " + s.inferenceConfidence.ToString().ToUpperInvariant() + " CONFIDENCE";
-            if (s.type == MacroStepType.Bundle) return "BUNDLE  •  " + (string.IsNullOrEmpty(s.bundleName) ? "not selected" : s.bundleName);
-            if (s.type == MacroStepType.WallJump) return "WALLJUMP " + DirectionText(s.direction).ToUpperInvariant() + "  •  hold " + s.durationTicks + " frames  •  wall-aware" + confidence;
-            return TypeName(s.type) + " " + DirectionText(s.direction).ToUpperInvariant() + "  •  " + s.durationTicks + " frames" + confidence;
-        }
         private static string HotkeyText(MacroDefinition m)
         {
             if (string.IsNullOrEmpty(m.hotkey)) return "No hotkey";
@@ -2160,16 +1451,10 @@ namespace IGTAPTasMod
                 Quarantine(_settingsPath);
                 _settings = new StudioSettings();
             }
-            _window = new Rect(_settings.windowX, _settings.windowY, _settings.windowWidth, _settings.windowHeight);
-            SetView(string.IsNullOrEmpty(_settings.selectedView) ? "routes" : _settings.selectedView);
         }
 
         private void SaveSettings()
         {
-            _settings.windowX = _window.x;
-            _settings.windowY = _window.y;
-            _settings.windowWidth = _window.width;
-            _settings.windowHeight = _window.height;
             WriteJsonAtomic(_settingsPath, _settings, true);
         }
 
@@ -2467,8 +1752,6 @@ namespace IGTAPTasMod
                 int index = _library.macros.FindIndex(r => r.id == id);
                 if (index < 0) throw new InvalidOperationException("Route not found.");
                 _library.selectedIndex = index;
-                _timelineEditor = null;
-                _timelineRouteId = null;
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -2485,8 +1768,6 @@ namespace IGTAPTasMod
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
                 DuplicateMacro();
-                _timelineEditor = null;
-                _timelineRouteId = null;
                 return new { ok = true, routeId = SelectedMacro.id };
             }
             if (request.Path == "/api/routes/rename")
@@ -2520,8 +1801,6 @@ namespace IGTAPTasMod
                 _library.macros.RemoveAt(index);
                 _library.selectedIndex = Mathf.Clamp(_library.selectedIndex > index ? _library.selectedIndex - 1 : _library.selectedIndex,
                     0, Mathf.Max(0, _library.macros.Count - 1));
-                _timelineEditor = null;
-                _timelineRouteId = null;
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -2613,7 +1892,6 @@ namespace IGTAPTasMod
                 route.steps[index] = first;
                 route.steps.Insert(index + 1, second);
                 route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
-                _timelineEditor = null;
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -2649,7 +1927,6 @@ namespace IGTAPTasMod
                 if (body["rawDashHeld"] != null) action.rawDashHeld = (bool)body["rawDashHeld"];
                 if (body["enabled"] != null) action.enabled = (bool)body["enabled"];
                 route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
-                _timelineEditor = null;
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -2784,8 +2061,6 @@ namespace IGTAPTasMod
             candidate.timeline = TimelineDocument.FromSequentialSteps(candidate.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(candidate);
             _library.selectedIndex = _library.macros.Count - 1;
-            _timelineEditor = null;
-            _timelineRouteId = null;
             SaveLibrary();
             return new { ok = true, routeId = candidate.id, name = candidate.name, actionCount = candidate.steps.Count };
         }
@@ -2862,8 +2137,6 @@ namespace IGTAPTasMod
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(route);
             _library.selectedIndex = _library.macros.Count - 1;
-            _timelineEditor = null;
-            _timelineRouteId = null;
             SaveLibrary();
             return new { ok = true, routeId = route.id, name = route.name, actionCount = route.steps.Count };
         }
@@ -2992,52 +2265,6 @@ namespace IGTAPTasMod
                 MethodInfo toggle = AccessTools.Method(pauseMenu.GetType(), "menuButtonPressed");
                 if (toggle != null) toggle.Invoke(pauseMenu, null);
             }
-        }
-
-        private void EnsureStyles()
-        {
-            if (_windowStyle != null) return;
-            Color navy = new Color(0.025f, 0.075f, 0.16f, 1f), panel = new Color(0.04f, 0.13f, 0.27f, 1f);
-            Color blue = new Color(0.05f, 0.36f, 0.78f, 1f), bright = new Color(0.08f, 0.55f, 1f, 1f);
-            Color field = new Color(0.018f, 0.06f, 0.13f, 1f), danger = new Color(0.68f, 0.10f, 0.16f, 1f);
-            _solidNavy = Texture(navy);
-            _windowStyle = Style(GUI.skin.window, navy, Color.white, 16, TextAnchor.UpperCenter);
-            _windowStyle.padding = new RectOffset(14, 14, 34, 12);
-            _panelStyle = Style(GUI.skin.box, panel, Color.white, 13, TextAnchor.MiddleLeft);
-            _panelStyle.padding = new RectOffset(10, 10, 10, 10);
-            _headerStyle = new GUIStyle(GUI.skin.label) { normal = { textColor = new Color(0.45f, 0.78f, 1f) }, fontSize = 13, fontStyle = FontStyle.Bold };
-            _labelStyle = new GUIStyle(GUI.skin.label) { normal = { textColor = Color.white }, fontSize = 13, wordWrap = true };
-            _buttonStyle = Style(GUI.skin.button, new Color(0.07f, 0.20f, 0.39f, 1f), Color.white, 12, TextAnchor.MiddleCenter);
-            _selectedStyle = Style(GUI.skin.button, blue, Color.white, 12, TextAnchor.MiddleCenter);
-            _runStyle = Style(GUI.skin.button, bright, Color.white, 13, TextAnchor.MiddleCenter);
-            _dangerStyle = Style(GUI.skin.button, danger, Color.white, 12, TextAnchor.MiddleCenter);
-            _fieldStyle = Style(GUI.skin.textField, field, Color.white, 13, TextAnchor.MiddleLeft);
-            _fieldStyle.padding = new RectOffset(8, 8, 4, 4);
-            _stepStyle = Style(GUI.skin.button, new Color(0.035f, 0.105f, 0.22f, 1f), Color.white, 13, TextAnchor.MiddleLeft);
-            _stepStyle.padding = new RectOffset(12, 8, 5, 5);
-            _selectedStepStyle = Style(_stepStyle, blue, Color.white, 13, TextAnchor.MiddleLeft);
-            _tabStyle = Style(GUI.skin.button, new Color(0.025f, 0.09f, 0.19f, 1f), Color.white, 12, TextAnchor.MiddleCenter);
-            _activeTabStyle = Style(GUI.skin.button, bright, Color.white, 12, TextAnchor.MiddleCenter);
-        }
-
-        private static GUIStyle Style(GUIStyle source, Color background, Color text, int size, TextAnchor alignment)
-        {
-            GUIStyle style = new GUIStyle(source) { fontSize = size, alignment = alignment };
-            Texture2D texture = Texture(background);
-            style.border = new RectOffset(0, 0, 0, 0);
-            style.normal.background = texture; style.hover.background = texture; style.active.background = texture;
-            style.focused.background = texture; style.normal.textColor = text; style.hover.textColor = text;
-            style.active.textColor = text; style.focused.textColor = text;
-            return style;
-        }
-
-        private static Texture2D Texture(Color color)
-        {
-            Texture2D texture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-            texture.hideFlags = HideFlags.HideAndDontSave;
-            texture.SetPixel(0, 0, color);
-            texture.Apply(false, true);
-            return texture;
         }
 
         private void OnDestroy()

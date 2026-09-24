@@ -20,9 +20,7 @@ between the simulator and the game. Fixing each mismatch is how progress gets ma
 | `simulator/OfflineSuite.cs` (`suite`) | The optimizer the studio button runs. Repeated passes: route-shape changes (drop a jump / redirect a block, then retime nearby blocks) → timing beam (width 64) → restart from the new best until a pass stops improving. Candidates are rejected if they touch spikes (2px margin) or break when the start shifts ±1px. |
 | `simulator/Program.cs` (`FastSimulator.Step`) | The physics model. |
 | `simulator/RayWorld.cs` | Movement's raycasts cast against the exported colliders. **Exact: 0 errors across 76,910 oracle ticks × 13 rays** (`ray-validate`). Used for grounded/walk-off, airborne landing, and step-up decisions. |
-| `tools/fidelity-sweep.py` | The regression suite. Replays every recorded game run (studio results + oracle corpus) through the simulator and reports where each first diverges. **Run it after every simulator change.** Current: 45 runs, 9/9 exact finish ticks, every death predicted as a failure. |
-| `tools/oracle.py` | Runs routes on the oracle game instance (port 17427). `first_split()` / `trace()` compare the simulator and the game tick by tick. Every run is appended to `planning/fidelity-routes/oracle-corpus.json`. |
-| `tools/search-loop.py` | The full closed loop: search → oracle-test the top distinct candidates → adopt only real-game wins → repeat → import the winner into the studio. **Written but not run end-to-end yet.** |
+| `tools/fidelity-sweep.py` | The regression suite. Replays every recorded game run (studio results + oracle corpus) through the simulator and reports where each first diverges. **Run it after every simulator change.** NOTE: calls `audit-reference`, whose backend (`SolverAudit.cs`) was never committed; restore it before the sweep can run. |
 | `planning/fidelity-routes/` | Archive of every route version seen, plus the oracle corpus, so deleting routes in the studio doesn't shrink the test set. |
 
 Debug commands (`IGTAP.FastSim.exe`):
@@ -55,10 +53,9 @@ From the last oracle batch (`oracle-A4`; all 8 candidates died):
 The underlying cause of most of these: `Step` runs in a different order from the game (gravity → detection → input → integrate, with projections to compensate). The robust fix is to rewrite `Step` in the game's `FixedUpdate` order (see `scratch_movement.txt` 833–1160 and `getPlayerControlledInput` 1586+), using `RayWorld` for all probes. Validate it with `fidelity-sweep.py` and a one-tick check against the oracle diagnostics (they record the full state every tick).
 
 ## Next steps
-1. Fix open mismatches 1 and 2 using the method: `oracle.first_split()` → `route-trace` → `ray-probe` / game code → minimal fix → sweep (no regressions allowed).
+1. Fix open mismatches 1 and 2 using the method: `route-trace`  `ray-probe` / game code  minimal fix  sweep (no regressions allowed). `oracle.py` and `search-loop.py` need to be rewritten first (their sources were never committed).
 2. Improve shortlist diversity. `DistinctBy(ShapeChange)` treats hop variants as distinct, so the oracle batch was 8 copies of one idea. Group candidates by structural change and ignore hop details.
-3. Run `python tools/search-loop.py "2_WJ SIM2 A 835 (16.70s pred)" <A's latest result json>`. It stops on its own and imports any confirmed win.
-4. Speed: a 2M-simulation search takes about 9 minutes now (ray casts). Adding a cache or using a smaller budget per round in the loop would help.
+3. Speed: a 2M-simulation search takes about 9 minutes now (ray casts). Adding a cache or using a smaller budget per round in the loop would help.
 
 ## Housekeeping
 - The game plugin and the `IGTAPFastSim` copy are built and deployed from the current source (the studio button uses the new optimizer). Restart the game if the plugin DLL changes.
