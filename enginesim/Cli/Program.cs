@@ -324,6 +324,8 @@ namespace IGTAP.EngineSim.Cli
                         d.dash = true;
                         if (rng.NextDouble() < .5) d.dashJump = rng.Next(1, 11);
                         inputs[at] = d;
+                        int j = Math.Min(inputs.Count - 1, at + rng.Next(0, 6));
+                        if (d.dashJump == 0 && rng.NextDouble() < .5) { InputTick k = inputs[j]; k.press = k.held = true; inputs[j] = k; }
                     }
                 }
                 return inputs;
