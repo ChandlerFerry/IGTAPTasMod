@@ -45,10 +45,6 @@ namespace IGTAPTasMod
         private int _stableTicks;
         private bool _hasSynchronizationPosition;
         private Vector2 _synchronizationPosition;
-        private float? _firstJumpPositionOffsetX;
-        private bool _firstJumpPositionAdjusted;
-        private float _courseStartPositionOffsetX;
-        private bool _courseStartPositionAdjusted;
         private int _preRollTicksRemaining;
         private int _preRollTicksTotal;
         private long _runTicks;
@@ -74,15 +70,13 @@ namespace IGTAPTasMod
         public int CourseStartUnityFrame { get { return _courseStartUnityFrame; } }
         public Vector2 CourseStartPosition { get { return _courseStartPosition; } }
         public string EarlyTrace { get { return string.Join(";", _earlyTrace.ToArray()); } }
-        public float FirstJumpPositionOffsetX { get { return _firstJumpPositionOffsetX.GetValueOrDefault(); } }
-        public float CourseStartPositionOffsetX { get { return _courseStartPositionOffsetX; } }
         public event Action<bool, string, int, long> AttemptEnded;
         // Solver runs happen dozens of times a second; their start/end lines would flood the log.
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
 
         public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
-            int startDelayTicks = 0, Vector2? synchronizationPosition = null, float? firstJumpPositionOffsetX = null)
+            int startDelayTicks = 0, Vector2? synchronizationPosition = null)
         {
             if (macro == null || macro.steps == null || macro.steps.Count == 0)
             {
@@ -103,10 +97,6 @@ namespace IGTAPTasMod
             _stableTicks = 0;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
             _synchronizationPosition = synchronizationPosition.GetValueOrDefault();
-            _firstJumpPositionOffsetX = firstJumpPositionOffsetX;
-            _firstJumpPositionAdjusted = false;
-            _courseStartPositionOffsetX = 0f;
-            _courseStartPositionAdjusted = false;
             _preRollTicksRemaining = Mathf.Max(0, startDelayTicks);
             _preRollTicksTotal = _preRollTicksRemaining;
             _runTicks = 0;
@@ -184,25 +174,7 @@ namespace IGTAPTasMod
             if (movement != null) _courseStartPosition = movement.transform.position;
         }
 
-        public void SetCourseStartPositionOffset(float offsetX)
-        {
-            _courseStartPositionOffsetX = offsetX;
-        }
 
-        public void ApplyCourseStartPositionOffset(Movement movement)
-        {
-            if (_courseStartPositionAdjusted || movement == null || Mathf.Approximately(_courseStartPositionOffsetX, 0f)) return;
-            _courseStartPositionAdjusted = true;
-            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
-            Vector2 position = body == null ? (Vector2)movement.transform.position : body.position;
-            position.x += _courseStartPositionOffsetX;
-            Vector3 transformPosition = movement.transform.position;
-            transformPosition.x = position.x;
-            transformPosition.y = position.y;
-            movement.transform.position = transformPosition;
-            if (body != null) body.position = position;
-            Physics2D.SyncTransforms();
-        }
 
         public void FixedTick(Movement movement)
         {
@@ -301,7 +273,6 @@ namespace IGTAPTasMod
             {
                 if (step.rawJumpPressed)
                 {
-                    ApplyFirstJumpPositionOffset(movement);
                     PressJump(movement);
                 }
                 if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld))
@@ -335,20 +306,6 @@ namespace IGTAPTasMod
                 ? step.wallJumpHoldDirection : step.direction;
         }
 
-        private void ApplyFirstJumpPositionOffset(Movement movement)
-        {
-            if (_firstJumpPositionAdjusted || !_firstJumpPositionOffsetX.HasValue || movement == null) return;
-            _firstJumpPositionAdjusted = true;
-            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
-            Vector2 position = body == null ? (Vector2)movement.transform.position : body.position;
-            position.x += _firstJumpPositionOffsetX.Value;
-            Vector3 transformPosition = movement.transform.position;
-            transformPosition.x = position.x;
-            transformPosition.y = position.y;
-            movement.transform.position = transformPosition;
-            if (body != null) body.position = position;
-            Physics2D.SyncTransforms();
-        }
 
         private void Advance(Movement movement, bool releaseJump)
         {

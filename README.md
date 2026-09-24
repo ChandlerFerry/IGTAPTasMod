@@ -61,10 +61,32 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 - Buffers: jump press 0.12 s (0.2 s mid-dash), dash press 0.12 s, jump cut after release 0.26 s.
 - A clip into a wall corner can make the foot raycast see ground; with a buffered press that fires a full ground jump
   (looks like a wall jump). Legit only with a real press inside the buffer window.
+- Spikes (`spikeScript`): the first overlap tick is Enter; each later tick is a Stay that adds 1 to `counter`. Death at
+  `counter > graceFrames` (1 on the level's spikes), or at once while dashing (`killPlayerOnDash`). So a non-dashing
+  graze of up to two ticks is survivable in the real game; routes may use it (user decision 2026-09-24).
+  `IGTAP.EngineSim path` prints every spike Stay along a route.
 - Superbounce: dash into a wall, jump 0–5 ticks later (inside `dashBoostMax` = 6 frames) → `SpecialWallJump(.6, 1,
   up * dashBoostUpwards = 410)`.
 - Real-time play has frame-timing variance (same route: 126/127/132 ticks); turbo is deterministic.
 - Decompiled game code for reference: `obj/Movement.decompiled.cs`, `obj/courseScript.decompiled.cs`.
+
+## What the plugin changes in the game
+
+Audited 2026-09-24. No game method's logic is replaced; the patches only read state, feed input, or skip saves.
+
+| Where | What it does | Why it's not a rule change |
+|---|---|---|
+| `Movement.getPlayerControlledInput` prefix | Sets `MoveAxis` and presses/releases jump and dash exactly like `Movement.Update` does for a real button (same buffer flags and expiry timers). | This is the controller. The game's own code then does all movement. |
+| `Movement.CheckForSuperJump` prefix | Presses jump on a chosen dash frame (dash-jump input). | Same press a player makes during a dash. |
+| `Movement.FixedUpdate` prefix/postfix | Starts queued runs; enforces a tick budget. | Bookkeeping only. |
+| `courseScript.startTracking` / `stopTracking`, `Movement.onDeath` | Read the course time and end the run. | Read-only; the game still does everything it normally does. |
+| `Saveloader.autosave` / `manualSave` | Skipped while a category's unlocks or a turbo run are applied (and in headless workers). | Keeps our settings out of your save; the game plays the same. |
+| Category unlocks | Solver runs and category playback set `wallJumpUnlocked`, `dashUnlocked`, `maxAirDashes`, `airDashesLeft` (`CategoryAbilities`) and restore them after. Off with DO NOT MODIFY CAPABILITIES. | Defines the category; these are the game's own progression values. |
+| Run start | Quick-restarts to the course start (the game's `respawn`) and waits standing still. | A player's quick reset. |
+| `Rigidbody2D.interpolation = None` during runs | Makes physics independent of render timing. | Changes how a render frame's pose feeds a jump nudge; see issue #1 (real-time check with interpolation on). |
+| Turbo only | Steps physics itself (`Physics2D.simulationMode = Script`), fires Movement's `Invoke` timers on the tick a ≥50 fps game would, doesn't wait out the 0.05 s dash freeze. | Verified: turbo results match real-time playback for every route. |
+
+Removed 2026-09-24: `/api/routes/run` position offsets (`firstJumpPositionOffsetX`, `courseStartPositionOffsetX`), which moved the player.
 
 ## Safety
 
