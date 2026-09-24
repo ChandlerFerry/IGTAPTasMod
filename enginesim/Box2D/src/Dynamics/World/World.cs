@@ -532,11 +532,13 @@ namespace Box2D
         // Find islands, integrate and solve constraints, solve position constraints
         private void Solve(b2TimeStep step)
         {
-            // Size the island for the worst case.
-            var island = new b2Island(m_bodyCount,
+            // Size the island for the worst case (reused across steps while it is big enough; only counts are read).
+            if (m_island == null || !m_island.Fits(m_bodyCount, m_contactManager.m_contactCount, m_jointCount, m_contactManager.m_contactListener))
+                m_island = new b2Island(m_bodyCount,
                                     m_contactManager.m_contactCount,
                                     m_jointCount,
                                     m_contactManager.m_contactListener);
+            b2Island island = m_island;
 
             // Clear all the island flags.
             for (b2Body b = m_bodyList; b != null; b = b.m_next)
@@ -558,7 +560,8 @@ namespace Box2D
             int stackSize = m_bodyCount;
             //Stack<b2Body> stack = new Stack<b2Body>(_bodyCount);
             //b2Body stack     = (b2Body**) m_stackAllocator.Allocate(stackSize * sizeof(b2Body*));
-            var stack = new b2Body[m_bodyCount];
+            if (m_islandStack == null || m_islandStack.Length < m_bodyCount) m_islandStack = new b2Body[m_bodyCount];
+            b2Body[] stack = m_islandStack;
             for (b2Body seed = m_bodyList; seed != null; seed = seed.m_next)
             {
                 if (seed.HasFlag(b2BodyFlags.b2Island))
@@ -720,8 +723,12 @@ namespace Box2D
 
         private void SolveTOI(in b2TimeStep step)
         {
-            var island = new b2Island(2 * b2Settings.maxTOIContacts, b2Settings.maxTOIContacts, 0,
+            // The TOI island's capacity is part of its logic (it stops adding at capacity): reuse only an exact match.
+            if (m_toiIsland == null || m_toiIsland.m_bodyCapacity != 2 * b2Settings.maxTOIContacts
+                || m_toiIsland.m_contactCapacity != b2Settings.maxTOIContacts || !m_toiIsland.Fits(0, 0, 0, m_contactManager.m_contactListener))
+                m_toiIsland = new b2Island(2 * b2Settings.maxTOIContacts, b2Settings.maxTOIContacts, 0,
                                     m_contactManager.m_contactListener);
+            b2Island island = m_toiIsland;
 
             if (m_stepComplete)
             {
@@ -1108,6 +1115,8 @@ namespace Box2D
 
         // The broadphase callbacks are bound once and read the caller's callback from a field, so queries don't allocate.
         private b2QueryCallback m_queryCallback;
+        private b2Island m_island, m_toiIsland;
+        private b2Body[] m_islandStack;
         private b2RayCastCallback m_rayCastCallback;
         private Func<int, bool> m_queryProxy;
         private Func<b2RayCastInput, int, float> m_rayCastProxy;
