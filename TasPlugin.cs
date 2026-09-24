@@ -43,8 +43,6 @@ namespace IGTAPTasMod
         private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
-        private float? _pendingReplayFirstJumpPositionOffsetX;
-        private float _pendingReplayCourseStartPositionOffsetX;
         private Rigidbody2D _deterministicBody;
         private RigidbodyInterpolation2D _savedBodyInterpolation;
         private bool _hasPreservedCourseResetPoint;
@@ -126,9 +124,13 @@ namespace IGTAPTasMod
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
+        // The game's saves run only when nothing of ours is applied to the player: never in headless oracle workers,
+        // and never while a category route's unlocks (playback) or a turbo/solver run are in effect, so those can't
+        // end up in the user's save. Live edits from /api/session/setup are the user's own and save normally.
         private static bool BlockSharedSave()
         {
-            return string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGTAP_ORACLE"));
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGTAP_ORACLE"))) return false;
+            return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active);
         }
 
         private static bool BeforeMovementFixedUpdate()
@@ -142,7 +144,7 @@ namespace IGTAPTasMod
                 Movement movement = FindWorldMovement();
                 Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, true, true, 0,
-                    movement == null ? (Vector2?)null : movement.transform.position, null);
+                    movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
             if (Instance._pendingOracleMacro != null && !Instance._engine.IsRunning)
@@ -154,28 +156,21 @@ namespace IGTAPTasMod
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
                 Instance._oracleStartPose = movement == null ? (Vector2?)null : (Vector2?)movement.transform.position;
                 Instance.BeginDeterministicPhysics(movement);
-                Instance._engine.Run(macro, Instance._library, true, true, 0, synchronizationPosition, null);
-                Instance._engine.SetCourseStartPositionOffset(0f);
+                Instance._engine.Run(macro, Instance._library, true, true, 0, synchronizationPosition);
                 return true;
             }
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning)
             {
                 MacroDefinition macro = Instance._pendingReplay;
                 int startDelayTicks = Instance._pendingReplayStartDelayTicks;
-                float? firstJumpPositionOffsetX = Instance._pendingReplayFirstJumpPositionOffsetX;
-                float courseStartPositionOffsetX = Instance._pendingReplayCourseStartPositionOffsetX;
                 Instance._pendingReplay = null;
                 Instance._pendingReplayStartDelayTicks = 0;
-                Instance._pendingReplayFirstJumpPositionOffsetX = null;
-                Instance._pendingReplayCourseStartPositionOffsetX = 0f;
                 bool checkpointRestored = Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
                 Instance.BeginDeterministicPhysics(movement);
-                Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks,
-                    synchronizationPosition, firstJumpPositionOffsetX);
-                Instance._engine.SetCourseStartPositionOffset(courseStartPositionOffsetX);
+                Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
             }
             return true;
         }
@@ -222,7 +217,6 @@ namespace IGTAPTasMod
                 Instance._pendingCourseTime = 0f;
                 Movement movement = FindWorldMovement();
                 Instance._engine.MarkCourseStart(movement);
-                Instance._engine.ApplyCourseStartPositionOffset(movement);
                 Instance._recorder.MarkCourseStart();
             }
             if (Instance != null && Instance._recorder.IsRecording) Log.LogInfo("Recording: authoritative course start detected");
@@ -862,7 +856,7 @@ namespace IGTAPTasMod
                         menuCount = menuCount,
                         movements = inventory,
                         colliderCount = colliderCount,
-                        notes = _bootstrapNotes,
+                        notes = _bootstrapNotes.ToArray(),
                         position = new { x = pos.x, y = pos.y },
                         expectedOrdinaryPose = new { x = 4783.434, y = 1866.225 },
                         poseMatches = Math.Abs(pos.x - 4783.434f) < 0.02 && Math.Abs(pos.y - 1866.225f) < 0.02,
@@ -1211,8 +1205,7 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError("Could not delete recording: " + ex.Message); }
         }
 
-        private void ReplaySelected(int startDelayTicks = 0, float? firstJumpPositionOffsetX = null,
-            float courseStartPositionOffsetX = 0f)
+        private void ReplaySelected(int startDelayTicks = 0)
         {
             MacroDefinition macro = SelectedMacro;
             if (macro == null) return;
@@ -1221,8 +1214,6 @@ namespace IGTAPTasMod
             // arming until the prefix of Movement's next full fixed tick.
             _pendingReplay = macro;
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
-            _pendingReplayFirstJumpPositionOffsetX = firstJumpPositionOffsetX;
-            _pendingReplayCourseStartPositionOffsetX = courseStartPositionOffsetX;
         }
 
         // A category route ("<course>_NO_WJ|WJ|WJDASH <time>") plays back with that category's unlocks, like the solver
@@ -1297,8 +1288,6 @@ namespace IGTAPTasMod
                 courseStartY = _engine.CourseStartPosition.y,
                 startStateFingerprint = _engine.StartStateFingerprint,
                 earlyTrace = _engine.EarlyTrace,
-                firstJumpPositionOffsetX = _engine.FirstJumpPositionOffsetX,
-                courseStartPositionOffsetX = _engine.CourseStartPositionOffsetX,
                 deterministicPhysics = _deterministicBody != null,
                 failureAction = action,
                 failureReason = success ? null : reason
@@ -1693,10 +1682,7 @@ namespace IGTAPTasMod
             if (request.Path == "/api/routes/run")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
-                float? firstJumpPositionOffsetX = body["firstJumpPositionOffsetX"] == null
-                    ? (float?)null : FloatNumber(body, "firstJumpPositionOffsetX", 0f);
-                ReplaySelected(Number(body, "startDelayTicks", 0), firstJumpPositionOffsetX,
-                    FloatNumber(body, "courseStartPositionOffsetX", 0f));
+                ReplaySelected(Number(body, "startDelayTicks", 0));
                 return new { ok = true };
             }
             if (request.Path == "/api/routes/duplicate")
@@ -1749,8 +1735,6 @@ namespace IGTAPTasMod
             {
                 _pendingReplay = null;
                 _pendingReplayStartDelayTicks = 0;
-                _pendingReplayFirstJumpPositionOffsetX = null;
-                _pendingReplayCourseStartPositionOffsetX = 0f;
                 if (_engine.IsRunning) _engine.Abort("Stopped from Web Studio");
                 if (_recorder.IsRecording) StopRecording("Stopped from Web Studio");
                 return new { ok = true };
@@ -2078,7 +2062,12 @@ namespace IGTAPTasMod
                         deterministicPhysics = result.deterministicPhysics,
                         failureReason = result.failureReason, timestampUtc = result.timestampUtc });
 
+            Movement player = FindWorldMovement();
             return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
+                // Read-only: the live unlocks, to check that playback and the tools put the save's back.
+                unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
+                    dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
+                    airDashesLeft = GetMovementField(player, "airDashesLeft") },
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
                 running = _engine.IsRunning,
