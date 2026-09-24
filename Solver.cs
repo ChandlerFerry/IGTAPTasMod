@@ -363,7 +363,8 @@ namespace IGTAPTasMod
                 return;
             }
             List<SolverTick> best = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
-            if (!SaveSolverRoute(best, replayed)) return;
+            // A seed that only ties the category's saved route is the search's starting best, not a new route.
+            if (replayed < CategoryBest(_solverCourse + "_" + CapabilityLabels[_solverCaps]) - .0001f && !SaveSolverRoute(best, replayed)) return;
             _solverBest = replayed; _solverBestAt = _solverEvaluations;
             _solverBestInputs = best;
             _bestStates = states;
