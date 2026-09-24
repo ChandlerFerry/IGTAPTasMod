@@ -12,8 +12,6 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using UnityEngine.SceneManagement;
-using Process = System.Diagnostics.Process;
-using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 namespace IGTAPTasMod
 {
@@ -37,11 +35,6 @@ namespace IGTAPTasMod
         private string _resultsPath;
         private string _checkpointsPath;
         private string _settingsPath;
-        private Process _offlineProcess;
-        private string _offlineOutputPath;
-        private string _offlineRouteId;
-        private string _offlineRouteName;
-        private string _offlineError;
         private StudioSettings _settings = new StudioSettings();
         private readonly List<RecordingDefinition> _recordings = new List<RecordingDefinition>();
         private readonly List<AttemptResult> _results = new List<AttemptResult>();
@@ -72,22 +65,10 @@ namespace IGTAPTasMod
         private int _oracleGroundLayerValue;
         private int _oracleBlockingLayerValue;
         private bool _oracleMasksCaptured;
-        private List<OracleBatchCandidate> _oracleBatchQueue;
-        private List<object> _oracleBatchResults;
-        private int _oracleBatchIndex;
-        private string _oracleBatchCurrentName;
-        private bool _oracleStopRequested;
         private WebStudioRequest _bootstrapRequest;
         private int _bootstrapPhase;
         private JObject _bootstrapBody;
         private readonly List<string> _bootstrapNotes = new List<string>();
-
-        private sealed class OracleBatchCandidate
-        {
-            public string name;
-            public string error;
-            public List<MacroStep> steps;
-        }
 
         private static FieldInfo _groundRaycastLayerField;
         private static readonly FieldInfo MovIsOnMainMenuField = AccessTools.Field(typeof(Movement), "isOnMainMenu");
@@ -625,7 +606,6 @@ namespace IGTAPTasMod
             string routeName = string.IsNullOrEmpty(_oracleRouteName) ? "OracleEvaluation" : _oracleRouteName;
             string status = ClassifyOracleStatus(success, reason);
             long courseStartRunTick = _engine.CourseStartRunTick;
-            string fingerprint = _engine.StartStateFingerprint;
             string earlyTrace = _engine.EarlyTrace;
             Vector2? startPose = _oracleStartPose;
             List<object> trace = _oracleTrace;
@@ -638,31 +618,6 @@ namespace IGTAPTasMod
             _oracleTrace = null;
             _oracleDiagnostics = null;
             _oracleStartPose = null;
-
-            if (_oracleBatchQueue != null)
-            {
-                _oracleBatchResults.Add(new
-                {
-                    name = _oracleBatchCurrentName,
-                    status = status,
-                    completionTicks = success ? ticks : -1,
-                    deathTick = success ? -1 : ticks,
-                    completionTime = time,
-                    error = success ? null : reason,
-                    failureAction = action,
-                    startPose = startPose.HasValue ? (object)new { x = startPose.Value.x, y = startPose.Value.y } : null,
-                    finalPosition = new { x = finalPos.x, y = finalPos.y },
-                    courseStartRunTick = courseStartRunTick,
-                    startStateFingerprint = fingerprint,
-                    trace = trace,
-                    diagnostics = diagnostics,
-                    resultPath = resultPath,
-                    diagnosticsPath = diagnosticsPath
-                });
-                _oracleBatchIndex++;
-                StartNextOracleBatchCandidate();
-                return;
-            }
 
             var resultObj = new
             {
@@ -690,142 +645,6 @@ namespace IGTAPTasMod
                 _activeOracleRequest.Completed.Set();
                 _activeOracleRequest = null;
             }
-        }
-
-        private bool StartOracleBatch(WebStudioRequest request, JObject body)
-        {
-            JArray candidatesToken = body["candidates"] as JArray;
-            if (candidatesToken == null || candidatesToken.Count == 0)
-            {
-                request.StatusCode = 400;
-                request.Response = JsonConvert.SerializeObject(new { ok = false, error = "No candidates found." });
-                request.Completed.Set();
-                return false;
-            }
-            if (candidatesToken.Count > 64)
-            {
-                request.StatusCode = 400;
-                request.Response = JsonConvert.SerializeObject(new { ok = false, error = "Candidate limit is 64." });
-                request.Completed.Set();
-                return false;
-            }
-
-            List<OracleBatchCandidate> queue = new List<OracleBatchCandidate>();
-            for (int i = 0; i < candidatesToken.Count; i++)
-            {
-                JObject c = candidatesToken[i] as JObject;
-                OracleBatchCandidate candidate = new OracleBatchCandidate();
-                candidate.name = c != null && c["name"] != null ? (string)c["name"] : "candidate-" + i;
-                bool hasActions = c != null && c["actions"] != null;
-                bool hasFrames = c != null && c["frames"] != null;
-                if (c == null) candidate.error = "Candidate entry is not an object.";
-                else if (hasActions && hasFrames) candidate.error = "Candidate must use either actions or frames, not both.";
-                else if (!hasActions && !hasFrames) candidate.error = "Candidate has neither actions nor frames.";
-                else
-                {
-                    try
-                    {
-                        candidate.steps = hasActions ? ConvertActionsToSteps(c["actions"]) : ConvertFramesToSteps(c["frames"]);
-                        if (candidate.steps == null || candidate.steps.Count == 0) candidate.error = "Candidate produced no input steps.";
-                    }
-                    catch (Exception ex) { candidate.error = ex.Message; }
-                }
-                queue.Add(candidate);
-            }
-
-            if (_engine.IsRunning) _engine.Abort("Aborted for new oracle batch");
-
-            _activeOracleRequest = request;
-            request.AsyncHandling = true;
-            _oracleBatchQueue = queue;
-            _oracleBatchResults = new List<object>();
-            _oracleBatchIndex = 0;
-            _oracleStopRequested = false;
-            _oracleMaxTicks = body["maxTicks"] != null ? (int)body["maxTicks"] : 1500;
-            _oracleIncludeDiagnostics = body["diagnostic"] != null && (bool)body["diagnostic"];
-            StartNextOracleBatchCandidate();
-            return true;
-        }
-
-        private void StartNextOracleBatchCandidate()
-        {
-            if (_oracleStopRequested || _oracleBatchQueue == null || _oracleBatchIndex >= _oracleBatchQueue.Count)
-            {
-                FinishOracleBatch(_oracleStopRequested ? "stopped" : "ok");
-                return;
-            }
-            OracleBatchCandidate candidate = _oracleBatchQueue[_oracleBatchIndex];
-            if (candidate.error != null)
-            {
-                _oracleBatchResults.Add(new
-                {
-                    name = candidate.name,
-                    status = "error",
-                    completionTicks = -1,
-                    deathTick = -1,
-                    completionTime = 0f,
-                    error = candidate.error,
-                    failureAction = -1,
-                    startPose = (object)null,
-                    finalPosition = (object)null,
-                    courseStartRunTick = -1L,
-                    startStateFingerprint = (string)null,
-                    trace = (object)null,
-                    diagnostics = (object)null,
-                    resultPath = (string)null,
-                    diagnosticsPath = (string)null
-                });
-                _oracleBatchIndex++;
-                StartNextOracleBatchCandidate();
-                return;
-            }
-
-            _isOracleEvaluation = true;
-            _oracleBatchCurrentName = candidate.name;
-            _oracleResultId = Guid.NewGuid().ToString("N");
-            _oracleRouteName = candidate.name;
-            _oracleStartPose = null;
-            _oracleMasksCaptured = false;
-            _oracleTrace = new List<object>();
-            _oracleDiagnostics = new List<object>();
-
-            MacroDefinition evalMacro = new MacroDefinition
-            {
-                id = "oracle-batch-" + Guid.NewGuid().ToString("N"),
-                name = candidate.name,
-                steps = candidate.steps
-            };
-
-            EnsureGameUnpaused();
-            _pendingOracleMacro = evalMacro;
-        }
-
-        private void FinishOracleBatch(string status)
-        {
-            if (_activeOracleRequest != null)
-            {
-                _activeOracleRequest.Response = JsonConvert.SerializeObject(new
-                {
-                    ok = true,
-                    status = status,
-                    engine = _engine.Status,
-                    completed = _oracleBatchResults != null ? _oracleBatchResults.Count : 0,
-                    total = _oracleBatchQueue != null ? _oracleBatchQueue.Count : 0,
-                    results = _oracleBatchResults
-                });
-                _activeOracleRequest.StatusCode = 200;
-                _activeOracleRequest.Completed.Set();
-                _activeOracleRequest = null;
-            }
-            _isOracleEvaluation = false;
-            _oracleTrace = null;
-            _oracleDiagnostics = null;
-            _oracleStartPose = null;
-            _oracleBatchQueue = null;
-            _oracleBatchResults = null;
-            _oracleBatchIndex = 0;
-            _oracleBatchCurrentName = null;
-            _oracleStopRequested = false;
         }
 
         private static Movement FindWorldMovement()
@@ -1731,35 +1550,8 @@ namespace IGTAPTasMod
                     ok = true,
                     evaluating = _isOracleEvaluation,
                     runTicks = _engine.IsRunning ? _engine.RunTicks : 0,
-                    status = _engine.Status,
-                    batch = _oracleBatchQueue != null,
-                    batchIndex = _oracleBatchIndex,
-                    batchTotal = _oracleBatchQueue != null ? _oracleBatchQueue.Count : 0,
-                    batchName = _oracleBatchCurrentName
+                    status = _engine.Status
                 };
-            }
-            if (request.Path == "/api/oracle/stop")
-            {
-                if (_oracleBatchQueue != null) _oracleStopRequested = true;
-                if (_isOracleEvaluation && _engine.IsRunning)
-                {
-                    _engine.Abort("Oracle evaluation stopped by request");
-                }
-                else if (_oracleBatchQueue != null)
-                {
-                    FinishOracleBatch("stopped");
-                }
-                return new { ok = true };
-            }
-            if (request.Path == "/api/oracle/evaluate")
-            {
-                if (_activeOracleRequest != null)
-                {
-                    request.StatusCode = 409;
-                    return new { ok = false, error = "An oracle evaluation is already in progress." };
-                }
-                StartOracleEvaluation(request, body);
-                return null;
             }
             if (request.Path == "/api/solver/start")
             {
@@ -1795,7 +1587,7 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/turbo/evaluate")
             {
-                // Same contract as /api/oracle/evaluate, but stepped inside this frame instead of in real time.
+                // Runs a routeId, actions, frames or steps (StartOracleEvaluation), stepped inside this frame instead of in real time.
                 if (_activeOracleRequest != null)
                 {
                     request.StatusCode = 409;
@@ -1839,16 +1631,6 @@ namespace IGTAPTasMod
                 }
                 return null;
             }
-            if (request.Path == "/api/oracle/evaluate-batch")
-            {
-                if (_activeOracleRequest != null)
-                {
-                    request.StatusCode = 409;
-                    return new { ok = false, error = "An oracle evaluation is already in progress." };
-                }
-                StartOracleBatch(request, body);
-                return null;
-            }
             if (request.Path == "/api/oracle/bootstrap")
             {
                 return BootstrapOracle(request, body);
@@ -1871,35 +1653,7 @@ namespace IGTAPTasMod
             {
                 return ImportAutonomousPlan(body);
             }
-            if (request.Method == "GET" && request.Path == "/api/offline/report")
-            {
-                string report = string.IsNullOrEmpty(_offlineOutputPath) ? null : Path.Combine(_offlineOutputPath, "report.html");
-                if (report == null || !File.Exists(report)) throw new InvalidOperationException("Offline report is not ready.");
-                return new { ok = true, html = File.ReadAllText(report) };
-            }
             if (request.Method != "POST") throw new InvalidOperationException("Unsupported request method.");
-
-            if (request.Path == "/api/offline/start")
-            {
-                StartOfflineOptimization(body);
-                return new { ok = true };
-            }
-            if (request.Path == "/api/offline/stop")
-            {
-                if (_offlineProcess != null && !_offlineProcess.HasExited)
-                {
-                    _offlineProcess.Kill();
-                    _offlineError = "Offline search stopped by user.";
-                }
-                return new { ok = true };
-            }
-            if (request.Path == "/api/offline/import")
-            {
-                int rank = Math.Max(1, Number(body, "rank", 1));
-                string path = string.IsNullOrEmpty(_offlineOutputPath) ? null : Path.Combine(_offlineOutputPath, "candidate-" + rank.ToString("00") + ".json");
-                if (path == null || !File.Exists(path)) throw new InvalidOperationException("Offline candidate is not ready.");
-                return ImportOfflineCandidate(JObject.Parse(File.ReadAllText(path)));
-            }
 
             if (request.Path == "/api/routes/select")
             {
@@ -2111,72 +1865,6 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown Web Studio command: " + request.Path);
         }
 
-        private void StartOfflineOptimization(JObject body)
-        {
-            if (_offlineProcess != null && !_offlineProcess.HasExited)
-                throw new InvalidOperationException("An offline search is already running.");
-            if (_offlineProcess != null) { _offlineProcess.Dispose(); _offlineProcess = null; }
-            MacroDefinition route = _library.macros.Find(item => item.id == Text(body, "routeId"));
-            if (route == null) route = SelectedMacro;
-            if (route == null) throw new InvalidOperationException("Select a route first.");
-
-            Movement movement = FindWorldMovement();
-            SimulationModelExport model = SimulationModelExtractor.Capture(movement, MacroLibrary.CurrentSchemaVersion);
-            string simulationDirectory = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "simulation");
-            string modelPath = SimulationModelExtractor.Save(model, simulationDirectory);
-            string enginePath = Path.Combine(Paths.PluginPath, "IGTAPFastSim", "IGTAP.FastSim.dll");
-            if (!File.Exists(enginePath)) throw new InvalidOperationException("Offline engine is not installed. Rebuild the plugin once.");
-
-            _offlineOutputPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "offline", DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff"));
-            Directory.CreateDirectory(_offlineOutputPath);
-            _offlineRouteId = route.id;
-            _offlineRouteName = route.name;
-            _offlineError = null;
-            int radius = Mathf.Clamp(Number(body, "radius", 8), 0, 20);
-            int budget = Mathf.Clamp(Number(body, "budget", 2000000), 1, 1000000000);
-            int beam = Mathf.Clamp(Number(body, "beam", 1000), 1, 100000);
-            int top = Mathf.Clamp(Number(body, "top", 20), 1, 1000);
-            string recording = null;
-            try
-            {
-                string[] recordings = Directory.GetFiles(_recordingsPath, "*.json");
-                if (recordings.Length > 0)
-                {
-                    Array.Sort(recordings, (left, right) => File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
-                    recording = recordings[0];
-                }
-            }
-            catch (Exception ex) { Logger.LogWarning("Could not select an offline calibration recording: " + ex.Message); }
-
-            string resultPath = null;
-            try
-            {
-                string[] results = Directory.GetFiles(_resultsPath, "*.json");
-                Array.Sort(results, (left, right) => File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
-                foreach (string path in results)
-                {
-                    JObject result = JObject.Parse(File.ReadAllText(path));
-                    if ((string)result["routeId"] == route.id && (bool?)result["success"] == true
-                        && (bool?)result["deterministicPhysics"] == true && !string.IsNullOrWhiteSpace((string)result["earlyTrace"]))
-                    { resultPath = path; break; }
-                }
-            }
-            catch (Exception ex) { Logger.LogWarning("Could not select an authoritative result trace: " + ex.Message); }
-
-            string arguments = QuoteProcessArgument(enginePath) + " suite " + QuoteProcessArgument(modelPath) + " "
-                + QuoteProcessArgument(_libraryPath) + " " + QuoteProcessArgument(route.name)
-                + " --out " + QuoteProcessArgument(_offlineOutputPath)
-                + " --radius " + radius + " --max " + budget + " --beam " + beam + " --top " + top;
-            if (!string.IsNullOrEmpty(recording)) arguments += " --recording " + QuoteProcessArgument(recording);
-            if (!string.IsNullOrEmpty(resultPath)) arguments += " --result " + QuoteProcessArgument(resultPath);
-            ProcessStartInfo start = new ProcessStartInfo("dotnet", arguments) {
-                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Paths.PluginPath
-            };
-            try { _offlineProcess = Process.Start(start); }
-            catch (Exception ex) { _offlineError = ex.Message; throw new InvalidOperationException("Could not start offline engine: " + ex.Message); }
-            if (_offlineProcess == null) throw new InvalidOperationException("Could not start offline engine.");
-        }
-
         private object ImportOfflineCandidate(JObject body)
         {
             MacroDefinition candidate = BuildOfflineCandidate(body);
@@ -2304,29 +1992,6 @@ namespace IGTAPTasMod
             return new { ok = true, routeId = route.id, name = route.name, actionCount = route.steps.Count };
         }
 
-        private object BuildOfflineWebState()
-        {
-            bool running = _offlineProcess != null && !_offlineProcess.HasExited;
-            int? exitCode = _offlineProcess != null && !running ? (int?)_offlineProcess.ExitCode : null;
-            string summaryPath = string.IsNullOrEmpty(_offlineOutputPath) ? null : Path.Combine(_offlineOutputPath, "summary.json");
-            JObject summary = null;
-            if (!running && summaryPath != null && File.Exists(summaryPath))
-            {
-                try { summary = JObject.Parse(File.ReadAllText(summaryPath)); }
-                catch (Exception ex) { _offlineError = "Could not read offline results: " + ex.Message; }
-            }
-            string status = running ? "Running" : summary != null ? "Completed"
-                : exitCode.HasValue && exitCode.Value != 0 ? "Failed" : "Idle";
-            return new { status = status, running = running, exitCode = exitCode,
-                routeId = _offlineRouteId, routeName = _offlineRouteName, error = _offlineError,
-                hasReport = summary != null, summary = summary };
-        }
-
-        private static string QuoteProcessArgument(string value)
-        {
-            return "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
-        }
-
         private object BuildWebState()
         {
             MacroDefinition selected = SelectedMacro;
@@ -2383,7 +2048,7 @@ namespace IGTAPTasMod
                 running = _engine.IsRunning,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
-                offline = BuildOfflineWebState(), solver = BuildSolverWebState() };
+                solver = BuildSolverWebState() };
         }
 
         private static string Text(JObject value, string name)
@@ -2438,7 +2103,6 @@ namespace IGTAPTasMod
             SaveLibrary();
             SaveSettings();
             if (_webServer != null) _webServer.Dispose();
-            if (_offlineProcess != null) _offlineProcess.Dispose();
             if (_harmony != null) _harmony.UnpatchSelf();
         }
     }
