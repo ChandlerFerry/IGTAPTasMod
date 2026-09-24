@@ -4,7 +4,7 @@ Usage: python tools/fidelity-sweep.py [out.json|-] [extra-routes.json ...]
 Matches each result to its route by id across every routes file on disk; when a route was
 edited after the run, the version that tracks the native trace longest is used.
 """
-import argparse, glob, json, re, subprocess, sys, tempfile
+import glob, json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,8 +45,7 @@ def audit(result_path, macro, tmp):
     routes_path = str(Path(tmp) / f"{os.getpid()}-{abs(hash((result_path, id(macro))))}.json")
     with open(routes_path, "w", encoding="utf-8") as f:
         json.dump({"macros": [macro]}, f)
-    out = subprocess.run([SIM, "audit-reference", MODEL, "course 2", routes_path, macro["name"], result_path,
-                          routes_path + ".audit.json"], capture_output=True, text=True, encoding="utf-8").stdout
+    out = subprocess.run([SIM, "fidelity", MODEL, routes_path, macro["name"], result_path], capture_output=True, text=True, encoding="utf-8").stdout
     m = LINE.search(out)
     if not m:
         return None
@@ -56,6 +55,7 @@ def audit(result_path, macro, tmp):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     versions = route_versions()
     jobs = []
     for path in sorted(glob.glob(str(CONFIG / "results" / "*.json"))):

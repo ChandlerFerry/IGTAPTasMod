@@ -30,15 +30,17 @@ namespace IGTAPTasMod
         private static readonly FieldInfo DashActiveField = AccessTools.Field(typeof(Movement), "dashActive");
         private static readonly FieldInfo FacingRightField = AccessTools.Field(typeof(Movement), "facingRight");
         private static readonly FieldInfo CutsceneModeField = AccessTools.Field(typeof(Movement), "cutsceneMode");
+        private static readonly FieldInfo FramesSinceLastDashField = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
 
         private List<MacroStep> _steps;
         private string _macroName;
         private int _stepIndex = -1;
         private float _elapsedMs;
         private int _elapsedTicks;
-        private int _clearJumpCutTicks;
         private bool _wallJumpTriggered;
         private bool _rawJumpHeld;
+        private int _dashJumpFrame;
+        private Vector2 _dashJumpAxis;
         private bool _waitingForStable;
         private int _stableTicks;
         private bool _hasSynchronizationPosition;
@@ -75,6 +77,9 @@ namespace IGTAPTasMod
         public float FirstJumpPositionOffsetX { get { return _firstJumpPositionOffsetX.GetValueOrDefault(); } }
         public float CourseStartPositionOffsetX { get { return _courseStartPositionOffsetX; } }
         public event Action<bool, string, int, long> AttemptEnded;
+        // Solver runs happen dozens of times a second; their start/end lines would flood the log.
+        public bool Quiet;
+        public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
 
         public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null, float? firstJumpPositionOffsetX = null)
@@ -91,9 +96,9 @@ namespace IGTAPTasMod
             _stepIndex = 0;
             _elapsedMs = 0f;
             _elapsedTicks = 0;
-            _clearJumpCutTicks = 0;
             _wallJumpTriggered = false;
             _rawJumpHeld = false;
+            _dashJumpFrame = 0;
             _waitingForStable = synchronizeStart;
             _stableTicks = 0;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
@@ -115,7 +120,22 @@ namespace IGTAPTasMod
             _courseStartPosition = Vector2.zero;
             _earlyTrace.Clear();
             Status = synchronizeStart ? "Waiting for 3 stable ticks: " + macro.name : "Running: " + macro.name;
-            TasPlugin.Log.LogInfo(Status);
+            if (!Quiet) TasPlugin.Log.LogInfo(Status);
+        }
+
+        public object[] CaptureState() { return FieldState.Capture(this); }
+
+        // Continues a captured run with new remaining inputs, as if they had followed the captured prefix all along.
+        public void Resume(object[] state, List<MacroStep> remaining)
+        {
+            FieldState.Restore(this, state);
+            _steps = Expand(remaining);
+            NormalizeFrameTiming(_steps);
+            _stepIndex = 0;
+            _elapsedMs = 0f;
+            _elapsedTicks = 0;
+            _wallJumpTriggered = false;
+            _finishWaitTicks = 0;
         }
 
         public void Abort(string reason = "Stopped")
@@ -128,13 +148,12 @@ namespace IGTAPTasMod
             _elapsedMs = 0f;
             _elapsedTicks = 0;
             Status = reason;
-            TasPlugin.Log.LogInfo(reason);
+            if (!Quiet) TasPlugin.Log.LogInfo(reason);
             if (wasRunning && AttemptEnded != null) AttemptEnded(false, reason, step, ticks);
         }
 
         public void ClearInjectedInput(Movement movement)
         {
-            _clearJumpCutTicks = 0;
             _rawJumpHeld = false;
             if (movement == null) return;
             SetDirection(movement, 0);
@@ -151,7 +170,7 @@ namespace IGTAPTasMod
             _steps = null;
             _stepIndex = -1;
             Status = reason + ": " + _macroName;
-            TasPlugin.Log.LogInfo(Status);
+            if (!Quiet) TasPlugin.Log.LogInfo(Status);
             if (AttemptEnded != null) AttemptEnded(true, reason, -1, ticks);
         }
 
@@ -185,9 +204,6 @@ namespace IGTAPTasMod
 
         public void FixedTick(Movement movement)
         {
-            if (_clearJumpCutTicks > 0 && --_clearJumpCutTicks == 0)
-                SetField(JumpCutBufferField, movement, false);
-
             if (!IsRunning)
                 return;
             if (_waitingForStable)
@@ -239,7 +255,7 @@ namespace IGTAPTasMod
             if (entering && step.type == MacroStepType.Jump)
                 PressJump(movement);
             else if (entering && step.type == MacroStepType.Dash)
-                SetField(DashBufferField, movement, true);
+                PressDash(movement);
 
             _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
@@ -287,16 +303,28 @@ namespace IGTAPTasMod
                     PressJump(movement);
                 }
                 if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld))
+                    ReleaseJump(movement);
+                if (step.rawDashPressed)
                 {
-                    SetField(JumpCutBufferField, movement, true);
-                    _clearJumpCutTicks = 2;
+                    PressDash(movement);
+                    _dashJumpFrame = step.dashJumpFrame;
+                    _dashJumpAxis = new Vector2(step.rawMoveX, step.rawMoveY);
                 }
-                if (step.rawDashPressed) SetField(DashBufferField, movement, true);
                 _rawJumpHeld = step.rawJumpHeld;
             }
             _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
             if (_elapsedTicks >= Mathf.Max(1, step.durationTicks)) Advance(movement, false);
+        }
+
+        // Called once per dash frame (Movement.CheckForSuperJump prefix), before the game reads jumpBuffer.
+        public void DashFrame(Movement movement)
+        {
+            if (!IsRunning || _dashJumpFrame <= 0 || ReadFloat(FramesSinceLastDashField, movement) < _dashJumpFrame) return;
+            _dashJumpFrame = 0;
+            movement.MoveAxis = _dashJumpAxis;
+            PressJump(movement);
+            _rawJumpHeld = true;
         }
 
         private static int WallJumpHoldDirection(MacroStep step)
@@ -322,11 +350,7 @@ namespace IGTAPTasMod
 
         private void Advance(Movement movement, bool releaseJump)
         {
-            if (releaseJump)
-            {
-                SetField(JumpCutBufferField, movement, true);
-                _clearJumpCutTicks = 2;
-            }
+            if (releaseJump) ReleaseJump(movement);
             _stepIndex++;
             _elapsedMs = 0f;
             _elapsedTicks = 0;
@@ -357,7 +381,7 @@ namespace IGTAPTasMod
             _steps = null;
             _stepIndex = -1;
             Status = "Complete: " + name;
-            TasPlugin.Log.LogInfo(Status);
+            if (!Quiet) TasPlugin.Log.LogInfo(Status);
             if (AttemptEnded != null) AttemptEnded(true, "Timeline complete", -1, _runTicks);
         }
 
@@ -394,11 +418,31 @@ namespace IGTAPTasMod
             return ReadBool(OnWallField, movement) || ReadFloat(WallCoyoteField, movement) > 0f;
         }
 
+        // Presses and releases do exactly what Movement.Update does for a real one, including the buffer expiry timers
+        // (a jump press stays buffered 0.12 s, 0.2 s mid-dash; a dash press 0.12 s; a release's jump cut 0.26 s).
         private static void PressJump(Movement movement)
         {
             if (JumpCutBufferField == null || JumpBufferField == null) return;
-            SetField(JumpCutBufferField, movement, false);
             SetField(JumpBufferField, movement, true);
+            movement.CancelInvoke("cancelJumpBuffer");
+            movement.CancelInvoke("cancelJumpCutBuffer");
+            SetField(JumpCutBufferField, movement, false);
+            bool dashing = string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase);
+            movement.Invoke("cancelJumpBuffer", dashing ? 0.2f : 0.12f);
+        }
+
+        private static void ReleaseJump(Movement movement)
+        {
+            SetField(JumpCutBufferField, movement, true);
+            movement.CancelInvoke("cancelJumpCutBuffer");
+            movement.Invoke("cancelJumpCutBuffer", 0.26f);
+        }
+
+        private static void PressDash(Movement movement)
+        {
+            SetField(DashBufferField, movement, true);
+            movement.CancelInvoke("cancelDashBuffer");
+            movement.Invoke("cancelDashBuffer", 0.12f);
         }
 
         private static void SetDirection(Movement movement, int direction)
@@ -414,8 +458,8 @@ namespace IGTAPTasMod
             // authoritative calibration/diagnostic input for the offline simulator.
             // Course 2 and later routes span many screens and routinely exceed
             // 512 fixed ticks. Retain enough authoritative samples to calibrate
-            // the complete route, including its finish trigger.
-            if (_runTicks < 8192)
+            // the complete route, including its finish trigger. Quiet (solver) runs never persist it.
+            if (!Quiet && _runTicks < 8192)
             {
                 Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
                 Vector2 bodyPosition = body == null ? (Vector2)position : body.position;
@@ -432,8 +476,6 @@ namespace IGTAPTasMod
             if (!_hasProgressSample)
             {
                 _hasProgressSample = true;
-                _peakY = position.y;
-                _minimumX = _maximumX = position.x;
                 _startStateFingerprint = string.Join("|", new[] {
                     position.x.ToString("0.###", CultureInfo.InvariantCulture),
                     position.y.ToString("0.###", CultureInfo.InvariantCulture),

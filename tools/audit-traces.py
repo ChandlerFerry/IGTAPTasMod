@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Check captured turbo traces against route rule 3 (CLAUDE.md): a buffered jump/dash needs a real press in the game's
+buffer window. Same rule as Solver.cs AuditTick. Exit code 1 if any trace violates it.
+
+  audit-traces.py [trace.json ...]     default: every trace in the enginesim config folder
+"""
+import json
+import sys
+from pathlib import Path
+
+TRACES = Path(r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\enginesim")
+JUMP_WINDOW, DASH_WINDOW = 12, 8  # Solver.cs JumpBufferTicks / DashBufferTicks
+
+
+def press_near(inputs, tick, window, jump):
+    for i in range(max(0, tick - window - 16), min(len(inputs), tick + 3)):
+        k = inputs[i]
+        if jump:
+            press = i if k["press"] else i + k["dashJump"] if k["dash"] and k["dashJump"] > 0 else -1
+        else:
+            press = i if k["dash"] else -1
+        if press >= 0 and press - 2 <= tick <= press + window:
+            return True
+    return False
+
+
+def violations(trace):
+    found = []
+    for i, t in enumerate(trace["ticks"]):
+        m = {e[1]: e[2] for e in t["movement"]}
+        if m["jumpBuffer"] and not press_near(trace["inputs"], i, JUMP_WINDOW, True):
+            found.append(f"tick {i}: stale jump buffer")
+        if m["dashBuffer"] and not press_near(trace["inputs"], i, DASH_WINDOW, False):
+            found.append(f"tick {i}: stale dash buffer")
+    return found
+
+
+def main():
+    paths = [Path(p) for p in sys.argv[1:]] or sorted(p for p in TRACES.glob("*.json") if not p.name.endswith(".world.json"))
+    bad = 0
+    for path in paths:
+        found = violations(json.loads(path.read_text()))
+        bad += bool(found)
+        print(f"{path.name:36} {'VIOLATES ' + '; '.join(found[:3]) if found else 'ok'}")
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()

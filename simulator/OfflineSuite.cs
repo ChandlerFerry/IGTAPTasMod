@@ -38,7 +38,7 @@ static class OfflineSuite
             + RawMoveX.Select((x, i) => (int)Math.Round(Math.Abs(x - baselineX[i]) * 20)).Sum()
             + NoJump.Count(n => n) * 4
             + (HopStep >= 0 ? 2 + HopHold : 0);
-        public string ShapeChange(float[] baselineX)
+        public string ShapeChange(float[] baselineX, bool includeHop = true)
         {
             var parts = new List<string>();
             int[] dropped = Enumerable.Range(0, NoJump.Length).Where(i => NoJump[i]).ToArray();
@@ -46,7 +46,7 @@ static class OfflineSuite
             int[] turned = Enumerable.Range(0, RawMoveX.Length).Where(i => MathF.Abs(RawMoveX[i] - baselineX[i]) > .5f).ToArray();
             if (turned.Length > 0) parts.Add("redirect step " + string.Join('/', turned.Select(i =>
                 (i + 1) + "→" + RawMoveX[i].ToString("0.##", CultureInfo.InvariantCulture))));
-            if (HopStep >= 0) parts.Add($"hop step {HopStep + 1}, tick {HopTick}, hold {HopHold}");
+            if (includeHop && HopStep >= 0) parts.Add($"hop step {HopStep + 1}, tick {HopTick}, hold {HopHold}");
             return parts.Count == 0 ? "—" : string.Join("; ", parts);
         }
     }
@@ -335,7 +335,9 @@ static class OfflineSuite
                 });
             }
             int fragile = 0;
-            foreach (Candidate candidate in ranked.Where(c => c.Result.Finished).DistinctBy(c => c.ShapeChange(baselineX))
+            foreach (Candidate candidate in ranked.Where(c => c.Result.Finished)
+                // Hop variants of one route shape are one idea; the shortlist keeps the best of each.
+                .DistinctBy(c => c.ShapeChange(baselineX, includeHop: false))
                 .Where(c => Robust(c) || ++fragile < 0)
                 .Take(Math.Max(Math.Min(3, options.Top), options.Top / 2)))
                 if (!shortlist.Any(item => item.Signature == candidate.Signature)) shortlist.Add(candidate);

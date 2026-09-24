@@ -118,6 +118,20 @@ sealed class RayWorld
         return null;
     }
 
+    // Movement.Update's ledge step-up (scratch_movement.txt 797-809): the new Transform Y, or null.
+    // Update runs after each physics step at >=50 fps (A4 #1 tick 317: lifted onto the 6592 block top at 1645;
+    // a fast landing that sinks below floor+33 pops to floor+36, route A tick 416).
+    public float? UpdateStepUp(float x, float y, bool facingRight, bool onGround, float velocityX, float bodyVY)
+    {
+        float f = facingRight ? 1f : -1f;
+        if (MathF.Abs(velocityX) <= 230f || bodyVY >= 10f) return null;
+        if (Cast(x + 27f * f, y + 10f, 0, -1, 43f, GroundMask) is not float down) return null;
+        float? blocker = onGround ? Cast(x + 24f * f, y + 10f, f, 0, 6f, GroundMask) : Cast(x + 15f * f, y - 18f, f, 0, 14f, GroundMask);
+        if (blocker != null || Cast(x + 15f * f, y + 19f, f, 0, 14f, GroundMask) != null) return null;
+        float hitY = y + 10f - down;
+        return hitY + 74f > y ? hitY + 36f : null;
+    }
+
     // Movement's step-up nudge (scratch_movement.txt 954): (r6 || r7) && !r8 && !r9. The
     // negative-length r8/r9 never hit (0 of 76,910 oracle ticks), so r6 || r7 decides.
     public bool StepUp(float x, float y, bool facingRight)

@@ -247,8 +247,21 @@ sealed class FastSimulator
         }
         else if (!s.Grounded)
         {
-            if (s.WallCoyoteFrames > 0) s.WallCoyoteFrames--;
-            if (s.WallCoyoteFrames <= 0) s.OnWall = false;
+            // Movement: wall coyote applies ApplyWallslideFriction(0.7f) (A4 #2 ticks 48-53).
+            if (s.WallCoyoteFrames > 0 && s.OnWall)
+            {
+                if (s.WallJumpsLeft > 0)
+                {
+                    s.VY += physics.Gravity - physics.WallSlideFriction;
+                    if (s.VY < -physics.MaxWallSlideSpeed * .7f * .8f)
+                        s.VY += (-physics.MaxWallSlideSpeed * .7f - s.VY) * physics.DownwardDrag;
+                }
+                else s.VY += physics.Gravity - physics.WallSlideFriction - 2f;
+                s.WallCoyoteFrames--;
+            }
+            // The fallback branch clears OnWall a tick after coyote runs out (A4 #2 tick 55 keeps normal gravity).
+            else if (s.WallCoyoteFrames > 0) s.WallCoyoteFrames--;
+            else s.OnWall = false;
         }
 
         if (s.VY < -75f && !s.Grounded && !s.OnWall) s.VY -= physics.FastFallGravity;
@@ -422,7 +435,9 @@ sealed class FastSimulator
                     // fractionally smaller.  Requiring a meaningful horizontal
                     // advantage prevents a false wall-wrap/wall-jump while still
                     // allowing the known .55 route to clear around the corner.
-                    if (oldHorizontalPenetration < 7f
+                    // A body still beside the block before the step meets its face
+                    // (A4 #2 tick 22: side 3.0 px vs underside 2.8 px, X stops, Y keeps rising).
+                    if (oldHorizontalPenetration < 0f || oldHorizontalPenetration < 7f
                         && Math.Min(leftPenetration, rightPenetration) + 2f < verticalPenetration)
                     {
                         nextX = leftPenetration < rightPenetration
@@ -482,10 +497,11 @@ sealed class FastSimulator
         if (support != null && s.Grounded && MathF.Abs(oldBottom - support.Y) < .1f)
             nextY = s.Y;
         float nextBottom = nextY + (s.Grounded ? NormalOffsetY - NormalHalfHeight : AirOffsetY - AirHalfHeight);
+        float? sunkY = null;
         if (s.VY <= 0f && s.RecentlyJumped == 0)
         {
             // Contact callbacks come from the pose the physics step starts at.
-            Surface? landing = FindCrossedSurface(raysLeftGround ? s.X : nextX, oldBottom, nextBottom);
+            Surface? landing = FindCrossedSurface(raysLeftGround ? s.X : nextX, s.FacingRight, oldBottom, nextBottom);
             // A body still resting on the edge it is walking off keeps its height and
             // OnCollisionStay2D's zeroed speed, but onGround and coyote come from the
             // rays (oracle walk-off tick 37: cy 5 with vy -27).
@@ -500,6 +516,7 @@ sealed class FastSimulator
                 s.Grounded = true;
                 s.CoyoteFrames = physics.CoyoteFrames;
                 s.AirDashesLeft = physics.MaxAirDashes;
+                sunkY = nextY;
                 nextY = landing.Y - NormalOffsetY + NormalHalfHeight;
                 // Native Rigidbody traces retain one gravity increment while
                 // resting on a platform. Keeping -gravity here makes the
@@ -509,6 +526,11 @@ sealed class FastSimulator
         }
         s.X = nextX;
         s.Y = nextY;
+        // Update sees the pose the solver left, which after a fast landing is still sunk into the floor;
+        // without a step-up the snap above stands in for the solver's recovery.
+        // ponytail: dash (wider probe, first-frame exclusion) is not modeled.
+        if (!s.DashActive && rays?.UpdateStepUp(s.X, sunkY ?? s.Y, s.FacingRight, s.Grounded, s.VX, s.VY) is float steppedY)
+            s.Y = steppedY;
         s.PeakY = Math.Max(s.PeakY, s.Y);
     }
 
@@ -579,7 +601,7 @@ sealed class FastSimulator
         {
             bool existingContact = MathF.Abs(MathF.Abs(oldX - wall.X) - collisionHalfWidth) < .6f;
             float y = existingContact ? oldY : nextY;
-            if (y + 22f < wall.Y1 || y - 32f > wall.Y2) continue;
+            if (y + 27f <= wall.Y1 + .1f || y - 32f > wall.Y2) continue;
             // A body that was already over the column and above its top meets the
             // top, not the face (#1 candidate tick 307 lands on the 6592 block top);
             // one already sunk into the corner is still pushed out sideways (18.64 tick 143).
@@ -670,7 +692,10 @@ sealed class FastSimulator
         // horizontal wall contact. Its contact skin sits about 0.64 px inside
         // the nominal 25.515 px wall stand-off at Course 2 tick 455.
         nextX = ResolveWallCollision(s.X, nextX, s.Y, s.Y, out Wall? probeWall);
-        float skinX = probeWall != null ? MathF.Sign(probeWall.X - nextX) * .64f : 0f;
+        // A fresh impact or overlap (tick 455: facing flip widens the leading edge) leaves the
+        // body inside; one already resting flush against the face stays flush (A4 #2 tick 30).
+        float skinX = probeWall != null && MathF.Abs(MathF.Abs(s.X - probeWall.X) - 25.515f) > .01f
+            ? MathF.Sign(probeWall.X - nextX) * .64f : 0f;
         float direction = facingRight ? 1f : -1f;
         // Movement's forward ground ray starts 25 px from Transform X and 18
         // px below Transform Y, extends down 22 px, and requires the paired
@@ -731,12 +756,14 @@ sealed class FastSimulator
         return null;
     }
 
-    Surface? FindCrossedSurface(float x, float oldBottom, float newBottom)
+    Surface? FindCrossedSurface(float x, bool facingRight, float oldBottom, float newBottom)
     {
+        // The 41 px collider is offset 5 px toward facing: -15.5/+25.5 (A4 #2 tick 70 falls past the 5088 corner).
+        float left = facingRight ? 15.5f : 25.5f, right = facingRight ? 25.5f : 15.5f;
         Surface? best = null;
         foreach (Surface surface in surfaces)
         {
-            if (x + HalfWidth < surface.X1 || x - HalfWidth > surface.X2) continue;
+            if (x + right < surface.X1 || x - left > surface.X2) continue;
             if (oldBottom >= surface.Y - 1f && newBottom <= surface.Y && (best == null || surface.Y > best.Y)) best = surface;
         }
         return best;
@@ -866,7 +893,7 @@ static class Loader
             Scalar("maxDownwardsSpeed", 100f) * 10f, Scalar("PostMaxDownwardsSpeedDrag", .25f),
             Scalar("wallSlideFriction", 10f), Scalar("maxWallSlideSpeed", 150f),
             Math.Max(0, (int)Scalar("maxCoyoteFrames", 6f)),
-            Math.Max(0, (int)Scalar("maxWallCoyoteFrames", 7f) - 1),
+            Math.Max(0, (int)Scalar("maxWallCoyoteFrames", 7f) + 1),
             Math.Max(0, (int)Scalar("wallJumpMovementLockFrames", 5f)),
             Math.Max(0, (int)Scalar("maxWallJumps", 4f)),
             allowDash && Flag("dashUnlocked"),
@@ -1088,6 +1115,24 @@ class Program
             Console.WriteLine($"sim startTick={traced.StartTick} finishTick={traced.FinishTick} courseTicks={traced.CourseTicks} " +
                 $"firstSpikeContact={OfflineSuite.FirstHazardTick(args[1], traceEnvironment.viewport, fullTrace, 0)} " +
                 $"firstWithin2px={OfflineSuite.FirstHazardTick(args[1], traceEnvironment.viewport, fullTrace, 2)}");
+            return 0;
+        }
+        if (args.Length == 5 && args[0] == "fidelity")
+        {
+            // fidelity <model> <routes> <route> <native-result>: first tick the sim drifts >=1/5/10px from the game.
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(args[4]));
+            var nativeTrace = OfflineSuite.ParseAttemptTrace(document.RootElement.GetProperty("earlyTrace").GetString() ?? "");
+            var fidelityEnvironment = Loader.Environment(args[1], nativeTrace[0].x, nativeTrace[0].y, false, "course 2");
+            List<Loader.RouteStep> steps = Loader.Route(args[2], args[3]);
+            var simTrace = new List<(float x, float y, float vx, float vy, bool ground)>();
+            SimResult fidelityResult = CreateSimulator(fidelityEnvironment).Run(
+                BuildFrames(steps, steps.Select(step => step.Duration).ToArray(), -1, -1, 0), simTrace, continueAfterFinish: true);
+            var errors = Enumerable.Range(0, Math.Min(simTrace.Count, nativeTrace.Count))
+                .Select(i => MathF.Sqrt(MathF.Pow(simTrace[i].x - nativeTrace[i].x, 2) + MathF.Pow(simTrace[i].y - nativeTrace[i].y, 2))).ToArray();
+            string First(float px) { int i = Array.FindIndex(errors, e => e >= px); return i < 0 ? "none" : i.ToString(); }
+            int native = document.RootElement.TryGetProperty("completionTicks", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : -1;
+            Console.WriteLine($"native={native}; simulated={fidelityResult.FinishTick}; peakError={(errors.Length > 0 ? errors.Max() : 0):0.###}px");
+            Console.WriteLine($"first >=1/5/10px: {First(1)}/{First(5)}/{First(10)}");
             return 0;
         }
         if (args.Length < 2) { Console.Error.WriteLine("Usage: IGTAP.FastSim <model.json> <recording.json>"); return 2; }

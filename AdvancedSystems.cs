@@ -235,3 +235,4 @@ namespace IGTAPTasMod
         private static float P(string value) { return float.Parse(value, CultureInfo.InvariantCulture); }
     }
 
+}

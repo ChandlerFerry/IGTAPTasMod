@@ -8,3 +8,8 @@ web/out/
 .tools/
 tools/__pycache__/
 offline-*/
+# Generated run logs and scratch output
+planning/*.jsonl
+planning/candidates/
+planning/sweep-*.json
+*.log

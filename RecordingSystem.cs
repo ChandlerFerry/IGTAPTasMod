@@ -147,8 +147,7 @@ namespace IGTAPTasMod
                         durationTicks = Math.Max(1, end - i),
                         durationMs = TicksToMs(Math.Max(1, end - i), tickMs),
                         timeoutTicks = Math.Max(1, Mathf.RoundToInt(1200f / tickMs)), timeoutMs = 1200,
-                        endCondition = ActionEndCondition.FixedTicks,
-                        inferenceConfidence = directWall ? InferenceConfidence.High : InferenceConfidence.Medium
+                        endCondition = ActionEndCondition.FixedTicks
                     });
                     // Keep the boundary sample. A second press can be the walljump
                     // itself; consuming it produces a route that waits for the wrong wall.
@@ -159,8 +158,7 @@ namespace IGTAPTasMod
                 {
                     result.Add(new MacroStep { label = "Recorded dash", type = MacroStepType.Dash,
                         direction = direction, durationTicks = 1, durationMs = TicksToMs(1, tickMs),
-                        endCondition = ActionEndCondition.FixedTicks,
-                        inferenceConfidence = InferenceConfidence.High });
+                        endCondition = ActionEndCondition.FixedTicks });
                     i++;
                     continue;
                 }
@@ -170,8 +168,7 @@ namespace IGTAPTasMod
                 result.Add(new MacroStep { label = direction == 0 ? "Recorded wait" : "Recorded move",
                     type = direction == 0 ? MacroStepType.Wait : MacroStepType.Move,
                     direction = direction, durationTicks = Math.Max(1, next - i),
-                    durationMs = TicksToMs(next - i, tickMs), endCondition = ActionEndCondition.FixedTicks,
-                    inferenceConfidence = InferenceConfidence.High });
+                    durationMs = TicksToMs(next - i, tickMs), endCondition = ActionEndCondition.FixedTicks });
                 i = next;
             }
             return MergeAdjacent(result);
@@ -240,7 +237,6 @@ namespace IGTAPTasMod
                     durationTicks = frames,
                     durationMs = Math.Max(1, Mathf.RoundToInt(frames * tickMs)),
                     endCondition = ActionEndCondition.FixedTicks,
-                    inferenceConfidence = InferenceConfidence.High,
                     rawMoveX = first.moveX, rawMoveY = first.moveY,
                     rawJumpPressed = first.jumpPressed, rawJumpHeld = first.jumpHeld,
                     rawJumpReleased = first.jumpReleased,
@@ -272,7 +268,6 @@ namespace IGTAPTasMod
             if (sample.jumpHeld) return "Exact " + movement + " jump held";
             return "Exact " + movement;
         }
-    }
 
         private static int Direction(float value) { return value < -0.25f ? -1 : value > 0.25f ? 1 : 0; }
     }

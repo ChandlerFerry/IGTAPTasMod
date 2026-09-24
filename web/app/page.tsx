@@ -16,12 +16,13 @@ type Result = { id: string; success: boolean; completionTime: number; completion
 type OfflineResult = { finished: boolean; courseTicks: number; timeSeconds: number };
 type OfflineSummary = { coverage: { mode: string; theoreticalCombinations: number; uniqueCandidates: number }; validation?: { rmsePixels: number; groundAgreement: number; fidelity: string }; baseline: OfflineResult; candidates: { rank: number; candidate: OfflineResult }[] };
 type Offline = { status: string; running: boolean; error?: string; hasReport: boolean; summary?: OfflineSummary };
+type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; evaluations: number; finishes: number; cells: number; best: number | null; log: string[]; courses: number[] };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean;
-  selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; offline: Offline;
+  connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean;
+  selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; offline: Offline; solver: SolverState;
 };
 
-const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], offline: { status: "Idle", running: false, hasReport: false } };
+const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], offline: { status: "Idle", running: false, hasReport: false }, solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, cells: 0, best: null, log: [], courses: [1, 2, 3] } };
 
 async function request(path: string, body?: unknown) {
   const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -60,6 +61,11 @@ export default function Studio() {
     </aside>
 
     <section className="workspace">
+      <label className={`capabilityLock ${state.capabilitiesLocked ? "on" : ""}`}>
+        <input type="checkbox" checked={state.capabilitiesLocked} disabled={!state.connected} onChange={e => command("/settings/lock-capabilities", { locked: e.target.checked })} />
+        <strong>DO NOT MODIFY CAPABILITIES</strong>
+        <span>{state.capabilitiesLocked ? "On: the plugin never changes your unlocks. The solver and turbo tools are disabled." : "Off: category routes and the solver set wall jump / dash for their category."}</span>
+      </label>
       <header className="topbar">
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.engineStatus}</p></div>
         <div className="transport">
@@ -88,7 +94,7 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className={`recordingCard ${recording.favorite?"locked":""}`} key={recording.id}><div className="recordingTitle"><div><strong>{recording.favorite?"★ ":""}{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions{recording.favorite?" · read-only":""}</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button disabled={recording.favorite} onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className={`favoriteButton ${recording.favorite?"active":""}`} onClick={()=>command("/recordings/favorite",{recordingId:recording.id,favorite:!recording.favorite})}>{recording.favorite?"★ Locked":"☆ Favorite"}</button><button className="danger" disabled={recording.favorite} onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "optimize" && <OfflineOptimizer offline={state.offline ?? emptyState.offline} route={route} onRefresh={refresh} onError={setError}/>} 
+        {tab === "optimize" && <Solver solver={state.solver ?? emptyState.solver} onCommand={command}/>} 
 
         {tab === "checkpoints" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Section checkpoints</h2></div><button className="primary" onClick={() => command("/checkpoints/capture")}>Capture current state</button></div><p className="lede">Assign a checkpoint to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="checkpointList">{state.checkpoints.map(cp => <div className={`checkpoint ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/checkpoints/restore", { checkpointId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/checkpoints/assign", { checkpointId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
 
@@ -122,40 +128,20 @@ function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:A
   return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
 }
 function ActionCard({action,index,locked,onSave}:{action:Action;index:number;locked:boolean;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""} ${locked?"locked":""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select disabled={locked} value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input disabled={locked} type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button disabled={locked} onClick={()=>onSave({durationTicks:duration})}>Save</button><button disabled={locked} className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
-function OfflineOptimizer({offline,route,onRefresh,onError}:{offline:Offline;route?:Route;onRefresh:()=>Promise<void>;onError:(message:string)=>void}) {
-  const [settings,setSettings]=useState({radius:8,budget:5000000,beam:2000,top:20,finalists:3,trials:10,reliability:100});
-  const [report,setReport]=useState("");
-  const [confirming,setConfirming]=useState("");
-  const start=async()=>{try{onError("");setReport("");await request("/offline/start",{routeId:route?.id,...settings});await onRefresh();}catch(e){onError(e instanceof Error?e.message:String(e));}};
-  const stop=async()=>{try{await request("/offline/stop",{});await onRefresh();}catch(e){onError(e instanceof Error?e.message:String(e));}};
-  const openReport=async()=>{try{const result=await request("/offline/report");setReport(result.html);}catch(e){onError(e instanceof Error?e.message:String(e));}};
-  const importCandidate=async(confirm:boolean)=>{try{
-    onError("");
-    if(!confirm){const imported=await request("/offline/import",{rank:1});setConfirming(`Imported ${imported.name}`);await onRefresh();return;}
-    const count=Math.min(settings.finalists,offline.summary?.candidates.length??0);if(count<1)throw new Error("No offline finalists are available.");
-    const tested:{routeId:string;name:string;rank:number;successes:number;outcomes:Result[];median:number}[]=[];
-    for(let rank=1;rank<=count;rank++){
-      const imported=await request("/offline/import",{rank});const initial=await request("/state");const seen=new Set<string>(initial.results.map((item:Result)=>item.id));const outcomes:Result[]=[];
-      for(let trial=1;trial<=settings.trials;trial++){
-        setConfirming(`Finalist ${rank}/${count} · in-game trial ${trial}/${settings.trials}…`);await request("/routes/run",{});
-        const deadline=Date.now()+30000;let found:Result|undefined;
-        while(Date.now()<deadline&&!found){await new Promise(resolve=>window.setTimeout(resolve,200));const snapshot=await request("/state");found=snapshot.results.find((item:Result)=>!seen.has(item.id));}
-        if(!found)throw new Error(`Finalist ${rank}, trial ${trial} timed out.`);seen.add(found.id);outcomes.push(found);
-      }
-      const times=outcomes.filter(item=>item.success).map(item=>item.completionTime).sort((a,b)=>a-b);const middle=Math.floor(times.length/2);const median=times.length?(times.length%2?times[middle]:(times[middle-1]+times[middle])/2):Number.POSITIVE_INFINITY;
-      tested.push({routeId:imported.routeId,name:imported.name,rank,successes:times.length,outcomes,median});
-    }
-    const required=Math.ceil(settings.trials*settings.reliability/100);const eligible=tested.filter(item=>item.successes>=required).sort((a,b)=>a.median-b.median||b.successes-a.successes||a.rank-b.rank);
-    const winner=eligible[0]??[...tested].sort((a,b)=>b.successes-a.successes||a.median-b.median||a.rank-b.rank)[0];await request("/routes/select",{routeId:winner.routeId});
-    setConfirming(`${winner.name} selected · ${winner.successes}/${settings.trials} succeeded · ${Number.isFinite(winner.median)?`${winner.median.toFixed(3)}s median`:"no finish"}${eligible.length?` · met ${settings.reliability}% target`:" · no finalist met target"}`);await onRefresh();
-  }catch(e){onError(e instanceof Error?e.message:String(e));setConfirming("");}};
-  const summary=offline.summary; const best=summary?.candidates?.[0]?.candidate; const fidelity=summary?.validation?.fidelity??"unmeasured";
-  return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">PRIMARY OPTIMIZER · 100% OFFLINE SEARCH</p><h2>Simulate the full map and every candidate locally</h2></div><span className={`offlineStatus ${offline.status.toLowerCase()}`}>{offline.status}</span></div>
-    <p className="lede">Exports the live map and movement model, searches coupled frame timings, jump edges, and analog strengths outside Unity, and rejects candidates that do not reproduce the route's landings and wall-jump topology. Unity is never accelerated and is used only after the search to confirm the tiny finalist set.</p>
-    <div className="offlineControls"><Field label="± timing radius"><input type="number" min="0" max="20" value={settings.radius} onChange={e=>setSettings({...settings,radius:Number(e.target.value)})}/></Field><Field label="Evaluation budget"><input type="number" min="1" value={settings.budget} onChange={e=>setSettings({...settings,budget:Number(e.target.value)})}/></Field><Field label="Beam width"><input type="number" min="1" value={settings.beam} onChange={e=>setSettings({...settings,beam:Number(e.target.value)})}/></Field><Field label="Shortlist"><input type="number" min="2" value={settings.top} onChange={e=>setSettings({...settings,top:Number(e.target.value)})}/></Field><Field label="Finalists to validate"><input type="number" min="1" max="20" value={settings.finalists} onChange={e=>setSettings({...settings,finalists:Number(e.target.value)})}/></Field><Field label="Trials per finalist"><input type="number" min="1" max="100" value={settings.trials} onChange={e=>setSettings({...settings,trials:Number(e.target.value)})}/></Field><Field label="Required reliability %"><input type="number" min="1" max="100" value={settings.reliability} onChange={e=>setSettings({...settings,reliability:Number(e.target.value)})}/></Field></div>
-    <div className="buttonRow"><button className="primary" disabled={!route||offline.running} onClick={start}>{offline.running?"Searching offline…":"Run complete offline optimization"}</button>{offline.running&&<button className="danger" onClick={stop}>Stop offline search</button>}{offline.hasReport&&<button onClick={openReport}>Draw map & candidate paths</button>}{offline.hasReport&&<button className="secondary" onClick={()=>importCandidate(false)}>Import #1 without testing</button>}{offline.hasReport&&<button className="primary" disabled={!!confirming&&confirming.includes("…")} onClick={()=>importCandidate(true)}>Confirm finalists at native 1×</button>}</div>
-    {offline.error&&<p className="notice">{offline.error}</p>}{confirming&&<p className="offlineConfirmation">{confirming}</p>}
-    {summary&&<div className="offlineSummary"><div><span>Coverage</span><strong>{summary.coverage.mode}</strong><small>{summary.coverage.uniqueCandidates.toLocaleString()} candidates / {summary.coverage.theoreticalCombinations.toLocaleString()} combinations</small></div><div><span>Prediction</span><strong>{best?.finished?`${best.courseTicks}f · ${best.timeSeconds.toFixed(3)}s`:"No finish"}</strong><small>Baseline {summary.baseline.courseTicks}f</small></div><div><span>Fidelity</span><strong className={fidelity==="pixel-certified"?"success":"warn"}>{fidelity}</strong><small>{summary.validation?`${summary.validation.rmsePixels.toFixed(2)} px RMS · ${(summary.validation.groundAgreement*100).toFixed(1)}% contacts`:"Record a run to calibrate"}</small></div></div>}
-    {report&&<div className="reportViewer"><button onClick={()=>setReport("")}>Close report</button><iframe title="Offline optimizer map report" sandbox="" srcDoc={report}/></div>}
+function Solver({solver,onCommand}:{solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+  const [course,setCourse]=useState<number|"">("");
+  const [caps,setCaps]=useState("wj");
+  const chosen=course===""?(solver.courses[0]??1):course;
+  return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">REAL-GAME SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
+    <p className="lede">Runs the real game fast-forwarded. It explores new paths from the start and sharpens the best finish; only the start and stop timer gates matter. Every new best is saved as a route and replaces slower ones.</p>
+    <div className="offlineControls">
+      <Field label="1. Course"><select value={chosen} disabled={solver.running} onChange={e=>{ if(e.target.value==="new") onCommand("/courses/add-from-recording").then(()=>setCourse(Math.max(0,...solver.courses)+1)); else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=><option key={id} value={id}>Course {id}</option>)}<option value="new">+ New course from last recording</option></select></Field>
+      <Field label="2. Capabilities"><select value={caps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}><option value="none">Nothing</option><option value="wj">Wall jump</option><option value="wjdash">Wall jump + dash</option></select></Field>
+    </div>
+    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",{course:chosen,capabilities:caps})}>3. Solve</button>}</div>
+    <div className="offlineSummary"><div><span>Best</span><strong>{solver.best!=null?`${solver.best.toFixed(2)}s`:"—"}</strong><small>{solver.course?`Course ${solver.course} · ${solver.capabilities}`:"Not started"}</small></div><div><span>Runs</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.finishes.toLocaleString()} timed finishes</small></div><div><span>Explored</span><strong>{solver.cells.toLocaleString()}</strong><small>map cells reached</small></div></div>
+    <p className="offlineConfirmation">{solver.status}</p>
+    {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
+    {solver.log.length>0&&<ul className="solverLog">{solver.log.map((line,i)=><li key={i}>{line}</li>)}</ul>}
   </div>;
 }

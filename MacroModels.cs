@@ -35,6 +35,9 @@ namespace IGTAPTasMod
         public bool rawJumpReleased;
         public bool rawDashPressed;
         public bool rawDashHeld;
+        // With rawDashPressed: press jump on this frame of the dash it starts (1 = first dash frame). The engine
+        // gets no ticks during a dash, so this is the only way to jump mid-dash (a late super jump). 0 = off.
+        public int dashJumpFrame;
 
         public MacroStep Copy()
         {
@@ -46,7 +49,7 @@ namespace IGTAPTasMod
                 rawMoveX = rawMoveX, rawMoveY = rawMoveY,
                 rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
                 rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
-                rawDashHeld = rawDashHeld };
+                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame };
         }
     }
 
@@ -147,5 +150,7 @@ namespace IGTAPTasMod
         public const int CurrentSchemaVersion = 1;
         public int schemaVersion = CurrentSchemaVersion;
         public bool autoOpenWebStudio = true;
+        // Ethical runs: the plugin never changes the player's unlocks (wall jump, dash, ...), and tools that need to refuse.
+        public bool lockCapabilities;
     }
 }

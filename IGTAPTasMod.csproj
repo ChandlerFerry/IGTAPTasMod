@@ -12,6 +12,9 @@
 
   <ItemGroup>
     <Compile Remove="simulator\**\*.cs" />
+    <!-- The offline engine host builds its own assemblies (including a rewritten Assembly-CSharp). -->
+    <None Remove="enginesim\**" />
+    <Compile Remove="enginesim\**\*.cs" />
     <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
     <Reference Include="0Harmony" HintPath="$(BepInExDir)\0Harmony.dll" Private="false" />
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />
@@ -22,12 +25,12 @@
     <Reference Include="Newtonsoft.Json" HintPath="$(ManagedDir)\Newtonsoft.Json.dll" Private="false" />
   </ItemGroup>
 
-  <Target Name="BuildWebStudio" BeforeTargets="Build">
+  <Target Name="BuildWebStudio" BeforeTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
     <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)\web" Condition="!Exists('$(MSBuildProjectDirectory)\web\node_modules\next\package.json')" />
     <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\web" />
   </Target>
 
-  <Target Name="DeployToGame" AfterTargets="Build">
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
     <MSBuild Projects="$(MSBuildProjectDirectory)\simulator\IGTAP.FastSim.csproj"
              Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(PluginDir)" />

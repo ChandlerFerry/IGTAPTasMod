@@ -1,79 +1,71 @@
 # IGTAP TAS Studio
 
-Browser-based recording, replay, editing, and offline route optimization for the full Unity game.
-
-The plugin uses the game's normal movement and collision code. Route actions are injected at the 50 Hz physics boundary; authoritative tests always run in Unity at native 1× speed.
+Recording, replay, editing and route solving for IGTAP, driven from a browser studio. **Route rules are in
+[`AGENTS.md`](AGENTS.md); read them first.** Open work is tracked in GitHub issues.
 
 ## Components
 
-- `TasPlugin.cs` — BepInEx plugin, route runner, recorder, HTTP API, native result capture, and live model export.
-- `web/` — Next.js browser studio served on `http://127.0.0.1:17426/`.
-- `simulator/` — standalone .NET simulator, deterministic offline optimizer.
-- `tools/` — reproducible live-map and serialized-scene exporters, plus the fidelity regression sweep.
-- `HANDOFF.md` — current Level 2 status and exact continuation instructions.
+| Piece | What it does |
+|---|---|
+| `TasPlugin.cs` | BepInEx plugin: route runner, recorder, HTTP API on `http://127.0.0.1:17426/`, attempt results, settings. |
+| `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Presses and releases do exactly what `Movement.Update` does, including buffer expiry timers. Shared with `enginesim`. |
+| `TurboRunner.cs` | "Turbo": steps `Movement.FixedUpdate` → `courseScript.FixedUpdate` → `Physics2D.Simulate` → `Movement.Update` in a loop inside one frame (`Physics2D.simulationMode = Script`). Movement's `Invoke` timers are intercepted and fired on the tick the frame loop would fire them (≥50 fps semantics). ~45× real time; verified identical to real-time runs. |
+| `Solver.cs` | In-game solver (Optimize tab) and `SaveSolverRoute`, the single gated save for category routes. |
+| `EngineSimBridge.cs` | Endpoints the offline engine uses: `trace`, `submit` (turbo is the judge), `raycast`. |
+| `enginesim/` | The game's own `Assembly-CSharp.dll` running in .NET on a Unity shim and a C# Box2D port: millions of runs without the game. See [`enginesim/README.md`](enginesim/README.md). |
+| `web/` | Next.js studio, served by the plugin. |
+| `simulator/` | Older hand-written physics model (FastSim). Only an idea generator now; not used by the solver. |
+| `tools/` | `enginesim-capture.py` (traces), `enginesim-redeploy.py`, `validate.py` (re-run every category route in turbo), `audit-traces.py` (rule 3 over captured traces), `turbo-search.py`, `solve.py`, `fidelity-sweep.py`. |
 
-## Build
-
-```powershell
-dotnet build .\IGTAPTasMod.csproj -c Release
-```
-
-A clean build restores dependencies, builds the browser studio and simulator, then deploys:
-
-```text
-C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\plugins\IGTAPTasMod.dll
-C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\plugins\IGTAPTasWeb\
-C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\plugins\IGTAPFastSim\
-```
-
-Restart the game after rebuilding the plugin DLL.
-
-Simulator-only build:
+## Build and deploy
 
 ```powershell
-dotnet build .\simulator\IGTAP.FastSim.csproj -c Release
+dotnet build .\IGTAPTasMod.csproj -c Release     # web UI + plugin, copied into the game
 ```
 
-Simulator regression tests:
+The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGTAPfullGame.exe //F`), build, relaunch
+`IGTAPfullGame.exe`, then `POST /api/oracle/bootstrap` (or load a save) to get onto a course.
+`python tools/enginesim-redeploy.py` does all of that for a plugin-only build.
 
-```powershell
-.\simulator\bin\Release\net8.0\IGTAP.FastSim.exe self-test
-```
+## Studio
 
-## Browser studio
+- **Top bar:** `DO NOT MODIFY CAPABILITIES`. When on, the plugin never writes an unlock, and the solver/turbo tools
+  refuse (setting `lockCapabilities` in `settings.json`, `POST /api/settings/lock-capabilities {locked}`).
+- **Routes:** select, edit, duplicate, favorite (favorites are never deleted by any tool), run, record.
+  Playing a category route (`<course>_<NO_WJ|WJ|WJDASH> <time>`) applies that category's unlocks for the attempt, then
+  restores the save's.
+- **Optimize:** pick course and capabilities, press Solve. New bests are saved as `<course>_<CAPS> <time>` through the
+  gate and replace slower non-favorite routes of that category.
 
-The game starts a loopback-only server at `http://127.0.0.1:17426/`. The browser studio supports:
+## Solver
 
-- route selection, editing, duplication, locking, running, and stopping;
-- fixed-tick recording and conversion to editable routes;
-- checkpoints and native attempt results;
-- deterministic offline optimization with native finalist confirmation; and
-- live physics/model export.
+- **Seeds:** every route whose name starts with `<course>_`, plus an empty route.
+- **Explore (Go-Explore):** archive keyed by 48 px map cell × "course timer running", each cell keeping the earliest input
+  prefix that reached it. Pick a cell (rarely picked first, timed cells ×3), resume there, append a random 1–3 chunk burst
+  (stick −1/0/1, jump with hold, dash if allowed; superbounce offline).
+- **Optimize:** mutate the best finish (cut, insert, dash/dash-jump/hop + retime, drop a press, re-aim). 50/50 with explore.
+- **Scoring:** the game's own timer (`courseScript.currentPathTime`). A finish counts only when the solver's course stops
+  while tracking.
+- **Gate:** `SaveSolverRoute` replays the route from the course start and rejects it (`REJECTED …` in the solver log,
+  `rejected` in the submit reply) unless it finishes on the course in the same time, every jump/dash buffer has a real
+  press within the game's window, and the unlocks match the category on every tick.
 
-The removed native brute-force optimizer is not a compatibility path. Unsupported persisted schemas are quarantined and replaced with current-format data.
+## Game facts
 
-## Optimization model
+- Score by the game timer, not "finish tick − start tick"; they differ on dash routes (cause not identified).
+- Course starts (quick-restart point; the player spawns 12 px lower): C1 (2241, −292), C2 (4783.43359, 1878.2251),
+  C3 (9505, 6967.01465). Courses live in `config/IGTAPTasMod/courses.json`.
+- `Time.fixedDeltaTime` is 0.0199999921, so float counters get an extra tick (wall coyote lasts 8 ticks, not 7).
+- Buffers: jump press 0.12 s (0.2 s mid-dash), dash press 0.12 s, jump cut after release 0.26 s.
+- A clip into a wall corner can make the foot raycast see ground; with a buffered press that fires a full ground jump
+  (looks like a wall jump). Legit only with a real press inside the buffer window.
+- Superbounce: dash into a wall, jump 0–5 ticks later (inside `dashBoostMax` = 6 frames) → `SpecialWallJump(.6, 1,
+  up * dashBoostUpwards = 410)`.
+- Real-time play has frame-timing variance (same route: 126/127/132 ticks); turbo is deterministic.
+- Decompiled game code for reference: `obj/Movement.decompiled.cs`, `obj/courseScript.decompiled.cs`.
 
-The offline suite improves an existing route by exploring frame timings, analog strengths, jump insertion, and route-shape changes (dropping a jump or redirecting a block, then re-timing around it). Every candidate is gated on spike clearance. The autonomous planner searches raw inputs against ordered map-derived topology targets.
+## Safety
 
-```text
-IGTAP.FastSim suite ...
-```
-
-The canonical initialized map source is generated by the running game:
-
-```text
-C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\simulation\live-simulation-model.json
-```
-
-Serialized Unity scenes are useful for authored hierarchy and tile data, but startup code changes checkpoints, the finish, and parts of the spike layout. Do not use serialized scene positions as the final runtime collision map.
-
-## Safety invariants
-
-- Never accelerate Unity for authoritative testing.
-- Never modify the player position during an attempt.
-- Never change Unity's clock or fixed timestep.
-- Preserve source routes; import candidates as new routes.
-- Treat only repeated native completion results as proof.
-
-See `HANDOFF.md` for the active Level 2 route, map landmarks, validated endpoints, and next command.
+- Nothing the plugin does in turbo or offline is saved to the game; unlocks it sets for a run are restored.
+- Real-time runs use Unity at native speed; never change Unity's clock or fixed timestep.
+- Preserve source routes; candidates become new routes.

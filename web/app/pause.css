@@ -26,3 +26,37 @@
   border-color: #9a6d28;
   color: #ffe1ad;
 }
+
+.capabilityLock {
+  align-items: center;
+  background: #0b1c31;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 6px 12px;
+  padding: 10px 36px;
+}
+
+.capabilityLock input {
+  accent-color: var(--red);
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.capabilityLock strong {
+  color: var(--text);
+  letter-spacing: .08em;
+}
+
+.capabilityLock.on {
+  background: #3c1822;
+  color: #ffb6c0;
+}
+
+.capabilityLock.on strong {
+  color: #ff9aa8;
+}
