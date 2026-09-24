@@ -44,6 +44,8 @@ namespace IGTAP.EngineSim.Cli
             Func<Simulation> create = () =>
             {
                 var sim = new Simulation(World.Load(worldPath)) { TargetCourse = course };
+                if (header.TryGetProperty("finish", out JsonElement finish))
+                    sim.TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
                 sim.LoadStart(start);
                 return sim;
             };

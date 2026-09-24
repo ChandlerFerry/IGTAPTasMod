@@ -145,6 +145,15 @@ namespace IGTAPTasMod
                 JsonTextWriter w = json.W;
                 w.WriteStartObject();
                 w.WritePropertyName("course"); w.WriteValue(course);
+                CourseDef finishCourse = _courses.Find(c => c.id == course);
+                if (finishCourse != null && finishCourse.HasFinish)
+                {
+                    // The bonus course's reward box, so offline runs finish exactly where this one did.
+                    w.WritePropertyName("finish"); w.WriteStartArray();
+                    json.Float(finishCourse.endX); json.Float(finishCourse.endY);
+                    json.Float(finishCourse.endW); json.Float(finishCourse.endH);
+                    w.WriteEndArray();
+                }
                 w.WritePropertyName("capabilities"); w.WriteValue(caps);
                 w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
                 w.WritePropertyName("inputs"); w.WriteRawValue(JsonConvert.SerializeObject(inputs));

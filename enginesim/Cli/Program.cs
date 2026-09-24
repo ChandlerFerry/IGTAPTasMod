@@ -85,6 +85,8 @@ namespace IGTAP.EngineSim.Cli
             var sim = new Simulation(world);
             JsonDocument trace = JsonDocument.Parse(File.ReadAllText(tracePath), new JsonDocumentOptions { MaxDepth = 256 });
             sim.TargetCourse = trace.RootElement.GetProperty("course").GetInt32();
+            if (trace.RootElement.TryGetProperty("finish", out JsonElement finish))
+                sim.TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
             sim.LoadStart(trace.RootElement.GetProperty("start"));
             var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(t => new InputTick
             {
