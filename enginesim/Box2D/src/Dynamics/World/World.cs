@@ -38,10 +38,6 @@ namespace Box2D
     /// </summary>
     public partial class b2World
     {
-        public delegate bool QueryCallback(b2Fixture fixture);
-
-        public delegate void RayCastCallback(b2Fixture fixture, b2Vec2 point, b2Vec2 normal, float fraction);
-
         private bool m_clearForces;
 
         //public b2BroadPhase     _broadPhase;
@@ -1110,15 +1106,22 @@ namespace Box2D
             }
         }
 
-        public void QueryAABB(QueryCallback callback, in b2AABB aabb)
-        {
-            bool internalCallback(int proxyId)
-            {
-                var proxy = (FixtureProxy)m_contactManager.m_broadPhase.GetUserData(proxyId);
-                return callback(proxy.fixture);
-            }
+        // The broadphase callbacks are bound once and read the caller's callback from a field, so queries don't allocate.
+        private b2QueryCallback m_queryCallback;
+        private b2RayCastCallback m_rayCastCallback;
+        private Func<int, bool> m_queryProxy;
+        private Func<b2RayCastInput, int, float> m_rayCastProxy;
 
-            m_contactManager.m_broadPhase.Query(internalCallback, aabb);
+        public void QueryAABB(b2QueryCallback callback, in b2AABB aabb)
+        {
+            m_queryCallback = callback;
+            m_contactManager.m_broadPhase.Query(m_queryProxy ??= QueryProxy, aabb);
+        }
+
+        private bool QueryProxy(int proxyId)
+        {
+            var proxy = (FixtureProxy)m_contactManager.m_broadPhase.GetUserData(proxyId);
+            return m_queryCallback.ReportFixture(proxy.fixture);
         }
 
         public int QueryAABB(out b2Fixture[] fixtures, in b2AABB aabb, int maxFixtures = 256)
@@ -1140,31 +1143,33 @@ namespace Box2D
             return i;
         }
 
-        public void RayCast(RayCastCallback callback, in b2Vec2 point1, in b2Vec2 point2)
+        public void RayCast(b2RayCastCallback callback, in b2Vec2 point1, in b2Vec2 point2)
         {
-            float internalCallback(b2RayCastInput input, int proxyId)
-            {
-                object userData = m_contactManager.m_broadPhase.GetUserData(proxyId);
-                var proxy = (FixtureProxy)userData;
-                b2Fixture fixture = proxy.fixture;
-                int index = proxy.childIndex;
-                bool hit = fixture.RayCast(out b2RayCastOutput output, input, index);
-
-                if (hit)
-                {
-                    float fraction = output.fraction;
-                    b2Vec2 point = (1f - fraction) * input.p1 + fraction * input.p2;
-                    callback(fixture, point, output.normal, fraction);
-                }
-
-                return input.maxFraction;
-            }
-
+            m_rayCastCallback = callback;
             b2RayCastInput input;
             input.maxFraction = 1.0f;
             input.p1 = point1;
             input.p2 = point2;
-            m_contactManager.m_broadPhase.RayCast(internalCallback, in input);
+            m_contactManager.m_broadPhase.RayCast(m_rayCastProxy ??= RayCastProxy, in input);
+        }
+
+        // Ignores the callback's return: the ray is never clipped and every hit is reported.
+        private float RayCastProxy(b2RayCastInput input, int proxyId)
+        {
+            object userData = m_contactManager.m_broadPhase.GetUserData(proxyId);
+            var proxy = (FixtureProxy)userData;
+            b2Fixture fixture = proxy.fixture;
+            int index = proxy.childIndex;
+            bool hit = fixture.RayCast(out b2RayCastOutput output, input, index);
+
+            if (hit)
+            {
+                float fraction = output.fraction;
+                b2Vec2 point = (1f - fraction) * input.p1 + fraction * input.p2;
+                m_rayCastCallback.ReportFixture(fixture, point, output.normal, fraction);
+            }
+
+            return input.maxFraction;
         }
 
         private void DrawJoint(b2Joint joint)

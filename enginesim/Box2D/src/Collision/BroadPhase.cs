@@ -66,6 +66,7 @@ namespace Box2D
 
 		private int m_proxyCount;
 		private int m_queryProxyId;
+		private Func<int, bool> m_queryCallback;
 
 		public b2BroadPhase()
 		{
@@ -116,7 +117,7 @@ namespace Box2D
 
 				b2AABB fatAABB = m_tree.GetFatAABB(m_queryProxyId);
 
-				m_tree.Query(QueryCallback, fatAABB);
+				m_tree.Query(m_queryCallback ??= QueryCallback, fatAABB);
 			}
 
 			for (var i = 0; i < m_pairCount; ++i)
