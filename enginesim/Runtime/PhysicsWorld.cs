@@ -666,23 +666,64 @@ namespace IGTAP.EngineSim
             if (!_colliders.TryGetValue(a, out ColliderState sa) || !_colliders.TryGetValue(b, out ColliderState sb)
                 || sa.Fixtures.Count == 0 || sb.Fixtures.Count == 0)
                 return new ColliderDistance2D { isValid = false };
+            if ((sb.Body?.Body ?? _ground).Type() == b2BodyType.Static && NearbyDistance(sa, sb, out float nearest))
+                return new ColliderDistance2D { distance = nearest, isValid = true };
             float best = float.PositiveInfinity;
             foreach (b2Fixture fa in sa.Fixtures)
                 foreach (b2Fixture fb in sb.Fixtures)
                     for (int ca = 0; ca < fa.GetShape().GetChildCount(); ca++)
                         for (int cb = 0; cb < fb.GetShape().GetChildCount(); cb++)
-                        {
-                            var input = new b2DistanceInput();
-                            input.proxyA.Set(fa.GetShape(), ca);
-                            input.proxyB.Set(fb.GetShape(), cb);
-                            input.transformA = fa.GetBody().GetTransform();
-                            input.transformB = fb.GetBody().GetTransform();
-                            input.useRadii = true;
-                            var cache = new b2SimplexCache();
-                            b2Distance(out b2DistanceOutput output, ref cache, input);
-                            best = MathF.Min(best, output.distance);
-                        }
+                            best = MathF.Min(best, ChildDistance(fa, ca, fb, cb));
             return new ColliderDistance2D { distance = best, isValid = true };
+        }
+
+        static float ChildDistance(b2Fixture fa, int ca, b2Fixture fb, int cb)
+        {
+            var input = new b2DistanceInput();
+            input.proxyA.Set(fa.GetShape(), ca);
+            input.proxyB.Set(fb.GetShape(), cb);
+            input.transformA = fa.GetBody().GetTransform();
+            input.transformB = fb.GetBody().GetTransform();
+            input.useRadii = true;
+            var cache = new b2SimplexCache();
+            b2Distance(out b2DistanceOutput output, ref cache, input);
+            return output.distance;
+        }
+
+        // A static collider can have thousands of shapes (a level's ground is one collider). Only its shapes in grid cells
+        // within NearbyRange of `a` are measured; the rest are provably farther than that, so the minimum is exact
+        // whenever it is below the range (minus a float margin). False: measure everything.
+        const float NearbyRange = 32f;
+
+        bool NearbyDistance(ColliderState sa, ColliderState sb, out float best)
+        {
+            if (_static == null) BuildGrid();
+            best = float.PositiveInfinity;
+            b2AABB box = default;
+            bool first = true;
+            foreach (b2Fixture fa in sa.Fixtures)
+                for (int ca = 0; ca < fa.GetShape().GetChildCount(); ca++)
+                {
+                    fa.GetShape().ComputeAABB(out b2AABB c, fa.GetBody().GetTransform(), ca);
+                    if (first) box = c;
+                    else box = new b2AABB { lowerBound = b2Vec2.Min(box.lowerBound, c.lowerBound), upperBound = b2Vec2.Max(box.upperBound, c.upperBound) };
+                    first = false;
+                }
+            box.lowerBound -= new b2Vec2(NearbyRange, NearbyRange);
+            box.upperBound += new b2Vec2(NearbyRange, NearbyRange);
+            CellRange(box, out int x0, out int y0, out int x1, out int y1);
+            _stamp++;
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                    foreach (int i in _cells[y * _cellsX + x])
+                    {
+                        if (_seen[i] == _stamp || _static[i].State != sb) continue;
+                        _seen[i] = _stamp;
+                        foreach (b2Fixture fa in sa.Fixtures)
+                            for (int ca = 0; ca < fa.GetShape().GetChildCount(); ca++)
+                                best = MathF.Min(best, ChildDistance(fa, ca, _static[i].Fixture, _static[i].Child));
+                    }
+            return best < NearbyRange - 1f;
         }
 
         public Vector2 GetPosition(Rigidbody2D body) { b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
