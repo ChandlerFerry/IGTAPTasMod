@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import "./action-editor.css";
 import "./frame-timeline.css";
 import "./favorite-ui.css";
+import "./route-sidebar.css";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -13,10 +14,11 @@ type RecordedAction = { label: string; type: string; direction: number; wallJump
 type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
+type Course = { id: number; token: string; bonus: boolean; minLevel: number };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; evaluations: number; finishes: number; cells: number; best: number | null; log: string[]; courses: number[] };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean;
-  selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
+  selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
 };
 
 const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, cells: 0, best: null, log: [], courses: [1, 2, 3] } };
@@ -52,8 +54,7 @@ export default function Studio() {
     <aside className="sidebar">
       <div className="brand"><span className="brandMark">T</span><div><strong>IGTAP</strong><small>TAS STUDIO</small></div></div>
       <div className={`connection ${state.connected ? "online" : "offline"}`}><i />{state.connected ? `Connected · v${state.version}` : "Waiting for game"}</div>
-      <label className="sectionLabel">ROUTES</label>
-      <div className="routeList">{state.routes.map((item, index) => <div className={`routeRow ${item.id === route?.id ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (!item.favorite && window.confirm(`Delete route “${item.name}”?`)) command("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => command("/routes/select", { routeId: item.id })}><span>{index + 1}</span><div><strong>{item.favorite ? "★ " : ""}{item.name}</strong><small>{item.actions.length} actions{item.favorite ? " · read-only" : item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button><button className={`favoriteButton ${item.favorite?"active":""}`} title={item.favorite?"Unfavorite and unlock":"Favorite and lock"} onClick={()=>command("/routes/favorite",{routeId:item.id,favorite:!item.favorite})}>{item.favorite?"★":"☆"}</button></div>)}</div>
+      <RouteSidebar routes={state.routes} courses={state.courses ?? []} activeId={route?.id} onCommand={command} />
       <div className="sidebarFooter"><p>The game keeps simulating while this window is focused.</p><kbd>F8</kbd><span>Emergency stop</span></div>
     </aside>
 
@@ -91,7 +92,7 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className={`recordingCard ${recording.favorite?"locked":""}`} key={recording.id}><div className="recordingTitle"><div><strong>{recording.favorite?"★ ":""}{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions{recording.favorite?" · read-only":""}</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button disabled={recording.favorite} onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className={`favoriteButton ${recording.favorite?"active":""}`} onClick={()=>command("/recordings/favorite",{recordingId:recording.id,favorite:!recording.favorite})}>{recording.favorite?"★ Locked":"☆ Favorite"}</button><button className="danger" disabled={recording.favorite} onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "optimize" && <Solver solver={state.solver ?? emptyState.solver} onCommand={command}/>} 
+        {tab === "optimize" && <Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} onCommand={command}/>} 
 
         {tab === "checkpoints" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Section checkpoints</h2></div><button className="primary" onClick={() => command("/checkpoints/capture")}>Capture current state</button></div><p className="lede">Assign a checkpoint to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="checkpointList">{state.checkpoints.map(cp => <div className={`checkpoint ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/checkpoints/restore", { checkpointId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/checkpoints/assign", { checkpointId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
 
@@ -101,6 +102,40 @@ export default function Studio() {
   </main>;
 }
 
+const CATEGORIES: [string, string][] = [["NO_WJ", "No wall jump"], ["WJ", "Wall jump"], ["WJDASH", "Wall jump + dash"], ["WJ_DASH_AJ", "Wall jump + dash + air jump"]];
+const CATEGORY_ROUTE = /^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) ([\d.]+)$/i;
+
+// Courses in order, bonuses last; each shows its fastest route per category. Everything else is under "Other routes".
+function RouteSidebar({routes,courses,activeId,onCommand}:{routes:Route[];courses:Course[];activeId?:string;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+  const best = new Map<string, {route: Route; time: number}>();
+  const other: Route[] = [];
+  for (const r of routes) {
+    const m = CATEGORY_ROUTE.exec(r.name);
+    const course = m && courses.find(c => c.token.toLowerCase() === m[1].toLowerCase());
+    const level = m ? CATEGORIES.findIndex(([cat]) => cat === m[2].toUpperCase()) : -1;
+    if (!m || !course || level < (course.minLevel ?? 0)) { other.push(r); continue; }
+    const key = `${course.id}:${m[2].toUpperCase()}`, time = Number(m[3]);
+    const current = best.get(key);
+    if (!current || time < current.time) best.set(key, {route: r, time});
+    else other.push(r);
+  }
+  const section = (label: string, list: Course[]) => list.length > 0 && <>
+    <label className="sectionLabel">{label}</label>
+    {list.map(c => <div className="courseGroup" key={c.id}>
+      <strong className="courseName">{c.bonus ? c.token : `Course ${c.token}`}</strong>
+      {CATEGORIES.slice(c.minLevel ?? 0).map(([cat, title]) => { const b = best.get(`${c.id}:${cat}`); return b
+        ? <button key={cat} className={`categoryRow ${b.route.id === activeId ? "active" : ""}`} onClick={() => onCommand("/routes/select", { routeId: b.route.id })} title={b.route.name}><span>{title}</span><b>{b.time.toFixed(2)}s</b></button>
+        : <div key={cat} className="categoryRow empty"><span>{title}</span><b>—</b></div>; })}
+    </div>)}
+  </>;
+  return <div className="courseList">
+    {section("COURSES", courses.filter(c => !c.bonus).sort((a, b) => a.id - b.id))}
+    {section("BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id))}
+    {other.length > 0 && <details className="otherRoutes"><summary className="sectionLabel">OTHER ROUTES ({other.length})</summary>
+      <div className="routeList">{other.map(item => <div className={`routeRow ${item.id === activeId ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (!item.favorite && window.confirm(`Delete route “${item.name}”?`)) onCommand("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => onCommand("/routes/select", { routeId: item.id })}><div><strong>{item.favorite ? "★ " : ""}{item.name}</strong><small>{item.actions.length} actions{item.favorite ? " · read-only" : item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button><button className={`favoriteButton ${item.favorite?"active":""}`} title={item.favorite?"Unfavorite and unlock":"Favorite and lock"} onClick={()=>onCommand("/routes/favorite",{routeId:item.id,favorite:!item.favorite})}>{item.favorite?"★":"☆"}</button></div>)}</div>
+    </details>}
+  </div>;
+}
 function DirectionText(direction:number) { return direction < 0 ? "←" : direction > 0 ? "→" : "neutral"; }
 function Stat({label,value,detail,tone=""}:{label:string,value:string,detail:string,tone?:string}) { return <div className={`stat ${tone}`}><p>{label}</p><strong>{value}</strong><span>{detail}</span></div>; }
 function Field({label,children}:{label:string,children:React.ReactNode}) { return <label className="field"><span>{label}</span>{children}</label>; }
@@ -125,17 +160,21 @@ function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:A
   return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
 }
 function ActionCard({action,index,locked,onSave}:{action:Action;index:number;locked:boolean;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""} ${locked?"locked":""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select disabled={locked} value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input disabled={locked} type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button disabled={locked} onClick={()=>onSave({durationTicks:duration})}>Save</button><button disabled={locked} className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
-function Solver({solver,onCommand}:{solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function Solver({solver,courses,onCommand}:{solver:SolverState;courses:Course[];onCommand:(path:string,body?:unknown)=>Promise<void>}) {
   const [course,setCourse]=useState<number|"">("");
   const [caps,setCaps]=useState("wj");
   const chosen=course===""?(solver.courses[0]??1):course;
+  // A course has no categories below its minimum (Course 2 starts at WJ, 3 at WJDASH, 4 at WJ_DASH_AJ).
+  const minLevel=courses.find(c=>c.id===chosen)?.minLevel??0;
+  const capsOptions=[["none","Nothing"],["wj","Wall jump"],["wjdash","Wall jump + dash"],["wjdashaj","Wall jump + dash + air jump"]].slice(minLevel);
+  const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">REAL-GAME SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
     <p className="lede">Runs the real game fast-forwarded. It explores new paths from the start and sharpens the best finish; only the start and stop timer gates matter. Every new best is saved as a route and replaces slower ones.</p>
     <div className="offlineControls">
-      <Field label="1. Course"><select value={chosen} disabled={solver.running} onChange={e=>{ if(e.target.value==="new") onCommand("/courses/add-from-recording").then(()=>setCourse(Math.max(0,...solver.courses)+1)); else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=><option key={id} value={id}>Course {id}</option>)}<option value="new">+ New course from last recording</option></select></Field>
-      <Field label="2. Capabilities"><select value={caps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}><option value="none">Nothing</option><option value="wj">Wall jump</option><option value="wjdash">Wall jump + dash</option></select></Field>
+      <Field label="1. Course"><select value={chosen} disabled={solver.running} onChange={e=>{ if(e.target.value==="new") onCommand("/courses/add-from-recording").then(()=>setCourse(Math.max(0,...solver.courses)+1)); else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=><option key={id} value={id}>{courses.find(c=>c.id===id)?.bonus?courses.find(c=>c.id===id)?.token:`Course ${id}`}</option>)}<option value="new">+ New course from last recording</option></select></Field>
+      <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></Field>
     </div>
-    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",{course:chosen,capabilities:caps})}>3. Solve</button>}</div>
+    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",{course:chosen,capabilities:chosenCaps})}>3. Solve</button>}</div>
     <div className="offlineSummary"><div><span>Best</span><strong>{solver.best!=null?`${solver.best.toFixed(2)}s`:"—"}</strong><small>{solver.course?`Course ${solver.course} · ${solver.capabilities}`:"Not started"}</small></div><div><span>Runs</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.finishes.toLocaleString()} timed finishes</small></div><div><span>Explored</span><strong>{solver.cells.toLocaleString()}</strong><small>map cells reached</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}

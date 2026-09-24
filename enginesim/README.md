@@ -23,10 +23,13 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   category's route (`<course>_<CAPS> <time>`) when it finishes faster than the current best.
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 
-`tools/enginesim-capture.py routes|random|start` captures traces; `tools/enginesim-redeploy.py` rebuilds and reloads the
-plugin.
+`tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
+reloads the plugin.
 
 ## Use
+
+All searching happens here, never in the game (`AGENTS.md` rule 7). The game is needed once per course/category to
+capture a start trace and world, and afterwards only to judge new bests.
 
 ```powershell
 dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release
@@ -39,15 +42,32 @@ $traces = "C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\eng
 ```
 
 `solve` loads the trace's world and start state on every thread, seeds with the trace's inputs (plus `--seed` traces),
-writes each new best to `<traces>\offline-best\`, and sends it to the running game's `/api/enginesim/submit`
-(skip with `--no-submit`; submit later by posting the saved file).
+writes each new best to `<traces>\offline-best\`, and sends each best that beats its seeds to the running game's
+`/api/enginesim/submit` (skip with `--no-submit`). With the game closed the best stays on disk; the plugin judges every
+waiting `offline-best\` file (its category, then the course's other categories) as soon as the game is next in the
+world and idle, and moves it to `offline-best\judged\`.
+
+A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
+the game and solve offline.
+
+```powershell
+python tools\enginesim-capture.py start bonus1 wj                     # -> start-cbonus1-wj.json + .world.json
+python tools\enginesim-capture.py route bonus1_WJ bonus1 wj           # -> seed-cbonus1-wj-bonus1-WJ.json
+python tools\enginesim-capture.py start 4 wjdashaj                    # -> start-c4-wjdashaj.json + .world.json
+python tools\enginesim-capture.py route 4_almost_completed 4 wjdashaj # partial route as a seed
+& $exe replay $traces\seed-cbonus1-*.json $traces\seed-c4-*.json     # fidelity on the new course first
+& $exe solve $traces\start-cbonus1-wj.json --seed $traces\seed-cbonus1-wj-bonus1-WJ.json --no-submit --minutes 60
+```
+
+The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in
+`AGENTS.md` (trace it with `path`, say what the trick is).
 
 ## Rules
 
 - Nothing here changes how the game or the plugin behave; the plugin only gained read-only export endpoints and
   `submit`, which judges with the same turbo path as the in-game solver.
 - A method goes into `cuts.txt` only if it is presentation or real-time-only work that turbo never sees within a run.
-- Invokes: every script's `Invoke` fires on ticks (turbo only reschedules Movement's; others wait for real time).
+- Invokes: every script's `Invoke` fires on ticks, in turbo and here.
 - Fidelity is measured, not assumed: `replay` must report every tick identical on the trace corpus.
 
 ## Fidelity facts (all verified against traces)
@@ -61,8 +81,13 @@ writes each new best to `<traces>\offline-best\`, and sends it to the running ga
   the first step, Stay after; the start state primes existing contacts as already touching.
 - Raycasts: direction normalized, negative distance flips the ray, start-inside hits at fraction 0 with normal −dir,
   triggers are hit (`queriesHitTriggers`).
-- Every trace result matches turbo; three runs differ on their death tick only (a pair's contact order in
-  `Collision2D`, see `Box2D/NOTES.md`).
+- Transforms: the player's parent (`PlayerObject`) follows the game's `FloatingOrigin` and sits at (−20200, −10539)
+  on Course 4. Unity keeps only the local position, so a world position reads back as parent + (world − parent),
+  rounded (20202.4453 → 20202.4434), while the body keeps the unrounded value. A scale change (facing flip) rebuilds
+  the shapes but does not move the body; a position/rotation write does.
+- Every trace result matches turbo; two runs differ on their death tick only (a pair's contact order in
+  `Collision2D`, see `Box2D/NOTES.md`). bonus1 (`seed-cbonus1-wj-*`) differs at one tick only: body velocity y
+  1.2e-14 instead of 0 from a contact on a ground seam whose normal is (0, 0.99999994); every later tick is identical.
 
 ## Memory
 

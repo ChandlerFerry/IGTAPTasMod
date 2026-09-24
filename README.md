@@ -9,13 +9,13 @@ Recording, replay, editing and route solving for IGTAP, driven from a browser st
 |---|---|
 | `TasPlugin.cs` | BepInEx plugin: route runner, recorder, HTTP API on `http://127.0.0.1:17426/`, attempt results, settings. |
 | `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Presses and releases do exactly what `Movement.Update` does, including buffer expiry timers. Shared with `enginesim`. |
-| `TurboRunner.cs` | "Turbo": steps `Movement.FixedUpdate` → `courseScript.FixedUpdate` → `Physics2D.Simulate` → `Movement.Update` in a loop inside one frame (`Physics2D.simulationMode = Script`). Movement's `Invoke` timers are intercepted and fired on the tick the frame loop would fire them (≥50 fps semantics). ~45× real time; verified identical to real-time runs. |
-| `Solver.cs` | In-game solver (Optimize tab) and `SaveSolverRoute`, the single gated save for category routes. |
-| `EngineSimBridge.cs` | Endpoints the offline engine uses: `trace`, `submit` (turbo is the judge), `raycast`. |
+| `TurboRunner.cs` | "Turbo": steps `Movement.FixedUpdate` → `courseScript.FixedUpdate` → `Physics2D.Simulate` → `Movement.Update` in a loop inside one frame (`Physics2D.simulationMode = Script`). Every script's `Invoke` timer (Movement's and the world's, e.g. a spring's 0.15 s cooldown) is intercepted and fired on the tick the frame loop would fire it (≥50 fps semantics); the world's timers still pending when a run ends fire then. ~45× real time; verified identical to real-time runs. |
+| `Solver.cs` | The studio's in-game solver (Optimize tab, for the user; agents search offline, see `AGENTS.md` rule 7) and `SaveSolverRoute`, the single gated save for category routes. |
+| `EngineSimBridge.cs` | Endpoints the offline engine uses: `trace`, `submit` (turbo is the judge), `raycast`. Also judges offline bests (`enginesim/offline-best/*.json`) automatically once the game is in the world and idle, so they reach the studio. |
 | `enginesim/` | The game's own `Assembly-CSharp.dll` running in .NET on a Unity shim and a C# Box2D port: millions of runs without the game. See [`enginesim/README.md`](enginesim/README.md). |
 | `web/` | Next.js studio, served by the plugin. |
 | `simulator/` | Older hand-written physics model (FastSim). Only an idea generator now; not used by the solver. |
-| `tools/` | `enginesim-capture.py` (traces), `enginesim-redeploy.py`, `validate.py` (re-run every category route in turbo), `audit-traces.py` (rule 3 over captured traces), `turbo-search.py`, `solve.py`, `fidelity-sweep.py`. |
+| `tools/` | `enginesim-capture.py` (traces), `enginesim-redeploy.py`, `validate.py` (re-run every category route in turbo), `audit-traces.py` (rule 3 over captured traces), `fidelity-sweep.py` (FastSim only). |
 
 ## Build and deploy
 
@@ -32,15 +32,20 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 - **Top bar:** `DO NOT MODIFY CAPABILITIES`. When on, the plugin never writes an unlock, and the solver/turbo tools
   refuse (setting `lockCapabilities` in `settings.json`, `POST /api/settings/lock-capabilities {locked}`).
 - **Routes:** select, edit, duplicate, favorite (favorites are never deleted by any tool), run, record.
-  Playing a category route (`<course>_<NO_WJ|WJ|WJDASH> <time>`) applies that category's unlocks for the attempt, then
+  Playing a category route (`<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>`) applies that category's unlocks for the attempt, then
   restores the save's.
+- **Sidebar:** each course (bonuses last) with its fastest route per category, from the course's first category up;
+  every other route is under "Other routes".
 - **Optimize:** pick course and capabilities, press Solve. New bests are saved as `<course>_<CAPS> <time>` through the
   gate and replace slower non-favorite routes of that category.
 
 ## Solver
 
-- **Seeds:** every route whose name starts with `<course>_`, plus an empty route.
-- **Wider categories:** a route is valid in every category with more unlocks (NO_WJ ⊂ WJ ⊂ WJDASH), so the offline
+Searching is offline (`IGTAP.EngineSim solve`, [`enginesim/README.md`](enginesim/README.md#use)); the game only captures
+traces and judges new bests. The in-game Optimize tab runs the same algorithm in turbo for the studio user.
+
+- **Seeds:** every route whose name starts with `<course>_`, plus an empty route (offline: the trace's inputs and `--seed` traces).
+- **Wider categories:** a route is valid in every category with more unlocks (NO_WJ ⊂ WJ ⊂ WJDASH ⊂ WJ_DASH_AJ), so the offline
   `solve` submits each best to its own category and every wider one; a wider category is never slower than a narrower.
 - **Explore (Go-Explore):** archive keyed by 48 px map cell × "course timer running", each cell keeping the earliest input
   prefix that reached it. Pick a cell (rarely picked first, timed cells ×3), resume there, append a random 1–3 chunk burst
@@ -49,14 +54,22 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 - **Scoring:** the game's own timer (`courseScript.currentPathTime`). A finish counts only when the solver's course stops
   while tracking.
 - **Gate:** `SaveSolverRoute` replays the route from the course start and rejects it (`REJECTED …` in the solver log,
-  `rejected` in the submit reply) unless it finishes on the course in the same time, every jump/dash buffer has a real
-  press within the game's window, and the unlocks match the category on every tick.
+  `rejected` in the submit reply) unless it finishes on the course in the same time, every jump/dash/jump-cut buffer
+  the game holds (checked every physics tick, dash ticks included) came from a press or release `MacroEngine` made
+  within the game's window (stamped in physics ticks, so a dash that starts late and its dash-jump are judged where they
+  really happened), and the unlocks match the category on every tick.
 
 ## Game facts
 
 - Score by the game timer, not "finish tick − start tick"; they differ on dash routes (cause not identified).
 - Course starts (quick-restart point; the player spawns 12 px lower): C1 (2241, −292), C2 (4783.43359, 1878.2251),
-  C3 (9505, 6967.01465). Courses live in `config/IGTAPTasMod/courses.json`.
+  C3 (9505, 6967.01465), C4 (20200.4004, 10554.5449). Courses live in `config/IGTAPTasMod/courses.json`, with
+  `minCapabilities`, the course's first category: C1 `none`, C2 `wj`, C3 `wjdash`, C4 `wjdashaj`, bonus1 `wj`. Narrower
+  categories are refused by the solver, submit and trace.
+- Floating origin: once the player is 17500 px from the world origin, `FloatingOrigin` moves every root object by the
+  player's position and adds it to `currentOrigin`. Course coordinates are absolute (world = absolute + currentOrigin);
+  Course 4's start is past the threshold, so the world shifts as soon as the player gets there. Automated runs park the
+  player at the start and let the shift happen before capturing the start state, as a real attempt would.
 - `Time.fixedDeltaTime` is 0.0199999921, so float counters get an extra tick (wall coyote lasts 8 ticks, not 7).
 - Buffers: jump press 0.12 s (0.2 s mid-dash), dash press 0.12 s, jump cut after release 0.26 s.
 - A clip into a wall corner can make the foot raycast see ground; with a buffered press that fires a full ground jump
@@ -78,15 +91,17 @@ Audited 2026-09-24. No game method's logic is replaced; the patches only read st
 |---|---|---|
 | `Movement.getPlayerControlledInput` prefix | Sets `MoveAxis` and presses/releases jump and dash exactly like `Movement.Update` does for a real button (same buffer flags and expiry timers). | This is the controller. The game's own code then does all movement. |
 | `Movement.CheckForSuperJump` prefix | Presses jump on a chosen dash frame (dash-jump input). | Same press a player makes during a dash. |
-| `Movement.FixedUpdate` prefix/postfix | Starts queued runs; enforces a tick budget. | Bookkeeping only. |
+| `Movement.FixedUpdate` prefix | Starts queued runs. | Bookkeeping only. |
 | `courseScript.startTracking` / `stopTracking`, `Movement.onDeath` | Read the course time and end the run. | Read-only; the game still does everything it normally does. |
-| `Saveloader.autosave` / `manualSave` | Skipped while a category's unlocks or a turbo run are applied (and in headless workers). | Keeps our settings out of your save; the game plays the same. |
+| `Saveloader.autosave` / `manualSave` | Skipped while a category's unlocks or a turbo run are applied. | Keeps our settings out of your save; the game plays the same. |
 | Category unlocks | Solver runs and category playback set `wallJumpUnlocked`, `dashUnlocked`, `maxAirDashes`, `airDashesLeft` (`CategoryAbilities`) and restore them after. Off with DO NOT MODIFY CAPABILITIES. | Defines the category; these are the game's own progression values. |
 | Run start | Quick-restarts to the course start (the game's `respawn`) and waits standing still. | A player's quick reset. |
 | `Rigidbody2D.interpolation = None` during runs | Makes physics independent of render timing. | Changes how a render frame's pose feeds a jump nudge; see issue #1 (real-time check with interpolation on). |
-| Turbo only | Steps physics itself (`Physics2D.simulationMode = Script`), fires Movement's `Invoke` timers on the tick a ≥50 fps game would, doesn't wait out the 0.05 s dash freeze. | Verified: turbo results match real-time playback for every route. |
+| Turbo only | Steps physics itself (`Physics2D.simulationMode = Script`), fires every script's `Invoke` timers on the tick a ≥50 fps game would (world timers still pending at the end of a run fire then), doesn't wait out the 0.05 s dash freeze. | Verified: turbo results match real-time playback for every route. |
 
 Removed 2026-09-24: `/api/routes/run` position offsets (`firstJumpPositionOffsetX`, `courseStartPositionOffsetX`), which moved the player.
+Removed 2026-09-24: game-judged search (`tools/swarm.py` headless workers, `tools/turbo-search.py`, `tools/solve.py`,
+`/api/turbo/evaluate`, `/api/simulation/import-plan`); search offline with `enginesim` instead.
 
 ## Safety
 

@@ -93,6 +93,7 @@ namespace IGTAPTasMod
             _wallJumpTriggered = false;
             _rawJumpHeld = false;
             _dashJumpFrame = 0;
+            LastJumpPress = LastJumpRelease = LastDashPress = Never;
             _waitingForStable = synchronizeStart;
             _stableTicks = 0;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
@@ -382,9 +383,16 @@ namespace IGTAPTasMod
 
         // Presses and releases do exactly what Movement.Update does for a real one, including the buffer expiry timers
         // (a jump press stays buffered 0.12 s, 0.2 s mid-dash; a dash press 0.12 s; a release's jump cut 0.26 s).
-        private static void PressJump(Movement movement)
+        // Each is stamped with Clock, which the route gate (TasPlugin.AuditTick) advances once per physics tick, dash
+        // ticks included, so it checks every buffer against the press or release that made it.
+        public int Clock;
+        public int LastJumpPress = Never, LastJumpRelease = Never, LastDashPress = Never;
+        const int Never = -1000000;
+
+        private void PressJump(Movement movement)
         {
             if (JumpCutBufferField == null || JumpBufferField == null) return;
+            LastJumpPress = Clock;
             SetField(JumpBufferField, movement, true);
             movement.CancelInvoke("cancelJumpBuffer");
             movement.CancelInvoke("cancelJumpCutBuffer");
@@ -393,15 +401,17 @@ namespace IGTAPTasMod
             movement.Invoke("cancelJumpBuffer", dashing ? 0.2f : 0.12f);
         }
 
-        private static void ReleaseJump(Movement movement)
+        private void ReleaseJump(Movement movement)
         {
+            LastJumpRelease = Clock;
             SetField(JumpCutBufferField, movement, true);
             movement.CancelInvoke("cancelJumpCutBuffer");
             movement.Invoke("cancelJumpCutBuffer", 0.26f);
         }
 
-        private static void PressDash(Movement movement)
+        private void PressDash(Movement movement)
         {
+            LastDashPress = Clock;
             SetField(DashBufferField, movement, true);
             movement.CancelInvoke("cancelDashBuffer");
             movement.Invoke("cancelDashBuffer", 0.12f);

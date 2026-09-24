@@ -14,3 +14,4 @@ planning/candidates/
 planning/sweep-*.json
 *.log
 .claude/
+web/tsconfig.tsbuildinfo

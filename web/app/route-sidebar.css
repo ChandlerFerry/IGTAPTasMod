@@ -1,0 +1,25 @@
+.courseList { flex: 1; min-height: 0; overflow: auto; }
+.courseGroup { margin: 0 0 12px; }
+.courseName { display: block; padding: 4px 10px 6px; font-size: 13px; color: var(--text); }
+.categoryRow {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.categoryRow b { color: var(--text); font-variant-numeric: tabular-nums; }
+.categoryRow:hover { background: #10213a; }
+.categoryRow.active { background: #15335a; box-shadow: inset 3px 0 var(--cyan); }
+.categoryRow.empty { cursor: default; opacity: .5; }
+.categoryRow.empty:hover { background: transparent; }
+.categoryRow.empty b { color: var(--muted); }
+.otherRoutes summary { cursor: pointer; }
+.otherRoutes .routeList { max-height: none; }

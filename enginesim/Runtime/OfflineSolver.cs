@@ -95,7 +95,7 @@ namespace IGTAP.EngineSim
                 _rng = new System.Random(seed);
                 _seeds = new Queue<List<InputTick>>(seeds.Select(s => s.ToList()));
                 _seeds.Enqueue(new List<InputTick>());
-                _dash = owner.Capabilities == "wjdash";
+                _dash = owner.Capabilities == "wjdash" || owner.Capabilities == "wjdashaj";
             }
 
             public void Loop()
@@ -284,7 +284,7 @@ namespace IGTAP.EngineSim
                     bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
                     // The branch never judged the prefix (its source's), so the replay judges the same ticks only.
-                    bool again = Evaluate(inputs, null, null, null, mode == "optimize", out float replay, out _, from.Tick);
+                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _, from.Tick);
                     Interlocked.Increment(ref _owner.BranchChecks);
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
@@ -324,7 +324,7 @@ namespace IGTAP.EngineSim
                         // visit would cut the best route itself once a mutation resumes past it.
                         if (arrivals != null) arrivals[key] = elapsed;
                     }
-                    FileCell(inputs, Math.Min(tick, inputs.Count), key, timing ? Simulation.CourseTime(active) : tick * .02f, states);
+                    FileCell(inputs, Math.Min(tick, inputs.Count), key, elapsed >= 0f ? elapsed : tick * .02f, states);
                     return !losing;
                 });
                 Interlocked.Increment(ref _owner.Runs);

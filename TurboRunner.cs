@@ -8,14 +8,15 @@ namespace IGTAPTasMod
 {
     // Runs the real game faster than real time: Movement.FixedUpdate, Physics2D.Simulate and
     // Movement.Update are stepped in a loop inside one rendered frame, in Unity's per-frame order
-    // (FixedUpdate -> physics step -> Update -> delayed Invokes). Movement's Invoke timers are
-    // re-scheduled on fixed ticks so they fire where the frame loop would at >= 50 fps.
+    // (FixedUpdate -> physics step -> Update -> delayed Invokes). Every script's Invoke timer (Movement's, and the
+    // world's: a spring's 0.15 s cooldown) is re-scheduled on fixed ticks so it fires where the frame loop would at
+    // >= 50 fps; left to real time, a spring hit once stayed on cooldown for the rest of the run.
     internal static class TurboRunner
     {
         static readonly MethodInfo FixedUpdateMethod = AccessTools.Method(typeof(Movement), "FixedUpdate");
         static readonly MethodInfo UpdateMethod = AccessTools.Method(typeof(Movement), "Update");
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
-        static readonly List<(int due, string method)> Pending = new List<(int, string)>();
+        static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
         static Movement _movement;
         static int _tick;
 
@@ -31,17 +32,17 @@ namespace IGTAPTasMod
 
         static bool BeforeInvoke(MonoBehaviour __instance, string methodName, float time)
         {
-            if (!Active || __instance != _movement) return true;
+            if (!Active) return true;
             // A delayed call fires in the first frame whose time reaches it, after that frame's fixed
             // steps: 0.03 s scheduled on tick n is seen by tick n+1 and cleared before tick n+2.
-            Pending.Add((_tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1, methodName));
+            Pending.Add((_tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1, __instance, methodName));
             return false;
         }
 
         static bool BeforeCancelInvoke(MonoBehaviour __instance, string methodName)
         {
-            if (!Active || __instance != _movement) return true;
-            Pending.RemoveAll(p => p.method == methodName);
+            if (!Active) return true;
+            Pending.RemoveAll(p => p.target == __instance && p.method == methodName);
             return false;
         }
 
@@ -56,15 +57,15 @@ namespace IGTAPTasMod
             public Vector2 bodyPosition, velocity;
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
-            public (int due, string method)[] pending;
+            public (int due, MonoBehaviour target, string method)[] pending;
         }
 
         public static Snapshot Capture(Movement movement, courseScript[] courses, object[] engine, int tick)
         {
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
-            var pending = new (int, string)[Pending.Count];
+            var pending = new (int, MonoBehaviour, string)[Pending.Count];
             // Relative to the first tick after the restore.
-            for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - _tick - 1, Pending[i].method);
+            for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - _tick - 1, Pending[i].target, Pending[i].method);
             return new Snapshot {
                 tick = tick, movement = FieldState.Capture(movement), engine = engine,
                 courses = Array.ConvertAll(courses, c => (c, FieldState.Capture(c))),
@@ -116,9 +117,9 @@ namespace IGTAPTasMod
                     for (int i = 0; i < Pending.Count; i++)
                     {
                         if (Pending[i].due > _tick) continue;
-                        string method = Pending[i].method;
+                        var (_, target, method) = Pending[i];
                         Pending.RemoveAt(i--);
-                        AccessTools.Method(typeof(Movement), method)?.Invoke(movement, null);
+                        if (target != null) AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
                     }
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
@@ -133,9 +134,14 @@ namespace IGTAPTasMod
             {
                 Active = false;
                 Physics2D.simulationMode = savedMode;
-                // Hand timers still pending (e.g. deathRespawn) back to Unity in real time.
-                foreach (var (due, method) in Pending)
-                    movement.Invoke(method, Mathf.Max(0f, (due - _tick) * Time.fixedDeltaTime));
+                // Hand the player's timers still pending (e.g. deathRespawn) back to Unity in real time. The world's
+                // (a spring's cooldown) fire now: the next run starts from a settled world, as a real retry would.
+                foreach (var (due, target, method) in Pending.ToArray())
+                {
+                    if (target == null) continue;
+                    if (target == movement) movement.Invoke(method, Mathf.Max(0f, (due - _tick) * Time.fixedDeltaTime));
+                    else AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
+                }
                 Pending.Clear();
                 _movement = null;
             }

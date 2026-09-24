@@ -28,8 +28,12 @@ namespace IGTAPTasMod
             // A bonus course has no start/stop gates: its run finishes when the player touches this box (the
             // reward's buy trigger) and is timed in ticks from the run start. Zero size = a gated course.
             public float endX, endY, endW, endH;
+            // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
+            // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
+            public string minCapabilities;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
+            [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
         }
 
         sealed class SolverTick
@@ -78,27 +82,6 @@ namespace IGTAPTasMod
         int _profRuns; long _profTicks; double _profSetupMs, _profRunMs;
         readonly Stopwatch _profWall = new Stopwatch();
 
-        // Headless worker instances (see tools/swarm.py) solve alongside the studio's game and never write routes.json;
-        // every instance shares its best through solver-share/ and adopts a faster peer best after replaying it.
-        internal static readonly bool IsWorker = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGTAP_ORACLE"));
-        sealed class SharedBest { public float time; public List<SolverTick> inputs; }
-        readonly Stopwatch _shareClock = Stopwatch.StartNew();
-        string ShareDir { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "solver-share", _solverCourse + "_" + _solverCaps); } }
-        string SharePath { get { return Path.Combine(ShareDir, WebStudioServer.Port + ".json"); } }
-
-        void AdoptPeerBest()
-        {
-            if (!Directory.Exists(ShareDir)) return;
-            foreach (string file in Directory.GetFiles(ShareDir, "*.json"))
-            {
-                if (file == SharePath) continue;
-                SharedBest peer;
-                try { peer = JsonConvert.DeserializeObject<SharedBest>(File.ReadAllText(file)); }
-                catch (Exception) { continue; }
-                if (peer?.inputs != null && peer.time < _solverBest - .0001f) Try(peer.inputs, "peer " + Path.GetFileNameWithoutExtension(file));
-            }
-        }
-
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
 
         void LoadCourses()
@@ -108,13 +91,14 @@ namespace IGTAPTasMod
                 if (File.Exists(CoursesPath)) { _courses = JsonConvert.DeserializeObject<List<CourseDef>>(File.ReadAllText(CoursesPath)); return; }
             }
             catch (Exception ex) { Logger.LogWarning("courses.json rejected: " + ex.Message); }
-            // Start points (quick restarts for 1-3); the game places the player 12 px below. bonus1 has no gates:
+            // Start points (quick restarts for 1-4); the game places the player 12 px below. bonus1 has no gates:
             // runs start in the course 2 secret shaft and finish on the free secret box at the corridor's end.
             _courses = new List<CourseDef> {
-                new CourseDef { id = 1, x = 2241f, y = -292f },
-                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f },
-                new CourseDef { id = 3, x = 9505f, y = 6967.01465f },
-                new CourseDef { id = 4, name = "bonus1", x = 7392.427f, y = 2807.015f,
+                new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none" },
+                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "wj" },
+                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjdash" },
+                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 5, name = "bonus1", x = 7392.427f, y = 2807.015f, minCapabilities = "wj",
                     endX = 5239.43f, endY = 681f, endW = 127.5f, endH = 6f } };
             SaveCourses();
         }
@@ -126,7 +110,9 @@ namespace IGTAPTasMod
             RecordingDefinition recording = _recordings.OrderByDescending(r => r.createdUtc).FirstOrDefault();
             if (recording == null || recording.samples == null || recording.samples.Count == 0)
                 throw new InvalidOperationException("No recording to take the course start from.");
-            int id = _courses.Count == 0 ? 1 : _courses.Max(c => c.id) + 1;
+            // The lowest unused id: bonus areas hold 101+, so the game's courses keep their own numbers.
+            int id = 1;
+            while (_courses.Any(c => c.id == id)) id++;
             _courses.Add(new CourseDef { id = id, x = recording.samples[0].positionX, y = recording.samples[0].positionY + 12f });
             SaveCourses();
             CreateRouteFromRecording(recording);
@@ -136,7 +122,16 @@ namespace IGTAPTasMod
         }
 
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
-            { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" } };
+            { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" }, { "wjdashaj", "WJ_DASH_AJ" } };
+
+        // Course 2 has no NO_WJ category, Course 3 starts at WJDASH, Course 4 at WJ_DASH_AJ (courses.json minCapabilities).
+        void CheckCategory(int course, string capabilities)
+        {
+            CourseDef def = _courses.Find(c => c.id == course);
+            if (def != null && CapsLevel(capabilities) < def.MinLevel)
+                throw new InvalidOperationException("Course " + def.Token + " has no " + CapabilityLabels[capabilities] + " category; it starts at "
+                    + CapabilityLabels[def.minCapabilities] + ".");
+        }
 
         void StartSolver(int course, string capabilities)
         {
@@ -144,6 +139,7 @@ namespace IGTAPTasMod
             if (!CapabilityLabels.ContainsKey(capabilities)) throw new InvalidOperationException("Unknown capabilities.");
             if (_engine.IsRunning || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
+            CheckCategory(course, capabilities);
             _solverCourse = course; _solverCaps = capabilities;
             _solverEvaluations = _solverFinishes = _solverBestAt = 0;
             _solverBest = float.PositiveInfinity; _solverBestInputs = null; _bestStates = null; _bestArrival.Clear();
@@ -162,17 +158,28 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
         }
 
-        // A course's zone loads in real frames around the player (turbo does not step the loader); a run captured
-        // before that runs through an empty course. Until it is loaded, park the player at its start and wait.
+        // A course's zone loads in real frames around the player (turbo does not step the loader), and FloatingOrigin
+        // shifts the world in LateUpdate once the player is far from the origin (Course 4's start is). A run captured
+        // before either settles runs through an empty course or from the wrong place, so park the player at the start
+        // (absolute course coordinates + currentOrigin) and let a few real frames pass first.
+        int _parkedFrame = -1000;
+
         bool CourseLoaded()
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             CourseDef target = _courses.Find(c => c.id == _solverCourse);
+            Movement player = FindWorldMovement();
+            Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
+            bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f;
+            if (!parked)
+            {
+                RestoreRouteStart(new MacroDefinition { name = target.Token + "_" });
+                _parkedFrame = Time.frameCount;
+            }
             // A bonus course has no courseScript of its own; settled zones are all its runs need.
-            if (ZonesSettled() && (target != null && target.HasFinish
+            else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled() && (target.HasFinish
                 || _solverCourses.Any(c => c.courseNumber == _solverCourse && c.isActiveAndEnabled))) return true;
-            RestoreRouteStart(new MacroDefinition { name = _solverCourse + "_" });
-            _solverStatus = "Loading course " + _solverCourse;
+            _solverStatus = "Loading course " + target.Token;
             return false;
         }
 
@@ -206,16 +213,36 @@ namespace IGTAPTasMod
                 courses = _courses.Select(c => c.id).ToArray() };
         }
 
+        // The studio's sidebar groups category routes by these; a course with a reward box is a bonus.
+        object[] BuildCourseWebState()
+        {
+            return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.HasFinish, minLevel = c.MinLevel }).ToArray();
+        }
+
+        // Snapshots hold world positions. After a FloatingOrigin shift they would put the player where the course no
+        // longer is, so the start state, the archive and the best's states are rebuilt (the best replays as a seed).
+        Vector2 _startOrigin;
+
+        void ForgetStartState()
+        {
+            _startState = null;
+            _archive.Clear();
+            _bestStates = null;
+            _bestArrival.Clear();
+            if (_solverBestInputs != null) _solverSeeds.Enqueue(_solverBestInputs);
+            _solverBest = float.PositiveInfinity;
+            _solverBestInputs = null;
+        }
+
         void PumpSolver()
         {
             if (!_solverRunning || _engine.IsRunning || _recorder.IsRecording) return;
             Stopwatch clock = Stopwatch.StartNew();
             try
             {
+                if (_startState != null && CurrentOrigin() != _startOrigin) ForgetStartState();
                 if (_startState == null && !CourseLoaded()) return;
-                if (_shareClock.ElapsedMilliseconds > 3000) { _shareClock.Restart(); AdoptPeerBest(); }
-                // A worker has no one watching its frames.
-                while (clock.ElapsedMilliseconds < (IsWorker ? 1000 : 80))
+                while (clock.ElapsedMilliseconds < 80)
                 {
                     if (_solverSeeds.Count > 0) { Try(_solverSeeds.Dequeue(), "seed"); continue; }
                     if (_solverBestInputs == null || _rng.NextDouble() < .5) Explore();
@@ -256,7 +283,7 @@ namespace IGTAPTasMod
 
         List<SolverTick> RandomBurst(List<SolverTick> inputs)
         {
-            bool dash = _solverCaps == "wjdash";
+            bool dash = CapsLevel(_solverCaps) >= 2;
             float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f;
             for (int chunk = _rng.Next(1, 4); chunk > 0; chunk--)
             {
@@ -288,7 +315,7 @@ namespace IGTAPTasMod
         {
             List<SolverTick> t = _solverBestInputs.Select(tick => tick.Clone()).ToList();
             int n = t.Count, p = _rng.Next(n);
-            string[] kinds = _solverCaps == "wjdash"
+            string[] kinds = CapsLevel(_solverCaps) >= 2
                 ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump" }
                 : new[] { "cut", "cut", "hop", "nojump", "stick", "insert" };
             switch (kinds[_rng.Next(kinds.Length)])
@@ -383,62 +410,38 @@ namespace IGTAPTasMod
             }
             List<SolverTick> best = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
             // A seed that only ties the category's saved route is the search's starting best, not a new route.
-            if (replayed < CategoryBest(_solverCourse + "_" + CapabilityLabels[_solverCaps]) - .0001f && !SaveSolverRoute(best, replayed)) return;
+            if (replayed < CategoryBest(SolverCategory) - .0001f && !SaveSolverRoute(best, replayed)) return;
             _solverBest = replayed; _solverBestAt = _solverEvaluations;
             _solverBestInputs = best;
             _bestStates = states;
             _bestArrival = arrivals;
-            WriteJsonAtomic(SharePath, new SharedBest { time = replayed, inputs = _solverBestInputs }, false);
             _solverLog.Add(replayed.ToString("0.00") + "s via " + mode + " after " + _solverEvaluations + " runs");
         }
 
         // ---- Route rules. Every category route is saved through SaveSolverRoute, which replays it from the course start
         // and refuses it unless every tick obeys what a human with that category's unlocks can do. The checks read the
-        // game's own state, so they hold however inputs are injected.
+        // game's own state, so they hold however inputs are injected: every buffer the game holds must come from a press
+        // or release MacroEngine made within the game's window, counted in physics ticks (MacroEngine.Clock).
         const int JumpBufferTicks = 12;   // game: 0.12 s, 0.2 s mid-dash (10 ticks), +2 slack
         const int DashBufferTicks = 8;    // game: 0.12 s (6 ticks), +2 slack
         const int JumpCutBufferTicks = 15; // game: 0.26 s after a release (13 ticks), +2 slack
         List<string> _audit;
 
-        static bool PressNear(List<SolverTick> inputs, int tick, int window, bool jump)
-        {
-            for (int i = Math.Max(0, tick - window - 16); i < Math.Min(inputs.Count, tick + 3); i++)
-            {
-                SolverTick k = inputs[i];
-                int press = jump ? (k.press ? i : k.dash && k.dashJump > 0 ? i + k.dashJump : -1) : (k.dash ? i : -1);
-                if (press >= 0 && press - 2 <= tick && tick <= press + window) return true;
-            }
-            return false;
-        }
-
-        // A release is what MacroEngine.RunRawInput does on entering a step: `release`, or held -> not held
-        // (a dash-jump counts as held from its dash; ponytail: slightly lenient if the dash-jump never fires).
-        static bool ReleaseNear(List<SolverTick> inputs, int tick, int window)
-        {
-            bool held = false;
-            for (int i = 0; i < Math.Min(inputs.Count, tick + 3); i++)
-            {
-                SolverTick k = inputs[i], p = i > 0 ? inputs[i - 1] : null;
-                if (p != null && !k.press && !k.release && !k.dash && k.x == p.x && k.held == p.held) continue; // same step (ToSteps)
-                bool release = k.release || held && !k.held;
-                held = k.held || k.dash && k.dashJump > 0;
-                if (release && i - 2 <= tick && tick <= i + window) return true;
-            }
-            return false;
-        }
-
-        void AuditTick(Movement player, List<SolverTick> inputs, int tick)
+        void AuditTick(Movement player, int tick)
         {
             if (_audit.Count >= 5) return;
-            if (GetMovementBool(player, "jumpBuffer", false) && !PressNear(inputs, tick, JumpBufferTicks, true))
+            int now = _engine.Clock;
+            if (GetMovementBool(player, "jumpBuffer", false) && now - _engine.LastJumpPress > JumpBufferTicks)
                 _audit.Add("tick " + tick + ": jump buffered with no jump press within the game's buffer window");
-            if (GetMovementBool(player, "dashBuffer", false) && !PressNear(inputs, tick, DashBufferTicks, false))
+            if (GetMovementBool(player, "dashBuffer", false) && now - _engine.LastDashPress > DashBufferTicks)
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
-            if (GetMovementBool(player, "jumpCutBuffer", false) && !ReleaseNear(inputs, tick, JumpCutBufferTicks))
+            if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            if (GetMovementBool(player, "wallJumpUnlocked", false) != (_solverCaps != "none")
-                || GetMovementBool(player, "dashUnlocked", false) != (_solverCaps == "wjdash")
-                || !Equals(GetMovementField(player, "maxAirDashes"), _solverCaps == "wjdash" ? 1 : 0))
+            if (GetMovementBool(player, "wallJumpUnlocked", false) != (CapsLevel(_solverCaps) >= 1)
+                || GetMovementBool(player, "dashUnlocked", false) != (CapsLevel(_solverCaps) >= 2)
+                || !Equals(GetMovementField(player, "maxAirDashes"), CapsLevel(_solverCaps) >= 2 ? 1 : 0)
+                || GetMovementBool(player, "doubleJumpUnlocked", false) != (CapsLevel(_solverCaps) >= 3)
+                || !Equals(GetMovementField(player, "maxAirJumps"), CapsLevel(_solverCaps) >= 3 ? 1 : 0))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
@@ -499,12 +502,15 @@ namespace IGTAPTasMod
                     inputs.Count - (from == null ? 0 : from.tick) + 400, () =>
                     {
                         if (setupMs < 0) setupMs = clock.Elapsed.TotalMilliseconds;
+                        _engine.Clock++;
                         _engineSimTickHook?.Invoke(player);
                         if (!_engine.IsRunning) return;
                         if (_engine.InputsExhausted) idleTicks++;
                         int tick = (int)_engine.RunTicks;
                         if (_startState == null && tick == 0) settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
-                        if (_startState == null && tick > 0) _startState = settling;
+                        if (_startState == null && tick > 0) { _startState = settling; _startOrigin = CurrentOrigin(); }
+                        // Every tick, dash ticks (which take no input) included.
+                        if (_audit != null) AuditTick(player, tick);
                         if (tick == lastTick) return;
                         lastTick = tick;
                         courseScript active = _solverCourses.FirstOrDefault(c => c != null && c.courseNumber == _solverCourse && CourseTrackingFlag.GetValue(c) is bool tracking && tracking);
@@ -521,7 +527,6 @@ namespace IGTAPTasMod
                             if (cut && tick > judgeAfter && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
                             if (arrivals != null && !arrivals.ContainsKey(key)) arrivals[key] = elapsed;
                         }
-                        if (_audit != null) AuditTick(player, inputs, tick);
                         FileCell(inputs, Math.Min(tick, inputs.Count), player, key, states);
                     }, from);
                 if (_engine.IsRunning) _engine.Abort("Solver run ended");
@@ -562,10 +567,13 @@ namespace IGTAPTasMod
             if (better) _archive[key] = new Cell { source = inputs, length = tick, state = state };
         }
 
+        // "<course token>_<CAPS>": the solver's course and category as category routes name them ("bonus1_WJ").
+        string SolverCategory { get { return _courses.Find(c => c.id == _solverCourse).Token + "_" + CapabilityLabels[_solverCaps]; } }
+
         // The only place a category route is saved. False (and nothing saved) when the route breaks a rule.
         bool SaveSolverRoute(List<SolverTick> inputs, float time)
         {
-            string category = _courses.Find(c => c.id == _solverCourse).Token + "_" + CapabilityLabels[_solverCaps];
+            string category = SolverCategory;
             string violation = RouteViolation(inputs, time);
             if (violation != null)
             {
@@ -574,7 +582,6 @@ namespace IGTAPTasMod
                 Logger.LogWarning(line);
                 return false;
             }
-            if (IsWorker) return true;
             var route = new MacroDefinition { name = category + " " + time.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
                 steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
@@ -584,7 +591,7 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ_DASH_AJ|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
 
         // Keeps only the fastest "<course>_<CAPS> <time>" route per category; favorites are never removed. True if any was removed.
         bool PruneSlowerRoutes()

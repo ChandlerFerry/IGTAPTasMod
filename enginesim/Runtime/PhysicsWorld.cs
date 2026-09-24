@@ -29,7 +29,9 @@ namespace IGTAP.EngineSim
         {
             public Rigidbody2D Rigidbody;
             public b2Body Body;
-            public bool TransformDirty;
+            // A moved/rotated Transform re-poses the body; a rescaled one only rebuilds its shapes (Unity keeps the body
+            // where physics left it, which differs from the transform's read-back once the parent is far from the origin).
+            public bool TransformDirty, ScaleDirty;
             public readonly List<ColliderState> Colliders = new List<ColliderState>();
         }
 
@@ -268,11 +270,12 @@ namespace IGTAP.EngineSim
                 foreach (ColliderState s in list) Rebuild(s);
         }
 
-        public void TransformChanged(Transform transform)
+        public void TransformChanged(Transform transform, bool pose)
         {
             Rigidbody2D rb = transform.m_GameObject.GetComponent<Rigidbody2D>();
             if (rb == null || !_bodies.TryGetValue(rb, out BodyState b)) return;
-            b.TransformDirty = true;
+            if (pose) b.TransformDirty = true;
+            else b.ScaleDirty = true;
         }
 
         // Unity syncs a moved Transform into its body (rebuilding shapes if its scale changed) when the simulation
@@ -281,11 +284,14 @@ namespace IGTAP.EngineSim
         {
             foreach (BodyState b in _bodies.Values)
             {
-                if (!b.TransformDirty) continue;
-                b.TransformDirty = false;
-                Moving(b.Body);
+                if (!b.TransformDirty && !b.ScaleDirty) continue;
                 Transform t = b.Rigidbody.transform;
-                b.Body.SetTransform(new b2Vec2(t.m_Position.x, t.m_Position.y), t.m_Rotation.eulerAngles.z * (MathF.PI / 180f));
+                if (b.TransformDirty)
+                {
+                    Moving(b.Body);
+                    b.Body.SetTransform(new b2Vec2(t.m_Position.x, t.m_Position.y), t.m_Rotation.eulerAngles.z * (MathF.PI / 180f));
+                }
+                b.TransformDirty = b.ScaleDirty = false;
                 foreach (ColliderState s in b.Colliders)
                     if (s.BuiltScale != t.m_LossyScale) Rebuild(s);
             }
@@ -300,8 +306,7 @@ namespace IGTAP.EngineSim
                 if (b.Rigidbody.bodyType == RigidbodyType2D.Static) continue;
                 b2Vec2 p = b.Body.GetPosition();
                 Transform t = b.Rigidbody.transform;
-                t.m_Position = new Vector3(p.x, p.y, t.m_Position.z);
-                t.m_LocalPosition = t.m_Parent == null ? t.m_Position : t.m_Position - t.m_Parent.m_Position;
+                t.StoreWorldPosition(new Vector3(p.x, p.y, t.m_Position.z));
             }
             DispatchCallbacks();
         }
@@ -320,13 +325,19 @@ namespace IGTAP.EngineSim
         public int TouchingPairs { get { return _pairsBefore.Count; } }
         public int BodyCount { get { return _b2.GetBodyCount(); } }
 
+        // Unity reports what the step ended with: every callback's contact points are taken before the first callback
+        // runs, so a callback that rebuilds a collider (destroying its Box2D contacts) doesn't change later reports.
+        readonly List<(Pair pair, int message, Collision2D a, Collision2D b)> _sends = new List<(Pair, int, Collision2D, Collision2D)>();
+
         void DispatchCallbacks()
         {
             CollectTouching();
+            _sends.Clear();
             foreach (Pair p in _pairsBefore)
-                if (!_touchingNext.Contains(p)) Send(p, "Exit", null);
+                if (!_touchingNext.Contains(p)) Queue(p, "Exit", null);
             foreach (Pair p in _pairsNow)
-                Send(p, _touching.Contains(p) ? "Stay" : "Enter", _contactsNow[p]);
+                Queue(p, _touching.Contains(p) ? "Stay" : "Enter", _contactsNow[p]);
+            foreach (var (pair, message, a, b) in _sends) Send(pair, message, a, b);
             AdvanceTouching();
         }
 
@@ -368,17 +379,24 @@ namespace IGTAP.EngineSim
             _pairsBefore.AddRange(_pairsNow);
         }
 
-        void Send(Pair p, string phase, List<b2Contact> contacts)
+        void Queue(Pair p, string phase, List<b2Contact> contacts)
         {
             int message = (p.Trigger ? 0 : 3) + (phase == "Enter" ? 0 : phase == "Stay" ? 1 : 2);
+            if (p.Trigger) { _sends.Add((p, message, null, null)); return; }
+            _sends.Add((p, message, p.A.Handlers[message].Length > 0 ? MakeCollision(p.A, p.B, contacts) : null,
+                p.B.Handlers[message].Length > 0 ? MakeCollision(p.B, p.A, contacts) : null));
+        }
+
+        void Send(Pair p, int message, Collision2D a, Collision2D b)
+        {
             if (p.Trigger)
             {
                 Call(p.A, message, p.B.Collider);
                 Call(p.B, message, p.A.Collider);
                 return;
             }
-            if (p.A.Handlers[message].Length > 0) Call(p.A, message, MakeCollision(p.A, p.B, contacts));
-            if (p.B.Handlers[message].Length > 0) Call(p.B, message, MakeCollision(p.B, p.A, contacts));
+            if (a != null) Call(p.A, message, a);
+            if (b != null) Call(p.B, message, b);
         }
 
         static Collision2D MakeCollision(ColliderState self, ColliderState other, List<b2Contact> contacts)
@@ -793,7 +811,7 @@ namespace IGTAP.EngineSim
             _player.Body.SetTransform(new b2Vec2(position.x, position.y), rotation * (MathF.PI / 180f));
             _player.Body.SetLinearVelocity(new b2Vec2(velocity.x, velocity.y));
             _player.Body.SetAngularVelocity(angularVelocity * (MathF.PI / 180f));
-            _player.TransformDirty = false;
+            _player.TransformDirty = _player.ScaleDirty = false;
             // The live game had been stepping before this state: its contacts exist and have been reported (the
             // player's collidingBodies already lists what it rests on). Create and evaluate them now, and count them
             // as already touching, so the first step reports Stay rather than a second Enter.
@@ -810,7 +828,7 @@ namespace IGTAP.EngineSim
         sealed class PhysicsSnapshot
         {
             public object World;
-            public bool TransformDirty;
+            public bool TransformDirty, ScaleDirty;
             public Vector3[] BuiltScales;
             public Pair[] Touching;
         }
@@ -820,7 +838,7 @@ namespace IGTAP.EngineSim
             object world;
             try { world = _b2.SaveState(); }
             catch (NotImplementedException) { world = null; }
-            return new PhysicsSnapshot { World = world, TransformDirty = _player.TransformDirty, Touching = _pairsBefore.ToArray(),
+            return new PhysicsSnapshot { World = world, TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, Touching = _pairsBefore.ToArray(),
                 BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray() };
         }
 
@@ -832,6 +850,7 @@ namespace IGTAP.EngineSim
             foreach (ColliderState c in _player.Colliders) c.Fixtures.Clear();
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
             _player.TransformDirty = s.TransformDirty;
+            _player.ScaleDirty = s.ScaleDirty;
             for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];
             _touching.Clear();
             foreach (Pair p in s.Touching) _touching.Add(p);

@@ -260,7 +260,7 @@ namespace IGTAP.EngineSim
                 foreach (System.Collections.IList list in _coursePathLists[i]) list.Clear();
             }
             Transform t = Player.transform;
-            t.m_Position = s.Position; t.m_LocalPosition = s.Position;
+            t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
             t.m_LocalScale = s.LocalScale; t.m_LossyScale = s.LocalScale;
             t.m_Rotation = s.Rotation; t.m_LocalRotation = s.Rotation;
             for (int i = 0; i < _playerColliders.Length; i++)
