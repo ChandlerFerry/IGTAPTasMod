@@ -47,6 +47,9 @@ namespace IGTAPTasMod
         private RigidbodyInterpolation2D _savedBodyInterpolation;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
+        // The course the running route starts at (resolved from its name in RestoreRouteStart); a bonus course's
+        // run finishes on its reward box instead of an end gate.
+        private CourseDef _runCourse;
         private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
         private static readonly FieldInfo CourseTrackingField = AccessTools.Field(typeof(courseScript), "tracking");
 
@@ -187,11 +190,35 @@ namespace IGTAPTasMod
                 Instance.RecordOracleTick(__instance);
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
+            // Before the tick's inputs: the same world state the recorder samples. A bonus run ends on its
+            // reward box instead of an end gate.
+            if (Instance._engine.IsRunning && Instance.TryRewardFinish(__instance)) return true;
             Instance._engine.FixedTick(__instance);
             // This method is the movement executor, not a device sampler. The prefix
             // supplies MoveAxis and input buffers; the original must run to consume
             // them and apply movement, jumping, walljumping, and dashing.
             return true;
+        }
+
+        // The bonus-area analogue of an end gate: a course with a reward box (endX/endY/endW/endH) has no
+        // gates, and its run finishes when the player touches the box's trigger. No in-game timer exists for
+        // such a run, so its time is the run's elapsed ticks, the same clock every other tick is judged on.
+        private bool TryRewardFinish(Movement player)
+        {
+            CourseDef course = _silentEvaluation ? _courses.Find(c => c.id == _solverCourse) : _runCourse;
+            if (player == null || course == null || !course.HasFinish) return false;
+            Rect zone = new Rect(course.endX - course.endW / 2f, course.endY - course.endH / 2f, course.endW, course.endH);
+            foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
+            {
+                if (!box.enabled) continue;
+                Bounds bounds = box.bounds;
+                if (new Rect(bounds.min.x, bounds.min.y, bounds.size.x, bounds.size.y).Overlaps(zone))
+                {
+                    _engine.CompleteFromGame(MacroEngine.RewardFinishReason, _engine.RunTicks * Time.fixedDeltaTime);
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static void BeforeDashFrame(Movement __instance)
@@ -1071,6 +1098,17 @@ namespace IGTAPTasMod
         {
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
+            // A route named "<course>_..." or "<course> ..." always starts at that course, whatever was played before.
+            // The course is its id ("2_WJ ...") or its name ("bonus1_WJ ...").
+            Match courseName = Regex.Match(route.name ?? "", @"^([^_\s]+)[_ ]");
+            CourseDef named = null;
+            if (courseName.Success)
+            {
+                string token = courseName.Groups[1].Value;
+                named = int.TryParse(token, out int courseId) ? _courses.Find(c => c.id == courseId)
+                    : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
+            }
+            _runCourse = named;
             SectionCheckpoint checkpoint = string.IsNullOrEmpty(route.checkpointId) ? null : _checkpoints.Find(c => c.id == route.checkpointId);
             if (movement != null && checkpoint != null)
             {
@@ -1079,9 +1117,6 @@ namespace IGTAPTasMod
                 Logger.LogWarning(restored.Message + "; using quick restart.");
             }
             MethodInfo respawn = AccessTools.Method(typeof(Movement), "respawn");
-            // A route named "<course>_..." or "<course> ..." always starts at that course, whatever was played before.
-            Match courseName = Regex.Match(route.name ?? "", @"^(\d+)[_ ]");
-            CourseDef named = courseName.Success ? _courses.Find(c => c.id == int.Parse(courseName.Groups[1].Value)) : null;
             if (named != null)
             {
                 _preservedCourseResetPoint = new Vector2(named.x, named.y);
@@ -1243,7 +1278,7 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^\d+_(NO_WJ|WJDASH|WJ) ");
+            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NO_WJ|WJDASH|WJ)(?: |$)");
             if (!category.Success || movement == null) return;
             string caps = category.Groups[1].Value == "NO_WJ" ? "none" : category.Groups[1].Value.ToLowerInvariant();
             foreach (var (field, value) in ApplyAbilities(movement, caps))
@@ -1264,7 +1299,7 @@ namespace IGTAPTasMod
             if (_silentEvaluation)
             {
                 EndDeterministicPhysics();
-                _silentFinished = success && reason == "Course finish detected";
+                _silentFinished = success && (reason == "Course finish detected" || reason == MacroEngine.RewardFinishReason);
                 _silentTime = _engine.AuthoritativeCompletionTime;
                 return;
             }
@@ -1281,7 +1316,7 @@ namespace IGTAPTasMod
                 success = success,
                 completionTicks = ticks,
                 completionTime = hasGameTime ? _engine.AuthoritativeCompletionTime : ticks * Time.fixedDeltaTime,
-                timingSource = hasGameTime ? "In-game course timer" : "Macro elapsed time",
+                timingSource = hasGameTime ? (reason == MacroEngine.RewardFinishReason ? "Run ticks to reward" : "In-game course timer") : "Macro elapsed time",
                 courseStartRunTick = _engine.CourseStartRunTick,
                 courseStartUnityFrame = _engine.CourseStartUnityFrame,
                 courseStartX = _engine.CourseStartPosition.x,
@@ -1879,7 +1914,7 @@ namespace IGTAPTasMod
         // AGENTS.md rule 4: a category route name ("<course>_<CAPS> <time>") only comes from the gate (SaveSolverRoute).
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^\d+_(NO_WJ|WJDASH|WJ) [\d.]+$", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NO_WJ|WJDASH|WJ) [\d.]+$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 

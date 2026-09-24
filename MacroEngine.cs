@@ -152,6 +152,9 @@ namespace IGTAPTasMod
             SetField(DashBufferField, movement, false);
         }
 
+        // A bonus course's run finishes on its reward box (no end gate anywhere in the area).
+        internal const string RewardFinishReason = "Reward collected";
+
         public void CompleteFromGame(string reason = "Course finish detected", float authoritativeTime = 0f)
         {
             if (!IsRunning) return;
