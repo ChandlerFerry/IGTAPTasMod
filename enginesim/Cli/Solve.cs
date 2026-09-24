@@ -88,7 +88,9 @@ namespace IGTAP.EngineSim.Cli
 
         static List<InputTick> ReadInputs(JsonElement trace)
         {
-            return trace.GetProperty("inputs").EnumerateArray().Select(t => new InputTick
+            // A trace has "inputs"; solve's own best files (offline-best/*.json) have "ticks".
+            JsonElement list = trace.TryGetProperty("inputs", out JsonElement inputs) ? inputs : trace.GetProperty("ticks");
+            return list.EnumerateArray().Select(t => new InputTick
             {
                 x = t.GetProperty("x").GetSingle(),
                 held = t.GetProperty("held").GetBoolean(),
