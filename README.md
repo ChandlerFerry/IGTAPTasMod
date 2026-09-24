@@ -70,6 +70,24 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 - Real-time play has frame-timing variance (same route: 126/127/132 ticks); turbo is deterministic.
 - Decompiled game code for reference: `obj/Movement.decompiled.cs`, `obj/courseScript.decompiled.cs`.
 
+## What the plugin changes in the game
+
+Audited 2026-09-24. No game method's logic is replaced; the patches only read state, feed input, or skip saves.
+
+| Where | What it does | Why it's not a rule change |
+|---|---|---|
+| `Movement.getPlayerControlledInput` prefix | Sets `MoveAxis` and presses/releases jump and dash exactly like `Movement.Update` does for a real button (same buffer flags and expiry timers). | This is the controller. The game's own code then does all movement. |
+| `Movement.CheckForSuperJump` prefix | Presses jump on a chosen dash frame (dash-jump input). | Same press a player makes during a dash. |
+| `Movement.FixedUpdate` prefix/postfix | Starts queued runs; enforces a tick budget. | Bookkeeping only. |
+| `courseScript.startTracking` / `stopTracking`, `Movement.onDeath` | Read the course time and end the run. | Read-only; the game still does everything it normally does. |
+| `Saveloader.autosave` / `manualSave` | Skipped while a category's unlocks or a turbo run are applied (and in headless workers). | Keeps our settings out of your save; the game plays the same. |
+| Category unlocks | Solver runs and category playback set `wallJumpUnlocked`, `dashUnlocked`, `maxAirDashes`, `airDashesLeft` (`CategoryAbilities`) and restore them after. Off with DO NOT MODIFY CAPABILITIES. | Defines the category; these are the game's own progression values. |
+| Run start | Quick-restarts to the course start (the game's `respawn`) and waits standing still. | A player's quick reset. |
+| `Rigidbody2D.interpolation = None` during runs | Makes physics independent of render timing. | Changes how a render frame's pose feeds a jump nudge; see issue #1 (real-time check with interpolation on). |
+| Turbo only | Steps physics itself (`Physics2D.simulationMode = Script`), fires Movement's `Invoke` timers on the tick a ≥50 fps game would, doesn't wait out the 0.05 s dash freeze. | Verified: turbo results match real-time playback for every route. |
+
+Removed 2026-09-24: `/api/routes/run` position offsets (`firstJumpPositionOffsetX`, `courseStartPositionOffsetX`), which moved the player.
+
 ## Safety
 
 - Nothing the plugin does in turbo or offline is saved to the game; unlocks it sets for a run are restored.
