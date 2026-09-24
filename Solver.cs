@@ -364,7 +364,8 @@ namespace IGTAPTasMod
             bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, out Vector2 end);
             if (from != null && _rng.Next(100) == 0)
             {
-                bool matchFinished = Evaluate(inputs, null, null, null, mode == "optimize", out float replayTime, out _, out Vector2 replayEnd);
+                // The branch never judged the prefix (its source's), so the replay judges the same ticks only.
+                bool matchFinished = Evaluate(inputs, null, null, null, mode == "optimize", out float replayTime, out _, out Vector2 replayEnd, from.tick);
                 _branchChecks++;
                 if (matchFinished == finished && Mathf.Abs(replayTime - time) < .0001f && (replayEnd - end).sqrMagnitude < .01f) _branchMatches++;
                 else Logger.LogInfo("Branch mismatch (" + mode + ", resumed at input " + from.tick + " of " + inputs.Count + "): branch "
@@ -455,9 +456,10 @@ namespace IGTAPTasMod
         }
 
         // `states`/`arrivals`, when given, receive a snapshot after every input tick and the course time of each
-        // timed cell's first visit. `cut` stops the run once it falls behind the best route (see _bestArrival).
+        // timed cell's first visit. `cut` stops the run once it falls behind the best route (see _bestArrival); a run
+        // is judged behind only after input tick `judgeAfter`.
         bool Evaluate(List<SolverTick> inputs, TurboRunner.Snapshot from, TurboRunner.Snapshot[] states,
-            Dictionary<long, float> arrivals, bool cut, out float time, out int finishTick, out Vector2 end)
+            Dictionary<long, float> arrivals, bool cut, out float time, out int finishTick, out Vector2 end, int judgeAfter = -1)
         {
             Movement player = FindWorldMovement();
             if (from == null) from = _startState;
@@ -482,9 +484,12 @@ namespace IGTAPTasMod
             {
                 TurboRunner.Restore(from, player);
                 BeginDeterministicPhysics(player);
-                _engine.Resume(from.engine, ToSteps(inputs.Skip(from.tick).ToList()));
+                int step = from.tick;
+                while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
+                _engine.Resume(from.engine, ToSteps(inputs.Skip(step).ToList()), from.tick - step);
             }
-            int lastTick = -1, idleTicks = 0;
+            // The run `from` came from already reported its tick (ticks mid-dash take no input, so RunTicks can stay put).
+            int lastTick = from != null && from.tick > 0 ? from.tick : -1, idleTicks = 0;
             bool losing = false;
             Stopwatch clock = Stopwatch.StartNew();
             double setupMs = -1;
@@ -512,8 +517,8 @@ namespace IGTAPTasMod
                         if (elapsed >= 0f)
                         {
                             // Already slower than the best finish: nothing later in this run can matter.
-                            if (elapsed > _solverBest) losing = true;
-                            if (cut && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
+                            if (tick > judgeAfter && elapsed > _solverBest) losing = true;
+                            if (cut && tick > judgeAfter && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
                             if (arrivals != null && !arrivals.ContainsKey(key)) arrivals[key] = elapsed;
                         }
                         if (_audit != null) AuditTick(player, inputs, tick);
@@ -616,6 +621,12 @@ namespace IGTAPTasMod
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0 });
             return ticks;
+        }
+
+        // ToSteps' rule: `k` continues the step `previous` is in.
+        static bool Merges(SolverTick previous, SolverTick k)
+        {
+            return !k.press && !k.release && !k.dash && previous.x == k.x && previous.held == k.held;
         }
 
         static List<MacroStep> ToSteps(List<SolverTick> ticks)

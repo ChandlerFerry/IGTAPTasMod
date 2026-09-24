@@ -283,7 +283,8 @@ namespace IGTAP.EngineSim
                     // fires inside the replayed prefix (a loop route revisiting a cell), which the branch never sees.
                     bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
-                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _);
+                    // The branch never judged the prefix (its source's), so the replay judges the same ticks only.
+                    bool again = Evaluate(inputs, null, null, null, mode == "optimize", out float replay, out _, from.Tick);
                     Interlocked.Increment(ref _owner.BranchChecks);
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
@@ -301,9 +302,10 @@ namespace IGTAP.EngineSim
                 _owner.Offer(replayed, _bestInputs, mode);
             }
 
-            // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best.
+            // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best (judged
+            // only after input tick `judgeAfter`).
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
-                out float time, out int finishTick)
+                out float time, out int finishTick, int judgeAfter = -1)
             {
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
@@ -316,8 +318,8 @@ namespace IGTAP.EngineSim
                         : active == null ? -1f : Simulation.CourseTime(active);
                     if (elapsed >= 0f)
                     {
-                        if (elapsed > _best) losing = true;
-                        if (cut && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
+                        if (tick > judgeAfter && elapsed > _best) losing = true;
+                        if (cut && tick > judgeAfter && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
                         // The best route's last time in each cell: a loop route revisits cells, and cutting at the first
                         // visit would cut the best route itself once a mutation resumes past it.
                         if (arrivals != null) arrivals[key] = elapsed;

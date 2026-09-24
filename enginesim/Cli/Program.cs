@@ -27,6 +27,7 @@ namespace IGTAP.EngineSim.Cli
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
+                    case "branch": return Branch(args[1], args.Length > 2 ? int.Parse(args[2]) : 200);
                     case "path":
                     {
                         // path <start-trace> <route.json>: where the course timer starts/stops along a route.
@@ -84,7 +85,8 @@ namespace IGTAP.EngineSim.Cli
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit]\n"
                             + "                                         offline solver from that trace's start state; new bests are\n"
                             + "                                         confirmed in turbo (/api/enginesim/submit) when the game runs\n"
-                            + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format");
+                            + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
+                            + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
                         return 2;
                 }
             }
@@ -311,6 +313,102 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
+
+        // Branch determinism, the solver's way: new inputs resumed from an archived snapshot (taken in an earlier, possibly
+        // branched, run) must step exactly like the same inputs from the start (player, engine, courses, Invokes, body).
+        static int Branch(string tracePath, int runs)
+        {
+            var (sim, _, route) = Open(tracePath);
+            var rng = new System.Random(1);
+            FieldInfo[] engineFields = FieldState.For(typeof(MacroEngine));
+            string State()
+            {
+                var sb = new StringBuilder();
+                sb.Append(Json(FieldState.Capture(sim.Player))).Append('|').Append(Json(sim.Player.transform.position));
+                object[] engine = sim.Engine.CaptureState();
+                for (int i = 0; i < engine.Length; i++)
+                    if (!(engineFields[i].Name is "_steps" or "_stepIndex" or "_elapsedTicks" or "_elapsedMs" or "_wallJumpTriggered" or "<Status>k__BackingField"))
+                        sb.Append('|').Append(engineFields[i].Name).Append('=').Append(Json(engine[i]));
+                foreach (courseScript c in sim.Courses) sb.Append('|').Append(Json(FieldState.Capture(c)));
+                foreach (Scheduler.Pending p in sim.Scheduler.Queue) sb.Append("|inv ").Append(p.Method).Append('@').Append(p.Due - sim.Scheduler.Tick);
+                Rigidbody2D body = sim.Player.GetComponent<Rigidbody2D>();
+                sb.Append('|').Append(Json(sim.Physics.GetPosition(body))).Append(Json(sim.Physics.GetVelocity(body)));
+                return sb.ToString();
+            }
+            List<InputTick> Burst(List<InputTick> inputs, int count)
+            {
+                float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f;
+                while (inputs.Count < count)
+                {
+                    if (rng.NextDouble() < .35) x = new[] { -1f, 0f, 1f }[rng.Next(3)];
+                    int length = rng.Next(3, 21), at = inputs.Count;
+                    for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x });
+                    if (rng.NextDouble() < .4)
+                    {
+                        int hold = new[] { 1, 3, 6, 10, 16 }[rng.Next(5)];
+                        for (int i = at; i < Math.Min(inputs.Count, at + hold); i++) { InputTick k = inputs[i]; k.held = true; k.press = i == at; inputs[i] = k; }
+                        if (at + hold < inputs.Count) { InputTick k = inputs[at + hold]; k.release = true; inputs[at + hold] = k; }
+                    }
+                    if (rng.NextDouble() < .25)
+                    {
+                        InputTick d = inputs[at];
+                        d.dash = true;
+                        if (rng.NextDouble() < .5) d.dashJump = rng.Next(1, 11);
+                        inputs[at] = d;
+                        int j = Math.Min(inputs.Count - 1, at + rng.Next(0, 6));
+                        if (d.dashJump == 0 && rng.NextDouble() < .5) { InputTick k = inputs[j]; k.press = k.held = true; inputs[j] = k; }
+                    }
+                }
+                return inputs;
+            }
+            // Each stepped tick's state, and per input index the snapshot taken there with its step.
+            (List<string>, Dictionary<int, (SimSnapshot, int)>) Record(List<InputTick> inputs, SimSnapshot from, int only = -1)
+            {
+                var states = new List<string>();
+                var snaps = new Dictionary<int, (SimSnapshot, int)>();
+                int lastTick = -1;
+                sim.Run(inputs, from, tick =>
+                {
+                    if (tick > 0 && tick < inputs.Count && !sim.Engine.InputsExhausted && tick != lastTick) snaps[tick] = (only < 0 || tick == only ? sim.Capture(tick) : null, states.Count - 1);
+                    lastTick = tick;
+                    return true;
+                }, onStep: s => states.Add(State()));
+                return (states, snaps);
+            }
+            int checks = 0, matches = 0;
+            var archive = new List<(List<InputTick> source, int k, SimSnapshot snap)>();
+            for (int r = 0; r < runs; r++)
+            {
+                List<InputTick> source = r % 2 == 0 ? route : Burst(new List<InputTick>(), 60);
+                foreach (var (k, (snap, _)) in Record(source, null).Item2) archive.Add((source, k, snap));
+                for (int b = 0; b < 20; b++)
+                {
+                    var (from, k, snapshot) = archive[rng.Next(archive.Count)];
+                    var inputs = Burst(from.Take(k).ToList(), k + rng.Next(1, 60));
+                    var (branch, taken) = Record(inputs, snapshot);
+                    foreach (var (tk, (ts, _)) in taken) if (rng.Next(4) == 0) archive.Add((inputs, tk, ts));
+                    var (full, starts) = Record(inputs, null, k);
+                    if (!starts.TryGetValue(k, out var at)) continue;
+                    int step = at.Item2;
+                    checks++;
+                    int bad = 0;
+                    while (bad < branch.Count && step + 1 + bad < full.Count && branch[bad] == full[step + 1 + bad]) bad++;
+                    if (bad == branch.Count && step + 1 + bad == full.Count) { matches++; continue; }
+                    if (checks - matches > 5) continue;
+                    Console.WriteLine($"run {r} resume at input {k} (step {step}): first difference {bad} steps later (resumed {branch.Count}, from start {full.Count - step - 1})");
+                    Console.WriteLine("  inputs " + string.Join(" ", inputs.Skip(Math.Max(0, k - 3)).Take(bad + 6).Select(t => $"{t.x}{(t.held ? "h" : "")}{(t.press ? "P" : "")}{(t.release ? "R" : "")}{(t.dash ? "D" + t.dashJump : "")}")));
+                    if (bad >= branch.Count || step + 1 + bad >= full.Count) continue;
+                    string[] got = branch[bad].Split('|'), expected = full[step + 1 + bad].Split('|');
+                    for (int i = 0; i < Math.Max(got.Length, expected.Length); i++)
+                    {
+                        string g = i < got.Length ? got[i] : "<none>", e = i < expected.Length ? expected[i] : "<none>";
+                        if (g != e) Console.WriteLine($"  [{i}] resumed {Short(g)}\n       start   {Short(e)}");
+                    }
+                }
+            }
+            Console.WriteLine($"branch replays matching {matches}/{checks}");
+            return matches == checks ? 0 : 3;
+        }
 
         // Single-core throughput on one trace's inputs, from its start state.
         static int Bench(string[] args)
