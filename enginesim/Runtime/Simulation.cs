@@ -243,6 +243,57 @@ namespace IGTAP.EngineSim
             };
         }
 
+        // A hash of everything the rest of a run depends on besides its inputs and the (time-driven) rest of the world:
+        // the player's scripts, transform, colliders and body, the courses, pending Invokes, and the scripts a callback
+        // touched. Two runs of the same inputs with equal fingerprints at the same tick continue identically (up to a
+        // hash collision or Box2D contact caches; a false match only costs the solver one mutation).
+        public int Fingerprint()
+        {
+            var h = new HashCode();
+            AddFields(ref h, Player);
+            foreach (courseScript c in Courses) AddFields(ref h, c);
+            Transform t = Player.transform;
+            h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
+            foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
+            h.Add(Physics.PlayerBody());
+            foreach (Scheduler.Pending p in Scheduler.Queue)
+            {
+                h.Add(p.Due - Scheduler.Tick); h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(p.Target)); h.Add(p.Method); h.Add(p.Repeat);
+            }
+            int touched = 0;
+            foreach (MonoBehaviour script in _touched)
+            {
+                var s = new HashCode();
+                s.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(script));
+                AddFields(ref s, script);
+                touched ^= s.ToHashCode();
+            }
+            h.Add(touched);
+            return h.ToHashCode();
+        }
+
+        static void AddFields(ref HashCode h, object target)
+        {
+            foreach (FieldInfo f in FieldState.For(target.GetType())) AddValue(ref h, f.GetValue(target));
+        }
+
+        static void AddValue(ref HashCode h, object value)
+        {
+            switch (value)
+            {
+                case null: h.Add(0); break;
+                case UnityEngine.Object o: h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o)); break;
+                case string s: h.Add(s); break;
+                case System.Collections.IEnumerable items:
+                    foreach (object item in items) AddValue(ref h, item);
+                    h.Add(-1);
+                    break;
+                default:
+                    h.Add(value.GetType().IsValueType ? value.GetHashCode() : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value));
+                    break;
+            }
+        }
+
         public void Restore(SimSnapshot s)
         {
             foreach (MonoBehaviour script in _touched) FieldState.Restore(script, _pristine[script]);

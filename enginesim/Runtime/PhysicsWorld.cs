@@ -823,6 +823,13 @@ namespace IGTAP.EngineSim
             AdvanceTouching();
         }
 
+        // The player's body as Box2D holds it (position, rotation in radians, velocities).
+        public (float px, float py, float angle, float vx, float vy, float w) PlayerBody()
+        {
+            b2Vec2 p = _player.Body.GetPosition(), v = _player.Body.GetLinearVelocity();
+            return (p.x, p.y, _player.Body.GetAngle(), v.x, v.y, _player.Body.GetAngularVelocity());
+        }
+
         // Physics state a run changes: the Box2D world's dynamic state (bodies, the player's fixtures, contacts,
         // broadphase), the player's pending transform sync, and the touching pairs the callbacks are based on.
         sealed class PhysicsSnapshot
