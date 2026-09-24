@@ -356,8 +356,18 @@ namespace Box2D
                 b.m_angularDamping = rec.angularDamping;
 
                 // Detach fixtures dropped by the restore (created after the save);
-                // their proxies vanish with the broadphase restore.
-                for (b2Fixture f = b.m_fixtureList; f != null;)
+                // their proxies vanish with the broadphase restore. Usually the list
+                // is unchanged (a level body has thousands of fixtures): skip the scan.
+                int same = 0;
+                b2Fixture rest = b.m_fixtureList;
+                while (rest != null && same < rec.fixtures.Length && ReferenceEquals(rest, rec.fixtures[same]))
+                {
+                    rest = rest.m_next;
+                    same++;
+                }
+
+                bool unchanged = rest == null && same == rec.fixtures.Length;
+                for (b2Fixture f = unchanged ? null : b.m_fixtureList; f != null;)
                 {
                     b2Fixture next = f.m_next;
                     f.m_next = null;
