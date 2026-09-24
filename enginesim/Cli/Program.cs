@@ -83,8 +83,8 @@ namespace IGTAP.EngineSim.Cli
                         Console.Error.WriteLine("usage:\n  replay <trace.json>... [--verbose]   compare offline runs with turbo traces tick by tick\n"
                             + "  bench <trace.json> [seconds]           runs/s and ticks/s on one core\n"
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit]\n"
-                            + "                                         offline solver from that trace's start state; new bests are\n"
-                            + "                                         confirmed in turbo (/api/enginesim/submit) when the game runs\n"
+                            + "                                         offline solver from that trace's start state; bests that beat\n"
+                            + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
                         return 2;

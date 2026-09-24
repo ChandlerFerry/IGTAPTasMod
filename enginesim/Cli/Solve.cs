@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim.Cli
 {
     // Offline solver driver: N worker threads (one world each) from a trace's start state; every new best is
     // written to disk and, unless --no-submit, replayed in the running game's turbo (which saves it as the category's
-    // route when the game agrees it is faster).
+    // route when the game agrees it is faster). A seed's own time is not new, so it never goes to the game.
     static class Solve
     {
         const string Api = "http://127.0.0.1:17426";
@@ -62,7 +62,7 @@ namespace IGTAP.EngineSim.Cli
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
                 File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, ticks = inputs.Select(ToJson) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks) -> {Path.GetFileName(file)}");
-                if (submit) pending.Set(time, inputs);
+                if (submit && how != "seed") pending.Set(time, inputs);
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
             solver.Start(threads);
@@ -127,7 +127,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        static readonly string[] Categories = { "none", "wj", "wjdash" };
+        static readonly string[] Categories = { "none", "wj", "wjdash", "wjdashaj" };
 
         static void SubmitOther(HttpClient http, int course, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
@@ -139,7 +139,13 @@ namespace IGTAP.EngineSim.Cli
                     string reply = http.PostAsync(Api + "/api/enginesim/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result
                         .Content.ReadAsStringAsync().Result;
                     using JsonDocument r = JsonDocument.Parse(reply);
-                    if (!r.RootElement.TryGetProperty("saved", out JsonElement saved)) { Thread.Sleep(2000); continue; }
+                    if (!r.RootElement.TryGetProperty("saved", out JsonElement saved))
+                    {
+                        // Busy or loading: retry. Anything else (a category the course doesn't have) is final.
+                        if (!reply.Contains("loading") && !reply.Contains("Stop the solver")) return;
+                        Thread.Sleep(2000);
+                        continue;
+                    }
                     if (saved.GetBoolean()) Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {course}_{caps}");
                     return;
                 }

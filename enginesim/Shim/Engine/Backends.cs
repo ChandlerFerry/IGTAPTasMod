@@ -12,7 +12,8 @@ namespace IGTAP.EngineSim
         void SyncTransforms();
         ColliderDistance2D Distance(Collider2D a, Collider2D b);
         void ColliderChanged(Collider2D collider);
-        void TransformChanged(Transform transform);
+        // pose: position/rotation changed (the body follows); false: only the scale (shapes rebuild, the body stays).
+        void TransformChanged(Transform transform, bool pose);
         void ActiveChanged(GameObject gameObject);
         Vector2 GetPosition(Rigidbody2D body);
         void SetPosition(Rigidbody2D body, Vector2 position);

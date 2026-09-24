@@ -21,16 +21,7 @@ namespace IGTAPTasMod
 
     internal sealed class WebStudioServer : IDisposable
     {
-        public static int Port
-        {
-            get
-            {
-                string env = Environment.GetEnvironmentVariable("IGTAP_TAS_PORT");
-                int port;
-                if (!string.IsNullOrEmpty(env) && int.TryParse(env, out port)) return port;
-                return 17426;
-            }
-        }
+        public const int Port = 17426;
 
         public static string Url => "http://127.0.0.1:" + Port + "/";
 

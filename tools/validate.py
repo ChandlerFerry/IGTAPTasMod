@@ -3,18 +3,31 @@
 Uses the solver's own replay (/api/enginesim/submit with routeId), so a category means exactly what the solver and
 the gate use (TasPlugin.CategoryAbilities). A route is never re-saved: submit only saves a strictly faster time.
 
-Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|WJDASH> <time>")
+Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>")
 """
-import json, re, sys, urllib.request
+import json, re, sys, time, urllib.error, urllib.request
 ROUTES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\routes.json"
 COURSES = ROUTES.replace("routes.json", "courses.json")
-LABELS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash"}
+LABELS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash", "WJ_DASH_AJ": "wjdashaj"}
+
+
+def submit(body):
+    request = urllib.request.Request("http://127.0.0.1:17426/api/enginesim/submit", json.dumps(body).encode())
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        return json.loads(error.read())
 
 
 def check(route, course, caps):
     body = {"course": course, "capabilities": caps, "routeId": route["id"]}
-    r = json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:17426/api/enginesim/submit",
-                                                                 json.dumps(body).encode()), timeout=300))
+    # The plugin parks the player at a new course's start and answers "loading" until its zone has settled.
+    for _ in range(30):
+        r = submit(body)
+        if "loading" not in str(r.get("error", "")):
+            break
+        time.sleep(1)
     ok = r.get("finished")
     print(f"{route['name']:34} C{course} {caps:6} {'OK  ' + format(r['time'], '.2f') + 's' if ok else 'FAIL ' + json.dumps(r)}")
 
@@ -24,5 +37,5 @@ if __name__ == "__main__":
     # The course of a category route is its courses.json id or name ("bonus1_WJ 13.56").
     ids = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
     for m in json.load(open(ROUTES, encoding="utf-8-sig"))["macros"]:
-        match = re.fullmatch(r"([^_\s]+)_(NO_WJ|WJDASH|WJ) [\d.]+", m["name"])
+        match = re.fullmatch(r"([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+", m["name"])
         if match and match[1] in ids: check(m, ids[match[1]], LABELS[match[2]])

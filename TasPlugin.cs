@@ -53,32 +53,12 @@ namespace IGTAPTasMod
         private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
         private static readonly FieldInfo CourseTrackingField = AccessTools.Field(typeof(courseScript), "tracking");
 
-        private WebStudioRequest _activeOracleRequest;
-        private MacroDefinition _pendingOracleMacro;
-        private bool _isOracleEvaluation;
-        private int _oracleMaxTicks = 1500;
-        private bool _oracleIncludeDiagnostics;
-        private List<object> _oracleTrace;
-        private List<object> _oracleDiagnostics;
-        private string _oracleResultId;
-        private string _oracleRouteName;
-        private Vector2? _oracleStartPose;
-        private int _oracleGroundLayerValue;
-        private int _oracleBlockingLayerValue;
-        private bool _oracleMasksCaptured;
         private WebStudioRequest _bootstrapRequest;
         private int _bootstrapPhase;
         private JObject _bootstrapBody;
         private readonly List<string> _bootstrapNotes = new List<string>();
 
-        private static FieldInfo _groundRaycastLayerField;
         private static readonly FieldInfo MovIsOnMainMenuField = AccessTools.Field(typeof(Movement), "isOnMainMenu");
-        private static FieldInfo _blockingGroundRaycastLayerField;
-        private static readonly FieldInfo MovCoyoteField = AccessTools.Field(typeof(Movement), "coyoteFrames");
-        private static readonly FieldInfo MovWallCoyoteField = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
-        private static readonly FieldInfo MovJumpBufferField = AccessTools.Field(typeof(Movement), "jumpBuffer");
-        private static readonly FieldInfo MovJumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
-        private static readonly FieldInfo MovNormalColliderField = AccessTools.Field(typeof(Movement), "normalCollider");
 
 
         private void Awake()
@@ -103,7 +83,7 @@ namespace IGTAPTasMod
             {
                 _webServer.Start(Path.Combine(Paths.PluginPath, "IGTAPTasWeb"));
                 Logger.LogInfo("Web Studio listening at " + WebStudioServer.Url);
-                if (_settings.autoOpenWebStudio && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGTAP_ORACLE"))) Application.OpenURL(WebStudioServer.Url);
+                if (_settings.autoOpenWebStudio) Application.OpenURL(WebStudioServer.Url);
             }
             catch (Exception ex) { Logger.LogError("Could not start Web Studio: " + ex); }
             _harmony = new Harmony(PluginGuid);
@@ -115,7 +95,7 @@ namespace IGTAPTasMod
                 return;
             }
             _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
-            PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), nameof(AfterMovementFixedUpdate));
+            PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), null);
             TurboRunner.Patch(_harmony);
             PatchOptional(typeof(courseScript), "startTracking", null, nameof(AfterCourseStart));
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
@@ -127,12 +107,11 @@ namespace IGTAPTasMod
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
-        // The game's saves run only when nothing of ours is applied to the player: never in headless oracle workers,
-        // and never while a category route's unlocks (playback) or a turbo/solver run are in effect, so those can't
-        // end up in the user's save. Live edits from /api/session/setup are the user's own and save normally.
+        // The game's saves run only when nothing of ours is applied to the player: never while a category route's
+        // unlocks (playback) or a turbo/solver run are in effect, so those can't end up in the user's save. Live edits
+        // from /api/session/setup are the user's own and save normally.
         private static bool BlockSharedSave()
         {
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("IGTAP_ORACLE"))) return false;
             return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active);
         }
 
@@ -148,18 +127,6 @@ namespace IGTAPTasMod
                 Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, true, true, 0,
                     movement == null ? (Vector2?)null : movement.transform.position);
-                return true;
-            }
-            if (Instance._pendingOracleMacro != null && !Instance._engine.IsRunning)
-            {
-                MacroDefinition macro = Instance._pendingOracleMacro;
-                Instance._pendingOracleMacro = null;
-                Instance.RestoreRouteStart(macro);
-                Movement movement = FindWorldMovement();
-                Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                Instance._oracleStartPose = movement == null ? (Vector2?)null : (Vector2?)movement.transform.position;
-                Instance.BeginDeterministicPhysics(movement);
-                Instance._engine.Run(macro, Instance._library, true, true, 0, synchronizationPosition);
                 return true;
             }
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning)
@@ -186,8 +153,6 @@ namespace IGTAPTasMod
             // and OnWall logic (1002-1067) and BEFORE the jump/wall-jump
             // consumption (1655-1745). This prefix therefore observes the exact
             // OnWall / wallCoyoteFrames / probe state the jump code will read.
-            if (Instance._isOracleEvaluation && Instance._engine.IsRunning && __instance != null)
-                Instance.RecordOracleTick(__instance);
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
             // Before the tick's inputs: the same world state the recorder samples. A bonus run ends on its
@@ -207,7 +172,8 @@ namespace IGTAPTasMod
         {
             CourseDef course = _silentEvaluation ? _courses.Find(c => c.id == _solverCourse) : _runCourse;
             if (player == null || course == null || !course.HasFinish) return false;
-            Rect zone = new Rect(course.endX - course.endW / 2f, course.endY - course.endH / 2f, course.endW, course.endH);
+            Vector2 origin = CurrentOrigin();
+            Rect zone = new Rect(course.endX - course.endW / 2f + origin.x, course.endY - course.endH / 2f + origin.y, course.endW, course.endH);
             foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
             {
                 if (!box.enabled) continue;
@@ -282,392 +248,6 @@ namespace IGTAPTasMod
             }
         }
 
-        private static void AfterMovementFixedUpdate(Movement __instance)
-        {
-            if (Instance == null || __instance == null) return;
-            if (Instance._isOracleEvaluation && Instance._engine.IsRunning)
-            {
-                if (Instance._engine.RunTicks > Instance._oracleMaxTicks)
-                {
-                    Instance._engine.Abort("Oracle tick budget exceeded");
-                }
-            }
-        }
-
-        private void RecordOracleTick(Movement movement)
-        {
-            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
-            Vector2 tPos = movement.transform.position;
-            Vector2 bPos = body != null ? body.position : tPos;
-            Vector2 vel = movement.Velocity;
-            Vector2 bVel = body != null ? body.linearVelocity : vel;
-
-            long tick = _engine.RunTicks;
-            if (_oracleTrace != null)
-            {
-                _oracleTrace.Add(new
-                {
-                    tick = tick,
-                    x = tPos.x,
-                    y = tPos.y,
-                    bodyX = bPos.x,
-                    bodyY = bPos.y,
-                    vx = vel.x,
-                    vy = vel.y,
-                    linearVx = bVel.x,
-                    linearVy = bVel.y,
-                    grounded = movement.onGround,
-                    onWall = movement.OnWall,
-                    facingRight = movement.facingRight
-                });
-            }
-
-            if (_oracleIncludeDiagnostics && _oracleDiagnostics != null)
-            {
-                Vector2 v1, v2, v3, v4, v5, v6, v7;
-                Vector2 wallFacing;
-                if (movement.facingRight)
-                {
-                    v1 = (Vector2)movement.transform.position + new Vector2(-15f, -18f);
-                    v2 = (Vector2)movement.transform.position + new Vector2(-9f, -18f);
-                    v3 = (Vector2)movement.transform.position + new Vector2(25f, -18f);
-                    v4 = (Vector2)movement.transform.position + new Vector2(21f, -18f);
-                    v5 = (Vector2)movement.transform.position + new Vector2(6f, -18f);
-                    v6 = (Vector2)movement.transform.position + new Vector2(15f, 19f);
-                    v7 = (Vector2)movement.transform.position + new Vector2(15f, -18f);
-                    wallFacing = Vector2.right;
-                }
-                else
-                {
-                    v1 = (Vector2)movement.transform.position + new Vector2(15f, -18f);
-                    v2 = (Vector2)movement.transform.position + new Vector2(9f, -18f);
-                    v3 = (Vector2)movement.transform.position + new Vector2(-25f, -18f);
-                    v4 = (Vector2)movement.transform.position + new Vector2(-21f, -18f);
-                    v5 = (Vector2)movement.transform.position + new Vector2(-6f, -18f);
-                    v6 = (Vector2)movement.transform.position + new Vector2(-15f, 19f);
-                    v7 = (Vector2)movement.transform.position + new Vector2(-15f, -18f);
-                    wallFacing = Vector2.left;
-                }
-
-                LayerMask groundLayer = GetMovementLayerMask(movement, "groundRaycastLayer");
-                LayerMask blockingLayer = GetMovementLayerMask(movement, "blockingGroundRaycastLayer");
-                if (!_oracleMasksCaptured)
-                {
-                    _oracleGroundLayerValue = groundLayer.value;
-                    _oracleBlockingLayerValue = blockingLayer.value;
-                    _oracleMasksCaptured = true;
-                }
-
-                float num = (movement.currentlyTouchedMovingPlatform != null || movement.dashActive) ? 3f : 0f;
-
-                RaycastHit2D r1 = Physics2D.Raycast(v1, Vector2.down, 22f, groundLayer);
-                RaycastHit2D r2 = Physics2D.Raycast(v2, Vector2.down, 22f, blockingLayer);
-                RaycastHit2D r3 = Physics2D.Raycast(v3, Vector2.down, 22f, groundLayer);
-                RaycastHit2D r4 = Physics2D.Raycast(v4, Vector2.down, 22f, blockingLayer);
-                RaycastHit2D r5 = Physics2D.Raycast(v5, Vector2.down, 22f, groundLayer);
-                RaycastHit2D r6 = Physics2D.Raycast(v1, Vector2.down, 5f, groundLayer);
-                RaycastHit2D r7 = Physics2D.Raycast(v3, Vector2.down, 5f, groundLayer);
-                RaycastHit2D r8 = Physics2D.Raycast(v1, Vector2.down, -25f, groundLayer);
-                RaycastHit2D r9 = Physics2D.Raycast(v3, Vector2.down, -25f, groundLayer);
-
-                RaycastHit2D r10 = Physics2D.Raycast(v7, wallFacing, 12f + num, groundLayer);
-                RaycastHit2D r11 = Physics2D.Raycast(v6, wallFacing, 12f + num, groundLayer);
-                RaycastHit2D r12 = Physics2D.Raycast(v7, wallFacing, 12f + num, blockingLayer);
-                RaycastHit2D r13 = Physics2D.Raycast(v6, wallFacing, 12f + num, blockingLayer);
-
-                // Movement.Update probes (scratch_movement.txt:767-801). These are a
-                // separate set from the FixedUpdate r1-r13 probes and are the only
-                // wall signals that can arm a wall jump while r10/r11 both miss and
-                // OnWall is false (native Course 2 tick 154 of the 905 route).
-                float updY = 10f;
-                float dashBonus = 0f;
-                object cutscene = GetMovementField(movement, "cutsceneMode");
-                if (cutscene != null && cutscene.ToString() == "dash") { dashBonus = 2f; updY += 10f; }
-                Vector2 u1Origin, u2Origin, u3Origin, u4Origin;
-                if (movement.facingRight)
-                {
-                    u1Origin = (Vector2)movement.transform.position + new Vector2(24f, updY);
-                    u2Origin = (Vector2)movement.transform.position + new Vector2(27f + dashBonus, updY);
-                    u3Origin = (Vector2)movement.transform.position + new Vector2(15f, -18f);
-                    u4Origin = (Vector2)movement.transform.position + new Vector2(15f, 19f);
-                }
-                else
-                {
-                    u1Origin = (Vector2)movement.transform.position + new Vector2(-24f, updY);
-                    u2Origin = (Vector2)movement.transform.position + new Vector2(-27f - dashBonus, updY);
-                    u3Origin = (Vector2)movement.transform.position + new Vector2(-15f, -18f);
-                    u4Origin = (Vector2)movement.transform.position + new Vector2(-15f, 19f);
-                }
-                RaycastHit2D u1 = Physics2D.Raycast(u1Origin, wallFacing, 6f + dashBonus, groundLayer);
-                RaycastHit2D u2 = Physics2D.Raycast(u2Origin, Vector2.down, 33f + updY, groundLayer);
-                RaycastHit2D u3 = Physics2D.Raycast(u3Origin, wallFacing, 14f, groundLayer);
-                RaycastHit2D u4 = Physics2D.Raycast(u4Origin, wallFacing, 14f, groundLayer);
-
-                BoxCollider2D normCol = MovNormalColliderField != null ? (BoxCollider2D)MovNormalColliderField.GetValue(movement) : null;
-                _oracleDiagnostics.Add(new
-                {
-                    tick = tick,
-                    x = tPos.x,
-                    y = tPos.y,
-                    bodyX = bPos.x,
-                    bodyY = bPos.y,
-                    vx = vel.x,
-                    vy = vel.y,
-                    linearVx = bVel.x,
-                    linearVy = bVel.y,
-                    groundLayer = groundLayer.value,
-                    blockingLayer = blockingLayer.value,
-                    onGround = movement.onGround,
-                    onWall = movement.OnWall,
-                    coyoteFrames = MovCoyoteField != null ? (float)MovCoyoteField.GetValue(movement) : 0f,
-                    wallCoyoteFrames = MovWallCoyoteField != null ? (float)MovWallCoyoteField.GetValue(movement) : 0f,
-                    wallJumpsLeft = movement.wallJumpsLeft,
-                    facingRight = movement.facingRight,
-                    jumpBuffer = MovJumpBufferField != null && (bool)MovJumpBufferField.GetValue(movement),
-                    jumpCutBuffer = MovJumpCutBufferField != null && (bool)MovJumpCutBufferField.GetValue(movement),
-                    normalColliderSize = normCol != null ? $"{normCol.size.x},{normCol.size.y}" : "",
-                    normalColliderOffset = normCol != null ? $"{normCol.offset.x},{normCol.offset.y}" : "",
-                    r1 = SummarizeHit(r1),
-                    r2 = SummarizeHit(r2),
-                    r3 = SummarizeHit(r3),
-                    r4 = SummarizeHit(r4),
-                    r5 = SummarizeHit(r5),
-                    r6 = SummarizeHit(r6),
-                    r7 = SummarizeHit(r7),
-                    r8 = SummarizeHit(r8),
-                    r9 = SummarizeHit(r9),
-                    r10 = SummarizeHit(r10),
-                    r11 = SummarizeHit(r11),
-                    r12 = SummarizeHit(r12),
-                    r13 = SummarizeHit(r13),
-                    u1 = SummarizeHit(u1),
-                    u2 = SummarizeHit(u2),
-                    u3 = SummarizeHit(u3),
-                    u4 = SummarizeHit(u4),
-                    wallProbe = (!movement.onGround && !movement.dashActive) ? SummarizeHit(u3) : SummarizeHit(u1)
-                });
-            }
-        }
-
-        private static object SummarizeHit(RaycastHit2D hit)
-        {
-            if (hit.collider == null) return null;
-            return new
-            {
-                distance = hit.distance,
-                point = new { x = hit.point.x, y = hit.point.y },
-                collider = hit.collider.name,
-                tag = hit.collider.tag,
-                layer = hit.collider.gameObject.layer
-            };
-        }
-
-        private static LayerMask GetMovementLayerMask(Movement movement, string fieldName)
-        {
-            try
-            {
-                if (fieldName == "groundRaycastLayer")
-                {
-                    if (_groundRaycastLayerField == null)
-                        _groundRaycastLayerField = AccessTools.Field(typeof(Movement), "groundRaycastLayer");
-                    if (_groundRaycastLayerField != null)
-                        return (LayerMask)_groundRaycastLayerField.GetValue(movement);
-                }
-                else if (fieldName == "blockingGroundRaycastLayer")
-                {
-                    if (_blockingGroundRaycastLayerField == null)
-                        _blockingGroundRaycastLayerField = AccessTools.Field(typeof(Movement), "blockingGroundRaycastLayer");
-                    if (_blockingGroundRaycastLayerField != null)
-                        return (LayerMask)_blockingGroundRaycastLayerField.GetValue(movement);
-                }
-            }
-            catch { }
-            return 0;
-        }
-
-        private bool StartOracleEvaluation(WebStudioRequest request, JObject body)
-        {
-            List<MacroStep> steps = null;
-            string routeId = Text(body, "routeId");
-            if (!string.IsNullOrEmpty(routeId))
-            {
-                MacroDefinition existing = _library.macros.Find(m => m.id == routeId);
-                if (existing != null)
-                {
-                    steps = new List<MacroStep>();
-                    foreach (MacroStep s in existing.steps) steps.Add(s.Copy());
-                }
-            }
-            if (steps == null && body["actions"] != null)
-            {
-                steps = ConvertActionsToSteps(body["actions"]);
-            }
-            if (steps == null && body["frames"] != null)
-            {
-                steps = ConvertFramesToSteps(body["frames"]);
-            }
-            if (steps == null && body["steps"] != null)
-            {
-                steps = body["steps"].ToObject<List<MacroStep>>();
-            }
-            if (steps == null || steps.Count == 0)
-            {
-                request.StatusCode = 400;
-                request.Response = JsonConvert.SerializeObject(new { ok = false, error = "No actions, frames, steps, or valid routeId found." });
-                request.Completed.Set();
-                return false;
-            }
-
-            if (_engine.IsRunning)
-            {
-                _engine.Abort("Aborted for new oracle evaluation");
-            }
-
-            _activeOracleRequest = request;
-            request.AsyncHandling = true;
-            _isOracleEvaluation = true;
-            _oracleMaxTicks = body["maxTicks"] != null ? (int)body["maxTicks"] : 1500;
-            _oracleIncludeDiagnostics = body["diagnostic"] != null && (bool)body["diagnostic"];
-            _oracleTrace = new List<object>();
-            _oracleDiagnostics = new List<object>();
-
-            MacroDefinition evalMacro = new MacroDefinition
-            {
-                id = "oracle-eval-" + Guid.NewGuid().ToString("N"),
-                name = "OracleEvaluation",
-                steps = steps
-            };
-
-            EnsureGameUnpaused();
-            _oracleResultId = Guid.NewGuid().ToString("N");
-            _oracleRouteName = evalMacro.name;
-            _oracleStartPose = null;
-            _oracleMasksCaptured = false;
-            _pendingOracleMacro = evalMacro;
-            return true;
-        }
-
-        private static string ClassifyOracleStatus(bool success, string reason)
-        {
-            if (success) return "complete";
-            if (string.IsNullOrEmpty(reason)) return "error";
-            if (reason.IndexOf("tick budget", StringComparison.OrdinalIgnoreCase) >= 0) return "timeout";
-            if (reason.IndexOf("death", StringComparison.OrdinalIgnoreCase) >= 0) return "death";
-            return "error";
-        }
-
-        private string PersistOracleDiagnostics(string resultId, string routeName, long ticks, bool success)
-        {
-            if (_oracleDiagnostics == null || _oracleDiagnostics.Count == 0) return null;
-            try
-            {
-                string path = Path.Combine(_resultsPath, DateTime.UtcNow.ToString("o").Replace(":", "-") + "-" + resultId + ".diagnostics.json");
-                var dump = new
-                {
-                    schemaVersion = 1,
-                    resultId = resultId,
-                    routeName = routeName,
-                    success = success,
-                    completionTicks = ticks,
-                    tickConvention = "native tick 0 is pre-input; stateTrace Tick n follows frame n-1",
-                    coordinate = "Unity transform position (earlyTrace columns 2-3)",
-                    masks = new { groundRaycastLayer = _oracleGroundLayerValue, blockingGroundRaycastLayer = _oracleBlockingLayerValue },
-                    startPose = _oracleStartPose.HasValue ? (object)new { x = _oracleStartPose.Value.x, y = _oracleStartPose.Value.y } : null,
-                    diagnostics = _oracleDiagnostics
-                };
-                WriteJsonAtomic(path, dump, false);
-                return path;
-            }
-            catch (Exception ex) { if (Log != null) Log.LogError("Could not save oracle diagnostics: " + ex.Message); return null; }
-        }
-
-        private string PersistOracleResult(string resultId, string routeName, bool success, string reason, int action,
-            long ticks, float time, Vector2 finalPos, string diagnosticsPath)
-        {
-            try
-            {
-                string path = Path.Combine(_resultsPath, DateTime.UtcNow.ToString("o").Replace(":", "-") + "-" + resultId + ".json");
-                var result = new
-                {
-                    schemaVersion = 1,
-                    id = resultId,
-                    routeId = "oracle-eval-" + resultId,
-                    routeName = routeName,
-                    timestampUtc = DateTime.UtcNow.ToString("o"),
-                    success = success,
-                    completionTicks = ticks,
-                    completionTime = time,
-                    timingSource = "Oracle evaluation",
-                    courseStartRunTick = _engine.CourseStartRunTick,
-                    courseStartX = _oracleStartPose.HasValue ? _oracleStartPose.Value.x : 0f,
-                    courseStartY = _oracleStartPose.HasValue ? _oracleStartPose.Value.y : 0f,
-                    startStateFingerprint = _engine.StartStateFingerprint,
-                    earlyTrace = _engine.EarlyTrace,
-                    firstJumpPositionOffsetX = 0f,
-                    courseStartPositionOffsetX = 0f,
-                    deterministicPhysics = _deterministicBody != null,
-                    failureAction = action,
-                    failureReason = success ? null : reason,
-                    finalPosition = new { x = finalPos.x, y = finalPos.y },
-                    diagnosticsPath = diagnosticsPath
-                };
-                WriteJsonAtomic(path, result, false);
-                return path;
-            }
-            catch (Exception ex) { if (Log != null) Log.LogError("Could not save oracle result: " + ex.Message); return null; }
-        }
-
-        private void CompleteOracleEvaluation(bool success, string reason, int action, long ticks)
-        {
-            Movement movement = FindWorldMovement();
-            Vector2 finalPos = movement != null ? (Vector2)movement.transform.position : Vector2.zero;
-            bool hasGameTime = success && _engine.AuthoritativeCompletionTime > 0f;
-            float time = hasGameTime ? _engine.AuthoritativeCompletionTime : ticks * Time.fixedDeltaTime;
-            string resultId = string.IsNullOrEmpty(_oracleResultId) ? Guid.NewGuid().ToString("N") : _oracleResultId;
-            string routeName = string.IsNullOrEmpty(_oracleRouteName) ? "OracleEvaluation" : _oracleRouteName;
-            string status = ClassifyOracleStatus(success, reason);
-            long courseStartRunTick = _engine.CourseStartRunTick;
-            string earlyTrace = _engine.EarlyTrace;
-            Vector2? startPose = _oracleStartPose;
-            List<object> trace = _oracleTrace;
-            List<object> diagnostics = _oracleIncludeDiagnostics ? _oracleDiagnostics : null;
-
-            string diagnosticsPath = PersistOracleDiagnostics(resultId, routeName, ticks, success);
-            string resultPath = PersistOracleResult(resultId, routeName, success, reason, action, ticks, time, finalPos, diagnosticsPath);
-
-            _isOracleEvaluation = false;
-            _oracleTrace = null;
-            _oracleDiagnostics = null;
-            _oracleStartPose = null;
-
-            var resultObj = new
-            {
-                ok = true,
-                success = success,
-                status = status,
-                completionTicks = ticks,
-                completionTime = time,
-                deathTick = success ? -1 : ticks,
-                failureAction = action,
-                failureReason = success ? null : reason,
-                finalPosition = new { x = finalPos.x, y = finalPos.y },
-                courseStartRunTick = courseStartRunTick,
-                startPose = startPose.HasValue ? (object)new { x = startPose.Value.x, y = startPose.Value.y } : null,
-                resultPath = resultPath,
-                diagnosticsPath = diagnosticsPath,
-                trace = trace,
-                diagnostics = diagnostics
-            };
-
-            if (_activeOracleRequest != null)
-            {
-                _activeOracleRequest.Response = JsonConvert.SerializeObject(resultObj);
-                _activeOracleRequest.StatusCode = 200;
-                _activeOracleRequest.Completed.Set();
-                _activeOracleRequest = null;
-            }
-        }
-
         private static Movement FindWorldMovement()
         {
             Movement[] all = FindObjectsByType<Movement>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -699,7 +279,7 @@ namespace IGTAPTasMod
         private static void SetMovementField(Movement movement, string name, object value)
         {
             // Every unlock change goes through here; with the lock on the save's own unlocks are never touched.
-            if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft")) return;
+            if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft" || name == "maxAirJumps" || name == "airJumpsLeft")) return;
             try
             {
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
@@ -714,9 +294,20 @@ namespace IGTAPTasMod
             return v is bool b ? b : fallback;
         }
 
+        // Course coordinates (courses.json, respawnPoint) are absolute. FloatingOrigin moves every root object by the
+        // player's position once the player is Threshold (17500) from the origin, keeping the total in currentOrigin, so
+        // a world position is absolute + currentOrigin (Course 4 starts past the threshold). courseResetPoint is world.
+        static FloatingOrigin _floatingOrigin;
+
+        internal static Vector2 CurrentOrigin()
+        {
+            if (_floatingOrigin == null) _floatingOrigin = FindAnyObjectByType<FloatingOrigin>();
+            return _floatingOrigin == null ? Vector2.zero : (Vector2)_floatingOrigin.currentOrigin;
+        }
+
         private static void ApplyRestartGeometry(Movement movement)
         {
-            Vector2 reset = movement.courseResetPoint != Vector2.zero ? movement.courseResetPoint : movement.respawnPoint;
+            Vector2 reset = movement.courseResetPoint != Vector2.zero ? movement.courseResetPoint : movement.respawnPoint + CurrentOrigin();
             movement.transform.position = (Vector3)(reset + new Vector2(0f, -12f));
             try { movement.onGround = true; } catch { }
             try { movement.Velocity = Vector2.zero; } catch { }
@@ -965,80 +556,12 @@ namespace IGTAPTasMod
             return null;
         }
 
-        private static List<MacroStep> ConvertActionsToSteps(JToken actionsToken)
-        {
-            JArray actions = actionsToken as JArray;
-            if (actions == null || actions.Count == 0) return null;
-            List<MacroStep> steps = new List<MacroStep>();
-            foreach (JToken token in actions)
-            {
-                JObject action = token as JObject;
-                if (action == null) continue;
-                int durationTicks = Math.Max(1, (int?)action["durationTicks"] ?? 1);
-                float moveX = Mathf.Clamp((float?)action["rawMoveX"] ?? 0f, -1f, 1f);
-                steps.Add(new MacroStep
-                {
-                    label = (string)action["label"] ?? "Oracle input",
-                    type = MacroStepType.RawInput,
-                    direction = moveX > 0f ? 1 : moveX < 0f ? -1 : 0,
-                    durationTicks = durationTicks,
-                    durationMs = durationTicks * 20,
-                    timeoutTicks = Math.Max(durationTicks, 60),
-                    timeoutMs = Math.Max(durationTicks, 60) * 20,
-                    endCondition = ActionEndCondition.FixedTicks,
-                    rawMoveX = moveX,
-                    rawMoveY = Mathf.Clamp((float?)action["rawMoveY"] ?? 0f, -1f, 1f),
-                    rawJumpPressed = (bool?)action["rawJumpPressed"] ?? false,
-                    rawJumpHeld = (bool?)action["rawJumpHeld"] ?? false,
-                    rawJumpReleased = (bool?)action["rawJumpReleased"] ?? false,
-                    rawDashPressed = (bool?)action["rawDashPressed"] ?? false,
-                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false,
-                    dashJumpFrame = Math.Max(0, (int?)action["dashJumpFrame"] ?? 0)
-                });
-            }
-            return steps;
-        }
-
-        private static List<MacroStep> ConvertFramesToSteps(JToken framesToken)
-        {
-            JArray frames = framesToken as JArray;
-            if (frames == null || frames.Count == 0) return null;
-            List<MacroStep> steps = new List<MacroStep>();
-            for (int i = 0; i < frames.Count; i++)
-            {
-                JObject f = frames[i] as JObject;
-                if (f == null) continue;
-                float moveX = Mathf.Clamp((float?)(f["X"] ?? f["x"] ?? f["moveX"] ?? 0f) ?? 0f, -1f, 1f);
-                bool press = (bool?)(f["Press"] ?? f["press"] ?? f["jumpPressed"] ?? false) ?? false;
-                bool held = (bool?)(f["Held"] ?? f["held"] ?? f["jumpHeld"] ?? false) ?? false;
-                bool release = (bool?)(f["Release"] ?? f["release"] ?? f["jumpReleased"] ?? false) ?? false;
-                bool dash = (bool?)(f["DashPress"] ?? f["dashPress"] ?? f["dashPressed"] ?? false) ?? false;
-
-                steps.Add(new MacroStep
-                {
-                    label = "Frame " + i,
-                    type = MacroStepType.RawInput,
-                    direction = moveX > 0f ? 1 : moveX < 0f ? -1 : 0,
-                    durationTicks = 1,
-                    durationMs = 20,
-                    timeoutTicks = 60,
-                    timeoutMs = 1200,
-                    endCondition = ActionEndCondition.FixedTicks,
-                    rawMoveX = moveX,
-                    rawJumpPressed = press,
-                    rawJumpHeld = held,
-                    rawJumpReleased = release,
-                    rawDashPressed = dash
-                });
-            }
-            return steps;
-        }
-
         private void Update()
         {
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
             PumpSolver();
             PumpBootstrap();
+            PumpOfflineBests();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -1055,6 +578,8 @@ namespace IGTAPTasMod
                 if (HotkeyPressed(keyboard, macro))
                 {
                     BeginDeterministicPhysics(FindWorldMovement());
+                    // Hotkey playback continues from here, not from a course start: no course may finish it.
+                    _runCourse = null;
                     _engine.Run(macro, _library);
                     break;
                 }
@@ -1135,7 +660,7 @@ namespace IGTAPTasMod
                     // Capture whichever legitimate reset target the game currently owns
                     // before the first automated attempt can overwrite it.
                     Vector2 initialResetPoint = movement.courseResetPoint != Vector2.zero
-                        ? movement.courseResetPoint
+                        ? movement.courseResetPoint - CurrentOrigin()
                         : movement.respawnPoint;
                     if (initialResetPoint != Vector2.zero)
                     {
@@ -1143,7 +668,11 @@ namespace IGTAPTasMod
                         _hasPreservedCourseResetPoint = true;
                     }
                 }
-                if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint;
+                // A run whose start is exactly a course start (turbo's "start" override picks it the same way)
+                // is scored on that course: its end gate, or its reward box when it has one.
+                if (_runCourse == null && _hasPreservedCourseResetPoint)
+                    _runCourse = _courses.Find(c => c.x == _preservedCourseResetPoint.x && c.y == _preservedCourseResetPoint.y);
+                if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint + CurrentOrigin();
                 // A death schedules deathRespawn after a delay. If it survives into the
                 // next trial it resets the player in the middle of that attempt.
                 movement.CancelInvoke("deathRespawn");
@@ -1159,7 +688,7 @@ namespace IGTAPTasMod
                     Logger.LogWarning("respawn(true) failed (" + (ex.InnerException != null ? ex.InnerException.Message : ex.Message) + "); applying restart geometry directly.");
                 }
                 if (!respawnRan) ApplyRestartGeometry(movement);
-                if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint;
+                if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint + CurrentOrigin();
                 Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
                 if (body != null)
                 {
@@ -1251,17 +780,32 @@ namespace IGTAPTasMod
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
         }
 
-        // A category route ("<course>_NO_WJ|WJ|WJDASH <time>") plays back with that category's unlocks, like the solver
-        // judged it; the save's own unlocks come back when the attempt ends.
+        // A category route ("<course>_NO_WJ|WJ|WJDASH|WJ_DASH_AJ <time>") plays back with that category's unlocks, like
+        // the solver judged it; the save's own unlocks come back when the attempt ends.
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        // What a category means in game fields. Dash comes with one air dash (the game's own course starts pair
-        // dashUnlocked with maxAirDashes = 1); airDashesLeft starts full, the ground refills it after that.
+        // The category ladder: none < wj < wjdash < wjdashaj (wall jump, dash, air jump).
+        internal static int CapsLevel(string caps)
+        {
+            return caps == "wjdashaj" ? 3 : caps == "wjdash" ? 2 : caps == "wj" ? 1 : 0;
+        }
+
+        // A category route label ("WJ_DASH_AJ") back to the solver's caps key ("wjdashaj").
+        internal static string CapsFor(string label)
+        {
+            return label == "NO_WJ" ? "none" : label == "WJ_DASH_AJ" ? "wjdashaj" : label.ToLowerInvariant();
+        }
+
+        // What a category means in game fields. Dash comes with one air dash and air jump with one air jump (the
+        // game's own course 4 start pairs them that way); the counters start full, the ground refills them after that.
         internal static (string field, object value)[] CategoryAbilities(string caps)
         {
-            int dashes = caps == "wjdash" ? 1 : 0;
-            return new (string, object)[] { ("wallJumpUnlocked", caps != "none"), ("dashUnlocked", caps == "wjdash"),
-                ("maxAirDashes", dashes), ("airDashesLeft", dashes) };
+            int level = CapsLevel(caps);
+            int dashes = level >= 2 ? 1 : 0;
+            int jumps = level >= 3 ? 1 : 0;
+            return new (string, object)[] { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
+                ("maxAirDashes", dashes), ("airDashesLeft", dashes),
+                ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps) };
         }
 
         // Sets a category's abilities; returns the previous values so they can be put back.
@@ -1278,9 +822,9 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NO_WJ|WJDASH|WJ)(?: |$)");
+            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ)(?: |$)");
             if (!category.Success || movement == null) return;
-            string caps = category.Groups[1].Value == "NO_WJ" ? "none" : category.Groups[1].Value.ToLowerInvariant();
+            string caps = CapsFor(category.Groups[2].Value);
             foreach (var (field, value) in ApplyAbilities(movement, caps))
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
@@ -1301,12 +845,6 @@ namespace IGTAPTasMod
                 EndDeterministicPhysics();
                 _silentFinished = success && (reason == "Course finish detected" || reason == MacroEngine.RewardFinishReason);
                 _silentTime = _engine.AuthoritativeCompletionTime;
-                return;
-            }
-            if (_isOracleEvaluation)
-            {
-                EndDeterministicPhysics();
-                CompleteOracleEvaluation(success, reason, action, ticks);
                 return;
             }
             bool hasGameTime = success && _engine.AuthoritativeCompletionTime > 0f;
@@ -1552,7 +1090,6 @@ namespace IGTAPTasMod
 
         private void SaveLibrary()
         {
-            if (IsWorker) return;
             WriteJsonAtomic(_libraryPath, _library, true);
         }
 
@@ -1590,7 +1127,6 @@ namespace IGTAPTasMod
                 return new
                 {
                     ok = true,
-                    evaluating = _isOracleEvaluation,
                     runTicks = _engine.IsRunning ? _engine.RunTicks : 0,
                     status = _engine.Status
                 };
@@ -1635,52 +1171,6 @@ namespace IGTAPTasMod
                     }
                 return new { ok = true, abilities = applied };
             }
-            if (request.Path == "/api/turbo/evaluate")
-            {
-                // Runs a routeId, actions, frames or steps (StartOracleEvaluation), stepped inside this frame instead of in real time.
-                if (_activeOracleRequest != null)
-                {
-                    request.StatusCode = 409;
-                    return new { ok = false, error = "An oracle evaluation is already in progress." };
-                }
-                // An offline candidate (routeId + durations/rawMoveX/noJump/hop) is evaluated without saving it.
-                if (body["durations"] != null)
-                {
-                    body["steps"] = JArray.FromObject(BuildOfflineCandidate(body).steps);
-                    body.Remove("routeId");
-                }
-                // "start": {x, y} picks the course (its quick-restart point); "abilities": {"wallJumpUnlocked": false, ...}
-                // sets the category's unlocks for this run only.
-                if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
-                Movement turboPlayer = FindWorldMovement();
-                Vector2 savedResetPoint = _preservedCourseResetPoint;
-                bool savedHasResetPoint = _hasPreservedCourseResetPoint;
-                if (body["start"] is JObject start)
-                {
-                    _preservedCourseResetPoint = new Vector2((float)start["x"], (float)start["y"]);
-                    _hasPreservedCourseResetPoint = true;
-                }
-                var savedAbilities = new Dictionary<string, bool>();
-                if (body["abilities"] is JObject abilities && turboPlayer != null)
-                    foreach (JProperty ability in abilities.Properties())
-                    {
-                        savedAbilities[ability.Name] = GetMovementBool(turboPlayer, ability.Name, false);
-                        SetMovementField(turboPlayer, ability.Name, (bool)ability.Value);
-                    }
-                try
-                {
-                    if (!StartOracleEvaluation(request, body)) return null;
-                    TurboRunner.Run(turboPlayer, () => _activeOracleRequest != null, _oracleMaxTicks + 600);
-                    if (_activeOracleRequest != null && _engine.IsRunning) _engine.Abort("Turbo tick budget exhausted");
-                }
-                finally
-                {
-                    foreach (KeyValuePair<string, bool> ability in savedAbilities) SetMovementField(turboPlayer, ability.Key, ability.Value);
-                    _preservedCourseResetPoint = savedResetPoint;
-                    _hasPreservedCourseResetPoint = savedHasResetPoint;
-                }
-                return null;
-            }
             if (request.Path == "/api/oracle/bootstrap")
             {
                 return BootstrapOracle(request, body);
@@ -1698,10 +1188,6 @@ namespace IGTAPTasMod
             if (request.Path == "/api/simulation/import-candidate")
             {
                 return ImportOfflineCandidate(body);
-            }
-            if (request.Path == "/api/simulation/import-plan")
-            {
-                return ImportAutonomousPlan(body);
             }
             if (request.Method != "POST") throw new InvalidOperationException("Unsupported request method.");
 
@@ -1914,7 +1400,7 @@ namespace IGTAPTasMod
         // AGENTS.md rule 4: a category route name ("<course>_<CAPS> <time>") only comes from the gate (SaveSolverRoute).
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NO_WJ|WJDASH|WJ) [\d.]+$", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
@@ -2004,49 +1490,6 @@ namespace IGTAPTasMod
             return step;
         }
 
-        private object ImportAutonomousPlan(JObject body)
-        {
-            JArray actions = body["actions"] as JArray;
-            if (actions == null || actions.Count == 0)
-                throw new InvalidOperationException("The autonomous plan does not contain any actions.");
-            RejectCategoryName(Text(body, "name"));
-
-            MacroDefinition route = new MacroDefinition {
-                id = Guid.NewGuid().ToString("N"),
-                name = string.IsNullOrWhiteSpace(Text(body, "name")) ? "Autonomous route" : Text(body, "name"),
-                hotkey = "",
-                favorite = false
-            };
-            foreach (JToken token in actions)
-            {
-                JObject action = token as JObject;
-                if (action == null) throw new InvalidOperationException("An autonomous action is malformed.");
-                int durationTicks = Math.Max(1, (int?)action["durationTicks"] ?? 1);
-                float moveX = Mathf.Clamp((float?)action["rawMoveX"] ?? 0f, -1f, 1f);
-                route.steps.Add(new MacroStep {
-                    label = (string)action["label"] ?? "Autonomous input",
-                    type = MacroStepType.RawInput,
-                    enabled = true,
-                    durationTicks = durationTicks,
-                    durationMs = Mathf.RoundToInt(durationTicks * Time.fixedDeltaTime * 1000f),
-                    endCondition = ActionEndCondition.FixedTicks,
-                    direction = moveX > 0f ? 1 : moveX < 0f ? -1 : 0,
-                    rawMoveX = moveX,
-                    rawJumpPressed = (bool?)action["rawJumpPressed"] ?? false,
-                    rawJumpHeld = (bool?)action["rawJumpHeld"] ?? false,
-                    rawJumpReleased = (bool?)action["rawJumpReleased"] ?? false,
-                    rawDashPressed = (bool?)action["rawDashPressed"] ?? false,
-                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false,
-                    dashJumpFrame = Math.Max(0, (int?)action["dashJumpFrame"] ?? 0)
-                });
-            }
-            route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
-            _library.macros.Add(route);
-            _library.selectedIndex = _library.macros.Count - 1;
-            SaveLibrary();
-            return new { ok = true, routeId = route.id, name = route.name, actionCount = route.steps.Count };
-        }
-
         private object BuildWebState()
         {
             MacroDefinition selected = SelectedMacro;
@@ -2102,12 +1545,14 @@ namespace IGTAPTasMod
                 // Read-only: the live unlocks, to check that playback and the tools put the save's back.
                 unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
                     dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
-                    airDashesLeft = GetMovementField(player, "airDashesLeft") },
+                    airDashesLeft = GetMovementField(player, "airDashesLeft"),
+                    airJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
                 running = _engine.IsRunning,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
+                courses = BuildCourseWebState(),
                 solver = BuildSolverWebState() };
         }
 
