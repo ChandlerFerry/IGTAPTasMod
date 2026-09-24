@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly string[] Categories = { "none", "wj", "wjdash" };
 
-        static void SubmitWider(HttpClient http, int course, string caps, float time, List<InputTick> inputs, Stopwatch clock)
+        static void SubmitOther(HttpClient http, int course, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
             string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
             for (int attempt = 0; attempt < 5; attempt++)
@@ -149,10 +149,10 @@ namespace IGTAP.EngineSim.Cli
             while (true)
             {
                 var (time, inputs) = pending.Take();
-                // A route is also valid in every category with more unlocks (it just doesn't use them); the gate
-                // judges it there under that category's unlocks.
-                foreach (string wider in Categories.SkipWhile(c => c != caps).Skip(1))
-                    SubmitWider(http, course, wider, time, inputs, clock);
+                // The same inputs may be valid in the course's other categories too (a WJ route never needs dash; a WJDASH
+                // route may never dash); the gate replays them under each category's unlocks and decides.
+                foreach (string other in Categories.Where(c => c != caps))
+                    SubmitOther(http, course, other, time, inputs, clock);
                 string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
                 try
                 {

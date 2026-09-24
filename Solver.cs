@@ -404,7 +404,8 @@ namespace IGTAPTasMod
             if (GetMovementBool(player, "jumpCutBuffer", false) && !ReleaseNear(inputs, tick, JumpCutBufferTicks))
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (_solverCaps != "none")
-                || GetMovementBool(player, "dashUnlocked", false) != (_solverCaps == "wjdash"))
+                || GetMovementBool(player, "dashUnlocked", false) != (_solverCaps == "wjdash")
+                || !Equals(GetMovementField(player, "maxAirDashes"), _solverCaps == "wjdash" ? 1 : 0))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
@@ -432,12 +433,9 @@ namespace IGTAPTasMod
             CourseDef course = _courses.First(c => c.id == _solverCourse);
             Vector2 savedReset = _preservedCourseResetPoint;
             bool savedHasReset = _hasPreservedCourseResetPoint;
-            bool savedWallJump = GetMovementBool(player, "wallJumpUnlocked", true);
-            bool savedDash = GetMovementBool(player, "dashUnlocked", true);
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
-            SetMovementField(player, "wallJumpUnlocked", _solverCaps != "none");
-            SetMovementField(player, "dashUnlocked", _solverCaps == "wjdash");
+            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -496,8 +494,7 @@ namespace IGTAPTasMod
                 _engine.Quiet = false;
                 _preservedCourseResetPoint = savedReset;
                 _hasPreservedCourseResetPoint = savedHasReset;
-                SetMovementField(player, "wallJumpUnlocked", savedWallJump);
-                SetMovementField(player, "dashUnlocked", savedDash);
+                foreach (var (field, value) in savedAbilities) SetMovementField(player, field, value);
             }
             time = _silentTime;
             finishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick));

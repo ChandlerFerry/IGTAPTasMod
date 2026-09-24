@@ -678,7 +678,7 @@ namespace IGTAPTasMod
         private static void SetMovementField(Movement movement, string name, object value)
         {
             // Every unlock change goes through here; with the lock on the save's own unlocks are never touched.
-            if (Instance != null && Instance.CapabilitiesLocked && name.EndsWith("Unlocked")) return;
+            if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft")) return;
             try
             {
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
@@ -1227,25 +1227,43 @@ namespace IGTAPTasMod
 
         // A category route ("<course>_NO_WJ|WJ|WJDASH <time>") plays back with that category's unlocks, like the solver
         // judged it; the save's own unlocks come back when the attempt ends.
-        private readonly Dictionary<string, bool> _playbackSavedAbilities = new Dictionary<string, bool>();
+        private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
+
+        // What a category means in game fields. Dash comes with one air dash (the game's own course starts pair
+        // dashUnlocked with maxAirDashes = 1); airDashesLeft starts full, the ground refills it after that.
+        internal static (string field, object value)[] CategoryAbilities(string caps)
+        {
+            int dashes = caps == "wjdash" ? 1 : 0;
+            return new (string, object)[] { ("wallJumpUnlocked", caps != "none"), ("dashUnlocked", caps == "wjdash"),
+                ("maxAirDashes", dashes), ("airDashesLeft", dashes) };
+        }
+
+        // Sets a category's abilities; returns the previous values so they can be put back.
+        internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
+        {
+            var saved = new List<(string, object)>();
+            foreach (var (field, value) in CategoryAbilities(caps))
+            {
+                saved.Add((field, GetMovementField(movement, field)));
+                SetMovementField(movement, field, value);
+            }
+            return saved;
+        }
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
             Match category = Regex.Match(route.name ?? "", @"^\d+_(NO_WJ|WJDASH|WJ) ");
             if (!category.Success || movement == null) return;
             string caps = category.Groups[1].Value == "NO_WJ" ? "none" : category.Groups[1].Value.ToLowerInvariant();
-            foreach (var (field, value) in new[] { ("wallJumpUnlocked", caps != "none"), ("dashUnlocked", caps == "wjdash") })
-            {
-                if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = GetMovementBool(movement, field, true);
-                SetMovementField(movement, field, value);
-            }
+            foreach (var (field, value) in ApplyAbilities(movement, caps))
+                if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 
         private void RestorePlaybackAbilities()
         {
             Movement movement = FindWorldMovement();
             if (movement != null)
-                foreach (KeyValuePair<string, bool> ability in _playbackSavedAbilities) SetMovementField(movement, ability.Key, ability.Value);
+                foreach (KeyValuePair<string, object> ability in _playbackSavedAbilities) SetMovementField(movement, ability.Key, ability.Value);
             _playbackSavedAbilities.Clear();
         }
 
