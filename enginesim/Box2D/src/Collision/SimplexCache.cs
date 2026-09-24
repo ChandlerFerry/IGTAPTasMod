@@ -34,17 +34,24 @@ namespace Box2D
     ///  Used to warm start Distance.
     ///  Set count to zero on first call.
     /// </summary>
-    public class b2SimplexCache
+    public struct b2SimplexCache
     {
         ///< length or area
         public ushort count;
 
-        public byte[] indexA = new byte[3];
+        public b2Array3<byte> indexA;
 
         ///< vertices on shape A
-        public byte[] indexB = new byte[3];
+        public b2Array3<byte> indexB;
 
         ///< vertices on shape B
         public float metric;
+    }
+
+    // C++ `T x[3]`, stored inline so simplices and caches don't allocate.
+    [System.Runtime.CompilerServices.InlineArray(3)]
+    public struct b2Array3<T>
+    {
+        private T _element0;
     }
 }

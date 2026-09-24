@@ -30,13 +30,11 @@ using System.Runtime.CompilerServices;
 
 namespace Box2D
 {
-    public class b2Simplex
+    public struct b2Simplex
     {
-        public readonly b2SimplexVertex[] m_v;
+        public b2Array3<b2SimplexVertex> m_v;
 
         public int m_count;
-
-        public b2Simplex() => m_v = new b2SimplexVertex[3];
 
         private b2SimplexVertex m_v1
         {
@@ -67,7 +65,7 @@ namespace Box2D
 
             // Copy data from cache.
             m_count = cache.count;
-            b2SimplexVertex[] vertices = m_v;
+            ref b2Array3<b2SimplexVertex> vertices = ref m_v;
             for (var i = 0; i < m_count; ++i)
             {
                 ref b2SimplexVertex v = ref vertices[i];
@@ -110,11 +108,11 @@ namespace Box2D
             }
         }
 
-        public void WriteCache(b2SimplexCache cache)
+        public void WriteCache(ref b2SimplexCache cache)
         {
             cache.metric = GetMetric();
             cache.count = (ushort)m_count;
-            b2SimplexVertex[] vertices = m_v;
+            ref b2Array3<b2SimplexVertex> vertices = ref m_v;
             for (var i = 0; i < m_count; ++i)
             {
                 cache.indexA[i] = (byte)vertices[i].indexA;

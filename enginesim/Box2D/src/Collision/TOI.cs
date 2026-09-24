@@ -77,7 +77,7 @@ namespace Box2D
                 // to get a separating axis.
                 distanceInput.transformA = xfA;
                 distanceInput.transformB = xfB;
-                b2Contact.Distance(out b2DistanceOutput distanceOutput, cache, in distanceInput);
+                b2Contact.Distance(out b2DistanceOutput distanceOutput, ref cache, in distanceInput);
 
                 // If the shapes are overlapped, we give up on continuous collision.
                 if (distanceOutput.distance <= 0.0f)

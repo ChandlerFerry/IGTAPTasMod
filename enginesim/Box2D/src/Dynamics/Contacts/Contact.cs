@@ -417,12 +417,12 @@ namespace Box2D
             var cache = new b2SimplexCache();
             cache.count = 0;
 
-            Distance(out b2DistanceOutput output, cache, in input);
+            Distance(out b2DistanceOutput output, ref cache, in input);
 
             return output.distance < 10.0f * b2Settings.FLT_EPSILON;
         }
 
-        public static void Distance(out b2DistanceOutput output, b2SimplexCache cache, in b2DistanceInput input)
+        public static void Distance(out b2DistanceOutput output, ref b2SimplexCache cache, in b2DistanceInput input)
         {
             output = new b2DistanceOutput();
 
@@ -437,12 +437,12 @@ namespace Box2D
             simplex.ReadCache(cache, proxyA, transformA, proxyB, transformB);
 
             // Get simplex vertices as an array.
-            b2SimplexVertex[] vertices = simplex.m_v;
+            ref b2Array3<b2SimplexVertex> vertices = ref simplex.m_v;
             const int k_maxIters = 20;
 
             // These store the vertices of the last simplex so that we
             // can check for duplicates and prevent cycling.
-            int[] saveA = new int[3], saveB = new int[3];
+            Span<int> saveA = stackalloc int[3], saveB = stackalloc int[3];
             var saveCount = 0;
 
             // Main iteration loop.
@@ -533,7 +533,7 @@ namespace Box2D
             output.iterations = iter;
 
             // Cache the simplex.
-            simplex.WriteCache(cache);
+            simplex.WriteCache(ref cache);
 
             // Apply radii if requested.
             if (input.useRadii)
@@ -589,7 +589,7 @@ namespace Box2D
             simplex.m_count = 0;
 
             // Get simplex vertices as an array.
-            b2SimplexVertex[] vertices = simplex.m_v;
+            ref b2Array3<b2SimplexVertex> vertices = ref simplex.m_v;
 
             // Get support point in -r direction
             int indexA = proxyA.GetSupport(Math.MulT(xfA.q, -r));
