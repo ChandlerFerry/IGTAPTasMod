@@ -176,6 +176,7 @@ namespace IGTAP.EngineSim
         // (Re)creates a collider's fixtures from its current properties.
         void Rebuild(ColliderState s)
         {
+            if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
             b2Body body = s.Body?.Body ?? _ground;
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
@@ -281,6 +282,7 @@ namespace IGTAP.EngineSim
             {
                 if (!b.TransformDirty) continue;
                 b.TransformDirty = false;
+                Moving(b.Body);
                 Transform t = b.Rigidbody.transform;
                 b.Body.SetTransform(new b2Vec2(t.m_Position.x, t.m_Position.y), t.m_Rotation.eulerAngles.z * (MathF.PI / 180f));
                 foreach (ColliderState s in b.Colliders)
@@ -463,12 +465,14 @@ namespace IGTAP.EngineSim
             var p2 = new b2Vec2(origin.x + dir.x * distance, origin.y + dir.y * distance);
             if (_queriesStartInColliders)
             {
-                _inside.Reset(p1, layerMask);
-                _b2.QueryAABB(_inside, new b2AABB { lowerBound = p1, upperBound = p1 });
-                if (_inside.Hit != null) return new RaycastHit2D(_inside.Hit.Collider, origin, -dir, 0f, 0f);
+                ColliderState inside = FindInside(p1, layerMask);
+                if (inside != null) return new RaycastHit2D(inside.Collider, origin, -dir, 0f, 0f);
             }
-            _ray.Reset(layerMask);
-            _b2.RayCast(_ray, p1, p2);
+            if (!FindRayHit(p1, p2, layerMask))
+            {
+                _ray.Reset(layerMask);
+                _b2.RayCast(_ray, p1, p2);
+            }
             if (_ray.Hit == null) return default;
             return new RaycastHit2D(_ray.Hit.Collider, new Vector2(_ray.Point.x, _ray.Point.y), new Vector2(_ray.Normal.x, _ray.Normal.y),
                 _ray.Fraction * distance, _ray.Fraction);
@@ -476,6 +480,143 @@ namespace IGTAP.EngineSim
 
         readonly InsideQuery _inside;
         readonly ClosestRay _ray;
+
+        // Queries without the broadphase tree. The tree reports every proxy along a query and the callbacks keep the
+        // first containing / last hit collider in tree order, so the answer depends on that order only when two or more
+        // accepted colliders qualify: find the qualifying ones directly (static shapes from a grid, moving bodies' shapes
+        // by listing them) and fall back to the tree walk when there is more than one.
+        const float CellSize = 64f;
+        struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; }
+        StaticShape[] _static;
+        int[][] _cells;
+        int[] _seen;
+        int _stamp, _cellsX, _cellsY;
+        float _gridX, _gridY;
+
+        // Static colliders' shapes on a grid of their bounding boxes (grown by a unit so float rounding in a shape test
+        // can't reach past them). Static geometry is fixed during runs (b2WorldState's contract); rebuilt if it changes.
+        void BuildGrid()
+        {
+            var shapes = new List<StaticShape>();
+            var boxes = new List<b2AABB>();
+            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
+            {
+                if (body.Type() != b2BodyType.Static) continue;
+                for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
+                    for (int c = 0; c < f.m_proxyCount; c++)
+                    {
+                        f.GetShape().ComputeAABB(out b2AABB box, body.GetTransform(), c);
+                        box.lowerBound -= new b2Vec2(1f, 1f);
+                        box.upperBound += new b2Vec2(1f, 1f);
+                        shapes.Add(new StaticShape { Fixture = f, Child = c, State = (ColliderState)f.UserData });
+                        boxes.Add(box);
+                    }
+            }
+            _static = shapes.ToArray();
+            _seen = new int[_static.Length];
+            float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                if (i == 0) { minX = boxes[0].lowerBound.x; minY = boxes[0].lowerBound.y; maxX = boxes[0].upperBound.x; maxY = boxes[0].upperBound.y; }
+                minX = MathF.Min(minX, boxes[i].lowerBound.x); minY = MathF.Min(minY, boxes[i].lowerBound.y);
+                maxX = MathF.Max(maxX, boxes[i].upperBound.x); maxY = MathF.Max(maxY, boxes[i].upperBound.y);
+            }
+            _gridX = minX; _gridY = minY;
+            _cellsX = (int)((maxX - minX) / CellSize) + 1;
+            _cellsY = (int)((maxY - minY) / CellSize) + 1;
+            var lists = new List<int>[_cellsX * _cellsY];
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                CellRange(boxes[i], out int x0, out int y0, out int x1, out int y1);
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                        (lists[y * _cellsX + x] ??= new List<int>()).Add(i);
+            }
+            _cells = new int[lists.Length][];
+            for (int i = 0; i < lists.Length; i++) _cells[i] = lists[i]?.ToArray() ?? Array.Empty<int>();
+        }
+
+        // Grid cells a box touches, clamped to the grid (x1 < x0 when it misses the grid).
+        void CellRange(in b2AABB box, out int x0, out int y0, out int x1, out int y1)
+        {
+            x0 = System.Math.Max(0, (int)MathF.Floor((box.lowerBound.x - _gridX) / CellSize));
+            y0 = System.Math.Max(0, (int)MathF.Floor((box.lowerBound.y - _gridY) / CellSize));
+            x1 = System.Math.Min(_cellsX - 1, (int)MathF.Floor((box.upperBound.x - _gridX) / CellSize));
+            y1 = System.Math.Min(_cellsY - 1, (int)MathF.Floor((box.upperBound.y - _gridY) / CellSize));
+        }
+
+        // The collider a start-inside query reports (InsideQuery over the tree).
+        ColliderState FindInside(b2Vec2 p, int layerMask)
+        {
+            if (_static == null) BuildGrid();
+            ColliderState found = null;
+            int count = 0;
+            CellRange(new b2AABB { lowerBound = p, upperBound = p }, out int x0, out int y0, out int x1, out int y1);
+            if (x0 <= x1 && y0 <= y1)
+                foreach (int i in _cells[y0 * _cellsX + x0])
+                {
+                    ref StaticShape s = ref _static[i];
+                    if (!Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
+                    found = s.State;
+                    count++;
+                }
+            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
+                if (body.Type() != b2BodyType.Static)
+                    for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
+                    {
+                        var s = (ColliderState)f.UserData;
+                        if (!Accept(s, layerMask)) continue;
+                        for (int c = 0; c < f.m_proxyCount; c++)
+                            if (f.TestPoint(p)) { found = s; count++; }
+                    }
+            if (count <= 1) return found;
+            _inside.Reset(p, layerMask);
+            _b2.QueryAABB(_inside, new b2AABB { lowerBound = p, upperBound = p });
+            return _inside.Hit;
+        }
+
+        // Fills _ray as ClosestRay over the tree would; false when more than one accepted collider is hit.
+        bool FindRayHit(b2Vec2 p1, b2Vec2 p2, int layerMask)
+        {
+            if (_static == null) BuildGrid();
+            _ray.Reset(layerMask);
+            b2RayCastInput input;
+            input.maxFraction = 1.0f;
+            input.p1 = p1;
+            input.p2 = p2;
+            int count = 0;
+            CellRange(new b2AABB { lowerBound = b2Vec2.Min(p1, p2), upperBound = b2Vec2.Max(p1, p2) }, out int x0, out int y0, out int x1, out int y1);
+            _stamp++;
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                    foreach (int i in _cells[y * _cellsX + x])
+                    {
+                        if (_seen[i] == _stamp) continue;
+                        _seen[i] = _stamp;
+                        ref StaticShape s = ref _static[i];
+                        if (Accept(s.State, layerMask) && RayHit(s.Fixture, s.Child, s.State, input) && ++count > 1) return false;
+                    }
+            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
+                if (body.Type() != b2BodyType.Static)
+                    for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
+                    {
+                        var s = (ColliderState)f.UserData;
+                        if (!Accept(s, layerMask)) continue;
+                        for (int c = 0; c < f.m_proxyCount; c++)
+                            if (RayHit(f, c, s, input) && ++count > 1) return false;
+                    }
+            return true;
+        }
+
+        // b2World.RayCastProxy's hit test and point, into _ray.
+        bool RayHit(b2Fixture fixture, int child, ColliderState s, in b2RayCastInput input)
+        {
+            if (!fixture.RayCast(out b2RayCastOutput output, input, child)) return false;
+            float fraction = output.fraction;
+            b2Vec2 point = (1f - fraction) * input.p1 + fraction * input.p2;
+            _ray.Hit = s; _ray.Point = point; _ray.Normal = output.normal; _ray.Fraction = fraction;
+            return true;
+        }
 
         sealed class InsideQuery : b2QueryCallback
         {
@@ -545,9 +686,12 @@ namespace IGTAP.EngineSim
         }
 
         public Vector2 GetPosition(Rigidbody2D body) { b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
-        public void SetPosition(Rigidbody2D body, Vector2 position) { b2Body b = State(body).Body; b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
+        public void SetPosition(Rigidbody2D body, Vector2 position) { b2Body b = State(body).Body; Moving(b); b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
         public float GetRotation(Rigidbody2D body) { return State(body).Body.GetAngle() * (180f / MathF.PI); }
-        public void SetRotation(Rigidbody2D body, float degrees) { b2Body b = State(body).Body; b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
+        public void SetRotation(Rigidbody2D body, float degrees) { b2Body b = State(body).Body; Moving(b); b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
+
+        // A static body that moves takes its shapes' grid cells with it.
+        void Moving(b2Body body) { if (body.Type() == b2BodyType.Static) _static = null; }
         public Vector2 GetVelocity(Rigidbody2D body) { b2Vec2 v = State(body).Body.GetLinearVelocity(); return new Vector2(v.x, v.y); }
         public void SetVelocity(Rigidbody2D body, Vector2 velocity) { State(body).Body.SetLinearVelocity(new b2Vec2(velocity.x, velocity.y)); }
         public float GetAngularVelocity(Rigidbody2D body) { return State(body).Body.GetAngularVelocity() * (180f / MathF.PI); }
