@@ -862,7 +862,7 @@ namespace IGTAPTasMod
                         menuCount = menuCount,
                         movements = inventory,
                         colliderCount = colliderCount,
-                        notes = _bootstrapNotes,
+                        notes = _bootstrapNotes.ToArray(),
                         position = new { x = pos.x, y = pos.y },
                         expectedOrdinaryPose = new { x = 4783.434, y = 1866.225 },
                         poseMatches = Math.Abs(pos.x - 4783.434f) < 0.02 && Math.Abs(pos.y - 1866.225f) < 0.02,
