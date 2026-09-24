@@ -49,8 +49,13 @@ traces and judges new bests. The in-game Optimize tab runs the same algorithm in
   `solve` submits each best to its own category and every wider one; a wider category is never slower than a narrower.
 - **Explore (Go-Explore):** archive keyed by 48 px map cell × "course timer running", each cell keeping the earliest input
   prefix that reached it. Pick a cell (rarely picked first, timed cells ×3), resume there, append a random 1–3 chunk burst
-  (stick −1/0/1, jump with hold, dash if allowed; superbounce offline).
-- **Optimize:** mutate the best finish (cut, insert, dash/dash-jump/hop + retime, drop a press, re-aim). 50/50 with explore.
+  (stick −1/0/1, jump with a 1–40 tick hold, dash if allowed; superbounce offline). A prefix that ends mid-hold keeps
+  holding for 0–60 ticks instead of releasing at the resume, which would cut every jump crossing a cell boundary. Only
+  arrivals with a snapshot are filed (one reached after the inputs ran out would replay its prefix from the start).
+- **Optimize:** mutate the best finish (cut, insert, dash/dash-jump/hop + retime, drop a press, re-aim, change a jump's
+  hold length, move a jump press or dash ±1–8 ticks). 50/50 with explore. A mutation that keeps the route's length
+  stops once its state fingerprint (`Simulation.Fingerprint`) equals the best's at the same tick with the same inputs
+  ahead: it would finish exactly like the best.
 - **Scoring:** the game's own timer (`courseScript.currentPathTime`). A finish counts only when the solver's course stops
   while tracking.
 - **Gate:** `SaveSolverRoute` replays the route from the course start and rejects it (`REJECTED …` in the solver log,
@@ -80,6 +85,12 @@ traces and judges new bests. The in-game Optimize tab runs the same algorithm in
   `IGTAP.EngineSim path` prints every spike Stay along a route.
 - Superbounce: dash into a wall, jump 0–5 ticks later (inside `dashBoostMax` = 6 frames) → `SpecialWallJump(.6, 1,
   up * dashBoostUpwards = 410)`.
+- Air jump: `Velocity.y = 745 + max(vy, 0) / 2` (vy after this tick's gravity). Allowed at vy < 200 after a normal
+  jump (ground, wall, air, dash-jump), vy < 700 after a spring or superbounce, so a stacked one reaches ~1086; it keeps
+  momentum. A jump release cuts vy to 50 at the first tick within 0.26 s where 150 < vy < 580 (normal jumps only), so a
+  normal jump or air jump needs ~27 held ticks for full height; an air jump of 931+ can be released at once. Metal walls,
+  springs and landing refill it; a foot ray over a ledge top counts as landing even while rising (only the front ray is
+  gated by vy < 200).
 - Real-time play has frame-timing variance (same route: 126/127/132 ticks); turbo is deterministic.
 - Decompiled game code for reference: `obj/Movement.decompiled.cs`, `obj/courseScript.decompiled.cs`.
 

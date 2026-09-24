@@ -128,6 +128,8 @@ namespace IGTAP.EngineSim
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
+                _bestBody = _replayBody;
+                _bestFingerprint = _replayFingerprint;
             }
 
             void Explore()
@@ -155,16 +157,24 @@ namespace IGTAP.EngineSim
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
+            // Jump holds, in ticks. A normal jump or air jump reaches full height only when held until it rises slower
+            // than 150 (~27 ticks; a release earlier cuts it to 50 up to 13 ticks later), so holds reach past that.
+            static readonly int[] Holds = { 1, 3, 6, 10, 16, 24, 30, 40 };
+            // How much longer a resumed prefix that ends mid-hold keeps holding (0 = release at once).
+            static readonly int[] ResumeHolds = { 0, 3, 8, 16, 30, 60 };
+
             List<InputTick> RandomBurst(List<InputTick> inputs)
             {
                 float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f;
+                // Releasing at every resume would cut every jump that crosses a cell boundary.
+                int holdEnd = inputs.Count > 0 && inputs[inputs.Count - 1].held ? inputs.Count + ResumeHolds[_rng.Next(ResumeHolds.Length)] : 0;
                 for (int chunk = _rng.Next(1, 4); chunk > 0; chunk--)
                 {
                     if (_rng.NextDouble() < .35) x = new[] { -1f, 0f, 1f }[_rng.Next(3)];
                     int length = _rng.Next(3, 21);
                     int start = inputs.Count;
-                    for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x });
-                    if (_rng.NextDouble() < .4) Hop(inputs, start, new[] { 1, 3, 6, 10, 16 }[_rng.Next(5)]);
+                    for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x, held = start + i < holdEnd });
+                    if (_rng.NextDouble() < .4) holdEnd = Hop(inputs, start, Holds[_rng.Next(Holds.Length)]);
                     if (_dash && _rng.NextDouble() < .25)
                     {
                         int at = start + _rng.Next(Math.Min(length, 4));
@@ -173,31 +183,62 @@ namespace IGTAP.EngineSim
                         if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
                         inputs[at] = d;
                         // Superbounce (Solver.cs SuperBounce): jump buffered in the first dash frames against a wall.
-                        if (d.dashJump == 0 && _rng.NextDouble() < .5) SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
+                        if (d.dashJump == 0 && _rng.NextDouble() < .5)
+                            holdEnd = SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
                     }
                 }
                 return inputs;
             }
 
-            static void Hop(List<InputTick> t, int at, int hold)
+            // Press at `at`, held for `hold` ticks (clipped to the list), released after; returns the release tick.
+            static int Hop(List<InputTick> t, int at, int hold)
             {
-                if (at >= t.Count) return;
+                if (at >= t.Count) return at;
                 InputTick first = t[at];
                 first.press = true; first.held = true; first.release = false;
                 t[at] = first;
-                for (int i = at + 1; i < Math.Min(t.Count, at + hold); i++) { InputTick k = t[i]; k.held = true; t[i] = k; }
-                if (at + hold < t.Count) { InputTick r = t[at + hold]; r.held = false; r.release = true; t[at + hold] = r; }
+                for (int i = at + 1; i < Math.Min(t.Count, at + hold); i++) { InputTick k = t[i]; k.held = true; k.release = false; t[i] = k; }
+                for (int i = at + hold; i < t.Count && t[i].held && !t[i].press; i++) { InputTick k = t[i]; k.held = false; k.release = false; t[i] = k; }
+                if (at + hold < t.Count) { InputTick r = t[at + hold]; r.release = true; t[at + hold] = r; }
+                return at + hold;
             }
 
             // Solver.cs SuperBounce: dash into a wall with jump pressed 0-5 ticks later, optionally steer away after.
-            void SuperBounce(List<InputTick> t, int at, float toward)
+            // Returns the jump's release tick.
+            int SuperBounce(List<InputTick> t, int at, float toward)
             {
-                if (at < 0 || at >= t.Count) return;
+                if (at < 0 || at >= t.Count) return 0;
                 for (int i = at; i < Math.Min(t.Count, at + 8); i++) { InputTick k = t[i]; k.x = toward; t[i] = k; }
                 InputTick d = t[at]; d.dash = true; d.dashJump = 0; t[at] = d;
-                Hop(t, Math.Min(t.Count - 1, at + _rng.Next(0, 6)), new[] { 3, 6, 10, 16 }[_rng.Next(4)]);
+                int release = Hop(t, Math.Min(t.Count - 1, at + _rng.Next(0, 6)), new[] { 3, 6, 10, 16 }[_rng.Next(4)]);
                 if (_rng.NextDouble() < .5)
                     for (int i = at + 8; i < Math.Min(t.Count, at + 8 + _rng.Next(1, 20)); i++) { InputTick k = t[i]; k.x = -toward; t[i] = k; }
+                return release;
+            }
+
+            // Where the hold that starts with the press at `q` ends (the first tick not held, or a later press).
+            static int HoldEnd(List<InputTick> t, int q)
+            {
+                int e = q + 1;
+                while (e < t.Count && t[e].held && !t[e].press) e++;
+                return e;
+            }
+
+            // Sets the hold of the press at `q` to end at `end`: held up to it, released there, not held after until the
+            // old end.
+            static void SetHold(List<InputTick> t, int q, int end)
+            {
+                int old = HoldEnd(t, q);
+                end = Math.Max(q + 1, end);
+                InputTick first = t[q]; first.held = true; t[q] = first;
+                for (int i = q + 1; i < Math.Min(t.Count, Math.Max(old, end) + 1); i++)
+                {
+                    if (t[i].press) break;
+                    InputTick k = t[i];
+                    k.held = i < end;
+                    k.release = i == end;
+                    t[i] = k;
+                }
             }
 
             static void Cut(List<InputTick> t, int at, int count)
@@ -211,8 +252,8 @@ namespace IGTAP.EngineSim
                 int n = t.Count, p = _rng.Next(n);
                 string[] kinds = _dash
                     ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
-                        "superbounce", "superbounce", "superbounce" }
-                    : new[] { "cut", "cut", "hop", "nojump", "stick", "insert" };
+                        "superbounce", "superbounce", "superbounce", "hold", "hold", "retime", "retime" }
+                    : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime" };
                 switch (kinds[_rng.Next(kinds.Length)])
                 {
                     case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
@@ -247,7 +288,7 @@ namespace IGTAP.EngineSim
                         break;
                     }
                     case "hop":
-                        Hop(t, p, new[] { 1, 2, 4, 7, 11, 16 }[_rng.Next(6)]);
+                        Hop(t, p, Holds[_rng.Next(Holds.Length)]);
                         Cut(t, p + _rng.Next(1, 30), _rng.Next(0, 10));
                         break;
                     case "nojump":
@@ -256,6 +297,44 @@ namespace IGTAP.EngineSim
                         if (presses.Count == 0) return;
                         int q = presses[_rng.Next(presses.Count)];
                         InputTick k = t[q]; k.press = k.dash = false; k.dashJump = 0; t[q] = k;
+                        break;
+                    }
+                    // Air jump height: a jump's hold length decides whether (and when) it is cut.
+                    case "hold":
+                    {
+                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press).ToList();
+                        if (presses.Count == 0) return;
+                        int q = presses[_rng.Next(presses.Count)];
+                        int end = _rng.NextDouble() < .5 ? q + Holds[_rng.Next(Holds.Length)]
+                            : HoldEnd(t, q) + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 2, 3, 5, 8 }[_rng.Next(5)];
+                        SetHold(t, q, end);
+                        break;
+                    }
+                    // Air jump timing (a stacked air jump climbs higher pressed later) and press/release order: moves a
+                    // jump press or a dash a few ticks, keeping where the jump's hold ends.
+                    case "retime":
+                    {
+                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
+                        if (presses.Count == 0) return;
+                        int q = presses[_rng.Next(presses.Count)];
+                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)];
+                        if (to < 0 || to >= n || t[to].press || t[to].dash) return;
+                        InputTick from = t[q], dest = t[to];
+                        if (from.dash)
+                        {
+                            dest.dash = true; dest.dashJump = from.dashJump;
+                            from.dash = false; from.dashJump = 0;
+                            t[q] = from; t[to] = dest;
+                            break;
+                        }
+                        int end = HoldEnd(t, q);
+                        bool heldBefore = q > 0 && t[q - 1].held;
+                        from.press = false; t[q] = from;
+                        dest.press = true; dest.held = true; dest.release = false; t[to] = dest;
+                        // Earlier: hold from the new press. Later: not held before it (unless the jump was already held).
+                        for (int i = Math.Min(q, to) + 1; i < Math.Max(q, to); i++) { InputTick k = t[i]; k.held = to < q || heldBefore; k.release = false; t[i] = k; }
+                        if (to > q && !heldBefore) { InputTick k = t[q]; k.held = false; k.release = false; t[q] = k; }
+                        if (end > to) SetHold(t, to, end);
                         break;
                     }
                     case "stick":
@@ -267,16 +346,25 @@ namespace IGTAP.EngineSim
                 }
                 int s = 0;
                 while (s < t.Count && s < _bestInputs.Count && t[s].Equals(_bestInputs[s])) s++;
+                // From `converge` on the inputs equal the best's at the same ticks (only when the mutation kept the length:
+                // a shift moves the time-driven world against the player). +12: a dash-jump pressed before it resolves.
+                int converge = int.MaxValue;
+                if (t.Count == _bestInputs.Count)
+                {
+                    int j = t.Count - 1;
+                    while (j >= 0 && t[j].Equals(_bestInputs[j])) j--;
+                    converge = j + 1 + 12;
+                }
                 s = Math.Min(Math.Min(s, t.Count - 1), _bestStates.Length - 1);
                 while (s > 0 && _bestStates[s] == null) s--;
-                Try(t, "optimize", s > 0 ? _bestStates[s] : null);
+                Try(t, "optimize", s > 0 ? _bestStates[s] : null, converge);
             }
 
-            void Try(List<InputTick> inputs, string mode, SimSnapshot from = null)
+            void Try(List<InputTick> inputs, string mode, SimSnapshot from = null, int converge = int.MaxValue)
             {
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (from != null && from.Tick >= inputs.Count) from = null;
-                bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _);
+                bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, converge: converge);
                 if (from != null && _rng.Next(100) == 0)
                 {
                     // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
@@ -299,16 +387,35 @@ namespace IGTAP.EngineSim
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
+                _bestBody = _replayBody;
+                _bestFingerprint = _replayFingerprint;
                 _owner.Offer(replayed, _bestInputs, mode);
             }
 
             // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best (judged
-            // only after input tick `judgeAfter`).
+            // only after input tick `judgeAfter`). A replay that records `states` also records each tick's fingerprint;
+            // a run whose inputs equal the best's from tick `converge` on stops once it is back in the best's state
+            // (it would finish exactly like the best).
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
-                out float time, out int finishTick, int judgeAfter = -1)
+                out float time, out int finishTick, int judgeAfter = -1, int converge = int.MaxValue)
             {
+                if (states != null)
+                {
+                    _replayBody = new (float, float, float, float, float, float)[inputs.Count + 1];
+                    _replayFingerprint = new int?[inputs.Count + 1];
+                }
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
+                    if (states != null && tick < _replayBody.Length)
+                    {
+                        _replayBody[tick] = _sim.Physics.PlayerBody();
+                        _replayFingerprint[tick] = _sim.Fingerprint();
+                    }
+                    else if (tick >= converge && _bestFingerprint != null && tick < _bestFingerprint.Length && _bestFingerprint[tick] is int best
+                        && _sim.Physics.PlayerBody() == _bestBody[tick] && _sim.Fingerprint() == best)
+                    {
+                        return false;
+                    }
                     courseScript active = _sim.TimingCourse();
                     // A bonus course has no course timer; its runs are timed in ticks from the run start.
                     bool timing = _sim.TargetFinish.w > 0f || active != null;
@@ -333,6 +440,8 @@ namespace IGTAP.EngineSim
                 finishTick = result.FinishTick;
                 return result.Finished;
             }
+            (float, float, float, float, float, float)[] _replayBody, _bestBody;
+            int?[] _replayFingerprint, _bestFingerprint;
 
             static long CellKey(Vector3 position, bool timing)
             {
@@ -341,14 +450,15 @@ namespace IGTAP.EngineSim
             }
 
             // A cell keeps its earliest arrival: by course time once the timer runs (dash ticks consume no input but still
-            // cost 0.02 s each), by input tick before it.
+            // cost 0.02 s each), by input tick before it. Only arrivals a run can resume from are filed: one reached after
+            // the inputs ran out has no snapshot, and exploring from it would replay its whole prefix from the start.
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
                 bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
                 SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
                 if (states != null && state != null) states[tick] = state;
-                if (!better) return;
+                if (!better || state == null) return;
                 _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };
                 if (key < 0 && rank > _maxTimedRank) _maxTimedRank = rank;
             }
