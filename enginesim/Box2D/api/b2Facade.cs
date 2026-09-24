@@ -65,19 +65,8 @@ namespace Box2D
         }
     }
 
-    /// <summary>Adapter overloads so the promised b2* callback classes work with b2World.</summary>
     public static class b2WorldExtensions
     {
-        public static void QueryAABB(this b2World world, b2QueryCallback callback, in b2AABB aabb)
-        {
-            world.QueryAABB(f => callback.ReportFixture(f), in aabb);
-        }
-
-        public static void RayCast(this b2World world, b2RayCastCallback callback, in b2Vec2 point1, in b2Vec2 point2)
-        {
-            world.RayCast((f, p, n, fr) => callback.ReportFixture(f, p, n, fr), in point1, in point2);
-        }
-
         /// <summary>Exact world snapshot for branching. Implemented in the next drop.</summary>
         public static object SaveState(this b2World world) =>
             throw new NotImplementedException("b2World.SaveState lands in the next drop.");
