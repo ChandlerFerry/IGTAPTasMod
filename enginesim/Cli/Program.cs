@@ -37,11 +37,28 @@ namespace IGTAP.EngineSim.Cli
                             x = t.GetProperty("x").GetSingle(), held = t.GetProperty("held").GetBoolean(), press = t.GetProperty("press").GetBoolean(),
                             release = t.GetProperty("release").GetBoolean(), dash = t.GetProperty("dash").GetBoolean(), dashJump = t.GetProperty("dashJump").GetInt32(),
                         }).ToList();
+                        // --verbose: every tick with the movement state a trick depends on.
+                        bool verbose = args.Contains("--verbose");
+                        string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames" };
+                        var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
                         bool was = false;
+                        int lastRun = 0;
                         RunResult r = sim.Run(inputs, onStep: st =>
                         {
                             bool timing = sim.TimingCourse() != null;
-                            if (timing != was || st % 25 == 0)
+                            if (verbose)
+                            {
+                                // The input this tick consumed; dash ticks consume none (the game skips its input hook).
+                                int run = (int)sim.Engine.RunTicks - 1;
+                                InputTick k = run >= 0 && run < inputs.Count ? inputs[run] : default;
+                                string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
+                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") : "");
+                                lastRun = run + 1;
+                                Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}"
+                                    + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()).ToString("0.00") : "") + " " + input + " | "
+                                    + string.Join(" ", fields.Select((f, i) => f + "=" + infos[i]?.GetValue(sim.Player))));
+                            }
+                            else if (timing != was || st % 25 == 0)
                                 Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0} timing {timing}"
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()) : ""));
                             was = timing;
