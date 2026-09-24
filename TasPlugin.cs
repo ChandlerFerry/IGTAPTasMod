@@ -1687,6 +1687,7 @@ namespace IGTAPTasMod
                 if (route == null) throw new InvalidOperationException("Route not found.");
                 if (route.favorite) throw new InvalidOperationException("Unfavorite this route before renaming it.");
                 if (string.IsNullOrEmpty(name)) throw new InvalidOperationException("Route name cannot be empty.");
+                RejectCategoryName(name);
                 route.name = name;
                 SaveLibrary();
                 return new { ok = true };
@@ -1865,9 +1866,17 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown Web Studio command: " + request.Path);
         }
 
+        // AGENTS.md rule 4: a category route name ("<course>_<CAPS> <time>") only comes from the gate (SaveSolverRoute).
+        private static void RejectCategoryName(string name)
+        {
+            if (Regex.IsMatch(name ?? "", @"^\d+_(NO_WJ|WJDASH|WJ) [\d.]+$", RegexOptions.IgnoreCase))
+                throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
+        }
+
         private object ImportOfflineCandidate(JObject body)
         {
             MacroDefinition candidate = BuildOfflineCandidate(body);
+            RejectCategoryName(candidate.name);
             _library.macros.Add(candidate);
             _library.selectedIndex = _library.macros.Count - 1;
             SaveLibrary();
@@ -1955,6 +1964,7 @@ namespace IGTAPTasMod
             JArray actions = body["actions"] as JArray;
             if (actions == null || actions.Count == 0)
                 throw new InvalidOperationException("The autonomous plan does not contain any actions.");
+            RejectCategoryName(Text(body, "name"));
 
             MacroDefinition route = new MacroDefinition {
                 id = Guid.NewGuid().ToString("N"),

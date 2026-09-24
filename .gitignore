@@ -13,3 +13,4 @@ planning/*.jsonl
 planning/candidates/
 planning/sweep-*.json
 *.log
+.claude/
