@@ -190,6 +190,7 @@ namespace Box2D
         /// <warning>This function is locked during callbacks.</warning>
         public b2Fixture CreateFixture(in b2FixtureDef def)
         {
+            m_world.StaticChanged(this);
             //Debug.Assert(_world.IsLocked() == false);
             if (m_world.IsLocked())
             {
@@ -245,6 +246,7 @@ namespace Box2D
 
         public void DestroyFixture(b2Fixture fixture)
         {
+            m_world.StaticChanged(this);
             if (fixture == null)
             {
                 return;
@@ -328,6 +330,7 @@ namespace Box2D
 
         public void SetTransform(in b2Vec2 position, float angle)
         {
+            m_world.StaticChanged(this);
             //Debug.Assert(_world.IsLocked() == false);
             if (m_world.IsLocked())
             {
@@ -689,6 +692,7 @@ namespace Box2D
 
         public void SetType(b2BodyType type)
         {
+            m_world.StaticChanged(null);
             //Debug.Assert(_world.IsLocked() == false);
             if (m_world.IsLocked())
             {
@@ -819,6 +823,7 @@ namespace Box2D
 
         public void SetEnabled(bool flag)
         {
+            m_world.StaticChanged(this);
             //Debug.Assert(_world.IsLocked() == false);
 
             if (flag == IsEnabled())
