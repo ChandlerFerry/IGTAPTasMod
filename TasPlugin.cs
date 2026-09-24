@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -17,7 +18,7 @@ using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 namespace IGTAPTasMod
 {
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    public sealed class TasPlugin : BaseUnityPlugin
+    public sealed partial class TasPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "local.deafwave.igtap.tas";
         public const string PluginName = "IGTAP TAS Studio";
@@ -46,6 +47,7 @@ namespace IGTAPTasMod
         private readonly List<AttemptResult> _results = new List<AttemptResult>();
         private readonly List<SectionCheckpoint> _checkpoints = new List<SectionCheckpoint>();
         private float _pendingCourseTime;
+        private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
         private float? _pendingReplayFirstJumpPositionOffsetX;
@@ -55,6 +57,7 @@ namespace IGTAPTasMod
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
         private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
+        private static readonly FieldInfo CourseTrackingField = AccessTools.Field(typeof(courseScript), "tracking");
 
         private WebStudioRequest _activeOracleRequest;
         private MacroDefinition _pendingOracleMacro;
@@ -110,6 +113,7 @@ namespace IGTAPTasMod
             LoadRecordings();
             LoadResults();
             LoadCheckpoints();
+            LoadCourses();
             _engine.AttemptEnded += SaveAttemptResult;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
@@ -130,9 +134,11 @@ namespace IGTAPTasMod
             }
             _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
             PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), nameof(AfterMovementFixedUpdate));
+            TurboRunner.Patch(_harmony);
             PatchOptional(typeof(courseScript), "startTracking", null, nameof(AfterCourseStart));
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
             PatchOptional(typeof(Movement), "onDeath", null, nameof(AfterPlayerDeath));
+            PatchOptional(typeof(Movement), "CheckForSuperJump", nameof(BeforeDashFrame), null);
             PatchOptional(typeof(Saveloader), "autosave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "manualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
@@ -147,6 +153,17 @@ namespace IGTAPTasMod
         private static bool BeforeMovementFixedUpdate()
         {
             if (Instance == null) return true;
+            if (Instance._pendingSilentMacro != null && !Instance._engine.IsRunning)
+            {
+                MacroDefinition macro = Instance._pendingSilentMacro;
+                Instance._pendingSilentMacro = null;
+                Instance.RestoreRouteStart(macro);
+                Movement movement = FindWorldMovement();
+                Instance.BeginDeterministicPhysics(movement);
+                Instance._engine.Run(macro, Instance._library, true, true, 0,
+                    movement == null ? (Vector2?)null : movement.transform.position, null);
+                return true;
+            }
             if (Instance._pendingOracleMacro != null && !Instance._engine.IsRunning)
             {
                 MacroDefinition macro = Instance._pendingOracleMacro;
@@ -172,6 +189,7 @@ namespace IGTAPTasMod
                 Instance._pendingReplayCourseStartPositionOffsetX = 0f;
                 bool checkpointRestored = Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
+                Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
                 Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks,
@@ -200,6 +218,11 @@ namespace IGTAPTasMod
             return true;
         }
 
+        private static void BeforeDashFrame(Movement __instance)
+        {
+            if (Instance != null && !Instance._recorder.IsRecording) Instance._engine.DashFrame(__instance);
+        }
+
         private void PatchOptional(Type type, string methodName, string prefixName, string postfixName)
         {
             MethodInfo target = AccessTools.Method(type, methodName);
@@ -226,14 +249,20 @@ namespace IGTAPTasMod
 
         private static void BeforeCourseFinish(courseScript __instance, bool savePositionData)
         {
-            if (Instance == null || !savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
+            if (Instance == null) return;
+            // stopTracking only finishes a course it is timing; an end gate reached without the start gate is not a run.
+            Instance._pendingCourseWasTracking = __instance != null && CourseTrackingField != null
+                && CourseTrackingField.GetValue(__instance) is bool tracking && tracking
+                // A solver run is scored on its own course; finishing another course on the way is not a finish.
+                && (!Instance._silentEvaluation || __instance.courseNumber == Instance._solverCourse);
+            if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
             object value = CourseCurrentPathTimeField.GetValue(__instance);
             Instance._pendingCourseTime = value is float ? (float)value : 0f;
         }
 
         private static void AfterCourseFinish(bool savePositionData)
         {
-            if (Instance == null || !savePositionData) return;
+            if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
             Instance._engine.CompleteFromGame("Course finish detected", Instance._pendingCourseTime);
@@ -824,8 +853,13 @@ namespace IGTAPTasMod
             catch { return null; }
         }
 
+        const string CapabilitiesLockedError = "DO NOT MODIFY CAPABILITIES is on; turn it off to use this.";
+        bool CapabilitiesLocked { get { return _settings.lockCapabilities; } }
+
         private static void SetMovementField(Movement movement, string name, object value)
         {
+            // Every unlock change goes through here; with the lock on the save's own unlocks are never touched.
+            if (Instance != null && Instance.CapabilitiesLocked && name.EndsWith("Unlocked")) return;
             try
             {
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
@@ -1118,7 +1152,8 @@ namespace IGTAPTasMod
                     rawJumpHeld = (bool?)action["rawJumpHeld"] ?? false,
                     rawJumpReleased = (bool?)action["rawJumpReleased"] ?? false,
                     rawDashPressed = (bool?)action["rawDashPressed"] ?? false,
-                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false
+                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false,
+                    dashJumpFrame = Math.Max(0, (int?)action["dashJumpFrame"] ?? 0)
                 });
             }
             return steps;
@@ -1162,6 +1197,7 @@ namespace IGTAPTasMod
         private void Update()
         {
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
+            PumpSolver();
             PumpBootstrap();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
@@ -1230,6 +1266,14 @@ namespace IGTAPTasMod
                 Logger.LogWarning(restored.Message + "; using quick restart.");
             }
             MethodInfo respawn = AccessTools.Method(typeof(Movement), "respawn");
+            // A route named "<course>_..." or "<course> ..." always starts at that course, whatever was played before.
+            Match courseName = Regex.Match(route.name ?? "", @"^(\d+)[_ ]");
+            CourseDef named = courseName.Success ? _courses.Find(c => c.id == int.Parse(courseName.Groups[1].Value)) : null;
+            if (named != null)
+            {
+                _preservedCourseResetPoint = new Vector2(named.x, named.y);
+                _hasPreservedCourseResetPoint = true;
+            }
             if (movement != null && respawn != null)
             {
                 // Courses use courseResetPoint as a one-shot override and may replace it
@@ -1362,8 +1406,40 @@ namespace IGTAPTasMod
             _pendingReplayCourseStartPositionOffsetX = courseStartPositionOffsetX;
         }
 
+        // A category route ("<course>_NO_WJ|WJ|WJDASH <time>") plays back with that category's unlocks, like the solver
+        // judged it; the save's own unlocks come back when the attempt ends.
+        private readonly Dictionary<string, bool> _playbackSavedAbilities = new Dictionary<string, bool>();
+
+        private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
+        {
+            Match category = Regex.Match(route.name ?? "", @"^\d+_(NO_WJ|WJDASH|WJ) ");
+            if (!category.Success || movement == null) return;
+            string caps = category.Groups[1].Value == "NO_WJ" ? "none" : category.Groups[1].Value.ToLowerInvariant();
+            foreach (var (field, value) in new[] { ("wallJumpUnlocked", caps != "none"), ("dashUnlocked", caps == "wjdash") })
+            {
+                if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = GetMovementBool(movement, field, true);
+                SetMovementField(movement, field, value);
+            }
+        }
+
+        private void RestorePlaybackAbilities()
+        {
+            Movement movement = FindWorldMovement();
+            if (movement != null)
+                foreach (KeyValuePair<string, bool> ability in _playbackSavedAbilities) SetMovementField(movement, ability.Key, ability.Value);
+            _playbackSavedAbilities.Clear();
+        }
+
         private void SaveAttemptResult(bool success, string reason, int action, long ticks)
         {
+            RestorePlaybackAbilities();
+            if (_silentEvaluation)
+            {
+                EndDeterministicPhysics();
+                _silentFinished = success && reason == "Course finish detected";
+                _silentTime = _engine.AuthoritativeCompletionTime;
+                return;
+            }
             if (_isOracleEvaluation)
             {
                 EndDeterministicPhysics();
@@ -1413,7 +1489,7 @@ namespace IGTAPTasMod
         {
             if (!File.Exists(_libraryPath))
             {
-                _library = MacroLibrary.CreateDefault();
+                _library = new MacroLibrary();
                 SaveLibrary();
                 return;
             }
@@ -1422,13 +1498,13 @@ namespace IGTAPTasMod
                 MacroLibrary loaded = JsonConvert.DeserializeObject<MacroLibrary>(File.ReadAllText(_libraryPath));
                 ValidateLibrary(loaded);
                 _library = loaded;
-                if (NormalizeLibraryFrameTiming(_library)) SaveLibrary();
+                if (NormalizeLibraryFrameTiming(_library) | PruneSlowerRoutes()) SaveLibrary();
             }
             catch (Exception ex)
             {
                 Logger.LogError("Routes file rejected; starting with the current schema: " + ex.Message);
                 Quarantine(_libraryPath);
-                _library = MacroLibrary.CreateDefault();
+                _library = new MacroLibrary();
                 SaveLibrary();
             }
         }
@@ -1494,7 +1570,11 @@ namespace IGTAPTasMod
                 {
                     try
                     {
-                        AttemptResult result = JsonConvert.DeserializeObject<AttemptResult>(File.ReadAllText(path));
+                        // Oracle/turbo evaluations and their diagnostics are fidelity data, not studio attempts.
+                        if (path.EndsWith(".diagnostics.json", StringComparison.OrdinalIgnoreCase)) continue;
+                        string text = File.ReadAllText(path);
+                        if (text.Contains("oracle-eval-")) continue;
+                        AttemptResult result = JsonConvert.DeserializeObject<AttemptResult>(text);
                         if (result == null || result.schemaVersion != AttemptResult.CurrentSchemaVersion || string.IsNullOrEmpty(result.id))
                             throw new InvalidDataException("Unsupported or incomplete result.");
                         _results.Add(result);
@@ -1545,14 +1625,11 @@ namespace IGTAPTasMod
             if (library == null) throw new InvalidDataException("File contains no library.");
             if (library.schemaVersion != MacroLibrary.CurrentSchemaVersion)
                 throw new InvalidDataException("Unsupported schema " + library.schemaVersion + "; expected " + MacroLibrary.CurrentSchemaVersion + ".");
-            if (library.macros == null || library.bundles == null)
-                throw new InvalidDataException("Required route or bundle collection is missing.");
+            if (library.macros == null)
+                throw new InvalidDataException("Required route collection is missing.");
             foreach (MacroDefinition route in library.macros)
                 if (route == null || string.IsNullOrEmpty(route.id) || route.steps == null || route.timeline == null || route.timeline.actions == null)
                     throw new InvalidDataException("A route is incomplete.");
-            foreach (BundleDefinition bundle in library.bundles)
-                if (bundle == null || string.IsNullOrEmpty(bundle.id) || bundle.steps == null || bundle.parameters == null || bundle.actions == null)
-                    throw new InvalidDataException("A bundle is incomplete.");
         }
 
         private static void ValidateRecording(RecordingDefinition recording)
@@ -1574,8 +1651,6 @@ namespace IGTAPTasMod
                 foreach (TimelineAction action in route.timeline.actions)
                     if (action != null && action.step != null) changed |= NormalizeStepFrameTiming(action.step, tickMs);
             }
-            foreach (BundleDefinition bundle in library.bundles)
-                foreach (MacroStep step in bundle.steps) changed |= NormalizeStepFrameTiming(step, tickMs);
             return changed;
         }
 
@@ -1616,6 +1691,7 @@ namespace IGTAPTasMod
 
         private void SaveLibrary()
         {
+            if (IsWorker) return;
             WriteJsonAtomic(_libraryPath, _library, true);
         }
 
@@ -1647,6 +1723,7 @@ namespace IGTAPTasMod
         private object HandleWebRequest(WebStudioRequest request)
         {
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
+            if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -1682,6 +1759,84 @@ namespace IGTAPTasMod
                     return new { ok = false, error = "An oracle evaluation is already in progress." };
                 }
                 StartOracleEvaluation(request, body);
+                return null;
+            }
+            if (request.Path == "/api/solver/start")
+            {
+                StartSolver(Number(body, "course", 0), Text(body, "capabilities"));
+                return new { ok = true };
+            }
+            if (request.Path == "/api/solver/stop")
+            {
+                StopSolver("Stopped");
+                return new { ok = true };
+            }
+            if (request.Path == "/api/courses/add-from-recording")
+                return AddCourseFromLastRecording();
+            if (request.Path == "/api/settings/lock-capabilities")
+            {
+                _settings.lockCapabilities = Truthy(body, "locked");
+                SaveSettings();
+                return new { ok = true, locked = _settings.lockCapabilities };
+            }
+            if (request.Path == "/api/session/setup")
+            {
+                // Persistent course/category for real-time runs: {"start": {x, y}, "abilities": {"dashUnlocked": false, ...}}.
+                if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
+                Movement player = FindWorldMovement();
+                if (body["start"] is JObject setupStart)
+                {
+                    _preservedCourseResetPoint = new Vector2((float)setupStart["x"], (float)setupStart["y"]);
+                    _hasPreservedCourseResetPoint = true;
+                }
+                if (body["abilities"] is JObject setupAbilities && player != null)
+                    foreach (JProperty ability in setupAbilities.Properties()) SetMovementField(player, ability.Name, (bool)ability.Value);
+                return new { ok = true };
+            }
+            if (request.Path == "/api/turbo/evaluate")
+            {
+                // Same contract as /api/oracle/evaluate, but stepped inside this frame instead of in real time.
+                if (_activeOracleRequest != null)
+                {
+                    request.StatusCode = 409;
+                    return new { ok = false, error = "An oracle evaluation is already in progress." };
+                }
+                // An offline candidate (routeId + durations/rawMoveX/noJump/hop) is evaluated without saving it.
+                if (body["durations"] != null)
+                {
+                    body["steps"] = JArray.FromObject(BuildOfflineCandidate(body).steps);
+                    body.Remove("routeId");
+                }
+                // "start": {x, y} picks the course (its quick-restart point); "abilities": {"wallJumpUnlocked": false, ...}
+                // sets the category's unlocks for this run only.
+                if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
+                Movement turboPlayer = FindWorldMovement();
+                Vector2 savedResetPoint = _preservedCourseResetPoint;
+                bool savedHasResetPoint = _hasPreservedCourseResetPoint;
+                if (body["start"] is JObject start)
+                {
+                    _preservedCourseResetPoint = new Vector2((float)start["x"], (float)start["y"]);
+                    _hasPreservedCourseResetPoint = true;
+                }
+                var savedAbilities = new Dictionary<string, bool>();
+                if (body["abilities"] is JObject abilities && turboPlayer != null)
+                    foreach (JProperty ability in abilities.Properties())
+                    {
+                        savedAbilities[ability.Name] = GetMovementBool(turboPlayer, ability.Name, false);
+                        SetMovementField(turboPlayer, ability.Name, (bool)ability.Value);
+                    }
+                try
+                {
+                    if (!StartOracleEvaluation(request, body)) return null;
+                    TurboRunner.Run(turboPlayer, () => _activeOracleRequest != null, _oracleMaxTicks + 600);
+                    if (_activeOracleRequest != null && _engine.IsRunning) _engine.Abort("Turbo tick budget exhausted");
+                }
+                finally
+                {
+                    foreach (KeyValuePair<string, bool> ability in savedAbilities) SetMovementField(turboPlayer, ability.Key, ability.Value);
+                    _preservedCourseResetPoint = savedResetPoint;
+                    _hasPreservedCourseResetPoint = savedHasResetPoint;
+                }
                 return null;
             }
             if (request.Path == "/api/oracle/evaluate-batch")
@@ -1925,6 +2080,7 @@ namespace IGTAPTasMod
                 if (body["rawJumpReleased"] != null) action.rawJumpReleased = (bool)body["rawJumpReleased"];
                 if (body["rawDashPressed"] != null) action.rawDashPressed = (bool)body["rawDashPressed"];
                 if (body["rawDashHeld"] != null) action.rawDashHeld = (bool)body["rawDashHeld"];
+                if (body["dashJumpFrame"] != null) action.dashJumpFrame = Math.Max(0, Number(body, "dashJumpFrame", 0));
                 if (body["enabled"] != null) action.enabled = (bool)body["enabled"];
                 route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
                 SaveLibrary();
@@ -2023,6 +2179,15 @@ namespace IGTAPTasMod
 
         private object ImportOfflineCandidate(JObject body)
         {
+            MacroDefinition candidate = BuildOfflineCandidate(body);
+            _library.macros.Add(candidate);
+            _library.selectedIndex = _library.macros.Count - 1;
+            SaveLibrary();
+            return new { ok = true, routeId = candidate.id, name = candidate.name, actionCount = candidate.steps.Count };
+        }
+
+        private MacroDefinition BuildOfflineCandidate(JObject body)
+        {
             string routeId = Text(body, "routeId");
             MacroDefinition source = _library.macros.Find(r => r.id == routeId);
             if (source == null) throw new InvalidOperationException("Source route not found.");
@@ -2059,10 +2224,7 @@ namespace IGTAPTasMod
             }
             InsertJump(candidate, Number(body, "hopStep", -1), Number(body, "hopTick", -1), Number(body, "hopHold", 0));
             candidate.timeline = TimelineDocument.FromSequentialSteps(candidate.steps, Time.fixedDeltaTime * 1000f);
-            _library.macros.Add(candidate);
-            _library.selectedIndex = _library.macros.Count - 1;
-            SaveLibrary();
-            return new { ok = true, routeId = candidate.id, name = candidate.name, actionCount = candidate.steps.Count };
+            return candidate;
         }
 
         private static void InsertJump(MacroDefinition route, int actionIndex, int requestedTick, int requestedHoldTicks)
@@ -2131,7 +2293,8 @@ namespace IGTAPTasMod
                     rawJumpHeld = (bool?)action["rawJumpHeld"] ?? false,
                     rawJumpReleased = (bool?)action["rawJumpReleased"] ?? false,
                     rawDashPressed = (bool?)action["rawDashPressed"] ?? false,
-                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false
+                    rawDashHeld = (bool?)action["rawDashHeld"] ?? false,
+                    dashJumpFrame = Math.Max(0, (int?)action["dashJumpFrame"] ?? 0)
                 });
             }
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
@@ -2179,7 +2342,7 @@ namespace IGTAPTasMod
                     rawJumpPressed = action.rawJumpPressed, rawJumpHeld = action.rawJumpHeld,
                     rawJumpReleased = action.rawJumpReleased,
                     rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
-                    enabled = action.enabled, endCondition = action.endCondition.ToString()
+                    dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
                 });
                 routes.Add(new { id = route.id, name = route.name, favorite = route.favorite, hotkey = HotkeyText(route), checkpointId = route.checkpointId, actions = actions });
             }
@@ -2216,10 +2379,11 @@ namespace IGTAPTasMod
 
             return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
                 paused = IsGamePaused(),
+                capabilitiesLocked = _settings.lockCapabilities,
                 running = _engine.IsRunning,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
-                offline = BuildOfflineWebState() };
+                offline = BuildOfflineWebState(), solver = BuildSolverWebState() };
         }
 
         private static string Text(JObject value, string name)

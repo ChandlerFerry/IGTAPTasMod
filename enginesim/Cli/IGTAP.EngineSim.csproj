@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>IGTAP.EngineSim</AssemblyName>
+    <RootNamespace>IGTAP.EngineSim.Cli</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Optimize>true</Optimize>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Safety net: OutOfMemory at 40% of RAM instead of paging the machine to death. -->
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimitPercent" Value="40" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runtime\IGTAP.EngineSim.Runtime.csproj" />
+    <Reference Include="Assembly-CSharp" HintPath="..\obj\game\Assembly-CSharp.dll" Private="true" />
+  </ItemGroup>
+</Project>

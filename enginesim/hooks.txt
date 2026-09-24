@@ -1,0 +1,9 @@
+# Calls the retarget step injects into game methods, mirroring the plugin's Harmony patches (TasPlugin.Awake).
+# prefix  <Type::method> <IGTAP.EngineSim.Hooks method>   call the hook with (this, args...) first
+# replace <Type::method> <IGTAP.EngineSim.Hooks method>   the method becomes just that call
+prefix Movement::getPlayerControlledInput OnPlayerInput
+prefix Movement::CheckForSuperJump OnDashFrame
+prefix Movement::onDeath OnDeath
+# The plugin reads the course time before stopTracking and ends the run after it; everything else stopTracking
+# does is rewards and UI. The host hook applies its two state changes (tracking off, courseResetPoint cleared).
+replace courseScript::stopTracking OnCourseStop

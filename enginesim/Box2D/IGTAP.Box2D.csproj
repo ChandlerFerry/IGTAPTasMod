@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Optimize>true</Optimize>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Box2D</RootNamespace>
+    <AssemblyName>IGTAP.Box2D</AssemblyName>
+    <NoWarn>CS0618;CS0619;CS0108;CS0114;CS1591</NoWarn>
+  </PropertyGroup>
+</Project>
