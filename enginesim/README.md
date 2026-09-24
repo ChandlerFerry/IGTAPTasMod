@@ -61,8 +61,8 @@ writes each new best to `<traces>\offline-best\`, and sends it to the running ga
   the first step, Stay after; the start state primes existing contacts as already touching.
 - Raycasts: direction normalized, negative distance flips the ray, start-inside hits at fraction 0 with normal −dir,
   triggers are hit (`queriesHitTriggers`).
-- Every trace result matches turbo; a few runs have a late one-tick residue (Box2D GJK/TOI still follow the 2.3-era
-  port, see `Box2D/NOTES.md`).
+- Every trace result matches turbo; three runs differ on their death tick only (a pair's contact order in
+  `Collision2D`, see `Box2D/NOTES.md`).
 
 ## Memory
 

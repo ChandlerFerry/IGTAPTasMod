@@ -13,16 +13,13 @@ type RecordedAction = { label: string; type: string; direction: number; wallJump
 type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
-type OfflineResult = { finished: boolean; courseTicks: number; timeSeconds: number };
-type OfflineSummary = { coverage: { mode: string; theoreticalCombinations: number; uniqueCandidates: number }; validation?: { rmsePixels: number; groundAgreement: number; fidelity: string }; baseline: OfflineResult; candidates: { rank: number; candidate: OfflineResult }[] };
-type Offline = { status: string; running: boolean; error?: string; hasReport: boolean; summary?: OfflineSummary };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; evaluations: number; finishes: number; cells: number; best: number | null; log: string[]; courses: number[] };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean;
-  selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; offline: Offline; solver: SolverState;
+  selectedRouteId: string; routes: Route[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
 };
 
-const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], offline: { status: "Idle", running: false, hasReport: false }, solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, cells: 0, best: null, log: [], courses: [1, 2, 3] } };
+const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, cells: 0, best: null, log: [], courses: [1, 2, 3] } };
 
 async function request(path: string, body?: unknown) {
   const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
