@@ -33,6 +33,7 @@ namespace Box2D
         internal BodyRec[] bodies;
         internal ContactRec[] contacts;
         internal object broadphaseSnapshot;
+        internal int staticEpoch;
 
         internal sealed class BodyRec
         {
@@ -54,6 +55,7 @@ namespace Box2D
             internal float linearDamping;
             internal float angularDamping;
             internal b2Fixture[] fixtures;
+            internal int staticEpoch; // m_staticValuesEpoch when these fixture records were taken
 
             // Fixture proxy bookkeeping (FixtureProxy objects are shared with the
             // dynamic tree and mutate across save/load: proxyId is cleared and
@@ -109,6 +111,16 @@ namespace Box2D
 
     public partial class b2World
     {
+        // Static bodies' fixtures change only through the b2Body calls that report StaticChanged. Each change starts a
+        // new epoch; m_staticValuesEpoch names the static configuration the world holds now (a load brings back the
+        // snapshot's), so a snapshot from the same epoch has nothing static to restore.
+        private int m_staticEpoch, m_staticValuesEpoch;
+
+        internal void StaticChanged(b2Body body)
+        {
+            if (body == null || body.m_type == b2BodyType.Static) m_staticValuesEpoch = ++m_staticEpoch;
+        }
+
         private readonly System.Collections.Generic.Dictionary<b2Body, b2WorldState.BodyRec> m_savedBodyRecs =
             new System.Collections.Generic.Dictionary<b2Body, b2WorldState.BodyRec>();
 
@@ -146,6 +158,7 @@ namespace Box2D
                 invDt0 = m_inv_dt0,
                 allowSleep = m_allowSleep,
                 bodyCountGuard = m_bodyCount,
+                staticEpoch = m_staticValuesEpoch,
             };
 
             // All bodies are recorded. Value state is restored for every body too
@@ -186,7 +199,8 @@ namespace Box2D
 
                 // Fixture records rarely change between snapshots (static level geometry never does); share the
                 // previous snapshot's arrays when identical so per-tick snapshots don't copy the level each time.
-                if (m_savedBodyRecs.TryGetValue(b, out b2WorldState.BodyRec prev) && FixturesMatch(b, prev))
+                if (m_savedBodyRecs.TryGetValue(b, out b2WorldState.BodyRec prev)
+                    && (b.m_type == b2BodyType.Static && prev.type == b2BodyType.Static && prev.staticEpoch == m_staticValuesEpoch || FixturesMatch(b, prev)))
                 {
                     rec.fixtures = prev.fixtures;
                     rec.fixtureSensor = prev.fixtureSensor;
@@ -240,6 +254,7 @@ namespace Box2D
 
                         fi++;
                     }
+                    rec.staticEpoch = m_staticValuesEpoch;
                     m_savedBodyRecs[b] = rec;
                 }
 
@@ -335,6 +350,8 @@ namespace Box2D
             }
 
             // Non-static bodies: value state + fixture list exactly as saved.
+            bool staticCurrent = state.staticEpoch == m_staticValuesEpoch;
+            m_staticValuesEpoch = state.staticEpoch;
             foreach (b2WorldState.BodyRec rec in state.bodies)
             {
                 b2Body b = rec.body;
@@ -354,6 +371,10 @@ namespace Box2D
                 b.m_gravityScale = rec.gravityScale;
                 b.m_linearDamping = rec.linearDamping;
                 b.m_angularDamping = rec.angularDamping;
+                if (staticCurrent && rec.type == b2BodyType.Static)
+                {
+                    continue;
+                }
 
                 // Detach fixtures dropped by the restore (created after the save);
                 // their proxies vanish with the broadphase restore. Usually the list
