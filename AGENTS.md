@@ -14,7 +14,11 @@ suspected exploit of our own tooling until proven otherwise.
 4. **The gate is the only way in.** Category routes (`<course>_<NO_WJ|WJ|WJDASH> <time>`) are saved only by
    `SaveSolverRoute`, which replays the route from the course start and refuses it if any tick breaks 1–3. Don't add
    another save path, and don't loosen the gate to make a route pass.
-5. **"DO NOT MODIFY CAPABILITIES"** (studio toggle) means the plugin never writes an unlock; tools that need to,
+5. **Never edit the game's save files** (`%USERPROFILE%/AppData/LocalLow/Pepper tango games/IGTAPfullGame/Savedata`).
+   Change the running game live instead: `POST /api/session/setup {"abilities": {"dashUnlocked": true, "maxAirDashes": 1,
+   "airDashesLeft": 1}}` sets Movement fields on the live player and replies with them. `/api/oracle/bootstrap` loads
+   the scene without going through the menu, and the game autosaves, so treat relaunches as able to change the save.
+6. **"DO NOT MODIFY CAPABILITIES"** (studio toggle) means the plugin never writes an unlock; tools that need to,
    refuse.
 
 Before calling a new best real: trace it (`IGTAP.EngineSim path <trace> <route.json>`), check where the timer starts
