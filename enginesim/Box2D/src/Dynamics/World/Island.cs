@@ -183,6 +183,11 @@ namespace Box2D
             m_positions = new b2Position[m_bodyCapacity];
         }
 
+        // Whether this island can be reused for a step that would size a new one with these arguments.
+        public bool Fits(int bodyCapacity, int contactCapacity, int jointCapacity, b2ContactListener listener)
+            => m_bodyCapacity >= bodyCapacity && m_contactCapacity >= contactCapacity && m_joints.Length >= jointCapacity
+            && m_listener == listener;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Clear()
         {
