@@ -1591,7 +1591,8 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/setup")
             {
-                // Persistent course/category for real-time runs: {"start": {x, y}, "abilities": {"dashUnlocked": false, ...}}.
+                // Live changes to the running game (never the save file): {"start": {x, y},
+                // "abilities": {"dashUnlocked": true, "maxAirDashes": 1, "airDashesLeft": 1, ...}}. Replies with the fields as set.
                 if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
                 Movement player = FindWorldMovement();
                 if (body["start"] is JObject setupStart)
@@ -1599,9 +1600,16 @@ namespace IGTAPTasMod
                     _preservedCourseResetPoint = new Vector2((float)setupStart["x"], (float)setupStart["y"]);
                     _hasPreservedCourseResetPoint = true;
                 }
+                var applied = new Dictionary<string, object>();
                 if (body["abilities"] is JObject setupAbilities && player != null)
-                    foreach (JProperty ability in setupAbilities.Properties()) SetMovementField(player, ability.Name, (bool)ability.Value);
-                return new { ok = true };
+                    foreach (JProperty ability in setupAbilities.Properties())
+                    {
+                        object value = ability.Value.Type == JTokenType.Boolean ? (object)(bool)ability.Value
+                            : ability.Value.Type == JTokenType.Integer ? (object)(int)ability.Value : (float)ability.Value;
+                        SetMovementField(player, ability.Name, value);
+                        applied[ability.Name] = GetMovementField(player, ability.Name);
+                    }
+                return new { ok = true, abilities = applied };
             }
             if (request.Path == "/api/turbo/evaluate")
             {
