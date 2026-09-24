@@ -456,7 +456,8 @@ namespace IGTAPTasMod
                 while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
                 _engine.Resume(from.engine, ToSteps(inputs.Skip(step).ToList()), from.tick - step);
             }
-            int lastTick = -1, idleTicks = 0;
+            // The run `from` came from already reported its tick (ticks mid-dash take no input, so RunTicks can stay put).
+            int lastTick = from != null && from.tick > 0 ? from.tick : -1, idleTicks = 0;
             bool losing = false;
             Stopwatch clock = Stopwatch.StartNew();
             double setupMs = -1;

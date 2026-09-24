@@ -271,7 +271,8 @@ namespace IGTAP.EngineSim
             _finishTime = 0f;
             _endReason = null;
             int maxTicks = inputs.Count - from.Tick + extraTicks;
-            int idleTicks = 0, lastTick = -1, stepped = 0;
+            // The run `from` came from already reported its tick (ticks mid-dash take no input, so RunTicks can stay put).
+            int idleTicks = 0, lastTick = from.Tick > 0 ? from.Tick : -1, stepped = 0;
             bool stop = false;
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
