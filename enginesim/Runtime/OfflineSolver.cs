@@ -67,6 +67,7 @@ namespace IGTAP.EngineSim
         {
             public List<InputTick> Source;
             public int Length, Picks;
+            public float Rank;
             public SimSnapshot State;
         }
 
@@ -85,6 +86,7 @@ namespace IGTAP.EngineSim
             SimSnapshot[] _bestStates;
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
             int _sharedVersion;
+            float _maxTimedRank;
 
             public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds)
             {
@@ -144,7 +146,14 @@ namespace IGTAP.EngineSim
                 Try(RandomBurst(chosen.Source.Take(chosen.Length).ToList()), "explore", chosen.State);
             }
 
-            static double Weight(long key, Cell cell) { return (key < 0 ? 3.0 : 1.0) / Math.Sqrt(cell.Picks + 1); }
+            // Before the first finish, timed cells reached later on the course timer (further along the course) weigh
+            // more, so exploration pushes the frontier of long courses instead of re-rolling the well-covered start.
+            double Weight(long key, Cell cell)
+            {
+                double w = key < 0 ? 3.0 : 1.0;
+                if (key < 0 && _bestInputs == null && _maxTimedRank > 0) w *= 1 + 10 * Math.Pow(cell.Rank / _maxTimedRank, 4);
+                return w / Math.Sqrt(cell.Picks + 1);
+            }
 
             List<InputTick> RandomBurst(List<InputTick> inputs)
             {
@@ -270,10 +279,13 @@ namespace IGTAP.EngineSim
                 bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _);
                 if (from != null && _rng.Next(100) == 0)
                 {
+                    // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
+                    // fires inside the replayed prefix (a loop route revisiting a cell), which the branch never sees.
+                    bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
-                    bool again = Evaluate(inputs, null, null, null, mode == "optimize", out float replay, out _);
+                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _);
                     Interlocked.Increment(ref _owner.BranchChecks);
-                    if (again == finished && Math.Abs(replay - time) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
+                    if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
                 if (!finished) return;
@@ -306,9 +318,11 @@ namespace IGTAP.EngineSim
                     {
                         if (elapsed > _best) losing = true;
                         if (cut && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
-                        if (arrivals != null && !arrivals.ContainsKey(key)) arrivals[key] = elapsed;
+                        // The best route's last time in each cell: a loop route revisits cells, and cutting at the first
+                        // visit would cut the best route itself once a mutation resumes past it.
+                        if (arrivals != null) arrivals[key] = elapsed;
                     }
-                    FileCell(inputs, Math.Min(tick, inputs.Count), key, states);
+                    FileCell(inputs, Math.Min(tick, inputs.Count), key, timing ? Simulation.CourseTime(active) : tick * .02f, states);
                     return !losing;
                 });
                 Interlocked.Increment(ref _owner.Runs);
@@ -324,13 +338,17 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - Math.Abs(key) : key;
             }
 
-            void FileCell(List<InputTick> inputs, int tick, long key, SimSnapshot[] states)
+            // A cell keeps its earliest arrival: by course time once the timer runs (dash ticks consume no input but still
+            // cost 0.02 s each), by input tick before it.
+            void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
-                bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Length > tick;
+                bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
                 SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
                 if (states != null && state != null) states[tick] = state;
-                if (better) _archive[key] = new Cell { Source = inputs, Length = tick, State = state };
+                if (!better) return;
+                _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };
+                if (key < 0 && rank > _maxTimedRank) _maxTimedRank = rank;
             }
         }
     }
