@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>IGTAPTasMod</AssemblyName>
+    <RootNamespace>IGTAPTasMod</RootNamespace>
+    <GameRoot>C:\Users\deafwave\Downloads\IGTAP_Real</GameRoot>
+    <ManagedDir>$(GameRoot)\IGTAPfullGame_Data\Managed</ManagedDir>
+    <BepInExDir>$(GameRoot)\BepInEx\core</BepInExDir>
+    <PluginDir>$(GameRoot)\BepInEx\plugins</PluginDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="simulator\**\*.cs" />
+    <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(BepInExDir)\0Harmony.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(ManagedDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(ManagedDir)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(ManagedDir)\UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.Physics2DModule" HintPath="$(ManagedDir)\UnityEngine.Physics2DModule.dll" Private="false" />
+    <Reference Include="UnityEngine.JSONSerializeModule" HintPath="$(ManagedDir)\UnityEngine.JSONSerializeModule.dll" Private="false" />
+    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(ManagedDir)\UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="Unity.InputSystem" HintPath="$(ManagedDir)\Unity.InputSystem.dll" Private="false" />
+    <Reference Include="Newtonsoft.Json" HintPath="$(ManagedDir)\Newtonsoft.Json.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="BuildWebStudio" BeforeTargets="Build">
+    <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)\web" Condition="!Exists('$(MSBuildProjectDirectory)\web\node_modules\next\package.json')" />
+    <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\web" />
+  </Target>
+
+  <Target Name="DeployToGame" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\simulator\IGTAP.FastSim.csproj"
+             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
+    <MakeDir Directories="$(PluginDir)" />
+    <RemoveDir Directories="$(PluginDir)\IGTAPTasWeb" />
+    <RemoveDir Directories="$(PluginDir)\IGTAPFastSim" />
+    <MakeDir Directories="$(PluginDir)\IGTAPTasWeb" />
+    <MakeDir Directories="$(PluginDir)\IGTAPFastSim" />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFiles="$(PluginDir)\IGTAPTasMod.dll"
+          SkipUnchangedFiles="false"
+          OverwriteReadOnlyFiles="true" />
+    <ItemGroup>
+      <WebStudioFiles Include="$(MSBuildProjectDirectory)\web\out\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebStudioFiles)"
+          DestinationFolder="$(PluginDir)\IGTAPTasWeb\%(RecursiveDir)"
+          SkipUnchangedFiles="false" />
+    <ItemGroup>
+      <OfflineSimulatorFiles Include="$(MSBuildProjectDirectory)\simulator\bin\$(Configuration)\net8.0\IGTAP.FastSim.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(OfflineSimulatorFiles)"
+          DestinationFolder="$(PluginDir)\IGTAPFastSim"
+          SkipUnchangedFiles="false" />
+    <Message Importance="high" Text="Deployed $(TargetPath) to $(PluginDir)\IGTAPTasMod.dll" />
+  </Target>
+</Project>

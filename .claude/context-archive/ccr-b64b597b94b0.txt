@@ -1,0 +1,497 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+static class OfflineSuite
+{
+    sealed record Shape(string Name, string Tag, bool Trigger, string Type, float CenterX, float CenterY,
+        float SizeX, float SizeY, float[] Points, int[] PathStarts);
+    sealed record Options(string Model, string Routes, string Route, string Output, int Radius,
+        long MaxEvaluations, int Beam, int Top, string? Recording, string? Result, bool AllowScreening);
+    sealed class ValidationData
+    {
+        public int samples { get; init; }
+        public double rmsePixels { get; init; }
+        public double maxErrorPixels { get; init; }
+        public double groundAgreement { get; init; }
+        public string fidelity { get; init; } = "unmeasured";
+        [JsonIgnore] public List<(float x, float y, float vx, float vy, bool ground)> Truth { get; init; } = [];
+    }
+    sealed record Candidate(int[] Durations, float[] RawMoveX, int HopStep, int HopTick, int HopHold, SimResult Result,
+        double Clearance, List<(float x, float y, float vx, float vy, bool ground)>? Trace = null)
+    {
+        public double HazardClearance { get; init; } = double.NaN;
+        public string Signature => string.Join(',', Durations) + "|x="
+            + string.Join(',', RawMoveX.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))
+            + $"|{HopStep}|{HopTick}|{HopHold}";
+        public int ChangeCost(int[] baseline, float[] baselineX) => Durations.Select((d, i) => Math.Abs(d - baseline[i])).Sum()
+            + RawMoveX.Select((x, i) => (int)Math.Round(Math.Abs(x - baselineX[i]) * 20)).Sum()
+            + (HopStep >= 0 ? 2 + HopHold : 0);
+    }
+
+    public static int Run(string[] args)
+    {
+        try
+        {
+            Options options = Parse(args);
+            Directory.CreateDirectory(options.Output);
+            var environment = Loader.Environment(options.Model);
+            List<Shape> geometry = LoadGeometry(options.Model);
+            Gate[] hazardBounds = LoadHazardBounds(geometry, environment.viewport);
+            float initialX = environment.initialX, initialY = environment.initialY;
+            // An export can capture the controller between restart and the first
+            // replay physics sample. Use the measured tick-zero pose for a
+            // result-backed search so timing edits share the native start state.
+            if (!string.IsNullOrWhiteSpace(options.Result) && File.Exists(options.Result))
+            {
+                using JsonDocument resultDocument = JsonDocument.Parse(File.ReadAllText(options.Result));
+                string trace = resultDocument.RootElement.GetProperty("earlyTrace").GetString() ?? "";
+                var measured = ParseAttemptTrace(trace);
+                if (measured.Count > 0) (initialX, initialY) = (measured[0].x, measured[0].y);
+            }
+            else if (!string.IsNullOrWhiteSpace(options.Recording) && File.Exists(options.Recording))
+            {
+                Loader.Recording(options.Recording, out var recordedTrace);
+                if (recordedTrace.Count > 0) (initialX, initialY) = (recordedTrace[0].x, recordedTrace[0].y);
+            }
+            var simulator = new FastSimulator(environment.surfaces, environment.ceilings, environment.walls,
+                environment.start, environment.finish, environment.physics, initialX, initialY);
+            List<Loader.RouteStep> steps = Loader.Route(options.Routes, options.Route);
+            int[] baseline = steps.Select(s => s.Duration).ToArray();
+            float[] baselineX = steps.Select(s => s.X).ToArray();
+            var validation = Validate(options.Recording, options.Result, simulator, steps);
+            if (validation != null && validation.fidelity == "screening-only" && !options.AllowScreening)
+                throw new InvalidDataException($"Offline model validation failed for {environment.course}: "
+                    + $"RMSE {validation.rmsePixels:0.###} px, max error {validation.maxErrorPixels:0.###} px. "
+                    + "Search aborted before candidate evaluation.");
+
+            int[] variables = Enumerable.Range(0, steps.Count)
+                .Where(i => steps[i].Duration > 1).ToArray();
+            int[][] values = variables.Select(i => Enumerable.Range(
+                Math.Max(1, baseline[i] - options.Radius), baseline[i] + options.Radius - Math.Max(1, baseline[i] - options.Radius) + 1)
+                .ToArray()).ToArray();
+            long cartesian = Product(values.Select(v => (long)v.Length), long.MaxValue);
+            bool exhaustive = cartesian <= options.MaxEvaluations;
+            var evaluated = new ConcurrentDictionary<string, Candidate>();
+            long simulations = 0;
+            Candidate? budgetFallback = null;
+
+            Candidate Evaluate(int[] durations, int hopStep = -1, int hopTick = -1, int hopHold = 0, float[]? rawMoveX = null)
+            {
+                rawMoveX ??= baselineX;
+                string signature = string.Join(',', durations) + "|x="
+                    + string.Join(',', rawMoveX.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))
+                    + $"|{hopStep}|{hopTick}|{hopHold}";
+                if (evaluated.TryGetValue(signature, out Candidate? existing)) return existing;
+                if (Volatile.Read(ref simulations) >= options.MaxEvaluations && budgetFallback != null)
+                    return budgetFallback;
+                return evaluated.GetOrAdd(signature, _ =>
+                {
+                    Interlocked.Increment(ref simulations);
+                    SimResult result = simulator.Run(BuildFrames(steps, durations, hopStep, hopTick, hopHold, rawMoveX));
+                    return new Candidate((int[])durations.Clone(), (float[])rawMoveX.Clone(), hopStep, hopTick, hopHold, result, double.NaN);
+                });
+            }
+
+            Candidate baselineCandidate = Evaluate(baseline);
+            budgetFallback = baselineCandidate;
+            int requiredLandingMask = baselineCandidate.Result.LandingMask;
+            int requiredWallJumps = baselineCandidate.Result.WallJumpCount;
+            if (exhaustive)
+            {
+                var combinations = EnumerateCartesian(baseline, variables, values).ToArray();
+                Parallel.ForEach(combinations, durations => Evaluate(durations));
+            }
+            else
+            {
+                // Complete one-factor suite: every legal value of every timing block.
+                foreach (var pair in variables.Select((step, p) => (step, p)))
+                {
+                    if (simulations >= options.MaxEvaluations) break;
+                    foreach (int value in values[pair.p])
+                    {
+                        if (simulations >= options.MaxEvaluations) break;
+                        int[] durations = (int[])baseline.Clone();
+                        durations[pair.step] = value;
+                        Evaluate(durations);
+                    }
+                }
+
+                // Deterministic beam search explores interacting timing changes without random blind spots.
+                List<Candidate> beam = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps).Take(options.Beam).ToList();
+                for (int round = 0; round < variables.Length && simulations < options.MaxEvaluations; round++)
+                {
+                    foreach (Candidate seed in beam.ToArray())
+                    {
+                        if (simulations >= options.MaxEvaluations) break;
+                        foreach (var pair in variables.Select((step, p) => (step, p)))
+                        {
+                            if (simulations >= options.MaxEvaluations) break;
+                            foreach (int value in values[pair.p])
+                            {
+                                if (simulations >= options.MaxEvaluations) break;
+                                int[] durations = (int[])seed.Durations.Clone();
+                                durations[pair.step] = value;
+                                Evaluate(durations, seed.HopStep, seed.HopTick, seed.HopHold, seed.RawMoveX);
+                            }
+                        }
+                    }
+                    List<Candidate> next = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps).Take(options.Beam).ToList();
+                    if (next.Select(c => c.Signature).SequenceEqual(beam.Select(c => c.Signature))) break;
+                    beam = next;
+                    if (simulations >= options.MaxEvaluations) break;
+                }
+            }
+
+            // Search controller magnitude in the offline engine. Preserve each
+            // block's intended direction, but include fine values around an
+            // existing analog input and useful partial values for digital blocks.
+            int[] analogSteps = Enumerable.Range(0, steps.Count).Where(i => MathF.Abs(baselineX[i]) > .001f).ToArray();
+            foreach (int analogStep in analogSteps)
+            {
+                if (simulations >= options.MaxEvaluations) break;
+                float sign = MathF.Sign(baselineX[analogStep]);
+                float baseMagnitude = MathF.Abs(baselineX[analogStep]);
+                float minimumMagnitude = baseMagnitude < .999f ? MathF.Max(.2f, baseMagnitude - .5f) : .5f;
+                float increment = baseMagnitude < .999f ? .01f : .05f;
+                for (float magnitude = minimumMagnitude; magnitude <= 1.0001f; magnitude += increment)
+                {
+                    if (simulations >= options.MaxEvaluations) break;
+                    float[] xs = (float[])baselineX.Clone();
+                    xs[analogStep] = MathF.Round(sign * magnitude, 2);
+                    Evaluate(baseline, -1, -1, 0, xs);
+                }
+            }
+
+            // Coordinate beam rounds allow analog and duration improvements to
+            // compose without an in-game Cartesian search.
+            List<Candidate> analogBeam = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps)
+                .Take(options.Beam).ToList();
+            for (int round = 0; round < 2 && simulations < options.MaxEvaluations; round++)
+            {
+                foreach (Candidate seed in analogBeam.Take(Math.Min(100, analogBeam.Count)).ToArray())
+                {
+                    if (simulations >= options.MaxEvaluations) break;
+                    foreach (int analogStep in analogSteps)
+                    {
+                        if (simulations >= options.MaxEvaluations) break;
+                        foreach (float delta in new[] { -.05f, -.02f, -.01f, .01f, .02f, .05f })
+                        {
+                            if (simulations >= options.MaxEvaluations) break;
+                            float sign = MathF.Sign(baselineX[analogStep]);
+                            float[] xs = (float[])seed.RawMoveX.Clone();
+                            xs[analogStep] = Math.Clamp(MathF.Round(xs[analogStep] + sign * delta, 2), -1f, 1f);
+                            if (MathF.Sign(xs[analogStep]) != sign || MathF.Abs(xs[analogStep]) < .2f) continue;
+                            Evaluate(seed.Durations, seed.HopStep, seed.HopTick, seed.HopHold, xs);
+                        }
+                    }
+                }
+                analogBeam = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps).Take(options.Beam).ToList();
+            }
+
+            // Test every jump insertion/release pair in every long plain-input block on strong timing candidates.
+            Candidate[] timingSeeds = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps).Take(Math.Min(100, options.Beam)).ToArray();
+            foreach (Candidate seed in timingSeeds)
+            {
+                if (simulations >= options.MaxEvaluations) break;
+                for (int step = 0; step < steps.Count; step++)
+                {
+                    if (simulations >= options.MaxEvaluations) break;
+                    Loader.RouteStep source = steps[step];
+                    if (seed.Durations[step] < 4 || source.Press || source.Held || source.Release) continue;
+                    for (int tick = 0; tick < seed.Durations[step]; tick++)
+                    {
+                        if (simulations >= options.MaxEvaluations) break;
+                        for (int hold = 0; hold <= Math.Min(12, seed.Durations[step] - tick); hold++)
+                        {
+                            Evaluate(seed.Durations, step, tick, hold, seed.RawMoveX);
+                            if (simulations >= options.MaxEvaluations) break;
+                        }
+                    }
+                }
+            }
+
+            Candidate[] ranked = Rank(evaluated.Values, baseline, baselineX, requiredLandingMask, requiredWallJumps).ToArray();
+            var shortlist = new List<Candidate>();
+            // Keep raw speed leaders, but reserve room for low-edit anchors. Interpolation phase
+            // makes edge-of-platform routes disproportionately fragile, and tiny edits are the
+            // best available offline proxy until Unity performs the authoritative trials.
+            foreach (Candidate candidate in ranked.Take(Math.Min(3, options.Top)))
+                if (!shortlist.Any(item => item.Signature == candidate.Signature)) shortlist.Add(candidate);
+            if (options.Top > 1 && !shortlist.Any(item => item.Signature == baselineCandidate.Signature))
+                shortlist.Add(baselineCandidate);
+            foreach (Candidate candidate in ranked.OrderBy(item => item.ChangeCost(baseline, baselineX))
+                .ThenBy(item => item.Result.Finished ? item.Result.CourseTicks : int.MaxValue))
+            {
+                if (!shortlist.Any(item => item.Signature == candidate.Signature)) shortlist.Add(candidate);
+                if (shortlist.Count >= options.Top) break;
+            }
+            Candidate[] top = shortlist.Take(options.Top).Select(candidate =>
+            {
+                var trace = new List<(float x, float y, float vx, float vy, bool ground)>();
+                SimResult result = simulator.Run(BuildFrames(steps, candidate.Durations, candidate.HopStep, candidate.HopTick, candidate.HopHold, candidate.RawMoveX), trace);
+                return candidate with { Result = result, Clearance = Clearance(trace, environment.surfaces),
+                    HazardClearance = HazardClearance(trace, hazardBounds), Trace = trace };
+            }).ToArray();
+
+            WriteArtifacts(options, steps, baseline, baselineX, baselineCandidate, top, environment, geometry, validation,
+                exhaustive, cartesian, simulations, evaluated.Count);
+            Console.WriteLine($"mode={(exhaustive ? "exhaustive" : "bounded-deterministic")} theoretical={cartesian:N0} simulations={simulations:N0} unique={evaluated.Count:N0}");
+            Console.WriteLine($"baseline={(baselineCandidate.Result.Finished ? baselineCandidate.Result.CourseTicks : -1)} ticks; best={(top.FirstOrDefault()?.Result.CourseTicks ?? -1)} ticks");
+            Console.WriteLine("report=" + Path.GetFullPath(Path.Combine(options.Output, "report.html")));
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return 2;
+        }
+    }
+
+    static Options Parse(string[] args)
+    {
+        if (args.Length < 3) throw new ArgumentException(
+            "Usage: IGTAP.FastSim suite <model.json> <routes.json> <route-name> [--out dir] [--radius 8] [--max 2000000] [--beam 1000] [--top 20] [--recording file] [--result file] [--allow-screening]");
+        string output = Path.Combine(Environment.CurrentDirectory, "offline-report");
+        int radius = 8, beam = 1000, top = 20; long max = 2_000_000; string? recording = null, result = null;
+        bool allowScreening = false;
+        for (int i = 3; i < args.Length; i++)
+        {
+            string Value() => ++i < args.Length ? args[i] : throw new ArgumentException("Missing value for " + args[i - 1]);
+            switch (args[i])
+            {
+                case "--out": output = Value(); break;
+                case "--radius": radius = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+                case "--max": max = long.Parse(Value(), CultureInfo.InvariantCulture); break;
+                case "--beam": beam = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+                case "--top": top = int.Parse(Value(), CultureInfo.InvariantCulture); break;
+                case "--recording": recording = Value(); break;
+                case "--result": result = Value(); break;
+                case "--allow-screening": allowScreening = true; break;
+                default: throw new ArgumentException("Unknown option: " + args[i]);
+            }
+        }
+        if (radius < 0 || beam < 1 || top < 1 || max < 1) throw new ArgumentException("Search limits must be positive.");
+        return new Options(args[0], args[1], args[2], output, radius, max, beam, top, recording, result, allowScreening);
+    }
+
+    static ValidationData? Validate(string? recording, string? resultPath, FastSimulator simulator, List<Loader.RouteStep> steps)
+    {
+        List<InputFrame> inputs;
+        List<(float x, float y, float vx, float vy, bool ground)> truth;
+        if (!string.IsNullOrWhiteSpace(resultPath) && File.Exists(resultPath))
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(resultPath));
+            string trace = document.RootElement.TryGetProperty("earlyTrace", out JsonElement traceElement)
+                ? traceElement.GetString() ?? "" : "";
+            truth = ParseAttemptTrace(trace);
+            int[] durations = steps.Select(step => step.Duration).ToArray();
+            inputs = BuildFrames(steps, durations, -1, -1, 0).ToList();
+        }
+        else if (!string.IsNullOrWhiteSpace(recording) && File.Exists(recording))
+            inputs = Loader.Recording(recording, out truth);
+        else return null;
+        var predicted = new List<(float x, float y, float vx, float vy, bool ground)>();
+        simulator.Run(inputs, predicted, continueAfterFinish: true);
+        int count = Math.Min(truth.Count, predicted.Count); double squared = 0, max = 0; int ground = 0;
+        for (int i = 0; i < count; i++)
+        {
+            double dx = truth[i].x - predicted[i].x, dy = truth[i].y - predicted[i].y;
+            double error = Math.Sqrt(dx * dx + dy * dy); squared += error * error; max = Math.Max(max, error);
+            if (truth[i].ground == predicted[i].ground) ground++;
+        }
+        return new ValidationData { samples = count, rmsePixels = count == 0 ? 0 : Math.Sqrt(squared / count), maxErrorPixels = max,
+            groundAgreement = count == 0 ? 0 : (double)ground / count,
+            fidelity = max <= 1 ? "pixel-certified" : max <= 5 ? "close" : "screening-only", Truth = truth };
+    }
+
+    internal static List<(float x, float y, float vx, float vy, bool ground)> ParseAttemptTrace(string trace)
+    {
+        var raw = new List<(float x, float y, float vx, float vy)>();
+        foreach (string sample in trace.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] values = sample.Split(',');
+            if (values.Length < 7) continue;
+            raw.Add((float.Parse(values[3], CultureInfo.InvariantCulture), float.Parse(values[4], CultureInfo.InvariantCulture),
+                float.Parse(values[5], CultureInfo.InvariantCulture), float.Parse(values[6], CultureInfo.InvariantCulture)));
+        }
+        var result = new List<(float x, float y, float vx, float vy, bool ground)>(raw.Count);
+        for (int i = 0; i < raw.Count; i++)
+        {
+            bool ground = MathF.Abs(raw[i].vy + 25f) < .1f && (i == 0 || MathF.Abs(raw[i].y - raw[i - 1].y) < 1f);
+            result.Add((raw[i].x, raw[i].y, raw[i].vx, raw[i].vy, ground));
+        }
+        return result;
+    }
+
+    static IEnumerable<int[]> EnumerateCartesian(int[] baseline, int[] variables, int[][] values)
+    {
+        int[] indices = new int[variables.Length];
+        while (true)
+        {
+            int[] item = (int[])baseline.Clone();
+            for (int i = 0; i < variables.Length; i++) item[variables[i]] = values[i][indices[i]];
+            yield return item;
+            int position = indices.Length - 1;
+            while (position >= 0 && ++indices[position] == values[position].Length) { indices[position] = 0; position--; }
+            if (position < 0) yield break;
+        }
+    }
+
+    static long Product(IEnumerable<long> values, long cap)
+    {
+        long result = 1;
+        foreach (long value in values) { if (result > cap / value) return cap; result *= value; }
+        return result;
+    }
+
+    static IOrderedEnumerable<Candidate> Rank(IEnumerable<Candidate> candidates, int[] baseline, float[] baselineX,
+        int requiredLandingMask, int requiredWallJumps) => candidates
+        .OrderBy(c => c.Result.Finished ? 0 : 1)
+        .ThenBy(c => (c.Result.LandingMask & requiredLandingMask) == requiredLandingMask ? 0 : 1)
+        .ThenBy(c => c.Result.WallJumpCount == requiredWallJumps ? 0 : 1)
+        .ThenBy(c => c.Result.Finished ? c.Result.CourseTicks : int.MaxValue)
+        .ThenBy(c => c.Result.Finished ? c.ChangeCost(baseline, baselineX) : int.MaxValue)
+        .ThenByDescending(c => c.Result.LandingMask)
+        .ThenByDescending(c => c.Result.PeakY)
+        .ThenBy(c => c.Signature, StringComparer.Ordinal);
+
+    static InputFrame[] BuildFrames(List<Loader.RouteStep> steps, int[] durations, int hopStep, int hopTick, int hopHold, float[]? rawMoveX = null)
+    {
+        var frames = new List<InputFrame>(durations.Sum() + 80);
+        for (int step = 0; step < steps.Count; step++)
+            for (int tick = 0; tick < durations[step]; tick++)
+            {
+                bool press = tick == 0 && steps[step].Press;
+                bool release = tick == 0 && steps[step].Release;
+                bool held = steps[step].Held;
+                if (step == hopStep && tick == hopTick) press = true;
+                if (step == hopStep && tick >= hopTick && tick < hopTick + hopHold) held = true;
+                if (step == hopStep && tick == hopTick + hopHold) release = true;
+                frames.Add(new InputFrame(rawMoveX == null ? steps[step].X : rawMoveX[step], press, held, release,
+                    tick == 0 && steps[step].DashPress));
+            }
+        return frames.ToArray();
+    }
+
+    static double Clearance(List<(float x, float y, float vx, float vy, bool ground)> trace, Surface[] surfaces)
+    {
+        double minimum = double.PositiveInfinity;
+        foreach (var point in trace)
+            foreach (Surface surface in surfaces)
+            {
+                double dx = point.x < surface.X1 ? surface.X1 - point.x : point.x > surface.X2 ? point.x - surface.X2 : 0;
+                double dy = Math.Abs((point.y - 32) - surface.Y);
+                double distance = Math.Sqrt(dx * dx + dy * dy);
+                if (distance > .01) minimum = Math.Min(minimum, distance);
+            }
+        return double.IsFinite(minimum) ? minimum : 0;
+    }
+
+    static Gate[] LoadHazardBounds(List<Shape> geometry, Gate viewport)
+    {
+        var result = new List<Gate>();
+        foreach (Shape shape in geometry.Where(shape => shape.Trigger && shape.Name.Contains("Spike", StringComparison.OrdinalIgnoreCase)
+            || shape.Name.Contains("BallKiller", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (shape.Points.Length >= 6 && shape.PathStarts.Length > 0)
+            {
+                int[] ends = shape.PathStarts.Append(shape.Points.Length / 2).ToArray();
+                for (int path = 0; path < shape.PathStarts.Length; path++)
+                {
+                    var indices = Enumerable.Range(shape.PathStarts[path], ends[path + 1] - shape.PathStarts[path]).ToArray();
+                    var gate = new Gate(indices.Min(i => shape.Points[i * 2]), indices.Max(i => shape.Points[i * 2]),
+                        indices.Min(i => shape.Points[i * 2 + 1]), indices.Max(i => shape.Points[i * 2 + 1]));
+                    if (gate.MaxX >= viewport.MinX && gate.MinX <= viewport.MaxX
+                        && gate.MaxY >= viewport.MinY && gate.MinY <= viewport.MaxY) result.Add(gate);
+                }
+            }
+            else
+            {
+                var gate = new Gate(shape.CenterX - shape.SizeX / 2, shape.CenterX + shape.SizeX / 2,
+                    shape.CenterY - shape.SizeY / 2, shape.CenterY + shape.SizeY / 2);
+                if (gate.MaxX >= viewport.MinX && gate.MinX <= viewport.MaxX
+                    && gate.MaxY >= viewport.MinY && gate.MinY <= viewport.MaxY) result.Add(gate);
+            }
+        }
+        return result.ToArray();
+    }
+
+    static double HazardClearance(List<(float x, float y, float vx, float vy, bool ground)> trace, Gate[] hazards)
+    {
+        double minimum = double.PositiveInfinity;
+        foreach (var point in trace)
+        {
+            float lowY = point.y - (point.ground ? 34f : 32f);
+            float highY = point.y + (point.ground ? 38f : 22f);
+            foreach (Gate hazard in hazards)
+            {
+                double dx = Math.Max(hazard.MinX - (point.x + 20.5f), point.x - 20.5f - hazard.MaxX);
+                double dy = Math.Max(hazard.MinY - highY, lowY - hazard.MaxY);
+                double clearance = dx <= 0 && dy <= 0 ? Math.Max(dx, dy)
+                    : Math.Sqrt(Math.Max(0, dx) * Math.Max(0, dx) + Math.Max(0, dy) * Math.Max(0, dy));
+                minimum = Math.Min(minimum, clearance);
+            }
+        }
+        return double.IsFinite(minimum) ? minimum : -1;
+    }
+
+    static List<Shape> LoadGeometry(string modelPath)
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(modelPath));
+        var result = new List<Shape>();
+        foreach (JsonElement item in document.RootElement.GetProperty("colliders").EnumerateArray())
+        {
+            float[] points = item.GetProperty("points").EnumerateArray().Select(value => value.GetSingle()).ToArray();
+            int[] starts = item.GetProperty("pathStarts").EnumerateArray().Select(value => value.GetInt32()).ToArray();
+            result.Add(new Shape(item.GetProperty("name").GetString() ?? "", item.GetProperty("tag").GetString() ?? "",
+                item.GetProperty("trigger").GetBoolean(), item.GetProperty("colliderType").GetString() ?? "",
+                item.GetProperty("centerX").GetSingle(), item.GetProperty("centerY").GetSingle(),
+                item.GetProperty("sizeX").GetSingle(), item.GetProperty("sizeY").GetSingle(), points, starts));
+        }
+        return result;
+    }
+
+    static string RouteId(string routesPath, string routeName)
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(routesPath));
+        foreach (JsonElement macro in document.RootElement.GetProperty("macros").EnumerateArray())
+            if (string.Equals(macro.GetProperty("name").GetString(), routeName, StringComparison.Ordinal))
+                return macro.GetProperty("id").GetString() ?? "";
+        return "";
+    }
+
+    static void WriteArtifacts(Options options, List<Loader.RouteStep> steps, int[] baseline, float[] baselineX, Candidate baselineCandidate,
+        Candidate[] top, SimulationEnvironment environment, List<Shape> geometry, ValidationData? validation,
+        bool exhaustive, long theoretical, long simulations, int unique)
+    {
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        var summary = new
+        {
+            schemaVersion = 1, createdUtc = DateTime.UtcNow, route = options.Route,
+            coverage = new { mode = exhaustive ? "exhaustive" : "bounded-deterministic", radius = options.Radius,
+                theoreticalCombinations = theoretical, simulations, uniqueCandidates = unique, targetEvaluationBudget = options.MaxEvaluations },
+            validation, baseline = ResultObject(baselineCandidate, baseline, baselineX, baselineCandidate.Result.LandingMask, baselineCandidate.Result.WallJumpCount),
+            candidates = top.Select((candidate, index) => new { rank = index + 1, candidate = ResultObject(candidate, baseline, baselineX, baselineCandidate.Result.LandingMask, baselineCandidate.Result.WallJumpCount) })
+        };
+        File.WriteAllText(Path.Combine(options.Output, "summary.json"), JsonSerializer.Serialize(summary, jsonOptions));
+        for (int i = 0; i < top.Length; i++)
+        {
+            Candidate candidate = top[i];
+            var import = new { routeId = RouteId(options.Routes, options.Route), name = $"{options.Route} [offline #{i + 1}]",
+                durations = candidate.Durations, rawMoveX = candidate.RawMoveX,
+                hopStep = candidate.HopStep, hopTick = candidate.HopTick, hopHold = candidate.HopHold };
+            File.WriteAllText(Path.Combine(options.Output, $"candidate-{i + 1:00}.json"), JsonSerializer.Serialize(import, jsonOptions));
+        }
+        File.WriteAllText(Path.Combine(options.Output, "report.html"), Html(options, steps, baseline, baselineX, baselineCandidate, top, environment, geometry, validation, exhaustive, theoretical, simulations));
+    }
+
+    static object ResultObject(Candidate candidate, int[] baseline, float[] baselineX, int requiredLandingMask, int requiredWallJumps) => new
+    {
+        finished = candidate.Result.Finished, courseTicks = candidate.Result.Finished ? candidate.Result.CourseTicks : -1,
+        timeSeconds = candidate.Result.Finished ? candidate.Result.CourseTicks * .02 : -1,
+        durations = candidate.Durations, rawMoveX = candidate.RawMoveX,
+        ho

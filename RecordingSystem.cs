@@ -1,0 +1,296 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using HarmonyLib;
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+namespace IGTAPTasMod
+{
+    internal sealed class InputRecorder
+    {
+        private static readonly FieldInfo JumpBuffer = AccessTools.Field(typeof(Movement), "jumpBuffer");
+        private static readonly FieldInfo JumpCutBuffer = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
+        private static readonly FieldInfo DashBuffer = AccessTools.Field(typeof(Movement), "dashBuffer");
+        private static readonly FieldInfo OnGround = AccessTools.Field(typeof(Movement), "onGround");
+        private static readonly FieldInfo OnWall = AccessTools.Field(typeof(Movement), "OnWall");
+        private static readonly FieldInfo WallCoyote = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
+        private static readonly FieldInfo WallSide = AccessTools.Field(typeof(Movement), "wallCoyoteDir");
+        private static readonly FieldInfo Velocity = AccessTools.Field(typeof(Movement), "Velocity");
+        private static readonly FieldInfo Momentum = AccessTools.Field(typeof(Movement), "momentum");
+        private static readonly FieldInfo AirJumps = AccessTools.Field(typeof(Movement), "airJumpsLeft");
+        private static readonly FieldInfo AirDashes = AccessTools.Field(typeof(Movement), "airDashesLeft");
+        private static readonly FieldInfo DashActive = AccessTools.Field(typeof(Movement), "dashActive");
+        private static readonly FieldInfo AtApex = AccessTools.Field(typeof(Movement), "atJumpApex");
+        private static readonly FieldInfo IsDead = AccessTools.Field(typeof(Movement), "isDead");
+        private static readonly FieldInfo CutsceneMode = AccessTools.Field(typeof(Movement), "cutsceneMode");
+        private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
+        private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
+
+        private bool _lastJump;
+        private bool _lastCut;
+        private bool _lastDash;
+        private long _tick;
+
+        public RecordingDefinition Current { get; private set; }
+        public bool IsRecording { get { return Current != null; } }
+
+        public void Start(string name)
+        {
+            Current = new RecordingDefinition { name = name, fixedDeltaMs = Time.fixedDeltaTime * 1000f };
+            _lastJump = _lastCut = _lastDash = false;
+            _tick = 0;
+        }
+
+        public RecordingDefinition Stop(string reason)
+        {
+            RecordingDefinition result = Current;
+            Current = null;
+            if (result == null) return null;
+            result.stopReason = reason;
+            Reprocess(result);
+            return result;
+        }
+
+        public void MarkCourseStart()
+        {
+            if (Current != null) Current.courseStartTick = _tick;
+        }
+
+        public void MarkCourseFinish(float courseTimeSeconds)
+        {
+            if (Current != null && courseTimeSeconds > 0f) Current.courseTimeSeconds = courseTimeSeconds;
+        }
+
+        public static void Reprocess(RecordingDefinition recording)
+        {
+            if (recording == null) return;
+            int removed = TrimLeadingIdle(recording.samples);
+            if (recording.courseStartTick >= 0) recording.courseStartTick = Math.Max(0, recording.courseStartTick - removed);
+            recording.semanticSteps = SemanticCompressor.Compress(recording.samples, recording.fixedDeltaMs);
+        }
+
+        private static int TrimLeadingIdle(List<RawTickSample> samples)
+        {
+            if (samples == null || samples.Count == 0) return 0;
+            int firstInput = 0;
+            while (firstInput < samples.Count)
+            {
+                RawTickSample sample = samples[firstInput];
+                if (Mathf.Abs(sample.moveX) > 0.25f || Mathf.Abs(sample.moveY) > 0.25f
+                    || sample.jumpPressed || sample.jumpHeld || sample.dashPressed || sample.dashHeld) break;
+                firstInput++;
+            }
+            if (firstInput >= samples.Count) { int count = samples.Count; samples.Clear(); return count; }
+            if (firstInput > 0) samples.RemoveRange(0, firstInput);
+            for (int i = 0; i < samples.Count; i++) samples[i].tick = i;
+            return firstInput;
+        }
+
+        public void FixedTick(Movement movement)
+        {
+            if (!IsRecording || movement == null) return;
+            bool jump = Read<bool>(JumpBuffer, movement);
+            bool cut = Read<bool>(JumpCutBuffer, movement);
+            bool dash = Read<bool>(DashBuffer, movement);
+            InputAction jumpAction = Read<InputAction>(JumpAction, movement);
+            InputAction dashAction = Read<InputAction>(DashAction, movement);
+            Vector2 velocity = Read<Vector2>(Velocity, movement);
+            Vector2 momentum = Read<Vector2>(Momentum, movement);
+            Vector3 position = movement.transform.position;
+            Current.samples.Add(new RawTickSample {
+                tick = _tick++, fixedTime = Time.fixedTime, unscaledTime = Time.unscaledTime,
+                moveX = movement.MoveAxis.x, moveY = movement.MoveAxis.y,
+                jumpPressed = jump && !_lastJump, jumpHeld = jumpAction != null ? jumpAction.IsPressed() : jump && !cut,
+                jumpReleased = cut && !_lastCut, dashPressed = dash && !_lastDash,
+                dashHeld = dashAction != null ? dashAction.IsPressed() : dash,
+                positionX = position.x, positionY = position.y,
+                velocityX = velocity.x, velocityY = velocity.y,
+                momentumX = momentum.x, momentumY = momentum.y,
+                onGround = Read<bool>(OnGround, movement), onWall = Read<bool>(OnWall, movement),
+                wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement),
+                airJumpsLeft = Read<int>(AirJumps, movement), airDashesLeft = Read<int>(AirDashes, movement),
+                dashActive = Read<bool>(DashActive, movement), atJumpApex = Read<bool>(AtApex, movement),
+                isDead = Read<bool>(IsDead, movement), movementMode = ReadObject(CutsceneMode, movement)
+            });
+            _lastJump = jump;
+            _lastCut = cut;
+            _lastDash = dash;
+        }
+
+        private static T Read<T>(FieldInfo field, object instance)
+        {
+            if (field == null) return default(T);
+            object value = field.GetValue(instance);
+            return value is T ? (T)value : default(T);
+        }
+
+        private static string ReadObject(FieldInfo field, object instance)
+        {
+            object value = field == null ? null : field.GetValue(instance);
+            return value == null ? "unknown" : value.ToString();
+        }
+    }
+
+    internal static class SemanticCompressor
+    {
+        public static List<MacroStep> Compress(List<RawTickSample> samples, float fixedDeltaMs)
+        {
+            List<MacroStep> result = new List<MacroStep>();
+            if (samples == null || samples.Count == 0) return result;
+            float tickMs = fixedDeltaMs > 0f ? fixedDeltaMs : 20f;
+            int i = 0;
+            while (i < samples.Count)
+            {
+                RawTickSample sample = samples[i];
+                int direction = Direction(sample.moveX);
+                if (sample.jumpPressed)
+                {
+                    int end = FindJumpEndExclusive(samples, i);
+                    bool directWall = sample.onWall || sample.wallCoyoteFrames > 0f;
+                    bool wall = directWall || HasNearbyWall(samples, i);
+                    int outputDirection = direction;
+                    if (wall)
+                    {
+                        // wallCoyoteDir identifies the wall, while a walljump must steer
+                        // away from it. Raw input is often still held toward the wall on
+                        // the exact trigger tick, so using moveX reverses the recorded route.
+                        int wallDirection = Direction(sample.wallSide);
+                        if (wallDirection != 0) outputDirection = -wallDirection;
+                    }
+                    result.Add(new MacroStep {
+                        label = wall ? "Recorded walljump" : "Recorded jump",
+                        type = wall ? MacroStepType.WallJump : MacroStepType.Jump,
+                        direction = outputDirection, wallJumpHoldDirection = direction,
+                        durationTicks = Math.Max(1, end - i),
+                        durationMs = TicksToMs(Math.Max(1, end - i), tickMs),
+                        timeoutTicks = Math.Max(1, Mathf.RoundToInt(1200f / tickMs)), timeoutMs = 1200,
+                        endCondition = ActionEndCondition.FixedTicks,
+                        inferenceConfidence = directWall ? InferenceConfidence.High : InferenceConfidence.Medium
+                    });
+                    // Keep the boundary sample. A second press can be the walljump
+                    // itself; consuming it produces a route that waits for the wrong wall.
+                    i = end;
+                    continue;
+                }
+                if (sample.dashPressed)
+                {
+                    result.Add(new MacroStep { label = "Recorded dash", type = MacroStepType.Dash,
+                        direction = direction, durationTicks = 1, durationMs = TicksToMs(1, tickMs),
+                        endCondition = ActionEndCondition.FixedTicks,
+                        inferenceConfidence = InferenceConfidence.High });
+                    i++;
+                    continue;
+                }
+                int next = i + 1;
+                while (next < samples.Count && !samples[next].jumpPressed && !samples[next].dashPressed
+                    && Direction(samples[next].moveX) == direction) next++;
+                result.Add(new MacroStep { label = direction == 0 ? "Recorded wait" : "Recorded move",
+                    type = direction == 0 ? MacroStepType.Wait : MacroStepType.Move,
+                    direction = direction, durationTicks = Math.Max(1, next - i),
+                    durationMs = TicksToMs(next - i, tickMs), endCondition = ActionEndCondition.FixedTicks,
+                    inferenceConfidence = InferenceConfidence.High });
+                i = next;
+            }
+            return MergeAdjacent(result);
+        }
+
+        private static int FindJumpEndExclusive(List<RawTickSample> samples, int start)
+        {
+            int initialDirection = Direction(samples[start].moveX);
+            int limit = Math.Min(samples.Count, start + 21);
+            for (int i = start + 1; i < limit; i++)
+            {
+                RawTickSample sample = samples[i];
+                if (sample.jumpPressed || sample.dashPressed || sample.jumpReleased
+                    || Direction(sample.moveX) != initialDirection)
+                    return i;
+            }
+            return limit;
+        }
+
+        private static bool HasNearbyWall(List<RawTickSample> samples, int start)
+        {
+            int end = Math.Min(samples.Count - 1, start + 3);
+            for (int i = start; i <= end; i++)
+                if (samples[i].onWall || samples[i].wallCoyoteFrames > 0f) return true;
+            return false;
+        }
+
+        private static List<MacroStep> MergeAdjacent(List<MacroStep> source)
+        {
+            List<MacroStep> result = new List<MacroStep>();
+            foreach (MacroStep step in source)
+            {
+                MacroStep previous = result.Count == 0 ? null : result[result.Count - 1];
+                if (previous != null && previous.type == step.type && previous.direction == step.direction
+                    && (step.type == MacroStepType.Move || step.type == MacroStepType.Wait))
+                {
+                    previous.durationTicks += step.durationTicks;
+                    previous.durationMs += step.durationMs;
+                }
+                else result.Add(step);
+            }
+            return result;
+        }
+
+        private static int Direction(float value) { return value < -0.25f ? -1 : value > 0.25f ? 1 : 0; }
+        private static int TicksToMs(int ticks, float tickMs) { return Math.Max(1, Mathf.RoundToInt(ticks * tickMs)); }
+    }
+
+    internal static class ExactInputCompressor
+    {
+        public static List<MacroStep> Compress(List<RawTickSample> samples, float fixedDeltaMs)
+        {
+            List<MacroStep> result = new List<MacroStep>();
+            if (samples == null || samples.Count == 0) return result;
+            float tickMs = fixedDeltaMs > 0f ? fixedDeltaMs : 20f;
+            int start = 0;
+            while (start < samples.Count)
+            {
+                RawTickSample first = samples[start];
+                int end = start + 1;
+                while (end < samples.Count && SameInput(first, samples[end])) end++;
+                int frames = end - start;
+                result.Add(new MacroStep {
+                    label = Label(first), type = MacroStepType.RawInput,
+                    direction = Direction(first.moveX),
+                    durationTicks = frames,
+                    durationMs = Math.Max(1, Mathf.RoundToInt(frames * tickMs)),
+                    endCondition = ActionEndCondition.FixedTicks,
+                    inferenceConfidence = InferenceConfidence.High,
+                    rawMoveX = first.moveX, rawMoveY = first.moveY,
+                    rawJumpPressed = first.jumpPressed, rawJumpHeld = first.jumpHeld,
+                    rawJumpReleased = first.jumpReleased,
+                    rawDashPressed = first.dashPressed, rawDashHeld = first.dashHeld
+                });
+                start = end;
+            }
+            return result;
+        }
+
+        private static bool SameInput(RawTickSample left, RawTickSample right)
+        {
+            return Mathf.Approximately(left.moveX, right.moveX)
+                && Mathf.Approximately(left.moveY, right.moveY)
+                && left.jumpPressed == right.jumpPressed
+                && left.jumpHeld == right.jumpHeld
+                && left.jumpReleased == right.jumpReleased
+                && left.dashPressed == right.dashPressed
+                && left.dashHeld == right.dashHeld;
+        }
+
+        private static string Label(RawTickSample sample)
+        {
+            string movement = sample.moveX < -0.01f ? "←" : sample.moveX > 0.01f ? "→" : "neutral";
+            if (sample.jumpPressed && sample.jumpReleased) return "Exact " + movement + " jump press/release";
+            if (sample.jumpPressed) return "Exact " + movement + " jump press";
+            if (sample.jumpReleased) return "Exact " + movement + " jump release";
+            if (sample.dashPressed) return "Exact " + movement + " dash press";
+            if (sample.jumpHeld) return "Exact " + movement + " jump held";
+            return "Exact " + movement;
+        }
+
+        private static int Direction(float value) { return value < -0.25f ? -1 : value > 0.25f ? 1 : 0; }
+    }
+}

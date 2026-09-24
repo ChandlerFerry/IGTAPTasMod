@@ -1,0 +1,10 @@
+bin/
+obj/
+simulator/bin/
+simulator/obj/
+web/.next/
+web/node_modules/
+web/out/
+.tools/
+tools/__pycache__/
+offline-*/

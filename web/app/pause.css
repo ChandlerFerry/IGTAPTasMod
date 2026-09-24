@@ -1,0 +1,28 @@
+.pauseBanner {
+  align-items: center;
+  background: #342817;
+  border: 1px solid #75572d;
+  border-radius: 9px;
+  color: #ffd493;
+  display: flex;
+  justify-content: space-between;
+  margin: 14px 36px 0;
+  padding: 12px 15px;
+}
+
+.pauseBanner strong,
+.pauseBanner span {
+  display: block;
+}
+
+.pauseBanner span {
+  color: #c5a97f;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.pauseBanner button {
+  background: #684919;
+  border-color: #9a6d28;
+  color: #ffe1ad;
+}
