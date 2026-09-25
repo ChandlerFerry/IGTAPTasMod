@@ -1,0 +1,11 @@
+{
+  "paths": [
+    {
+      "course": 3,
+      "capabilities": ["wjdash", "wjdashaj"],
+      "note": "Top-hole shortcut out of the first room: runs through the right hole are cut.",
+      "avoid": [[1085, -165, 1735, 685]],
+      "via": []
+    }
+  ]
+}
