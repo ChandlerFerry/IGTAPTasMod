@@ -7,3 +7,7 @@ prefix Movement::onDeath OnDeath
 # The plugin reads the course time before stopTracking and ends the run after it; everything else stopTracking
 # does is rewards and UI. The host hook applies its two state changes (tracking off, courseResetPoint cleared).
 replace courseScript::stopTracking OnCourseStop
+# A box buys on a trigger stay when its cooldown is up, the player can afford it and it is active. The host hook applies
+# that rule and what a purchase changes that a run can observe (Cash, cost, cap, unlocks, the segment's finish), not the
+# boxes' UI, particles or save bookkeeping.
+replace upgradeBox::OnTriggerStay2D OnUpgradeBoxStay

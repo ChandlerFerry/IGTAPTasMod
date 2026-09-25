@@ -373,7 +373,7 @@ namespace IGTAPTasMod
             catch { return null; }
         }
 
-        const string CapabilitiesLockedError = "DO NOT MODIFY CAPABILITIES is on; turn it off to use this.";
+        const string CapabilitiesLockedError = "\"Don't touch my unlocks\" is on; turn it off to use this.";
         bool CapabilitiesLocked { get { return _settings.lockCapabilities; } }
 
         private static void SetMovementField(Movement movement, string name, object value)
@@ -677,6 +677,8 @@ namespace IGTAPTasMod
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
+        // The fresh game is still the one in the world (a bootstrap or scene change replaces its player).
+        bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement(); } }
         bool SolverFromNewGame { get { return _solverChain != null && _solverChain.FromNewGame; } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
@@ -692,10 +694,16 @@ namespace IGTAPTasMod
         // `request` (the endpoint's) is answered once the fresh game's first tick is captured; null for a chain's playback.
         void StartNewGame(WebStudioRequest request)
         {
-            if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
-            if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
+            LoadNewGame(request);
+        }
+
+        // StartNewGame without the solver check: the solver loads one itself for a chain from a new game (LaunchSolve).
+        void LoadNewGame(WebStudioRequest request)
+        {
+            if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
+            if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
             _newGameSession = true;
             // What the menu does before its scene change (pauseMenuScript.changeScene: normal difficulty, time running).
             globalStats.difficultyLevel = 0;
@@ -784,6 +792,8 @@ namespace IGTAPTasMod
                 _lastChainResult = "Chain " + _pendingChain.chain.name + " did not start: " + error;
                 _pendingChain = null;
             }
+            // A solve that loaded it would load it again every frame: it ends here.
+            if (_solverRunning && SolverFromNewGame && _solveProcess == null) StopSolver("New game did not load: " + error);
             WebStudioRequest request = _newGameRequest;
             _newGameRequest = null;
             if (request == null) return;
@@ -795,7 +805,7 @@ namespace IGTAPTasMod
         // The start state of a chain from a new game; only a fresh session has it.
         TurboRunner.Snapshot NewGameStart()
         {
-            if (!FreshGame || _newGamePlayer != FindWorldMovement())
+            if (!FreshGameInWorld)
                 throw new InvalidOperationException("This chain starts from a new game and this session is not a fresh one: POST /api/session/newgame first"
                     + " (tools/enginesim-capture.py chain does it).");
             return _newGameStart;

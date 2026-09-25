@@ -1,8 +1,6 @@
 .courseList { flex: 1; min-height: 0; overflow: auto; }
 .courseGroup { margin: 0 0 12px; }
 .courseName { display: block; padding: 4px 10px 6px; font-size: 13px; color: var(--text); }
-.chainHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 6px; }
-.chainHeader .courseName { flex: 1; min-width: 0; }
 .chainPlay {
   flex: none;
   padding: 3px 9px;
@@ -15,25 +13,52 @@
 }
 .chainPlay:hover:not(:disabled) { background: var(--blue); }
 .chainPlay:disabled { opacity: .4; cursor: default; }
-.categoryRow {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.categoryRow b { color: var(--text); font-variant-numeric: tabular-nums; }
-.categoryRow:hover { background: #10213a; }
-.categoryRow.active { background: #15335a; box-shadow: inset 3px 0 var(--cyan); }
-.categoryRow.empty { cursor: default; opacity: .5; }
-.categoryRow.empty:hover { background: transparent; }
-.categoryRow.empty b { color: var(--muted); }
+/* The new game run: total, progress, next segment to solve. */
+.runCard { margin: 0 4px 14px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.runHead { display: flex; align-items: center; gap: 8px; }
+.runHead strong { flex: 1; font-size: 13px; }
+.runHead b { font-variant-numeric: tabular-nums; }
+.runHead b.partial { color: var(--muted); font-weight: 500; }
+.runBar { height: 4px; margin: 8px 0 6px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.runBar i { display: block; height: 100%; background: var(--cyan); }
+.runCard small { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.runCard small b { color: var(--text); font-weight: 500; }
+.runCard .runError { color: var(--red); }
+/* Solo vs in-run times: label | solo | run | Δ. */
+.cmpHead, .cmpRow { display: grid; grid-template-columns: minmax(0, 1fr) 46px 46px 40px; align-items: center; gap: 2px; padding: 0 6px 0 10px; }
+.cmpHead { margin: 22px 0 6px; }
+.cmpHead .sectionLabel { margin: 0; }
+.cmpHead span { padding-right: 4px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-align: right; text-transform: uppercase; }
+.cmpRow { font-size: 12px; color: var(--muted); }
+.cmpRow small { opacity: .7; }
+.cmpRow.beyondUnlocks { opacity: .45; }
+.cmpCell { padding: 5px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; cursor: pointer; }
+.cmpCell:hover { background: #10213a; }
+.cmpCell.active { background: #15335a; box-shadow: inset 0 -2px var(--cyan); }
+.cmpCell.empty { color: var(--muted); opacity: .5; cursor: default; }
+.cmpDelta { text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cmpDelta.behind { color: var(--amber); }
+.cmpDelta.ahead { color: var(--green); }
 .otherRoutes summary { cursor: pointer; }
 .otherRoutes .routeList { max-height: none; }
+/* A run's segments in collapsible parts (Runs tab). */
+.chainPart { margin: 2px 0; }
+.chainPart > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.chainPart > summary::-webkit-details-marker { display: none; }
+.chainPart > summary::before { content: "▸"; color: var(--muted); }
+.chainPart[open] > summary::before { content: "▾"; }
+.chainPart > summary:hover { background: #10213a; }
+.chainPart > summary span { flex: 1; min-width: 0; }
+.chainPart > summary small { color: var(--muted); white-space: nowrap; }
+.chainPart > summary b { font-variant-numeric: tabular-nums; }
+.matrixPart th button small { color: var(--muted); margin-left: 6px; }

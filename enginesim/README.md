@@ -24,10 +24,15 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   (`chain`, `segment`) starts where the chain's routes before it end (replayed in turbo from the chain's start) and adds
   `fromRunStart: true` (a course segment is timed in physics ticks too) and `restart: true` when the segment starts with
   the game's quick restart (`Movement.respawn(true)` before its first tick's `FixedUpdate`, on runs from the start only).
+  With `lead: true`, a course segment right after a transition to its start gate starts where that transition starts
+  instead. Its header's `lead` has `ticks`, the transition's saved time in physics ticks (a later gate crossing is
+  cut), and `inputs`, how many of the trace's inputs are the transition's route. The lap is timed from the gate
+  crossing (`Simulation.LapStart`).
 - `POST /api/enginesim/submit {course, capabilities | chain, segment; ticks}` — turbo replay of an offline candidate;
   saved as the category's route (`<course>_<CAPS> <time>`, or the chain segment's `<chain>/<segment>_<CAPS> <time>`)
   when it finishes faster than the current best, or as fast in fewer physics ticks from the run start (`runTicks`; the
-  saved route is replayed for its own). The reply has both.
+  saved route is replayed for its own). The reply has both. With `lead: true` the inputs start at the transition: the
+  ones up to the gate are judged as the transition's route, the rest as the lap (`runTicks` from the transition's start).
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 
 `tools/enginesim-capture.py routes|random|start|route|chain` captures traces; `tools/enginesim-redeploy.py` rebuilds and
@@ -50,11 +55,24 @@ $traces = "C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\eng
 
 `solve` loads the trace's world and start state on every thread, seeds with the trace's inputs (plus `--seed` traces),
 writes each new best to `<traces>\offline-best\`, and sends each best that beats its seeds to the running game's
-`/api/enginesim/submit` (skip with `--no-submit`). A best is the fastest course time; at the same time, the fewest
+`/api/enginesim/submit` (skip with `--no-submit`). Each worker walks its best's plateau: a mutation that finishes
+exactly as fast (or rejoins the best's state) replaces it (`drifts` in the progress line), since a faster route is often
+several mutations away, each alone no faster. A best is the fastest course time; at the same time, the fewest
 physics ticks from the run start (`runTicks`), which shortens a flying start's setup before its last start-gate
 crossing (off the timer, but a player still sits through it). With the game closed the best stays on disk; the plugin
 judges every waiting `offline-best\` file that beats or ties the saved route (its category, then the course's other
-categories) as soon as the game is next in the world and idle, and moves it to `offline-best\judged\`.
+categories) as soon as the game is in the world and idle (a studio Optimize run holds the queue only while it starts
+each target, and its running target's own files until that `solve` ends), and moves it to `offline-best\judged\`.
+
+A solve picks up where the last solve of the same target stopped. Its search state goes to `<traces>\archive\<label>.json`
+(`<course>_<caps>`, or `chain-<chain>-<segment>_<caps>[-lead]`) every minute and when it ends, so a solve the studio
+stops (it kills the process) loses at most the last minute. The file holds every explore cell's input prefix with how
+often it was picked, plus the plateau (each worker's route as fast as the best, drifted away from the saved one), and
+a running count of all runs. The next solve replays the prefixes, split across its workers, to rebuild the cells
+(~700k ticks for Course 4 after one session, a few seconds). Well-explored cells keep their picks, so exploration
+goes on from the frontier and doesn't start again from the course start. Each worker also starts drifting from a
+plateau route instead of the saved route. A plateau route's result is not submitted: its file was written when it
+was found. `--fresh` ignores the file for this solve but still overwrites it.
 
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
 the game and solve offline.
@@ -67,6 +85,8 @@ python tools\enginesim-capture.py chain wj 2                          # -> start
 & $exe replay $traces\seed-cbonus1-*.json $traces\seed-c4-*.json     # fidelity on the new course first
 & $exe solve $traces\start-cbonus1-wj.json --seed $traces\seed-cbonus1-wj-bonus1-WJ.json --no-submit --minutes 60
 & $exe solve $traces\start-chain-wj-2.json --minutes 20                # its bests: offline-best\chain-wj-2_wj-<time>.json
+python tools\enginesim-capture.py chain newgame 1 --lead               # -> start-chain-newgame-1.json + start-chain-newgame-1-lead.json
+& $exe solve $traces\start-chain-newgame-1.json --lead $traces\start-chain-newgame-1-lead.json  # a lap with its lead-in
 ```
 
 The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in
@@ -89,6 +109,14 @@ The best file in `offline-best\` reaches the studio by itself (see above); befor
   per step; contact masks = `(layerMatrix[layer] | include) & ~exclude`, both sides must accept.
 - Callbacks: collisions from Box2D touching flags (start of step); triggers from an overlap test after the step; Enter on
   the first step, Stay after; the start state primes existing contacts as already touching.
+- Turbo restores (`TurboRunner.Restore`) match that priming: one muted physics step at the restored pose rebuilds
+  Unity's contacts, so the first tick reports Stay, not a stale Exit plus a fresh Enter. Without it a start touching a
+  collider (a purchase segment starting under its box) ran differently in turbo from run to run.
+- Turbo spawns no floating numbers (`FloatingNumberScript.ActuallySpawnText` off for the run). Their pool of 200 is only
+  refilled by their own `FixedUpdate`, which turbo doesn't step. A long chain replay drained it; the next pop threw
+  out of `courseScript.stopTracking` (no finish) or `clonesScript.DestroyClone` (the clone stays and pays again), at a
+  point that depended on how much real time refilled the pool since the last run. The same newgame replay then
+  finished 56 segments once and then stopped at segment 30 or segment 2.
 - Raycasts: direction normalized, negative distance flips the ray, start-inside hits at fraction 0 with normal −dir,
   triggers are hit (`queriesHitTriggers`).
 - Transforms: the player's parent (`PlayerObject`) follows the game's `FloatingOrigin` and sits at (−20200, −10539)
@@ -98,6 +126,9 @@ The best file in `offline-best\` reaches the studio by itself (see above); befor
 - Every trace result matches turbo; two runs differ on their death tick only (a pair's contact order in
   `Collision2D`, see `Box2D/NOTES.md`). bonus1 (`seed-cbonus1-wj-*`) differs at one tick only: body velocity y
   1.2e-14 instead of 0 from a contact on a ground seam whose normal is (0, 0.99999994); every later tick is identical.
+- Upgrade boxes: `hooks.txt` replaces `upgradeBox.OnTriggerStay2D` with `Runtime/Shop.cs` (the buy rule, Cash, cost,
+  cap, movement unlocks, a purchase segment's finish; clone income from the trace's `purchase.income`). Traces of
+  Course 1's reward and clone purchases (one waiting on clone income) match turbo's result and Cash on every tick.
 
 ## Memory
 

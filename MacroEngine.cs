@@ -55,6 +55,8 @@ namespace IGTAPTasMod
         private long _physicsTicks;
         // A chain segment (Continue) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
         private bool _countEveryPhysicsTick;
+        // A purchase segment: which of its boxes (CourseDef.boxes, by index) this run bought so far.
+        private int _purchasesMade;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
         private bool _hasProgressSample;
@@ -112,6 +114,7 @@ namespace IGTAPTasMod
             _runTicks = 0;
             _physicsTicks = 0;
             _countEveryPhysicsTick = false;
+            _purchasesMade = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
             _hasProgressSample = false;
@@ -169,6 +172,7 @@ namespace IGTAPTasMod
             _runTicks = 0;
             _physicsTicks = 0;
             _countEveryPhysicsTick = true;
+            _purchasesMade = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
             _hasProgressSample = false;
@@ -226,6 +230,15 @@ namespace IGTAPTasMod
         internal static bool IsFinishReason(string reason)
         {
             return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason || reason == PurchaseFinishReason;
+        }
+
+        // A purchase segment's boxes (hierarchy paths; a path listed twice must be bought twice): the game just bought
+        // `bought`, which counts for the first of them not bought yet in this run. True once every one is.
+        internal bool RecordPurchase(IReadOnlyList<string> required, string bought)
+        {
+            for (int i = 0; i < required.Count; i++)
+                if ((_purchasesMade & (1 << i)) == 0 && required[i] == bought) { _purchasesMade |= 1 << i; break; }
+            return _purchasesMade == (1 << required.Count) - 1;
         }
 
         // Once per physics tick, after Movement.FixedUpdate (which takes the tick's input, if any).

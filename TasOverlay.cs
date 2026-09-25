@@ -8,7 +8,7 @@ namespace IGTAPTasMod
 {
     // What viewers see in the game while the studio's "Show TAS overlay" is on: the player's hurtbox, every spike's
     // collider, the spike grace count while the hurtbox is inside one, and on the left the inputs playback presses, one
-    // row per run of identical physics ticks (newest last, like a TAS input file). Only real-time playback is listed;
+    // row per run of identical physics ticks (newest at the top; older rows fall off the bottom). Only real-time playback is listed;
     // solver and turbo runs are not.
     public sealed partial class TasPlugin
     {
@@ -109,7 +109,7 @@ namespace IGTAPTasMod
         void BuildOverlayStyles(float scale)
         {
             _overlayStyleHeight = Screen.height;
-            _overlayTitle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(22 * scale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
+            _overlayTitle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(22 * scale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip, wordWrap = false };
             _overlayTitle.normal.textColor = Color.white;
             _overlayText = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * scale) };
             _overlayTicksStyle = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleRight };
@@ -175,9 +175,11 @@ namespace IGTAPTasMod
         {
             public Collider2D collider;
             public spikeScript script;
-            // Static colliders keep their shapes; a moving one rebuilds them every frame.
+            // Static colliders keep their shapes until their shape count or world bounds change (a scene load can
+            // place a static body after the first scan); a moving one rebuilds them every frame.
             public bool moving;
             public int shapeCount = -1;
+            public Bounds bounds;
             public readonly List<SpikeShape> shapes = new List<SpikeShape>();
         }
 
@@ -272,7 +274,7 @@ namespace IGTAPTasMod
                         _spikeByCollider[c] = entry = new SpikeCollider { collider = c, script = spike };
                     Rigidbody2D body = c.attachedRigidbody;
                     entry.moving = body != null && body.bodyType != RigidbodyType2D.Static;
-                    if (!entry.moving && entry.shapeCount != c.shapeCount) BuildShapes(entry);
+                    if (!entry.moving && (entry.shapeCount != c.shapeCount || entry.bounds != c.bounds)) BuildShapes(entry);
                     _spikeColliders.Add(entry);
                 }
             }
@@ -284,6 +286,7 @@ namespace IGTAPTasMod
             Collider2D c = entry.collider;
             entry.shapes.Clear();
             entry.shapeCount = c.shapeCount;
+            entry.bounds = c.bounds;
             int count = c.GetShapes(_shapeGroup);
             Matrix4x4 m = _shapeGroup.localToWorldMatrix;
             float radiusScale = Mathf.Max(Mathf.Abs(m.lossyScale.x), Mathf.Abs(m.lossyScale.y));
@@ -371,9 +374,13 @@ namespace IGTAPTasMod
             Color touched = _grazeKilled ? HitboxColor : GraceColor;
             float half = Mathf.Max(0.75f, scale);
 
+            // Clipped to the camera's viewport: a window wider than the game's aspect shows black bars the spikes
+            // must not spill into.
+            Rect pixels = cam.pixelRect;
             material.SetPass(0);
             GL.PushMatrix();
-            GL.LoadPixelMatrix(0, Screen.width, Screen.height, 0);
+            GL.Viewport(pixels);
+            GL.LoadPixelMatrix(pixels.xMin, pixels.xMax, Screen.height - pixels.yMin, Screen.height - pixels.yMax);
             GL.Begin(GL.QUADS);
             foreach (SpikeCollider entry in _spikeColliders)
             {
@@ -420,6 +427,7 @@ namespace IGTAPTasMod
             }
             GL.End();
             GL.PopMatrix();
+            GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
         }
 
         static Rect BoundsRect(Bounds b) { return Rect.MinMaxRect(b.min.x, b.min.y, b.max.x, b.max.y); }
@@ -442,7 +450,7 @@ namespace IGTAPTasMod
             }
             else if (Time.unscaledTime - _lastGrazeTime < GrazeLingerSeconds)
             {
-                text = _lastGrazeKilled ? "SPIKE ✗" : "SPIKE GRAZE " + _lastGrazeTicks + "/" + _lastGrazeLimit + " SURVIVED";
+                text = _lastGrazeKilled ? "SPIKE ✗" : "SPIKE GRACE " + _lastGrazeTicks + "/" + _lastGrazeLimit;
                 color = _lastGrazeKilled ? HitboxColor : GraceColor;
                 color.a = 1f - (Time.unscaledTime - _lastGrazeTime) / GrazeLingerSeconds;
             }
@@ -482,10 +490,9 @@ namespace IGTAPTasMod
         void DrawInputPanel(float scale)
         {
             if (_overlayClock == null)
-                _overlayClock = _overlayTicks + " ticks = " + (_overlayTicks * Time.fixedDeltaTime).ToString("0.00") + " s  (1 tick = "
-                    + Mathf.RoundToInt(Time.fixedDeltaTime * 1000f) + " ms)";
+                _overlayClock = _overlayTicks + " ticks · " + (_overlayTicks * Time.fixedDeltaTime).ToString("0.00") + " s";
             float margin = 16 * scale, pad = 14 * scale, rowHeight = 26 * scale, width = 340 * scale;
-            float headerHeight = pad + 24 * scale + 24 * scale + 26 * scale + 4 * scale;
+            float headerHeight = pad + 24 * scale + 26 * scale + 4 * scale;
             int fit = Mathf.Max(1, Mathf.FloorToInt((Screen.height - 2 * margin - headerHeight - pad) / rowHeight));
             int shown = Mathf.Min(fit, _inputRows.Count);
             Rect panel = new Rect(margin, margin, width, headerHeight + shown * rowHeight + pad);
@@ -494,14 +501,9 @@ namespace IGTAPTasMod
 
             float x = panel.x + pad, y = panel.y + pad;
             Label(new Rect(x, y, width - 2 * pad, 24 * scale), _overlayClock, _overlayText, DimColor);
-            float legend = y + 24 * scale, swatch = 12 * scale, swatchY = legend + 6 * scale;
-            Fill(new Rect(x, swatchY, swatch, swatch), SpikeColor);
-            Label(new Rect(x + 18 * scale, legend, 70 * scale, 24 * scale), "SPIKES", _overlayText, DimColor);
-            Fill(new Rect(x + 88 * scale, swatchY, swatch, swatch), GraceColor);
-            Label(new Rect(x + 106 * scale, legend, 80 * scale, 24 * scale), "GRACE", _overlayText, DimColor);
 
             // Columns: how many ticks the row's inputs are held, the stick, jump held, dash pressed.
-            float stickX = x + 64 * scale, jumpX = x + 170 * scale, dashX = x + 240 * scale, columns = legend + 26 * scale;
+            float stickX = x + 64 * scale, jumpX = x + 170 * scale, dashX = x + 240 * scale, columns = y + 24 * scale;
             Fill(new Rect(panel.x + 4 * scale, columns + 25 * scale, width - 4 * scale, 1), new Color(1f, 1f, 1f, 0.25f));
             Label(new Rect(x, columns, 48 * scale, 24 * scale), "TICKS", _overlayTicksStyle, DimColor);
             Label(new Rect(stickX, columns, 100 * scale, 24 * scale), "STICK", _overlayText, DimColor);
@@ -510,7 +512,9 @@ namespace IGTAPTasMod
             y = panel.y + headerHeight;
 
             bool live = _overlayLastTick != 0;
-            for (int i = _inputRows.Count - shown; i < _inputRows.Count; i++, y += rowHeight)
+            // Newest first: the current row sits under the column header and older rows scroll down and off the panel.
+            // A segment's "▸ route" header row is its oldest, so it sits under that segment's rows.
+            for (int i = _inputRows.Count - 1; i >= _inputRows.Count - shown; i--, y += rowHeight)
             {
                 InputRow row = _inputRows[i];
                 if (row.header != null)

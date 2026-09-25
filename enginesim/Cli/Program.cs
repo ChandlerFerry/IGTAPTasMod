@@ -82,7 +82,7 @@ namespace IGTAP.EngineSim.Cli
                     default:
                         Console.Error.WriteLine("usage:\n  replay <trace.json>... [--verbose]   compare offline runs with turbo traces tick by tick\n"
                             + "  bench <trace.json> [seconds]           runs/s and ticks/s on one core\n"
-                            + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit]\n"
+                            + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit] [--fresh]\n"
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
@@ -163,6 +163,7 @@ namespace IGTAP.EngineSim.Cli
                             Compare(here, "course" + c.courseNumber + "." + name, Json(f.GetValue(c)), entry[2]);
                         }
                     }
+                    if (t.TryGetProperty("cash", out JsonElement cash)) Compare(here, "cash", Json(sim.Shop.CashNow), cash);
                     if (here.Count == 0) return;
                     if (firstDiff < 0) firstDiff = step;
                     if (diffs.Count < 60) diffs.Add("tick " + step + ": " + string.Join("; ", here));
