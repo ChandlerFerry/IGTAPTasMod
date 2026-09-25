@@ -42,7 +42,7 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown enginesim endpoint." };
         }
 
-        // Sets the solver's course/category (or chain segment) and makes sure its start state exists. Returns an error
+        // Sets the solver's course/category and makes sure its start state exists. Returns an error
         // response or null.
         object PrepareEngineSimRun(WebStudioRequest request, JObject body, out List<SolverTick> inputs)
         {
@@ -58,8 +58,7 @@ namespace IGTAPTasMod
                 return new { ok = false, error = "A new game is loading; retry in a moment." };
             }
             string key = SelectSolverTarget(body);
-            // A chain from a new game writes no unlock, so it runs with "Don't touch my unlocks" on.
-            if (CapabilitiesLocked && !SolverFromNewGame)
+            if (CapabilitiesLocked)
             {
                 request.StatusCode = 409;
                 return new { ok = false, error = CapabilitiesLockedError };
@@ -77,60 +76,28 @@ namespace IGTAPTasMod
             if (_startState == null && !CourseLoaded())
             {
                 request.StatusCode = 409;
-                return new { ok = false, error = "Course " + _solverPark.Token + " is loading; retry in a moment." };
+                return new { ok = false, error = "Course " + _solverTarget.Token + " is loading; retry in a moment." };
             }
             if (_startState == null)
             {
                 _engineSimStartKey = null;
-                // The solver's first run captures the start state; every later run resumes from it. A chain segment's
-                // start is where the chain's routes before it end.
-                if (_solverChain != null) CaptureChainSegmentStart(Truthy(body, "freshStart"));
-                else Evaluate(new List<SolverTick> { new SolverTick() }, out _, out _, out _);
+                // The solver's first run captures the start state; every later run resumes from it.
+                Evaluate(new List<SolverTick> { new SolverTick() }, out _, out _, out _);
                 if (_startState == null) throw new InvalidOperationException("The start state was not captured.");
                 _engineSimStartKey = key;
             }
             return null;
         }
 
-        // {course, capabilities} or {chain, segment} (0-based; the chain's category): what every turbo run is made for.
-        // `lead: true` (a course segment right after a transition to its start gate, LeadSegment): runs start where that
-        // transition starts. Returns the key of its start state.
+        // {course, capabilities}: what every turbo run is made for. Returns the key of its start state.
         string SelectSolverTarget(JObject body)
         {
-            string chainName = Text(body, "chain");
-            if (!string.IsNullOrEmpty(chainName))
-            {
-                ChainDef chain = FindChain(chainName);
-                List<ChainSegment> segments = ChainSegments(chain);
-                int index = Number(body, "segment", -1);
-                if (index < 0 || index >= segments.Count) throw new InvalidOperationException("Chain " + chain.name + " has no segment " + index + " (0-based).");
-                int lead = Truthy(body, "lead") ? LeadSegment(segments, index) : -1;
-                if (Truthy(body, "lead") && lead < 0)
-                    throw new InvalidOperationException("Chain " + chain.name + ": segment " + (index + 1) + " does not come right after a transition to its start gate.");
-                int from = lead >= 0 ? lead : index;
-                // Every route before its start must exist: they make it.
-                List<MacroDefinition> before = ChainRoutes(chain, segments, from);
-                _solverChain = chain;
-                _solverSegments = segments;
-                _solverSegment = index;
-                _solverLead = lead;
-                _solverTarget = segments[index].target;
-                _solverPark = segments[0].target;
-                _solverRestart = segments[from].restart;
-                _solverCaps = segments[index].caps;
-                return "chain " + chain.name + " " + from + ": " + string.Join(" | ", before.Select(r => r.id + " " + r.name));
-            }
             int course = Number(body, "course", 0);
             string caps = Text(body, "capabilities");
             CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
             if (!CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, caps);
-            _solverChain = null;
-            _solverSegments = null;
-            _solverSegment = -1;
-            _solverLead = -1;
-            _solverRestart = false;
-            _solverTarget = _solverPark = def;
+            _solverTarget = def;
             _solverCaps = caps;
             return course + "_" + caps;
         }
@@ -148,7 +115,6 @@ namespace IGTAPTasMod
         // faster on the timer, or as fast in fewer physics ticks from the run start (a shorter flying-start setup).
         JudgeResult Judge(List<SolverTick> inputs)
         {
-            if (_solverLead >= 0) return JudgeLead(inputs);
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
             long runTicks = _engine.PhysicsTicks;
             string category = SolverCategory;
@@ -168,68 +134,11 @@ namespace IGTAPTasMod
             return result;
         }
 
-        // A lap with its lead-in (lead: true), judged as the chain plays it: its inputs up to where the course's start
-        // gate starts its timer are the transition, which must be no slower than the transition's saved route; the rest is
-        // the lap from there, judged like any segment's route. The transition's route is saved first (unless it is the saved
-        // one), then the lap; when the lap isn't saved, the library goes back to what it was, so a lead-in changes nothing
-        // unless it makes the lap faster. The reply's runTicks count from the transition's start, like the offline run's.
-        JudgeResult JudgeLead(List<SolverTick> inputs)
-        {
-            ChainDef chain = _solverChain;
-            int lap = _solverSegment, lead = _solverLead;
-            SelectChainSegment(chain, lead);
-            bool through = Evaluate(inputs, out float leadTime, out int leadTick, out _);
-            long leadTicks = _engine.PhysicsTicks;
-            string leadCategory = SolverCategory;
-            float leadBest = CategoryBest(leadCategory);
-            ParkAtStart();
-            if (!through || leadTime > leadBest + .0001f)
-                return new JudgeResult { rejected = "its lead-in " + (through ? "takes " + leadTime.ToString("0.00", CultureInfo.InvariantCulture) + "s, over "
-                    + leadCategory + " " + leadBest.ToString("0.00", CultureInfo.InvariantCulture) : "never starts the course's timer") };
-            List<SolverTick> transition = inputs.Take(leadTick + 1).Select(k => k.Clone()).ToList();
-            MacroDefinition savedLead = ChainSegmentRoute(chain, _solverSegments[lead]);
-            bool same = savedLead != null && JsonConvert.SerializeObject(ToTicks(savedLead.steps)) == JsonConvert.SerializeObject(transition);
-            List<(MacroDefinition route, string name)> library = _library.macros.Select(m => (m, m.name)).ToList();
-            if (!same && !SaveSolverRoute(transition, leadTime))
-                return new JudgeResult { finished = true, time = leadTime, runTicks = leadTicks, rejected = _solverLog[_solverLog.Count - 1] };
-            SelectChainSegment(chain, lap);
-            JudgeResult result = Judge(inputs.Skip(leadTick + 1).Select(k => k.Clone()).ToList());
-            result.runTicks += leadTicks;
-            if (result.previousRunTicks is long was) result.previousRunTicks = was + leadTicks;
-            if (!result.saved && !same)
-            {
-                _library.macros.Clear();
-                foreach (var (route, name) in library) { route.name = name; _library.macros.Add(route); }
-                SaveLibrary();
-                _startState = null;
-                _engineSimStartKey = null;
-                string line = "Chain " + chain.name + ": " + leadCategory + " " + leadTime.ToString("0.00", CultureInfo.InvariantCulture)
-                    + " put back: the lap after it is not faster";
-                _solverLog.Add(line);
-                Logger.LogInfo(line);
-            }
-            return result;
-        }
-
-        // PrepareEngineSimRun for a chain segment on its own (no lead-in), inside a judge that already passed its checks.
-        void SelectChainSegment(ChainDef chain, int segment)
-        {
-            object error = PrepareEngineSimRun(new WebStudioRequest(), new JObject { ["chain"] = chain.name, ["segment"] = segment }, out _);
-            if (error != null) throw new InvalidOperationException((string)JObject.FromObject(error)["error"]);
-        }
-
         // Back to the course start after a turbo run: the real frames until the next run then load the start's zone
-        // (and apply any FloatingOrigin shift) instead of wherever the run ended. A chain segment's is its chain's start;
-        // a chain from a new game's is the fresh game's first tick (economy included: nothing a turbo run bought stays).
+        // (and apply any FloatingOrigin shift) instead of wherever the run ended.
         void ParkAtStart()
         {
-            if (SolverFromNewGame)
-            {
-                Movement player = FindWorldMovement();
-                if (FreshGame && player == _newGamePlayer) TurboRunner.Restore(_newGameStart, player);
-                return;
-            }
-            RestoreRouteStart(new MacroDefinition { name = _solverPark.Token + "_" });
+            RestoreRouteStart(new MacroDefinition { name = _solverTarget.Token + "_" });
         }
 
         sealed class JudgeResult
@@ -244,22 +153,20 @@ namespace IGTAPTasMod
             public string rejected;
         }
 
-        // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json (a chain
-        // segment's to chain-<chain>-<segment>_<caps>-<time>.json, chain-<chain>-<segment>_<caps>-lead-<time>.json with its
-        // lead-in) and submits it only while the game runs. Once the game is in the world and not busy (a studio solve counts
+        // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json and
+        // submits it only while the game runs. Once the game is in the world and not busy (a studio solve counts
         // as busy only while it starts a target; its running process's own category waits for that process, which submits
         // its bests itself), the fastest waiting file per category that beats
-        // or ties the saved route is judged here like a submit (a course's in its own category and the others, as solve does;
-        // a chain segment's in its chain's), so solves run with the game closed still reach the studio. Judged or superseded
+        // or ties the saved route is judged here like a submit (a course's in its own category and the others, as solve
+        // does), so solves run with the game closed still reach the studio. Judged or superseded
         // files move to judged/. A Full-TAS run's (fulltas-<run>-<time>.json) goes through the Full-TAS gate; its group waits
         // while no fresh new game is at its start.
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
-        static readonly Regex OfflineChainBestFile = new Regex(@"^chain-([A-Za-z0-9]+)-(\d+)_([a-z]+)(-lead)?-([\d.]+)\.json$");
         float _offlineBestCheckAt;
         // "<file>|<label>" already judged; a category whose course is still loading is retried on a later pump.
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
 
-        // A waiting offline best: its group (one category or chain segment), time, and the submits that judge it (label,
+        // A waiting offline best: its group (one category), time, and the submits that judge it (label,
         // body, category route name), its own first.
         sealed class OfflineBest
         {
@@ -293,19 +200,7 @@ namespace IGTAPTasMod
                 return new OfflineBest { path = path, group = "fulltas-" + run.name, time = float.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
                     judgings = new List<(string, JObject, string)> { (CapabilityLabels["none"], new JObject { ["fulltas"] = run.name }, FullTasCategory(run.name)) } };
             }
-            m = OfflineChainBestFile.Match(file);
-            if (!m.Success) return null;
-            ChainDef chain = _chains.Find(c => string.Equals(c.name, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
-            if (chain == null) return null;
-            List<ChainSegment> segments;
-            try { segments = ChainSegments(chain); }
-            catch (InvalidOperationException) { return null; }
-            int index = int.Parse(m.Groups[2].Value);
-            // Judged in the segment's own category (the chain's, wall jump after a buywj).
-            if (index >= segments.Count || segments[index].caps != m.Groups[3].Value) return null;
-            return new OfflineBest { path = path, group = "chain-" + chain.name + "-" + index, time = float.Parse(m.Groups[5].Value, CultureInfo.InvariantCulture),
-                judgings = new List<(string, JObject, string)> { (CapabilityLabels[segments[index].caps],
-                    new JObject { ["chain"] = chain.name, ["segment"] = index, ["lead"] = m.Groups[4].Success }, ChainCategory(chain, segments[index])) } };
+            return null;
         }
 
         // How many offline bests wait to be judged (the Solve panel's "To validate").
@@ -327,7 +222,7 @@ namespace IGTAPTasMod
             var groups = Directory.GetFiles(dir, "*.json").Select(ReadOfflineBest).Where(f => f != null).GroupBy(f => f.group);
             string judged = Path.Combine(dir, "judged");
             // The running solve submits its own bests; its group waits until the process ends (then catches what it missed).
-            string solving = !_solverRunning ? null : _solveChain != null ? "chain-" + _solveChain + "-" + _solveSegment : _solveCourse + "_" + _solveCaps;
+            string solving = !_solverRunning ? null : _solveCourse + "_" + _solveCaps;
             foreach (var group in groups)
             {
                 if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
@@ -405,22 +300,13 @@ namespace IGTAPTasMod
             return fewest;
         }
 
-        // {course, capabilities | chain, segment; ticks: [{x, held, press, release, dash, dashJump, reset}] or routeId, name,
+        // {course, capabilities; ticks: [{x, held, press, release, dash, dashJump, reset}] or routeId, name,
         // world, freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
         // every stepped tick; with world: true also the world export as that run saw it. {fulltas: <run>, ...}: FullTasTrace.
         object EngineSimTrace(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
             if (error != null) return error;
-            // A lap with its lead-in runs what the chain plays now: the transition's route, then the lap's if it has one
-            // (its header's lead.inputs says where the lap's begin).
-            List<SolverTick> leadInputs = null;
-            if (_solverLead >= 0)
-            {
-                MacroDefinition lapRoute = ChainSegmentRoute(_solverChain, _solverSegments[_solverSegment]);
-                leadInputs = ToTicks(ChainSegmentRoute(_solverChain, _solverSegments[_solverLead]).steps);
-                inputs = leadInputs.Concat(lapRoute != null ? ToTicks(lapRoute.steps) : new List<SolverTick>()).ToList();
-            }
             CourseDef finishCourse = _solverTarget;
             int course = finishCourse.id;
             string caps = _solverCaps;
@@ -449,20 +335,6 @@ namespace IGTAPTasMod
                     json.Float(finishCourse.endW); json.Float(finishCourse.endH);
                     w.WriteEndArray();
                 }
-                // A purchase: the boxes it buys (hierarchy paths) and the Cash the clones pay while it runs (the start's
-                // economy is in "start"): offline, the game's buy rule decides when each box is bought (enginesim Shop).
-                if (finishCourse.IsPurchase)
-                {
-                    List<double> income = PurchaseIncome();
-                    w.WritePropertyName("purchase"); w.WriteStartObject();
-                    w.WritePropertyName("boxes"); w.WriteStartArray();
-                    foreach (string box in finishCourse.boxes) w.WriteValue(box);
-                    w.WriteEndArray();
-                    w.WritePropertyName("income"); w.WriteStartArray();
-                    foreach (double paid in income) w.WriteValue(paid);
-                    w.WriteEndArray();
-                    w.WriteEndObject();
-                }
                 // A transition (Simulation.SetTarget): timed in physics ticks, and ends at its end box or at the start gate
                 // of course `finishStart`.
                 if (finishCourse != null && finishCourse.IsTransition)
@@ -470,45 +342,19 @@ namespace IGTAPTasMod
                     w.WritePropertyName("transition"); w.WriteValue(true);
                     if (finishCourse.toCourse > 0) { w.WritePropertyName("finishStart"); w.WriteValue(finishCourse.toCourse); }
                 }
-                // A chain segment: timed in physics ticks from its start (a course segment too: the chain's time is the sum
-                // of its segments', and the course's timer may be running already), after a quick restart if it has one.
-                if (_solverChain != null)
-                {
-                    w.WritePropertyName("chain"); w.WriteValue(_solverChain.name);
-                    w.WritePropertyName("segment"); w.WriteValue(_solverSegment);
-                    w.WritePropertyName("fromRunStart"); w.WriteValue(true);
-                    if (_solverRestart) { w.WritePropertyName("restart"); w.WriteValue(true); }
-                    // A lap with its lead-in: the run starts where the transition before it starts (enginesim Simulation.LeadDeadline).
-                    // `ticks`: the transition's saved route in physics ticks; `inputs`: its input ticks, the first of this trace's.
-                    if (leadInputs != null)
-                    {
-                        float leadTime = CategoryBest(ChainCategory(_solverChain, _solverSegments[_solverLead]));
-                        w.WritePropertyName("lead"); w.WriteStartObject();
-                        w.WritePropertyName("segment"); w.WriteValue(_solverLead);
-                        w.WritePropertyName("ticks"); w.WriteValue(Mathf.RoundToInt(leadTime / Time.fixedDeltaTime));
-                        w.WritePropertyName("inputs"); w.WriteValue(leadInputs.Count);
-                        w.WriteEndObject();
-                    }
-                }
                 w.WritePropertyName("capabilities"); w.WriteValue(caps);
                 w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
                 w.WritePropertyName("inputs"); w.WriteRawValue(JsonConvert.SerializeObject(inputs));
                 w.WritePropertyName("start"); EngineSimExport.WriteSnapshot(json, _startState, player, false);
                 w.WritePropertyName("ticks");
                 w.WriteStartArray();
-                // A lead trace's result is the lap's time, as offline runs score it: physics ticks from the tick the
-                // course's start gate starts its timer.
-                courseScript lapCourse = leadInputs != null ? _solverCourses.FirstOrDefault(c => c != null && c.courseNumber == course) : null;
-                long lapStart = -1;
                 _engineSimTickHook = p =>
                 {
-                    if (lapCourse != null && lapStart < 0 && (bool)CourseTrackingFlag.GetValue(lapCourse)) lapStart = _engine.PhysicsTicks;
                     var snapshot = TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks, false, false);
                     EngineSimExport.WriteSnapshot(json, snapshot, p, true);
                 };
                 try { finished = Evaluate(inputs, out time, out finishTick, out end); }
                 finally { _engineSimTickHook = null; }
-                if (finished && lapCourse != null) time = (_engine.PhysicsTicks - lapStart) * Time.fixedDeltaTime;
                 ParkAtStart();
                 w.WriteEndArray();
                 w.WritePropertyName("result");
@@ -522,27 +368,6 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
             }
             return new { ok = true, path = path, finished = finished, time = time, finishTick = finishTick };
-        }
-
-        // Ticks of clone income a purchase trace carries: offline runs past it get no more Cash.
-        const int PurchaseIncomeTicks = 1500;
-
-        // The Cash the clones pay from the segment's start, standing still in turbo: element k is what they paid through
-        // physics tick k + 1. Clones run on their own clock, so any route earns the same while the clones stay on screen,
-        // except what a clone or reward it buys on the way adds (enginesim Shop leaves that out).
-        List<double> PurchaseIncome()
-        {
-            var income = new List<double>();
-            double start = TurboRunner.Cash(_startState);
-            _engineSimTickHook = p =>
-            {
-                double paid = globalStats.currencyLookup[globalStats.Currencies.Cash] - start;
-                while (income.Count < _engine.PhysicsTicks) income.Add(paid);
-            };
-            try { Evaluate(Enumerable.Range(0, PurchaseIncomeTicks).Select(_ => new SolverTick()).ToList(), out _, out _, out _); }
-            finally { _engineSimTickHook = null; }
-            ParkAtStart();
-            return income;
         }
 
         string _engineSimStartKey;

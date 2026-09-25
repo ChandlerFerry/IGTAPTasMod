@@ -11,16 +11,15 @@ namespace IGTAP.EngineSim
 {
     // The upgrade boxes offline. hooks.txt makes upgradeBox.OnTriggerStay2D call Stay: the game's buy rule (cooldown up,
     // affordable, active) and what a purchase changes that a run observes: Cash, the box's cost, uses and cap, the
-    // unlocks a movement box gives, the local upgrades (Economy), and a purchase segment's finish. The rest a purchase
-    // does (the box's UI, particles) is left out. Each box's buy cooldown counts down by the tick like
-    // upgradeBox.FixedUpdate in TurboRunner.Run.
+    // unlocks a movement box gives, the local upgrades (Economy), and Full-TAS buy goals. The rest a purchase does (the
+    // box's UI, particles) is left out. Each box's buy cooldown counts down by the tick like upgradeBox.FixedUpdate in
+    // TurboRunner.Run.
     //
     // Cash is per simulation (the game keeps it in a static every worker thread shares): the start's, plus what the run
     // earned, minus what it spent. Earned: with the start's clone state, the native Economy (course rewards, clones,
-    // local upgrades); else what the clones paid by then (a purchase trace's income, recorded in turbo standing still).
-    // Purchases whose effects aren't modeled (buy-max and prestige boxes, global boxes other than the global reward one
-    // with the native economy; movement boxes other than dash, wall jump and double jump) end the run: offline can't say
-    // what follows them.
+    // local upgrades); else nothing. Purchases whose effects aren't modeled (buy-max and prestige boxes, global boxes
+    // other than the global reward one with the native economy; movement boxes other than dash, wall jump and double
+    // jump) end the run: offline can't say what follows them.
     public sealed class Shop
     {
         const int CurrencyCount = 7;
@@ -39,10 +38,6 @@ namespace IGTAP.EngineSim
         readonly Dictionary<upgradeBox, string> _ids = new Dictionary<upgradeBox, string>();
         readonly double[] _start = new double[CurrencyCount];
         double[] _spent = new double[CurrencyCount];
-        // Cash the clones paid through physics tick k + 1 of the run (TasPlugin.PurchaseIncome).
-        double[] _income = Array.Empty<double>();
-        // A purchase segment's boxes (hierarchy paths, MacroEngine.RecordPurchase); null for any other target.
-        string[] _targets;
         // The native economy: null unless the start state carries the clones' state (LoadStart).
         internal Economy Economy { get; private set; }
 
@@ -70,19 +65,6 @@ namespace IGTAP.EngineSim
             // clonesScript.isOnScreen, and courseScript.UpdateReward / fullUpdate (hooks.txt): the economy's, when native.
             Hooks.ClonesOnScreen = (clones, onScreen) => Economy?.OnScreen((clonesScript)clones, onScreen);
             Hooks.CourseReward = course => Economy?.UpdateReward((courseScript)course);
-        }
-
-        public bool IsPurchase { get { return _targets != null; } }
-
-        // The trace's "purchase": {boxes, income}.
-        internal void SetTarget(JsonElement purchase)
-        {
-            if (!purchase.TryGetProperty("boxes", out JsonElement boxes))
-                throw new InvalidOperationException("This purchase trace predates the offline buy rule: capture it again.");
-            _targets = boxes.EnumerateArray().Select(b => b.GetString()).ToArray();
-            foreach (string path in _targets)
-                if (!_paths.ContainsValue(path)) throw new InvalidOperationException("Upgrade box " + path + " is not in this world export.");
-            _income = purchase.GetProperty("income").EnumerateArray().Select(v => v.GetDouble()).ToArray();
         }
 
         // The start state's "economy" (TasPlugin's TurboRunner.Economy): every currency and every box's own state; with
@@ -116,20 +98,13 @@ namespace IGTAP.EngineSim
         // What the player can spend now: this tick's physics runs after the clones paid in the ticks before it.
         double Available(int currency)
         {
-            if (Economy != null) return _start[currency] - _spent[currency] + (currency == Cash ? Economy.Earned : 0.0);
-            return _start[currency] - _spent[currency] + (currency == Cash ? Paid(_sim.Engine.PhysicsTicks - 1) : 0.0);
+            return _start[currency] - _spent[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
         }
 
         // Cash after the run's latest tick, clone payouts included (a trace tick's "cash").
         public double CashNow
         {
-            get { return _start[Cash] - _spent[Cash] + (Economy != null ? Economy.Earned : Paid(_sim.Engine.PhysicsTicks)); }
-        }
-
-        // What the clones paid through physics tick `ticks` of the run.
-        double Paid(long ticks)
-        {
-            return ticks <= 0 || _income.Length == 0 ? 0.0 : _income[(int)Math.Min(ticks, _income.Length) - 1];
+            get { return _start[Cash] - _spent[Cash] + (Economy?.Earned ?? 0.0); }
         }
 
         // TurboRunner.StepClones for every course's clones, after Movement.Update.
@@ -196,9 +171,7 @@ namespace IGTAP.EngineSim
                 box.upgradeCost = Math.Ceiling(box.upgradeCost);
             }
             if (box.TimesUsed >= box.Cap) box.isActive = false;
-            // TasPlugin.AfterBuyUpgrade.
-            if (_targets != null && _sim.Engine.RecordPurchase(_targets, path))
-                _sim.Engine.CompleteFromGame(MacroEngine.PurchaseFinishReason, _sim.Engine.PhysicsTicks * _sim.World.FixedDeltaTime);
+            // TasPlugin.AfterBuyUpgrade: a Full-TAS buy goal.
             _sim.Bought(path, _ids[box]);
         }
 

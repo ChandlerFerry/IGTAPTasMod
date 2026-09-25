@@ -85,7 +85,6 @@ namespace IGTAPTasMod
             LoadResults();
             LoadCheckpoints();
             LoadCourses();
-            LoadChains();
             LoadFullTas();
             _engine.AttemptEnded += SaveAttemptResult;
             Application.runInBackground = true;
@@ -150,20 +149,11 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance)) Instance.OverlayBeforeTick(__instance);
             // A bonus (its reward's buy trigger) or a transition ending at a bonus finishes on touching its end box.
             // Checked every tick, dash ticks included, where enginesim checks it (after the previous tick's physics and
-            // Update); timed in physics ticks from the run start: there is no course timer. A segment that starts with a
-            // quick restart is not checked before it. A purchase finishes only when the game buys it (AfterBuyUpgrade).
-            CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) && !Instance._restartBeforeTick ? Instance.RunCourse : null;
-            if (course != null && course.HasFinish && !course.IsPurchase && Instance.TouchesEndBox(__instance, course))
+            // Update); timed in physics ticks from the run start: there is no course timer.
+            CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
+            if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
-            // A chain's next segment goes on from where the last one finished, then does its quick restart if it has one.
-            if (Instance._chainRun != null && Instance._chainRun.pendingNext && !Instance._engine.IsRunning && !IsMenuPlayer(__instance))
-                Instance.ContinueChain(__instance);
-            if (Instance._restartBeforeTick && !IsMenuPlayer(__instance))
-            {
-                Instance._restartBeforeTick = false;
-                Instance.QuickRestart(__instance);
-            }
             // A route's own quick restart input (MacroStep.rawQuickRestart): the game's quick restart right before this tick,
             // after the pending Invokes, where enginesim does it.
             if (!IsMenuPlayer(__instance) && Instance._engine.TakeQuickRestart()) Instance.QuickRestart(__instance);
@@ -178,13 +168,8 @@ namespace IGTAPTasMod
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
-            // A fresh new game's first tick: its start state, and a chain from a new game starts right here.
+            // A fresh new game's first tick: its start state.
             if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active) Instance.CaptureNewGameStart(__instance);
-            if (Instance._pendingChain != null && !Instance._pendingChain.waitingForNewGame && !Instance._engine.IsRunning)
-            {
-                Instance.BeginChainPlayback();
-                return true;
-            }
             if (Instance._fullTasPlay != null && !Instance._fullTasPlay.started && !Instance._fullTasPlay.waitingForNewGame && !Instance._engine.IsRunning
                 && !IsMenuPlayer(__instance))
             {
@@ -257,13 +242,9 @@ namespace IGTAPTasMod
             movement.MoveAxis = new Vector2(_brakeAxis, 0f);
         }
 
-        // The course the running attempt is scored on: the chain segment's, the solver's in turbo, else the route's
-        // (RestoreRouteStart). None during a Full-TAS run: only its last goal ends it.
-        CourseDef RunCourse { get { return _fullTas != null ? null : _chainRun != null ? _chainRun.Current.target : _silentEvaluation ? _solverTarget : _runCourse; } }
-
-        // Chain segments (played or judged) are timed in physics ticks from their start, a course's too: the chain's time
-        // is the sum, and a course's timer may already be running when its segment starts.
-        bool ScoreFromRunStart { get { return _chainRun != null || _silentEvaluation && _solverChain != null; } }
+        // The course the running attempt is scored on: the solver's in turbo, else the route's (RestoreRouteStart). None
+        // during a Full-TAS run: only its last goal ends it.
+        CourseDef RunCourse { get { return _fullTas != null ? null : _silentEvaluation ? _solverTarget : _runCourse; } }
 
         // The player's colliders overlap the course's end box (absolute coordinates, shifted by FloatingOrigin).
         private bool TouchesEndBox(Movement player, CourseDef course)
@@ -341,8 +322,8 @@ namespace IGTAPTasMod
             // A Full-TAS run: the player's own finish of a course it is timing is a goal event (AfterCourseFinish), never its end.
             Instance._fullTasFinishCourse = Instance._fullTas != null && timing ? __instance.courseNumber : -1;
             Instance._pendingCourseWasTracking = timing && Instance._fullTas == null
-                // A solver run or chain segment is scored on its own course; finishing another course on the way is not a finish.
-                && (!Instance._silentEvaluation && Instance._chainRun == null
+                // A solver run is scored on its own course; finishing another course on the way is not a finish.
+                && (!Instance._silentEvaluation
                     || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.id);
             if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
             object value = CourseCurrentPathTimeField.GetValue(__instance);
@@ -355,8 +336,7 @@ namespace IGTAPTasMod
             if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
-            Instance._engine.CompleteFromGame("Course finish detected",
-                Instance.ScoreFromRunStart ? Instance._engine.PhysicsTicks * Time.fixedDeltaTime : Instance._pendingCourseTime);
+            Instance._engine.CompleteFromGame("Course finish detected", Instance._pendingCourseTime);
         }
 
         private static void AfterPlayerDeath(Movement __instance)
@@ -684,7 +664,7 @@ namespace IGTAPTasMod
             return null;
         }
 
-        // ---- A fresh new game in memory (POST /api/session/newgame, or a chain that starts with "newgame"): the Overworld
+        // ---- A fresh new game in memory (POST /api/session/newgame): the Overworld
         // scene loaded the way the menu's New Game loads it with no save file, except that Saveloader neither loads nor
         // saves (BeforeSaveloaderAwake: IsSaving = isLoading = false before its Awake, so no load and no autosave, and
         // manualSave returns). Movement.Start then runs its NORMAL case (Cash 0, zone 1, the scene's respawnPoint) and
@@ -697,13 +677,12 @@ namespace IGTAPTasMod
         WebStudioRequest _newGameRequest;
         readonly List<string> _newGameNotes = new List<string>();
         // The fresh game's first physics tick (taken in its Movement.FixedUpdate prefix, engine state as a run starts):
-        // the start state of every chain from a new game, in turbo and offline. Valid while its player exists.
+        // the start state of every run from a new game, in turbo and offline. Valid while its player exists.
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
         // The fresh game is still the one in the world (a bootstrap or scene change replaces its player).
         bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement(); } }
-        bool SolverFromNewGame { get { return _solverChain != null && _solverChain.FromNewGame; } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
         static readonly FieldInfo SaveloaderIsLoading = AccessTools.Field(typeof(Saveloader), "isLoading");
@@ -715,7 +694,7 @@ namespace IGTAPTasMod
             SaveloaderIsLoading.SetValue(__instance, false);
         }
 
-        // `request` (the endpoint's) is answered once the fresh game's first tick is captured; null for a chain's playback.
+        // `request` (the endpoint's) is answered once the fresh game's first tick is captured; null for a playback.
         void StartNewGame(WebStudioRequest request)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -723,7 +702,7 @@ namespace IGTAPTasMod
             LoadNewGame(request);
         }
 
-        // StartNewGame without the solver check: the solver loads one itself for a chain from a new game (LaunchSolve).
+        // StartNewGame without the solver check: the Full-TAS requests load one themselves (FullTasWhenReady).
         void LoadNewGame(WebStudioRequest request)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
@@ -736,7 +715,7 @@ namespace IGTAPTasMod
             _newGameStart = null;
             _newGamePlayer = null;
             // Every start state belongs to the scene that is going away.
-            _startState = _chainStartState = null;
+            _startState = null;
             _engineSimStartKey = null;
             _newGameNotes.Clear();
             _newGameFrame = Time.frameCount;
@@ -781,7 +760,7 @@ namespace IGTAPTasMod
         {
             _newGamePhase = 0;
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
-            // The engine as a chain from here starts it (BeginChainPlayback: no quick restart, no stable wait).
+            // The engine as a run from here starts it (no quick restart, no stable wait).
             bool quiet = _engine.Quiet;
             _engine.Quiet = true;
             _engine.Run(new MacroDefinition { name = "New game start", steps = { new MacroStep { type = MacroStepType.RawInput, durationTicks = 1 } } },
@@ -790,7 +769,6 @@ namespace IGTAPTasMod
             _engine.Discard();
             _engine.Quiet = quiet;
             _newGamePlayer = player;
-            if (_pendingChain != null) _pendingChain.waitingForNewGame = false;
             if (_fullTasPlay != null) _fullTasPlay.waitingForNewGame = false;
             Vector2 position = player.transform.position;
             Vector2 respawn = GetMovementField(player, "respawnPoint") is Vector2 r ? r : Vector2.zero;
@@ -812,13 +790,6 @@ namespace IGTAPTasMod
         {
             _newGamePhase = 0;
             Logger.LogWarning("New game: " + error);
-            if (_pendingChain != null && _pendingChain.waitingForNewGame)
-            {
-                _lastChainResult = "Chain " + _pendingChain.chain.name + " did not start: " + error;
-                _pendingChain = null;
-            }
-            // A solve that loaded it would load it again every frame: it ends here.
-            if (_solverRunning && SolverFromNewGame && _solveProcess == null) StopSolver("New game did not load: " + error);
             DropPendingFullTasPlayback("the new game did not load: " + error);
             WebStudioRequest request = _newGameRequest;
             _newGameRequest = null;
@@ -828,12 +799,11 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        // The start state of a chain from a new game; only a fresh session has it.
+        // The start state of a run from a new game (Full-TAS's, in turbo and offline); only a fresh session has it.
         TurboRunner.Snapshot NewGameStart()
         {
             if (!FreshGameInWorld)
-                throw new InvalidOperationException("This chain starts from a new game and this session is not a fresh one: POST /api/session/newgame first"
-                    + " (tools/enginesim-capture.py chain does it).");
+                throw new InvalidOperationException("A run from a new game needs a fresh one: POST /api/session/newgame first.");
             return _newGameStart;
         }
 
@@ -877,7 +847,6 @@ namespace IGTAPTasMod
             PumpBootstrap();
             PumpNewGame();
             PumpOfflineBests();
-            PumpChains();
             PumpFullTas();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
@@ -1093,17 +1062,6 @@ namespace IGTAPTasMod
                 StartFullTasPlayback(FindFullTasRun(fullTasRoute.Groups[1].Value), macro);
                 return;
             }
-            // A chain segment's route ("wj/2tobonus1_WJ 9.10") starts where the chain's routes before it end: play the
-            // chain through it.
-            Match chainRoute = Regex.Match(macro.name ?? "", @"^([A-Za-z0-9]+)/([^_\s/]+)_");
-            ChainDef chain = chainRoute.Success ? _chains.Find(c => string.Equals(c.name, chainRoute.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) : null;
-            if (chain != null)
-            {
-                ChainSegment segment = ChainSegments(chain).Find(s => string.Equals(s.key, chainRoute.Groups[2].Value, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidOperationException("Chain " + chain.name + " has no segment " + chainRoute.Groups[2].Value + ".");
-                StartChainPlayback(chain, segment.index, macro);
-                return;
-            }
             EnsureGameUnpaused();
             // Web/UI commands arrive during rendered Update frames. Queue the reset and
             // arming until the prefix of Movement's next full fixed tick.
@@ -1183,13 +1141,6 @@ namespace IGTAPTasMod
 
         private void SaveAttemptResult(bool success, string reason, int action, long ticks)
         {
-            if (_chainRun != null)
-            {
-                if (ChainSegmentEnded(success, reason)) return;
-                if (_silentEvaluation) EndDeterministicPhysics();
-                else FinishChainPlayback(success, reason);
-                return;
-            }
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
                 FinishFullTasPlayback(success, reason);
@@ -1553,19 +1504,6 @@ namespace IGTAPTasMod
                 return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();
-            if (request.Path == "/api/simulation/export")
-            {
-                Movement movement = FindWorldMovement();
-                SimulationModelExport model = SimulationModelExtractor.Capture(movement, MacroLibrary.CurrentSchemaVersion);
-                string directory = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "simulation");
-                string path = SimulationModelExtractor.Save(model, directory);
-                return new { ok = true, path = path, scalarCount = model.movement.Count + model.rigidbody.Count,
-                    colliderCount = model.colliders.Count, model = model };
-            }
-            if (request.Path == "/api/simulation/import-candidate")
-            {
-                return ImportOfflineCandidate(body);
-            }
             if (request.Method != "POST") throw new InvalidOperationException("Unsupported request method.");
 
             if (request.Path == "/api/routes/select")
@@ -1581,12 +1519,6 @@ namespace IGTAPTasMod
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
                 ReplaySelected(Number(body, "startDelayTicks", 0));
-                return new { ok = true };
-            }
-            if (request.Path == "/api/chains/run")
-            {
-                // {chain, through?}: the chain from its start through segment `through` (0-based; default all of it).
-                StartChainPlayback(FindChain(Text(body, "chain")), Number(body, "through", -1));
                 return new { ok = true };
             }
             if (request.Path == "/api/routes/duplicate")
@@ -1791,92 +1723,6 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
-        private object ImportOfflineCandidate(JObject body)
-        {
-            MacroDefinition candidate = BuildOfflineCandidate(body);
-            RejectCategoryName(candidate.name);
-            _library.macros.Add(candidate);
-            _library.selectedIndex = _library.macros.Count - 1;
-            SaveLibrary();
-            return new { ok = true, routeId = candidate.id, name = candidate.name, actionCount = candidate.steps.Count };
-        }
-
-        private MacroDefinition BuildOfflineCandidate(JObject body)
-        {
-            string routeId = Text(body, "routeId");
-            MacroDefinition source = _library.macros.Find(r => r.id == routeId);
-            if (source == null) throw new InvalidOperationException("Source route not found.");
-            MacroDefinition candidate = JsonConvert.DeserializeObject<MacroDefinition>(JsonConvert.SerializeObject(source));
-            candidate.id = Guid.NewGuid().ToString("N");
-            candidate.name = string.IsNullOrWhiteSpace(Text(body, "name")) ? source.name + " [offline candidate]" : Text(body, "name");
-            candidate.hotkey = "";
-            candidate.favorite = false;
-            JArray durations = body["durations"] as JArray;
-            if (durations == null || durations.Count != candidate.steps.Count)
-                throw new InvalidOperationException("Candidate duration count does not match the source route.");
-            for (int i = 0; i < candidate.steps.Count; i++)
-            {
-                candidate.steps[i].durationTicks = Math.Max(1, (int)durations[i]);
-                candidate.steps[i].durationMs = Mathf.RoundToInt(candidate.steps[i].durationTicks * Time.fixedDeltaTime * 1000f);
-                candidate.steps[i].endCondition = ActionEndCondition.FixedTicks;
-            }
-            JArray rawMoveX = body["rawMoveX"] as JArray;
-            if (rawMoveX != null)
-            {
-                if (rawMoveX.Count != candidate.steps.Count)
-                    throw new InvalidOperationException("Candidate analog-input count does not match the source route.");
-                for (int i = 0; i < candidate.steps.Count; i++)
-                    candidate.steps[i].rawMoveX = Mathf.Clamp((float)rawMoveX[i], -1f, 1f);
-            }
-            JArray noJump = body["noJump"] as JArray;
-            if (noJump != null)
-            {
-                if (noJump.Count != candidate.steps.Count)
-                    throw new InvalidOperationException("Candidate jump-removal count does not match the source route.");
-                for (int i = 0; i < candidate.steps.Count; i++)
-                    if ((bool)noJump[i])
-                        candidate.steps[i].rawJumpPressed = candidate.steps[i].rawJumpHeld = candidate.steps[i].rawJumpReleased = false;
-            }
-            InsertJump(candidate, Number(body, "hopStep", -1), Number(body, "hopTick", -1), Number(body, "hopHold", 0));
-            candidate.timeline = TimelineDocument.FromSequentialSteps(candidate.steps, Time.fixedDeltaTime * 1000f);
-            return candidate;
-        }
-
-        private static void InsertJump(MacroDefinition route, int actionIndex, int requestedTick, int requestedHoldTicks)
-        {
-            if (route == null || actionIndex < 0 || actionIndex >= route.steps.Count || requestedTick < 0) return;
-            MacroStep source = route.steps[actionIndex];
-            if (source.type != MacroStepType.RawInput || source.durationTicks < 3) return;
-            int jumpTick = Math.Max(0, Math.Min(source.durationTicks - 2, requestedTick));
-            int holdTicks = Math.Max(0, Math.Min(source.durationTicks - jumpTick - 1, requestedHoldTicks));
-            int suffixTicks = source.durationTicks - jumpTick - holdTicks - 1;
-            List<MacroStep> replacement = new List<MacroStep>();
-            if (jumpTick > 0) replacement.Add(RawSegment(source, jumpTick, false, false, false, "before hop"));
-            if (holdTicks == 0)
-                replacement.Add(RawSegment(source, 1, true, false, true, "inserted micro-hop"));
-            else
-            {
-                replacement.Add(RawSegment(source, holdTicks, true, true, false, "inserted hop"));
-                replacement.Add(RawSegment(source, 1, false, false, true, "hop release"));
-            }
-            if (suffixTicks > 0) replacement.Add(RawSegment(source, suffixTicks, false, false, false, "after hop"));
-            route.steps.RemoveAt(actionIndex);
-            route.steps.InsertRange(actionIndex, replacement);
-        }
-
-        private static MacroStep RawSegment(MacroStep source, int ticks, bool pressed, bool held, bool released, string suffix)
-        {
-            MacroStep step = source.Copy();
-            step.label = source.label + " (" + suffix + ")";
-            step.durationTicks = Math.Max(1, ticks);
-            step.durationMs = Math.Max(1, (int)Math.Round(step.durationTicks * Time.fixedDeltaTime * 1000f));
-            step.endCondition = ActionEndCondition.FixedTicks;
-            step.rawJumpPressed = pressed;
-            step.rawJumpHeld = held;
-            step.rawJumpReleased = released;
-            return step;
-        }
-
         private object BuildWebState()
         {
             MacroDefinition selected = SelectedMacro;
@@ -1936,14 +1782,11 @@ namespace IGTAPTasMod
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
-                // A fresh new game (/api/session/newgame) whose start state chains from "newgame" use; loading while one loads.
-                freshGame = FreshGame, newGameLoading = _newGamePhase != 0,
                 overlayShown = _settings.showOverlay,
                 running = PlaybackActive,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
                 courses = BuildCourseWebState(),
-                chains = BuildChainWebState(), chainRun = BuildChainRunWebState(),
                 solver = BuildSolverWebState(), fullTas = BuildFullTasWebState() };
         }
 

@@ -59,8 +59,8 @@ namespace IGTAP.EngineSim.Cli
         {
             public string Name;
             public string[] Goals;
-            // It starts standing at its course's quick-restart point (a standalone route); its chain segment starts with
-            // a quick restart.
+            // It starts standing at its course's quick-restart point (a standalone route), or with a quick restart (the
+            // seed file's "restart").
             public bool Standing, Restart;
             // The category it was made in (CapsLevel: none 0, wj 1, wjdash 2, wjdashaj 3): a seed that needs an unlock the
             // run hasn't bought yet at the window's start isn't tried.
@@ -277,7 +277,7 @@ namespace IGTAP.EngineSim.Cli
         // Window starts from the seeds that have one of goals first..limit-1, for a window from state `at` (after `prefix`),
         // each seed's likeliest first:
         // - a standing seed after a quick restart and the ticks the player then takes to stand still (where it was made);
-        // - a chain segment that starts with a quick restart: the seed with the restart on its first tick;
+        // - a seed that starts with a quick restart: the seed with the restart on its first tick;
         // - the seed as it is;
         // - the seed after a quick restart and 0..12 idle ticks (nearest the ticks to stand still first).
         // No quick restart on the window's first tick right after the prefix's own (a real button is released in between).
@@ -298,7 +298,7 @@ namespace IGTAP.EngineSim.Cli
             int settle = -1;
             if (restart)
             {
-                int still = SeedAlign.Still(_eval, new List<InputTick> { new InputTick { reset = true } }, 300).ticks;
+                int still = _eval.Still(new List<InputTick> { new InputTick { reset = true } }, 300);
                 settle = still < 1 ? -1 : still - 1;
             }
             List<InputTick> Restarted(Seed s, int idle)

@@ -52,10 +52,10 @@ namespace IGTAP.EngineSim
         public (MonoBehaviour target, object[] fields)[] Touched;
         // Shop: what the run spent, per currency, and the native economy's state (Economy).
         internal Shop.State Economy;
-        // Simulation.LapStart at this point.
-        public long LapStart;
         // Full-TAS: the goal tracker's state (null outside a Full-TAS run).
         internal FullTasTracker.State Goal;
+        // OfflineSolver.ForcedPath: how many of the forced path's boxes the run had passed here (the solver sets it).
+        public int Waypoints;
     }
 
     // Steps the game's own code exactly like TurboRunner.Run inside TasPlugin.Evaluate: pending Invokes,
@@ -195,7 +195,7 @@ namespace IGTAP.EngineSim
                 if (savePositionData && Engine.IsRunning) GoalEvent(Goals.CourseFinished(course.courseNumber, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
             }
             else if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
-                Engine.CompleteFromGame("Course finish detected", FromRunStart ? (Engine.PhysicsTicks - Math.Max(0L, LapStart)) * World.FixedDeltaTime : time);
+                Engine.CompleteFromGame("Course finish detected", time);
         }
 
         // The bonus course's reward box (endX, endY, endW, endH) as a world rect the player's colliders may touch.
@@ -230,7 +230,7 @@ namespace IGTAP.EngineSim
         public int TargetCourse;
 
         // The bonus course's reward box, or a transition's end box (the trace's "finish": endX, endY, endW, endH); zero
-        // size = a gated course or a purchase (Shop: the game's buy rule finishes it).
+        // size = a gated course.
         public (float x, float y, float w, float h) TargetFinish;
 
         // A transition (the trace's "transition"): timed in physics ticks from the run start (dash ticks included), and
@@ -239,30 +239,14 @@ namespace IGTAP.EngineSim
         public int TargetStart { get; private set; }
         courseScript _targetStartCourse;
 
-        // Bonus, transition and purchase runs have no course timer of their own; they are timed from the run start.
-        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Shop.IsPurchase || Goals != null; } }
+        // Bonus, transition and Full-TAS runs have no course timer of their own; they are timed from the run start.
+        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
 
-        // A chain segment (the trace's "fromRunStart"): a course segment is timed from the run start too (TasPlugin.
-        // ScoreFromRunStart), and one after a quick restart does it first (the trace's "restart").
-        public bool FromRunStart { get; private set; }
-        // Settable here for SeedAlign's analysis runs (where a standalone route's quick restart puts the player).
-        public bool RestartAtStart { get; internal set; }
-
-        // A lap run with its lead-in (the trace's "lead": TasPlugin.EngineSimTrace): the run starts where the transition
-        // before the course segment starts, and the lap starts when the course's start gate first starts its timer, the
-        // transition's finish. The lap is timed in physics ticks from there. A run whose transition would take more than
-        // `LeadDeadline` physics ticks (the transition's saved route) is cut. 0: no lead-in.
-        public long LeadDeadline { get; private set; }
-        // Physics ticks from the run start to the lap's start: 0 without a lead-in, -1 before the gate.
-        public long LapStart { get; private set; }
-        courseScript _lapCourse;
-
-        // What the solver ranks a run by so far: physics ticks from the lap start after a lead-in (-1 before it), from the
-        // run start for bonus, transition, purchase and chain segment runs, else the course timer (-1 before it runs).
+        // What the solver ranks a run by so far: physics ticks from the run start for bonus, transition and Full-TAS
+        // runs, else the course timer (-1 before it runs).
         public float Elapsed(courseScript active)
         {
-            if (LeadDeadline > 0) return LapStart < 0 ? -1f : (Engine.PhysicsTicks - LapStart) * World.FixedDeltaTime;
-            if (TimedFromRunStart || FromRunStart) return Engine.PhysicsTicks * World.FixedDeltaTime;
+            if (TimedFromRunStart) return Engine.PhysicsTicks * World.FixedDeltaTime;
             return active == null ? -1f : CourseTime(active);
         }
 
@@ -273,20 +257,13 @@ namespace IGTAP.EngineSim
             if (header.TryGetProperty("finish", out JsonElement finish))
                 TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
-            FromRunStart = header.TryGetProperty("fromRunStart", out JsonElement fromStart) && fromStart.GetBoolean();
-            RestartAtStart = header.TryGetProperty("restart", out JsonElement restart) && restart.GetBoolean();
-            if (header.TryGetProperty("purchase", out JsonElement purchase)) Shop.SetTarget(purchase);
             if (header.TryGetProperty("finishStart", out JsonElement next))
             {
                 TargetStart = next.GetInt32();
                 _targetStartCourse = Courses.FirstOrDefault(c => c.courseNumber == TargetStart)
                     ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
             }
-            LeadDeadline = header.TryGetProperty("lead", out JsonElement lead) ? lead.GetProperty("ticks").GetInt64() : 0;
             if (header.TryGetProperty("fulltas", out JsonElement fulltas)) SetGoals(fulltas.GetProperty("goals"));
-            LapStart = LeadDeadline > 0 ? -1 : 0;
-            _lapCourse = LeadDeadline > 0 ? Courses.FirstOrDefault(c => c.courseNumber == TargetCourse)
-                ?? throw new InvalidOperationException("Course " + TargetCourse + " is not active in this world export.") : null;
         }
 
         // The trace's "fulltas": {name, goals: [{label, kind, course, boxes, rect: [x, y, w, h]}]} (TasPlugin writes it). A
@@ -415,7 +392,6 @@ namespace IGTAP.EngineSim
                 Physics = Physics.Capture(),
                 Touched = _touched.Select(s => (s, FieldState.Capture(s))).ToArray(),
                 Economy = Shop.Capture(),
-                LapStart = LapStart,
                 Goal = Goals?.Capture(),
             };
         }
@@ -446,7 +422,6 @@ namespace IGTAP.EngineSim
                 touched ^= s.ToHashCode();
             }
             h.Add(touched);
-            h.Add(LapStart);
             Shop.AddTo(ref h);
             if (Goals != null) h.Add(Goals.Hash());
             return h.ToHashCode();
@@ -507,7 +482,6 @@ namespace IGTAP.EngineSim
             foreach (var (due, target, method, repeat) in s.Pending)
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
             Physics.Restore(s.Physics);
-            LapStart = s.LapStart;
             Shop.Restore(s.Economy);
             if (Goals != null) Goals.Restore(s.Goal);
         }
@@ -519,9 +493,6 @@ namespace IGTAP.EngineSim
         {
             from ??= _start;
             if (from.Tick >= inputs.Count) from = _start;
-            // A chain segment's quick restart is its first act (TasPlugin.BeforeMovementFixedUpdate), before the end-box
-            // check can see it; a run resumed past the start already did it.
-            bool restart = RestartAtStart && ReferenceEquals(from, _start);
             Restore(from);
             int step = from.Tick;
             while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
@@ -536,18 +507,12 @@ namespace IGTAP.EngineSim
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
                 bool nextWasTracking = _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse);
-                bool lapWasTracking = LapStart < 0 && (bool)TrackingField.GetValue(_lapCourse);
                 // Full-TAS: a start goal is reached when its course's start gate starts the timer (off before the tick, on
                 // after it: TasPlugin counts it in startTracking only when the course wasn't timing).
                 FullTasGoal goal = Goals?.Current;
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
                 bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
                 Scheduler.FireDue();
-                if (restart)
-                {
-                    restart = false;
-                    RespawnMethod.Invoke(Player, new object[] { true });
-                }
                 // A route's own quick restart (InputTick.reset), where TasPlugin.BeforeMovementFixedUpdate does it.
                 if (Engine.TakeQuickRestart()) RespawnMethod.Invoke(Player, new object[] { true });
                 _fixedUpdate();
@@ -568,12 +533,6 @@ namespace IGTAP.EngineSim
                 // timer (this tick's triggers), in physics ticks from the run start.
                 if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse))
                     Engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
-                // A lead-in: the lap starts where the transition would finish, and a run slower to get there is cut.
-                if (Engine.IsRunning && LapStart < 0)
-                {
-                    if (!lapWasTracking && (bool)TrackingField.GetValue(_lapCourse)) LapStart = Engine.PhysicsTicks;
-                    else if (Engine.PhysicsTicks >= LeadDeadline) Engine.Abort("Lead-in slower than the transition's route");
-                }
                 if (Goals != null && Engine.IsRunning)
                 {
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
@@ -602,6 +561,30 @@ namespace IGTAP.EngineSim
                 GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
                 GoalPhysicsTicks = Goals == null ? null : (long[])Goals.PhysicsTicks.Clone(),
             };
+        }
+
+        static readonly FieldInfo OnGroundField = typeof(Movement).GetField("onGround", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        static readonly FieldInfo MomentumField = typeof(Movement).GetField("momentum", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        const int StillTicks = 3;
+
+        // Plays `walk`, then no input until the player stands still on the ground for StillTicks ticks. Returns the input
+        // count at that point, or -1 if not within `limit` more ticks.
+        public int Still(List<InputTick> walk, int limit)
+        {
+            var inputs = walk.Concat(Enumerable.Repeat(new InputTick(), limit)).ToList();
+            int still = 0, found = -1;
+            Run(inputs, afterTick: tick =>
+            {
+                if (tick < walk.Count) return true;
+                bool rest = (bool)OnGroundField.GetValue(Player) && ((Vector2)VelocityField.GetValue(Player)).sqrMagnitude < 1e-4f
+                    && ((Vector2)MomentumField.GetValue(Player)).sqrMagnitude < 1e-4f;
+                still = rest ? still + 1 : 0;
+                if (still < StillTicks) return true;
+                found = tick + 1;
+                return false;
+            }, extraTicks: 0);
+            return found;
         }
 
         static bool Merges(InputTick previous, InputTick k)

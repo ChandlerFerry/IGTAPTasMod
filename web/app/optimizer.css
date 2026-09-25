@@ -26,16 +26,7 @@
 .recordingCard .buttonRow { justify-content: flex-end; }
 .solverLog { margin: 12px 0 0; padding-left: 18px; color: #aac0d7; font-size: 12px; line-height: 1.7; }
 
-/* Chains tab: one block per chain. */
-.chainBlock { margin-top: 18px; }
-.chainBlock .tableRow .buttonRow { gap: 6px; }
-.chainBlock .tableRow.solving { color: var(--cyan); background: #10263d; }
-.chainBlock .tableRow.stale { color: var(--amber); background: #2a2214; }
-.solvingTag { margin-left: 8px; color: var(--cyan); font-size: 11px; font-style: normal; }
-.runSolving { align-items: center; margin-top: 12px; }
-.runSolving > span { flex: 1; color: var(--cyan); font-size: 12px; }
-
-/* Optimize time budget, shared by Runs and Optimize many. */
+/* Optimize many's time budget. */
 .passFields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 4px 0 14px; }
 .passFields .field { width: 170px; }
 .passLoop { display: inline-flex; align-items: center; gap: 6px; padding-bottom: 8px; font-size: 12px; white-space: nowrap; cursor: pointer; }

@@ -4,7 +4,8 @@ The whole game from a fresh new game as one continuous input stream. A run is a 
 happen in order; its time is the physics ticks from the new game's first settled tick to the last goal. Goals split
 the run for display and for the offline search; nothing restarts, teleports or re-times between them. A quick restart
 (`Movement.respawn(true)`, the game's QuickReset) is an input the route chooses (`reset` on a tick), so a route can
-restart or run on, whichever is faster. This lives next to the chains (`docs/runs.md`); nothing there changed.
+restart or run on, whichever is faster. The new game is loaded by `POST /api/session/newgame`: the menu's New Game with
+no save file, except that `Saveloader` neither loads nor saves for the rest of the session.
 
 ## fulltas.json
 
@@ -18,8 +19,8 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 |---|---|
 | `start:N` | Course N's start gate starts its timer (it wasn't timing). |
 | `finish:N` | The player's own finish at course N's end gate. |
-| `buy:buyreward+buyclone` | The game bought each of these boxes (any order; the chains' purchase tokens). |
-| `reward:bonusN` | The player touches bonus N's reward box. |
+| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`; Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buydash`. |
+| `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
 
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
 the game's purchases; the plugin writes none.
@@ -33,11 +34,8 @@ in `fulltas-splits.json`.
 
 ## Studio: Full-TAS tab
 
-- **Import from chain** (`POST /api/fulltas/import {name, chain}`): the chain's goals, and its saved routes as one input
-  stream (each cut where it finished in a turbo replay of the chain, restarts as `reset` ticks). A chain solved to its
-  end is judged by the gate; one solved in part becomes the run's seed (`enginesim/fulltas-<run>-seed.json`).
 - **Goals** (`POST /api/fulltas/goals {name, goals}`), **Capture start** (`/api/fulltas/capture`: start trace + world,
-  seeded with the saved best or the import's seed), **Play** (real time from a new game), **Solve** / **Stop**
+  seeded with the saved best), **Play** (real time from a new game), **Solve** / **Stop**
   (`/api/fulltas/solve {name, minutes, windowMinutes, window}` runs `IGTAP.EngineSim fulltas`; its output shows in the
   tab). `/api/state` has `fullTas`.
 
@@ -63,16 +61,13 @@ The whole run needs Cash offline. A start state whose economy carries the clones
 economy natively (`enginesim/Runtime/Economy.cs`): course-finish rewards, comp boost, new-best clone paths, clone spawns
 and payouts on and off screen (the clonesLoD trigger), what the courses' local boxes change (reward, clone count, clone
 multiplier) and the global reward box (`GLOBALcashPerLoop`: its own course's reward; the game updates the others on a
-random 5 s phase). Older traces keep the recorded `purchase.income`. Cases the model can't follow end the run
-(`Unmodeled economy: ...`): clone speed/size/colour rolls, clone dust, Vman, other global boxes and prestige boxes.
+random 5 s phase). Cases the model can't follow end the run (`Unmodeled economy: ...`): clone speed/size/colour rolls,
+clone dust, Vman, other global boxes and prestige boxes.
 
 ## Status (2026-09-25)
 
-- `main` imported from `newgame` (72 of 79 segments solved there): 114 goals, the seed reaches 104 (through
-  `bonus1to2`). Its offline replay matches turbo on every tick's position and Cash through all 104 goals; the only
-  differences are sub-micro velocities on ground seams that never move the player.
-- Next: goal 105 (`buy:buydash`, 3,000,000 W) needs Course 2's economy first: the `newgame` chain's plan
-  (`docs/runs.md`, Economy) buys Course 2's boxes (`buy:buyreward2`, `buy:buyclone2`, …) before it.
-- `short` (the first 8 goals of `main`: three Course 1 laps with two reward buys) is the end-to-end check: seeded
-  from `main`'s import at 14.62, a 4-minute studio solve reached 14.58 (laps 2 and 3 after the quick restart now take
-  102 ticks like lap 1, not 103), both saved by the gate, and real-time playback finishes it in 14.58.
+- `main` has 200 goals: Course 1 through `reward:bonus1`, then Course 2's economy as planned by
+  `python tools/plan-fulltas.py --write` (Course 2 laps and box buys), with dash bought at ~236 s in the plan.
+- The offline search seeds its laps with the saved standalone course, bonus and transition routes.
+- Real-time playback warns on the overlay when it drops frames: Update-driven state (clone pay, purchases waiting on
+  it) can then differ from the route's.

@@ -11,7 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="simulator\**\*.cs" />
     <!-- The offline engine host builds its own assemblies (including a rewritten Assembly-CSharp). -->
     <None Remove="enginesim\**" />
     <Compile Remove="enginesim\**\*.cs" />
@@ -38,9 +37,6 @@
   </Target>
 
   <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
-    <!-- FastSim is only run by tools/fidelity-sweep.py, from simulator\bin. -->
-    <MSBuild Projects="$(MSBuildProjectDirectory)\simulator\IGTAP.FastSim.csproj"
-             Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <MakeDir Directories="$(PluginDir)" />
     <RemoveDir Directories="$(PluginDir)\IGTAPTasWeb" />
     <MakeDir Directories="$(PluginDir)\IGTAPTasWeb" />

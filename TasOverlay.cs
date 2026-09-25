@@ -14,7 +14,7 @@ namespace IGTAPTasMod
     {
         sealed class InputRow
         {
-            // Set on the row that starts a route's inputs (a chain lists each segment's); such a row has no inputs.
+            // Set on the row that starts a route's inputs; such a row has no inputs.
             public string header;
             public int ticks;
             public string ticksText;
@@ -89,18 +89,14 @@ namespace IGTAPTasMod
             if (!OverlayListsRun) _overlayLastTick = 0;
             else if (_engine.PhysicsTicks != _overlayLastTick)
             {
-                // A run starts listing on its first timed tick. A chain's next segment may start in the same tick its
-                // previous one finished, so a new route or a restarted tick count also starts one.
+                // A run starts listing on its first timed tick; a new route or a restarted tick count starts one too.
                 if (_overlayLastTick == 0 || _engine.PhysicsTicks < _overlayLastTick || !ReferenceEquals(_engine.ActiveMacroName, _overlayRoute))
                 {
-                    if (_chainRun == null || _chainRun.index == 0)
-                    {
-                        _inputRows.Clear();
-                        _overlayTicks = 0;
-                        _droppedFrames = _worstFrameTicks = 0;
-                        _lastDropTick = 0;
-                        _ticksSinceFrame = 0;
-                    }
+                    _inputRows.Clear();
+                    _overlayTicks = 0;
+                    _droppedFrames = _worstFrameTicks = 0;
+                    _lastDropTick = 0;
+                    _ticksSinceFrame = 0;
                     _overlayRoute = _engine.ActiveMacroName;
                     _inputRows.Add(new InputRow { header = "▸ " + (_overlayRoute ?? "") });
                 }
@@ -568,7 +564,7 @@ namespace IGTAPTasMod
 
             bool live = _overlayLastTick != 0;
             // Newest first: the current row sits under the column header and older rows scroll down and off the panel.
-            // A segment's "▸ route" header row is its oldest, so it sits under that segment's rows.
+            // A run's "▸ route" header row is its oldest, so it sits under that run's rows.
             for (int i = _inputRows.Count - 1; i >= _inputRows.Count - shown; i--, y += rowHeight)
             {
                 InputRow row = _inputRows[i];
