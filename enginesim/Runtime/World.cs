@@ -27,6 +27,11 @@ namespace IGTAP.EngineSim
         public float[] LocalToWorld;
         public ShapeData[] Shapes = Array.Empty<ShapeData>();
         public float Friction, Bounciness;
+        // A collider merged into a CompositeCollider2D (its compositeOperation isn't None): the composite's data.
+        public ColliderData Composite;
+        // A composite whose sources a run toggles (the coloured blocks): its geometry with its sources enabled (the
+        // export's "sourceShapes"); null when the export has none.
+        public ShapeData[] SourceShapes;
     }
 
     // The game scene rebuilt from a world export (EngineSimBridge.WriteWorld): every GameObject and component, with
@@ -131,6 +136,8 @@ namespace IGTAP.EngineSim
                     data.LocalToWorld = shapes.GetProperty("localToWorld").EnumerateArray().Select(v => v.GetSingle()).ToArray();
                     data.Shapes = shapes.GetProperty("list").EnumerateArray().Select(ReadShape).ToArray();
                 }
+                if (c.TryGetProperty("sourceShapes", out JsonElement source) && source.ValueKind == JsonValueKind.Object)
+                    data.SourceShapes = source.GetProperty("list").EnumerateArray().Select(ReadShape).ToArray();
                 Colliders.Add(data);
                 _pendingColliders.Add((data, c.GetProperty("props").Clone()));
             }
@@ -165,6 +172,9 @@ namespace IGTAP.EngineSim
             data.Bounciness = props.GetProperty("bounciness").GetSingle();
             c.friction = data.Friction;
             c.bounciness = data.Bounciness;
+            if (props.TryGetProperty("compositeOperation", out JsonElement operation) && operation.ValueKind == JsonValueKind.Number && operation.GetInt32() != 0
+                && Ref(props, "composite") is Collider2D composite)
+                data.Composite = composite.BackendData as ColliderData;
         }
 
         void FillBody(Rigidbody2D body, JsonElement props)

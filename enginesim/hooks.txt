@@ -19,3 +19,8 @@ replace clonesScript::isOnScreen OnClonesOnScreen
 # A course's reward from the upgrades; fullUpdate is that plus UI. The host economy computes it (a no-op without it).
 replace courseScript::UpdateReward OnCourseReward
 replace courseScript::fullUpdate OnCourseReward
+# Sound draws UnityEngine.Random (a clip, a pitch) on every turbo tick the player makes a sound on. cuts.txt empties
+# these two; the hooks keep exactly the draws the game's bodies make (see enginesim/README.md's consumer audit).
+# playSFX also draws for the Audio.PlayAudio its land cases make (the body is empty here, so the hook draws those too).
+prefix Movement::playSFX OnPlaySfx
+prefix Audio::PlayAudio OnPlayAudio

@@ -6,6 +6,13 @@
       "note": "Top-hole shortcut out of the first room: runs through the right hole are cut.",
       "avoid": [[1085, -165, 1735, 685]],
       "via": []
+    },
+    {
+      "course": 5,
+      "capabilities": ["wjdashaj"],
+      "note": "No orange blocks (the upgrade after air jump): runs that go far left, into the low left corner, or deep below the start floor are cut (the super jump off the bottom wall left of the floor dips about 110 below it, so that stays open); the way left under the maze to Checkpoint (1) stays open. Forward only: runs that go back right past the course entry (into the shop room and the hub) are cut. The start room's ceiling hole is the finish (RealEnd, a trigger just under the ceiling), entered from above: a run climbing up through it never started the timer (the start gate is left, and End (1) cancels a timed run coming back right), so the hole's column below RealEnd is cut.",
+      "avoid": [[-8959, -2850, -2959, 6150], [-2959, -550, -1559, 450], [-2959, -2850, 341, -550], [-79, -2850, 23000, 1450], [-319, 300, -191, 389]],
+      "via": []
     }
   ]
 }

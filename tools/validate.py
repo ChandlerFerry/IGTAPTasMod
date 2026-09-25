@@ -7,8 +7,11 @@ Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|
 routes "fulltas/<run>_NO_WJ <time>" are skipped: the Full-TAS gate judges them from a new game)
 """
 import json, re, sys, time, urllib.error, urllib.request
-ROUTES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\routes.json"
-COURSES = ROUTES.replace("routes.json", "courses.json")
+
+from gamepaths import CONFIG
+
+ROUTES = CONFIG / "routes.json"
+COURSES = CONFIG / "courses.json"
 LABELS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash", "WJ_DASH_AJ": "wjdashaj"}
 
 

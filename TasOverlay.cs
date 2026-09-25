@@ -7,9 +7,10 @@ using UnityEngine.Rendering;
 namespace IGTAPTasMod
 {
     // What viewers see in the game while the studio's "Show TAS overlay" is on: the player's hurtbox, every spike's
-    // collider, the spike grace count while the hurtbox is inside one, and in the top left corner the inputs playback
-    // gave on each of the last MaxInputRows physics ticks (newest at the top). Only real-time playback is listed;
-    // solver and turbo runs are not. The top right corner shows the player's velocity (TasOverlayVelocity.cs).
+    // collider, the spike grace count while the hurtbox is inside one, and in the top left corner a "TAS - <course> -
+    // <unlocks>" title over the inputs playback gave on each of the last MaxInputRows physics ticks (newest at the top).
+    // Only real-time playback is listed; solver and turbo runs are not. The top right corner shows the player's velocity
+    // (TasOverlayVelocity.cs).
     public sealed partial class TasPlugin
     {
         sealed class InputRow
@@ -31,7 +32,10 @@ namespace IGTAPTasMod
         // PhysicsTicks of the last listed tick; 0 while no playback runs.
         long _overlayLastTick;
         long _overlayTicks;
-        string _overlayRoute, _overlayRouteText;
+        string _overlayRoute;
+        // The course the listed playback runs ("1", "bonus1"): the route's course, or for a Full-TAS run the course it
+        // last started. "—" until one is known.
+        string _overlayCourse = "—";
         string _overlayClock;
         int _overlayJumpPresses, _overlayDashPresses;
         GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze;
@@ -97,7 +101,7 @@ namespace IGTAPTasMod
                     _lastDropTick = 0;
                     _ticksSinceFrame = 0;
                     _overlayRoute = _engine.ActiveMacroName;
-                    _overlayRouteText = "▸ " + (_overlayRoute ?? "");
+                    _overlayCourse = _runCourse != null ? _runCourse.Token : "—";
                 }
                 _overlayLastTick = _engine.PhysicsTicks;
                 _overlayTicks++;
@@ -530,6 +534,14 @@ namespace IGTAPTasMod
         static readonly Color HitboxColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);
         static readonly Color GraceColor = new Color(0.35f, 1f, 0.45f, 0.95f);
+        // The panel title: "TAS" and each unlock in its own colour, each at least 7:1 contrast (WCAG AAA) against
+        // PanelBand even over a white scene.
+        static readonly Color TasColor = Hex(0xffa3b4, 1f);
+        static readonly Color WallJumpColor = Hex(0x5bf08a, 1f);
+        static readonly Color DashCapColor = Hex(0x6cc8ff, 1f);
+        static readonly Color AirJumpColor = Hex(0xffd84d, 1f);
+        static readonly Color BlockSwapColor = Hex(0xffab70, 1f);
+        static readonly Color OmniDashColor = Hex(0xdab3ff, 1f);
         // The input panel: the studio website's palette (web/app/globals.css).
         static readonly Color PanelBack = Hex(0x0d1a2d, 0.92f);
         static readonly Color PanelBand = Hex(0x12243d, 0.95f);
@@ -563,7 +575,37 @@ namespace IGTAPTasMod
             GUI.contentColor = saved;
         }
 
-        // Top left corner of the screen (0, 0): a band with the route and its clock, the column header, then one row per tick.
+        static readonly GUIContent OverlayMeasure = new GUIContent();
+
+        // Draws text on the title line at x, as wide as it needs; returns where the next text starts.
+        static float Segment(float x, float y, float height, float gap, string text, GUIStyle style, Color color)
+        {
+            OverlayMeasure.text = text;
+            float width = style.CalcSize(OverlayMeasure).x;
+            Label(new Rect(x, y, width, height), text, style, color);
+            return x + width + gap;
+        }
+
+        // "TAS - <course> - WJ DS AJ OR OM": the live player's unlocks (a category route's once playback applied them).
+        void DrawPanelTitle(float x, float y, float height, float scale)
+        {
+            float gap = 6 * scale;
+            x = Segment(x, y, height, gap, "TAS", _overlayTitle, TasColor);
+            x = Segment(x, y, height, gap, "-", _overlayTitle, MutedColor);
+            x = Segment(x, y, height, gap, _overlayCourse, _overlayTitle, PanelText);
+            Movement p = _overlayPlayer;
+            if (p == null) return;
+            x = Segment(x, y, height, gap, "-", _overlayTitle, MutedColor);
+            bool any = false;
+            if (p.wallJumpUnlocked) { x = Segment(x, y, height, gap, "WJ", _overlayTitle, WallJumpColor); any = true; }
+            if (p.dashUnlocked) { x = Segment(x, y, height, gap, "DS", _overlayTitle, DashCapColor); any = true; }
+            if (p.doubleJumpUnlocked) { x = Segment(x, y, height, gap, "AJ", _overlayTitle, AirJumpColor); any = true; }
+            if (p.blockSwapUnlocked) { x = Segment(x, y, height, gap, "OR", _overlayTitle, BlockSwapColor); any = true; }
+            if (p.omniDashUnlocked) { x = Segment(x, y, height, gap, "OM", _overlayTitle, OmniDashColor); any = true; }
+            if (!any) Segment(x, y, height, gap, "NONE", _overlayTitle, MutedColor);
+        }
+
+        // Top left corner of the screen (0, 0): a band with the TAS title and the run's clock, the column header, then one row per tick.
         void DrawInputPanel(float screenScale)
         {
             float scale = PanelScale(screenScale);
@@ -581,7 +623,7 @@ namespace IGTAPTasMod
             Fill(new Rect(panel.x, panel.yMax - 1, width, 1), PanelLine);
 
             float x = panel.x + pad, y = panel.y + 14 * scale, inner = width - 2 * pad;
-            Label(new Rect(x, y, inner, titleLine), _overlayRouteText, _overlayTitle, PanelText);
+            DrawPanelTitle(x, y, titleLine, scale);
             Label(new Rect(x, y + titleLine, inner, clockLine), _overlayClock, _overlaySmall, MutedColor);
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);

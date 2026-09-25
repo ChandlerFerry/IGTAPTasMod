@@ -37,7 +37,13 @@ namespace Box2D
         public b2BroadPhase m_broadPhase;
         public int m_contactCount;
         public b2ContactFilter m_contactFilter;
+        // Unity's world contact list is oldest first: a new contact goes to the end (vanilla Box2D puts it at the
+        // head). It is the order Collide updates contacts in (so contacts that start touching in the same step report
+        // in it) and SolveTOI's tie-break between equally early impacts (the first wins): turbo traces of a player
+        // meeting two coplanar wall shapes at once (diverge-c5-13.14 ticks 206, 305, 412) and of a corner of four
+        // shapes (tick 884) match only this. Bodies' contact edge lists stay newest first (the island's order).
         public b2Contact m_contactList;
+        public b2Contact m_contactTail;
         public b2ContactListener m_contactListener;
 
         public ContactManager()
@@ -73,6 +79,11 @@ namespace Box2D
                 m_contactListener.EndContact(c);
             }
 
+            if (c.Touching)
+            {
+                c.LeaveTouchOrder();
+            }
+
             // Remove from the world.
             if (c.m_prev != null)
             {
@@ -87,6 +98,11 @@ namespace Box2D
             if (c == m_contactList)
             {
                 m_contactList = c.m_next;
+            }
+
+            if (c == m_contactTail)
+            {
+                m_contactTail = c.m_prev;
             }
 
             // Remove from body 1
@@ -298,15 +314,19 @@ namespace Box2D
             bodyA = fixtureA.GetBody();
             bodyB = fixtureB.GetBody();
 
-            // Insert into the world.
-            c.m_prev = null;
-            c.m_next = m_contactList;
-            if (m_contactList != null)
+            // Insert into the world, at the end (see m_contactList).
+            c.m_prev = m_contactTail;
+            c.m_next = null;
+            if (m_contactTail != null)
             {
-                m_contactList.m_prev = c;
+                m_contactTail.m_next = c;
+            }
+            else
+            {
+                m_contactList = c;
             }
 
-            m_contactList = c;
+            m_contactTail = c;
 
             // Connect to island graph.
 

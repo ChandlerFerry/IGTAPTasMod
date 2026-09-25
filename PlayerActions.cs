@@ -26,8 +26,9 @@ namespace IGTAPTasMod
             return path;
         }
 
-        // Run names are letters and digits only: route names ("2_WJ 14.86") and offline-best files carry them.
-        static readonly Regex RunName = new Regex(@"^[A-Za-z0-9]+$");
+        // Run names are letters, digits and "%" ("ANY%"): route names ("fulltas/ANY%_NO_WJ 812.40") and offline-best
+        // files carry them.
+        static readonly Regex RunName = new Regex(@"^[A-Za-z0-9%]+$");
 
         // A route name's transition token ("1to2", "2tobonus1"): "<from>to<to>", where each side is a course id or a
         // bonus name (standalone transitions are named with it: AddTransitionFromRecording).

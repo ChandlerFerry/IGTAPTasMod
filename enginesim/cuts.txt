@@ -22,10 +22,10 @@ FakeCreditsControlScript::OnTriggerEnter2D
 # Tutorial text fade (DOTween on TMP_Text colour).
 TutorialTextTrigger::OnTriggerEnter2D
 
-# Presentation called from movement code.
+# Presentation called from movement code. playSFX is emptied but its UnityEngine.Random draws stay (hooks.txt): every
+# turbo tick's sound picks a clip and a pitch in the game. PlayFootstep and PlayWallSlideSfx run for the same reason
+# (their bodies only dispatch to playSFX and Audio::PlayAudio, which keep their draws).
 Movement::playSFX
-Movement::PlayFootstep
-Movement::PlayWallSlideSfx
 Movement::HandleAfterimages
 Movement::JumpingSquashStretch
 Movement::LandingSquashStretch

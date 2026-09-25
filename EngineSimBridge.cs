@@ -32,6 +32,10 @@ namespace IGTAPTasMod
                 return body["fulltas"] != null ? FullTasTraceRequest(request, body) : EngineSimTrace(request, body);
             if (request.Path == "/api/enginesim/submit")
                 return EngineSimSubmit(request, body);
+            if (request.Path == "/api/enginesim/map")
+                return EngineSimMap(request, body);
+            if (request.Path == "/api/enginesim/play")
+                return EngineSimPlay(body);
             request.StatusCode = 404;
             return new { ok = false, error = "Unknown enginesim endpoint." };
         }
@@ -103,6 +107,38 @@ namespace IGTAPTasMod
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
             if (error != null) return error;
             return Judge(inputs);
+        }
+
+        // {course, capabilities}: plays the category's newest offline best (offline-best/, judged/ too: the latest solve's
+        // best, not an older solve's faster one found on physics since fixed) in real time from the course start with the
+        // category's unlocks, like a saved route, though turbo may have rejected it: to watch where the game and the
+        // offline engine part ways. Nothing is saved.
+        object EngineSimPlay(JObject body)
+        {
+            if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
+            if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
+            int course = Number(body, "course", 0);
+            string caps = Text(body, "capabilities");
+            CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
+            if (caps == null || !CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
+            string category = def.Token + "_" + CapabilityLabels[caps];
+            string root = Path.Combine(EngineSimDir, "offline-best");
+            // Moving a file to judged/ keeps its write time: newest is when the solve found it.
+            var newest = new[] { root, Path.Combine(root, "judged") }.Where(Directory.Exists)
+                .SelectMany(d => Directory.GetFiles(d, course + "_" + caps + "-*.json"))
+                .Select(p => (path: p, match: OfflineBestFile.Match(Path.GetFileName(p))))
+                .Where(f => f.match.Success)
+                .OrderByDescending(f => File.GetLastWriteTimeUtc(f.path))
+                .FirstOrDefault();
+            if (newest.path == null) throw new InvalidOperationException("No offline best for " + category + ".");
+            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
+            // The category route name gives the course start and the unlocks (RestoreRouteStart, ApplyCategoryAbilities).
+            var route = new MacroDefinition { id = "offline-best", name = category + " offline " + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
+            route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
+            EnsureGameUnpaused();
+            _pendingReplay = route;
+            _pendingReplayStartDelayTicks = 0;
+            return new { ok = true, name = route.name, file = Path.GetFileName(newest.path) };
         }
 
         // Turbo replay of prepared inputs; saved through the gate (SaveSolverRoute) when it beats the category's best:
@@ -373,11 +409,25 @@ namespace IGTAPTasMod
     {
         const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
+        // UnityEngine.Random.State's four private ints, in declaration order (s0, s1, s2, s3 in UnityEngine.CoreModule).
+        static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
+
+        // A snapshot's RNG state ("random": [s0, s1, s2, s3]) — the start state's at the start, each tick's after it.
+        static void WriteRandom(EngineSimJson json, UnityEngine.Random.State state)
+        {
+            object boxed = state;
+            JsonTextWriter w = json.W;
+            w.WriteStartArray();
+            foreach (FieldInfo field in RandomStateFields) w.WriteValue((int)field.GetValue(boxed));
+            w.WriteEndArray();
+        }
+
         public static void WriteSnapshot(EngineSimJson json, TurboRunner.Snapshot s, Movement player, bool live)
         {
             JsonTextWriter w = json.W;
             w.WriteStartObject();
             w.WritePropertyName("tick"); w.WriteValue(s.tick);
+            w.WritePropertyName("random"); WriteRandom(json, s.random);
             w.WritePropertyName("movement"); WriteFieldValues(json, typeof(Movement), s.movement);
             w.WritePropertyName("engine"); WriteFieldValues(json, typeof(MacroEngine), s.engine);
             w.WritePropertyName("courses");
@@ -540,13 +590,16 @@ namespace IGTAPTasMod
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
 
         // Every scene GameObject (active or not) with its transform, colliders' physics shapes, bodies, and the fields of
-        // every script; plus the global 2D physics settings.
+        // every script; plus the global 2D physics settings. The coloured blocks' composites also carry "sourceShapes":
+        // their geometry with their tilemap colliders enabled (a trip breaker or a block swap turns the other colour's
+        // on at run time; the offline engine swaps to it).
         public static int WriteWorld(string path)
         {
             var gameObjects = new List<GameObject>();
             foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
                 if (go != null && go.scene.IsValid() && (go.hideFlags & HideFlags.HideAndDontSave) == 0) gameObjects.Add(go);
             var materials = new Dictionary<int, PhysicsMaterial2D>();
+            Dictionary<CompositeCollider2D, PhysicsShapeGroup2D> sourceShapes = ColouredBlockSourceShapes();
             using (var writer = new StreamWriter(path))
             {
                 var json = new EngineSimJson(writer);
@@ -572,7 +625,7 @@ namespace IGTAPTasMod
                 w.WriteEndArray();
                 w.WritePropertyName("objects");
                 w.WriteStartArray();
-                foreach (GameObject go in gameObjects) WriteGameObject(json, go, materials);
+                foreach (GameObject go in gameObjects) WriteGameObject(json, go, materials, sourceShapes);
                 w.WriteEndArray();
                 w.WritePropertyName("materials");
                 w.WriteStartArray();
@@ -591,7 +644,59 @@ namespace IGTAPTasMod
             return gameObjects.Count;
         }
 
-        static void WriteGameObject(EngineSimJson json, GameObject go, Dictionary<int, PhysicsMaterial2D> materials)
+        // The colouredBlockSwapper's composites (one per colour object, fed by its TilemapCollider2D) with their sources
+        // enabled: the sources that are off are switched on for this frame only, the composites regenerated and read,
+        // then the sources are switched back off and the composites regenerated again. No physics step runs in
+        // between, so no contact or callback sees it; the composites must end as they started (checked).
+        static Dictionary<CompositeCollider2D, PhysicsShapeGroup2D> ColouredBlockSourceShapes()
+        {
+            var result = new Dictionary<CompositeCollider2D, PhysicsShapeGroup2D>();
+            colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
+            if (swapper == null) return result;
+            var composites = new List<(CompositeCollider2D composite, Collider2D[] sources, int paths, int points, int shapes)>();
+            foreach (string colour in new[] { "orange", "blue" })
+                foreach (GameObject o in (GameObject[])typeof(colouredBlockSwapper).GetField(colour, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(swapper) ?? new GameObject[0])
+                {
+                    CompositeCollider2D composite = o == null ? null : o.GetComponent<CompositeCollider2D>();
+                    if (composite == null) continue;
+                    Collider2D[] sources = o.GetComponents<Collider2D>()
+                        .Where(c => c != composite && c.compositeOperation != Collider2D.CompositeOperation.None).ToArray();
+                    composites.Add((composite, sources, composite.pathCount, composite.pointCount, composite.shapeCount));
+                }
+            var switchedOn = new List<Collider2D>();
+            try
+            {
+                foreach (var c in composites)
+                    foreach (Collider2D source in c.sources)
+                        if (!source.enabled) { source.enabled = true; switchedOn.Add(source); }
+                foreach (var c in composites)
+                {
+                    foreach (Collider2D source in c.sources) source.GetType().GetMethod("ProcessTilemapChanges", Type.EmptyTypes)?.Invoke(source, null);
+                    c.composite.GenerateGeometry();
+                    var group = new PhysicsShapeGroup2D();
+                    c.composite.GetShapes(group);
+                    result[c.composite] = group;
+                }
+            }
+            finally
+            {
+                foreach (Collider2D source in switchedOn) source.enabled = false;
+                foreach (var c in composites)
+                {
+                    foreach (Collider2D source in c.sources) source.GetType().GetMethod("ProcessTilemapChanges", Type.EmptyTypes)?.Invoke(source, null);
+                    c.composite.GenerateGeometry();
+                }
+            }
+            foreach (var c in composites)
+                if (c.composite.pathCount != c.paths || c.composite.pointCount != c.points || c.composite.shapeCount != c.shapes)
+                    throw new InvalidOperationException("World export: " + c.composite.name + "'s composite didn't come back as it was ("
+                        + c.paths + "/" + c.points + "/" + c.shapes + " paths/points/shapes, now " + c.composite.pathCount + "/"
+                        + c.composite.pointCount + "/" + c.composite.shapeCount + ").");
+            return result;
+        }
+
+        static void WriteGameObject(EngineSimJson json, GameObject go, Dictionary<int, PhysicsMaterial2D> materials,
+            Dictionary<CompositeCollider2D, PhysicsShapeGroup2D> sourceShapes)
         {
             JsonTextWriter w = json.W;
             Transform t = go.transform;
@@ -633,6 +738,11 @@ namespace IGTAPTasMod
                     w.WritePropertyName("props"); WriteProperties(json, col);
                     w.WritePropertyName("shapes"); WriteShapes(json, col);
                     WriteColliderPaths(json, col);
+                    if (col is CompositeCollider2D composite && sourceShapes.TryGetValue(composite, out PhysicsShapeGroup2D group))
+                    {
+                        w.WritePropertyName("sourceShapes");
+                        WriteShapeGroup(json, group, group.shapeCount);
+                    }
                 }
                 else if (c is Rigidbody2D rb)
                 {
@@ -673,11 +783,16 @@ namespace IGTAPTasMod
 
         static void WriteShapes(EngineSimJson json, Collider2D collider)
         {
-            JsonTextWriter w = json.W;
             var group = new PhysicsShapeGroup2D();
             int count;
             try { count = collider.GetShapes(group); }
-            catch (Exception) { w.WriteNull(); return; }
+            catch (Exception) { json.W.WriteNull(); return; }
+            WriteShapeGroup(json, group, count);
+        }
+
+        static void WriteShapeGroup(EngineSimJson json, PhysicsShapeGroup2D group, int count)
+        {
+            JsonTextWriter w = json.W;
             w.WriteStartObject();
             w.WritePropertyName("localToWorld");
             Matrix4x4 m = group.localToWorldMatrix;

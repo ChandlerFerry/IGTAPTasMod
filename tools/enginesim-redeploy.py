@@ -8,8 +8,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+from gamepaths import GAME
+
 ROOT = Path(__file__).resolve().parent.parent
-GAME = Path(r"C:\Users\deafwave\Downloads\IGTAP_Real")
 DLL = ROOT / "bin" / "Release" / "netstandard2.1" / "IGTAPTasMod.dll"
 TARGET = GAME / "BepInEx" / "plugins" / "IGTAPTasMod.dll"
 API = "http://127.0.0.1:17426"
@@ -24,7 +25,12 @@ def post(path, body=None, timeout=120):
 def main():
     subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
                     "-nologo", "-v:q"], check=True)
-    subprocess.run(["taskkill", "/IM", "IGTAPfullGame.exe", "/F"], capture_output=True)
+    # Only this install's game: another install may be running on its own.
+    exe = str(GAME / "IGTAPfullGame.exe").replace("'", "''")
+    subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process IGTAPfullGame -ErrorAction SilentlyContinue"
+                    f" | Where-Object {{ $_.Path -eq '{exe}' }} | Stop-Process -Force"], capture_output=True)
+    # Offline solves (IGTAP.EngineSim.exe) submit to the game being replaced; stop them all.
+    subprocess.run(["taskkill", "/IM", "IGTAP.EngineSim.exe", "/F"], capture_output=True)
     for _ in range(30):
         try:
             shutil.copyfile(DLL, TARGET)

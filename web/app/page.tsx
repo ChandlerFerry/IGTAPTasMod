@@ -1,22 +1,23 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./action-editor.css";
 import "./frame-timeline.css";
-import "./favorite-ui.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
 
 const API = "http://127.0.0.1:17426/api";
 
 type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawMoveY?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
-type Route = { id: string; name: string; favorite: boolean; hotkey: string; checkpointId: string; actionCount: number; actions: Action[] };
+type Route = { id: string; name: string; hotkey: string; checkpointId: string; actionCount: number; actions: Action[] };
 type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
-type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
+type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
 // A bonus has a reward box instead of gates; a transition runs between two places: a course ("2") or a bonus ("bonus2").
-type Course = { id: number; token: string; bonus: boolean; minLevel: number; from?: string; to?: string };
+// `hint`: a bonus's reward and price, as its box shows them in the game (null until the world has the box).
+// `maxLevel`: the widest category it runs in (a bonus: its first unless courses.json maxCapabilities widens it).
+type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null };
 // `queue`: the run's targets in order (one for a single Solve), each with how it ended once it has. `repeat`: the queue
 // starts over when it ends (pass 2, 3, ...), `minutes` doubling each pass, until stopped.
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
@@ -25,7 +26,8 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
 type FullTasSplit = { label: string; ticks: number };
 // `offline`: the offline search's best so far (partial runs too, which never reach the gate); `playable`: Play has
 // something to play (the saved best, else the offline best, else the run's seed).
-type FullTasRun = { name: string; goals: string[]; tokens?: string[]; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+// `breaker`: the index of the goal that trips the breaker (Area 1's lights go out, Courses 1-5 reset); null: none does.
+type FullTasRun = { name: string; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
 // The gate's reply to a submit (the plugin's `lastResult` too).
 type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
@@ -52,6 +54,7 @@ export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
   const [tab, setTab] = useState("overview");
   const [error, setError] = useState("");
+  const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   const unlockLevel = state.connected ? state.unlockLevel ?? null : null;
 
   const refresh = useCallback(async () => {
@@ -61,9 +64,10 @@ export default function Studio() {
 
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 750); return () => window.clearInterval(timer); }, [refresh]);
   const route = useMemo(() => state.routes.find(r => r.id === state.selectedRouteId) ?? state.routes[0], [state]);
+  // Resolves to whether the request succeeded; a failure shows in the error banner.
   const command = async (path: string, body: unknown = {}) => {
-    try { setError(""); await request(path, body); await refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    try { setError(""); await request(path, body); await refresh(); return true; }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
   };
   const successes = state.results.filter(r => r.success);
   const successRate = state.results.length ? successes.length / state.results.length * 100 : 0;
@@ -93,8 +97,7 @@ export default function Studio() {
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
-          <button className="secondary" disabled={!route || route.favorite} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
-          <button className={`favoriteButton topFavorite ${route?.favorite?"active":""}`} disabled={!route} onClick={()=>command("/routes/favorite",{routeId:route?.id,favorite:!route?.favorite})}>{route?.favorite?"★ Locked":"☆ Favorite"}</button>
+          <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
           <button className="record" disabled={!route || state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button>
           <button className="danger" disabled={!state.running && !state.recording} onClick={() => command("/routes/stop")}>Stop</button>
         </div>
@@ -112,13 +115,13 @@ export default function Studio() {
           <Stat label="Start state" value={route?.checkpointId ? "Checkpoint" : "Quick restart"} detail={route?.checkpointId ? "Fingerprint protected" : "3 stable ticks"} />
         </div>}
 
-        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">{route?.favorite?"★ Favorited · read-only":"Changes save immediately"}</span></div><FrameTimeline actions={route?.actions ?? []}/><div className="timeline">{route?.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} locked={!!route?.favorite} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />)}</div></div>}
+        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><div className="timeline">{route?.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />)}</div></div>}
 
-        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className={`recordingCard ${recording.favorite?"locked":""}`} key={recording.id}><div className="recordingTitle"><div><strong>{recording.favorite?"★ ":""}{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions{recording.favorite?" · read-only":""}</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button disabled={recording.favorite} onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className={`favoriteButton ${recording.favorite?"active":""}`} onClick={()=>command("/recordings/favorite",{recordingId:recording.id,favorite:!recording.favorite})}>{recording.favorite?"★ Locked":"☆ Favorite"}</button><button className="danger" disabled={recording.favorite} onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
+        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
         {tab === "fulltas" && <FullTas fullTas={state.fullTas} running={state.running} onCommand={command}/>}
 
-        {tab === "optimize" && <div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} onCommand={command}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>}
+        {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "checkpoints" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Section checkpoints</h2></div><button className="primary" onClick={() => command("/checkpoints/capture")}>Capture current state</button></div><p className="lede">Assign a checkpoint to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="checkpointList">{state.checkpoints.map(cp => <div className={`checkpoint ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/checkpoints/restore", { checkpointId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/checkpoints/assign", { checkpointId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
 
@@ -133,13 +136,61 @@ const CATEGORY_ROUTE = /^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) ([\d.]+)$/i;
 
 const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
+// Where each bonus's box is in the level, and where its solo run starts (courses.json's start), from the world export's
+// box positions relative to the courses. Every bonus box is +1 global watts (cashPerLoop) unless it says otherwise.
+const BONUS_WHERE: Record<string, string> = {
+  bonus1: "Below Course 2, a little right of its restart. The run starts right of Course 2, up a bit (where Course 2 → Bonus 1 ends).",
+  bonus2: "Between Course 2 and Course 3: below and left of Course 3's start, on the way up. The run starts just left of it.",
+  bonus3: "Right of Course 3's restart, a little higher. The run starts at Course 3's restart.",
+  bonus4: "Straight below Course 5's start. The run starts at Course 5's restart.",
+  bonus5: "Left end of Course 3's upgrade row, a bit below it (the buyfree3 box). The run starts at Course 3's restart.",
+  bonus6: "Very high up above Course 3, far left of Course 4 (the buyfree4c box). The run starts at Course 4's restart.",
+  bonus7: "Left of Course 4's upgrade row, a little higher (the buyfree4a box). The run starts at Course 4's restart.",
+  bonus8: "Far above Course 4 (Course 6's box). The run starts at Course 6's restart.",
+  bonus9: "Below and left of Course 9's start. The run starts at Course 6's restart.",
+  bonus10: "Left of Course 7's start, a bit lower. The run starts at Course 6's restart.",
+  bonus11: "Just below and right of Course 7's start. The run starts at Course 6's restart.",
+  bonus12: "Between Course 7 and Course 9: above Course 7, below Course 9. The run starts at Course 6's restart.",
+  bonus13: "Below Course 10, a little left. The run starts at Course 10's restart.",
+  bonus14: "Right of Course 10. The run starts at Course 10's restart.",
+  bonus15: "Far left of Course 5, up high. The run starts at Course 5's restart.",
+  bonus16: "Very high above Course 1, level with Bonus 6 (the buyfree4b box). The run starts at Course 4's restart.",
+  bonus17: "Far below Course 7 (unlocks jiggle drops, no watts). The run starts at Course 7's restart.",
+  bonus18: "Just left of Course 8's start (unlocks clone dust, no watts). The run starts at Course 8's restart.",
+  bonus19: "At The Tree in Area 1 (plants the tree, no watts). The run starts at Course 10's restart.",
+  bonus20: "The Vman speedrun start in overgrown Area 1, far above Course 10 (no watts). The run starts at Course 10's restart.",
+  bonus21: "The other Vman speedrun start, just above Bonus 20 (no watts). The run starts at Course 10's restart.",
+  bonus22: "High above Course 5's start, a little left (secret #2, the buyfree5 box; costs watts). The run starts at Course 5's restart.",
+  bonus23: "Swap coloured blocks when dashing (buyblockswap5): left end of Course 4's upgrade row, there only after the breaker. The run starts at Course 5's restart.",
+};
+// Full-TAS buy tokens that are a bonus's box.
+const BONUS_TOKENS: Record<string, string> = { buyfree3: "bonus5", buyfree4a: "bonus7", buyfree4b: "bonus16", buyfree4c: "bonus6", buyfree5: "bonus22", buyblockswap5: "bonus23" };
+
+// A place's tooltip: a bonus's location (plus its box's reward and price when the plugin knows them); a transition's
+// bonus end's location.
+function placeTitle(c: Course | undefined): string | undefined {
+  if (!c) return undefined;
+  const where = (p?: string) => p ? BONUS_WHERE[p.toLowerCase()] : undefined;
+  if (c.to) { const end = where(c.to), start = where(c.from); return [start && `From ${place(c.from ?? "")}: ${start}`, end && `To ${place(c.to)}: ${end}`].filter(Boolean).join("\n") || undefined; }
+  return [where(c.token), c.hint].filter(Boolean).join("\n") || undefined;
+}
+
+// A Full-TAS goal's tooltip: where its bonus is ("reward:bonus5", "buy:buyfree5").
+function goalTitle(label: string): string | undefined {
+  const m = /^(reward|buy):(.+)$/.exec(label);
+  if (!m) return undefined;
+  const parts = m[2].split("+").map(t => t.trim().toLowerCase()).map(t => m[1] === "reward" ? t : BONUS_TOKENS[t]).filter((t): t is string => !!t && !!BONUS_WHERE[t]);
+  return parts.map(t => `${place(t)}: ${BONUS_WHERE[t]}`).join("\n") || undefined;
+}
+
 function courseLabel(c: Course | undefined, id: number) {
   if (!c) return `Course ${id}`;
   return c.to ? `${place(c.from ?? "")} → ${place(c.to)}` : place(c.token);
 }
 
-// The widest category a course has: a bonus only has its first one (the unlocks it needs), everything else runs in every wider one too.
-function topLevel(c: Course) { return c.bonus ? c.minLevel ?? 0 : CATEGORIES.length - 1; }
+// The widest category a course has: a bonus its first one unless maxCapabilities widens it (older plugins send no
+// maxLevel), everything else runs in every wider one too.
+function topLevel(c: Course) { return c.maxLevel ?? (c.bonus ? c.minLevel ?? 0 : CATEGORIES.length - 1); }
 
 // The fastest category route per "<course id>:<CAPS>"; slower ones and routes that aren't a known course's category
 // routes go to `other`.
@@ -161,20 +212,26 @@ function categoryBests(routes: Route[], courses: Course[]) {
 
 const SHORT_CATEGORY: Record<string, string> = { NO_WJ: "No WJ", WJ: "WJ", WJDASH: "WJ + Dash", WJ_DASH_AJ: "WJ + Dash + AJ" };
 
+// The fastest route that runs `c` in the category `level` places past its minimum: its own or a narrower category's.
+function soloBest(best: Map<string, {route: Route; time: number}>, c: Course, level: number) {
+  let solo: {route: Route; time: number} | undefined;
+  for (const [narrower] of CATEGORIES.slice(c.minLevel ?? 0, (c.minLevel ?? 0) + level + 1)) {
+    const b = best.get(`${c.id}:${narrower}`);
+    if (b && (!solo || b.time < solo.time)) solo = b;
+  }
+  return solo;
+}
+
 // Every course, transition and bonus by category with its fastest solo route (from its own start). A solo route runs
 // in every wider category, so a category's time is the fastest over it and the narrower ones. A category wider than
 // `unlockLevel` (the save's unlocks) is dimmed: your save can't run it by hand.
-function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Route[];courses:Course[];activeId?:string;unlockLevel:number|null;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Route[];courses:Course[];activeId?:string;unlockLevel:number|null;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const {best, other} = categoryBests(routes, courses);
   const cell = (routeId: string | undefined, text: string, title: string) => routeId
     ? <button className={`cmpCell ${routeId === activeId ? "active" : ""}`} title={title} onClick={() => onCommand("/routes/select", { routeId })}>{text}</button>
     : <span className="cmpCell empty" title={title}>{text}</span>;
   const rows = (c: Course) => CATEGORIES.slice(c.minLevel ?? 0, topLevel(c) + 1).flatMap(([cat], i) => {
-    let solo: {route: Route; time: number} | undefined;
-    for (const [narrower] of CATEGORIES.slice(c.minLevel ?? 0, (c.minLevel ?? 0) + i + 1)) {
-      const b = best.get(`${c.id}:${narrower}`);
-      if (b && (!solo || b.time < solo.time)) solo = b;
-    }
+    const solo = soloBest(best, c, i);
     // A category with no route of its own would only repeat a narrower one's row.
     if (!best.has(`${c.id}:${cat}`)) return [];
     const beyond = unlockLevel != null && (c.minLevel ?? 0) + i > unlockLevel;
@@ -187,7 +244,7 @@ function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Ro
     const groups = list.map(c => ({c, r: rows(c)})).filter(g => g.r.length > 0);
     return groups.length > 0 && <>
       <div className="cmpHead"><label className="sectionLabel">{label}</label><span>Solo</span></div>
-      {groups.map(({c, r}) => <div className="courseGroup" key={c.token}><strong className="courseName">{courseLabel(c, c.id)}</strong>{r}</div>)}
+      {groups.map(({c, r}) => <div className="courseGroup" key={c.token}><strong className="courseName" title={placeTitle(c)}>{courseLabel(c, c.id)}</strong>{r}</div>)}
     </>;
   };
   return <div className="courseList">
@@ -195,7 +252,7 @@ function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Ro
     {section("TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id))}
     {section("BONUSES", courses.filter(c => c.bonus && !c.to).sort((a, b) => a.id - b.id))}
     {other.length > 0 && <details className="otherRoutes"><summary className="sectionLabel">OTHER ROUTES ({other.length})</summary>
-      <div className="routeList">{other.map(item => <div className={`routeRow ${item.id === activeId ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (!item.favorite && window.confirm(`Delete route “${item.name}”?`)) onCommand("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => onCommand("/routes/select", { routeId: item.id })}><div><strong>{item.favorite ? "★ " : ""}{item.name}</strong><small>{item.actionCount} actions{item.favorite ? " · read-only" : item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button><button className={`favoriteButton ${item.favorite?"active":""}`} title={item.favorite?"Unfavorite and unlock":"Favorite and lock"} onClick={()=>onCommand("/routes/favorite",{routeId:item.id,favorite:!item.favorite})}>{item.favorite?"★":"☆"}</button></div>)}</div>
+      <div className="routeList">{other.map(item => <div className={`routeRow ${item.id === activeId ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (window.confirm(`Delete route “${item.name}”?`)) onCommand("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => onCommand("/routes/select", { routeId: item.id })}><div><strong>{item.name}</strong><small>{item.actionCount} actions{item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button></div>)}</div>
     </details>}
   </div>;
 }
@@ -222,27 +279,169 @@ function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:A
   else if(raw&&action.rawDashHeld) inputs.push("D");
   return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
 }
-function ActionCard({action,index,locked,onSave}:{action:Action;index:number;locked:boolean;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""} ${locked?"locked":""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select disabled={locked} value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input disabled={locked} type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button disabled={locked} onClick={()=>onSave({durationTicks:duration})}>Save</button><button disabled={locked} className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
-function Solver({solver,courses,onCommand}:{solver:SolverState;courses:Course[];onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function ActionCard({action,index,onSave}:{action:Action;index:number;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button onClick={()=>onSave({durationTicks:duration})}>Save</button><button className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
+function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverState;courses:Course[];routes:Route[];running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
   const [course,setCourse]=useState<number|"">("");
   const [caps,setCaps]=useState("wj");
   const chosen=course===""?(solver.courses[0]??1):course;
-  // A course has no categories below its minimum (Course 2 starts at WJ, 3 at WJDASH, 4 at WJ_DASH_AJ); a bonus only its first.
+  // A course has no categories below its minimum (Course 2 starts at WJ, 3 at WJDASH, 4 at WJ_DASH_AJ); a bonus none above its maxLevel.
   const chosenCourse=courses.find(c=>c.id===chosen);
   const minLevel=chosenCourse?.minLevel??0;
   const capsOptions=[["none","Nothing"],["wj","Wall jump"],["wjdash","Wall jump + dash"],["wjdashaj","Wall jump + dash + air jump"]].slice(minLevel,chosenCourse?topLevel(chosenCourse)+1:undefined);
   const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
+  // The fastest saved route for this course in this category, or a narrower one's (it runs in every wider category too).
+  const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,capsOptions.findIndex(([v])=>v===chosenCaps)):undefined;
+  const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
     <p className="lede">Captures the course start in the game, then searches offline on every core: it explores new paths from the start and sharpens the best finish; only the start and stop timer gates matter. Every offline best is replayed in the game (turbo) and, if it holds up there, saved as a route that replaces slower ones.</p>
     <div className="offlineControls">
-      <Field label="1. Course"><select value={chosen} disabled={solver.running} onChange={e=>{ if(e.target.value==="new") { let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(()=>setCourse(id)); } else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=><option key={id} value={id}>{courseLabel(courses.find(c=>c.id===id),id)}</option>)}<option value="new">+ New course from last recording</option></select></Field>
+      <Field label="1. Course"><select value={chosen} disabled={solver.running} title={placeTitle(chosenCourse)} onChange={e=>{ if(e.target.value==="new") { let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(()=>setCourse(id)); } else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=>{ const c=courses.find(c=>c.id===id); return <option key={id} value={id} title={placeTitle(c)}>{courseLabel(c,id)}</option>; })}<option value="new">+ New course from last recording</option></select></Field>
       <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></Field>
     </div>
-    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",{course:chosen,capabilities:chosenCaps})}>3. Solve</button>}</div>
+    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",{course:chosen,capabilities:chosenCaps})}>3. Solve</button>}<button className="secondary" onClick={()=>onMap({course:chosen,capabilities:chosenCaps})} title="Draw what the search has explored for this course and category: saved routes, the offline best, the explored area and the forced-path boxes">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title="Play this category's newest offline best (the latest solve's) in the game in real time, even one the turbo check rejected; nothing is saved">▶ Play offline best</button></div>
     <div className="offlineSummary"><div><span>Best</span><strong>{solver.best!=null?`${solver.best.toFixed(2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}`:"Not started"}</small></div><div><span>Runs</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.finishes.toLocaleString()} timed finishes</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
     {solver.log.length>0&&<ul className="solverLog">{solver.log.map((line,i)=><li key={i}>{line}</li>)}</ul>}
+  </div>;
+}
+
+// The Optimize tab's map (POST /enginesim/map, drawn offline by `IGTAP.EngineSim map`): the level's colliders as the
+// solver's world export has them, the standing forced-path boxes, the course's saved routes, its fastest offline best
+// and the archive's plateau routes replayed from the course start, and every explore prefix of the archive as a grid of
+// each cell's fastest timed arrival (-1: reached only with the timer off). World units, y up. Wheel zooms, drag pans;
+// the cursor's position reads out in world and course-gate units (what Cli/forced-paths.json boxes use) and the time
+// the search first reached it.
+type MapTarget = { course: number; capabilities: string };
+type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number };
+type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
+type MapData = { course: number; capabilities: string; label: string; bounds: number[]; gate: number[] | null; solids: MapSolid[];
+  markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; routes: MapRoute[];
+  explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
+type MapLayers = { explored: boolean; level: boolean; boxes: boolean; markers: boolean };
+const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
+
+function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];onClose:()=>void}) {
+  const [data, setData] = useState<MapData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failure, setFailure] = useState("");
+  const [layers, setLayers] = useState<MapLayers>({ explored: true, level: true, boxes: true, markers: true });
+  const [hidden, setHidden] = useState<Set<number>>(new Set());
+  const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number } | null>(null);
+  // Explored cell ("cx,cy") -> fastest timed arrival, for the readout.
+  const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
+  // The latest fastest arrival: the red end of the explored colors.
+  const latest = useMemo(() => data?.explored.cells.reduce((m, v) => Math.max(m, v[2]), 0) || 1, [data]);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  // A route's color: the offline best gold, plateau routes faint, saved routes from the palette.
+  const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
+  // World to screen: screen = (world - origin) * scale, y flipped.
+  const view = useRef({ ox: 0, oy: 0, scale: 1 });
+  const drag = useRef<{ x: number; y: number } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setFailure("");
+    try { const d: MapData = await request("/enginesim/map", target); setData(d); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0))); fit(d); }
+    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
+  }, [target]);
+  useEffect(() => { load(); }, [load]);
+
+  function fit(d: MapData) {
+    const c = canvas.current; if (!c) return;
+    const [x0, y0, x1, y1] = d.bounds, scale = Math.min(c.clientWidth / (x1 - x0), c.clientHeight / (y1 - y0));
+    view.current = { scale, ox: (x0 + x1) / 2 - c.clientWidth / 2 / scale, oy: (y0 + y1) / 2 + c.clientHeight / 2 / scale };
+  }
+
+  const draw = useCallback(() => {
+    const c = canvas.current; if (!c || !data) return;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+    const g = c.getContext("2d"); if (!g) return;
+    const { ox, oy, scale } = view.current;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = "#07111f"; g.fillRect(0, 0, w, h);
+    // World transform: everything below is drawn in world units.
+    g.setTransform(dpr * scale, 0, 0, -dpr * scale, -ox * scale * dpr, oy * scale * dpr);
+    const px = 1 / scale;
+    if (layers.explored && data.explored.cells.length) {
+      // Fastest timed arrival: early blue through late red; cells only reached with the timer off in grey.
+      const size = data.explored.cell;
+      for (const [cx, cy, t] of data.explored.cells) {
+        g.fillStyle = t < 0 ? "#34383f" : `hsl(${230 - 230 * t / latest},90%,55%)`;
+        g.fillRect(cx * size, cy * size, size, size);
+      }
+    }
+    if (layers.level) for (const s of data.solids) {
+      const color = s.spike ? "#e5484d" : "#8193ab";
+      g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(px * 1.5, s.k === "capsule" ? s.r * 2 : 0); g.lineCap = "round";
+      g.beginPath();
+      if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); g.fill(); continue; }
+      g.moveTo(s.p[0], s.p[1]);
+      for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
+      if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
+    }
+    if (layers.boxes) for (const [boxes, color] of [[data.avoid, "#ff4fd8"], [data.via, "#3ddc97"]] as [number[][], string][])
+      for (const [x0, y0, x1, y1] of boxes) {
+        g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+        g.strokeStyle = color; g.lineWidth = 2 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      }
+    data.routes.forEach((r, i) => {
+      if (hidden.has(i) || r.points.length < 4) return;
+      g.strokeStyle = colors[i]; g.lineWidth = (r.kind === "best" ? 3 : r.kind === "plateau" ? 1 : 2) * px; g.lineJoin = "round";
+      g.beginPath(); g.moveTo(r.points[0], r.points[1]);
+      for (let k = 2; k < r.points.length; k += 2) g.lineTo(r.points[k], r.points[k + 1]);
+      g.stroke();
+      const end = r.points.length - 2;
+      g.fillStyle = g.strokeStyle; g.beginPath(); g.arc(r.points[end], r.points[end + 1], 4 * px, 0, Math.PI * 2); g.fill();
+      if (r.timerStart >= 0) { g.beginPath(); g.arc(r.points[r.timerStart * 2], r.points[r.timerStart * 2 + 1], 5 * px, 0, Math.PI * 2); g.lineWidth = 1.5 * px; g.strokeStyle = "#fff"; g.stroke(); }
+    });
+    if (layers.markers) for (const m of data.markers) {
+      g.fillStyle = m.kind === "start" ? "#3ddc97" : m.kind === "end" ? "#ff6b6b" : m.kind === "spring" ? "#ffd54f" : "#4fc3f7";
+      const s = (m.kind === "checkpoint" ? 4 : 6) * px;
+      g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
+    }
+  }, [data, layers, hidden, colors, latest]);
+  useEffect(() => { draw(); }, [draw]);
+  useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
+  // Wheel zoom about the cursor; a non-passive listener, so the page does not scroll.
+  useEffect(() => {
+    const c = canvas.current; if (!c) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const v = view.current, rect = c.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const wx = v.ox + mx / v.scale, wy = v.oy - my / v.scale, scale = v.scale * Math.exp(-e.deltaY * 0.0015);
+      view.current = { scale, ox: wx - mx / scale, oy: wy + my / scale };
+      draw();
+    };
+    c.addEventListener("wheel", onWheel, { passive: false });
+    return () => c.removeEventListener("wheel", onWheel);
+  }, [draw]);
+
+  const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const v = view.current, rect = e.currentTarget.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    if (drag.current) { v.ox -= (e.clientX - drag.current.x) / v.scale; v.oy += (e.clientY - drag.current.y) / v.scale; drag.current = { x: e.clientX, y: e.clientY }; draw(); }
+    const x = v.ox + mx / v.scale, y = v.oy - my / v.scale, reach = 10 / v.scale;
+    const near = layers.markers ? data?.markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
+    const size = data?.explored.cell ?? 1;
+    setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(`${Math.floor(x / size)},${Math.floor(y / size)}`) });
+  };
+  const gate = data?.gate;
+  const toggle = (key: keyof MapLayers) => setLayers(l => ({ ...l, [key]: !l[key] }));
+  return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}</h2></div>
+    <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
+    <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (pink: runs entering them are cut). A ring marks where a route's timer starts. Wheel to zoom, drag to pan.</p>
+    {failure && <p className="mapFailure">{failure}</p>}
+    <div className="mapLayers">
+      {([["explored", "Explored"], ["level", "Level"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, springs"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+        <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
+      {data && <span className="hint">{data.explored.prefixes.toLocaleString()} explore prefixes · {data.explored.runs.toLocaleString()} runs</span>}
+      {data && <span className="hint">timer at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</span>}
+    </div>
+    <canvas ref={canvas} className="mapCanvas" onMouseDown={e => { drag.current = { x: e.clientX, y: e.clientY }; }} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; setCursor(null); }} onMouseMove={onMove}/>
+    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(0)}, {cursor.y.toFixed(0)}{gate && <> · from the course gate {(cursor.x - gate[0]).toFixed(0)}, {(cursor.y - gate[1]).toFixed(0)}</>}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
+    {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>
+      <span className="mapSwatch" style={{ background: colors[i] }}/>{r.name}<small>{r.finished ? `${r.time.toFixed(2)}s` : "no finish"} · {r.points.length / 2} ticks</small></label></li>)}</ul>}
   </div>;
 }
 
@@ -283,7 +482,7 @@ function progressText(solver: SolverState) {
 
 // Batch optimize: every course's categories as a checkbox, solved one after another in the matrix's order (top to
 // bottom, left to right). The selection and passes are kept in the browser.
-function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:Course[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:Course[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [passes, updatePasses] = usePasses();
   useEffect(() => setSelected(new Set(JSON.parse(window.localStorage.getItem("optimizeSelection") ?? "[]"))), []);
@@ -320,7 +519,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={5}>{label}</th></tr>
           {list.map(c => <tr key={c.id}>
-            <th><button onClick={() => toggle(cells(c).filter((t): t is SolveTarget => !!t).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
+            <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).filter((t): t is SolveTarget => !!t).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
             {cells(c).map((t, level) => <td key={level} className={t ? "" : "na"}>{t && checkbox(t)}</td>)}
           </tr>)}
         </Fragment>)}
@@ -347,7 +546,7 @@ function replyText(r: FullTasReply | string | null | undefined) {
 // Full-TAS: the whole game from a fresh new game as one continuous input stream, scored from its first tick to its last
 // goal. The goals split it; the offline search (Solve) works through it window by window and the game's gate saves a
 // route only when it is faster.
-function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const runs = fullTas?.runs ?? [];
   const [selected, setSelected] = useState("");
   const [newName, setNewName] = useState("");
@@ -365,7 +564,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
   const solve: FullTasState["solve"] = fullTas.solve ?? { running: false, status: "", log: [] };
   const busy = solve.running || running;
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
-  const validName = /^[A-Za-z0-9]+$/.test(newName);
+  const validName = /^[A-Za-z0-9%]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run ? (splits.length > run.goals.length ? splits.map(s => s.label) : run.goals) : [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
@@ -380,7 +579,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
     </div>
     {!name && <p className="offlineConfirmation">No Full-TAS run yet: name a new one.</p>}
     <div className="fullTasInline">
-      <Field label="New run (letters and digits)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
+      <Field label="New run (letters, digits, %)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
       <button className="secondary" disabled={!validName || runs.some(r => r.name === newName)} onClick={() => { setSelected(newName); setNewName(""); }}>+ New run</button>
     </div>
     {name && <div className="fullTasGrid">
@@ -388,7 +587,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
         <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached} OF ${run.goals.length} GOALS · NOT SAVED (ONLY COMPLETE RUNS GO TO THE GATE)`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:run?.offline?` · ${run.offline.time.toFixed(2)}s to goal ${run.offline.reached}`:""}</h2></div></div>
         <div className="resultTable">
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
-          {labels.map((label, i) => { const s = splits[i]; return <div className={`tableRow ${s?"":"pending"}`} key={i}>
+          {labels.map((label, i) => { const s = splits[i]; const b = run?.breaker; const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(s?.label ?? label) ?? ""].filter(Boolean).join("\n"); return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"}`} key={i} title={title || undefined}>
             <span>{i + 1}</span><span>{s?.label ?? label}</span>
             <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
             <span>{s ? tickText(s.ticks) : "—"}</span>

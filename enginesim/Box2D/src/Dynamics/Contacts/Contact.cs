@@ -83,6 +83,30 @@ namespace Box2D
 
         public int m_toiCount;
 
+        // This contact's place among its fixtures' pair's touching contacts (fixture UserData pairs, a Unity collider
+        // pair). Unity keeps those in a list and reports them in its order: a contact that starts touching goes to the
+        // end (b2World.NextTouchOrder), one that stops is replaced by the last (LeaveTouchOrder). Verified against every
+        // multi-contact pair in the turbo trace corpus (a corner of four shapes: diverge-c5-13.14 ticks 881-885).
+        public long m_touchOrder;
+
+        // Swap-remove from the pair's list: the pair's last touching contact takes this one's place.
+        internal void LeaveTouchOrder()
+        {
+            b2Body body = m_fixtureA.b2Body.Type() == b2BodyType.Static ? m_fixtureB.b2Body : m_fixtureA.b2Body;
+            object userA = m_fixtureA.UserData, userB = m_fixtureB.UserData;
+            b2Contact last = null;
+            for (b2ContactEdge e = body.m_contactList; e != null; e = e.next)
+            {
+                b2Contact other = e.contact;
+                if (other == this || (other.m_flags & b2CollisionFlags.Touching) == 0 || other.m_touchOrder < m_touchOrder) continue;
+                object a = other.m_fixtureA.UserData, b = other.m_fixtureB.UserData;
+                if (!(a == userA && b == userB || a == userB && b == userA)) continue;
+                if (last == null || other.m_touchOrder > last.m_touchOrder) last = other;
+            }
+
+            if (last != null) last.m_touchOrder = m_touchOrder;
+        }
+
         public b2Contact(b2Fixture fA, int indexA, b2Fixture fB, int indexB)
         {
             m_flags = b2CollisionFlags.Enabled;
@@ -378,10 +402,12 @@ namespace Box2D
             if (touching)
             {
                 m_flags |= b2CollisionFlags.Touching;
+                if (!wasTouching) m_touchOrder = bodyA.GetWorld().NextTouchOrder();
             }
             else
             {
                 m_flags &= ~b2CollisionFlags.Touching;
+                if (wasTouching) LeaveTouchOrder();
             }
 
             if (listener != null)

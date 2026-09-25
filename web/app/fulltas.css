@@ -12,6 +12,9 @@
 @media (max-width: 1200px) { .fullTasGrid { grid-template-columns: 1fr; } }
 .fullTasGoals .tableHead, .fullTasGoals .tableRow { grid-template-columns: 40px minmax(0,1fr) 130px 130px; }
 .fullTasGoals .tableRow.pending { color: var(--muted); }
+/* Goals from the trip breaker on: the lights are out (Area 1 dark, Courses 1-5 reset). */
+.fullTasGoals .tableRow.breakerTrip { background: #3a1420; color: var(--red); font-weight: 700; box-shadow: inset 3px 0 0 var(--red); }
+.fullTasGoals .tableRow.breakerOut { background: #1a0d18; box-shadow: inset 3px 0 0 #7a2438; }
 .fullTasEditor textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 10px 11px; outline: none; font: 12px/1.6 ui-monospace,Consolas,monospace; }
 .fullTasEditor textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px #34b8ff1b; }
 .fullTasEditor .buttonRow, .fullTasSolve .buttonRow { flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }

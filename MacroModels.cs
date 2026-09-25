@@ -61,7 +61,6 @@ namespace IGTAPTasMod
     {
         public string id = Guid.NewGuid().ToString("N");
         public string name = "New macro";
-        public bool favorite;
         public string hotkey = "";
         public bool hotkeyCtrl;
         public bool hotkeyShift;
@@ -74,8 +73,6 @@ namespace IGTAPTasMod
     [Serializable]
     public sealed class MacroLibrary
     {
-        // favorite is an additive, backward-compatible field; keep schema 8 so existing
-        // route libraries deserialize with favorite=false instead of being quarantined.
         public const int CurrentSchemaVersion = 8;
         public int schemaVersion = CurrentSchemaVersion;
         public int selectedIndex;
@@ -93,8 +90,14 @@ namespace IGTAPTasMod
         public bool jumpReleased;
         public bool dashPressed;
         public bool dashHeld;
+        // On a dash press: the dash frame (Movement.framesSinceLastDash) the jump was pressed in, 0 = none. The game takes
+        // no input on dash frames, so a jump there (a super jump) shows up in no sample of its own (MacroStep.dashJumpFrame).
+        public int dashJumpFrame;
         public float positionX;
         public float positionY;
+        // FloatingOrigin.currentOrigin on this tick: the absolute position (courses.json's frame) is position - origin.
+        public float originX;
+        public float originY;
         public float velocityX;
         public float velocityY;
         public bool onGround;
@@ -106,12 +109,10 @@ namespace IGTAPTasMod
     [Serializable]
     public sealed class RecordingDefinition
     {
-        // favorite is optional and defaults to false for existing recordings.
         public const int CurrentSchemaVersion = 1;
         public int schemaVersion = CurrentSchemaVersion;
         public string id = Guid.NewGuid().ToString("N");
         public string name = "Recording";
-        public bool favorite;
         public string createdUtc = DateTime.UtcNow.ToString("o");
         public float fixedDeltaMs;
         public string stopReason = "Manual stop";

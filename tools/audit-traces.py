@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-TRACES = Path(r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\enginesim")
+from gamepaths import TRACES
 JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15  # Solver.cs JumpBufferTicks / DashBufferTicks / JumpCutBufferTicks
 
 

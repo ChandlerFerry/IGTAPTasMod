@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -11,13 +13,16 @@ namespace IGTAPTasMod
     // in a loop inside one rendered frame, in Unity's per-frame order (FixedUpdate -> physics step -> Update -> delayed
     // Invokes). Every script's Invoke timer (Movement's, and the world's: a spring's 0.15 s cooldown) is re-scheduled on
     // fixed ticks so it fires where the frame loop would at >= 50 fps; left to real time, a spring hit once stayed on
-    // cooldown for the rest of the run.
+    // cooldown for the rest of the run. A buy-max box's IE_BuyMax (upgradeBox.buyUpgrade) resumes at the end of every
+    // tick like a WaitForEndOfFrame at 50 fps; left to Unity it bought once per touch and the rest after the run.
     internal static class TurboRunner
     {
         static readonly MethodInfo FixedUpdateMethod = AccessTools.Method(typeof(Movement), "FixedUpdate");
         static readonly MethodInfo UpdateMethod = AccessTools.Method(typeof(Movement), "Update");
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
+        // The buy-max boxes' IE_BuyMax coroutines this run started, in start order, each waiting for the frame's end.
+        static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
         static Movement _movement;
         static int _tick;
 
@@ -29,6 +34,8 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeInvoke))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "CancelInvoke", new[] { typeof(string) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeCancelInvoke))));
+            harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "StartCoroutine", new[] { typeof(IEnumerator) }),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
         }
 
         static bool BeforeInvoke(MonoBehaviour __instance, string methodName, float time)
@@ -47,12 +54,38 @@ namespace IGTAPTasMod
             return false;
         }
 
+        // upgradeBox.buyUpgrade's IE_BuyMax in a run: its first iteration now, as StartCoroutine runs it (the
+        // affordability check and DoBuyUpgrade up to the first WaitForEndOfFrame), the rest at each tick's end (EndOfFrame).
+        // Unity's own coroutine would wait for the real frame's end, after the whole run.
+        static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
+        {
+            if (!Active || !(__instance is upgradeBox box) || routine == null || !routine.GetType().Name.Contains("IE_BuyMax")) return true;
+            __result = null;
+            if (routine.MoveNext()) BuyMax.Add((box, routine));
+            return false;
+        }
+
+        // WaitForEndOfFrame at the end of a tick (one frame per tick): every waiting IE_BuyMax takes its next iteration,
+        // one started during this tick's physics included. Unity stops a coroutine whose object went inactive.
+        static void EndOfFrame()
+        {
+            for (int i = 0; i < BuyMax.Count; i++)
+            {
+                var (box, routine) = BuyMax[i];
+                if (box == null || !box.gameObject.activeInHierarchy || !routine.MoveNext()) BuyMax.RemoveAt(i--);
+            }
+        }
+
         // Everything a turbo run changes (turbo steps nothing else in the scene), taken at the end of a tick. Unity's
         // contacts aren't in it: Restore rebuilds them for the restored pose (SettleContacts).
         internal sealed class Snapshot
         {
             public int tick;
             public object[] movement, engine;
+            // SpawnClone rolls UnityEngine.Random: the RNG state where the snapshot was taken. Restore puts it back
+            // (the fixed Full-TAS seed, UnityEngine.Random.InitState, is applied before the new game's start snapshot),
+            // and the trace records it as "random": [s0, s1, s2, s3].
+            public UnityEngine.Random.State random;
             public (courseScript course, object[] fields)[] courses;
             public Vector3 position;
             public Vector2 bodyPosition, velocity;
@@ -74,8 +107,83 @@ namespace IGTAPTasMod
             public (localUpgrades script, Dictionary<localUpgrades.localUpgradeSet, double> upgrades)[] locals;
             // The clone objects under the script when the snapshot was taken (a clone bought later is destroyed on restore).
             public (clonesScript clones, object[] fields, HashSet<Transform> children)[] clones;
-            // SpawnClone rolls UnityEngine.Random.
-            public UnityEngine.Random.State random;
+            public Scene scene;
+        }
+
+        // What the trip breaker (Course 5's prestige box: upgradeBox.BoostOldCourses, tripBreakerScript.TripBreaker) changes
+        // outside the fields above: the boxes' GameObjects and enabled flags, Area 1's state, the breaker's lights and
+        // arrays, and which coloured blocks collide. A run past the breaker then restores a start from before it.
+        internal sealed class Scene
+        {
+            public (upgradeBox box, bool active, bool enabled)[] boxes;
+            public globalStats.area1states a1State;
+            public (tripBreakerScript script, bool[] activeLights, bool[] fixedAreas, (GameObject obj, bool active)[] objects,
+                Behaviour light, bool lightEnabled, float outer, float inner)[] breakers;
+            public (Collider2D collider, bool enabled)[] blocks;
+            public bool blueActive;
+        }
+
+        static readonly AccessTools.FieldRef<tripBreakerScript, bool[]> BreakerActiveLights = AccessTools.FieldRefAccess<tripBreakerScript, bool[]>("activeLights");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerGlobalLight = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("globalLight");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerAllLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("allLights");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject[]> BreakerAreaLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject[]>("areaLights");
+        // A Light2D (URP, not referenced here): enabled plus its point radii by reflection.
+        static readonly FieldInfo BreakerPlayerLight = AccessTools.Field(typeof(tripBreakerScript), "playerLight");
+        static readonly AccessTools.FieldRef<colouredBlockSwapper, GameObject[]> OrangeBlocks = AccessTools.FieldRefAccess<colouredBlockSwapper, GameObject[]>("orange");
+        static readonly AccessTools.FieldRef<colouredBlockSwapper, GameObject[]> BlueBlocks = AccessTools.FieldRefAccess<colouredBlockSwapper, GameObject[]>("blue");
+
+        static Scene CaptureScene(upgradeBox[] boxes)
+        {
+            var breakers = new List<(tripBreakerScript, bool[], bool[], (GameObject, bool)[], Behaviour, bool, float, float)>();
+            foreach (tripBreakerScript t in UnityEngine.Object.FindObjectsByType<tripBreakerScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                var objects = new List<(GameObject, bool)>();
+                foreach (GameObject o in new[] { BreakerGlobalLight(t), BreakerAllLights(t) }.Concat(BreakerAreaLights(t) ?? new GameObject[0]))
+                    if (o != null) objects.Add((o, o.activeSelf));
+                var light = BreakerPlayerLight.GetValue(t) as Behaviour;
+                breakers.Add((t, (bool[])BreakerActiveLights(t)?.Clone(), (bool[])t.fixedAreas?.Clone(), objects.ToArray(),
+                    light, light != null && light.enabled, LightRadius(light, "pointLightOuterRadius"), LightRadius(light, "pointLightInnerRadius")));
+            }
+            colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
+            var blocks = new List<(Collider2D, bool)>();
+            if (swapper != null)
+                foreach (GameObject o in (OrangeBlocks(swapper) ?? new GameObject[0]).Concat(BlueBlocks(swapper) ?? new GameObject[0]))
+                    if (o != null) foreach (Collider2D c in o.GetComponents<Collider2D>()) blocks.Add((c, c.enabled));
+            return new Scene {
+                boxes = Array.ConvertAll(boxes, b => (b, b.gameObject.activeSelf, b.enabled)),
+                a1State = Singleton<globalStats>.Instance.currentA1State,
+                breakers = breakers.ToArray(), blocks = blocks.ToArray(), blueActive = swapper != null && swapper.isBlueActive };
+        }
+
+        static float LightRadius(Behaviour light, string property)
+        {
+            return light == null ? 0f : (float)light.GetType().GetProperty(property).GetValue(light);
+        }
+
+        static void RestoreScene(Scene s)
+        {
+            foreach (var (box, active, enabled) in s.boxes)
+            {
+                if (box == null) continue;
+                if (box.gameObject.activeSelf != active) box.gameObject.SetActive(active);
+                box.enabled = enabled;
+            }
+            Singleton<globalStats>.Instance.currentA1State = s.a1State;
+            foreach (var (script, activeLights, fixedAreas, objects, light, lightEnabled, outer, inner) in s.breakers)
+            {
+                if (script == null) continue;
+                script.CancelInvoke();
+                if (activeLights != null) BreakerActiveLights(script) = (bool[])activeLights.Clone();
+                if (fixedAreas != null) script.fixedAreas = (bool[])fixedAreas.Clone();
+                foreach (var (obj, active) in objects) if (obj != null && obj.activeSelf != active) obj.SetActive(active);
+                if (light == null) continue;
+                light.enabled = lightEnabled;
+                light.GetType().GetProperty("pointLightOuterRadius").SetValue(light, outer);
+                light.GetType().GetProperty("pointLightInnerRadius").SetValue(light, inner);
+            }
+            foreach (var (collider, enabled) in s.blocks) if (collider != null) collider.enabled = enabled;
+            colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
+            if (swapper != null) swapper.isBlueActive = s.blueActive;
         }
 
         static readonly AccessTools.FieldRef<upgradeBox, float> BoxCooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
@@ -140,20 +248,22 @@ namespace IGTAPTasMod
                 currencies = globalStats.currencyLookup == null ? null : new Dictionary<globalStats.Currencies, double>(globalStats.currencyLookup),
                 globalUpgrades = globalStats.globalUpgradeDict == null ? null : new Dictionary<globalStats.globalUpgradeSet, double>(globalStats.globalUpgradeDict),
                 boxes = Array.ConvertAll(boxes, b => (b, CaptureFields(b))),
+                scene = CaptureScene(boxes),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
                 {
                     var children = new HashSet<Transform>();
                     foreach (Transform child in c.transform) { children.Add(child); HeldClones.Add(child); }
                     return (c, CaptureFields(c), children);
-                }),
-                random = UnityEngine.Random.state };
+                }) };
         }
 
         static void RestoreEconomy(Economy e)
         {
             RestoreDictionary(globalStats.currencyLookup, e.currencies);
             RestoreDictionary(globalStats.globalUpgradeDict, e.globalUpgrades);
+            // GameObjects first: a box enabled again runs its OnEnable before its fields go back.
+            if (e.scene != null) RestoreScene(e.scene);
             foreach (var (box, fields) in e.boxes) if (box != null) RestoreFields(box, fields);
             foreach (var (script, upgrades) in e.locals) if (script != null) RestoreDictionary(script.localUpgradeDict, upgrades);
             foreach (var (clones, fields, children) in e.clones)
@@ -176,7 +286,6 @@ namespace IGTAPTasMod
                     else if (pooled.Contains(child.gameObject)) child.gameObject.SetActive(false);
                 }
             }
-            UnityEngine.Random.state = e.random;
         }
 
         public static double Cash(Snapshot s)
@@ -215,7 +324,7 @@ namespace IGTAPTasMod
             int next = _tick + (beforeTick ? 0 : 1);
             for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - next, Pending[i].target, Pending[i].method);
             return new Snapshot {
-                tick = tick, movement = FieldState.Capture(movement), engine = engine,
+                tick = tick, movement = FieldState.Capture(movement), engine = engine, random = UnityEngine.Random.state,
                 courses = Array.ConvertAll(courses, c => (c, FieldState.Capture(c))),
                 position = movement.transform.position, bodyPosition = body.position, velocity = body.linearVelocity,
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
@@ -250,6 +359,8 @@ namespace IGTAPTasMod
             // Last: nothing the settling step did to the scripts' state survives.
             FieldState.Restore(movement, s.movement);
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
+            // SpawnClone rolls UnityEngine.Random: the state the snapshot carried goes back with the scripts' state.
+            UnityEngine.Random.state = s.random;
             if (s.economy != null) RestoreEconomy(s.economy);
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
@@ -322,9 +433,11 @@ namespace IGTAPTasMod
         {
             if (movement == null) throw new InvalidOperationException("Player not found.");
             SimulationMode2D savedMode = Physics2D.simulationMode;
-            courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsSortMode.None);
-            upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsSortMode.None);
-            clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsSortMode.None);
+            // Inactive ones too: the per-tick isActiveAndEnabled check is Unity's FixedUpdate rule, and the trip breaker
+            // activates a box (SwapBlocksOnDash) and disables another mid-run.
+            courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             float dt = Time.fixedDeltaTime;
             // The floating numbers (a finish's reward, a clone's pay) come from a pool of 200 that only their own
             // FixedUpdate, never stepped here, refills. Drained mid-run, the next one throws out of courseScript.stopTracking
@@ -334,6 +447,7 @@ namespace IGTAPTasMod
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
             _movement = movement;
             Pending.Clear();
+            BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
             Active = true;
             if (numbers != null) numbers.ActuallySpawnText = false;
@@ -363,6 +477,7 @@ namespace IGTAPTasMod
                     UpdateMethod.Invoke(movement, null);
                     foreach (clonesScript c in clones)
                         if (c != null && c.isActiveAndEnabled) StepClones(c, dt);
+                    EndOfFrame();
                     afterTick?.Invoke();
                 }
                 return _tick;
@@ -381,6 +496,8 @@ namespace IGTAPTasMod
                     else AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
                 }
                 Pending.Clear();
+                // A buy-max box's purchases still waiting end with the run: the state it restores next has none.
+                BuyMax.Clear();
                 _movement = null;
             }
         }

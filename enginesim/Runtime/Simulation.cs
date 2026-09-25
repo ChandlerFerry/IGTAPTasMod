@@ -11,15 +11,36 @@ namespace IGTAP.EngineSim
     // One solver input tick (TasPlugin.SolverTick).
     public struct InputTick : IEquatable<InputTick>
     {
-        public float x;
+        // The stick: x as MacroEngine.ControllerAxis takes it, y 0 or ±1 (down: fast fall and faster wall slides, up:
+        // slower wall slides).
+        public float x, y;
         public bool held, press, release, dash;
         public int dashJump;
         // The game's quick restart before this tick (MacroStep.rawQuickRestart).
         public bool reset;
 
-        public bool Equals(InputTick o) { return x == o.x && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && reset == o.reset; }
+        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && reset == o.reset; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
-        public override int GetHashCode() { return HashCode.Combine(x, held, press, release, dash, dashJump, reset); }
+        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, reset); }
+
+        // A tick as routes, traces and offline bests write it (SolverTick's fields; y and reset may be absent).
+        public static InputTick FromJson(JsonElement t)
+        {
+            return new InputTick
+            {
+                x = t.GetProperty("x").GetSingle(),
+                y = t.TryGetProperty("y", out JsonElement y) ? y.GetSingle() : 0f,
+                held = t.GetProperty("held").GetBoolean(),
+                press = t.GetProperty("press").GetBoolean(),
+                release = t.GetProperty("release").GetBoolean(),
+                dash = t.GetProperty("dash").GetBoolean(),
+                dashJump = t.GetProperty("dashJump").GetInt32(),
+                reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
+            };
+        }
+
+        // As FromJson reads it (and the plugin's SolverTick).
+        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, reset }; }
     }
     public sealed class RunResult
     {
@@ -50,10 +71,16 @@ namespace IGTAP.EngineSim
         public (int due, MonoBehaviour target, string method, float repeat)[] Pending;
         public object Physics;
         public (MonoBehaviour target, object[] fields)[] Touched;
-        // Shop: what the run spent, per currency, and the native economy's state (Economy).
+        // GameObjects a run activated or deactivated and Behaviours it enabled or disabled (the trip breaker's), as
+        // they are here; any other of them is as loaded.
+        public (GameObject target, bool active)[] Active;
+        public (Behaviour target, bool enabled)[] Enabled;
+        // Shop: what the run spent, per currency, the native economy's state (Economy) and the buy-max purchases waiting.
         internal Shop.State Economy;
         // Full-TAS: the goal tracker's state (null outside a Full-TAS run).
         internal FullTasTracker.State Goal;
+        // UnityEngine.Random's state (the trace's "random"), so a restored run rolls what the original did.
+        public UnityEngine.Random.State Random;
         // OfflineSolver.ForcedPath: how many of the forced path's boxes the run had passed here (the solver sets it).
         public int Waypoints;
     }
@@ -90,6 +117,9 @@ namespace IGTAP.EngineSim
         // as loaded, so a restore can put them back.
         readonly Dictionary<MonoBehaviour, object[]> _pristine = new Dictionary<MonoBehaviour, object[]>();
         readonly HashSet<MonoBehaviour> _touched = new HashSet<MonoBehaviour>();
+        // The GameObjects and Behaviours a run toggled (SetActive, SetEnabled), with their flag as loaded.
+        readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
+        readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
 
         public Simulation(World world)
         {
@@ -116,6 +146,7 @@ namespace IGTAP.EngineSim
                 _endReason = reason;
             };
             Hooks.PlayerInput = m => Engine.FixedTick((Movement)m);
+            IGTAP.EngineSim.Engine.Stick = () => Engine.DeviceStick;
             Hooks.DashFrame = m => Engine.DashFrame((Movement)m);
             Hooks.Death = m =>
             {
@@ -128,6 +159,35 @@ namespace IGTAP.EngineSim
             // TasPlugin.BeforeRespawn.
             Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = false;
             Hooks.UpgradeBoxStay = Shop.Stay;
+            // The sound code's UnityEngine.Random draws (cuts.txt empties playSFX and Audio.PlayAudio; hooks.txt keeps
+            // the draws their game bodies make). Each draw moves the state one word (Random.Draw), so the counts are
+            // the whole contract; the values go to sound only.
+            Hooks.PlaySfx = (_, code) =>
+            {
+                // playSFX: a clip draw (or the wall-slide time draw), then always a pitch draw; land/grassLand
+                // instead make an Audio.PlayAudio(..., pitchVariance: 0.15f): its clip and pitch draws, and then
+                // playSFX's own pitch draw.
+                switch (code)
+                {
+                    case "land":
+                    case "grassLand": UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); break;
+                    case "bigJump":
+                    case "smallJump":
+                    case "wallSlide":
+                    case "grassWallSlide":
+                    case "dash":
+                    case "airJump":
+                    case "death": UnityEngine.Random.Draw(); break;
+                }
+                UnityEngine.Random.Draw();
+            };
+            Hooks.PlayAudio = (_, _2, _3, pitchVariance) =>
+            {
+                // Audio.PlayAudio: a clip draw (every AUDIO_ID's library has at least one clip) and a pitch draw when
+                // the caller passed a pitch variance.
+                UnityEngine.Random.Draw();
+                if (pitchVariance != 0f) UnityEngine.Random.Draw();
+            };
         }
 
         // ---- Full-TAS (FullTas.cs): the run goes on through every goal and finishes at the last one of `Goals.Limit`.
@@ -224,6 +284,19 @@ namespace IGTAP.EngineSim
         {
             if (script == Player || script is courseScript || !_touched.Add(script)) return;
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
+        }
+
+        // GameObject.SetActive / Behaviour.enabled from a modeled game method, so snapshots carry the flag.
+        internal void SetActive(GameObject gameObject, bool active)
+        {
+            if (!_activeAsLoaded.ContainsKey(gameObject)) _activeAsLoaded[gameObject] = gameObject.activeSelf;
+            gameObject.SetActive(active);
+        }
+
+        internal void SetEnabled(Behaviour behaviour, bool enabled)
+        {
+            if (!_enabledAsLoaded.ContainsKey(behaviour)) _enabledAsLoaded[behaviour] = behaviour.enabled;
+            behaviour.enabled = enabled;
         }
 
         // The course a run is scored on (the trace's course); 0 accepts any. Finishing another course is not a finish.
@@ -350,6 +423,14 @@ namespace IGTAP.EngineSim
             Physics.ResetPlayer(World.Vec2(start.GetProperty("bodyPosition")), World.Vec2(start.GetProperty("velocity")),
                 World.ReadFloat(start.GetProperty("rotation")), World.ReadFloat(start.GetProperty("angularVelocity")));
             if (start.TryGetProperty("economy", out JsonElement economy)) Shop.LoadStart(economy, ApplyFields);
+            // The start's "random": UnityEngine.Random's state (Random.State's s0..s3 in order) at the start snapshot.
+            // A trace without one predates the export; its runs start from a fixed state instead.
+            if (start.TryGetProperty("random", out JsonElement random))
+                UnityEngine.Random.state = new UnityEngine.Random.State
+                {
+                    s0 = random[0].GetInt32(), s1 = random[1].GetInt32(), s2 = random[2].GetInt32(), s3 = random[3].GetInt32(),
+                };
+            else UnityEngine.Random.InitState(0);
             _start = Capture(0);
         }
 
@@ -391,8 +472,11 @@ namespace IGTAP.EngineSim
                 Pending = pending,
                 Physics = Physics.Capture(),
                 Touched = _touched.Select(s => (s, FieldState.Capture(s))).ToArray(),
+                Active = _activeAsLoaded.Count == 0 ? Array.Empty<(GameObject, bool)>() : _activeAsLoaded.Keys.Select(g => (g, g.activeSelf)).ToArray(),
+                Enabled = _enabledAsLoaded.Count == 0 ? Array.Empty<(Behaviour, bool)>() : _enabledAsLoaded.Keys.Select(b => (b, b.enabled)).ToArray(),
                 Economy = Shop.Capture(),
                 Goal = Goals?.Capture(),
+                Random = UnityEngine.Random.state,
             };
         }
 
@@ -422,7 +506,14 @@ namespace IGTAP.EngineSim
                 touched ^= s.ToHashCode();
             }
             h.Add(touched);
+            int toggled = 0;
+            foreach (GameObject g in _activeAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
+            foreach (Behaviour b in _enabledAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
+            h.Add(toggled);
             Shop.AddTo(ref h);
+            // The RNG state the rest of the run rolls from.
+            UnityEngine.Random.State rng = UnityEngine.Random.state;
+            h.Add(rng.s0); h.Add(rng.s1); h.Add(rng.s2); h.Add(rng.s3);
             if (Goals != null) h.Add(Goals.Hash());
             return h.ToHashCode();
         }
@@ -451,6 +542,21 @@ namespace IGTAP.EngineSim
 
         public void Restore(SimSnapshot s)
         {
+            // Toggled objects first, without rebuilding their colliders: Physics.Restore brings their fixtures back.
+            Physics.Suspended = true;
+            foreach (var (g, loaded) in _activeAsLoaded)
+            {
+                bool active = loaded;
+                foreach (var (target, value) in s.Active) if (target == g) { active = value; break; }
+                if (g.activeSelf != active) g.SetActive(active);
+            }
+            foreach (var (b, loaded) in _enabledAsLoaded)
+            {
+                bool enabled = loaded;
+                foreach (var (target, value) in s.Enabled) if (target == b) { enabled = value; break; }
+                if (b.enabled != enabled) b.enabled = enabled;
+            }
+            Physics.Suspended = false;
             foreach (MonoBehaviour script in _touched) FieldState.Restore(script, _pristine[script]);
             _touched.Clear();
             foreach (var (target, fields) in s.Touched)
@@ -484,6 +590,7 @@ namespace IGTAP.EngineSim
             Physics.Restore(s.Physics);
             Shop.Restore(s.Economy);
             if (Goals != null) Goals.Restore(s.Goal);
+            UnityEngine.Random.state = s.Random;
         }
 
         // TasPlugin.Evaluate for one input list resumed from `from` (the start state when null). `afterTick` sees the
@@ -524,6 +631,8 @@ namespace IGTAP.EngineSim
                 _update();
                 // TurboRunner.StepClones: every course's clones, after Movement.Update.
                 Shop.StepClones();
+                // TurboRunner.EndOfFrame: the buy-max boxes' next purchases.
+                Shop.EndOfFrame();
                 // TasPlugin.BeforeMovementFixedUpdate: a bonus run finishes on its reward box (no end gate), a transition
                 // on its end box; both in physics ticks from the run start (dash ticks included).
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
@@ -589,7 +698,7 @@ namespace IGTAP.EngineSim
 
         static bool Merges(InputTick previous, InputTick k)
         {
-            return !k.press && !k.release && !k.dash && !k.reset && previous.x == k.x && previous.held == k.held;
+            return !k.press && !k.release && !k.dash && !k.reset && previous.x == k.x && previous.y == k.y && previous.held == k.held;
         }
 
         // TasPlugin.ToSteps: consecutive identical ticks merge into one raw-input step.
@@ -609,7 +718,7 @@ namespace IGTAP.EngineSim
                 }
                 steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
                     durationMs = tickMs, endCondition = ActionEndCondition.FixedTicks,
-                    direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawJumpHeld = k.held,
+                    direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, rawQuickRestart = k.reset });
             }

@@ -946,6 +946,7 @@ namespace Box2D
 				if (node.IsLeaf)
 				{
 					var subInput = input;
+					subInput.maxFraction = maxFraction;
 
 					float value = RayCastCallback(subInput, nodeId);
 
