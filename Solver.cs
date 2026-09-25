@@ -409,7 +409,12 @@ namespace IGTAPTasMod
                 && m.steps.All(s => s.type == MacroStepType.RawInput)))
             {
                 string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
-                File.WriteAllText(seed, JsonConvert.SerializeObject(new { ticks = ToTicks(route.steps) }));
+                // A standalone route seeding a chain segment starts at its course's quick-restart point, standing (the
+                // player spawns 12 px lower); solve walks there first (SeedAlign).
+                bool standalone = _solverChain != null && route.name.StartsWith(prefixes[0], StringComparison.OrdinalIgnoreCase);
+                Vector2 at = new Vector2(course.x, course.y - 12f) + CurrentOrigin();
+                File.WriteAllText(seed, JsonConvert.SerializeObject(standalone
+                    ? (object)new { ticks = ToTicks(route.steps), align = new { at.x, at.y } } : new { ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);

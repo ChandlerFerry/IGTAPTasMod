@@ -194,7 +194,9 @@ namespace IGTAPTasMod
         // Every physics tick, dash and spring ticks included (they skip the input hook, so RunTicks does not count them).
         private static void AfterMovementFixedUpdate(Movement __instance)
         {
-            if (Instance != null && !IsMenuPlayer(__instance)) Instance._engine.CountPhysicsTick();
+            if (Instance == null || IsMenuPlayer(__instance)) return;
+            Instance._engine.CountPhysicsTick();
+            Instance.OverlayTick(__instance);
         }
 
         // The main menu's own Movement (isOnMainMenu) also runs FixedUpdate; runs only ever drive the world's player.
@@ -214,6 +216,7 @@ namespace IGTAPTasMod
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
             Instance._engine.FixedTick(__instance);
+            Instance.OverlayCaptureAxis(__instance);
             if (Instance._brakeTicks >= 0 && !IsMenuPlayer(__instance)) Instance.Brake(__instance);
             // This method is the movement executor, not a device sampler. The prefix
             // supplies MoveAxis and input buffers; the original must run to consume
@@ -262,7 +265,10 @@ namespace IGTAPTasMod
 
         private static void BeforeDashFrame(Movement __instance)
         {
-            if (Instance != null && !Instance._recorder.IsRecording) Instance._engine.DashFrame(__instance);
+            if (Instance == null || Instance._recorder.IsRecording) return;
+            int presses = Instance._engine.JumpPresses;
+            Instance._engine.DashFrame(__instance);
+            if (Instance._engine.JumpPresses != presses) Instance.OverlayCaptureAxis(__instance);
         }
 
         private void PatchOptional(Type type, string methodName, string prefixName, string postfixName)
@@ -683,11 +689,6 @@ namespace IGTAPTasMod
             bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
             bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
             return (!macro.hotkeyCtrl || ctrl) && (!macro.hotkeyShift || shift) && (!macro.hotkeyAlt || alt);
-        }
-
-        private void OnGUI()
-        {
-            // Website-only UI. Intentionally draw nothing in the game.
         }
 
         private void CaptureCheckpoint()
@@ -1272,6 +1273,12 @@ namespace IGTAPTasMod
                 SaveSettings();
                 return new { ok = true, locked = _settings.lockCapabilities };
             }
+            if (request.Path == "/api/settings/overlay")
+            {
+                _settings.showOverlay = Truthy(body, "shown");
+                SaveSettings();
+                return new { ok = true, shown = _settings.showOverlay };
+            }
             if (request.Path == "/api/session/setup")
             {
                 // Live changes to the running game (never the save file): {"start": {x, y},
@@ -1684,6 +1691,7 @@ namespace IGTAPTasMod
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
+                overlayShown = _settings.showOverlay,
                 running = PlaybackActive,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
