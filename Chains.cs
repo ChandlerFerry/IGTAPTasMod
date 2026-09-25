@@ -290,7 +290,7 @@ namespace IGTAPTasMod
             // A Full-TAS run: a purchase is a goal event (and its unlocks count from here), never the end of the run by itself.
             if (Instance._fullTas != null)
             {
-                Instance.FullTasBought(HierarchyPath(__instance.transform));
+                Instance.FullTasBought(__instance);
                 return;
             }
             CourseDef course = Instance.RunCourse;
@@ -439,7 +439,8 @@ namespace IGTAPTasMod
             float total = run.splits.Sum();
             string splits = string.Join(" + ", run.splits.Select((t, i) => run.segments[i].key + " " + t.ToString("0.00", CultureInfo.InvariantCulture)));
             _lastChainResult = "Chain " + run.chain.name + (finished ? " finished in " + total.ToString("0.00", CultureInfo.InvariantCulture) + "s"
-                : " stopped in segment " + (run.index + 1) + " (" + run.Current.key + "): " + (run.failure ?? reason)) + (splits.Length > 0 ? " [" + splits + "]" : "");
+                : " stopped in segment " + (run.index + 1) + " (" + run.Current.key + "): " + (run.failure ?? reason)) + DroppedFramesText()
+                + (splits.Length > 0 ? " [" + splits + "]" : "");
             Logger.LogInfo(_lastChainResult);
             var result = new AttemptResult {
                 routeId = "chain:" + run.chain.name,
@@ -612,9 +613,30 @@ namespace IGTAPTasMod
             SaveLibrary();
         }
 
-        // The studio's view of every chain: its segments with their routes and times.
+        // The studio's view of every chain: its segments with their routes and times. The library is indexed once by
+        // category (ChainSegmentRoute's pick: the fastest, the first on a tie) rather than scanned per segment.
         object[] BuildChainWebState()
         {
+            var fastest = new Dictionary<string, KeyValuePair<MacroDefinition, float>>(StringComparer.OrdinalIgnoreCase);
+            var stale = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (MacroDefinition m in _library.macros)
+            {
+                if (m.name == null) continue;
+                Match g = CategoryRoute.Match(m.name);
+                if (g.Success)
+                {
+                    float time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
+                    if (!fastest.TryGetValue(g.Groups[1].Value, out var best) || time < best.Value)
+                        fastest[g.Groups[1].Value] = new KeyValuePair<MacroDefinition, float>(m, time);
+                }
+                int space = m.name.IndexOf(' ');
+                if (space > 0 && m.name.EndsWith(" stale", StringComparison.Ordinal))
+                {
+                    string category = m.name.Substring(0, space);
+                    stale.TryGetValue(category, out int count);
+                    stale[category] = count + 1;
+                }
+            }
             return _chains.Select(chain =>
             {
                 List<ChainSegment> segments;
@@ -622,13 +644,12 @@ namespace IGTAPTasMod
                 catch (Exception ex) { return (object)new { name = chain.name, capabilities = chain.capabilities, fromNewGame = chain.FromNewGame, error = ex.Message, segments = new object[0] }; }
                 var rows = segments.Select(s =>
                 {
-                    MacroDefinition route = ChainSegmentRoute(chain, s);
-                    Match g = route == null ? null : CategoryRoute.Match(route.name);
-                    string prefix = ChainCategory(chain, s) + " ";
+                    string category = ChainCategory(chain, s);
+                    bool has = fastest.TryGetValue(category, out var route);
+                    stale.TryGetValue(category, out int staleRoutes);
                     return new { index = s.index, token = s.token, key = s.key, category = CapabilityLabels[s.caps], restart = s.restart, module = s.module,
                         bonus = s.target.IsBonus, purchase = s.target.IsPurchase, @from = s.target.from, to = s.target.to,
-                        routeId = route?.id, time = g == null ? (float?)null : float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture),
-                        staleRoutes = _library.macros.Count(m => m.name != null && m.name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && m.name.EndsWith(" stale", StringComparison.Ordinal)) };
+                        routeId = has ? route.Key.id : null, time = has ? route.Value : (float?)null, staleRoutes };
                 }).ToArray();
                 return new { name = chain.name, capabilities = chain.capabilities, fromNewGame = chain.FromNewGame, error = (string)null, segments = rows,
                     total = rows.All(r => r.time != null) ? rows.Sum(r => r.time.Value) : (float?)null };

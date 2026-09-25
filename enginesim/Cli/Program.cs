@@ -87,9 +87,11 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--no-submit] [--fresh]        Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
+                            + "          [--seed <file>]... [--no-submit] [--fresh]\n"
+                            + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         run state in <traces>/fulltas/<run>.json, bests to the gate\n"
-                            + "                                         (/api/fulltas/submit) when the game runs\n"
+                            + "                                         (/api/fulltas/submit) when the game runs; --seed: saved course\n"
+                            + "                                         routes ({goals, standing, restart, ticks}) as window starts\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
                         return 2;

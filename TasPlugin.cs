@@ -156,8 +156,6 @@ namespace IGTAPTasMod
             if (course != null && course.HasFinish && !course.IsPurchase && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
-            // A Full-TAS run's reward goal: touching its box, checked where a bonus run's is.
-            if (Instance._fullTas != null && Instance._engine.IsRunning && !IsMenuPlayer(__instance)) Instance.FullTasRewardCheck(__instance);
             // A chain's next segment goes on from where the last one finished, then does its quick restart if it has one.
             if (Instance._chainRun != null && Instance._chainRun.pendingNext && !Instance._engine.IsRunning && !IsMenuPlayer(__instance))
                 Instance.ContinueChain(__instance);
@@ -839,8 +837,41 @@ namespace IGTAPTasMod
             return _newGameStart;
         }
 
+        // Real-time playback paces the game so every physics tick gets its own frame, as the route model (and the offline
+        // engine) assumes. At most one tick per frame: a hitch (autosave, overlay scan) stretches the playback instead of
+        // running up to 16 ticks with no Update between them. No vsync and a 144 fps cap: under ~50 fps two ticks share a
+        // frame and fractional-delay Invokes (buffers, spring cooldown) land a tick late; exactly 50 fps does too for the
+        // 0.03 s-class ones. Turbo and the solver step their own physics. Restored as soon as the playback ends.
+        const int PlaybackFrameRate = 144;
+        bool _playbackPaced;
+        float _savedMaximumDeltaTime;
+        int _savedVSyncCount, _savedTargetFrameRate;
+
+        void PacePlayback(bool on)
+        {
+            if (on == _playbackPaced) return;
+            _playbackPaced = on;
+            if (on)
+            {
+                _savedMaximumDeltaTime = Time.maximumDeltaTime;
+                _savedVSyncCount = QualitySettings.vSyncCount;
+                _savedTargetFrameRate = Application.targetFrameRate;
+                Time.maximumDeltaTime = Time.fixedDeltaTime;
+                QualitySettings.vSyncCount = 0;
+                Application.targetFrameRate = PlaybackFrameRate;
+            }
+            else
+            {
+                Time.maximumDeltaTime = _savedMaximumDeltaTime;
+                QualitySettings.vSyncCount = _savedVSyncCount;
+                Application.targetFrameRate = _savedTargetFrameRate;
+            }
+        }
+
         private void Update()
         {
+            PacePlayback(PlaybackActive && !TurboRunner.Active);
+            OverlayFrame();
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
             PumpSolver();
             PumpBootstrap();
@@ -1849,21 +1880,25 @@ namespace IGTAPTasMod
         private object BuildWebState()
         {
             MacroDefinition selected = SelectedMacro;
+            // The studio polls this every 750 ms on the game's main thread: only the selected route's actions (the others
+            // just their count) and only the result fields it shows, or each poll is a 2 MB, ~65 ms frame hitch.
             List<object> routes = new List<object>();
             foreach (MacroDefinition route in _library.macros)
             {
                 List<object> actions = new List<object>();
-                foreach (MacroStep action in route.steps) actions.Add(new {
-                    id = action.id, label = action.label, type = TypeName(action.type), direction = action.direction,
-                    wallJumpHoldDirection = action.wallJumpHoldDirection,
-                    durationTicks = action.durationTicks, durationMs = action.durationMs,
-                    rawMoveX = action.rawMoveX, rawMoveY = action.rawMoveY,
-                    rawJumpPressed = action.rawJumpPressed, rawJumpHeld = action.rawJumpHeld,
-                    rawJumpReleased = action.rawJumpReleased,
-                    rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
-                    dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
-                });
-                routes.Add(new { id = route.id, name = route.name, favorite = route.favorite, hotkey = HotkeyText(route), checkpointId = route.checkpointId, actions = actions });
+                if (route == selected)
+                    foreach (MacroStep action in route.steps) actions.Add(new {
+                        id = action.id, label = action.label, type = TypeName(action.type), direction = action.direction,
+                        wallJumpHoldDirection = action.wallJumpHoldDirection,
+                        durationTicks = action.durationTicks, durationMs = action.durationMs,
+                        rawMoveX = action.rawMoveX, rawMoveY = action.rawMoveY,
+                        rawJumpPressed = action.rawJumpPressed, rawJumpHeld = action.rawJumpHeld,
+                        rawJumpReleased = action.rawJumpReleased,
+                        rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
+                        dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
+                    });
+                routes.Add(new { id = route.id, name = route.name, favorite = route.favorite, hotkey = HotkeyText(route), checkpointId = route.checkpointId,
+                    actionCount = route.steps.Count, actions = actions });
             }
             List<object> checkpoints = new List<object>();
             foreach (SectionCheckpoint checkpoint in _checkpoints)
@@ -1887,12 +1922,6 @@ namespace IGTAPTasMod
                 if (selected != null && result.routeId == selected.id)
                     results.Add(new { id = result.id, success = result.success, completionTime = result.completionTime,
                         completionTicks = result.completionTicks, timingSource = result.timingSource,
-                        courseStartRunTick = result.courseStartRunTick, courseStartUnityFrame = result.courseStartUnityFrame,
-                        courseStartX = result.courseStartX, courseStartY = result.courseStartY,
-                        startStateFingerprint = result.startStateFingerprint,
-                        earlyTrace = result.earlyTrace,
-                        firstJumpPositionOffsetX = result.firstJumpPositionOffsetX,
-                        courseStartPositionOffsetX = result.courseStartPositionOffsetX,
                         deterministicPhysics = result.deterministicPhysics,
                         failureReason = result.failureReason, timestampUtc = result.timestampUtc });
 
@@ -1968,6 +1997,7 @@ namespace IGTAPTasMod
             if (_solverRunning) StopSolver("Game closed");
             if (_recorder.IsRecording) StopRecording("Game closed");
             EndDeterministicPhysics();
+            PacePlayback(false);
             SaveLibrary();
             SaveSettings();
             if (_webServer != null) _webServer.Dispose();

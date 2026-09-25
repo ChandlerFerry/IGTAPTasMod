@@ -86,6 +86,8 @@ namespace IGTAPTasMod
         FullTasPending _fullTasPending;
         int _fullTasParkedFrame = -1000;
         string _fullTasLastResult;
+        // Bonus name -> its reward box's id (FullTasRewardBox), once the world had it.
+        readonly Dictionary<string, string> _fullTasRewardBoxes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // The Full-TAS tab's offline search (`IGTAP.EngineSim fulltas`) and what it printed.
         Process _fullTasProcess;
@@ -97,6 +99,18 @@ namespace IGTAPTasMod
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9]+)_NO_WJ ", RegexOptions.IgnoreCase);
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9]+)-([\d.]+)\.json$");
+        // buy: tokens and their boxes (FullTasGoal.BoxId: hierarchy path in the Overworld scene plus sibling index; paths
+        // aren't unique: course 2's GLOBALcashPerLoop #3 is the 55000 W global reward box, #5 bonus1's free reward box, which
+        // reward:bonus1 buys). The chains' purchase tokens with the same names buy the same boxes.
+        static readonly (string token, string path, int sibling)[] FullTasBoxes = {
+            ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
+            ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
+            ("buywj", "Courses/course 1/localUpgrades/Wall jump", 2),
+            ("buyreward2", "Courses/course 2/localUpgrades/CashPerLoop", 0),
+            ("buyclone2", "Courses/course 2/localUpgrades/Clone", 1),
+            ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult", 2),
+            ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop", 3),
+            ("buydash", "Courses/course 2/localUpgrades/DashUnlock", 4) };
 
         string FullTasPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas.json"); } }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
@@ -153,8 +167,8 @@ namespace IGTAPTasMod
             return run.goals.Select(ResolveFullTasGoal).ToArray();
         }
 
-        // "start:<N>" / "finish:<N>" (a course), "buy:<t>[+<t>...]" (PurchaseBoxes tokens), "reward:bonus<N>" (the bonus's
-        // reward box, where a bonus run finishes: courses.json endX/endY/endW/endH, absolute; checked with CurrentOrigin()).
+        // "start:<N>" / "finish:<N>" (a course), "buy:<t>[+<t>...]" (FullTasBoxes tokens), "reward:bonus<N>" (the game buying
+        // the bonus's reward box, FullTasRewardBox; the goal keeps the bonus's end rect, courses.json endX/endY/endW/endH).
         FullTasGoal ResolveFullTasGoal(string token)
         {
             string text = (token ?? "").Trim().ToLowerInvariant();
@@ -173,11 +187,11 @@ namespace IGTAPTasMod
             else if (kind == FullTasGoal.Buy)
             {
                 string[] parts = arg.Split('+').Select(p => p.Trim()).ToArray();
-                int[] boxes = parts.Select(p => Array.FindIndex(PurchaseBoxes, b => b.token == p)).ToArray();
+                int[] boxes = parts.Select(p => Array.FindIndex(FullTasBoxes, b => b.token == p)).ToArray();
                 if (boxes.Any(i => i < 0))
-                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": boxes are " + string.Join(", ", PurchaseBoxes.Select(b => b.token)) + " (joined with \"+\").");
+                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": boxes are " + string.Join(", ", FullTasBoxes.Select(b => b.token)) + " (joined with \"+\").");
                 if (parts.Length > MaxPurchasesPerSegment) throw new InvalidOperationException("Full-TAS goal \"" + token + "\" buys more than " + MaxPurchasesPerSegment + " boxes.");
-                goal.boxes = boxes.Select(i => PurchaseBoxes[i].box).ToArray();
+                goal.boxes = boxes.Select(i => FullTasGoal.BoxId(FullTasBoxes[i].path, FullTasBoxes[i].sibling)).ToArray();
                 goal.label = "buy:" + string.Join("+", parts);
             }
             else
@@ -185,6 +199,8 @@ namespace IGTAPTasMod
                 CourseDef bonus = _courses.Find(c => c.IsBonus && string.Equals(c.name, arg, StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("Full-TAS goal \"" + token + "\": no bonus " + arg + " with a reward box in courses.json.");
                 goal.x = bonus.endX; goal.y = bonus.endY; goal.w = bonus.endW; goal.h = bonus.endH;
+                string box = FullTasRewardBox(bonus);
+                if (box != null) goal.boxes = new[] { box };
                 goal.label = "reward:" + bonus.Token.ToLowerInvariant();
             }
             return goal;
@@ -216,6 +232,60 @@ namespace IGTAPTasMod
                 if (time < bestTime) { best = m; bestTime = time; }
             }
             return best;
+        }
+
+        // What the offline search keeps for a run (enginesim `fulltas`: <EngineSimDir>/fulltas/<run>.json), read again only
+        // when the file changes: its inputs and when it reached each goal. A partial run (not every goal) never goes to the
+        // gate, so this is the only place its progress shows.
+        sealed class FullTasOffline
+        {
+            public DateTime written;
+            public List<SolverTick> inputs;
+            public int reached;
+            public List<FullTasSplit> splits;
+            public float time;
+        }
+        readonly Dictionary<string, FullTasOffline> _fullTasOffline = new Dictionary<string, FullTasOffline>(StringComparer.OrdinalIgnoreCase);
+
+        FullTasOffline FullTasOfflineBest(string run)
+        {
+            string path = Path.Combine(EngineSimDir, "fulltas", run + ".json");
+            if (!File.Exists(path)) { _fullTasOffline.Remove(run); return null; }
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            if (_fullTasOffline.TryGetValue(run, out FullTasOffline cached) && cached.written == written) return cached;
+            try
+            {
+                JObject o = JObject.Parse(File.ReadAllText(path));
+                var goals = o["goals"].ToObject<List<string>>();
+                var ticks = o["goalPhysicsTicks"].ToObject<List<long>>();
+                var offline = new FullTasOffline { written = written, inputs = o["inputs"].ToObject<List<SolverTick>>(), splits = new List<FullTasSplit>() };
+                for (int i = 0; i < goals.Count && i < ticks.Count && ticks[i] >= 0; i++)
+                    offline.splits.Add(new FullTasSplit { label = goals[i], ticks = ticks[i] });
+                offline.reached = offline.splits.Count;
+                offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].ticks * Time.fixedDeltaTime;
+                _fullTasOffline[run] = offline;
+                return offline;
+            }
+            catch (Exception ex)
+            {
+                // Written mid-read (the search replaces it atomically, so this is rare): the next poll reads it again.
+                Logger.LogWarning("Full-TAS offline best " + path + " unreadable: " + ex.Message);
+                return null;
+            }
+        }
+
+        // What Play plays: the saved best, else the offline search's best so far (a partial run: it stops at the goal it
+        // reaches last), else an import's seed. Null: nothing yet.
+        MacroDefinition FullTasPlayableRoute(FullTasRunDef run)
+        {
+            MacroDefinition best = FullTasBestRoute(run.name);
+            if (best != null) return best;
+            FullTasOffline offline = FullTasOfflineBest(run.name);
+            if (offline != null && offline.inputs.Count > 0)
+                return new MacroDefinition { name = "fulltas/" + run.name + " offline best (" + offline.reached + " of " + run.goals.Count + " goals)",
+                    steps = ToSteps(offline.inputs) };
+            List<SolverTick> seed = FullTasInputs(run, new JObject());
+            return seed.Count == 0 ? null : new MacroDefinition { name = "fulltas/" + run.name + " import seed", steps = ToSteps(seed) };
         }
 
         static List<FullTasSplit> FullTasSplits(FullTasTracker tracker)
@@ -268,21 +338,44 @@ namespace IGTAPTasMod
             if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseFinished(course, _engine.RunTicks, _engine.PhysicsTicks));
         }
 
-        // AfterBuyUpgrade: the game bought the box at `path`. Wall jump and dash come with their boxes.
-        void FullTasBought(string path)
+        // AfterBuyUpgrade: the game bought `box` (a buy goal's box, or a bonus's reward box). Wall jump and dash come with
+        // their boxes.
+        void FullTasBought(upgradeBox box)
         {
             if (_fullTas == null || !_engine.IsRunning) return;
+            string path = HierarchyPath(box.transform);
             if (path == PurchaseBoxes.First(b => b.token == "buywj").box) _fullTasWallJump = true;
             if (path == PurchaseBoxes.First(b => b.token == "buydash").box) _fullTasDash = true;
-            FullTasEvent(_fullTas.Bought(path, _engine.RunTicks, _engine.PhysicsTicks));
+            FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 
-        // BeforeMovementFixedUpdate, where a bonus run's reward box is checked: a reward goal on touching its box.
-        void FullTasRewardCheck(Movement player)
+        // A box's Full-TAS id (FullTasGoal.BoxId): its hierarchy path and sibling index. Paths aren't unique (course 2's
+        // GLOBALcashPerLoop and bonus 1's reward box share one); enginesim computes the same from its world export.
+        static string FullTasBoxId(upgradeBox box)
         {
-            FullTasGoal goal = _fullTas.Current;
-            if (goal != null && goal.kind == FullTasGoal.Reward && TouchesBox(player, goal.x, goal.y, goal.w, goal.h))
-                FullTasEvent(_fullTas.RewardTouched(_engine.RunTicks, _engine.PhysicsTicks));
+            return FullTasGoal.BoxId(HierarchyPath(box.transform), box.transform.GetSiblingIndex());
+        }
+
+        // A bonus's reward box: the upgrade box nearest the centre of its end rect (courses.json endX/endY + CurrentOrigin()),
+        // closer than FullTasGoal.RewardBoxRange; buying it is the bonus's unlock. Null while no upgrade box is loaded (no
+        // world yet); enginesim applies the same rule to a trace whose reward goal names no box.
+        string FullTasRewardBox(CourseDef bonus)
+        {
+            if (_fullTasRewardBoxes.TryGetValue(bonus.name, out string cached)) return cached;
+            upgradeBox[] boxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (boxes.Length == 0) return null;
+            Vector2 centre = new Vector2(bonus.endX, bonus.endY) + CurrentOrigin();
+            upgradeBox best = null;
+            float bestDistance = FullTasGoal.RewardBoxRange * FullTasGoal.RewardBoxRange;
+            foreach (upgradeBox box in boxes)
+            {
+                float d = ((Vector2)box.transform.position - centre).sqrMagnitude;
+                if (d < bestDistance) { best = box; bestDistance = d; }
+            }
+            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": no upgrade box near the bonus's end rect.");
+            string id = FullTasBoxId(best);
+            _fullTasRewardBoxes[bonus.name] = id;
+            return id;
         }
 
         // ---- Turbo
@@ -733,7 +826,7 @@ namespace IGTAPTasMod
             FullTasGoal next = tracker.Current;
             SetFullTasResult("Full-TAS " + play.run.name + (finished ? " finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s"
                 : " stopped after " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : " (next " + next.label + ")") + ": " + reason)
-                + (splitText.Length > 0 ? " [" + splitText + "]" : ""));
+                + DroppedFramesText() + (splitText.Length > 0 ? " [" + splitText + "]" : ""));
             if (finished && FullTasBestRoute(play.run.name) == play.route && !_fullTasSplits.ContainsKey(play.route.id)
                 && Mathf.Abs(CategoryBest(FullTasCategory(play.run.name)) - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);
@@ -776,6 +869,7 @@ namespace IGTAPTasMod
             if (window > 0) args.Append(" --window ").Append(window);
             if (Truthy(body, "fresh")) args.Append(" --fresh");
             if (Truthy(body, "noSubmit")) args.Append(" --no-submit");
+            int seeds = WriteFullTasSeeds(run, args);
             while (_fullTasOutput.TryDequeue(out _)) { }
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -787,8 +881,96 @@ namespace IGTAPTasMod
             process.BeginErrorReadLine();
             _fullTasProcess = process;
             _fullTasSolveRun = run.name;
-            _fullTasSolveStatus = "Solving " + run.name + " offline on " + threads + " threads";
+            _fullTasSolveStatus = "Solving " + run.name + " offline on " + threads + " threads from " + seeds + " seed routes";
             FullTasLog(EngineSimExe + " " + args);
+        }
+
+        static readonly Regex FullTasSeedRoute = new Regex(@"^(?:([A-Za-z0-9]+)/)?([A-Za-z0-9]+)(#\d+)?_");
+
+        // A solve's window seeds (fulltas-<run>-seed-<k>.json in the enginesim dir, the old ones deleted first), passed as
+        // --seed: every saved raw-input route of the courses, bonuses and transitions the run's goals name, standalone ones
+        // ("2_WJ 15.02", "1to2_NO_WJ 3.40") and every chain's for the same token ("newgame/1#2_NO_WJ 2.58"), stale ones too,
+        // once per distinct inputs, stale ones last, faster ones first. Each says which of the run's goals it reaches (a
+        // course: start:N, finish:N; a bonus: its reward; a transition: where it ends), its category, whether it starts
+        // standing at its course's quick-restart point (StartsStanding; `align` is that point) and whether its chain
+        // segment starts with a quick restart. Returns how many.
+        int WriteFullTasSeeds(FullTasRunDef run, StringBuilder args)
+        {
+            Directory.CreateDirectory(EngineSimDir);
+            string prefix = "fulltas-" + run.name + "-seed-";
+            var numbered = new Regex("^" + Regex.Escape(prefix) + @"\d+\.json$", RegexOptions.IgnoreCase);
+            foreach (string old in Directory.GetFiles(EngineSimDir, prefix + "*.json"))
+                if (numbered.IsMatch(Path.GetFileName(old))) File.Delete(old);
+            var labels = new HashSet<string>(ResolveFullTasGoals(run).Select(g => g.label));
+            var chainSegments = new Dictionary<string, List<ChainSegment>>(StringComparer.OrdinalIgnoreCase);
+            var found = new List<(bool stale, float time, string key, string json)>();
+            foreach (MacroDefinition route in _library.macros)
+            {
+                Match m = route.name == null ? Match.Empty : FullTasSeedRoute.Match(route.name);
+                if (!m.Success || !route.steps.All(s => s.type == MacroStepType.RawInput)) continue;
+                string chain = m.Groups[1].Success ? m.Groups[1].Value : null, token = m.Groups[2].Value.ToLowerInvariant();
+                CourseDef target = null;
+                int course = 0;
+                var goals = new List<string>();
+                Match transition = ChainTransition.Match(token);
+                if (transition.Success)
+                {
+                    string to = transition.Groups[2].Value.ToLowerInvariant();
+                    if (to.StartsWith("bonus", StringComparison.Ordinal)) goals.Add("reward:" + to);
+                    else { goals.Add("start:" + to); course = int.Parse(to, CultureInfo.InvariantCulture); }
+                }
+                else
+                {
+                    target = _courses.Find(c => !c.IsTransition && !c.IsPurchase && string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
+                    if (target == null) continue;
+                    if (target.IsBonus) goals.Add("reward:" + token);
+                    else { goals.Add("start:" + target.id); goals.Add("finish:" + target.id); course = target.id; }
+                }
+                goals.RemoveAll(g => !labels.Contains(g));
+                if (goals.Count == 0) continue;
+                bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
+                Match category = CategoryRoute.Match(stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name);
+                string caps = string.IsNullOrEmpty(target?.minCapabilities) ? "none" : target.minCapabilities;
+                float time = float.MaxValue;
+                if (category.Success)
+                {
+                    caps = CapabilityLabels.OrderByDescending(p => p.Value.Length)
+                        .First(p => category.Groups[1].Value.EndsWith("_" + p.Value, StringComparison.OrdinalIgnoreCase)).Key;
+                    if (!float.TryParse(category.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out time)) time = float.MaxValue;
+                }
+                bool standing = StartsStanding(route.name, token + "_"), restart = false;
+                if (chain != null)
+                {
+                    if (!chainSegments.TryGetValue(chain, out List<ChainSegment> segments))
+                    {
+                        ChainDef owner = _chains.Find(c => string.Equals(c.name, chain, StringComparison.OrdinalIgnoreCase));
+                        try { segments = owner == null ? null : ChainSegments(owner); }
+                        catch (InvalidOperationException) { segments = null; }
+                        chainSegments[chain] = segments;
+                    }
+                    string key = m.Groups[2].Value + m.Groups[3].Value;
+                    restart = segments != null && segments.Any(s => s.restart && string.Equals(s.key, key, StringComparison.OrdinalIgnoreCase));
+                }
+                List<SolverTick> ticks = ToTicks(route.steps);
+                object align = null;
+                if (standing && target != null)
+                {
+                    Vector2 at = new Vector2(target.x, target.y - 12f) + CurrentOrigin();
+                    align = new { at.x, at.y };
+                }
+                string json = JsonConvert.SerializeObject(new { name = route.name, token, course, goals, capabilities = caps, standing, restart, align, ticks });
+                found.Add((stale, time, token + "|" + caps + "|" + standing + "|" + restart + "|" + JsonConvert.SerializeObject(ticks), json));
+            }
+            var written = new HashSet<string>();
+            int count = 0;
+            foreach (var seed in found.OrderBy(s => s.stale).ThenBy(s => s.time))
+            {
+                if (!written.Add(seed.key)) continue;
+                string file = Path.Combine(EngineSimDir, prefix + count++ + ".json");
+                File.WriteAllText(file, seed.json);
+                args.Append(" --seed ").Append(Quote(file));
+            }
+            return count;
         }
 
         // POST /api/fulltas/solve {name, minutes, windowMinutes, window}: the trace first when it is missing.
@@ -914,7 +1096,7 @@ namespace IGTAPTasMod
                 case "/api/fulltas/play":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
-                    StartFullTasPlayback(run, FullTasBestRoute(run.name));
+                    StartFullTasPlayback(run, FullTasPlayableRoute(run));
                     return new { ok = true };
                 }
                 case "/api/fulltas/solve":
@@ -956,8 +1138,12 @@ namespace IGTAPTasMod
                 Match g = best == null ? null : CategoryRoute.Match(best.name);
                 List<FullTasSplit> splits;
                 if (best == null || !_fullTasSplits.TryGetValue(best.id, out splits)) splits = new List<FullTasSplit>();
+                FullTasOffline offline = FullTasOfflineBest(r.name);
                 return new { name = r.name, goals = labels, tokens = labels, error = error,
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
+                    // The offline search's best so far (partial runs included): goals reached, when, and the time to the last one.
+                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
+                    playable = best != null || offline != null && offline.inputs.Count > 0 || File.Exists(FullTasSeedPath(r.name)),
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
             FullTasPlay play = _fullTasPlay;
@@ -968,7 +1154,7 @@ namespace IGTAPTasMod
                 lastResult = _fullTasLastResult,
                 pending = _fullTasPending?.what,
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
-                    next = play.tracker.Current?.label } };
+                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames } };
         }
     }
 }

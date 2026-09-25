@@ -173,7 +173,7 @@ namespace IGTAP.EngineSim
 
         // Plays `walk`, then no input until the player stands still on the ground for StillTicks ticks. Returns the input
         // count at that point (-1 if not within `limit` more ticks) and the position.
-        static (int ticks, Vector2 pos) Still(Simulation sim, List<InputTick> walk, int limit)
+        public static (int ticks, Vector2 pos) Still(Simulation sim, List<InputTick> walk, int limit)
         {
             var inputs = walk.Concat(Enumerable.Repeat(new InputTick(), limit)).ToList();
             int still = 0, found = -1;

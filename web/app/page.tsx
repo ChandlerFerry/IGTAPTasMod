@@ -10,7 +10,7 @@ import "./fulltas.css";
 const API = "http://127.0.0.1:17426/api";
 
 type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawMoveY?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
-type Route = { id: string; name: string; favorite: boolean; hotkey: string; checkpointId: string; actions: Action[] };
+type Route = { id: string; name: string; favorite: boolean; hotkey: string; checkpointId: string; actionCount: number; actions: Action[] };
 type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
 type Recording = { id: string; name: string; favorite: boolean; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
@@ -29,7 +29,10 @@ type ChainRun = { running: { chain: string; segment: number; of: number; token: 
 // A Full-TAS run: the whole game from a new game as one input stream, split by its goals (config tokens, "start:1").
 // A split's `ticks` are the physics ticks from the run's start when that goal was reached.
 type FullTasSplit = { label: string; ticks: number };
-type FullTasRun = { name: string; goals: string[]; tokens?: string[]; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null; traceReady: boolean };
+// `offline`: the offline search's best so far (partial runs too, which never reach the gate); `playable`: Play has
+// something to play (the saved best, else the offline best, else an import's seed).
+type FullTasRun = { name: string; goals: string[]; tokens?: string[]; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+  offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
 // The gate's reply to an import / submit (the plugin's `lastResult` too).
 type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
 type FullTasState = { runs: FullTasRun[]; solve: { running: boolean; name?: string | null; status: string; log: string[] }; lastResult?: FullTasReply | string | null };
@@ -121,7 +124,7 @@ export default function Studio() {
         {tab === "overview" && <div className="overviewGrid">
           <Stat label="Success rate" value={`${successRate.toFixed(1)}%`} detail={`${successes.length} of ${state.results.length} attempts`} tone="green" />
           <Stat label="Best time" value={bestResult ? `${bestResult.completionTime.toFixed(3)}s` : "—"} detail={bestResult ? `${bestResult.completionTicks} physics frames` : "Successful attempts"} tone="blue" />
-          <Stat label="Route length" value={`${route?.actions.length ?? 0}`} detail="Semantic actions" />
+          <Stat label="Route length" value={`${route?.actionCount ?? 0}`} detail="Semantic actions" />
           <Stat label="Start state" value={route?.checkpointId ? "Checkpoint" : "Quick restart"} detail={route?.checkpointId ? "Fingerprint protected" : "3 stable ticks"} />
         </div>}
 
@@ -292,7 +295,7 @@ function RouteSidebar({routes,courses,chains,activeId,unlockLevel,running,onComm
     {section("TRANSITIONS", places.filter(c => c.to).sort((a, b) => a.id - b.id))}
     {section("BONUSES", places.filter(c => c.bonus && !c.to).sort((a, b) => a.id - b.id))}
     {other.length > 0 && <details className="otherRoutes"><summary className="sectionLabel">OTHER ROUTES ({other.length})</summary>
-      <div className="routeList">{other.map(item => <div className={`routeRow ${item.id === activeId ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (!item.favorite && window.confirm(`Delete route “${item.name}”?`)) onCommand("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => onCommand("/routes/select", { routeId: item.id })}><div><strong>{item.favorite ? "★ " : ""}{item.name}</strong><small>{item.actions.length} actions{item.favorite ? " · read-only" : item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button><button className={`favoriteButton ${item.favorite?"active":""}`} title={item.favorite?"Unfavorite and unlock":"Favorite and lock"} onClick={()=>onCommand("/routes/favorite",{routeId:item.id,favorite:!item.favorite})}>{item.favorite?"★":"☆"}</button></div>)}</div>
+      <div className="routeList">{other.map(item => <div className={`routeRow ${item.id === activeId ? "active" : ""}`} key={item.id} onContextMenu={(event) => { event.preventDefault(); if (!item.favorite && window.confirm(`Delete route “${item.name}”?`)) onCommand("/routes/delete", { routeId: item.id }); }}><button className="routeItem" onClick={() => onCommand("/routes/select", { routeId: item.id })}><div><strong>{item.favorite ? "★ " : ""}{item.name}</strong><small>{item.actionCount} actions{item.favorite ? " · read-only" : item.hotkey ? ` · ${item.hotkey}` : ""}</small></div></button><button className={`favoriteButton ${item.favorite?"active":""}`} title={item.favorite?"Unfavorite and unlock":"Favorite and lock"} onClick={()=>onCommand("/routes/favorite",{routeId:item.id,favorite:!item.favorite})}>{item.favorite?"★":"☆"}</button></div>)}</div>
     </details>}
   </div>;
 }
@@ -520,14 +523,14 @@ function FullTas({fullTas,running,onCommand,onQuery}:{fullTas?:FullTasState;runn
   const busy = solve.running || running;
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
   const validName = /^[A-Za-z0-9]+$/.test(newName);
-  const splits = run?.best?.splits ?? [];
+  const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run ? (splits.length > run.goals.length ? splits.map(s => s.label) : run.goals) : [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
     <p className="lede">A Full-TAS run is the whole game from a fresh new game as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses). <b>Solve</b> searches offline window by window; the game replays every better route from a new game and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => { setSelected(r.name); setImportReply(null); }}>
         <strong>{r.name}</strong><small>{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
-        {r.best?<b>{r.best.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
+        {r.best?<b>{r.best.time.toFixed(2)}s</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {r.offline.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
         <span className={`badge ${r.traceReady?"":"missing"}`}>{r.traceReady?"Trace ready":"No trace"}</span>
       </button>)}
       {name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
@@ -539,7 +542,7 @@ function FullTas({fullTas,running,onCommand,onQuery}:{fullTas?:FullTasState;runn
     </div>
     {name && <div className="fullTasGrid">
       <div className="fullTasGoals">
-        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:""}</h2></div></div>
+        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached} OF ${run.goals.length} GOALS · NOT SAVED (ONLY COMPLETE RUNS GO TO THE GATE)`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:run?.offline?` · ${run.offline.time.toFixed(2)}s to goal ${run.offline.reached}`:""}</h2></div></div>
         <div className="resultTable">
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
           {labels.map((label, i) => { const s = splits[i]; return <div className={`tableRow ${s?"":"pending"}`} key={i}>
@@ -552,7 +555,7 @@ function FullTas({fullTas,running,onCommand,onQuery}:{fullTas?:FullTasState;runn
         <div className="fullTasSolve">
           <div className="buttonRow">
             <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
-            <button className="secondary" disabled={busy || !run?.best} title="Plays the saved best in real time from a new game" onClick={() => onCommand("/fulltas/play", { name })}>▶ Play</button>
+            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>▶ Play</button>
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
           </div>
           <div className="offlineControls">

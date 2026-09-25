@@ -132,7 +132,7 @@ namespace IGTAP.EngineSim
 
         // ---- Full-TAS (FullTas.cs): the run goes on through every goal and finishes at the last one of `Goals.Limit`.
         // Goals are reached exactly where the plugin sees them: a course's start gate starting its timer, its end gate
-        // stopping it (the player's own finish), the game buying a box, a reward box touched.
+        // stopping it (the player's own finish), the game buying a box (a buy goal's, or a bonus's reward box).
         internal FullTasTracker Goals { get; private set; }
         // Inputs consumed before this simulation's start (a window's prefix, SetStart): goal input ticks are counted from
         // the run start, like the route's inputs.
@@ -145,10 +145,10 @@ namespace IGTAP.EngineSim
                 Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
         }
 
-        // Shop: the game bought `path`.
-        internal void Bought(string path)
+        // Shop: the game bought the box at `path` with id `id` (FullTasGoal.BoxId).
+        internal void Bought(string path, string id)
         {
-            if (Goals != null && Engine.IsRunning) GoalEvent(Goals.Bought(path, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+            if (Goals != null && Engine.IsRunning) GoalEvent(Goals.Bought(path, id, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
         }
 
         // Replays `prefix` from the start and returns the state right after its last input, as a start for runs of the
@@ -289,7 +289,8 @@ namespace IGTAP.EngineSim
                 ?? throw new InvalidOperationException("Course " + TargetCourse + " is not active in this world export.") : null;
         }
 
-        // The trace's "fulltas": {name, goals: [{label, kind, course, boxes, rect: [x, y, w, h]}]} (TasPlugin writes it).
+        // The trace's "fulltas": {name, goals: [{label, kind, course, boxes, rect: [x, y, w, h]}]} (TasPlugin writes it). A
+        // reward goal without boxes (a trace from before reward goals were purchases) gets the box nearest its rect.
         void SetGoals(JsonElement goals)
         {
             var list = new List<FullTasGoal>();
@@ -307,11 +308,19 @@ namespace IGTAP.EngineSim
                 {
                     if (!Courses.Any(c => c.courseNumber == goal.course)) throw new InvalidOperationException("Goal " + goal.label + ": course " + goal.course + " is not active in this world export.");
                 }
-                else if (goal.kind == FullTasGoal.Buy)
+                else if (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward)
                 {
+                    if (goal.kind == FullTasGoal.Reward && (goal.boxes == null || goal.boxes.Length == 0))
+                    {
+                        string box = Shop.NearestBox(goal.x, goal.y, FullTasGoal.RewardBoxRange);
+                        if (box == null) throw new InvalidOperationException("Goal " + goal.label + ": no upgrade box near its rect in this world export.");
+                        goal.boxes = new[] { box };
+                    }
                     if (goal.boxes == null || goal.boxes.Length == 0) throw new InvalidOperationException("Goal " + goal.label + " names no box.");
+                    foreach (string box in goal.boxes)
+                        if (!Shop.HasBox(box)) throw new InvalidOperationException("Goal " + goal.label + ": upgrade box " + box + " is not in this world export.");
                 }
-                else if (goal.kind != FullTasGoal.Reward) throw new InvalidOperationException("Goal " + goal.label + ": unknown kind " + goal.kind + ".");
+                else throw new InvalidOperationException("Goal " + goal.label + ": unknown kind " + goal.kind + ".");
                 list.Add(goal);
             }
             if (list.Count == 0) throw new InvalidOperationException("A Full-TAS trace needs at least one goal.");
@@ -569,10 +578,6 @@ namespace IGTAP.EngineSim
                 {
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
-                    // TasPlugin.BeforeMovementFixedUpdate: a reward goal, like a bonus run's reward box.
-                    FullTasGoal now = Goals.Current;
-                    if (Engine.IsRunning && now != null && now.kind == FullTasGoal.Reward && Touches(now.x, now.y, now.w, now.h))
-                        GoalEvent(Goals.RewardTouched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
                 stepped++;
                 onStep?.Invoke(stepped - 1);

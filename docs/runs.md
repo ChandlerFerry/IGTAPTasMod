@@ -119,9 +119,10 @@ the run's routes before them end (segment numbers from the plugin's `/api/state`
 
 `python tools/plan-newgame.py [--keep N] [--evals N] --write` plans both purchase phases and writes the `newgame` chain.
 Phase 1 searches Course 1's purchase order up to wall jump in time order (~1.5 min). The player never waits under a box
-for clone income if running Course 1 gets the money sooner. Then `chain:wj` runs, and bonus1 ends at the free +40%
-box. Phase 2 plans Course 2's purchases up to dash. Each purchase happens as early as the model allows: after k Course 2
-laps and the walk from the restart, or straight on along the row. The player waits under the box while the clones pay.
+for clone income if running Course 1 gets the money sooner. Then `chain:wj` runs. bonus1 finishes next to a free +40%
+box but doesn't buy it (`BONUS1_BOX`). Phase 2 plans Course 2's purchases up to dash. Each purchase happens as early as
+the model allows: after k Course 2 laps and the walk from the restart, or straight on along the row. The player waits
+under the box while the clones pay.
 The order starts greedy (best income gain per W) and is improved by a seeded local search (`--evals` tries,
 ~2 min at 30000). `--keep N` keeps the chain's first N segments (the solved ones; `chain:wj` counts its six) and plans
 from where they end. Its segment times are estimates: replace them with solved times and rerun.
@@ -131,7 +132,7 @@ from where they end. Its segment times are estimates: replace them with solved t
   10^tier)`. A clone pays `ceil(reward × (0.1 + 0.1 × clone multiplier buys))` per lap (lap = the course's best run),
   and a new clone spawns every lap / N. A course's clones pay the same per second while the player is away from it.
 - Course 1 (tier 0, baseReward 1): base reward 1, then ×1.1; clones 8, then ×1.153; wall jump 700 W.
-- Course 2 (tier 2, baseReward 4; one run 400 W, 560 W after bonus1): reward 400, then ×1.14 (cap 45); clones 800,
+- Course 2 (tier 2, baseReward 4; one run 400 W, 560 W with bonus1's free box): reward 400, then ×1.14 (cap 45); clones 800,
   then ×1.21 (cap 35); clone multiplier 3800, then `(prev + 1000) × 2` (cap 10); global reward 55000, then 275000
   (cap 2); dash 3,000,000 W (30000 × 10²; the in-game "3.00MW").
 - A bump before a box is affordable still starts its 0.2 s cooldown. Real time pays clones per render frame (turbo:
@@ -157,10 +158,12 @@ from where they end. Its segment times are estimates: replace them with solved t
   newgame chain's `1#k` laps already ran 2.06 on the game timer.
 - Dash costs 3,000,000 W, not 30000 (Course 2's tier 2 multiplies its boxes' base costs by 100). The `newgame` chain
   now buys Course 2's economy between `chain:wj` and `buydash` (`plan-newgame.py --keep 72 --write`; the previous chain
-  is `chains.before-dash-replan.json`). Model: arrival at 1007 W (captured: 911 W at bonus1to2's start, plus 8.36 s of
-  Course 1 clones), dash at 64.54 s after `chain:wj`. The plan: 4 single laps while the clones are few, then it stays
-  at the row: 38 reward buys, 26 clones, 6 clone multipliers, both global reward buys. Then 2 laps before dash. Clone
-  income overtakes laps after the first clone multiplier. A lap earns about 560 × (1 + reward buys) W every 159 ticks,
-  while the clones earn 26 × 24,025 W every 128 ticks by the end.
-- Running the economy right after `wj`'s Course 2 lap, with bonus1's detour after it, is about 2 s faster in the model.
-  It is left out: the model is less accurate than that, and it would split `chain:wj`.
+  is `chains.before-dash-replan.json`). Model: arrival at 971 W, dash 80.28 s after `chain:wj`. Captured
+  (`start-chain-newgame-72`): 999 W at Course 2's gate. The plan laps Course 2 while the clones are few, then stays at
+  the row buying as they pay, and laps again before dash. Segment 72 (`buyreward2`, the first) solves offline in 57
+  ticks; the model says 58.
+- bonus1 finishes at its reward rect before the free secret `GLOBALcashPerLoop` box (+40% on every reward) buys: the
+  capture has the global dictionary at 0 and Course 2 paying 400. With that box (`BONUS1_BOX = 1`) the model buys dash
+  at 64.54 s, 16 s sooner. That needs bonus1's route to bump the box before its finish counts.
+- Running the economy right after `wj`'s Course 2 lap, with bonus1's detour after it, was about 2 s faster in the
+  model (with the free box). It is left out: the model is less accurate than that, and it would split `chain:wj`.
