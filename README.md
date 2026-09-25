@@ -130,6 +130,32 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
   earlier routes don't exist) is skipped. `POST /api/solver/skip` ends the current target, `/api/solver/stop` the run;
   `solver.queue` in `/api/state` lists each target and how it ended.
 
+## New-game run (in progress, 2026-09-24)
+
+Goal: one chain `newgame` from a New Game: spawn → Course 1, then `1` + `buyreward` ×10, then Course 1 / base reward /
+clones until 700 W, `buywj`, then the `wj` chain's segments. Every loop goes back through `restart`, which (Course 1's
+checkpoint touched) lands at Course 1's quick-restart point, so every course and purchase segment starts from the same
+state and the standalone `1_NO_WJ 1.68` route (109 ticks) fits every course segment.
+
+- **Plan:** `python tools/plan-newgame.py [--loops 10] [--beam 60 --depth 70] --write` searches the purchase order and
+  writes the `newgame` chain into the game's `chains.json` (not in the repo; rerun to regenerate). Its segment times
+  (`COURSE`, `TO`, `MOVE`, `REPEAT`, clone lap `P`) are estimates: replace them with solved times and rerun. Current
+  plan: 61 segments, wall jump at ~117 s after the first course segment, ending with a ~27 s wait under the wall jump
+  box (the search stops buying at 12 clones / reward 21; worth re-examining with a deeper search).
+- **Economy facts:** Course 1 pays `1 + base-reward buys`; base reward costs 1, then `ceil(prev × 1.1)` (1..11, 13, 15,
+  17 …: the first 10 loops break exactly even); clones cost 8, then `ceil(prev × 1.153)` (8, 10, 12, 14, 17, 20 …);
+  a clone pays `ceil(0.1 × reward)` per lap, lap = best Course 1 run (1.68 s ⇒ 84 ticks), a new clone spawns every
+  lap / N. So the first Course 1 finish should be the fastest route. A bump before the box is affordable still starts
+  its 0.2 s cooldown. Real time pays clones per render frame (turbo: 50 fps), so leave a tick or two of slack before
+  each purchase that depends on clone income.
+- **Done:** `POST /api/session/newgame` (fresh game in memory, spawn (−60.6, −307.1), Cash 0, save files untouched,
+  verified); chain parses (61 segments with keys/categories, verified); segment 0 `newgame/newgameto1_NO_WJ 5.50`
+  solved offline and saved through the gate.
+- **Not yet exercised:** any purchase segment through the gate, turbo economy stepping/restore against real time,
+  a real-time *Run chain* of `newgame`. Next: for K = 1, 2, … `python tools\enginesim-capture.py chain newgame K`, then
+  `IGTAP.EngineSim solve <traces>\start-chain-newgame-K.json` (see enginesim/README.md); check segment 2
+  (`buyreward`) is accepted by the gate first, it's the first purchase.
+
 ## Solver
 
 Searching is offline (`IGTAP.EngineSim solve`, [`enginesim/README.md`](enginesim/README.md#use)), from the command line
