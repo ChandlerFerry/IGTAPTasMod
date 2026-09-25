@@ -74,7 +74,6 @@ namespace IGTAPTasMod
 
     public static class SectionCheckpointService
     {
-        // Only route-relevant, value-like state is captured. Object references are deliberately excluded.
         private static readonly string[] MovementFieldNames = {
             "Velocity", "momentum", "MoveAxis", "onGround", "OnWall", "wallCoyoteFrames",
             "wallCoyoteDir", "coyoteFrames", "jumpBuffer", "jumpCutBuffer", "dashBuffer",

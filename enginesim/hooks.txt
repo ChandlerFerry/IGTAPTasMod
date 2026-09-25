@@ -2,7 +2,10 @@
 # prefix  <Type::method> <IGTAP.EngineSim.Hooks method>   call the hook with (this, args...) first
 # replace <Type::method> <IGTAP.EngineSim.Hooks method>   the method becomes just that call
 prefix Movement::getPlayerControlledInput OnPlayerInput
-prefix Movement::CheckForSuperJump OnDashFrame
+# MacroEngine.WallTouch: a dash that hits a wall takes its input tick after all; its presses go in before the wall
+# branch reads the buttons.
+prefix Movement::touchedSolidGround OnWallTouch
+prefix Movement::touchedMossyGround OnWallTouch
 prefix Movement::onDeath OnDeath
 # TasPlugin.BeforeRespawn: course checkpoints are always off (a death respawns at the course's reset point).
 prefix Movement::respawn OnRespawn

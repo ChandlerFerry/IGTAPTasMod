@@ -11,13 +11,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // map <start-trace.json> --out <file> [--seed <file>]... [--threads N]: what a target's search looks like, for the
-    // studio's Optimize tab. Replays offline, from the trace's start, every route it is given (--seed files, {name?,
-    // ticks}), the target's fastest offline best and its archive's plateau routes, plus every explore prefix of its
-    // archive (archive/<course>_<caps>.json) into a grid of the fastest time any of them reached each cell with the
-    // run's timer going (-1: reached only with it off, before the start gate or after a cancel). Writes one JSON with the
-    // level's colliders around all of it, the standing forced-path boxes and the course's gates, checkpoints and
-    // springs, in world coordinates. Read-only: it never writes the archive or offline-best/.
     static class Map
     {
         const float Cell = 16f;
@@ -64,7 +57,6 @@ namespace IGTAP.EngineSim.Cli
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
                     routes.Add(("plateau " + (i + 1), "plateau", p));
 
-            // Explore prefixes into a grid of each cell's fastest timed arrival (-1: never timed), one simulation per thread.
             var reached = new ConcurrentDictionary<long, float>();
             List<List<InputTick>> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<List<InputTick>>();
             int next = -1;
@@ -102,7 +94,6 @@ namespace IGTAP.EngineSim.Cli
             }
             Task.WaitAll(workers);
 
-            // Everything drawn: the paths and the visited cells, padded.
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
             void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
             foreach (Path p in paths) for (int i = 0; i < p.Points.Count; i += 2) Grow(p.Points[i], p.Points[i + 1]);
@@ -113,7 +104,6 @@ namespace IGTAP.EngineSim.Cli
             var forced = new OfflineSolver.ForcedPath();
             Solve.AddStandingPaths(forced, course, caps, worldPath);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
-            // What forced-paths.json boxes are relative to; a bonus has no courseScript of its own.
             float[] gate = null;
             try { Vector2 g = Solve.CourseGate(worldPath, course); gate = new[] { g.x, g.y }; }
             catch (InvalidOperationException) { }
@@ -143,10 +133,8 @@ namespace IGTAP.EngineSim.Cli
 
         static float Round(float v) { return (float)Math.Round(v, 1); }
 
-        // The faster of two arrival times, where -1 (timer off) loses to any timed one.
         static float Earlier(float a, float b) { return a < 0f ? b : b < 0f ? a : Math.Min(a, b); }
 
-        // offline-best/<label>-<time>.json, judged ones included: the fastest.
         static string FastestOfflineBest(string dir, string label)
         {
             string root = System.IO.Path.Combine(dir, "offline-best");
@@ -157,8 +145,6 @@ namespace IGTAP.EngineSim.Cli
                 .Where(e => e.ok).OrderBy(e => e.t).Select(e => e.f).FirstOrDefault();
         }
 
-        // Active, enabled colliders as exported (world space): solid ground, and spikes (objects with a spikeScript)
-        // whether trigger or not; other triggers (camera zones, checkpoints) are left out.
         static List<object> Solids(JsonElement world, float x0, float y0, float x1, float y1)
         {
             var solids = new List<object>();
@@ -192,7 +178,6 @@ namespace IGTAP.EngineSim.Cli
             return solids;
         }
 
-        // Gates, checkpoints and springs: where a route starts, ends, respawns and bounces.
         static List<Marker> Markers(JsonElement world)
         {
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint", ["SpringScript"] = "spring" };

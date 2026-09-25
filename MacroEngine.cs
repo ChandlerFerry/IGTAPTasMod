@@ -28,6 +28,7 @@ namespace IGTAPTasMod
         private static readonly FieldInfo AirDashesField = AccessTools.Field(typeof(Movement), "airDashesLeft");
         private static readonly FieldInfo AirJumpsField = AccessTools.Field(typeof(Movement), "airJumpsLeft");
         private static readonly FieldInfo DashActiveField = AccessTools.Field(typeof(Movement), "dashActive");
+        private static readonly FieldInfo DashFramesRemainingField = AccessTools.Field(typeof(Movement), "dashFramesRemaining");
         private static readonly FieldInfo FacingRightField = AccessTools.Field(typeof(Movement), "facingRight");
         private static readonly FieldInfo CutsceneModeField = AccessTools.Field(typeof(Movement), "cutsceneMode");
         private static readonly FieldInfo FramesSinceLastDashField = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
@@ -44,9 +45,16 @@ namespace IGTAPTasMod
         private bool _rawJumpHeld;
         private int _dashJumpFrame;
         private Vector2 _dashJumpAxis;
-        // MacroStep.springDashFrame of the last input tick, and the spring ticks since it (SpringFrame).
         private int _springDashFrame;
         private int _springTicks;
+        // The last input tick's stick for the input-less ticks after it (MacroStep.lockMoveX/Y).
+        private bool _lockArmed;
+        private float? _lockX, _lockY;
+        // The step whose presses this run already made (at a tick start, BeforeTick, or a dash's wall end, WallTouch).
+        private int _pressedStep = -1;
+        // This tick: whether it started in a dash or spring lock (no input hook), and the stick the game reads.
+        private bool _tickLocked;
+        private Vector2 _tickStick;
         private bool _waitingForStable;
         private int _stableTicks;
         private bool _hasSynchronizationPosition;
@@ -54,12 +62,8 @@ namespace IGTAPTasMod
         private int _preRollTicksRemaining;
         private int _preRollTicksTotal;
         private long _runTicks;
-        // Physics ticks since the run's first input tick, dash/spring ticks (which take no input) included.
         private long _physicsTicks;
-        // A resumed run (Resume) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
         private bool _countEveryPhysicsTick;
-        // The step whose quick restart (MacroStep.rawQuickRestart) was already done: it fires once, on the first physics
-        // tick the step is due (a dash tick included, when the step's input waits for the dash to end).
         private int _quickRestartStep = -1;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
@@ -85,24 +89,14 @@ namespace IGTAPTasMod
         public Vector2 CourseStartPosition { get { return _courseStartPosition; } }
         public string EarlyTrace { get { return string.Join(";", _earlyTrace.ToArray()); } }
         public event Action<bool, string, int, long> AttemptEnded;
-        // Solver runs happen dozens of times a second; their start/end lines would flood the log.
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
-        // The stick the game reads from the controller while a run plays (Movement.FixedUpdate and Update, through
-        // NormaliseInput): the vertical of the input tick due next, x at rest. FixedUpdate reads it before the input hook,
-        // for fast fall (down, Movement.cs:1104) and wall-slide speed (ApplyWallslideFriction); the hook then sets the
-        // tick's whole stick. Nothing between the two reads x, and ticks without the hook (dash, spring) keep x at rest,
-        // as a stick held neutral does.
-        public Vector2 DeviceStick
-        {
-            get
-            {
-                if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0 || _stepIndex < 0 || _stepIndex >= _steps.Count)
-                    return Vector2.zero;
-                MacroStep step = _steps[_stepIndex];
-                return step.type == MacroStepType.RawInput ? new Vector2(0f, step.rawMoveY) : Vector2.zero;
-            }
-        }
+        // The stick the game reads from the controller this tick (NormaliseInput, in FixedUpdate and the Update after
+        // it; Unity samples the controller once per frame). The input hook sets the tick's whole stick after FixedUpdate
+        // read it; only y of that read matters there (fast fall, wall-slide speed), so x rests. On a tick in a dash or
+        // spring lock nothing sets it after, and it is the stick the last input tick held for the lock (x reaches
+        // Movement.CheckForSuperJump: a super jump's direction).
+        public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
         public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null)
@@ -124,6 +118,10 @@ namespace IGTAPTasMod
             _dashJumpFrame = 0;
             _springDashFrame = 0;
             _springTicks = 0;
+            _lockArmed = false;
+            _pressedStep = -1;
+            _tickLocked = false;
+            _tickStick = Vector2.zero;
             LastJumpPress = LastJumpRelease = LastDashPress = Never;
             JumpHeld = false;
             _waitingForStable = synchronizeStart;
@@ -151,9 +149,6 @@ namespace IGTAPTasMod
 
         public object[] CaptureState() { return FieldState.Capture(this); }
 
-        // Continues a captured run with new remaining inputs, as if they had followed the captured prefix all along.
-        // `remaining` starts with the whole step the run is in, `elapsedTicks` of which already ran: re-entering it
-        // would redo its press/release (e.g. release a dash-jump's jump that the step keeps held until it ends).
         public void Resume(object[] state, List<MacroStep> remaining, int elapsedTicks)
         {
             FieldState.Restore(this, state);
@@ -165,10 +160,9 @@ namespace IGTAPTasMod
             _wallJumpTriggered = false;
             _finishWaitTicks = 0;
             _quickRestartStep = -1;
+            _pressedStep = -1;
         }
 
-        // Movement.FixedUpdate prefix (plugin) / before it (enginesim): true once when the next step to run is a quick
-        // restart; the caller then does the game's quick restart, Movement.respawn(true).
         public bool TakeQuickRestart()
         {
             if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0 || _stepIndex < 0 || _stepIndex >= _steps.Count
@@ -179,29 +173,74 @@ namespace IGTAPTasMod
             return true;
         }
 
-        // Before Movement.FixedUpdate (plugin prefix / enginesim), after the pending Invokes: counts the spring ticks
-        // (a sideways spring's lock, no input hook) after the last input tick, and presses dash on the one that tick asked
-        // for (MacroStep.springDashFrame), as a player's press in the frame before it does. The spring branch cancels the
-        // lock on a buffered dash, and the dash starts on the next tick.
-        public void SpringFrame(Movement movement)
+        // Before Movement.FixedUpdate (plugin prefix / enginesim), after the quick restart: where a player's presses are,
+        // since the game takes them only in Update, before the whole physics tick. A tick in a dash or spring lock takes
+        // no input tick; there the only presses are a dash frame's jump (MacroStep.dashJumpFrame) and a spring's dash
+        // (springDashFrame), and the next input tick's presses wait for the first tick out of the lock.
+        public void BeforeTick(Movement movement)
         {
-            if (!IsRunning || _springDashFrame <= 0
-                || !string.Equals(ReadObject(CutsceneModeField, movement), "spring", StringComparison.OrdinalIgnoreCase)) return;
-            if (++_springTicks < _springDashFrame) return;
-            _springDashFrame = 0;
-            PressDash(movement);
+            if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0) { _tickStick = Vector2.zero; return; }
+            string mode = ReadObject(CutsceneModeField, movement);
+            bool dash = string.Equals(mode, "dash", StringComparison.OrdinalIgnoreCase);
+            // A dash whose frames run out ends in this tick's FixedUpdate before its input hook.
+            bool dashEnds = dash && ReadBool(DashActiveField, movement) && ReadFloat(DashFramesRemainingField, movement) <= 0f;
+            _tickLocked = !string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase) && !dashEnds;
+            MacroStep due = _stepIndex >= 0 && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
+            float nextY = due != null && due.type == MacroStepType.RawInput ? due.rawMoveY : 0f;
+            bool dashJumped = false;
+            if (dash && _dashJumpFrame > 0 && ReadFloat(FramesSinceLastDashField, movement) + 1f >= _dashJumpFrame)
+            {
+                _dashJumpFrame = 0;
+                PressJump(movement);
+                _rawJumpHeld = true;
+                dashJumped = true;
+            }
+            if (_springDashFrame > 0 && string.Equals(mode, "spring", StringComparison.OrdinalIgnoreCase) && ++_springTicks >= _springDashFrame)
+            {
+                _springDashFrame = 0;
+                PressDash(movement);
+            }
+            if (!_tickLocked) PressStep(movement);
+            _tickStick = !_tickLocked ? new Vector2(0f, nextY)
+                : _lockArmed ? new Vector2(_lockX ?? 0f, _lockY ?? nextY)
+                : dashJumped ? _dashJumpAxis
+                : new Vector2(0f, nextY);
         }
 
-        // A run resumed later from a capture taken now starts its own input count at 0 (its inputs are the ones after this
-        // point) while the physics tick count goes on: enginesim's Full-TAS windows start mid-run this way. Every physics
-        // tick counts from here, as it did in the run so far (its first input is behind it).
+        // Movement.touchedSolidGround/touchedMossyGround prefix: the wall branch's first call, before it reads jumpBuffer
+        // (a wall bounce, a dash's wall jump). A dash that hits a wall ends there and the tick takes its input tick after
+        // all: its presses go in now, before any of the tick's reads of the buttons, as if made before the tick.
+        public void WallTouch(Movement movement, bool touchedGround)
+        {
+            if (!IsRunning || touchedGround || !_tickLocked
+                || !string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase)) return;
+            PressStep(movement);
+        }
+
+        // The due raw-input step's presses and release, once.
+        private void PressStep(Movement movement)
+        {
+            if (_stepIndex < 0 || _stepIndex >= _steps.Count || _elapsedTicks != 0 || _pressedStep == _stepIndex) return;
+            MacroStep step = _steps[_stepIndex];
+            if (step.type != MacroStepType.RawInput) return;
+            _pressedStep = _stepIndex;
+            if (step.rawJumpPressed) PressJump(movement);
+            if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld)) ReleaseJump(movement);
+            if (step.rawDashPressed)
+            {
+                PressDash(movement);
+                _dashJumpFrame = step.dashJumpFrame;
+                _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
+            }
+            _rawJumpHeld = step.rawJumpHeld;
+        }
+
         public void RebaseInputs()
         {
             _runTicks = 0;
             _countEveryPhysicsTick = true;
         }
 
-        // Drops the run without ending an attempt (no AttemptEnded): a start capture only needed its state.
         public void Discard()
         {
             _steps = null;
@@ -235,12 +274,9 @@ namespace IGTAPTasMod
             SetField(DashBufferField, movement, false);
         }
 
-        // A bonus course's run finishes on its reward box (no end gate anywhere in the area).
         internal const string RewardFinishReason = "Reward collected";
-        // A transition's run finishes when the next course's start gate starts its timer.
         internal const string TransitionFinishReason = "Next course started";
 
-        // A Full-TAS run finishes when the game has reached every one of its goals (FullTasTracker), in order.
         internal const string FullTasFinishReason = "Full-TAS goals reached";
 
         internal static bool IsFinishReason(string reason)
@@ -249,7 +285,6 @@ namespace IGTAPTasMod
                 || reason == FullTasFinishReason;
         }
 
-        // Once per physics tick, after Movement.FixedUpdate (which takes the tick's input, if any).
         public void CountPhysicsTick()
         {
             if (IsRunning && (_runTicks > 0 || _countEveryPhysicsTick)) _physicsTicks++;
@@ -285,8 +320,6 @@ namespace IGTAPTasMod
             {
                 NormalizeQuickRestartState(movement);
                 PinSynchronizationPosition(movement);
-                // Quick restart preserves movement state from the previous attempt. Clear it
-                // throughout the synchronization window, then begin from three healthy ticks.
                 bool stable = !ReadBool(IsDeadField, movement)
                     && ReadBool(OnGroundField, movement)
                     && string.Equals(ReadObject(CutsceneModeField, movement), "none", StringComparison.OrdinalIgnoreCase);
@@ -370,40 +403,19 @@ namespace IGTAPTasMod
         private void RunRawInput(Movement movement, MacroStep step, bool entering)
         {
             movement.MoveAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
-            // Only the input tick right before the spring ticks can ask for their dash (a spring-dash tick is a step of
-            // its own: ToSteps never merges the next tick into it).
             _springDashFrame = entering ? step.springDashFrame : 0;
             _springTicks = 0;
-            if (entering)
-            {
-                if (step.rawJumpPressed)
-                {
-                    PressJump(movement);
-                }
-                if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld))
-                    ReleaseJump(movement);
-                if (step.rawDashPressed)
-                {
-                    PressDash(movement);
-                    _dashJumpFrame = step.dashJumpFrame;
-                    _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
-                }
-                _rawJumpHeld = step.rawJumpHeld;
-            }
+            _lockArmed = entering && (step.lockMoveX.HasValue || step.lockMoveY.HasValue);
+            _lockX = step.lockMoveX;
+            _lockY = step.lockMoveY;
+            // Made at the tick start (BeforeTick) or the dash's wall end (WallTouch); a tick neither saw has no earlier
+            // place left for them.
+            if (entering) PressStep(movement);
             _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
             if (_elapsedTicks >= Mathf.Max(1, step.durationTicks)) Advance(movement, false);
         }
 
-        // Called once per dash frame (Movement.CheckForSuperJump prefix), before the game reads jumpBuffer.
-        public void DashFrame(Movement movement)
-        {
-            if (!IsRunning || _dashJumpFrame <= 0 || ReadFloat(FramesSinceLastDashField, movement) < _dashJumpFrame) return;
-            _dashJumpFrame = 0;
-            movement.MoveAxis = _dashJumpAxis;
-            PressJump(movement);
-            _rawJumpHeld = true;
-        }
 
         private static int WallJumpHoldDirection(MacroStep step)
         {
@@ -482,15 +494,9 @@ namespace IGTAPTasMod
             return ReadBool(OnWallField, movement) || ReadFloat(WallCoyoteField, movement) > 0f;
         }
 
-        // Presses and releases do exactly what Movement.Update does for a real one, including the buffer expiry timers
-        // (a jump press stays buffered 0.12 s, 0.2 s mid-dash; a dash press 0.12 s; a release's jump cut 0.26 s).
-        // Each is stamped with Clock, which the route gate (TasPlugin.AuditTick) advances once per physics tick, dash
-        // ticks included, so it checks every buffer against the press or release that made it.
         public int Clock;
         public int LastJumpPress = Never, LastJumpRelease = Never, LastDashPress = Never;
         const int Never = -1000000;
-        // For the in-game input display: presses so far (a change marks a tick's press) and whether jump is held
-        // (pressed and not yet released, so no jump cut has been made).
         public int JumpPresses, DashPresses;
         public bool JumpHeld;
 
@@ -531,10 +537,6 @@ namespace IGTAPTasMod
             movement.MoveAxis = new Vector2(Mathf.Clamp(direction, -1, 1), 0f);
         }
 
-        // Movement.NormaliseInput: what the game makes of a stick position before it moves the player. Playback sets
-        // MoveAxis after the game read the controller, so it applies the same; otherwise it would play stick values no
-        // controller can give (0.1 creeps where a stick gives 0; 0.9 is 90 % where a stick gives full speed). What a
-        // controller can give: x 0, ±1 or 0.3..0.8 in size; y 0 or ±1.
         public static Vector2 ControllerAxis(float x, float y)
         {
             if ((double)x > 0.8) x = 1f;
@@ -550,11 +552,6 @@ namespace IGTAPTasMod
         {
             Vector3 position = movement.transform.position;
             Vector2 velocity = ReadVector(VelocityField, movement);
-            // Keep the whole normal route, not just its opening. This trace is the
-            // diagnostic input for enginesim fidelity checks.
-            // Course 2 and later routes span many screens and routinely exceed
-            // 512 fixed ticks. Retain enough authoritative samples to calibrate
-            // the complete route, including its finish trigger. Quiet (solver) runs never persist it.
             if (!Quiet && _runTicks < 8192)
             {
                 Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
@@ -602,8 +599,6 @@ namespace IGTAPTasMod
             SetField(JumpCutBufferField, movement, false);
             SetField(DashBufferField, movement, false);
             SetField(DashActiveField, movement, false);
-            // respawn(true) mid-dash skips endDash: dashCooldown stays at the dash's 100 s lock, so every later start would
-            // have no dash until real time ran it out. Start dash-ready (the -1 floor a wait reaches) with the dash's flags cleared.
             SetField(DashCooldownField, movement, -1f);
             SetField(CanHyperField, movement, false);
             SetField(WallBouncePossibleField, movement, false);

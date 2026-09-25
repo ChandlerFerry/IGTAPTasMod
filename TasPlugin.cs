@@ -47,13 +47,7 @@ namespace IGTAPTasMod
         private RigidbodyInterpolation2D _savedBodyInterpolation;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
-        // The course the running route starts at (resolved from its name in RestoreRouteStart); a bonus course's
-        // run finishes on its reward box instead of an end gate.
         private CourseDef _runCourse;
-        // After a played transition finishes the player would coast on into the next course (Bonus2_To_Course3 lands on
-        // Course 3's first spikes). Instead it brakes like a player: holds against its momentum until that is spent (not
-        // past zero: holding on would push it the other way), then lets go until it stands still.
-        // Ticks braked so far; -1 = not braking.
         private int _brakeTicks = -1;
         private float _brakeAxis;
         const int MaxBrakeTicks = 150;
@@ -112,6 +106,8 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Movement), "onDeath", null, nameof(AfterPlayerDeath));
             PatchOptional(typeof(Movement), "CheckForSuperJump", nameof(BeforeDashFrame), null);
             PatchOptional(typeof(Movement), "NormaliseInput", nameof(BeforeNormaliseInput), null);
+            PatchOptional(typeof(Movement), "touchedSolidGround", nameof(BeforeWallTouch), null);
+            PatchOptional(typeof(Movement), "touchedMossyGround", nameof(BeforeWallTouch), null);
             PatchOptional(typeof(Saveloader), "autosave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "manualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
@@ -122,17 +118,12 @@ namespace IGTAPTasMod
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
-        // The game's saves run only when nothing of ours is applied to the player: never while a category route's
-        // unlocks (playback) or a turbo/solver run are in effect, so those can't end up in the user's save, and never in a
-        // fresh new-game session. Live edits from /api/session/setup are the user's own and save normally.
         private static bool BlockSharedSave()
         {
             return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active
                 && !Instance._newGameSession);
         }
 
-        // Course checkpoints are always off: a death respawns at the course's reset point, never at the last checkpoint
-        // touched. respawn is the flag's only reader; the settings toggle is pinned off so the menu shows the truth.
         private static void BeforeRespawn(Movement __instance)
         {
             __instance.isRespawningAtCheckpoints = false;
@@ -148,16 +139,17 @@ namespace IGTAPTasMod
         {
             if (Instance == null) return true;
             if (!IsMenuPlayer(__instance)) Instance.OverlayBeforeTick(__instance);
-            // A bonus (its reward's buy trigger) or a transition ending at a bonus finishes on touching its end box.
-            // Checked every tick, dash ticks included, where enginesim checks it (after the previous tick's physics and
-            // Update); timed in physics ticks from the run start: there is no course timer.
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
             if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
-            // A route's own quick restart input (MacroStep.rawQuickRestart): the game's quick restart right before this tick,
-            // after the pending Invokes, where enginesim does it.
             if (!IsMenuPlayer(__instance) && Instance._engine.TakeQuickRestart()) Instance.QuickRestart(__instance);
+            if (!IsMenuPlayer(__instance) && !Instance._recorder.IsRecording)
+            {
+                int presses = Instance._engine.JumpPresses;
+                Instance._engine.BeforeTick(__instance);
+                if (Instance._engine.JumpPresses != presses) Instance.OverlayCaptureAxis(__instance);
+            }
             if (Instance._pendingSilentMacro != null && !Instance._engine.IsRunning)
             {
                 MacroDefinition macro = Instance._pendingSilentMacro;
@@ -169,7 +161,6 @@ namespace IGTAPTasMod
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
-            // A fresh new game's first tick: its start state.
             if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active) Instance.CaptureNewGameStart(__instance);
             if (Instance._fullTasPlay != null && !Instance._fullTasPlay.started && !Instance._fullTasPlay.waitingForNewGame && !Instance._engine.IsRunning
                 && !IsMenuPlayer(__instance))
@@ -193,7 +184,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        // Every physics tick, dash and spring ticks included (they skip the input hook, so RunTicks does not count them).
         private static void AfterMovementFixedUpdate(Movement __instance)
         {
             if (Instance == null || IsMenuPlayer(__instance)) return;
@@ -201,7 +191,6 @@ namespace IGTAPTasMod
             Instance.OverlayTick(__instance);
         }
 
-        // The main menu's own Movement (isOnMainMenu) also runs FixedUpdate; runs only ever drive the world's player.
         private static bool IsMenuPlayer(Movement movement)
         {
             return MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(movement) is bool menu && menu;
@@ -210,33 +199,26 @@ namespace IGTAPTasMod
         private static bool BeforePlayerInput(Movement __instance)
         {
             if (Instance == null) return true;
-            // Movement.FixedUpdate calls getPlayerControlledInput at
-            // scratch_movement.txt:1151, AFTER its r1-r13 raycasts (907-953)
-            // and OnWall logic (1002-1067) and BEFORE the jump/wall-jump
-            // consumption (1655-1745). This prefix therefore observes the exact
-            // OnWall / wallCoyoteFrames / probe state the jump code will read.
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
             Instance._engine.FixedTick(__instance);
             Instance.OverlayCaptureAxis(__instance);
             if (Instance._brakeTicks >= 0 && !IsMenuPlayer(__instance)) Instance.Brake(__instance);
-            // This method is the movement executor, not a device sampler. The prefix
-            // supplies MoveAxis and input buffers; the original must run to consume
-            // them and apply movement, jumping, walljumping, and dashing.
             return true;
         }
 
-        // The game's controller read (Movement.FixedUpdate and Update hand the raw stick to NormaliseInput): while a run
-        // plays, the stick it holds (MacroEngine.DeviceStick), as enginesim's InputAction reads it. FixedUpdate's fast
-        // fall and wall-slide speed read it before the input hook.
         private static void BeforeNormaliseInput(Movement __instance, ref Vector2 __0)
         {
             if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording || !Instance._engine.IsRunning) return;
-            __0 = Instance._engine.DeviceStick;
+            __0 = Instance._engine.TickStick;
         }
 
-        // Runs after the game sampled the controller (Movement.FixedUpdate), so the move axis replaces the real stick
-        // the way playback's does; nothing else is pressed.
+        private static void BeforeWallTouch(Movement __instance, bool touchedGround)
+        {
+            if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording) return;
+            Instance._engine.WallTouch(__instance, touchedGround);
+        }
+
         private void Brake(Movement movement)
         {
             if (_engine.IsRunning || ++_brakeTicks > MaxBrakeTicks) { _brakeTicks = -1; return; }
@@ -252,17 +234,13 @@ namespace IGTAPTasMod
             movement.MoveAxis = new Vector2(_brakeAxis, 0f);
         }
 
-        // The course the running attempt is scored on: the solver's in turbo, else the route's (RestoreRouteStart). None
-        // during a Full-TAS run: only its last goal ends it.
         CourseDef RunCourse { get { return _fullTas != null ? null : _silentEvaluation ? _solverTarget : _runCourse; } }
 
-        // The player's colliders overlap the course's end box (absolute coordinates, shifted by FloatingOrigin).
         private bool TouchesEndBox(Movement player, CourseDef course)
         {
             return TouchesBox(player, course.endX, course.endY, course.endW, course.endH);
         }
 
-        // The player's colliders overlap the box (centre and size, absolute coordinates, shifted by FloatingOrigin).
         private static bool TouchesBox(Movement player, float x, float y, float w, float h)
         {
             Vector2 origin = CurrentOrigin();
@@ -276,14 +254,10 @@ namespace IGTAPTasMod
             return false;
         }
 
+        // A human's jump press on a dash frame, filed for the recording (MacroStep.dashJumpFrame).
         private static void BeforeDashFrame(Movement __instance)
         {
-            if (Instance == null) return;
-            Instance._recorder.DashFrame(__instance);
-            if (Instance._recorder.IsRecording) return;
-            int presses = Instance._engine.JumpPresses;
-            Instance._engine.DashFrame(__instance);
-            if (Instance._engine.JumpPresses != presses) Instance.OverlayCaptureAxis(__instance);
+            if (Instance != null) Instance._recorder.DashFrame(__instance);
         }
 
         private void PatchOptional(Type type, string methodName, string prefixName, string postfixName)
@@ -297,12 +271,9 @@ namespace IGTAPTasMod
                 postfix: postfix == null ? null : new HarmonyMethod(postfix));
         }
 
-        // A transition's run finishes when the next course's start gate starts that course's timer (a call while it
-        // already times is no start). It has no timer of its own, so its time is physics ticks from the run start.
         private static void BeforeCourseStart(courseScript __instance)
         {
             if (Instance == null || __instance == null || !Instance._engine.IsRunning) return;
-            // A Full-TAS start goal: this call starts the course's timer (AfterCourseStart) only when it wasn't timing.
             Instance._fullTasStartWasTracking = CourseTrackingFlag.GetValue(__instance) is bool was && was;
             CourseDef course = Instance.RunCourse;
             if (course == null || course.toCourse <= 0 || __instance.courseNumber != course.toCourse) return;
@@ -315,7 +286,6 @@ namespace IGTAPTasMod
             if (Instance != null)
             {
                 Instance._pendingCourseTime = 0f;
-                // A Full-TAS run has no course of its own: the overlay title shows the one it just started.
                 if (__instance != null && Instance.OverlayListsRun) Instance._overlayCourse = __instance.courseNumber.ToString();
                 Movement movement = FindWorldMovement();
                 Instance._engine.MarkCourseStart(movement);
@@ -330,13 +300,10 @@ namespace IGTAPTasMod
         private static void BeforeCourseFinish(courseScript __instance, bool savePositionData)
         {
             if (Instance == null) return;
-            // stopTracking only finishes a course it is timing; an end gate reached without the start gate is not a run.
             CourseDef target = Instance.RunCourse;
             bool timing = __instance != null && CourseTrackingField != null && CourseTrackingField.GetValue(__instance) is bool tracking && tracking;
-            // A Full-TAS run: the player's own finish of a course it is timing is a goal event (AfterCourseFinish), never its end.
             Instance._fullTasFinishCourse = Instance._fullTas != null && timing ? __instance.courseNumber : -1;
             Instance._pendingCourseWasTracking = timing && Instance._fullTas == null
-                // A solver run is scored on its own course; finishing another course on the way is not a finish.
                 && (!Instance._silentEvaluation
                     || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.id);
             if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
@@ -368,7 +335,6 @@ namespace IGTAPTasMod
         private static Movement FindWorldMovement()
         {
             Movement[] all = FindObjectsByType<Movement>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            // None while a scene loads (a new game): no player, not a retry.
             if (all == null || all.Length == 0) return null;
             Movement fallback = null;
             foreach (Movement m in all)
@@ -396,7 +362,6 @@ namespace IGTAPTasMod
 
         private static void SetMovementField(Movement movement, string name, object value)
         {
-            // Every unlock change goes through here; with the lock on the save's own unlocks are never touched.
             if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft" || name == "maxAirJumps" || name == "airJumpsLeft")) return;
             try
             {
@@ -412,9 +377,6 @@ namespace IGTAPTasMod
             return v is bool b ? b : fallback;
         }
 
-        // Course coordinates (courses.json, respawnPoint) are absolute. FloatingOrigin moves every root object by the
-        // player's position once the player is Threshold (17500) from the origin, keeping the total in currentOrigin, so
-        // a world position is absolute + currentOrigin (Course 4 starts past the threshold). courseResetPoint is world.
         static FloatingOrigin _floatingOrigin;
 
         internal static Vector2 CurrentOrigin()
@@ -646,7 +608,6 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = _newGamePhase != 0 ? "A new game is loading." : "A bootstrap is already in progress." };
             }
-            // The bootstrap loads the save into the world: the fresh new-game session (if any) ends here.
             _newGameSession = false;
             _newGameStart = null;
             _newGamePlayer = null;
@@ -678,24 +639,14 @@ namespace IGTAPTasMod
             return null;
         }
 
-        // ---- A fresh new game in memory (POST /api/session/newgame): the Overworld
-        // scene loaded the way the menu's New Game loads it with no save file, except that Saveloader neither loads nor
-        // saves (BeforeSaveloaderAwake: IsSaving = isLoading = false before its Awake, so no load and no autosave, and
-        // manualSave returns). Movement.Start then runs its NORMAL case (Cash 0, zone 1, the scene's respawnPoint) and
-        // globalStats.Awake starts every currency and upgrade at 0. Nothing of ours moves the player or writes an unlock.
-        // The session stays save-free until /api/oracle/bootstrap loads the save (or the game restarts).
         bool _newGameSession;
-        // 1 the scene is loading, 2 waiting for the player and its zone to settle, 3 capture on the next physics tick.
         int _newGamePhase;
         int _newGameFrame;
         WebStudioRequest _newGameRequest;
         readonly List<string> _newGameNotes = new List<string>();
-        // The fresh game's first physics tick (taken in its Movement.FixedUpdate prefix, engine state as a run starts):
-        // The start state of every run from a new game, in turbo and offline. Valid while its player exists.
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
-        // The fresh game is still the one in the world (a bootstrap or scene change replaces its player).
         bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement(); } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
@@ -708,7 +659,6 @@ namespace IGTAPTasMod
             SaveloaderIsLoading.SetValue(__instance, false);
         }
 
-        // `request` (the endpoint's) is answered once the fresh game's first tick is captured; null for a playback.
         void StartNewGame(WebStudioRequest request)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -716,19 +666,16 @@ namespace IGTAPTasMod
             LoadNewGame(request);
         }
 
-        // StartNewGame without the solver check: the Full-TAS requests load one themselves (FullTasWhenReady).
         void LoadNewGame(WebStudioRequest request)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
             _newGameSession = true;
-            // What the menu does before its scene change (pauseMenuScript.changeScene: normal difficulty, time running).
             globalStats.difficultyLevel = 0;
             Time.timeScale = 1f;
             SceneManager.LoadScene("Overworld");
             _newGameStart = null;
             _newGamePlayer = null;
-            // Every start state belongs to the scene that is going away.
             _startState = null;
             _engineSimStartKey = null;
             _newGameNotes.Clear();
@@ -738,7 +685,6 @@ namespace IGTAPTasMod
             if (request != null) request.AsyncHandling = true;
         }
 
-        // Update: waits for the loaded scene's player to be in the world and its zone settled (as CourseLoaded does).
         void PumpNewGame()
         {
             if (_newGamePhase != 1 && _newGamePhase != 2) return;
@@ -746,7 +692,6 @@ namespace IGTAPTasMod
             if (frames > 600) { FailNewGame("The new game's player did not settle within 600 frames."); return; }
             if (_newGamePhase == 1)
             {
-                // LoadScene applies on the next frame.
                 if (frames < 2 || SceneManager.GetActiveScene().name != "Overworld") return;
                 _newGameNotes.Add("scene Overworld loaded");
                 _newGamePhase = 2;
@@ -758,7 +703,6 @@ namespace IGTAPTasMod
             if (!player.gameObject.activeInHierarchy)
             {
                 if (frames < 5) return;
-                // As /api/oracle/bootstrap does, without its load and its respawn: Movement.Start then runs its NORMAL case.
                 if (player.transform.parent != null) player.transform.parent.gameObject.SetActive(true);
                 player.gameObject.SetActive(true);
                 _newGameNotes.Add("activated the world player");
@@ -769,18 +713,14 @@ namespace IGTAPTasMod
             _newGamePhase = 3;
         }
 
-        // Movement.FixedUpdate prefix of the fresh game's first settled tick.
         void CaptureNewGameStart(Movement player)
         {
             _newGamePhase = 0;
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
-            // The engine as a run from here starts it (no quick restart, no stable wait).
             bool quiet = _engine.Quiet;
             _engine.Quiet = true;
             _engine.Run(new MacroDefinition { name = "New game start", steps = { new MacroStep { type = MacroStepType.RawInput, durationTicks = 1 } } },
                 _library, false, true);
-            // The fixed Full-TAS seed (the one allowed RNG write, README "### Rules"): applied right before the start
-            // snapshot, so the snapshot carries the seeded state and every run from it starts there.
             UnityEngine.Random.InitState(FullTasSeed);
             _newGameStart = TurboRunner.Capture(player, courses, _engine.CaptureState(), 0, true);
             _engine.Discard();
@@ -816,7 +756,6 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        // The start state of a run from a new game (Full-TAS's, in turbo and offline); only a fresh session has it.
         TurboRunner.Snapshot NewGameStart()
         {
             if (!FreshGameInWorld)
@@ -824,12 +763,6 @@ namespace IGTAPTasMod
             return _newGameStart;
         }
 
-        // Real-time playback paces the game so every physics tick gets its own frame, as the route model (and the offline
-        // engine) assumes. At most one tick per frame: a hitch (autosave, overlay scan) stretches the playback instead of
-        // running up to 16 ticks with no Update between them. No vsync and a 280 fps cap: a delayed Invoke fires in the
-        // first frame that reaches it, and the 0.01 s / 0.03 s ones (reEnableNormalCollider, endRecentJump) leave a 10 ms
-        // window before the next tick, so a frame must come at least every 10 ms; 280 fps (3.6 ms) leaves room for jitter.
-        // Slower, they land a tick late. Turbo and the solver step their own physics. Restored as soon as the playback ends.
         const int PlaybackFrameRate = 280;
         bool _playbackPaced;
         float _savedMaximumDeltaTime;
@@ -882,7 +815,6 @@ namespace IGTAPTasMod
                 if (HotkeyPressed(keyboard, macro))
                 {
                     BeginDeterministicPhysics(FindWorldMovement());
-                    // Hotkey playback continues from here, not from a course start: no course may finish it.
                     _runCourse = null;
                     _engine.Run(macro, _library);
                     break;
@@ -922,8 +854,6 @@ namespace IGTAPTasMod
         {
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
-            // A route named "<course>_..." or "<course> ..." always starts at that course, whatever was played before.
-            // The course is its id ("2_WJ ...") or its name ("bonus1_WJ ...").
             Match courseName = Regex.Match(route.name ?? "", @"^([^_\s]+)[_ ]");
             CourseDef named = null;
             if (courseName.Success)
@@ -948,16 +878,8 @@ namespace IGTAPTasMod
             }
             if (movement != null && respawn != null)
             {
-                // Courses use courseResetPoint as a one-shot override and may replace it
-                // with later checkpoints during a run. Capture the legitimate course start
-                // once for this plugin session, then reuse it for every replay/optimizer
-                // trial instead of rereading the mutable field.
                 if (!_hasPreservedCourseResetPoint)
                 {
-                    // Some courses leave courseResetPoint at zero and keep the real
-                    // start in respawnPoint until the player reaches a later checkpoint.
-                    // Capture whichever legitimate reset target the game currently owns
-                    // before the first automated attempt can overwrite it.
                     Vector2 initialResetPoint = movement.courseResetPoint != Vector2.zero
                         ? movement.courseResetPoint - CurrentOrigin()
                         : movement.respawnPoint;
@@ -967,13 +889,9 @@ namespace IGTAPTasMod
                         _hasPreservedCourseResetPoint = true;
                     }
                 }
-                // A run whose start is exactly a course start (turbo's "start" override picks it the same way)
-                // is scored on that course: its end gate, or its reward box when it has one.
                 if (_runCourse == null && _hasPreservedCourseResetPoint)
                     _runCourse = _courses.Find(c => c.x == _preservedCourseResetPoint.x && c.y == _preservedCourseResetPoint.y);
                 if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint + CurrentOrigin();
-                // A death schedules deathRespawn after a delay. If it survives into the
-                // next trial it resets the player in the middle of that attempt.
                 movement.CancelInvoke("deathRespawn");
                 movement.CancelInvoke("respawn");
                 bool respawnRan = false;
@@ -991,9 +909,6 @@ namespace IGTAPTasMod
                 Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
                 if (body != null)
                 {
-                    // Movement.respawn teleports only the Transform. Keep the physics body
-                    // at that exact point so the next simulation does not resolve a stale
-                    // body/transform pair differently depending on frame scheduling.
                     body.position = movement.transform.position;
                     body.linearVelocity = Vector2.zero;
                     body.angularVelocity = 0f;
@@ -1011,10 +926,6 @@ namespace IGTAPTasMod
             EndDeterministicPhysics();
             _deterministicBody = body;
             _savedBodyInterpolation = body.interpolation;
-            // Movement.FixedUpdate performs jump nudges through Transform.position.
-            // With interpolation enabled that property is a render-time pose between
-            // fixed states, so the nudge feeds render phase back into physics (including X).
-            // None exposes the authoritative body pose to the game during TAS playback.
             body.interpolation = RigidbodyInterpolation2D.None;
         }
 
@@ -1037,8 +948,6 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
             if (_engine.IsRunning) _engine.Abort("Recording started");
             string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
-            // As in playback: with interpolation on, Movement's Transform.position nudges read the render pose, so a
-            // recording's physics depends on its frame timing and its inputs don't replay the same in turbo.
             BeginDeterministicPhysics(FindWorldMovement());
             _recorder.Start(name);
             Logger.LogInfo("Fixed-tick recording started: " + name);
@@ -1054,7 +963,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Recording saved: " + recording.samples.Count + " physics frames, " + recording.semanticSteps.Count + " actions");
         }
 
-        // A route from the recording's inputs; `samples` limits it to a prefix (a transition's seed ends at its arrival).
         private void CreateRouteFromRecording(RecordingDefinition recording, List<RawTickSample> samples = null)
         {
             MacroDefinition macro = new MacroDefinition { name = recording.name };
@@ -1077,7 +985,6 @@ namespace IGTAPTasMod
         {
             MacroDefinition macro = SelectedMacro;
             if (macro == null) return;
-            // A Full-TAS route ("fulltas/main_NO_WJ 812.40") plays from a fresh new game with its run's goals.
             Match fullTasRoute = FullTasRouteName.Match(macro.name ?? "");
             if (fullTasRoute.Success)
             {
@@ -1085,30 +992,22 @@ namespace IGTAPTasMod
                 return;
             }
             EnsureGameUnpaused();
-            // Web/UI commands arrive during rendered Update frames. Queue the reset and
-            // arming until the prefix of Movement's next full fixed tick.
             _pendingReplay = macro;
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
         }
 
-        // A category route ("<course>_NO_WJ|WJ|WJDASH|WJ_DASH_AJ <time>") plays back with that category's unlocks, like
-        // the solver judged it; the save's own unlocks come back when the attempt ends.
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        // The category ladder: none < wj < wjdash < wjdashaj (wall jump, dash, air jump).
         internal static int CapsLevel(string caps)
         {
             return caps == "wjdashaj" ? 3 : caps == "wjdash" ? 2 : caps == "wj" ? 1 : 0;
         }
 
-        // A category route label ("WJ_DASH_AJ") back to the solver's caps key ("wjdashaj").
         internal static string CapsFor(string label)
         {
             return label == "NO_WJ" ? "none" : label == "WJ_DASH_AJ" ? "wjdashaj" : label.ToLowerInvariant();
         }
 
-        // What a category means in game fields. Dash comes with one air dash and air jump with one air jump (the
-        // game's own course 4 start pairs them that way); the counters start full, the ground refills them after that.
         internal static (string field, object value)[] CategoryAbilities(string caps)
         {
             int level = CapsLevel(caps);
@@ -1119,7 +1018,6 @@ namespace IGTAPTasMod
                 ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps) };
         }
 
-        // Sets a category's abilities; returns the previous values so they can be put back.
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
         {
             var saved = new List<(string, object)>();
@@ -1140,8 +1038,6 @@ namespace IGTAPTasMod
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 
-        // The widest category (CapsLevel) the save's unlocks cover: wall jump, then dash with an air dash, then air jump
-        // with an air jump. While a category route plays, its unlocks are applied; the save's are in _playbackSavedAbilities.
         private int SaveUnlockLevel(Movement movement)
         {
             Func<string, object> saved = field => _playbackSavedAbilities.TryGetValue(field, out object value) ? value : GetMovementField(movement, field);
@@ -1275,8 +1171,6 @@ namespace IGTAPTasMod
                     {
                         RecordingDefinition recording = JsonConvert.DeserializeObject<RecordingDefinition>(File.ReadAllText(path));
                         ValidateRecording(recording);
-                        // Raw samples are the source of truth. Re-run semantic inference so
-                        // recordings made before 6.2 gain idle trimming and correct walljump directions.
                         InputRecorder.Reprocess(recording);
                         _recordings.Add(recording);
                     }
@@ -1300,7 +1194,6 @@ namespace IGTAPTasMod
                 {
                     try
                     {
-                        // Oracle/turbo evaluations and their diagnostics are fidelity data, not studio attempts.
                         if (path.EndsWith(".diagnostics.json", StringComparison.OrdinalIgnoreCase)) continue;
                         string text = File.ReadAllText(path);
                         if (text.Contains("oracle-eval-")) continue;
@@ -1494,10 +1387,6 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/setup")
             {
-                // Live changes to the running game (never the save file): {"start": {x, y},
-                // "abilities": {"dashUnlocked": true, "maxAirDashes": 1, "airDashesLeft": 1, "respawnPoint": {x, y}, ...},
-                // "currencies": {"Cash": 3.16e22, ...}} (globalStats.Currencies names), "blueActive": false (the coloured
-                // blocks through the game's own colouredBlockSwapper.swapBlocks). Replies with the fields as set.
                 if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
                 Movement player = FindWorldMovement();
                 if (body["start"] is JObject setupStart)
@@ -1540,8 +1429,6 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/newgame")
             {
-                // A fresh new game (no load, no save for the rest of the session); replies once its player is in the world:
-                // {position, respawnPoint, cash, unlocks, notes}.
                 StartNewGame(request);
                 return null;
             }
@@ -1735,7 +1622,6 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown Web Studio command: " + request.Path);
         }
 
-        // AGENTS.md rule 4: a category route name ("<course>_<CAPS> <time>") only comes from the gate (SaveSolverRoute).
         private static void RejectCategoryName(string name)
         {
             if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+$", RegexOptions.IgnoreCase))
@@ -1745,8 +1631,6 @@ namespace IGTAPTasMod
         private object BuildWebState()
         {
             MacroDefinition selected = SelectedMacro;
-            // The studio polls this every 750 ms on the game's main thread: only the selected route's actions (the others
-            // just their count) and only the result fields it shows, or each poll is a 2 MB, ~65 ms frame hitch.
             List<object> routes = new List<object>();
             foreach (MacroDefinition route in _library.macros)
             {
@@ -1792,12 +1676,10 @@ namespace IGTAPTasMod
 
             Movement player = FindWorldMovement();
             return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
-                // Read-only: the live unlocks, to check that playback and the tools put the save's back.
                 unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
                     dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
                     airDashesLeft = GetMovementField(player, "airDashesLeft"),
                     airJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
-                // The widest category the save's own unlocks can run (a category playback's are not the save's).
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,

@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""Differential raycast check: Unity (running game) vs the offline engine, on Movement's own probe rays.
-
-usage: enginesim-rays.py <trace.json> [exe]
-
-Casts every ray Movement.FixedUpdate/Update would cast at each traced position (both facings, with jitter),
-in the game via /api/enginesim/raycast and offline via `IGTAP.EngineSim rays`, and reports mismatches.
-"""
 import json
 import random
 import subprocess

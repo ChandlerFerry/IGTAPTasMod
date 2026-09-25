@@ -3,9 +3,7 @@ using System.Collections.Generic;
 
 namespace IGTAPTasMod
 {
-    // Bundle is kept in the enum so existing serialized numeric action types retain their meaning.
     public enum MacroStepType { Move, Jump, Dash, Wait, WallJump, Bundle, RawInput }
-    // ponytail: only FixedTicks is produced; Duration survives for load-time migration.
     public enum ActionEndCondition { Duration, FixedTicks }
     public enum ActionTimeoutPolicy { AbortAttempt }
 
@@ -19,15 +17,10 @@ namespace IGTAPTasMod
         public int durationMs = 100;
         public int timeoutMs = 1200;
         public int direction;
-        // Wall jumps have two independent controls: direction identifies the wall-to-wall
-        // travel direction, while this is the horizontal input held after launch. 2 means
-        // automatic behavior (hold the travel direction).
         public int wallJumpHoldDirection = 2;
         public ActionEndCondition endCondition = ActionEndCondition.FixedTicks;
         public int durationTicks = 5;
         public int timeoutTicks = 60;
-        // Exact recorded-input playback. RawInput is appended to the enum so existing
-        // serialized numeric action types retain their meaning.
         public float rawMoveX;
         public float rawMoveY;
         public bool rawJumpPressed;
@@ -35,15 +28,11 @@ namespace IGTAPTasMod
         public bool rawJumpReleased;
         public bool rawDashPressed;
         public bool rawDashHeld;
-        // With rawDashPressed: press jump on this frame of the dash it starts (1 = first dash frame). The engine
-        // gets no ticks during a dash, so this is the only way to jump mid-dash (a late super jump). 0 = off.
         public int dashJumpFrame;
-        // Press dash on this spring tick after this step (1 = the first tick of a sideways spring's lock). Spring ticks
-        // take no input (Movement.FixedUpdate's spring branch skips getPlayerControlledInput), yet the branch cancels the
-        // lock when a dash is buffered: a player presses dash whenever they like during it. 0 = off.
         public int springDashFrame;
-        // The game's quick restart (the QuickReset button: Movement.respawn(true)) at the start of this step's first tick,
-        // before Movement.FixedUpdate. Full-TAS routes choose where to restart.
+        // The stick held on the input-less ticks (dash frames, a spring's lock) right after this step; null: x at rest, y
+        // of the next input tick.
+        public float? lockMoveX, lockMoveY;
         public bool rawQuickRestart;
 
         public MacroStep Copy()
@@ -56,7 +45,8 @@ namespace IGTAPTasMod
                 rawMoveX = rawMoveX, rawMoveY = rawMoveY,
                 rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
                 rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
-                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, springDashFrame = springDashFrame, rawQuickRestart = rawQuickRestart };
+                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, springDashFrame = springDashFrame,
+                lockMoveX = lockMoveX, lockMoveY = lockMoveY, rawQuickRestart = rawQuickRestart };
         }
     }
 
@@ -94,12 +84,9 @@ namespace IGTAPTasMod
         public bool jumpReleased;
         public bool dashPressed;
         public bool dashHeld;
-        // On a dash press: the dash frame (Movement.framesSinceLastDash) the jump was pressed in, 0 = none. The game takes
-        // no input on dash frames, so a jump there (a super jump) shows up in no sample of its own (MacroStep.dashJumpFrame).
         public int dashJumpFrame;
         public float positionX;
         public float positionY;
-        // FloatingOrigin.currentOrigin on this tick: the absolute position (courses.json's frame) is position - origin.
         public float originX;
         public float originY;
         public float velocityX;
@@ -158,9 +145,7 @@ namespace IGTAPTasMod
         public const int CurrentSchemaVersion = 1;
         public int schemaVersion = CurrentSchemaVersion;
         public bool autoOpenWebStudio = true;
-        // Ethical runs: the plugin never changes the player's unlocks (wall jump, dash, ...), and tools that need to refuse.
         public bool lockCapabilities;
-        // The in-game overlay for viewers: the player's hurtbox, spikes and their grace, the player's velocity, and the inputs playback gave on the last 30 ticks (TasOverlay.cs).
         public bool showOverlay = true;
     }
 }

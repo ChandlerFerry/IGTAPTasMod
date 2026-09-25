@@ -1,16 +1,9 @@
-#!/usr/bin/env python3
-"""Check captured turbo traces against route rule 3 (CLAUDE.md): a buffered jump/dash needs a real press in the game's
-buffer window, and a jump cut a real release in its window. Same rule as Solver.cs AuditTick. Exit code 1 if any trace
-violates it.
-
-  audit-traces.py [trace.json ...]     default: every trace in the enginesim config folder
-"""
 import json
 import sys
 from pathlib import Path
 
 from gamepaths import TRACES
-JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15  # Solver.cs JumpBufferTicks / DashBufferTicks / JumpCutBufferTicks
+JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15
 
 
 def press_near(inputs, tick, window, jump):
@@ -30,7 +23,7 @@ def release_near(inputs, tick, window):
     for i in range(min(len(inputs), tick + 3)):
         k, p = inputs[i], inputs[i - 1] if i else None
         if p and not (k["press"] or k["release"] or k["dash"]) and k["x"] == p["x"] and k["held"] == p["held"]:
-            continue  # same macro step (Solver.cs ToSteps)
+            continue
         release = k["release"] or held and not k["held"]
         held = k["held"] or k["dash"] and k["dashJump"] > 0
         if release and i - 2 <= tick <= i + window:
@@ -57,7 +50,7 @@ def main():
     for path in paths:
         trace = json.loads(path.read_text(encoding="utf-8"))
         if "ticks" not in trace or "inputs" not in trace:
-            continue  # not a trace (e.g. a world probe)
+            continue
         found = violations(trace)
         bad += bool(found)
         print(f"{path.name:36} {'VIOLATES ' + '; '.join(found[:3]) if found else 'ok'}")

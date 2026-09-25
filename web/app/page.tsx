@@ -14,30 +14,17 @@ type RecordedAction = { label: string; type: string; direction: number; wallJump
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
-// A bonus has a reward box instead of gates; a transition runs between two places: a course ("2") or a bonus ("bonus2").
-// `hint`: a bonus's reward and price, as its box shows them in the game (null until the world has the box).
-// `maxLevel`: the widest category it runs in (a bonus: its first unless courses.json maxCapabilities widens it).
 type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null };
-// `queue`: the run's targets in order (one for a single Solve), each with how it ended once it has. `repeat`: the queue
-// starts over when it ends (pass 2, 3, ...), `minutes` doubling each pass, until stopped.
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
-// A Full-TAS run: the whole game from a new game as one input stream, split by its goals (config tokens, "start:1").
-// A split's `ticks` are the physics ticks from the run's start when that goal was reached.
 type FullTasSplit = { label: string; ticks: number };
-// `offline`: the offline search's best so far (partial runs too, which never reach the gate); `playable`: Play has
-// something to play (the saved best, else the offline best, else the run's seed).
-// `breaker`: the index of the goal that trips the breaker (Area 1's lights go out, Courses 1-5 reset); null: none does.
 type FullTasRun = { name: string; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
-// The gate's reply to a submit (the plugin's `lastResult` too).
 type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
 type FullTasState = { runs: FullTasRun[]; solve: { running: boolean; name?: string | null; status: string; log: string[] }; lastResult?: FullTasReply | string | null };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean;
-  // The widest category the save's own unlocks can run (0 NO_WJ … 3 WJ_DASH_AJ); null when the player isn't loaded.
   unlockLevel?: number | null;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
-  // Missing on a plugin without Full-TAS.
   fullTas?: FullTasState;
 };
 
@@ -64,7 +51,6 @@ export default function Studio() {
 
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 750); return () => window.clearInterval(timer); }, [refresh]);
   const route = useMemo(() => state.routes.find(r => r.id === state.selectedRouteId) ?? state.routes[0], [state]);
-  // Resolves to whether the request succeeded; a failure shows in the error banner.
   const command = async (path: string, body: unknown = {}) => {
     try { setError(""); await request(path, body); await refresh(); return true; }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
@@ -136,8 +122,6 @@ const CATEGORY_ROUTE = /^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) ([\d.]+)$/i;
 
 const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
-// Where each bonus's box is in the level, and where its solo run starts (courses.json's start), from the world export's
-// box positions relative to the courses. Every bonus box is +1 global watts (cashPerLoop) unless it says otherwise.
 const BONUS_WHERE: Record<string, string> = {
   bonus1: "Below Course 2, a little right of its restart. The run starts right of Course 2, up a bit (where Course 2 → Bonus 1 ends).",
   bonus2: "Between Course 2 and Course 3: below and left of Course 3's start, on the way up. The run starts just left of it.",
@@ -163,11 +147,8 @@ const BONUS_WHERE: Record<string, string> = {
   bonus22: "High above Course 5's start, a little left (secret #2, the buyfree5 box; costs watts). The run starts at Course 5's restart.",
   bonus23: "Swap coloured blocks when dashing (buyblockswap5): left end of Course 4's upgrade row, there only after the breaker. The run starts at Course 5's restart.",
 };
-// Full-TAS buy tokens that are a bonus's box.
 const BONUS_TOKENS: Record<string, string> = { buyfree3: "bonus5", buyfree4a: "bonus7", buyfree4b: "bonus16", buyfree4c: "bonus6", buyfree5: "bonus22", buyblockswap5: "bonus23" };
 
-// A place's tooltip: a bonus's location (plus its box's reward and price when the plugin knows them); a transition's
-// bonus end's location.
 function placeTitle(c: Course | undefined): string | undefined {
   if (!c) return undefined;
   const where = (p?: string) => p ? BONUS_WHERE[p.toLowerCase()] : undefined;
@@ -175,7 +156,6 @@ function placeTitle(c: Course | undefined): string | undefined {
   return [where(c.token), c.hint].filter(Boolean).join("\n") || undefined;
 }
 
-// A Full-TAS goal's tooltip: where its bonus is ("reward:bonus5", "buy:buyfree5").
 function goalTitle(label: string): string | undefined {
   const m = /^(reward|buy):(.+)$/.exec(label);
   if (!m) return undefined;
@@ -188,12 +168,8 @@ function courseLabel(c: Course | undefined, id: number) {
   return c.to ? `${place(c.from ?? "")} → ${place(c.to)}` : place(c.token);
 }
 
-// The widest category a course has: a bonus its first one unless maxCapabilities widens it (older plugins send no
-// maxLevel), everything else runs in every wider one too.
 function topLevel(c: Course) { return c.maxLevel ?? (c.bonus ? c.minLevel ?? 0 : CATEGORIES.length - 1); }
 
-// The fastest category route per "<course id>:<CAPS>"; slower ones and routes that aren't a known course's category
-// routes go to `other`.
 function categoryBests(routes: Route[], courses: Course[]) {
   const best = new Map<string, {route: Route; time: number}>();
   const other: Route[] = [];
@@ -212,7 +188,6 @@ function categoryBests(routes: Route[], courses: Course[]) {
 
 const SHORT_CATEGORY: Record<string, string> = { NO_WJ: "No WJ", WJ: "WJ", WJDASH: "WJ + Dash", WJ_DASH_AJ: "WJ + Dash + AJ" };
 
-// The fastest route that runs `c` in the category `level` places past its minimum: its own or a narrower category's.
 function soloBest(best: Map<string, {route: Route; time: number}>, c: Course, level: number) {
   let solo: {route: Route; time: number} | undefined;
   for (const [narrower] of CATEGORIES.slice(c.minLevel ?? 0, (c.minLevel ?? 0) + level + 1)) {
@@ -222,9 +197,6 @@ function soloBest(best: Map<string, {route: Route; time: number}>, c: Course, le
   return solo;
 }
 
-// Every course, transition and bonus by category with its fastest solo route (from its own start). A solo route runs
-// in every wider category, so a category's time is the fastest over it and the narrower ones. A category wider than
-// `unlockLevel` (the save's unlocks) is dimmed: your save can't run it by hand.
 function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Route[];courses:Course[];activeId?:string;unlockLevel:number|null;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const {best, other} = categoryBests(routes, courses);
   const cell = (routeId: string | undefined, text: string, title: string) => routeId
@@ -232,7 +204,6 @@ function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Ro
     : <span className="cmpCell empty" title={title}>{text}</span>;
   const rows = (c: Course) => CATEGORIES.slice(c.minLevel ?? 0, topLevel(c) + 1).flatMap(([cat], i) => {
     const solo = soloBest(best, c, i);
-    // A category with no route of its own would only repeat a narrower one's row.
     if (!best.has(`${c.id}:${cat}`)) return [];
     const beyond = unlockLevel != null && (c.minLevel ?? 0) + i > unlockLevel;
     return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat} title={beyond ? `Your save's unlocks only reach ${CATEGORIES[unlockLevel][1]}` : undefined}>
@@ -284,12 +255,10 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   const [course,setCourse]=useState<number|"">("");
   const [caps,setCaps]=useState("wj");
   const chosen=course===""?(solver.courses[0]??1):course;
-  // A course has no categories below its minimum (Course 2 starts at WJ, 3 at WJDASH, 4 at WJ_DASH_AJ); a bonus none above its maxLevel.
   const chosenCourse=courses.find(c=>c.id===chosen);
   const minLevel=chosenCourse?.minLevel??0;
   const capsOptions=[["none","Nothing"],["wj","Wall jump"],["wjdash","Wall jump + dash"],["wjdashaj","Wall jump + dash + air jump"]].slice(minLevel,chosenCourse?topLevel(chosenCourse)+1:undefined);
   const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
-  // The fastest saved route for this course in this category, or a narrower one's (it runs in every wider category too).
   const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,capsOptions.findIndex(([v])=>v===chosenCaps)):undefined;
   const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
@@ -306,12 +275,6 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   </div>;
 }
 
-// The Optimize tab's map (POST /enginesim/map, drawn offline by `IGTAP.EngineSim map`): the level's colliders as the
-// solver's world export has them, the standing forced-path boxes, the course's saved routes, its fastest offline best
-// and the archive's plateau routes replayed from the course start, and every explore prefix of the archive as a grid of
-// each cell's fastest timed arrival (-1: reached only with the timer off). World units, y up. Wheel zooms, drag pans;
-// the cursor's position reads out in world and course-gate units (what Cli/forced-paths.json boxes use) and the time
-// the search first reached it.
 type MapTarget = { course: number; capabilities: string };
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
@@ -328,14 +291,10 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
   const [layers, setLayers] = useState<MapLayers>({ explored: true, level: true, boxes: true, markers: true });
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number } | null>(null);
-  // Explored cell ("cx,cy") -> fastest timed arrival, for the readout.
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
-  // The latest fastest arrival: the red end of the explored colors.
   const latest = useMemo(() => data?.explored.cells.reduce((m, v) => Math.max(m, v[2]), 0) || 1, [data]);
   const canvas = useRef<HTMLCanvasElement>(null);
-  // A route's color: the offline best gold, plateau routes faint, saved routes from the palette.
   const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
-  // World to screen: screen = (world - origin) * scale, y flipped.
   const view = useRef({ ox: 0, oy: 0, scale: 1 });
   const drag = useRef<{ x: number; y: number } | null>(null);
 
@@ -361,11 +320,9 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
     const { ox, oy, scale } = view.current;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = "#07111f"; g.fillRect(0, 0, w, h);
-    // World transform: everything below is drawn in world units.
     g.setTransform(dpr * scale, 0, 0, -dpr * scale, -ox * scale * dpr, oy * scale * dpr);
     const px = 1 / scale;
     if (layers.explored && data.explored.cells.length) {
-      // Fastest timed arrival: early blue through late red; cells only reached with the timer off in grey.
       const size = data.explored.cell;
       for (const [cx, cy, t] of data.explored.cells) {
         g.fillStyle = t < 0 ? "#34383f" : `hsl(${230 - 230 * t / latest},90%,55%)`;
@@ -404,7 +361,6 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
   }, [data, layers, hidden, colors, latest]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
-  // Wheel zoom about the cursor; a non-passive listener, so the page does not scroll.
   useEffect(() => {
     const c = canvas.current; if (!c) return;
     const onWheel = (e: WheelEvent) => {
@@ -445,19 +401,15 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
   </div>;
 }
 
-// The solver's capability values, indexed like CATEGORIES.
 const CAPS = ["none", "wj", "wjdash", "wjdashaj"];
 type SolveTarget = { key: string; body: { course: number; capabilities: string }; time?: number };
 
-// How Optimize many spends its time (kept in the browser): `minutes` per target, and with `repeat` the queue starts
-// over when it ends, each pass with twice the minutes up to `maxMinutes`, until stopped. Short first passes get every
-// target a route fast; later ones dig deeper (leave it overnight).
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
 function usePasses(): [Passes, (update: Partial<Passes>) => void] {
   const [passes, setPasses] = useState<Passes>({ minutes: 1, maxMinutes: 15, repeat: true });
   useEffect(() => {
     try { const saved = JSON.parse(window.localStorage.getItem("optimizePasses") ?? "null"); if (saved) setPasses(p => ({ ...p, ...saved })); }
-    catch { /* a corrupt value falls back to the defaults */ }
+    catch { }
   }, []);
   const update = (u: Partial<Passes>) => setPasses(p => { const next = { ...p, ...u }; window.localStorage.setItem("optimizePasses", JSON.stringify(next)); return next; });
   return [passes, update];
@@ -474,20 +426,16 @@ function PassFields({passes,update,disabled}:{passes:Passes;update:(u:Partial<Pa
   </div>;
 }
 
-// "Pass 3 · target 4 of 55 · 2 min each": where an optimize run is.
 function progressText(solver: SolverState) {
   const queue = solver.queue ?? [], at = queue.findIndex(q => q.active);
   return [solver.repeat ? `Pass ${solver.pass ?? 1}` : "", at >= 0 && queue.length > 1 ? `target ${at + 1} of ${queue.length}` : "", solver.minutes ? `${minutesText(solver.minutes)} each` : ""].filter(Boolean).join(" · ");
 }
 
-// Batch optimize: every course's categories as a checkbox, solved one after another in the matrix's order (top to
-// bottom, left to right). The selection and passes are kept in the browser.
 function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:Course[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [passes, updatePasses] = usePasses();
   useEffect(() => setSelected(new Set(JSON.parse(window.localStorage.getItem("optimizeSelection") ?? "[]"))), []);
   const select = (next: Set<string>) => { setSelected(next); window.localStorage.setItem("optimizeSelection", JSON.stringify([...next])); };
-  // Ticks every key, unless all of them already are: then clears them.
   const toggle = (keys: string[]) => {
     const next = new Set(selected), on = keys.some(k => !next.has(k));
     for (const k of keys) { if (on) next.add(k); else next.delete(k); }
@@ -535,7 +483,6 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
 const TICK_SECONDS = 0.02;
 const tickText = (ticks: number) => `${ticks} t · ${(ticks * TICK_SECONDS).toFixed(2)}s`;
 
-// "Finished · 812.34s · saved" / "Not finished · <reason>": a gate reply in one line.
 function replyText(r: FullTasReply | string | null | undefined) {
   if (r == null) return "";
   if (typeof r === "string") return r;
@@ -543,9 +490,6 @@ function replyText(r: FullTasReply | string | null | undefined) {
   return parts.filter(p => p).join(" · ");
 }
 
-// Full-TAS: the whole game from a fresh new game as one continuous input stream, scored from its first tick to its last
-// goal. The goals split it; the offline search (Solve) works through it window by window and the game's gate saves a
-// route only when it is faster.
 function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const runs = fullTas?.runs ?? [];
   const [selected, setSelected] = useState("");
@@ -557,7 +501,6 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
   const run = runs.find(r => r.name === name);
   const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
   const [draft, setDraft] = useState(savedGoals);
-  // The editor shows the selected run's saved goals again whenever the run or its saved goals change.
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
     <p className="lede">The game plugin doesn&apos;t report Full-TAS runs (an older version, or not connected).</p></div>;

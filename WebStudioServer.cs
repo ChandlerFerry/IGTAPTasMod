@@ -31,8 +31,6 @@ namespace IGTAPTasMod
         private volatile bool _running;
         private string _staticRoot;
 
-        // ponytail: hand-rolled HTTP/1.1 kept; Mono HttpListener needs URL-ACL reservations
-        // that a TcpListener on 127.0.0.1 does not. Swap when that friction disappears.
         public void Start(string staticRoot)
         {
             if (_running) return;

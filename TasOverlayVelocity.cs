@@ -3,29 +3,18 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // The overlay's top right panel: the player's velocity after each physics tick, split the way Movement.FixedUpdate
-    // builds it (body.linearVelocity = Velocity + momentum + movingPlatformVelocity). Velocity.x is capped at
-    // runSpeed * 10; anything faster is momentum (dashes, wall bounces, hypers), which the bar shows past its cap mark.
-    // Below: moves no velocity explains. Movement.FixedUpdate also moves the player by writing Transform.position (the
-    // ledge step-up, the wall jump's 1-unit hop); with the body's interpolation on that read is a render-time pose, so
-    // the game's own nudges would depend on frame timing. Playback turns interpolation off (BeginDeterministicPhysics).
     public sealed partial class TasPlugin
     {
         Vector2 _velocityRun, _velocityMomentum, _velocityPlatform;
         float _velocityCap;
-        // Set each tick; the panel's strings are rebuilt on the next repaint.
         bool _velocityDirty = true;
         string _velocityRatioText;
-        // x then y text for each of RUN, MOMENTUM, PLATFORM, TOTAL.
         readonly string[] _velocityText = new string[8];
-        // OverlayBeforeTick: where Movement.FixedUpdate started. What it moved the transform by is a nudge; a bigger
-        // jump than MaxNudge is a teleport (respawn, a route start), not a nudge.
         Vector2 _positionBeforeTick;
         const float MaxNudge = 100f, NudgeLingerSeconds = 1.5f;
         string _nudgeText;
         float _nudgeTime = float.NegativeInfinity;
 
-        // OverlayTick: the velocity the tick handed to physics, and any nudge it made.
         void SampleVelocity(Movement player)
         {
             _velocityRun = player.Velocity;
@@ -43,14 +32,11 @@ namespace IGTAPTasMod
 
         bool InterpolationLocked { get { return _deterministicBody != null && _deterministicBody.interpolation == RigidbodyInterpolation2D.None; } }
 
-        // Frame rate over the last FpsWindowSeconds, and its longest frame: a delayed Invoke that must land before the
-        // next tick needs a frame at least every 10 ms (see PlaybackFrameRate), so a slow frame shows red.
         const float FpsWindowSeconds = 0.5f, SlowFrameSeconds = 0.01f;
         int _fpsFrames;
         float _fpsElapsed, _fpsWorst, _fpsShownWorst;
         string _fpsText = "";
 
-        // TasPlugin.Update, once per rendered frame.
         void CountFrame()
         {
             float dt = Time.unscaledDeltaTime;
@@ -89,8 +75,6 @@ namespace IGTAPTasMod
 
         static readonly string[] VelocityPartNames = { "RUN", "MOMENTUM", "PLATFORM" };
 
-        // Top right corner of the screen, the input panel's width and palette: the total, a bar of horizontal speed
-        // against the run cap, and what the total is made of.
         void DrawVelocityPanel(float screenScale)
         {
             float scale = PanelScale(screenScale);
@@ -108,7 +92,6 @@ namespace IGTAPTasMod
             Fill(new Rect(panel.x, panel.y + bandHeight, width, 1), PanelLine);
 
             float x = panel.x + pad, inner = width - 2 * pad, y = panel.y + 14 * scale;
-            // Labels get everything left of the x column; "INTERPOLATION" is the widest.
             float xColumn = x + 160 * scale, yColumn = x + 280 * scale, columnWidth = 120 * scale, labelWidth = xColumn - x - 8 * scale;
             Label(new Rect(x, y, inner, titleLine), "VELOCITY", _overlayTitle, PanelText);
             Label(new Rect(x, y, inner, titleLine), _fpsText, _overlaySmallRight, _fpsShownWorst > SlowFrameSeconds ? HitboxColor : GraceColor);
@@ -117,7 +100,6 @@ namespace IGTAPTasMod
             Label(new Rect(xColumn, y, columnWidth, totalLine), _velocityText[6], _overlayTitle, PanelText);
             Label(new Rect(yColumn, y, columnWidth, totalLine), _velocityText[7], _overlayTitle, PanelText);
 
-            // Horizontal speed: blue up to the run cap (the white mark), amber for what momentum adds past it.
             y += totalLine + 12 * scale;
             float ratioWidth = 64 * scale, barWidth = inner - ratioWidth - 8 * scale;
             float top = Mathf.Max(_velocityCap * 2f, 1f);
@@ -140,7 +122,6 @@ namespace IGTAPTasMod
                 y += rowHeight;
             }
 
-            // Position moves outside velocity: interpolation locked off during playback, and the last nudge (step-up, wall-jump hop).
             y += 8 * scale;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
             y += 1 + 8 * scale;
@@ -154,7 +135,6 @@ namespace IGTAPTasMod
                 Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _nudgeText, _overlayText, new Color(JumpColor.r, JumpColor.g, JumpColor.b, 1f - age / NudgeLingerSeconds));
             else Label(new Rect(xColumn, y, columnWidth, rowHeight), "0", _overlayText, MutedColor);
 
-            // The fixed Full-TAS seed, read only (FullTasPlugin.FullTasSeed).
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
         }
