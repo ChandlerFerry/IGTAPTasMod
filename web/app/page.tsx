@@ -22,13 +22,13 @@ type ChainSegment = { index: number; token: string; restart: boolean; bonus: boo
 type Chain = { name: string; capabilities: string; error?: string | null; segments: ChainSegment[]; total?: number | null };
 type ChainRun = { running: { chain: string; segment: number; of: number; token: string; splits: number[] } | null; last?: string | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean;
   // The widest category the save's own unlocks can run (0 NO_WJ … 3 WJ_DASH_AJ); null when the player isn't loaded.
   unlockLevel?: number | null;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; chains?: Chain[]; chainRun?: ChainRun; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
 };
 
-const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
+const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
 
 async function request(path: string, body?: unknown) {
   const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -82,6 +82,11 @@ export default function Studio() {
         <input type="checkbox" checked={executableOnly} onChange={e => toggleExecutableOnly(e.target.checked)} />
         <strong>ONLY ROUTES I CAN RUN</strong>
         <span>{!executableOnly ? "Off: the sidebar lists every category's fastest route." : unlockLevel == null ? "On, but your unlocks are unknown until the game is in the world." : `On: each course shows its fastest route with your unlocks (${CATEGORIES[unlockLevel][1]}).`}</span>
+      </label>
+      <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`}>
+        <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
+        <strong>SHOW TAS OVERLAY</strong>
+        <span>{state.overlayShown ? "On: the game shows the player's hitbox and, on the left, the inputs playback presses." : "Off: the game draws nothing of the studio's."}</span>
       </label>
       <header className="topbar">
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.engineStatus}</p></div>

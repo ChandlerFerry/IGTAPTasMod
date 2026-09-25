@@ -31,6 +31,9 @@ namespace IGTAPTasMod
         private static readonly FieldInfo FacingRightField = AccessTools.Field(typeof(Movement), "facingRight");
         private static readonly FieldInfo CutsceneModeField = AccessTools.Field(typeof(Movement), "cutsceneMode");
         private static readonly FieldInfo FramesSinceLastDashField = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
+        private static readonly FieldInfo CanHyperField = AccessTools.Field(typeof(Movement), "canHyper");
+        private static readonly FieldInfo WallBouncePossibleField = AccessTools.Field(typeof(Movement), "wallBouncePossible");
+        private static readonly FieldInfo HitDashResetterField = AccessTools.Field(typeof(Movement), "hitDashResetterWhileInCurrentDash");
 
         private List<MacroStep> _steps;
         private string _macroName;
@@ -99,6 +102,7 @@ namespace IGTAPTasMod
             _rawJumpHeld = false;
             _dashJumpFrame = 0;
             LastJumpPress = LastJumpRelease = LastDashPress = Never;
+            JumpHeld = false;
             _waitingForStable = synchronizeStart;
             _stableTicks = 0;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
@@ -204,6 +208,7 @@ namespace IGTAPTasMod
         public void ClearInjectedInput(Movement movement)
         {
             _rawJumpHeld = false;
+            JumpHeld = false;
             if (movement == null) return;
             SetDirection(movement, 0);
             SetField(JumpBufferField, movement, false);
@@ -457,11 +462,17 @@ namespace IGTAPTasMod
         public int Clock;
         public int LastJumpPress = Never, LastJumpRelease = Never, LastDashPress = Never;
         const int Never = -1000000;
+        // For the in-game input display: presses so far (a change marks a tick's press) and whether jump is held
+        // (pressed and not yet released, so no jump cut has been made).
+        public int JumpPresses, DashPresses;
+        public bool JumpHeld;
 
         private void PressJump(Movement movement)
         {
             if (JumpCutBufferField == null || JumpBufferField == null) return;
             LastJumpPress = Clock;
+            JumpPresses++;
+            JumpHeld = true;
             SetField(JumpBufferField, movement, true);
             movement.CancelInvoke("cancelJumpBuffer");
             movement.CancelInvoke("cancelJumpCutBuffer");
@@ -473,6 +484,7 @@ namespace IGTAPTasMod
         private void ReleaseJump(Movement movement)
         {
             LastJumpRelease = Clock;
+            JumpHeld = false;
             SetField(JumpCutBufferField, movement, true);
             movement.CancelInvoke("cancelJumpCutBuffer");
             movement.Invoke("cancelJumpCutBuffer", 0.26f);
@@ -481,6 +493,7 @@ namespace IGTAPTasMod
         private void PressDash(Movement movement)
         {
             LastDashPress = Clock;
+            DashPresses++;
             SetField(DashBufferField, movement, true);
             movement.CancelInvoke("cancelDashBuffer");
             movement.Invoke("cancelDashBuffer", 0.12f);
@@ -547,6 +560,12 @@ namespace IGTAPTasMod
             SetField(JumpCutBufferField, movement, false);
             SetField(DashBufferField, movement, false);
             SetField(DashActiveField, movement, false);
+            // respawn(true) mid-dash skips endDash: dashCooldown stays at the dash's 100 s lock, so every later start would
+            // have no dash until real time ran it out. Start dash-ready (the -1 floor a wait reaches) with the dash's flags cleared.
+            SetField(DashCooldownField, movement, -1f);
+            SetField(CanHyperField, movement, false);
+            SetField(WallBouncePossibleField, movement, false);
+            SetField(HitDashResetterField, movement, false);
 
             Component body = movement.GetComponent("Rigidbody2D");
             if (body == null) return;

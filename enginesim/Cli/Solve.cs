@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -38,9 +39,16 @@ namespace IGTAP.EngineSim.Cli
             string chain = header.TryGetProperty("chain", out JsonElement chainName) ? chainName.GetString() : null;
             int segment = chain != null ? header.GetProperty("segment").GetInt32() : -1;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
+            var aligns = new List<(string path, Vector2 at, List<InputTick> route)>();
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
-                    seeds.Add(ReadInputs(doc.RootElement));
+                {
+                    List<InputTick> route = ReadInputs(doc.RootElement);
+                    // A standalone route seeding a chain segment: where it starts (TasPlugin.LaunchSolve), to walk there first.
+                    if (chain != null && doc.RootElement.TryGetProperty("align", out JsonElement at))
+                        aligns.Add((path, new Vector2(at.GetProperty("x").GetSingle(), at.GetProperty("y").GetSingle()), route));
+                    else seeds.Add(route);
+                }
 
             string worldPath = Path.ChangeExtension(startTrace, null) + ".world.json";
             JsonElement start = header.GetProperty("start");
@@ -51,6 +59,16 @@ namespace IGTAP.EngineSim.Cli
                 sim.LoadStart(start);
                 return sim;
             };
+            if (aligns.Count > 0)
+            {
+                Simulation alignSim = create();
+                foreach (var (path, at, route) in aligns)
+                {
+                    List<InputTick> aligned = SeedAlign.Align(alignSim, at, route, out string note);
+                    Console.WriteLine($"Seed {Path.GetFileName(path)} (starts at {at.x:0.0},{at.y:0.0}): {note}");
+                    seeds.Add(aligned ?? route);
+                }
+            }
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "offline-best");
             Directory.CreateDirectory(outDir);
             string label = chain != null ? "chain-" + chain + "-" + segment + "_" + caps : course + "_" + caps;

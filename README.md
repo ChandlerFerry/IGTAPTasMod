@@ -34,6 +34,13 @@ The plugin DLL is locked while the game runs: close it first (`taskkill //IM IGT
 - **Top bar:** `ONLY ROUTES I CAN RUN` (kept in the browser). When on, each course/transition in the sidebar shows only
   its fastest route the save's own unlocks can execute (`unlockLevel` in `/api/state`: the widest category the save's
   wall jump / dash + air dash / air jump cover, not a category playback's); a course that needs more says so.
+- **Top bar:** `SHOW TAS OVERLAY` (on by default; `showOverlay` in `settings.json`, `POST /api/settings/overlay {shown}`).
+  The game draws the player's two boxes: the body (`Movement.normalCollider`, green outline, collides with `Ground`;
+  41×72, 41×54 while dashing) and the smaller hurtbox (red, collides with `Default` and `Spikes`: what spikes and gates
+  touch), and, on the left, the inputs playback presses: one
+  row per run of identical physics ticks (tick count, ← → ↑ ↓, `JUMP` while held, `DASH` on its press tick), newest
+  last, the current row highlighted, with the run's tick count and time. A chain lists every segment under its route's
+  name. Solver and turbo runs are not listed. The overlay only reads playback; it never changes an input.
 - **Routes:** select, edit, duplicate, favorite (favorites are never deleted by any tool), run, record.
   Playing a category route (`<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>`) applies that category's unlocks for the attempt, then
   restores the save's.
@@ -88,7 +95,12 @@ or the Optimize tab; the game only captures traces and judges new bests.
 
 - **Seeds:** the trace's inputs, `--seed` traces (the Optimize tab passes every route whose name starts with `<course>_`,
   and for a chain segment also `<chain>/<segment>_`), plus an empty route. A chain segment's seed best is submitted too
-  (its seeds were made from another start).
+  (its seeds were made from another start). A standalone route seeding a chain segment carries its start (`align`: the
+  course's quick-restart point, 12 px lower); `solve` first lands, walks there and stands still with stick-only inputs
+  (`SeedAlign`, a few tenths of a second lost), then plays the route, so a route already made always gives the segment a
+  finish to optimize from. It prints what each alignment did.
+- **Start sync:** a quick restart mid-dash skips `endDash`, leaving `dashCooldown` at the dash's 100 s lock; the start
+  sync (`NormalizeQuickRestartState`) starts dash-ready, so a run cut mid-dash can't take the dash away from later runs.
 - **Wider categories:** a route is valid in every category with more unlocks (NO_WJ ⊂ WJ ⊂ WJDASH ⊂ WJ_DASH_AJ), so the offline
   `solve` submits each best to its own category and every wider one; a wider category is never slower than a narrower.
   Bonuses have only their first category (`CourseDef.HasCategory`); submit, trace and the solver refuse any other.
@@ -129,8 +141,15 @@ or the Optimize tab; the game only captures traces and judges new bests.
   player at the start and let the shift happen before capturing the start state, as a real attempt would.
 - `Time.fixedDeltaTime` is 0.0199999921, so float counters get an extra tick (wall coyote lasts 8 ticks, not 7).
 - Buffers: jump press 0.12 s (0.2 s mid-dash), dash press 0.12 s, jump cut after release 0.26 s.
-- A clip into a wall corner can make the foot raycast see ground; with a buffered press that fires a full ground jump
-  (looks like a wall jump). Legit only with a real press inside the buffer window.
+- Wall ground jump (no wall jump needed): the foot rays are placed by `facingRight`, the body collider by `localScale.x`
+  (offset ±5), and `determineSpriteDirection` flips both after the tick's raycasts. Facing away from a wall with the
+  back edge less than 10 px from it, a one-tick stick tilt toward the wall swings the collider into the wall; Box2D
+  pushes only part of the overlap out in one step, so the next tick's front foot ray (`x ± 25`, `y − 18`) starts inside
+  the wall's polygon, hits at distance 0 (`queriesStartInColliders`), and sets `onGround` when vy < 200. A jump press
+  on that tick is a full 805 ground jump. Tilting away again on that same tick stops the push-out, so a second one
+  works from the smaller overlap left (partial tilts, 0.05–0.7; a full tilt moves too far). Both tilts toward the wall
+  must last exactly one tick. `1_NO_WJ 1.68`: jump before the start gate, rise beside the block's right face (x 2528),
+  wall ground jumps at y −66 and y 153 (a jump cut first gets vy under 200 sooner), then over the block to the end.
 - Spikes (`spikeScript`): the first overlap tick is Enter; each later tick is a Stay that adds 1 to `counter`. Death at
   `counter > graceFrames` (1 on the level's spikes), or at once while dashing (`killPlayerOnDash`). So a non-dashing
   graze of up to two ticks is survivable in the real game; routes may use it (user decision 2026-09-24).

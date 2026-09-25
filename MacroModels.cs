@@ -152,5 +152,7 @@ namespace IGTAPTasMod
         public bool autoOpenWebStudio = true;
         // Ethical runs: the plugin never changes the player's unlocks (wall jump, dash, ...), and tools that need to refuse.
         public bool lockCapabilities;
+        // The in-game overlay for viewers: the player's hitbox and the inputs playback presses (TasOverlay.cs).
+        public bool showOverlay = true;
     }
 }
