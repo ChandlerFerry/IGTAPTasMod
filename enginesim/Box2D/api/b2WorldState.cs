@@ -598,6 +598,7 @@ namespace Box2D
         }
 
         private Node[] _snapshotBase;
+        public static long DbgChanged, DbgSnaps; public static int DbgNodes;
 
         private static bool Same(in Node a, in Node b)
             => a.Aabb.lowerBound.x == b.Aabb.lowerBound.x && a.Aabb.lowerBound.y == b.Aabb.lowerBound.y
@@ -612,6 +613,7 @@ namespace Box2D
             var node = new List<Node>();
             for (int i = 0; i < _nodes.Length; i++)
                 if (!Same(_nodes[i], _snapshotBase[i])) { index.Add(i); node.Add(_nodes[i]); }
+            System.Threading.Interlocked.Add(ref DbgChanged, index.Count); System.Threading.Interlocked.Increment(ref DbgSnaps); DbgNodes = _nodes.Length;
             return new TreeSnapshot
             {
                 baseNodes = _snapshotBase, changedIndex = index.ToArray(), changedNode = node.ToArray(),

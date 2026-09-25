@@ -101,7 +101,8 @@ namespace IGTAP.EngineSim.Cli
                     + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
-                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
+                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB"
+                    + $" DBG stateCaps {OfflineSolver.DbgStateCaps} betterCaps {OfflineSolver.DbgBetterCaps} gc0 {GC.CollectionCount(0)} gc2 {GC.CollectionCount(2)} pause {GC.GetTotalPauseDuration().TotalSeconds:0.0}s");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
                 // Every minute: a solve the studio stops is killed, so the search state is saved as it goes.
                 if (++beats % 6 == 0) SaveMemory(archiveFile, solver.Export(5000));

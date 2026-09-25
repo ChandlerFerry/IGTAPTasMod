@@ -436,6 +436,23 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"{runs / s:0.0} runs/s, {ticks / s:0} ticks/s, {s * 1e6 / ticks:0.00} us/tick ({inputs.Count} inputs); "
                 + $"{sim.Physics.BodyCount} bodies, {sim.Physics.ContactCount} contacts, {sim.Physics.TouchingPairs} touching pairs, "
                 + $"GC gen0 {GC.CollectionCount(0)} gen2 {GC.CollectionCount(2)}, allocated {GC.GetTotalAllocatedBytes() / 1e9:0.0} GB");
+            {
+                var sw = Stopwatch.StartNew(); long a0 = GC.GetTotalAllocatedBytes(true); int caps = 0;
+                for (int rep = 0; rep < 5; rep++) sim.Run(inputs, afterTick: t => { if (t > 0 && t < inputs.Count) { sim.Capture(t); caps++; } return true; });
+                Console.WriteLine($"DBG capture-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run, {caps / 5} caps/run, {(GC.GetTotalAllocatedBytes(true) - a0) / 5.0 / Math.Max(1, caps / 5) / 1024:0.0} KB/cap, tree changed/snap {Box2D.b2DynamicTree.DbgChanged / (double)Math.Max(1, Box2D.b2DynamicTree.DbgSnaps):0.0} of {Box2D.b2DynamicTree.DbgNodes}");
+                sw.Restart(); for (int rep = 0; rep < 5; rep++) sim.Run(inputs); Console.WriteLine($"DBG plain-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run");
+                sw.Restart(); for (int rep = 0; rep < 5; rep++) sim.Run(inputs, afterTick: t => { sim.Fingerprint(); return true; }); Console.WriteLine($"DBG fingerprint-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run");
+                sim.Run(inputs, afterTick: t =>
+                {
+                    if (t != 400) return true;
+                    long b = GC.GetAllocatedBytesForCurrentThread(); sim.Physics.Capture(); long p = GC.GetAllocatedBytesForCurrentThread() - b;
+                    b = GC.GetAllocatedBytesForCurrentThread(); FieldState.Capture(sim.Player); long m = GC.GetAllocatedBytesForCurrentThread() - b;
+                    b = GC.GetAllocatedBytesForCurrentThread(); foreach (var c in sim.Courses) FieldState.Capture(c); long cs = GC.GetAllocatedBytesForCurrentThread() - b;
+                    b = GC.GetAllocatedBytesForCurrentThread(); sim.Capture(t); long all = GC.GetAllocatedBytesForCurrentThread() - b;
+                    Console.WriteLine($"DBG bytes physics {p} movement {m} courses {cs} ({sim.Courses.Length}) all {all}");
+                    return true;
+                });
+            }
             return 0;
         }
     }

@@ -68,6 +68,19 @@ goes on from the frontier and doesn't start again from the course start. Each wo
 plateau route instead of the saved route. A plateau route's result is not submitted: its file was written when it
 was found. `--fresh` ignores the file for this solve but still overwrites it.
 
+A forced path limits which runs count. `--via x0,y0,x1,y1` boxes (the trace's world coordinates) must hold the
+player's center, in order, before a finish counts; a run that enters an `--avoid x0,y0,x1,y1` box is cut. Both are
+checked on every physics tick, dash ticks included. The boxes passed so far are part of every explore cell, and before
+the first finish, cells past more boxes weigh more. Explore bursts get 25 extra ticks of the same stick and hold, so a
+run that clears a box while coasting is saved. The search state goes to `archive\<label>-path-<--path-name>.json`,
+and bests are the category's as usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of their
+course and categories (the studio's too), with boxes relative to the course's start gate. Right now it cuts Course 3's
+right hole in WJDASH and WJDASH_AJ, which leaves the top-hole shortcut.
+
+```powershell
+& $exe solve $traces\start-c3-wjdash.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
+```
+
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
 the game and solve offline.
 
