@@ -39,13 +39,13 @@ namespace IGTAPTasMod
             // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
             // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
             public string minCapabilities;
-            // A purchase ("buyreward", "buywj", ...; chains only, never in courses.json): the hierarchy path of the upgrade
-            // box it buys. Live and in turbo it finishes only when the game buys that box (upgradeBox.DoBuyUpgrade);
-            // offline, on touching the box's buy trigger (endX..endH, read from the live collider for the trace).
-            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string box;
+            // A purchase ("buyreward", "buywj", "buyreward+buyclone", ...; chains only, never in courses.json): the
+            // hierarchy paths of the upgrade boxes it buys (a box twice: bought twice). It finishes when the game has bought
+            // every one of them (upgradeBox.DoBuyUpgrade): live, in turbo, and offline (enginesim Shop, the game's buy rule).
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string[] boxes;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
-            [JsonIgnore] public bool IsPurchase { get { return !string.IsNullOrEmpty(box); } }
+            [JsonIgnore] public bool IsPurchase { get { return boxes != null && boxes.Length > 0; } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition && !IsPurchase; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
@@ -75,6 +75,8 @@ namespace IGTAPTasMod
         ChainDef _solverChain;
         List<ChainSegment> _solverSegments;
         int _solverSegment = -1;
+        // The transition a lap is run from with its lead-in (EngineSimBridge JudgeLead); -1: none.
+        int _solverLead = -1;
         bool _solverRestart;
         string _solverCaps = "";
         courseScript[] _solverCourses;
@@ -105,11 +107,18 @@ namespace IGTAPTasMod
             public string result;
         }
 
-        // The Optimize run's targets, solved one after another (the batch matrix, or a single course or segment), and how
-        // long each one's search may take (it also stops after 5 minutes without a new best).
+        // The Optimize run's targets, solved one after another (the batch matrix, a whole run, or a single course or
+        // segment), and how long each one's search may take (it also stops once half of that, at most 5 minutes, passes
+        // without a new best). `_solveRepeat`: after the last target the queue starts over (pass 2, 3, ...), each pass
+        // with twice the minutes up to `_solveMaxMinutes`, until stopped: a run's segments get quick passes first.
         readonly List<SolveJob> _solveQueue = new List<SolveJob>();
         int _solveIndex = -1;
-        int _solveMinutes = 60;
+        float _solveMinutes = 60f, _solveMaxMinutes = 60f;
+        bool _solveRepeat;
+        // `_solveUnsolved` (Solve new segments): only run segments without a route; a pass skips the ones solved since,
+        // and the run ends once every one has a route (or none of the rest can start).
+        bool _solveUnsolved;
+        int _solvePass = 1;
 
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
 
@@ -286,8 +295,10 @@ namespace IGTAPTasMod
         }
 
         // POST /api/solver/start: {course, capabilities}, {chain, segment}, or {queue: [either, ...]}, solved in that order;
-        // `minutes` bounds each target's search. The first target's problems are the request's error; a later target
-        // that can't start when its turn comes (a chain segment whose earlier routes don't exist yet) is skipped.
+        // `minutes` (fractional allowed) bounds each target's search; `repeat` starts the queue over when it ends, the
+        // minutes doubling each pass up to `maxMinutes`. `unsolved` (chain segments only) implies `repeat` but passes over
+        // segments that have a route and ends once they all do. The first target's problems are the request's error; a
+        // later target that can't start when its turn comes (a chain segment whose earlier routes don't exist yet) is skipped.
         void StartSolver(JObject body)
         {
             if (_solverRunning) throw new InvalidOperationException("The solver is already running.");
@@ -299,11 +310,16 @@ namespace IGTAPTasMod
             List<SolveJob> jobs = items.Select(i => !string.IsNullOrEmpty(Text(i, "chain")) ? ChainJob(Text(i, "chain"), Number(i, "segment", -1))
                 : CourseJob(Number(i, "course", 0), Text(i, "capabilities"))).ToList();
             if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
-            int minutes = Number(body, "minutes", 60);
-            if (minutes < 1) throw new InvalidOperationException("Minutes per target must be at least 1.");
+            float minutes = FloatNumber(body, "minutes", 60f);
+            if (!(minutes >= 0.25f)) throw new InvalidOperationException("Minutes per target must be at least 0.25.");
             _solveQueue.Clear();
             _solveQueue.AddRange(jobs);
             _solveMinutes = minutes;
+            _solveMaxMinutes = Math.Max(minutes, FloatNumber(body, "maxMinutes", minutes));
+            _solveUnsolved = body["unsolved"] != null && body["unsolved"].Type == JTokenType.Boolean && (bool)body["unsolved"];
+            if (_solveUnsolved && jobs.Any(j => j.chain == null)) throw new InvalidOperationException("Solving new routes only applies to run segments.");
+            _solveRepeat = _solveUnsolved || body["repeat"] != null && body["repeat"].Type == JTokenType.Boolean && (bool)body["repeat"];
+            _solvePass = 1;
             _solverLog.Clear();
             StartSolveJob(0);
         }
@@ -323,7 +339,8 @@ namespace IGTAPTasMod
             _solveBest = float.PositiveInfinity;
             _solverSpeed = "";
             while (_solveOutput.TryDequeue(out _)) { }
-            if (_solveQueue.Count > 1) _solverLog.Add("── " + (index + 1) + "/" + _solveQueue.Count + " " + job.label);
+            if (_solveQueue.Count > 1 || _solveRepeat)
+                _solverLog.Add("── " + (_solveRepeat ? "pass " + _solvePass + " · " : "") + (index + 1) + "/" + _solveQueue.Count + " " + job.label);
             _solverRunning = true;
             _solverStatus = "Capturing the start state in turbo";
             EnsureGameUnpaused();
@@ -346,18 +363,41 @@ namespace IGTAPTasMod
             job.saved = _turboSaved;
             job.result = outcome + (float.IsInfinity(_solveBest) ? "" : ", best " + _solveBest.ToString("0.00", CultureInfo.InvariantCulture) + "s")
                 + ", " + _turboSaved + " saved";
-            for (int next = _solveIndex + 1; next < _solveQueue.Count; next++)
+            if (StartNextSolveJob(_solveIndex + 1)) return;
+            if (_solveRepeat)
             {
-                try { StartSolveJob(next); return; }
+                _solverLog.Add("Pass " + _solvePass + " done: " + _solveQueue.Sum(j => j.saved) + " new routes saved");
+                _solvePass++;
+                _solveMinutes = Math.Min(_solveMaxMinutes, _solveMinutes * 2f);
+                foreach (SolveJob j in _solveQueue) { j.result = null; j.saved = 0; }
+                if (StartNextSolveJob(0)) return;
+            }
+            _solverRunning = false;
+            _solverStatus = _solveQueue.Count == 1 && !_solveRepeat ? outcome
+                : _solveUnsolved ? (_solveQueue.All(HasRoute) ? "Done: every segment has a route" : "Stopped: no segment left without a route can start")
+                : "Done: " + _solveQueue.Count + " targets, " + _solveQueue.Sum(j => j.saved) + " new routes saved";
+        }
+
+        bool HasRoute(SolveJob job)
+        {
+            ChainDef chain = FindChain(job.chain);
+            return ChainSegmentRoute(chain, ChainSegments(chain)[job.segment]) != null;
+        }
+
+        // Starts the first target from `from` on that can start (the ones that can't are marked skipped); false if none.
+        bool StartNextSolveJob(int from)
+        {
+            for (int next = from; next < _solveQueue.Count; next++)
+            {
+                if (_solveUnsolved && HasRoute(_solveQueue[next])) { _solveQueue[next].result = "Has a route"; continue; }
+                try { StartSolveJob(next); return true; }
                 catch (Exception ex)
                 {
                     _solveQueue[next].result = "Skipped: " + ex.Message;
                     _solverLog.Add("Skipped " + _solveQueue[next].label + ": " + ex.Message);
                 }
             }
-            _solverRunning = false;
-            _solverStatus = _solveQueue.Count == 1 ? outcome
-                : "Done: " + _solveQueue.Count + " targets, " + _solveQueue.Sum(j => j.saved) + " new routes saved";
+            return false;
         }
 
         // POST /api/solver/skip: ends the current target and moves on to the next.
@@ -439,11 +479,11 @@ namespace IGTAPTasMod
             return new {
                 running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, speed = _solverSpeed,
                 chain = _solveChain, segment = _solveSegment,
-                evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved,
+                evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
                 courses = _courses.Select(c => c.id).ToArray(),
-                minutes = _solveMinutes,
+                minutes = _solveMinutes, repeat = _solveRepeat, pass = _solvePass,
                 queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
         }
 
@@ -484,9 +524,34 @@ namespace IGTAPTasMod
             JObject target = _solveChain != null ? new JObject { ["chain"] = _solveChain, ["segment"] = _solveSegment }
                 : new JObject { ["course"] = _solveCourse, ["capabilities"] = _solveCaps };
             SelectSolverTarget(target);
+            // A chain from a new game needs one in the world: load it here rather than failing (the Run button does too).
+            if (_newGamePhase != 0 || _bootstrapRequest != null) { _solverStatus = _newGamePhase != 0 ? "Loading a new game" : "Waiting for the bootstrap"; return; }
+            if (SolverFromNewGame && !FreshGameInWorld)
+            {
+                LoadNewGame(null);
+                _solverStatus = "Loading a new game";
+                return;
+            }
             if (!CourseLoaded()) return;
             CourseDef course = _solverTarget;
             string name = _solverChain != null ? "optimize-chain-" + _solverChain.name + "-" + _solverSegment : "optimize-c" + course.Token + "-" + _solveCaps;
+            // A course segment right after a transition to its start gate is searched with its lead-in: from the transition's
+            // start, so the transition's last ticks (a jump before the gate) can serve the lap. Its trace runs the pair the
+            // chain plays now (EngineSimTrace). Captured first: its world export needs the world as parked at the chain's
+            // start, before the segment's capture replays the chain to its gate.
+            string leadTrace = null;
+            if (_solverChain != null && LeadSegment(_solverSegments, _solverSegment) >= 0)
+            {
+                JObject leadBody = (JObject)target.DeepClone();
+                leadBody["lead"] = true; leadBody["name"] = name + "-lead"; leadBody["world"] = true; leadBody["freshStart"] = true;
+                JObject leadCaptured = JObject.FromObject(EngineSimTrace(new WebStudioRequest(), leadBody));
+                if (leadCaptured["ok"] == null || !(bool)leadCaptured["ok"])
+                {
+                    EndSolveJob("Lead-in start state not captured: " + leadCaptured["error"]);
+                    return;
+                }
+                leadTrace = (string)leadCaptured["path"];
+            }
             JObject body = (JObject)target.DeepClone();
             body["ticks"] = new JArray(); body["name"] = name; body["world"] = true; body["freshStart"] = true;
             JObject captured = JObject.FromObject(EngineSimTrace(new WebStudioRequest(), body));
@@ -496,29 +561,33 @@ namespace IGTAPTasMod
                 return;
             }
             var args = new StringBuilder(Quote((string)captured["path"]));
+            if (leadTrace != null) args.Append(" --lead ").Append(Quote(leadTrace));
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
-            // Every route already made for this course seeds the search, whatever category it was made for; a chain
-            // segment's also its chain's routes for the same token, every occurrence ("wj/1_", "wj/1#2_"), stale ones too.
+            // Every route already made for this course seeds the search, whatever category it was made for, and every
+            // chain's routes for the same token, every occurrence ("wj/1_", "newgame/1#2_"), stale ones too: the chains
+            // included in a bigger one ("chain:wj" in newgame) are solved on their own too, and a chain's segment that
+            // starts with a quick restart ("newgame/1#2_") starts exactly like the course's category route.
             string standalonePrefix = course.Token + "_";
-            Regex chainSeed = _solverChain == null ? null
-                : new Regex("^" + Regex.Escape(_solverChain.name + "/" + course.Token) + @"(#\d+)?_", RegexOptions.IgnoreCase);
+            var chainSeed = new Regex(@"^[A-Za-z0-9]+/" + Regex.Escape(course.Token) + @"(#\d+)?_", RegexOptions.IgnoreCase);
             int seeds = 0;
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
-                && (m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase) || chainSeed != null && chainSeed.IsMatch(m.name))
+                && (m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase) || chainSeed.IsMatch(m.name))
                 && m.steps.All(s => s.type == MacroStepType.RawInput)))
             {
                 string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
                 // A standalone route seeding a chain segment starts at its course's quick-restart point, standing (the
-                // player spawns 12 px lower); solve walks there first (SeedAlign).
-                bool standalone = _solverChain != null && route.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase);
+                // player spawns 12 px lower), as does the first segment of a chain that starts there (not from a new
+                // game); solve carries it over from there (SeedAlign).
+                bool standalone = _solverChain != null && StartsStanding(route.name, standalonePrefix);
                 Vector2 at = new Vector2(course.x, course.y - 12f) + CurrentOrigin();
                 File.WriteAllText(seed, JsonConvert.SerializeObject(standalone
                     ? (object)new { ticks = ToTicks(route.steps), align = new { at.x, at.y } } : new { ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);
-            args.Append(" --threads ").Append(threads).Append(" --minutes ").Append(_solveMinutes)
-                .Append(" --stall-minutes ").Append(Math.Min(5, _solveMinutes));
+            args.Append(" --threads ").Append(threads)
+                .Append(" --minutes ").Append(_solveMinutes.ToString(CultureInfo.InvariantCulture))
+                .Append(" --stall-minutes ").Append(Math.Min(5f, _solveMinutes / 2f).ToString(CultureInfo.InvariantCulture));
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, "solve " + args) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
@@ -530,6 +599,18 @@ namespace IGTAPTasMod
             _solveProcess = process;
             _solverStatus = "Solving offline on " + threads + " threads from " + seeds + " seed routes; turbo checks every new best";
             Logger.LogInfo("Optimize: " + EngineSimExe + " solve " + args);
+        }
+
+        // A route that starts standing at its course's quick-restart point: a standalone one ("1_NO_WJ 4.14"), or the
+        // first segment's of a chain that starts with a quick restart there ("wj/1_WJ 2.50"; not one from a new game).
+        bool StartsStanding(string routeName, string standalonePrefix)
+        {
+            if (routeName.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase)) return true;
+            int slash = routeName.IndexOf('/');
+            ChainDef owner = slash < 0 ? null : _chains.Find(c => string.Equals(c.name, routeName.Substring(0, slash), StringComparison.OrdinalIgnoreCase));
+            if (owner == null || owner.FromNewGame) return false;
+            try { return routeName.Substring(slash + 1).StartsWith(ChainSegments(owner)[0].key + "_", StringComparison.OrdinalIgnoreCase); }
+            catch (InvalidOperationException) { return false; }
         }
 
         static string Quote(string path) { return "\"" + path + "\""; }
@@ -597,6 +678,19 @@ namespace IGTAPTasMod
             if (!finished || Mathf.Abs(replayed - time) > .0001f)
                 audit.Insert(0, "a replay from the " + (_solverChain != null ? "segment's" : "course") + " start "
                     + (finished ? "finished in " + replayed.ToString("0.00") : "did not finish on " + _solverTarget.Token));
+            // A segment's captured start can differ from where the chain really is when it gets there: the route must also
+            // finish, in the same time, after the chain's routes before it, replayed from the chain's start.
+            if (audit.Count == 0 && _solverChain != null)
+            {
+                List<MacroDefinition> routes = ChainRoutes(_solverChain, _solverSegments, _solverSegment);
+                routes.Add(new MacroDefinition { name = SolverCategory + " candidate", steps = ToSteps(inputs) });
+                ChainRun run = ReplayChain(_solverChain, _solverSegments, routes, -1, false);
+                bool through = run.failure == null && run.splits.Count == routes.Count;
+                if (!through || Mathf.Abs(run.splits[routes.Count - 1] - time) > .0001f)
+                    audit.Add("a replay of the chain from its start " + (through ? "finished it in " + run.splits[routes.Count - 1].ToString("0.00")
+                        : run.splits.Count == routes.Count - 1 ? "did not finish it: " + (run.failure ?? "no finish")
+                        : "stopped at segment " + (run.splits.Count + 1) + ": " + (run.failure ?? "no finish")));
+            }
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 

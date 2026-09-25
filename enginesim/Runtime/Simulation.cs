@@ -44,6 +44,10 @@ namespace IGTAP.EngineSim
         public (int due, MonoBehaviour target, string method, float repeat)[] Pending;
         public object Physics;
         public (MonoBehaviour target, object[] fields)[] Touched;
+        // Shop: what the run spent, per currency.
+        public double[] Spent;
+        // Simulation.LapStart at this point.
+        public long LapStart;
     }
 
     // Steps the game's own code exactly like TurboRunner.Run inside TasPlugin.Evaluate: pending Invokes,
@@ -65,6 +69,7 @@ namespace IGTAP.EngineSim
         internal readonly MacroEngine Engine = new MacroEngine { Quiet = true };
         public readonly Scheduler Scheduler = new Scheduler();
         public readonly PhysicsWorld Physics;
+        public readonly Shop Shop;
         readonly Action _fixedUpdate, _update;
         readonly Action[] _courseFixedUpdates;
         readonly System.Collections.IList[][] _coursePathLists;
@@ -88,6 +93,7 @@ namespace IGTAP.EngineSim
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
             Physics = new PhysicsWorld(world, this);
             IGTAP.EngineSim.Engine.Physics = Physics;
+            Shop = new Shop(this, world);
             _fixedUpdate = (Action)Delegate.CreateDelegate(typeof(Action), Player, FixedUpdateMethod);
             _update = (Action)Delegate.CreateDelegate(typeof(Action), Player, UpdateMethod);
             _courseFixedUpdates = Courses.Select(c => (Action)Delegate.CreateDelegate(typeof(Action), c, CourseFixedUpdateMethod)).ToArray();
@@ -111,6 +117,7 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Player death at action " + (Engine.StepIndex + 1));
             };
             Hooks.CourseStop = CourseStop;
+            Hooks.UpgradeBoxStay = Shop.Stay;
         }
 
         // courseScript.stopTracking as far as a run can observe it, plus TasPlugin's Before/AfterCourseFinish.
@@ -125,7 +132,7 @@ namespace IGTAP.EngineSim
                 (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
             PathTimeField.SetValue(course, 0f);
             if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
-                Engine.CompleteFromGame("Course finish detected", FromRunStart ? Engine.PhysicsTicks * World.FixedDeltaTime : time);
+                Engine.CompleteFromGame("Course finish detected", FromRunStart ? (Engine.PhysicsTicks - Math.Max(0L, LapStart)) * World.FixedDeltaTime : time);
         }
 
         // The bonus course's reward box (endX, endY, endW, endH) as a world rect the player's colliders may touch.
@@ -157,7 +164,7 @@ namespace IGTAP.EngineSim
         public int TargetCourse;
 
         // The bonus course's reward box, or a transition's end box (the trace's "finish": endX, endY, endW, endH); zero
-        // size = a gated course.
+        // size = a gated course or a purchase (Shop: the game's buy rule finishes it).
         public (float x, float y, float w, float h) TargetFinish;
 
         // A transition (the trace's "transition"): timed in physics ticks from the run start (dash ticks included), and
@@ -166,14 +173,32 @@ namespace IGTAP.EngineSim
         public int TargetStart { get; private set; }
         courseScript _targetStartCourse;
 
-        // Bonus and transition runs have no course timer of their own; they are timed from the run start.
-        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition; } }
+        // Bonus, transition and purchase runs have no course timer of their own; they are timed from the run start.
+        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Shop.IsPurchase; } }
 
         // A chain segment (the trace's "fromRunStart"): a course segment is timed from the run start too (TasPlugin.
         // ScoreFromRunStart), and one after a quick restart does it first (the trace's "restart").
         public bool FromRunStart { get; private set; }
-        public bool RestartAtStart { get; private set; }
-        public bool ScoredFromRunStart { get { return TimedFromRunStart || FromRunStart; } }
+        // Settable here for SeedAlign's analysis runs (where a standalone route's quick restart puts the player).
+        public bool RestartAtStart { get; internal set; }
+
+        // A lap run with its lead-in (the trace's "lead": TasPlugin.EngineSimTrace): the run starts where the transition
+        // before the course segment starts, and the lap starts when the course's start gate first starts its timer, the
+        // transition's finish. The lap is timed in physics ticks from there. A run whose transition would take more than
+        // `LeadDeadline` physics ticks (the transition's saved route) is cut. 0: no lead-in.
+        public long LeadDeadline { get; private set; }
+        // Physics ticks from the run start to the lap's start: 0 without a lead-in, -1 before the gate.
+        public long LapStart { get; private set; }
+        courseScript _lapCourse;
+
+        // What the solver ranks a run by so far: physics ticks from the lap start after a lead-in (-1 before it), from the
+        // run start for bonus, transition, purchase and chain segment runs, else the course timer (-1 before it runs).
+        public float Elapsed(courseScript active)
+        {
+            if (LeadDeadline > 0) return LapStart < 0 ? -1f : (Engine.PhysicsTicks - LapStart) * World.FixedDeltaTime;
+            if (TimedFromRunStart || FromRunStart) return Engine.PhysicsTicks * World.FixedDeltaTime;
+            return active == null ? -1f : CourseTime(active);
+        }
 
         // What a run is scored on, from a trace or start-trace header (TasPlugin.EngineSimTrace writes it).
         public void SetTarget(JsonElement header)
@@ -184,12 +209,17 @@ namespace IGTAP.EngineSim
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
             FromRunStart = header.TryGetProperty("fromRunStart", out JsonElement fromStart) && fromStart.GetBoolean();
             RestartAtStart = header.TryGetProperty("restart", out JsonElement restart) && restart.GetBoolean();
+            if (header.TryGetProperty("purchase", out JsonElement purchase)) Shop.SetTarget(purchase);
             if (header.TryGetProperty("finishStart", out JsonElement next))
             {
                 TargetStart = next.GetInt32();
                 _targetStartCourse = Courses.FirstOrDefault(c => c.courseNumber == TargetStart)
                     ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
             }
+            LeadDeadline = header.TryGetProperty("lead", out JsonElement lead) ? lead.GetProperty("ticks").GetInt64() : 0;
+            LapStart = LeadDeadline > 0 ? -1 : 0;
+            _lapCourse = LeadDeadline > 0 ? Courses.FirstOrDefault(c => c.courseNumber == TargetCourse)
+                ?? throw new InvalidOperationException("Course " + TargetCourse + " is not active in this world export.") : null;
         }
 
         public courseScript TimingCourse()
@@ -237,6 +267,7 @@ namespace IGTAP.EngineSim
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = p[0].GetInt32(), Target = Player, Method = p[1].GetString(), Repeat = -1f });
             Physics.ResetPlayer(World.Vec2(start.GetProperty("bodyPosition")), World.Vec2(start.GetProperty("velocity")),
                 World.ReadFloat(start.GetProperty("rotation")), World.ReadFloat(start.GetProperty("angularVelocity")));
+            if (start.TryGetProperty("economy", out JsonElement economy)) Shop.LoadStart(economy, ApplyFields);
             _start = Capture(0);
         }
 
@@ -278,6 +309,8 @@ namespace IGTAP.EngineSim
                 Pending = pending,
                 Physics = Physics.Capture(),
                 Touched = _touched.Select(s => (s, FieldState.Capture(s))).ToArray(),
+                Spent = Shop.Capture(),
+                LapStart = LapStart,
             };
         }
 
@@ -307,6 +340,8 @@ namespace IGTAP.EngineSim
                 touched ^= s.ToHashCode();
             }
             h.Add(touched);
+            h.Add(LapStart);
+            Shop.AddTo(ref h);
             return h.ToHashCode();
         }
 
@@ -365,6 +400,8 @@ namespace IGTAP.EngineSim
             foreach (var (due, target, method, repeat) in s.Pending)
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
             Physics.Restore(s.Physics);
+            LapStart = s.LapStart;
+            Shop.Restore(s.Spent);
         }
 
         // TasPlugin.Evaluate for one input list resumed from `from` (the start state when null). `afterTick` sees the
@@ -391,6 +428,7 @@ namespace IGTAP.EngineSim
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
                 bool nextWasTracking = _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse);
+                bool lapWasTracking = LapStart < 0 && (bool)TrackingField.GetValue(_lapCourse);
                 Scheduler.FireDue();
                 if (restart)
                 {
@@ -401,6 +439,7 @@ namespace IGTAP.EngineSim
                 Engine.CountPhysicsTick();
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
+                Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.Simulate(World.FixedDeltaTime);
                 _update();
                 // TasPlugin.BeforeMovementFixedUpdate: a bonus run finishes on its reward box (no end gate), a transition
@@ -412,6 +451,12 @@ namespace IGTAP.EngineSim
                 // timer (this tick's triggers), in physics ticks from the run start.
                 if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse))
                     Engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+                // A lead-in: the lap starts where the transition would finish, and a run slower to get there is cut.
+                if (Engine.IsRunning && LapStart < 0)
+                {
+                    if (!lapWasTracking && (bool)TrackingField.GetValue(_lapCourse)) LapStart = Engine.PhysicsTicks;
+                    else if (Engine.PhysicsTicks >= LeadDeadline) Engine.Abort("Lead-in slower than the transition's route");
+                }
                 stepped++;
                 onStep?.Invoke(stepped - 1);
                 if (!Engine.IsRunning) continue;

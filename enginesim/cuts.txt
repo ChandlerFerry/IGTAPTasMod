@@ -16,8 +16,6 @@ LoadingPopupScript::OnTriggerEnter2D
 LoadingPopupScript::OnTriggerExit2D
 # Zone streaming runs in a coroutine over real frames; turbo runs never see it.
 zoneChanger::OnTriggerEnter2D
-# Upgrade shop boxes (hub only); buying changes the save, not a course run.
-upgradeBox::OnTriggerStay2D
 # Teleporter prompts/visited list: teleporting needs a stick-up input the solver never gives.
 TeleporterScript::OnTriggerEnter2D
 TeleporterScript::OnTriggerExit2D

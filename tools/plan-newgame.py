@@ -1,6 +1,6 @@
 """Plans the new-game chain's economy: which Course 1 boxes to buy, in what order, until wall jump (700 W).
 
-    python tools/plan-newgame.py [--loops 10] [--write]
+    python tools/plan-newgame.py [--keep N] [--write]
 
 Game facts (obj/fulldecomp): Course 1 pays ceil(reward), reward = 1 + base-reward buys. Base reward box costs
 1, then ceil(prev * 1.1); clone box 8, then ceil(prev * 1.153); wall jump 700. A clone spawns every lap/N (clonesScript
@@ -8,23 +8,35 @@ Update, one tick at 50 fps), walks the best run's path (one point per tick, P po
 it reaches the end. Every loop goes back through a quick restart, which puts the player at Course 1's quick-restart
 point, so each segment kind starts from the same state.
 
+The search goes in time order: from every state it tries a Course 1 run, a trip from the restart to a box, and the next
+box from where the player stands; a box not affordable yet is waited for under it (the clones pay meanwhile). Of the
+states with the same upgrades, clones and place, only one richer than every earlier one goes on. So a wait survives
+only where it beats running the course for the money, and the first state to buy wall jump is the plan (~1.5 min).
+
 Segment times are estimates in physics ticks (COURSE, TO, MOVE, REPEAT); replace them with solved times once the
-chain's routes exist. With --write the plan replaces the `newgame` chain in chains.json (other chains untouched).
+chain's routes exist. `--keep N` keeps the current `newgame` chain's first N segments (the ones already solved) and plans
+from where they end. With --write the plan replaces the `newgame` chain in chains.json (other chains untouched). After
+wall jump the run goes on with the `wj` chain's segments (`chain:wj`), buys dash at Course 2's box (30000 W, the clones'
+income meanwhile; not planned here) and goes on with the `dash` chain's (`chain:dash`).
 """
 import argparse
+import heapq
+import itertools
 import json
 import math
 import os
 
 CHAINS = os.path.join(os.environ.get("IGTAP_CONFIG", r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod"), "chains.json")
 
-P = 84          # clone path points = best Course 1 run in ticks (1.68 s)
-COURSE = 109    # restart -> Course 1 finish (1_NO_WJ 1.68)
+P = 107         # clone path points = best Course 1 run in ticks (newgame/1_NO_WJ 2.14)
+COURSE = 132    # restart -> Course 1 finish: 25-tick restart lead-in + 2.14 s (estimate; 1_NO_WJ 1.68 is stale)
 TO = {"R": 50, "K": 70, "W": 90}                     # restart -> first bump at a box
 MOVE = {("R", "K"): 25, ("K", "W"): 25, ("R", "W"): 45}  # box -> next box to the left, bump included
 REPEAT = 20     # another bump at the same box
 WJ_COST = 700
 TOKEN = {"R": "buyreward", "K": "buyclone", "W": "buywj"}
+BOX = {v: k for k, v in TOKEN.items()}
+TAIL = ["restart", "chain:wj", "buydash", "restart", "chain:dash"]
 
 
 def reward_cost(k):
@@ -88,7 +100,7 @@ class Eco:
         if self.cash < cost and (self.N == 0 or not self.path):
             return False  # no income while standing: the buy never happens
         while self.cash < cost:  # stand under the box until it's affordable (a bump before resets its cooldown)
-            self.run(1)
+            self.run(self.next_event())
         self.cash -= cost
         if box == "R":
             self.n += 1
@@ -97,98 +109,115 @@ class Eco:
             self.due = P / self.N
         return True
 
-    def trip(self, boxes):
-        prev = None
-        for b in boxes:
-            self.run(TO[b] if prev is None else REPEAT if prev == b else MOVE[(prev, b)])
-            if not self.buy(b):
-                return False
-            prev = b
-        return True
+    def next_event(self):
+        """Ticks until a clone pays or spawns (at least 1)."""
+        ticks = math.inf
+        if self.clones:
+            ticks = self.clones[0] + P - self.t
+        if len(self.clones) < self.N:
+            ticks = min(ticks, math.ceil(self.due - self.since))
+        return max(1, ticks)
+
+    def step(self, where, b):
+        """Go from `where` (None: the quick-restart point, else the box the player is under) to box `b` and buy it."""
+        self.run(TO[b] if where is None else REPEAT if where == b else MOVE[(where, b)])
+        return self.buy(b)
 
 
-def finish(e):
-    f = e.copy()
-    return f.t if f.trip(["W"]) else float("inf")
+# Where the player is: "gate" (Course 1's start gate, the new game's arrival), "done" (a Course 1 run's finish), a box.
+def search(e0, where0, tokens0):
+    """States in time order; each tries a Course 1 run, a trip from the restart to a box, and the next box from where
+    the player stands. Of the states with the same upgrades, clones and place, only one richer than every earlier one
+    goes on. The first to buy wall jump is the earliest."""
+    order = itertools.count()
+    heap = [(e0.t, next(order), e0, where0, tokens0)]
+    richest = {}
+    while heap:
+        _, _, e, where, tokens = heapq.heappop(heap)
+        if where == "W":
+            return e, tokens
+        key = (e.n, e.N, len(e.clones), where)
+        if richest.get(key, -1) >= e.cash:
+            continue
+        richest[key] = e.cash
+        restart = [] if where == "gate" else ["restart"]
+        c = e.copy()
+        c.course()
+        heapq.heappush(heap, (c.t, next(order), c, "done", tokens + restart + ["1"]))
+        for b in "RKW":
+            x = e.copy()
+            if where != "gate" and x.step(None, b):
+                heapq.heappush(heap, (x.t, next(order), x, b, tokens + restart + [TOKEN[b]]))
+            if where == b or (where, b) in MOVE:
+                x = e.copy()
+                if x.step(where, b):
+                    heapq.heappush(heap, (x.t, next(order), x, b, tokens + [TOKEN[b]]))
+    raise SystemExit("wall jump is never affordable")
 
 
-def plan(loops, beam_width, depth):
-    e = Eco()
-    for _ in range(loops):
-        e.course()
-        e.trip(["R"])
-    trips = [["R"] * r + ["K"] * k for r in range(4) for k in range(7) if r + k]
-    best = (finish(e), [])
-    beam = [(e, [])]
-    for _ in range(depth):
-        cand = []
-        for s, hist in beam:
-            c = s.copy()
-            c.course()
-            t = finish(c)
-            if t < best[0]:
-                best = (t, hist + [["1"]])
-            for base, pre in ((s, []), (c, [["1"]])):
-                for tr in trips:
-                    x = base.copy()
-                    if x.trip(tr) and x.t < best[0]:
-                        cand.append((x, hist + pre + [tr]))
-        if not cand:
-            break
-
-        def score(item):
-            x = item[0]
-            rate = x.N * math.ceil(0.1 * (1 + x.n)) / P + (1 + x.n) / (COURSE + TO["R"])
-            return x.t + max(0, WJ_COST - x.cash) / max(rate, 1e-6)
-
-        cand.sort(key=score)
-        seen, beam = set(), []
-        for item in cand:
-            x = item[0]
-            key = (x.n, x.N, x.cash // 4, x.t // 8)
-            if key not in seen:
-                seen.add(key)
-                beam.append(item)
-                if len(beam) >= beam_width:
-                    break
-    return e, best
-
-
-def segments(loops, steps):
-    # Every segment kind starts from the quick restart (Course 1's quick-restart point), except the first course.
-    seg = ["newgame", "newgameto1", "1", "restart", "buyreward", "restart"]
-    for _ in range(loops - 1):
-        seg += ["1", "restart", "buyreward", "restart"]
-    for step in steps:
-        if seg[-1] != "restart":
-            seg += ["restart"]
-        seg += ["1"] if step == ["1"] else [TOKEN[b] for b in step]
-    if seg[-1] != "restart":
-        seg += ["restart"]
-    return seg + ["buywj", "restart", "1", "1to2", "2", "2tobonus1", "bonus1", "restart", "bonus1to2"]
+def replay(tokens):
+    """The model's state after `tokens` (a chain's entries from "newgame" on) and where the player is."""
+    e, where = Eco(), "gate"
+    restarted = False
+    for token in tokens:
+        if token in ("newgame", "newgameto1"):
+            continue
+        if token == "restart":
+            restarted = True
+            continue
+        if token == "1":
+            e.course()
+            where = "done"
+        else:
+            for part in token.split("+"):
+                b = BOX[part]
+                if not e.step(None if restarted or where in ("gate", "done") else where, b):
+                    raise SystemExit(f"{token} is not affordable in the model where the chain buys it")
+                where, restarted = b, False
+        restarted = False
+    return e, where
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--loops", type=int, default=10)
-    ap.add_argument("--beam", type=int, default=200)
-    ap.add_argument("--depth", type=int, default=40)
+    ap.add_argument("--keep", type=int, default=1, help="keep the newgame chain's first N segments (1: just newgameto1)")
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
-    start, (t, steps) = plan(a.loops, a.beam, a.depth)
-    print(f"after {a.loops} loops: tick {start.t}, {start.cash} W, reward {1 + start.n}")
-    e = start.copy()
-    for step in steps:
-        if step == ["1"]:
-            e.course()
-            print(f"  tick {e.t:5d}  course 1          -> {e.cash:4d} W  reward {1 + e.n:2d}  clones {e.N}")
+    chains = json.load(open(CHAINS, encoding="utf-8")) if os.path.exists(CHAINS) else []
+    current = next((c for c in chains if c.get("name") == "newgame"), {"segments": ["newgame", "newgameto1"]})["segments"]
+    kept, count = ["newgame"], 0
+    for token in current[1:]:
+        if token != "restart":
+            if count == max(1, a.keep):
+                break
+            count += 1
+        kept.append(token)
+    while kept[-1] == "restart":
+        kept.pop()
+    e0, where0 = replay(kept)
+    e, tokens = search(e0, where0, kept)
+    seg = tokens + TAIL
+    shown = e0.copy()
+    where = where0
+    for token in tokens[len(kept):]:
+        if token == "restart":
+            where = None
+            continue
+        if token == "1":
+            shown.course()
+            where = "done"
+            what = "course 1"
         else:
-            e.trip(step)
-            print(f"  tick {e.t:5d}  buy {''.join(step):12s}  -> {e.cash:4d} W  reward {1 + e.n:2d}  clones {e.N}")
-    print(f"wall jump bought at tick {t} ({t * 0.02:.2f} s after the new game's first Course 1 segment, estimates)")
-    seg = segments(a.loops, steps)
+            b = BOX[token]
+            waited = shown.copy()
+            waited.run(TO[b] if where in (None, "gate", "done") else REPEAT if where == b else MOVE[(where, b)])
+            before = waited.t
+            shown.step(None if where in (None, "gate", "done") else where, b)
+            what = f"buy {token}" + (f" (waits {shown.t - before})" if shown.t > before else "")
+            where = b
+        print(f"  tick {shown.t:5d}  {what:28s} -> {shown.cash:4d} W  reward {1 + shown.n:2d}  clones {shown.N}")
+    print(f"wall jump bought at tick {e.t} ({e.t * 0.02:.2f} s after the new game's first Course 1 segment, estimates)")
     if a.write:
-        chains = json.load(open(CHAINS, encoding="utf-8")) if os.path.exists(CHAINS) else []
         chains = [c for c in chains if c.get("name") != "newgame"]
         chains.append({"name": "newgame", "capabilities": "none", "segments": seg})
         with open(CHAINS, "w", encoding="utf-8") as f:

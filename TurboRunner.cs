@@ -47,8 +47,8 @@ namespace IGTAPTasMod
             return false;
         }
 
-        // Everything a turbo run changes (turbo steps nothing else in the scene), taken at the end of a tick.
-        // Physics contact/trigger bookkeeping is not included, so a restored run can differ slightly from a replay.
+        // Everything a turbo run changes (turbo steps nothing else in the scene), taken at the end of a tick. Unity's
+        // contacts aren't in it: Restore rebuilds them for the restored pose (SettleContacts).
         internal sealed class Snapshot
         {
             public int tick;
@@ -92,7 +92,7 @@ namespace IGTAPTasMod
 
         // A script's own state: its value fields and its lists/stacks (copied). Its references (texts, sprites, the clone
         // path) are the scene's and no run changes them.
-        static FieldInfo[] EconomyFields(Type type)
+        internal static FieldInfo[] EconomyFields(Type type)
         {
             if (EconomyFieldCache.TryGetValue(type, out FieldInfo[] cached)) return cached;
             var list = new List<FieldInfo>();
@@ -126,6 +126,11 @@ namespace IGTAPTasMod
             foreach (KeyValuePair<TKey, double> entry in saved) live[entry.Key] = entry.Value;
         }
 
+        // Clone objects some economy snapshot holds. Restoring a snapshot that doesn't (the fresh game's has none) hides
+        // them instead of destroying them: every later restore of the snapshot that holds them needs them back (a
+        // destroyed clone pays nothing, so a purchase that waits for clone income would never happen).
+        static readonly HashSet<Transform> HeldClones = new HashSet<Transform>();
+
         static Economy CaptureEconomy()
         {
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -139,7 +144,7 @@ namespace IGTAPTasMod
                 clones = Array.ConvertAll(clones, c =>
                 {
                     var children = new HashSet<Transform>();
-                    foreach (Transform child in c.transform) children.Add(child);
+                    foreach (Transform child in c.transform) { children.Add(child); HeldClones.Add(child); }
                     return (c, CaptureFields(c), children);
                 }),
                 random = UnityEngine.Random.state };
@@ -162,21 +167,16 @@ namespace IGTAPTasMod
                 foreach (Transform child in clones.transform) now.Add(child);
                 foreach (Transform child in now)
                 {
-                    if (!children.Contains(child)) UnityEngine.Object.Destroy(child.gameObject);
+                    if (!children.Contains(child))
+                    {
+                        if (HeldClones.Contains(child)) child.gameObject.SetActive(false);
+                        else UnityEngine.Object.Destroy(child.gameObject);
+                    }
                     else if (active.Contains(child.gameObject)) child.gameObject.SetActive(clones.onScreen);
                     else if (pooled.Contains(child.gameObject)) child.gameObject.SetActive(false);
                 }
             }
             UnityEngine.Random.state = e.random;
-        }
-
-        // A field of `box` as the snapshot holds it (the trace header's purchase info).
-        public static object BoxField(Snapshot s, upgradeBox box, string name)
-        {
-            int index = Array.FindIndex(EconomyFields(typeof(upgradeBox)), f => f.Name == name);
-            if (s.economy == null || index < 0) return null;
-            foreach (var (b, fields) in s.economy.boxes) if (b == box) return fields[index];
-            return null;
         }
 
         public static double Cash(Snapshot s)
@@ -227,9 +227,12 @@ namespace IGTAPTasMod
         public static void Restore(Snapshot s, Movement movement)
         {
             movement.CancelInvoke();
-            FieldState.Restore(movement, s.movement);
-            foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
-            if (s.economy != null) RestoreEconomy(s.economy);
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            var own = new List<Collider2D>();
+            body.GetAttachedColliders(own);
+            // The colliders the last run's pose touches: their contacts end in the settling step.
+            var muted = new Dictionary<Collider2D, LayerMask>();
+            MuteAround(own, muted);
             BoxCollider2D[] colliders = movement.GetComponents<BoxCollider2D>();
             for (int i = 0; i < colliders.Length && i < s.colliders.Length; i++)
             {
@@ -239,12 +242,78 @@ namespace IGTAPTasMod
                 colliders[i].enabled = s.colliders[i].enabled;
             }
             movement.transform.position = s.position;
-            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            body.position = s.bodyPosition;
+            body.rotation = s.rotation;
+            Physics2D.SyncTransforms();
+            MuteAround(own, muted);
+            SettleContacts(body, muted);
+            // Last: nothing the settling step did to the scripts' state survives.
+            FieldState.Restore(movement, s.movement);
+            foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
+            if (s.economy != null) RestoreEconomy(s.economy);
+            movement.transform.position = s.position;
             body.position = s.bodyPosition;
             body.rotation = s.rotation;
             body.linearVelocity = s.velocity;
             body.angularVelocity = s.angularVelocity;
             Physics2D.SyncTransforms();
+        }
+
+        static readonly List<Collider2D> Overlaps = new List<Collider2D>();
+
+        // Mutes the callbacks of the player's colliders and of every collider within a unit of them (a contact starts or
+        // ends only within the contact offsets, 0.01).
+        static void MuteAround(List<Collider2D> own, Dictionary<Collider2D, LayerMask> muted)
+        {
+            var filter = new ContactFilter2D { useTriggers = true };
+            foreach (Collider2D c in own)
+            {
+                Mute(c, muted);
+                if (!c.enabled) continue;
+                Bounds b = c.bounds;
+                Physics2D.OverlapBox(b.center, (Vector2)b.size + new Vector2(2f, 2f), 0f, filter, Overlaps);
+                foreach (Collider2D other in Overlaps) Mute(other, muted);
+            }
+            Overlaps.Clear();
+        }
+
+        static void Mute(Collider2D c, Dictionary<Collider2D, LayerMask> muted)
+        {
+            if (muted.ContainsKey(c)) return;
+            muted[c] = c.callbackLayers;
+            c.callbackLayers = 0;
+        }
+
+        // Unity's contacts are the last run's, wherever it ended. Left as they are, the restored run's first step reports
+        // Exit for those and Enter for what the restored pose touches, where the run the snapshot was taken from reports
+        // Stay (and enginesim, which primes the start pose's contacts as already touching): Movement.collidingBodies lists
+        // a collider twice, OnCollisionStay2D doesn't zero a head bump's Velocity.y, and a trigger's Stay (an upgrade box's
+        // buy) comes a tick late. One step with those callbacks muted and the player standing still makes Unity's contacts
+        // the restored pose's; every body it moved goes back.
+        static void SettleContacts(Rigidbody2D player, Dictionary<Collider2D, LayerMask> muted)
+        {
+            Rigidbody2D[] bodies = UnityEngine.Object.FindObjectsByType<Rigidbody2D>(FindObjectsSortMode.None);
+            var poses = new (Vector2 position, float rotation, Vector2 velocity, float angular)[bodies.Length];
+            for (int i = 0; i < bodies.Length; i++)
+                poses[i] = (bodies[i].position, bodies[i].rotation, bodies[i].linearVelocity, bodies[i].angularVelocity);
+            player.linearVelocity = Vector2.zero;
+            player.angularVelocity = 0f;
+            SimulationMode2D savedMode = Physics2D.simulationMode;
+            Physics2D.simulationMode = SimulationMode2D.Script;
+            try { Physics2D.Simulate(Time.fixedDeltaTime); }
+            finally
+            {
+                Physics2D.simulationMode = savedMode;
+                foreach (KeyValuePair<Collider2D, LayerMask> m in muted) if (m.Key != null) m.Key.callbackLayers = m.Value;
+                for (int i = 0; i < bodies.Length; i++)
+                {
+                    if (bodies[i] == null || bodies[i].bodyType == RigidbodyType2D.Static) continue;
+                    bodies[i].position = poses[i].position;
+                    bodies[i].rotation = poses[i].rotation;
+                    bodies[i].linearVelocity = poses[i].velocity;
+                    bodies[i].angularVelocity = poses[i].angular;
+                }
+            }
         }
 
         // Steps until keepRunning() is false or maxTicks elapse. Returns ticks stepped. `resume` re-arms the
@@ -257,10 +326,17 @@ namespace IGTAPTasMod
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsSortMode.None);
             float dt = Time.fixedDeltaTime;
+            // The floating numbers (a finish's reward, a clone's pay) come from a pool of 200 that only their own
+            // FixedUpdate, never stepped here, refills. Drained mid-run, the next one throws out of courseScript.stopTracking
+            // (no finish) or clonesScript.DestroyClone (the clone stays and pays again), depending on how much real time
+            // refilled it since the last run. They are presentation: a turbo run spawns none.
+            FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
+            bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
             _movement = movement;
             Pending.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
             Active = true;
+            if (numbers != null) numbers.ActuallySpawnText = false;
             Physics2D.simulationMode = SimulationMode2D.Script;
             try
             {
@@ -294,6 +370,7 @@ namespace IGTAPTasMod
             finally
             {
                 Active = false;
+                if (numbers != null) numbers.ActuallySpawnText = spawnNumbers;
                 Physics2D.simulationMode = savedMode;
                 // Hand the player's timers still pending (e.g. deathRespawn) back to Unity in real time. The world's
                 // (a spring's cooldown) fire now: the next run starts from a settled world, as a real retry would.

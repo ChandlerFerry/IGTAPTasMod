@@ -27,6 +27,27 @@
   color: #ffe1ad;
 }
 
+/* Settings: one row of toggles; each explains itself on hover. */
+.toggleBar {
+  background: #0b1c31;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 36px;
+}
+
+.toggleBar .capabilityLock {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+
+.toggleBar .capabilityLock strong {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
 .capabilityLock {
   align-items: center;
   background: #0b1c31;
@@ -73,3 +94,4 @@
 .capabilityLock.executable.on strong {
   color: var(--cyan);
 }
+

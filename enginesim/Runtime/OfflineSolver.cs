@@ -22,19 +22,49 @@ namespace IGTAP.EngineSim
             public int Version;
         }
 
+        // Search state carried from one solve to the next (Solve.cs keeps it in archive/<label>.json): every explore
+        // cell's input prefix with how often it was picked, and the plateau, routes exactly as fast as the best that the
+        // workers drifted to. A solve replays the prefixes to rebuild the cells (snapshots are not saved) instead of
+        // re-finding them, and each worker resumes its drift from a plateau route instead of the saved one.
+        public sealed class Memory
+        {
+            public long Runs;
+            public List<Source> Sources = new List<Source>();
+            public List<List<InputTick>> Plateau = new List<List<InputTick>>();
+
+            // One run's inputs up to its last cell, and the cells it reached first.
+            public sealed class Source
+            {
+                public List<InputTick> Inputs;
+                public List<SavedCell> Cells = new List<SavedCell>();
+            }
+
+            public struct SavedCell
+            {
+                public long Key;
+                public int Length, Picks;
+                public float Rank;
+            }
+        }
+
         public readonly string Capabilities;
         readonly Func<Simulation> _createSimulation;
         readonly List<List<InputTick>> _seeds;
+        readonly Memory _memory;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, BranchChecks, BranchMatches;
+        public long Runs, Ticks, Finishes, Drifts, BranchChecks, BranchMatches;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
+        volatile int _exportGeneration;
+        Worker[] _workers;
+        List<Memory.Source>[] _partitions;
 
-        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds)
+        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null)
         {
             _createSimulation = createSimulation;
             Capabilities = capabilities;
             _seeds = seeds;
+            _memory = memory;
         }
 
         public void Stop() { _stop = true; }
@@ -42,15 +72,63 @@ namespace IGTAP.EngineSim
         public Thread[] Start(int workers)
         {
             var threads = new Thread[workers];
+            _workers = new Worker[workers];
+            // The saved prefixes are split between the workers, so each replays only its share.
+            _partitions = Enumerable.Range(0, workers).Select(i => _memory == null ? new List<Memory.Source>()
+                : _memory.Sources.Where((s, k) => k % workers == i).ToList()).ToArray();
             for (int i = 0; i < workers; i++)
             {
+                int index = i;
                 int seed = Environment.TickCount * 31 + i * 7919;
                 // Worker 0 evaluates the seed routes first; the others start exploring right away.
                 var seeds = i == 0 ? _seeds : new List<List<InputTick>>();
-                threads[i] = new Thread(() => new Worker(this, _createSimulation(), seed, seeds).Loop()) { IsBackground = true, Name = "solver-" + i };
+                List<InputTick> plateau = _memory != null && _memory.Plateau.Count > 0 ? _memory.Plateau[i % _memory.Plateau.Count] : null;
+                threads[i] = new Thread(() =>
+                {
+                    var worker = new Worker(this, _createSimulation(), seed, seeds, _partitions[index], plateau);
+                    _workers[index] = worker;
+                    worker.Loop();
+                }) { IsBackground = true, Name = "solver-" + i };
                 threads[i].Start();
             }
             return threads;
+        }
+
+        // The search state to carry to the next solve: each worker hands over its archive between runs (a worker that
+        // doesn't within `timeoutMs` counts with its last hand-over, or its unreplayed share of the saved state).
+        public Memory Export(int timeoutMs)
+        {
+            int generation = ++_exportGeneration;
+            var clock = Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < timeoutMs && _workers.Any(w => w == null || w.Exported < generation)) Thread.Sleep(10);
+            var cells = new Dictionary<long, (List<InputTick> source, int length, int picks, float rank)>();
+            void Add(long key, List<InputTick> source, int length, int picks, float rank)
+            {
+                if (!cells.TryGetValue(key, out var c)) { cells[key] = (source, length, picks, rank); return; }
+                bool better = rank < c.rank || (rank == c.rank && length < c.length);
+                cells[key] = better ? (source, length, c.picks + picks, rank) : (c.source, c.length, c.picks + picks, c.rank);
+            }
+            var memory = new Memory { Runs = (_memory?.Runs ?? 0) + Interlocked.Read(ref Runs) };
+            for (int i = 0; i < _workers.Length; i++)
+            {
+                Worker.Handover h = _workers[i]?.LastHandover;
+                foreach (Memory.Source s in h?.Pending ?? _partitions[i])
+                    foreach (Memory.SavedCell c in s.Cells) Add(c.Key, s.Inputs, c.Length, c.Picks, c.Rank);
+                if (h == null) continue;
+                foreach (var c in h.Cells) Add(c.key, c.source, c.length, c.picks, c.rank);
+                if (h.Plateau != null && !memory.Plateau.Any(p => p.SequenceEqual(h.Plateau))) memory.Plateau.Add(h.Plateau);
+            }
+            var sources = new Dictionary<List<InputTick>, Memory.Source>(ReferenceEqualityComparer.Instance);
+            foreach (var pair in cells)
+            {
+                if (!sources.TryGetValue(pair.Value.source, out Memory.Source s)) sources[pair.Value.source] = s = new Memory.Source { Inputs = pair.Value.source };
+                s.Cells.Add(new Memory.SavedCell { Key = pair.Key, Length = pair.Value.length, Picks = pair.Value.picks, Rank = pair.Value.rank });
+            }
+            // A cell's prefix is resumed after its tick's input, so the replay needs that one tick more.
+            foreach (Memory.Source s in sources.Values)
+                s.Inputs = s.Inputs.GetRange(0, Math.Min(s.Inputs.Count, s.Cells.Max(c => c.Length) + 1));
+            memory.Sources = sources.Values.ToList();
+            return memory;
         }
 
         // Faster on the timer, or as fast (same 0.0001 s tolerance as the game's judge) in fewer physics ticks overall.
@@ -100,14 +178,29 @@ namespace IGTAP.EngineSim
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
             int _sharedVersion;
             float _maxTimedRank;
+            readonly Queue<Memory.Source> _restore;
+            List<InputTick> _plateau;
 
-            public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds)
+            // What the worker hands the saver (Export): its cells, the saved prefixes it has yet to replay, and its best
+            // when that is as fast as the shared one.
+            public sealed class Handover
+            {
+                public List<(long key, List<InputTick> source, int length, int picks, float rank)> Cells;
+                public List<Memory.Source> Pending;
+                public List<InputTick> Plateau;
+            }
+            public volatile Handover LastHandover;
+            public volatile int Exported;
+
+            public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds, List<Memory.Source> restore, List<InputTick> plateau)
             {
                 _owner = owner;
                 _sim = sim;
                 _rng = new System.Random(seed);
                 _seeds = new Queue<List<InputTick>>(seeds.Select(s => s.ToList()));
                 _seeds.Enqueue(new List<InputTick>());
+                _restore = new Queue<Memory.Source>(restore);
+                _plateau = plateau?.ToList();
                 _dash = owner.Capabilities == "wjdash" || owner.Capabilities == "wjdashaj";
             }
 
@@ -116,11 +209,45 @@ namespace IGTAP.EngineSim
                 while (!_owner._stop)
                 {
                     AdoptShared();
+                    int generation = _owner._exportGeneration;
+                    if (Exported != generation) HandOver(generation);
                     if (_seeds.Count > 0) { Try(_seeds.Dequeue(), "seed"); continue; }
+                    if (_restore.Count > 0) { Restore(_restore.Dequeue()); continue; }
+                    if (_plateau != null) { Try(_plateau, "plateau"); _plateau = null; continue; }
                     if (_bestInputs == null || _rng.NextDouble() < .5) Explore();
                     else Optimize();
                 }
             }
+
+            void HandOver(int generation)
+            {
+                float sharedTime;
+                long sharedTicks;
+                lock (_owner.Shared) { sharedTime = _owner.Shared.Time; sharedTicks = _owner.Shared.RunTicks; }
+                LastHandover = new Handover
+                {
+                    Cells = _archive.Select(p => (p.Key, p.Value.Source, p.Value.Length, p.Value.Picks, p.Value.Rank)).ToList(),
+                    Pending = _restore.ToList(),
+                    Plateau = _bestInputs != null && !Beats(sharedTime, sharedTicks, _best, _bestRunTicks) ? _bestInputs : null,
+                };
+                Exported = generation;
+            }
+
+            // Rebuilds a saved prefix's cells: the replay files every cell it reaches (as fast as it reached them before,
+            // the inputs being the same), then the saved picks carry over so well-explored cells stay less likely.
+            void Restore(Memory.Source source)
+            {
+                _restoreKeys = new long[source.Inputs.Count + 1];
+                // Ticks the replay never reaches (cut behind the best) carry no picks.
+                Array.Fill(_restoreKeys, long.MinValue);
+                Evaluate(source.Inputs, null, null, null, false, out _, out _, out _);
+                long[] keys = _restoreKeys;
+                _restoreKeys = null;
+                foreach (Memory.SavedCell saved in source.Cells)
+                    if (saved.Length < keys.Length && _archive.TryGetValue(keys[saved.Length], out Cell cell))
+                        cell.Picks = Math.Max(cell.Picks, saved.Picks);
+            }
+            long[] _restoreKeys;
 
             void AdoptShared()
             {
@@ -385,6 +512,7 @@ namespace IGTAP.EngineSim
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (from != null && from.Tick >= inputs.Count) from = null;
                 bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, out long runTicks, converge: converge);
+                bool converged = _converged;
                 if (from != null && _rng.Next(100) == 0)
                 {
                     // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
@@ -397,13 +525,19 @@ namespace IGTAP.EngineSim
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
-                if (!finished) return;
-                Interlocked.Increment(ref _owner.Finishes);
-                if (!Beats(time, runTicks, _best, _bestRunTicks)) return;
+                if (finished) Interlocked.Increment(ref _owner.Finishes);
+                // Neutral drift: a mutation that finishes as fast as the best (or rejoins its state, so finishes exactly
+                // like it) replaces it. Whole-tick timing makes the best sit on wide plateaus, and a faster route is often
+                // several mutations away, each alone no faster (Course 1 NO_WJ 2.14 -> 2.06 moves a press a tick, turns
+                // the stick, cuts the jump at one tick, then drops an earlier press; only the last one gains).
+                // A saved plateau route (Memory) is the drift a worker had reached, so it replaces a best as fast too.
+                bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !Beats(_best, _bestRunTicks, time, runTicks));
+                if (!drift && (!finished || !Beats(time, runTicks, _best, _bestRunTicks))) return;
                 var states = new SimSnapshot[inputs.Count];
                 var arrivals = new Dictionary<long, float>();
                 if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick, out long replayedTicks)
-                    || !Beats(replayed, replayedTicks, _best, _bestRunTicks)) return;
+                    || Beats(_best, _bestRunTicks, replayed, replayedTicks)) return;
+                bool improved = Beats(replayed, replayedTicks, _best, _bestRunTicks);
                 _best = replayed;
                 _bestRunTicks = replayedTicks;
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
@@ -411,7 +545,8 @@ namespace IGTAP.EngineSim
                 _bestArrival = arrivals;
                 _bestBody = _replayBody;
                 _bestFingerprint = _replayFingerprint;
-                _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
+                if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
+                else Interlocked.Increment(ref _owner.Drifts);
             }
 
             // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best (judged
@@ -421,6 +556,7 @@ namespace IGTAP.EngineSim
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
                 out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue)
             {
+                _converged = false;
                 if (states != null)
                 {
                     _replayBody = new (float, float, float, float, float, float)[inputs.Count + 1];
@@ -436,6 +572,7 @@ namespace IGTAP.EngineSim
                     else if (tick >= converge && _bestFingerprint != null && tick < _bestFingerprint.Length && _bestFingerprint[tick] is int best
                         && _sim.Physics.PlayerBody() == _bestBody[tick] && _sim.Fingerprint() == best)
                     {
+                        _converged = true;
                         return false;
                     }
                     courseScript active = _sim.TimingCourse();
@@ -444,8 +581,7 @@ namespace IGTAP.EngineSim
                     bool timing = _sim.TimedFromRunStart || active != null;
                     long key = CellKey(_sim.Player.transform.m_Position, timing);
                     bool losing = false;
-                    float elapsed = _sim.ScoredFromRunStart ? _sim.Engine.PhysicsTicks * _sim.World.FixedDeltaTime
-                        : active == null ? -1f : Simulation.CourseTime(active);
+                    float elapsed = _sim.Elapsed(active);
                     if (elapsed >= 0f)
                     {
                         if (tick > judgeAfter && elapsed > _best) losing = true;
@@ -454,7 +590,9 @@ namespace IGTAP.EngineSim
                         // visit would cut the best route itself once a mutation resumes past it.
                         if (arrivals != null) arrivals[key] = elapsed;
                     }
-                    FileCell(inputs, Math.Min(tick, inputs.Count), key, elapsed >= 0f ? elapsed : tick * .02f, states);
+                    int filed = Math.Min(tick, inputs.Count);
+                    if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
+                    FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, states);
                     return !losing;
                 });
                 Interlocked.Increment(ref _owner.Runs);
@@ -466,6 +604,8 @@ namespace IGTAP.EngineSim
             }
             (float, float, float, float, float, float)[] _replayBody, _bestBody;
             int?[] _replayFingerprint, _bestFingerprint;
+            // The last Evaluate stopped because the run was back in the best's state (it would finish exactly like it).
+            bool _converged;
 
             static long CellKey(Vector3 position, bool timing)
             {

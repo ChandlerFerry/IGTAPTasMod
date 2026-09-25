@@ -10,6 +10,8 @@ that run saw it).
   enginesim-capture.py start C CAPS       just the start state (empty inputs) for course C, category CAPS
   enginesim-capture.py route NAME C CAPS  any studio route by name (e.g. a partial one), as a `solve --seed` trace
   enginesim-capture.py chain NAME K       chain NAME's segment K (0-based) start: where the chain's routes before it end
+  enginesim-capture.py chain NAME K --lead  also its lead-in trace (a course segment right after a transition to its
+                                          start gate: from the transition's start, for `solve --lead`)
 
 C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj. Chains are in chains.json
 next to courses.json (a chain segment is solved in its own category: the chain's, WJ after a buywj segment). A chain
@@ -118,6 +120,11 @@ def main():
             print("new game:", fresh)
             if not fresh.get("ok"):
                 sys.exit("could not load a fresh new game")
+        # The lead trace first: its world export needs the world as parked at the chain's start, before the segment's
+        # capture replays the chain to its gate.
+        if "--lead" in sys.argv:
+            r = trace({"chain": chain, "segment": segment, "lead": True, "name": f"start-chain-{chain}-{segment}-lead"})
+            print({k: v for k, v in r.items()})
         r = trace({"chain": chain, "segment": segment, "ticks": [], "name": f"start-chain-{chain}-{segment}"})
         print({k: v for k, v in r.items()})
     else:
