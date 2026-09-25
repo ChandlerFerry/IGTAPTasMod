@@ -27,10 +27,11 @@ namespace IGTAPTasMod
             // from the segment after a "buywj" on, and wall jump + dash from the one after a "buydash".
             public string capabilities;
             // Course ids ("2"), bonuses ("bonus1"), transitions ("<from>to<to>": "1to2", "2tobonus1", "bonus1to2"),
-            // purchases ("buyreward", "buyclone", "buywj": Course 1's upgrade boxes; "buydash": Course 2's dash box; joined
-            // with "+" for one segment that buys several, "buyreward+buyclone": one bump under two boxes), "restart" (a
-            // quick restart right before the next segment) and "chain:<name>" (that chain's segments, in its category,
-            // going on from here: a part of a bigger run, solved on its own too). A token may repeat.
+            // purchases ("buyreward", "buyclone", "buywj": Course 1's upgrade boxes; "buyreward2", "buyclone2",
+            // "buyclonemult2", "buyglobalreward2", "buydash": Course 2's; joined with "+" for one segment that buys several,
+            // "buyreward+buyclone": one bump under two boxes), "restart" (a quick restart right before the next segment) and
+            // "chain:<name>" (that chain's segments, in its category, going on from here: a part of a bigger run, solved on
+            // its own too). A token may repeat.
             // "newgame" first (not a segment): the chain starts from a fresh new game (POST /api/session/newgame), where
             // "newgameto<N>" runs to course N's start gate.
             public List<string> segments = new List<string>();
@@ -74,6 +75,8 @@ namespace IGTAPTasMod
             public bool waitingForNewGame;
             // Physics ticks × fixedDeltaTime of every finished segment.
             public readonly List<float> splits = new List<float>();
+            // Inputs each finished segment consumed (MacroEngine.RunTicks at its finish): /api/fulltas/import cuts its routes there.
+            public readonly List<long> inputTicks = new List<long>();
             public string failure;
             // Turbo only: stop where segment `captureAt` would start and keep that state as its start (`captured`).
             public int captureAt = -1;
@@ -93,8 +96,8 @@ namespace IGTAPTasMod
 
         string ChainsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "chains.json"); } }
 
-        // Playback in progress: a route, a chain (also between two of its segments), or one about to start.
-        bool PlaybackActive { get { return _engine.IsRunning || _chainRun != null || _pendingChain != null; } }
+        // Playback in progress: a route, a chain (also between two of its segments), a Full-TAS run, or one about to start.
+        bool PlaybackActive { get { return _engine.IsRunning || _chainRun != null || _pendingChain != null || _fullTasPlay != null; } }
 
         void LoadChains()
         {
@@ -144,12 +147,18 @@ namespace IGTAPTasMod
         // Purchases are made here too (one box: ids 901+; several: 1000+ like transitions).
         readonly Dictionary<string, CourseDef> _chainTransitions = new Dictionary<string, CourseDef>(StringComparer.OrdinalIgnoreCase);
 
-        // Purchase segments: Course 1's upgrade boxes and Course 2's dash box (hierarchy paths in the Overworld scene).
+        // Purchase segments: Course 1's and Course 2's upgrade boxes (hierarchy paths in the Overworld scene). Course 2
+        // has a second "GLOBALcashPerLoop", bonus1's free reward box, which the run buys at bonus1's end, never in a
+        // purchase segment.
         static readonly (string token, string box)[] PurchaseBoxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop"),
             ("buyclone", "Courses/course 1/localUpgrades/Clone"),
             ("buywj", "Courses/course 1/localUpgrades/Wall jump"),
-            ("buydash", "Courses/course 2/localUpgrades/DashUnlock") };
+            ("buydash", "Courses/course 2/localUpgrades/DashUnlock"),
+            ("buyreward2", "Courses/course 2/localUpgrades/CashPerLoop"),
+            ("buyclone2", "Courses/course 2/localUpgrades/Clone"),
+            ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult"),
+            ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop") };
         // MacroEngine.RecordPurchase keeps one bit per box of a purchase segment.
         const int MaxPurchasesPerSegment = 8;
 
@@ -246,7 +255,8 @@ namespace IGTAPTasMod
             }
             Match m = parts.Length == 1 ? ChainTransition.Match(token) : Match.Empty;
             if (!m.Success)
-                throw new InvalidOperationException("Unknown chain segment \"" + token + "\": a course id, a bonus name, \"<from>to<to>\", buyreward, buyclone, buywj, buydash (several joined with \"+\"), \"chain:<name>\" or \"restart\".");
+                throw new InvalidOperationException("Unknown chain segment \"" + token + "\": a course id, a bonus name, \"<from>to<to>\", "
+                    + string.Join(", ", PurchaseBoxes.Select(b => b.token)) + " (several joined with \"+\"), \"chain:<name>\" or \"restart\".");
             string from = m.Groups[1].Value.ToLowerInvariant(), to = m.Groups[2].Value.ToLowerInvariant();
             var transition = new CourseDef { id = 1000 + _chainTransitions.Count, name = from + "to" + to, from = from, to = to, minCapabilities = "none" };
             if (!to.StartsWith("bonus", StringComparison.Ordinal))
@@ -277,6 +287,12 @@ namespace IGTAPTasMod
         private static void AfterBuyUpgrade(upgradeBox __instance)
         {
             if (Instance == null || !Instance._engine.IsRunning || __instance == null) return;
+            // A Full-TAS run: a purchase is a goal event (and its unlocks count from here), never the end of the run by itself.
+            if (Instance._fullTas != null)
+            {
+                Instance.FullTasBought(HierarchyPath(__instance.transform));
+                return;
+            }
             CourseDef course = Instance.RunCourse;
             if (course == null || !course.IsPurchase || !Instance._engine.RecordPurchase(course.boxes, HierarchyPath(__instance.transform))) return;
             Instance._engine.CompleteFromGame(MacroEngine.PurchaseFinishReason, Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
@@ -396,6 +412,7 @@ namespace IGTAPTasMod
             if (success && MacroEngine.IsFinishReason(reason))
             {
                 run.splits.Add(_engine.AuthoritativeCompletionTime);
+                run.inputTicks.Add(_engine.RunTicks);
                 if (run.index + 1 < run.routes.Count || run.index + 1 == run.captureAt)
                 {
                     run.pendingNext = true;
@@ -445,6 +462,7 @@ namespace IGTAPTasMod
             _pendingReplay = null;
             _pendingReplayStartDelayTicks = 0;
             _pendingChain = null;
+            DropPendingFullTasPlayback(reason);
             if (_engine.IsRunning) _engine.Abort(reason);
             if (_chainRun != null && !_silentEvaluation) FinishChainPlayback(false, reason);
         }

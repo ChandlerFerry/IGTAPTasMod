@@ -14,10 +14,12 @@ namespace IGTAP.EngineSim
         public float x;
         public bool held, press, release, dash;
         public int dashJump;
+        // The game's quick restart before this tick (MacroStep.rawQuickRestart).
+        public bool reset;
 
-        public bool Equals(InputTick o) { return x == o.x && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump; }
+        public bool Equals(InputTick o) { return x == o.x && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && reset == o.reset; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
-        public override int GetHashCode() { return HashCode.Combine(x, held, press, release, dash, dashJump); }
+        public override int GetHashCode() { return HashCode.Combine(x, held, press, release, dash, dashJump, reset); }
     }
     public sealed class RunResult
     {
@@ -30,6 +32,10 @@ namespace IGTAP.EngineSim
         public int Stepped;
         public Vector2 End;
         public string EndReason;
+        // A Full-TAS run (Simulation.Goals): goals reached by the end, and when (inputs from the run start, i.e. with
+        // Simulation.InputBase added; physics ticks from the run start). Null otherwise.
+        public int Progress;
+        public long[] GoalInputTicks, GoalPhysicsTicks;
     }
 
     // Everything a run changes, captured after a tick so another run can continue from it.
@@ -44,10 +50,12 @@ namespace IGTAP.EngineSim
         public (int due, MonoBehaviour target, string method, float repeat)[] Pending;
         public object Physics;
         public (MonoBehaviour target, object[] fields)[] Touched;
-        // Shop: what the run spent, per currency.
-        public double[] Spent;
+        // Shop: what the run spent, per currency, and the native economy's state (Economy).
+        internal Shop.State Economy;
         // Simulation.LapStart at this point.
         public long LapStart;
+        // Full-TAS: the goal tracker's state (null outside a Full-TAS run).
+        internal FullTasTracker.State Goal;
     }
 
     // Steps the game's own code exactly like TurboRunner.Run inside TasPlugin.Evaluate: pending Invokes,
@@ -117,7 +125,56 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Player death at action " + (Engine.StepIndex + 1));
             };
             Hooks.CourseStop = CourseStop;
+            // TasPlugin.BeforeRespawn.
+            Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = false;
             Hooks.UpgradeBoxStay = Shop.Stay;
+        }
+
+        // ---- Full-TAS (FullTas.cs): the run goes on through every goal and finishes at the last one of `Goals.Limit`.
+        // Goals are reached exactly where the plugin sees them: a course's start gate starting its timer, its end gate
+        // stopping it (the player's own finish), the game buying a box, a reward box touched.
+        internal FullTasTracker Goals { get; private set; }
+        // Inputs consumed before this simulation's start (a window's prefix, SetStart): goal input ticks are counted from
+        // the run start, like the route's inputs.
+        public long InputBase;
+        public int Progress { get { return Goals == null ? 0 : Goals.Next; } }
+
+        void GoalEvent(bool reached)
+        {
+            if (reached && Goals.Done && Engine.IsRunning)
+                Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+        }
+
+        // Shop: the game bought `path`.
+        internal void Bought(string path)
+        {
+            if (Goals != null && Engine.IsRunning) GoalEvent(Goals.Bought(path, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+        }
+
+        // Replays `prefix` from the start and returns the state right after its last input, as a start for runs of the
+        // inputs that follow it (their own input count from 0, SetStart); null if the run ended first (a death, the
+        // last goal). The goals reached so far are in the state.
+        public SimSnapshot Advance(IReadOnlyList<InputTick> prefix)
+        {
+            if (prefix.Count == 0) return _start;
+            SimSnapshot at = null;
+            // One more input than the prefix, so the run is still going when its last input's tick ends.
+            var inputs = prefix.Concat(new[] { prefix[prefix.Count - 1] }).ToList();
+            Run(inputs, null, tick =>
+            {
+                if (tick < prefix.Count) return true;
+                Engine.RebaseInputs();
+                at = Capture(0);
+                return false;
+            }, 1000000);
+            return at;
+        }
+
+        // Runs start from `state` from now on (Advance's): `inputBase` inputs were consumed before it.
+        public void SetStart(SimSnapshot state, long inputBase)
+        {
+            _start = state;
+            InputBase = inputBase;
         }
 
         // courseScript.stopTracking as far as a run can observe it, plus TasPlugin's Before/AfterCourseFinish.
@@ -128,18 +185,27 @@ namespace IGTAP.EngineSim
             float time = (float)PathTimeField.GetValue(course);
             TrackingField.SetValue(course, false);
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
+            // The finish's reward, the clones' new path (Economy; only with the native economy).
+            if (savePositionData) Shop.CourseFinished(course, time);
             foreach (string list in CoursePathLists)
                 (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
             PathTimeField.SetValue(course, 0f);
-            if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
+            if (Goals != null)
+            {
+                if (savePositionData && Engine.IsRunning) GoalEvent(Goals.CourseFinished(course.courseNumber, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+            }
+            else if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
                 Engine.CompleteFromGame("Course finish detected", FromRunStart ? (Engine.PhysicsTicks - Math.Max(0L, LapStart)) * World.FixedDeltaTime : time);
         }
 
         // The bonus course's reward box (endX, endY, endW, endH) as a world rect the player's colliders may touch.
-        bool TouchesReward()
+        bool TouchesReward() { return Touches(TargetFinish.x, TargetFinish.y, TargetFinish.w, TargetFinish.h); }
+
+        // Whether one of the player's colliders touches the world rect at (x, y) (centre) of size (w, h).
+        bool Touches(float x, float y, float w, float h)
         {
-            float x0 = TargetFinish.x - TargetFinish.w / 2f, x1 = TargetFinish.x + TargetFinish.w / 2f;
-            float y0 = TargetFinish.y - TargetFinish.h / 2f, y1 = TargetFinish.y + TargetFinish.h / 2f;
+            float x0 = x - w / 2f, x1 = x + w / 2f;
+            float y0 = y - h / 2f, y1 = y + h / 2f;
             foreach (BoxCollider2D box in _playerColliders)
             {
                 if (!box.enabled) continue;
@@ -174,7 +240,7 @@ namespace IGTAP.EngineSim
         courseScript _targetStartCourse;
 
         // Bonus, transition and purchase runs have no course timer of their own; they are timed from the run start.
-        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Shop.IsPurchase; } }
+        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Shop.IsPurchase || Goals != null; } }
 
         // A chain segment (the trace's "fromRunStart"): a course segment is timed from the run start too (TasPlugin.
         // ScoreFromRunStart), and one after a quick restart does it first (the trace's "restart").
@@ -217,9 +283,39 @@ namespace IGTAP.EngineSim
                     ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
             }
             LeadDeadline = header.TryGetProperty("lead", out JsonElement lead) ? lead.GetProperty("ticks").GetInt64() : 0;
+            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) SetGoals(fulltas.GetProperty("goals"));
             LapStart = LeadDeadline > 0 ? -1 : 0;
             _lapCourse = LeadDeadline > 0 ? Courses.FirstOrDefault(c => c.courseNumber == TargetCourse)
                 ?? throw new InvalidOperationException("Course " + TargetCourse + " is not active in this world export.") : null;
+        }
+
+        // The trace's "fulltas": {name, goals: [{label, kind, course, boxes, rect: [x, y, w, h]}]} (TasPlugin writes it).
+        void SetGoals(JsonElement goals)
+        {
+            var list = new List<FullTasGoal>();
+            foreach (JsonElement g in goals.EnumerateArray())
+            {
+                var goal = new FullTasGoal { label = g.GetProperty("label").GetString(), kind = g.GetProperty("kind").GetString() };
+                if (g.TryGetProperty("course", out JsonElement course)) goal.course = course.GetInt32();
+                if (g.TryGetProperty("boxes", out JsonElement boxes) && boxes.ValueKind == JsonValueKind.Array)
+                    goal.boxes = boxes.EnumerateArray().Select(b => b.GetString()).ToArray();
+                if (g.TryGetProperty("rect", out JsonElement rect) && rect.ValueKind == JsonValueKind.Array)
+                {
+                    goal.x = rect[0].GetSingle(); goal.y = rect[1].GetSingle(); goal.w = rect[2].GetSingle(); goal.h = rect[3].GetSingle();
+                }
+                if (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish)
+                {
+                    if (!Courses.Any(c => c.courseNumber == goal.course)) throw new InvalidOperationException("Goal " + goal.label + ": course " + goal.course + " is not active in this world export.");
+                }
+                else if (goal.kind == FullTasGoal.Buy)
+                {
+                    if (goal.boxes == null || goal.boxes.Length == 0) throw new InvalidOperationException("Goal " + goal.label + " names no box.");
+                }
+                else if (goal.kind != FullTasGoal.Reward) throw new InvalidOperationException("Goal " + goal.label + ": unknown kind " + goal.kind + ".");
+                list.Add(goal);
+            }
+            if (list.Count == 0) throw new InvalidOperationException("A Full-TAS trace needs at least one goal.");
+            Goals = new FullTasTracker(list.ToArray());
         }
 
         public courseScript TimingCourse()
@@ -309,8 +405,9 @@ namespace IGTAP.EngineSim
                 Pending = pending,
                 Physics = Physics.Capture(),
                 Touched = _touched.Select(s => (s, FieldState.Capture(s))).ToArray(),
-                Spent = Shop.Capture(),
+                Economy = Shop.Capture(),
                 LapStart = LapStart,
+                Goal = Goals?.Capture(),
             };
         }
 
@@ -342,6 +439,7 @@ namespace IGTAP.EngineSim
             h.Add(touched);
             h.Add(LapStart);
             Shop.AddTo(ref h);
+            if (Goals != null) h.Add(Goals.Hash());
             return h.ToHashCode();
         }
 
@@ -401,7 +499,8 @@ namespace IGTAP.EngineSim
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
             Physics.Restore(s.Physics);
             LapStart = s.LapStart;
-            Shop.Restore(s.Spent);
+            Shop.Restore(s.Economy);
+            if (Goals != null) Goals.Restore(s.Goal);
         }
 
         // TasPlugin.Evaluate for one input list resumed from `from` (the start state when null). `afterTick` sees the
@@ -429,12 +528,19 @@ namespace IGTAP.EngineSim
             {
                 bool nextWasTracking = _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse);
                 bool lapWasTracking = LapStart < 0 && (bool)TrackingField.GetValue(_lapCourse);
+                // Full-TAS: a start goal is reached when its course's start gate starts the timer (off before the tick, on
+                // after it: TasPlugin counts it in startTracking only when the course wasn't timing).
+                FullTasGoal goal = Goals?.Current;
+                courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
+                bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
                 Scheduler.FireDue();
                 if (restart)
                 {
                     restart = false;
                     RespawnMethod.Invoke(Player, new object[] { true });
                 }
+                // A route's own quick restart (InputTick.reset), where TasPlugin.BeforeMovementFixedUpdate does it.
+                if (Engine.TakeQuickRestart()) RespawnMethod.Invoke(Player, new object[] { true });
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
                 for (int i = 0; i < Courses.Length; i++)
@@ -442,6 +548,8 @@ namespace IGTAP.EngineSim
                 Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.Simulate(World.FixedDeltaTime);
                 _update();
+                // TurboRunner.StepClones: every course's clones, after Movement.Update.
+                Shop.StepClones();
                 // TasPlugin.BeforeMovementFixedUpdate: a bonus run finishes on its reward box (no end gate), a transition
                 // on its end box; both in physics ticks from the run start (dash ticks included).
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
@@ -456,6 +564,15 @@ namespace IGTAP.EngineSim
                 {
                     if (!lapWasTracking && (bool)TrackingField.GetValue(_lapCourse)) LapStart = Engine.PhysicsTicks;
                     else if (Engine.PhysicsTicks >= LeadDeadline) Engine.Abort("Lead-in slower than the transition's route");
+                }
+                if (Goals != null && Engine.IsRunning)
+                {
+                    if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
+                        GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                    // TasPlugin.BeforeMovementFixedUpdate: a reward goal, like a bonus run's reward box.
+                    FullTasGoal now = Goals.Current;
+                    if (Engine.IsRunning && now != null && now.kind == FullTasGoal.Reward && Touches(now.x, now.y, now.w, now.h))
+                        GoalEvent(Goals.RewardTouched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
                 stepped++;
                 onStep?.Invoke(stepped - 1);
@@ -476,12 +593,15 @@ namespace IGTAP.EngineSim
                 PhysicsTicks = Engine.PhysicsTicks,
                 End = Player.transform.m_Position,
                 EndReason = _endReason,
+                Progress = Progress,
+                GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
+                GoalPhysicsTicks = Goals == null ? null : (long[])Goals.PhysicsTicks.Clone(),
             };
         }
 
         static bool Merges(InputTick previous, InputTick k)
         {
-            return !k.press && !k.release && !k.dash && previous.x == k.x && previous.held == k.held;
+            return !k.press && !k.release && !k.dash && !k.reset && previous.x == k.x && previous.held == k.held;
         }
 
         // TasPlugin.ToSteps: consecutive identical ticks merge into one raw-input step.
@@ -503,11 +623,46 @@ namespace IGTAP.EngineSim
                     durationMs = tickMs, endCondition = ActionEndCondition.FixedTicks,
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
-                    dashJumpFrame = k.dash ? k.dashJump : 0 });
+                    dashJumpFrame = k.dash ? k.dashJump : 0, rawQuickRestart = k.reset });
             }
             if (steps.Count == 0) steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,
                 endCondition = ActionEndCondition.FixedTicks });
             return steps;
+        }
+
+        // Full-TAS memo (fulltas CLI): a hash of the player alone (its script, transform, colliders and body), equal across
+        // simulations of different worlds (objects hash by instance id). A window route found from one start is worth
+        // trying from another start with the same player state (after a quick restart, say); it is verified by running it.
+        public int MovementFingerprint()
+        {
+            var h = new HashCode();
+            foreach (FieldInfo f in FieldState.For(Player.GetType()))
+                if (!MovementPresentationFields.Contains(f.Name)) AddPortableValue(ref h, f.GetValue(Player));
+            Transform t = Player.transform;
+            h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
+            foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
+            h.Add(Physics.PlayerBody());
+            return h.ToHashCode();
+        }
+
+        // Movement fields written only by presentation code (afterimages).
+        static readonly HashSet<string> MovementPresentationFields = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
+
+        static void AddPortableValue(ref HashCode h, object value)
+        {
+            switch (value)
+            {
+                case null: h.Add(0); break;
+                case UnityEngine.Object o: h.Add(o.GetInstanceID()); break;
+                case string s: h.Add(s); break;
+                case System.Collections.IEnumerable items:
+                    foreach (object item in items) AddPortableValue(ref h, item);
+                    h.Add(-1);
+                    break;
+                default:
+                    h.Add(value.GetType().IsValueType ? value.GetHashCode() : value.GetType().FullName.GetHashCode());
+                    break;
+            }
         }
     }
 }

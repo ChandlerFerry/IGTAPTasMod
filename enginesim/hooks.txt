@@ -4,6 +4,8 @@
 prefix Movement::getPlayerControlledInput OnPlayerInput
 prefix Movement::CheckForSuperJump OnDashFrame
 prefix Movement::onDeath OnDeath
+# TasPlugin.BeforeRespawn: course checkpoints are always off (a death respawns at the course's reset point).
+prefix Movement::respawn OnRespawn
 # The plugin reads the course time before stopTracking and ends the run after it; everything else stopTracking
 # does is rewards and UI. The host hook applies its two state changes (tracking off, courseResetPoint cleared).
 replace courseScript::stopTracking OnCourseStop
@@ -11,3 +13,9 @@ replace courseScript::stopTracking OnCourseStop
 # that rule and what a purchase changes that a run can observe (Cash, cost, cap, unlocks, the segment's finish), not the
 # boxes' UI, particles or save bookkeeping.
 replace upgradeBox::OnTriggerStay2D OnUpgradeBoxStay
+# The clones' LoD trigger (clonesLoD) tells a course's clones whether the player is near: on screen they walk the path
+# and pay at its end, off screen they pay at once. The host economy keeps the clones (Economy.OnScreen).
+replace clonesScript::isOnScreen OnClonesOnScreen
+# A course's reward from the upgrades; fullUpdate is that plus UI. The host economy computes it (a no-op without it).
+replace courseScript::UpdateReward OnCourseReward
+replace courseScript::fullUpdate OnCourseReward

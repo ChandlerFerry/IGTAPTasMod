@@ -11,14 +11,16 @@ namespace IGTAP.EngineSim
 {
     // The upgrade boxes offline. hooks.txt makes upgradeBox.OnTriggerStay2D call Stay: the game's buy rule (cooldown up,
     // affordable, active) and what a purchase changes that a run observes: Cash, the box's cost, uses and cap, the
-    // unlocks a movement box gives, and a purchase segment's finish. The rest a purchase does (the box's UI, particles,
-    // the upgrade dictionaries that only feed rewards and clone rolls) is left out. Each box's buy cooldown counts down
-    // by the tick like upgradeBox.FixedUpdate in TurboRunner.Run.
+    // unlocks a movement box gives, the local upgrades (Economy), and a purchase segment's finish. The rest a purchase
+    // does (the box's UI, particles) is left out. Each box's buy cooldown counts down by the tick like
+    // upgradeBox.FixedUpdate in TurboRunner.Run.
     //
-    // Cash is per simulation (the game keeps it in a static every worker thread shares): the start's, plus what the
-    // clones paid by then (the trace's income, recorded in turbo standing still), minus what this run spent. Purchases
-    // whose effects aren't modeled (global, prestige and buy-max boxes; movement boxes other than dash, wall jump and
-    // double jump) end the run: offline can't say what follows them.
+    // Cash is per simulation (the game keeps it in a static every worker thread shares): the start's, plus what the run
+    // earned, minus what it spent. Earned: with the start's clone state, the native Economy (course rewards, clones,
+    // local upgrades); else what the clones paid by then (a purchase trace's income, recorded in turbo standing still).
+    // Purchases whose effects aren't modeled (buy-max and prestige boxes, global boxes other than the global reward one
+    // with the native economy; movement boxes other than dash, wall jump and double jump) end the run: offline can't say
+    // what follows them.
     public sealed class Shop
     {
         const int CurrencyCount = 7;
@@ -39,6 +41,15 @@ namespace IGTAP.EngineSim
         double[] _income = Array.Empty<double>();
         // A purchase segment's boxes (hierarchy paths, MacroEngine.RecordPurchase); null for any other target.
         string[] _targets;
+        // The native economy: null unless the start state carries the clones' state (LoadStart).
+        internal Economy Economy { get; private set; }
+
+        // What a run changed (SimSnapshot): spent per currency, and the native economy's state.
+        internal sealed class State
+        {
+            public double[] Spent;
+            public Economy.State Economy;
+        }
 
         internal Shop(Simulation sim, World world)
         {
@@ -50,6 +61,9 @@ namespace IGTAP.EngineSim
             if (globalStats.currencyLookup != null)
                 foreach (KeyValuePair<globalStats.Currencies, double> c in globalStats.currencyLookup)
                     if ((int)c.Key >= 0 && (int)c.Key < CurrencyCount) _start[(int)c.Key] = c.Value;
+            // clonesScript.isOnScreen, and courseScript.UpdateReward / fullUpdate (hooks.txt): the economy's, when native.
+            Hooks.ClonesOnScreen = (clones, onScreen) => Economy?.OnScreen((clonesScript)clones, onScreen);
+            Hooks.CourseReward = course => Economy?.UpdateReward((courseScript)course);
         }
 
         public bool IsPurchase { get { return _targets != null; } }
@@ -65,7 +79,8 @@ namespace IGTAP.EngineSim
             _income = purchase.GetProperty("income").EnumerateArray().Select(v => v.GetDouble()).ToArray();
         }
 
-        // The start state's "economy" (TasPlugin's TurboRunner.Economy): every currency and every box's own state.
+        // The start state's "economy" (TasPlugin's TurboRunner.Economy): every currency and every box's own state; with
+        // "clones" (the clones' state, the upgrade dictionaries), the native Economy.
         internal void LoadStart(JsonElement economy, Action<object, JsonElement> applyFields)
         {
             foreach (JsonElement c in economy.GetProperty("currencies").EnumerateArray())
@@ -77,6 +92,7 @@ namespace IGTAP.EngineSim
                 if (_sim.World.Objects.TryGetValue(b.GetProperty("id").GetInt32(), out UnityEngine.Object o) && o is upgradeBox box)
                     applyFields(box, b.GetProperty("fields"));
             Array.Clear(_spent, 0, _spent.Length);
+            Economy = economy.TryGetProperty("clones", out _) ? new Economy(_sim, economy) : null;
         }
 
         // upgradeBox.FixedUpdate, before the tick's physics (TurboRunner.Run's order).
@@ -94,17 +110,27 @@ namespace IGTAP.EngineSim
         // What the player can spend now: this tick's physics runs after the clones paid in the ticks before it.
         double Available(int currency)
         {
+            if (Economy != null) return _start[currency] - _spent[currency] + (currency == Cash ? Economy.Earned : 0.0);
             return _start[currency] - _spent[currency] + (currency == Cash ? Paid(_sim.Engine.PhysicsTicks - 1) : 0.0);
         }
 
         // Cash after the run's latest tick, clone payouts included (a trace tick's "cash").
-        public double CashNow { get { return _start[Cash] - _spent[Cash] + Paid(_sim.Engine.PhysicsTicks); } }
+        public double CashNow
+        {
+            get { return _start[Cash] - _spent[Cash] + (Economy != null ? Economy.Earned : Paid(_sim.Engine.PhysicsTicks)); }
+        }
 
         // What the clones paid through physics tick `ticks` of the run.
         double Paid(long ticks)
         {
             return ticks <= 0 || _income.Length == 0 ? 0.0 : _income[(int)Math.Min(ticks, _income.Length) - 1];
         }
+
+        // TurboRunner.StepClones for every course's clones, after Movement.Update.
+        internal void StepClones() { Economy?.Step(_sim.World.FixedDeltaTime); }
+
+        // courseScript.stopTracking(player, true) of a course that was timing, at course timer `time`.
+        internal void CourseFinished(courseScript course, float time) { Economy?.CourseFinished(course, time); }
 
         // upgradeBox.OnTriggerStay2D (the physics world already touched the box).
         internal void Stay(object boxObject, Collider2D collision)
@@ -122,7 +148,9 @@ namespace IGTAP.EngineSim
             string path = _paths[box];
             localUpgrades.localUpgradeSet kind = box.upgrade;
             Movement player = kind == localUpgrades.localUpgradeSet.Movement ? collision.GetComponent<Movement>() : null;
-            bool modeled = !(box.buyMax && !box.neverBuyMax) && kind != localUpgrades.localUpgradeSet.GLOBAL
+            bool global = kind == localUpgrades.localUpgradeSet.GLOBAL;
+            bool modeled = !(box.buyMax && !box.neverBuyMax)
+                && (!global || Economy != null && box.globalUpgrade == globalStats.globalUpgradeSet.cashPerLoop)
                 && kind != localUpgrades.localUpgradeSet.prestige && kind != localUpgrades.localUpgradeSet.activateNextBreakerLights
                 && (kind != localUpgrades.localUpgradeSet.Movement || player != null && (box.movementUpgrade == upgradeBox.movementUpgrades.dash
                     || box.movementUpgrade == upgradeBox.movementUpgrades.wallJump || box.movementUpgrade == upgradeBox.movementUpgrades.doubleJump));
@@ -133,6 +161,7 @@ namespace IGTAP.EngineSim
             }
             box.TimesUsed++;
             if (!VmanScript.isCurrentlyVman) _spent[currency] += box.upgradeCost;
+            if (Economy != null && kind != localUpgrades.localUpgradeSet.Movement && !(global ? Economy.BoughtGlobal(box) : Economy.Bought(box, kind))) return;
             if (kind == localUpgrades.localUpgradeSet.Movement)
             {
                 switch (box.movementUpgrade)
@@ -142,6 +171,13 @@ namespace IGTAP.EngineSim
                     case upgradeBox.movementUpgrades.doubleJump: player.doubleJumpUnlocked = true; player.maxAirJumps++; break;
                 }
                 box.isActive = false;
+            }
+            else if (global)
+            {
+                // DoBuyUpgrade's global branch rounds.
+                box.upgradeCost += box.upgradeAddFactor;
+                box.upgradeCost = Math.Pow(box.upgradeCost, box.upgradePowerScaleFactor);
+                box.upgradeCost = Math.Round(box.upgradeCost * box.upgradeScaleFactor);
             }
             else
             {
@@ -155,13 +191,22 @@ namespace IGTAP.EngineSim
             // TasPlugin.AfterBuyUpgrade.
             if (_targets != null && _sim.Engine.RecordPurchase(_targets, path))
                 _sim.Engine.CompleteFromGame(MacroEngine.PurchaseFinishReason, _sim.Engine.PhysicsTicks * _sim.World.FixedDeltaTime);
+            _sim.Bought(path);
         }
 
-        internal double[] Capture() { return (double[])_spent.Clone(); }
+        internal State Capture() { return new State { Spent = (double[])_spent.Clone(), Economy = Economy?.Capture() }; }
 
-        internal void Restore(double[] spent) { Array.Copy(spent, _spent, CurrencyCount); }
+        internal void Restore(State s)
+        {
+            Array.Copy(s.Spent, _spent, CurrencyCount);
+            if (Economy != null && s.Economy != null) Economy.Restore(s.Economy);
+        }
 
-        internal void AddTo(ref HashCode h) { foreach (double s in _spent) h.Add(s); }
+        internal void AddTo(ref HashCode h)
+        {
+            foreach (double s in _spent) h.Add(s);
+            Economy?.AddTo(ref h);
+        }
 
         static string HierarchyPath(Transform t)
         {

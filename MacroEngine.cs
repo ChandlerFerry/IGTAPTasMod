@@ -55,6 +55,9 @@ namespace IGTAPTasMod
         private long _physicsTicks;
         // A chain segment (Continue) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
         private bool _countEveryPhysicsTick;
+        // The step whose quick restart (MacroStep.rawQuickRestart) was already done: it fires once, on the first physics
+        // tick the step is due (a dash tick included, when the step's input waits for the dash to end).
+        private int _quickRestartStep = -1;
         // A purchase segment: which of its boxes (CourseDef.boxes, by index) this run bought so far.
         private int _purchasesMade;
         private bool _requireCourseFinish;
@@ -114,6 +117,7 @@ namespace IGTAPTasMod
             _runTicks = 0;
             _physicsTicks = 0;
             _countEveryPhysicsTick = false;
+            _quickRestartStep = -1;
             _purchasesMade = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
@@ -143,6 +147,7 @@ namespace IGTAPTasMod
             _elapsedTicks = elapsedTicks;
             _wallJumpTriggered = false;
             _finishWaitTicks = 0;
+            _quickRestartStep = -1;
         }
 
         // The next segment of a chain, from exactly where the previous one ended: a chain's segments are one continuous
@@ -172,6 +177,7 @@ namespace IGTAPTasMod
             _runTicks = 0;
             _physicsTicks = 0;
             _countEveryPhysicsTick = true;
+            _quickRestartStep = -1;
             _purchasesMade = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
@@ -184,6 +190,27 @@ namespace IGTAPTasMod
             _earlyTrace.Clear();
             Status = "Running: " + macro.name;
             if (!Quiet) TasPlugin.Log.LogInfo(Status);
+        }
+
+        // Movement.FixedUpdate prefix (plugin) / before it (enginesim): true once when the next step to run is a quick
+        // restart; the caller then does the game's quick restart, Movement.respawn(true).
+        public bool TakeQuickRestart()
+        {
+            if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0 || _stepIndex < 0 || _stepIndex >= _steps.Count
+                || _elapsedTicks != 0 || _quickRestartStep == _stepIndex) return false;
+            MacroStep step = _steps[_stepIndex];
+            if (step.type != MacroStepType.RawInput || !step.rawQuickRestart) return false;
+            _quickRestartStep = _stepIndex;
+            return true;
+        }
+
+        // A run resumed later from a capture taken now starts its own input count at 0 (its inputs are the ones after this
+        // point) while the physics tick count goes on: enginesim's Full-TAS windows start mid-run this way. Every physics
+        // tick counts from here, as it did in the run so far (its first input is behind it).
+        public void RebaseInputs()
+        {
+            _runTicks = 0;
+            _countEveryPhysicsTick = true;
         }
 
         // Drops the run without ending an attempt (no AttemptEnded): a chain start capture only needed its state.
@@ -227,9 +254,13 @@ namespace IGTAPTasMod
         // A purchase segment's run finishes when the game itself buys its upgrade box (upgradeBox.DoBuyUpgrade).
         internal const string PurchaseFinishReason = "Upgrade bought";
 
+        // A Full-TAS run finishes when the game has reached every one of its goals (FullTasTracker), in order.
+        internal const string FullTasFinishReason = "Full-TAS goals reached";
+
         internal static bool IsFinishReason(string reason)
         {
-            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason || reason == PurchaseFinishReason;
+            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason || reason == PurchaseFinishReason
+                || reason == FullTasFinishReason;
         }
 
         // A purchase segment's boxes (hierarchy paths; a path listed twice must be bought twice): the game just bought

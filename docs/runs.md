@@ -9,8 +9,8 @@ within a second, never mid-run.
 
 ```json
 { "name": "newgame", "capabilities": "none",
-  "segments": ["newgame", "newgameto1", "1", "restart", "buyreward", "restart", "…",
-               "buywj", "restart", "chain:wj", "buydash", "restart", "chain:dash"] }
+  "segments": ["newgame", "newgameto1", "1", "restart", "buyreward", "restart", "…", "buywj", "restart", "chain:wj",
+               "restart", "buyreward2", "…", "restart", "buydash", "restart", "chain:dash"] }
 ```
 
 | Entry | What it is | Finishes |
@@ -19,7 +19,7 @@ within a second, never mid-run.
 | `2`, `bonus1` | A course / a bonus. | Its end gate / its reward box. |
 | `<from>to<to>` | A transition (`1to2`, `2tobonus1`, `bonus1to2`, `newgameto1`). One courses.json lacks starts wherever the run arrives. | The next course's start gate starting its timer, or the 32 px box at a bonus's start. |
 | `buyreward`, `buyclone`, `buywj` | Course 1's `CashPerLoop`, `Clone`, `Wall jump` boxes (`Courses/course 1/localUpgrades/…`). | The game itself buying the box (`upgradeBox.DoBuyUpgrade`). |
-| `buydash` | Course 2's `DashUnlock` box (30000 W). After `buywj` only. | Same. |
+| `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buydash` | Course 2's `CashPerLoop`, `Clone`, `CloneMult`, `GLOBALcashPerLoop` and `DashUnlock` boxes (`Courses/course 2/localUpgrades/…`), in a row left of its quick-restart point. bonus1's free reward box has the same `GLOBALcashPerLoop` path; bonus1 buys it. `buydash` after `buywj` only. | Same. |
 | `buyreward+buyclone`, … | One segment that buys several boxes (up to 8; a token twice = bought twice), e.g. one bump under two boxes. `buywj` / `buydash` in it unlock like on their own. | The game having bought every one of them in this segment. |
 | `restart` | The game's quick restart (`Movement.respawn(true)`) as the next segment's first act: the running course's reset point, else the last checkpoint. | — |
 | `chain:<name>` | That chain's segments (and its restarts) in place. | — |
@@ -82,8 +82,11 @@ pay through each physics tick of the segment (recorded in turbo standing still, 
 every currency and every upgrade box's state. Offline, `upgradeBox.OnTriggerStay2D` runs the game's buy rule
 (`enginesim/Runtime/Shop.cs`): the box buys on a trigger stay (the tick after the player first overlaps its strip) when
 its 0.2 s cooldown is up, the Cash covers its cost and it is active. So a bump under another box spends Cash there first,
-a graze that never stays doesn't buy, and a purchase waiting on clone income happens when the clones have paid. What a
-bought clone or reward adds to income is not modeled; global, prestige and buy-max boxes end an offline run. Trace
+a graze that never stays doesn't buy, and a purchase waiting on clone income happens when the clones have paid. A start
+captured since the native economy (`start.economy.clones`) runs rewards, clones and Course 1's box effects offline instead
+of `income` (`docs/fulltas.md`, Offline economy). Prestige and buy-max boxes, and global boxes other than the global
+reward one (`GLOBALcashPerLoop`, native economy only), end an offline run. Offline, a global reward purchase updates its
+own course's reward only; the game updates the other courses' on their own 5 s repeat (a random phase). Trace
 ticks carry `cash`, which `replay` compares. `python tools/validate.py` re-runs every route, segment routes from where
 the run's routes before them end (segment numbers from the plugin's `/api/state`).
 
@@ -114,19 +117,27 @@ the run's routes before them end (segment numbers from the plugin's `/api/state`
 
 ## Economy (new game)
 
-`python tools/plan-newgame.py [--keep N] --write` searches Course 1's purchase order up to wall jump in time order
-(~1.5 min) and writes the `newgame` chain, ending `buywj, restart, chain:wj, buydash, restart, chain:dash`. The player
-never stands under a box waiting for clone income when running Course 1 for the money gets there sooner. `--keep N`
-keeps the chain's first N segments (the solved ones) and plans from where they end. Its segment times are estimates:
-replace them with solved times and rerun.
+`python tools/plan-newgame.py [--keep N] [--evals N] --write` plans both purchase phases and writes the `newgame` chain.
+Phase 1 searches Course 1's purchase order up to wall jump in time order (~1.5 min). The player never waits under a box
+for clone income if running Course 1 gets the money sooner. Then `chain:wj` runs, and bonus1 ends at the free +40%
+box. Phase 2 plans Course 2's purchases up to dash. Each purchase happens as early as the model allows: after k Course 2
+laps and the walk from the restart, or straight on along the row. The player waits under the box while the clones pay.
+The order starts greedy (best income gain per W) and is improved by a seeded local search (`--evals` tries,
+~2 min at 30000). `--keep N` keeps the chain's first N segments (the solved ones; `chain:wj` counts its six) and plans
+from where they end. Its segment times are estimates: replace them with solved times and rerun.
 
-- Course 1 pays `1 + base-reward buys`; base reward costs 1, then `ceil(prev × 1.1)`; clones cost 8, then
-  `ceil(prev × 1.153)`; a clone pays `ceil(0.1 × reward)` per lap (lap = best Course 1 run), a new clone spawns every
-  lap / N. Wall jump costs 700 W, dash 30000 W.
+- A box costs its base × 10^(course tier) (`upgradeBox.Start`), then `ceil(prev × scale)` after each buy (a global
+  box: `round`). A course pays `ceil(baseReward × (1 + 0.4 × global reward buys) × (1 + its reward buys) ×
+  10^tier)`. A clone pays `ceil(reward × (0.1 + 0.1 × clone multiplier buys))` per lap (lap = the course's best run),
+  and a new clone spawns every lap / N. A course's clones pay the same per second while the player is away from it.
+- Course 1 (tier 0, baseReward 1): base reward 1, then ×1.1; clones 8, then ×1.153; wall jump 700 W.
+- Course 2 (tier 2, baseReward 4; one run 400 W, 560 W after bonus1): reward 400, then ×1.14 (cap 45); clones 800,
+  then ×1.21 (cap 35); clone multiplier 3800, then `(prev + 1000) × 2` (cap 10); global reward 55000, then 275000
+  (cap 2); dash 3,000,000 W (30000 × 10²; the in-game "3.00MW").
 - A bump before a box is affordable still starts its 0.2 s cooldown. Real time pays clones per render frame (turbo:
   50 fps): leave a tick or two of slack before a purchase that depends on clone income.
 
-## Status (2026-09-24)
+## Status (2026-09-25)
 
 - Solved: `newgame/newgameto1_NO_WJ 5.50`, `newgame/1_NO_WJ 2.04`. The lead-in solve took the lap from 2.12 to 2.04 without
   slowing the transition: it now jumps on flat ground 4 ticks before the gate. The chain can't reach 2.02 here because
@@ -144,4 +155,12 @@ replace them with solved times and rerun.
   jump buffered and turned mid-air), then cuts the last jump at its peak so the arc drops onto the end gate sooner.
   Found in seconds once `solve` kept equally fast mutations (neutral drift); before that it sat at 2.14 while the
   newgame chain's `1#k` laps already ran 2.06 on the game timer.
-- Between `chain:wj` and `buydash` nothing earns the 30000 W yet except the clones: plan Course 2's economy there.
+- Dash costs 3,000,000 W, not 30000 (Course 2's tier 2 multiplies its boxes' base costs by 100). The `newgame` chain
+  now buys Course 2's economy between `chain:wj` and `buydash` (`plan-newgame.py --keep 72 --write`; the previous chain
+  is `chains.before-dash-replan.json`). Model: arrival at 1007 W (captured: 911 W at bonus1to2's start, plus 8.36 s of
+  Course 1 clones), dash at 64.54 s after `chain:wj`. The plan: 4 single laps while the clones are few, then it stays
+  at the row: 38 reward buys, 26 clones, 6 clone multipliers, both global reward buys. Then 2 laps before dash. Clone
+  income overtakes laps after the first clone multiplier. A lap earns about 560 × (1 + reward buys) W every 159 ticks,
+  while the clones earn 26 × 24,025 W every 128 ticks by the end.
+- Running the economy right after `wj`'s Course 2 lap, with bonus1's detour after it, is about 2 s faster in the model.
+  It is left out: the model is less accurate than that, and it would split `chain:wj`.
