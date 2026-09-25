@@ -47,12 +47,9 @@ namespace IGTAPTasMod
         private Vector2 _dashJumpAxis;
         private int _springDashFrame;
         private int _springTicks;
-        // The last input tick's stick for the input-less ticks after it (MacroStep.lockMoveX/Y).
         private bool _lockArmed;
         private float? _lockX, _lockY;
-        // The step whose presses this run already made (at a tick start, BeforeTick, or a dash's wall end, WallTouch).
         private int _pressedStep = -1;
-        // This tick: whether it started in a dash or spring lock (no input hook), and the stick the game reads.
         private bool _tickLocked;
         private Vector2 _tickStick;
         private bool _waitingForStable;
@@ -91,11 +88,6 @@ namespace IGTAPTasMod
         public event Action<bool, string, int, long> AttemptEnded;
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
-        // The stick the game reads from the controller this tick (NormaliseInput, in FixedUpdate and the Update after
-        // it; Unity samples the controller once per frame). The input hook sets the tick's whole stick after FixedUpdate
-        // read it; only y of that read matters there (fast fall, wall-slide speed), so x rests. On a tick in a dash or
-        // spring lock nothing sets it after, and it is the stick the last input tick held for the lock (x reaches
-        // Movement.CheckForSuperJump: a super jump's direction).
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
         public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
@@ -173,16 +165,11 @@ namespace IGTAPTasMod
             return true;
         }
 
-        // Before Movement.FixedUpdate (plugin prefix / enginesim), after the quick restart: where a player's presses are,
-        // since the game takes them only in Update, before the whole physics tick. A tick in a dash or spring lock takes
-        // no input tick; there the only presses are a dash frame's jump (MacroStep.dashJumpFrame) and a spring's dash
-        // (springDashFrame), and the next input tick's presses wait for the first tick out of the lock.
         public void BeforeTick(Movement movement)
         {
             if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0) { _tickStick = Vector2.zero; return; }
             string mode = ReadObject(CutsceneModeField, movement);
             bool dash = string.Equals(mode, "dash", StringComparison.OrdinalIgnoreCase);
-            // A dash whose frames run out ends in this tick's FixedUpdate before its input hook.
             bool dashEnds = dash && ReadBool(DashActiveField, movement) && ReadFloat(DashFramesRemainingField, movement) <= 0f;
             _tickLocked = !string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase) && !dashEnds;
             MacroStep due = _stepIndex >= 0 && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
@@ -207,9 +194,6 @@ namespace IGTAPTasMod
                 : new Vector2(0f, nextY);
         }
 
-        // Movement.touchedSolidGround/touchedMossyGround prefix: the wall branch's first call, before it reads jumpBuffer
-        // (a wall bounce, a dash's wall jump). A dash that hits a wall ends there and the tick takes its input tick after
-        // all: its presses go in now, before any of the tick's reads of the buttons, as if made before the tick.
         public void WallTouch(Movement movement, bool touchedGround)
         {
             if (!IsRunning || touchedGround || !_tickLocked
@@ -217,7 +201,6 @@ namespace IGTAPTasMod
             PressStep(movement);
         }
 
-        // The due raw-input step's presses and release, once.
         private void PressStep(Movement movement)
         {
             if (_stepIndex < 0 || _stepIndex >= _steps.Count || _elapsedTicks != 0 || _pressedStep == _stepIndex) return;
@@ -408,8 +391,6 @@ namespace IGTAPTasMod
             _lockArmed = entering && (step.lockMoveX.HasValue || step.lockMoveY.HasValue);
             _lockX = step.lockMoveX;
             _lockY = step.lockMoveY;
-            // Made at the tick start (BeforeTick) or the dash's wall end (WallTouch); a tick neither saw has no earlier
-            // place left for them.
             if (entering) PressStep(movement);
             _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;

@@ -14,12 +14,9 @@ namespace IGTAP.EngineSim
         public bool held, press, release, dash;
         public int dashJump;
         public int springDash;
-        // The stick held on the input-less ticks right after this one (MacroStep.lockMoveX/Y; null: x at rest, y of the
-        // next input tick).
         public float? lockX, lockY;
         public bool reset;
 
-        // Arms something for the input-less ticks after it: a step of its own, never merged into.
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
         public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && reset == o.reset; }
