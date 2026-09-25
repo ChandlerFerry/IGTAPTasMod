@@ -73,6 +73,7 @@ namespace IGTAP.EngineSim
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, Drifts, BranchChecks, BranchMatches;
+        public static long DbgStateCaps, DbgBetterCaps;
         // A forced path: the most of its boxes any run has passed so far.
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
@@ -188,6 +189,11 @@ namespace IGTAP.EngineSim
         {
             const float CellSize = 48f;
             const float SegmentSlack = .2f;
+            // A best's replay keeps a snapshot and a fingerprint every StateEvery input ticks, not every tick: a mutation
+            // resumes from the snapshot at or before its first changed tick (a few ticks more to step), and convergence is
+            // checked on those ticks only. Snapshotting every tick of a long route (Course 4: ~670) on each drift made the
+            // solver spend most of its time allocating snapshots and collecting them.
+            const int StateEvery = 16;
             readonly OfflineSolver _owner;
             readonly Simulation _sim;
             readonly System.Random _rng;
@@ -673,7 +679,7 @@ namespace IGTAP.EngineSim
                     if (states != null && tick < _replayBody.Length)
                     {
                         _replayBody[tick] = _sim.Physics.PlayerBody();
-                        _replayFingerprint[tick] = _sim.Fingerprint();
+                        if (tick % StateEvery == 0) _replayFingerprint[tick] = _sim.Fingerprint();
                         _replayWaypoints[tick] = _waypoints;
                     }
                     else if (tick >= converge && _bestFingerprint != null && tick < _bestFingerprint.Length && _bestFingerprint[tick] is int best
@@ -740,7 +746,8 @@ namespace IGTAP.EngineSim
             {
                 bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
-                SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
+                SimSnapshot state = resumable && (better || states != null && tick % StateEvery == 0) ? _sim.Capture(tick) : null;
+                if (state != null) { if (states != null) Interlocked.Increment(ref DbgStateCaps); else Interlocked.Increment(ref DbgBetterCaps); }
                 if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
