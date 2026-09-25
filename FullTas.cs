@@ -11,15 +11,24 @@ namespace IGTAPTasMod
         public const string Start = "start", Finish = "finish", Buy = "buy", Reward = "reward";
         // The config token: "start:1" (course 1's start gate starts its timer), "finish:1" (its end gate stops it, the
         // player's own finish), "buy:buyreward+buyclone" (the game bought each of these boxes, any order), "reward:bonus1"
-        // (the player touches the bonus's reward box).
+        // (the game bought the bonus's reward box, the upgrade box nearest the bonus's end rect: the bonus's unlock).
         public string label;
         public string kind;
         // start / finish: the course number.
         public int course;
-        // buy: the boxes' hierarchy paths (a path twice must be bought twice).
+        // buy / reward: the boxes (a box twice must be bought twice). Each is a box id (BoxId: exactly that box) or a plain
+        // hierarchy path (any box at that path; two boxes can share one, e.g. course 2's GLOBALcashPerLoop and bonus 1's).
         public string[] boxes;
-        // reward: the box's world rect (centre and size) that one of the player's colliders must touch.
+        // reward: the bonus's end rect (centre and size, world coordinates), where its reward box was looked for.
         public float x, y, w, h;
+        // How far from the bonus's end rect's centre its reward box may be (world units; the boxes are about 157 above).
+        public const float RewardBoxRange = 400f;
+
+        // A box's id: its hierarchy path and its sibling index (Transform.GetSiblingIndex; enginesim: the world export's).
+        public static string BoxId(string path, int sibling)
+        {
+            return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
     }
 
     // Which goals a run has reached so far, and when. Events that don't match the next goal change nothing (buying some
@@ -68,20 +77,14 @@ namespace IGTAPTasMod
             return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics);
         }
 
-        public bool Bought(string box, long input, long physics)
+        // The game bought the box at hierarchy path `path` with id `id` (BoxId): a buy or reward goal's box.
+        public bool Bought(string path, string id, long input, long physics)
         {
             FullTasGoal g = Current;
-            if (g == null || g.kind != FullTasGoal.Buy || g.boxes == null) return false;
+            if (g == null || g.kind != FullTasGoal.Buy && g.kind != FullTasGoal.Reward || g.boxes == null) return false;
             for (int i = 0; i < g.boxes.Length; i++)
-                if ((_bought & (1 << i)) == 0 && g.boxes[i] == box) { _bought |= 1 << i; break; }
+                if ((_bought & (1 << i)) == 0 && (g.boxes[i] == id || g.boxes[i] == path)) { _bought |= 1 << i; break; }
             return _bought == (1 << g.boxes.Length) - 1 && Reach(input, physics);
-        }
-
-        // The caller checks the player against Current's rect (kind reward) every physics tick.
-        public bool RewardTouched(long input, long physics)
-        {
-            FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.Reward && Reach(input, physics);
         }
 
         bool Reach(long input, long physics)

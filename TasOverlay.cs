@@ -24,7 +24,7 @@ namespace IGTAPTasMod
             public bool jump, dash;
         }
 
-        const int MaxInputRows = 500;
+        const int MaxInputRows = 30;
         readonly List<InputRow> _inputRows = new List<InputRow>();
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
         Movement _overlayPlayer;
@@ -38,6 +38,41 @@ namespace IGTAPTasMod
         int _overlayJumpPresses, _overlayDashPresses;
         GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlayGraze;
         int _overlayStyleHeight;
+
+        // ---- Dropped frames. Turbo and enginesim give every physics tick exactly one Update after it (clones, the
+        // game's per-frame timers, everything Update-driven runs once per tick at dt = fixedDeltaTime). A real-time
+        // playback that renders fewer frames than physics ticks runs two or more ticks with no Update between them,
+        // so Update-driven game state (clone pay, purchases waiting on it) can come out differently from the route's.
+        // Counted from the first listed tick of a playback: a frame that covered n ticks drops n - 1.
+        int _ticksSinceFrame;
+        int _droppedFrames, _worstFrameTicks;
+        long _lastDropTick;
+        // Shown this long after the playback ends, so the result stays readable.
+        const float DroppedFramesLingerSeconds = 10f;
+        float _droppedFramesShownUntil;
+
+        // TasPlugin.Update: one render frame ended. The ticks OverlayTick counted since the previous one tell whether
+        // physics ticks ran without a frame of their own.
+        void OverlayFrame()
+        {
+            int ticks = _ticksSinceFrame;
+            _ticksSinceFrame = 0;
+            if (ticks <= 1 || !OverlayListsRun) return;
+            if (_droppedFrames == 0)
+                Log.LogWarning("Playback is dropping frames: " + ticks + " physics ticks in one frame at tick " + _engine.PhysicsTicks
+                    + ". Update-driven game state (clone pay) may differ from the route's; the overlay counts every drop.");
+            _droppedFrames += ticks - 1;
+            _worstFrameTicks = Mathf.Max(_worstFrameTicks, ticks);
+            _lastDropTick = _engine.PhysicsTicks;
+            _droppedFramesShownUntil = Time.unscaledTime + DroppedFramesLingerSeconds;
+        }
+
+        // For a playback's result line: "" when it dropped none.
+        string DroppedFramesText()
+        {
+            return _droppedFrames == 0 ? "" : " · " + _droppedFrames + " dropped frame" + (_droppedFrames == 1 ? "" : "s")
+                + " (up to " + _worstFrameTicks + " ticks in one frame, last at tick " + _lastDropTick + ")";
+        }
 
         bool OverlayListsRun { get { return _engine.IsRunning && !_engine.Quiet && !_silentEvaluation && !TurboRunner.Active; } }
 
@@ -58,12 +93,20 @@ namespace IGTAPTasMod
                 // previous one finished, so a new route or a restarted tick count also starts one.
                 if (_overlayLastTick == 0 || _engine.PhysicsTicks < _overlayLastTick || !ReferenceEquals(_engine.ActiveMacroName, _overlayRoute))
                 {
-                    if (_chainRun == null || _chainRun.index == 0) { _inputRows.Clear(); _overlayTicks = 0; }
+                    if (_chainRun == null || _chainRun.index == 0)
+                    {
+                        _inputRows.Clear();
+                        _overlayTicks = 0;
+                        _droppedFrames = _worstFrameTicks = 0;
+                        _lastDropTick = 0;
+                        _ticksSinceFrame = 0;
+                    }
                     _overlayRoute = _engine.ActiveMacroName;
                     _inputRows.Add(new InputRow { header = "▸ " + (_overlayRoute ?? "") });
                 }
                 _overlayLastTick = _engine.PhysicsTicks;
                 _overlayTicks++;
+                _ticksSinceFrame++;
                 _overlayClock = null;
                 float x = _overlayAxis.x, y = _overlayAxis.y;
                 bool jumpPress = _engine.JumpPresses != _overlayJumpPresses;
@@ -104,6 +147,18 @@ namespace IGTAPTasMod
             DrawHitbox(scale);
             DrawGraze(scale);
             if (_inputRows.Count > 0) DrawInputPanel(scale);
+            if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
+        }
+
+        // Top centre, red: this playback dropped frames, so it may not play out like the route.
+        void DrawDroppedFrames(float scale)
+        {
+            string text = "DROPPING FRAMES · " + _droppedFrames + " tick" + (_droppedFrames == 1 ? "" : "s") + " without a frame · worst "
+                + _worstFrameTicks + " ticks/frame · last at tick " + _lastDropTick;
+            float width = 760 * scale, height = 40 * scale;
+            Rect box = new Rect((Screen.width - width) / 2f, 16 * scale, width, height);
+            Fill(box, new Color(0.55f, 0f, 0f, 0.85f));
+            Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), text, _overlayText, Color.white);
         }
 
         void BuildOverlayStyles(float scale)

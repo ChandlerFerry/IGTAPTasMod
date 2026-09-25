@@ -35,6 +35,8 @@ namespace IGTAP.EngineSim
         // The boxes TurboRunner.Run counts down: on active objects, enabled.
         readonly upgradeBox[] _ticking;
         readonly Dictionary<upgradeBox, string> _paths = new Dictionary<upgradeBox, string>();
+        // Full-TAS box ids (FullTasGoal.BoxId): hierarchy paths aren't unique.
+        readonly Dictionary<upgradeBox, string> _ids = new Dictionary<upgradeBox, string>();
         readonly double[] _start = new double[CurrencyCount];
         double[] _spent = new double[CurrencyCount];
         // Cash the clones paid through physics tick k + 1 of the run (TasPlugin.PurchaseIncome).
@@ -56,7 +58,11 @@ namespace IGTAP.EngineSim
             _sim = sim;
             upgradeBox[] boxes = world.All<upgradeBox>();
             _ticking = boxes.Where(b => b.gameObject.activeInHierarchy && b.enabled).ToArray();
-            foreach (upgradeBox b in boxes) _paths[b] = HierarchyPath(b.transform);
+            foreach (upgradeBox b in boxes)
+            {
+                _paths[b] = HierarchyPath(b.transform);
+                _ids[b] = FullTasGoal.BoxId(_paths[b], world.SiblingIndex[b.transform]);
+            }
             // The world export's Cash; a start state with its economy (LoadStart) replaces it.
             if (globalStats.currencyLookup != null)
                 foreach (KeyValuePair<globalStats.Currencies, double> c in globalStats.currencyLookup)
@@ -156,7 +162,9 @@ namespace IGTAP.EngineSim
                     || box.movementUpgrade == upgradeBox.movementUpgrades.wallJump || box.movementUpgrade == upgradeBox.movementUpgrades.doubleJump));
             if (!modeled)
             {
-                _sim.Engine.Abort("Unmodeled purchase: " + path);
+                _sim.Engine.Abort("Unmodeled purchase: " + path + (!global || box.buyMax && !box.neverBuyMax ? ""
+                    : Economy == null ? " (a global upgrade needs the native economy: this trace's start state has no clones)"
+                    : box.globalUpgrade != globalStats.globalUpgradeSet.cashPerLoop ? " (global upgrade " + box.globalUpgrade + ")" : ""));
                 return;
             }
             box.TimesUsed++;
@@ -191,7 +199,24 @@ namespace IGTAP.EngineSim
             // TasPlugin.AfterBuyUpgrade.
             if (_targets != null && _sim.Engine.RecordPurchase(_targets, path))
                 _sim.Engine.CompleteFromGame(MacroEngine.PurchaseFinishReason, _sim.Engine.PhysicsTicks * _sim.World.FixedDeltaTime);
-            _sim.Bought(path);
+            _sim.Bought(path, _ids[box]);
+        }
+
+        // Whether some box has this id or hierarchy path (a Full-TAS goal's box).
+        internal bool HasBox(string box) { return _ids.ContainsValue(box) || _paths.ContainsValue(box); }
+
+        // The id of the upgrade box nearest the world point (x, y), closer than `range` (TasPlugin.FullTasRewardBox's rule); null: none.
+        internal string NearestBox(float x, float y, float range)
+        {
+            string best = null;
+            float bestDistance = range * range;
+            foreach (KeyValuePair<upgradeBox, string> b in _ids)
+            {
+                Vector3 p = b.Key.transform.position;
+                float dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+                if (d < bestDistance) { best = b.Value; bestDistance = d; }
+            }
+            return best;
         }
 
         internal State Capture() { return new State { Spent = (double[])_spent.Clone(), Economy = Economy?.Capture() }; }

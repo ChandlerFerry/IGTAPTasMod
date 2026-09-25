@@ -53,6 +53,26 @@ namespace IGTAP.EngineSim.Cli
         // an equal start.
         readonly Dictionary<(int, string), List<List<InputTick>>> _memo = new Dictionary<(int, string), List<List<InputTick>>>();
 
+        // A saved route of a course, bonus or transition the run's goals name (--seed <file>, TasPlugin.WriteFullTasSeeds):
+        // tried as a window's start when the window has one of its goals.
+        sealed class Seed
+        {
+            public string Name;
+            public string[] Goals;
+            // It starts standing at its course's quick-restart point (a standalone route); its chain segment starts with
+            // a quick restart.
+            public bool Standing, Restart;
+            // The category it was made in (CapsLevel: none 0, wj 1, wjdash 2, wjdashaj 3): a seed that needs an unlock the
+            // run hasn't bought yet at the window's start isn't tried.
+            public int Level;
+            public List<InputTick> Inputs;
+        }
+        const int MaxSeedStarts = 64, MaxSettle = 12;
+        readonly List<string> _seedFiles = new List<string>();
+        readonly List<Seed> _seeds = new List<Seed>();
+        // The frontier (goals reached, physics ticks at the last one) the seeds were last tried at.
+        (int, long) _seededFrontier = (-1, -1);
+
         FullTas(string[] args)
         {
             _trace = args[0];
@@ -65,6 +85,7 @@ namespace IGTAP.EngineSim.Cli
             _submit = !args.Contains("--no-submit");
             // --fresh: start from the trace's inputs, not the run's saved state.
             _fresh = args.Contains("--fresh");
+            for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
         }
 
         public static int Run(string[] args) { return new FullTas(args).Search(); }
@@ -106,6 +127,10 @@ namespace IGTAP.EngineSim.Cli
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            if (_seeds.Count > 0)
+                Console.WriteLine($"Seeds: {_seeds.Count} saved routes for " + string.Join(", ", _seeds.SelectMany(s => s.Goals).Distinct()
+                    .Select(g => g + " (" + _seeds.Count(s => s.Goals.Contains(g)) + ")")));
             if (_submit)
             {
                 _pending = new Latest();
@@ -114,7 +139,9 @@ namespace IGTAP.EngineSim.Cli
 
             while (!TimeUp)
             {
+                // The first goal not reached yet, when a saved route of its course reaches it: tried before anything else.
                 bool searched = false;
+                while (!TimeUp && SeedFrontier()) searched = true;
                 for (int i = 0; i < _goals && !TimeUp; i++)
                 {
                     Route best = _best;
@@ -122,6 +149,13 @@ namespace IGTAP.EngineSim.Cli
                     // Windows start at a goal the best reached (or the run's start); the first goal it didn't reach is
                     // searched alone, so each finish there is one more goal.
                     if (i > reached) break;
+                    if (i == reached && SeedFrontier())
+                    {
+                        // The frontier moved on: go on from there.
+                        i = _best.Progress - 1;
+                        searched = true;
+                        continue;
+                    }
                     int limit = reached == _goals ? Math.Min(i + _window, _goals) : i == reached ? reached + 1 : Math.Min(i + _window, reached);
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
                     long baseline = reached >= limit ? best.GoalPhysics[limit - 1] : long.MaxValue;
@@ -188,6 +222,10 @@ namespace IGTAP.EngineSim.Cli
                 foreach (List<InputTick> r in known)
                     if (!seeds.Any(s => s.SequenceEqual(r))) seeds.Add(r);
             string span = first == limit - 1 ? _labels[first] : _labels[first] + ".." + _labels[limit - 1];
+            // The saved routes of the window's courses (--seed) as starts; worker 0 runs them before exploring.
+            List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, first, limit);
+            foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
+            if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
 
             // A simulation runs on the thread that made it: each worker replays the prefix itself.
             Func<Simulation> create = () =>
@@ -234,6 +272,141 @@ namespace IGTAP.EngineSim.Cli
             if (list.Any(r => r.SequenceEqual(route))) return;
             list.Add(route);
             if (list.Count > 4) list.RemoveAt(0);
+        }
+
+        // Window starts from the seeds that have one of goals first..limit-1, for a window from state `at` (after `prefix`),
+        // each seed's likeliest first:
+        // - a standing seed after a quick restart and the ticks the player then takes to stand still (where it was made);
+        // - a chain segment that starts with a quick restart: the seed with the restart on its first tick;
+        // - the seed as it is;
+        // - the seed after a quick restart and 0..12 idle ticks (nearest the ticks to stand still first).
+        // No quick restart on the window's first tick right after the prefix's own (a real button is released in between).
+        // Round-robin over the seeds, deduped, at most MaxSeedStarts. Leaves _eval starting at `at`.
+        List<(string how, List<InputTick> inputs)> SeedStarts(SimSnapshot at, List<InputTick> prefix, int first, int limit)
+        {
+            var starts = new List<(string how, List<InputTick> inputs)>();
+            var labels = new HashSet<string>(_labels.Skip(first).Take(limit - first));
+            _eval.Restore(at);
+            Movement player = _eval.Player;
+            int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : 3;
+            // The run's own category first (a wall-jump lap once it has wall jump), then the ones below it.
+            List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
+            if (matching.Count == 0) return starts;
+            bool restart = prefix.Count == 0 || !prefix[prefix.Count - 1].reset;
+            _eval.SetStart(at, prefix.Count);
+            _eval.Goals.Limit = _goals;
+            int settle = -1;
+            if (restart)
+            {
+                int still = SeedAlign.Still(_eval, new List<InputTick> { new InputTick { reset = true } }, 300).ticks;
+                settle = still < 1 ? -1 : still - 1;
+            }
+            List<InputTick> Restarted(Seed s, int idle)
+            {
+                var inputs = new List<InputTick>(idle + 1 + s.Inputs.Count) { new InputTick { reset = true } };
+                inputs.AddRange(Enumerable.Repeat(new InputTick(), idle));
+                inputs.AddRange(s.Inputs);
+                return inputs;
+            }
+            var perSeed = matching.Select(s =>
+            {
+                var list = new List<(string how, List<InputTick> inputs)>();
+                if (restart && s.Standing && settle >= 0) list.Add((s.Name + ", after a quick restart and " + settle + " ticks to stand still", Restarted(s, settle)));
+                if (restart && s.Restart && s.Inputs.Count > 0)
+                {
+                    List<InputTick> own = s.Inputs.ToList();
+                    InputTick head = own[0];
+                    head.reset = true;
+                    own[0] = head;
+                    list.Add((s.Name + ", with a quick restart on its first tick", own));
+                }
+                list.Add((s.Name + ", as it is", s.Inputs));
+                if (restart)
+                    foreach (int k in Enumerable.Range(0, MaxSettle + 1).OrderBy(k => Math.Abs(k - Math.Max(0, settle))))
+                        if (!(s.Standing && k == settle)) list.Add((s.Name + ", after a quick restart and " + k + " idle ticks", Restarted(s, k)));
+                return list;
+            }).ToList();
+            for (int tier = 0; starts.Count < MaxSeedStarts && perSeed.Any(l => tier < l.Count); tier++)
+                foreach (var list in perSeed)
+                    if (tier < list.Count && starts.Count < MaxSeedStarts && !starts.Any(s => s.inputs.SequenceEqual(list[tier].inputs)))
+                        starts.Add(list[tier]);
+            return starts;
+        }
+
+        // The first goal the best doesn't reach, when seeds have it: each seed start (SeedStarts) runs from the state after
+        // the best's last goal, and the one that reaches the most goals, soonest, goes into the run through its last goal;
+        // kept when the whole run judged from the start does better. Tried once per frontier.
+        bool SeedFrontier()
+        {
+            Route best = _best;
+            int reached = best.Progress;
+            if (reached == _goals || !_seeds.Any(s => s.Goals.Contains(_labels[reached]))) return false;
+            (int, long) frontier = (reached, reached == 0 ? 0L : best.GoalPhysics[reached - 1]);
+            if (_seededFrontier == frontier) return false;
+            _seededFrontier = frontier;
+            int prefixLength = reached == 0 ? 0 : (int)Math.Min(best.GoalInput[reached - 1], best.Inputs.Count);
+            List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot at = _eval.Advance(prefix);
+            if (at == null) return false;
+            _eval.Restore(at);
+            // A goal reached on a dash tick after the prefix's last input: left to the windows.
+            if (_eval.Progress != reached) return false;
+            List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, reached, reached + 1);
+            string title = $"seeds for goal {reached + 1}/{_goals} {_labels[reached]}";
+            RunResult top = null;
+            int reaching = 0;
+            (string how, List<InputTick> inputs) chosen = default;
+            _eval.SetStart(at, prefixLength);
+            _eval.Goals.Limit = _goals;
+            foreach (var s in starts)
+            {
+                RunResult r = _eval.Run(s.inputs);
+                if (r.Progress <= reached) continue;
+                reaching++;
+                if (top == null || r.Progress > top.Progress
+                    || r.Progress == top.Progress && r.GoalPhysicsTicks[r.Progress - 1] < top.GoalPhysicsTicks[top.Progress - 1]) { top = r; chosen = s; }
+            }
+            if (top == null)
+            {
+                Log($"{title}: none of {starts.Count} starts from saved routes reaches it");
+                return false;
+            }
+            Log($"{title}: {chosen.how} reaches goal {top.Progress}/{_goals} {_labels[top.Progress - 1]} at "
+                + (top.GoalPhysicsTicks[top.Progress - 1] * _dt).ToString("0.00", CultureInfo.InvariantCulture) + $"s ({reaching} of {starts.Count} starts reach it)");
+            Route run = Splice(best, prefixLength, chosen.inputs, top.Progress, best);
+            if (run == null || !Better(run, _best))
+            {
+                Log(title + ": the whole run with it does no better; dropped");
+                return false;
+            }
+            Commit(run, "seeded: " + chosen.how);
+            return true;
+        }
+
+        // A --seed file: {name, goals: [labels], standing, restart, ticks} (older seeds: course or token instead of goals).
+        static Seed ReadSeed(string path)
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 });
+            JsonElement root = doc.RootElement;
+            bool Flag(string name) { return root.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.True; }
+            var goals = new List<string>();
+            if (root.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array) goals.AddRange(g.EnumerateArray().Select(e => e.GetString()));
+            else if (root.TryGetProperty("course", out JsonElement c) && c.ValueKind == JsonValueKind.Number && c.GetInt32() > 0)
+                goals.AddRange(new[] { "start:" + c.GetInt32(), "finish:" + c.GetInt32() });
+            else if (root.TryGetProperty("token", out JsonElement t) && t.ValueKind == JsonValueKind.String && t.GetString().StartsWith("bonus", StringComparison.OrdinalIgnoreCase))
+                goals.Add("reward:" + t.GetString().ToLowerInvariant());
+            return new Seed
+            {
+                Name = root.TryGetProperty("name", out JsonElement n) && n.ValueKind == JsonValueKind.String ? n.GetString() : Path.GetFileName(path),
+                Goals = goals.ToArray(),
+                Standing = Flag("standing"),
+                Restart = Flag("restart"),
+                Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
+                    : caps.GetString() == "wjdashaj" ? 3 : caps.GetString() == "wjdash" ? 2 : caps.GetString() == "wj" ? 1 : 0,
+                Inputs = ReadInputs(root),
+            };
         }
 
         // A window's routes, fastest first, put back into the best run; the first whole run that beats it is kept. When

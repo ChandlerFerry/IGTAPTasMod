@@ -17,8 +17,9 @@ affordable yet is waited for under it (the clones pay meanwhile). Of the states 
 place, only one richer than every earlier one goes on. So a wait survives only where it beats running the course for
 the money, and the first state to buy wall jump is the plan (~1.5 min).
 
-Then the run plays the `wj` chain (chain:wj: Course 1, 1to2, Course 2, bonus1, back to Course 2's start gate); bonus1
-ends at Course 2's free secret GLOBALcashPerLoop box (+40% on every course's reward).
+Then the run plays the `wj` chain (chain:wj: Course 1, 1to2, Course 2, bonus1, back to Course 2's start gate). bonus1
+ends next to Course 2's free secret GLOBALcashPerLoop box (+40% on every course's reward) but the chain doesn't buy it:
+the segment finishes at the reward rect before the box's trigger stay, and the restart after it leaves (BONUS1_BOX).
 
 Phase 2, Course 2 (tier 2, baseReward 4): its boxes stand in a row left of the quick-restart point (x 4783): reward
 (x 4199) 400, then ceil(prev * 1.14), cap 45; clone (4019) 800, then ceil(prev * 1.21), cap 35; clone multiplier (3839)
@@ -60,6 +61,9 @@ BOX = {v: k for k, v in TOKEN.items()}
 WJ_CHAIN = [("1", 118), ("1to2", 746), ("2", 327), ("2tobonus1", 490), ("bonus1", 406), ("bonus1to2", 418)]
 P1_WJ = 93      # Course 1's best run after chain:wj's lap with wall jump (1.86 s): its clones' path
 C2_TIER = 2
+# Global reward buys bonus1 leaves: 0 (start-chain-newgame-72 captured the global dictionary at 0, Course 2 paying 400);
+# 1 once bonus1's route buys the free box.
+BONUS1_BOX = 0
 
 # ---- Phase 2: Course 2 until dash.
 P2 = 128        # Course 2's clone path = its best run (2.56 s)
@@ -314,7 +318,7 @@ class Eco2:
 
 
 def after_wj_chain(e1):
-    """Phase 1's state at wall jump through chain:wj: the player at Course 2's start gate, the free box bought."""
+    """Phase 1's state at wall jump through chain:wj: the player at Course 2's start gate."""
     e = Eco2.__new__(Eco2)
     e.t, e.cash, e.n, e.N, e.m, e.g, e.free, e.clones = 0, e1.cash, 0, 0, 0, 0, 0, ()
     e.c1reward, e.c1clones, e.c1next = 1 + e1.n, e1.N, 50
@@ -325,7 +329,7 @@ def after_wj_chain(e1):
         elif token == "2":
             e.cash += course2_reward(0, 0)
         elif token == "bonus1":
-            e.free = 1
+            e.free = BONUS1_BOX
     e.c1next -= e.t
     e.t = 0
     return e

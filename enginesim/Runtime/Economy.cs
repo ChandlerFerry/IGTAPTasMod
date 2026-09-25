@@ -448,9 +448,10 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // upgradeBox.DoBuyUpgrade's global cashPerLoop: the global dictionary, then the box's course's reward. The game
-        // updates the other courses' rewards on their own 5 s UpdateReward repeat (a random phase), which offline doesn't
-        // run: their clones pay the old reward until something else updates it (a clone area change, a purchase there).
+        // upgradeBox.DoBuyUpgrade's global cashPerLoop (every bonus reward box and course 2's GLOBALcashPerLoop): the global
+        // dictionary, then the box's own course's reward. Other courses update theirs on their 5 s UpdateReward repeat, a
+        // real-time InvokeRepeating that never fires inside a turbo run (one frame) and isn't run here either: their clones
+        // and finishes pay the old reward until something else updates it (a clone area change, a purchase there).
         internal bool BoughtGlobal(upgradeBox box)
         {
             if (box.globalUpgrade != globalStats.globalUpgradeSet.cashPerLoop) return Unmodeled("global upgrade " + box.globalUpgrade);

@@ -39,6 +39,8 @@ namespace IGTAP.EngineSim
         public readonly List<Rigidbody2D> Bodies = new List<Rigidbody2D>();
         public readonly Dictionary<string, JsonElement> Physics2DSettings = new Dictionary<string, JsonElement>();
         public readonly int[] LayerCollisionMasks = new int[32];
+        // Each transform's Transform.GetSiblingIndex() in the live game (the export's "siblingIndex").
+        public readonly Dictionary<Transform, int> SiblingIndex = new Dictionary<Transform, int>();
         public float FixedDeltaTime;
         public Assembly Game { get; } = typeof(Movement).Assembly;
         readonly Assembly _shim = typeof(Object).Assembly;
@@ -91,7 +93,9 @@ namespace IGTAP.EngineSim
                 Objects[go.GetInstanceID()] = go;
                 Objects[t.GetInstanceID()] = t;
                 GameObjects.Add(go);
-                parents.Add((go, o.GetProperty("parent").GetInt32(), o.GetProperty("siblingIndex").GetInt32()));
+                int sibling = o.GetProperty("siblingIndex").GetInt32();
+                SiblingIndex[t] = sibling;
+                parents.Add((go, o.GetProperty("parent").GetInt32(), sibling));
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray()) CreateComponent(go, c, materials);
             }
             foreach (var (go, parent, sibling) in parents.OrderBy(p => p.sibling))
