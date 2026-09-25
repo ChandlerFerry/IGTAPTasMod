@@ -39,14 +39,9 @@ namespace IGTAPTasMod
             // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
             // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
             public string minCapabilities;
-            // A purchase ("buyreward", "buywj", "buyreward+buyclone", ...; chains only, never in courses.json): the
-            // hierarchy paths of the upgrade boxes it buys (a box twice: bought twice). It finishes when the game has bought
-            // every one of them (upgradeBox.DoBuyUpgrade): live, in turbo, and offline (enginesim Shop, the game's buy rule).
-            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string[] boxes;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
-            [JsonIgnore] public bool IsPurchase { get { return boxes != null && boxes.Length > 0; } }
-            [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition && !IsPurchase; } }
+            [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
             // A bonus is only run in its first category (the unlocks it needs); courses and transitions in every wider one too.
@@ -72,14 +67,8 @@ namespace IGTAPTasMod
         bool _solverRunning;
         string _solverStatus = "Idle", _solverSpeed = "";
         // What every turbo run is made for (set per run by SelectSolverTarget): the course, bonus or transition it is
-        // scored on, where its start is (the chain's first segment for a chain segment), and the chain segment if any.
-        CourseDef _solverTarget, _solverPark;
-        ChainDef _solverChain;
-        List<ChainSegment> _solverSegments;
-        int _solverSegment = -1;
-        // The transition a lap is run from with its lead-in (EngineSimBridge JudgeLead); -1: none.
-        int _solverLead = -1;
-        bool _solverRestart;
+        // scored on.
+        CourseDef _solverTarget;
         string _solverCaps = "";
         courseScript[] _solverCourses;
         // The course start as the first turbo run reached it (respawned and settling, one tick before its first
@@ -93,33 +82,27 @@ namespace IGTAPTasMod
         readonly ConcurrentQueue<string> _solveOutput = new ConcurrentQueue<string>();
         int _solveCourse;
         string _solveCaps = "";
-        // A chain segment instead of a course (the Optimize tab's chain solve).
-        string _solveChain;
-        int _solveSegment = -1;
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
 
-        // One target of an Optimize run: a course in a category, or a chain segment.
+        // One target of an Optimize run: a course in a category.
         sealed class SolveJob
         {
-            public int course, segment = -1, saved;
-            public string caps, chain, label;
+            public int course, saved;
+            public string caps, label;
             // How it ended ("Finished, best 28.41s, 1 saved", "Skipped: ..."); null until then.
             public string result;
         }
 
-        // The Optimize run's targets, solved one after another (the batch matrix, a whole run, or a single course or
-        // segment), and how long each one's search may take (it also stops once half of that, at most 5 minutes, passes
-        // without a new best). `_solveRepeat`: after the last target the queue starts over (pass 2, 3, ...), each pass
-        // with twice the minutes up to `_solveMaxMinutes`, until stopped: a run's segments get quick passes first.
+        // The Optimize run's targets, solved one after another (the batch matrix or a single course), and how long each
+        // one's search may take (it also stops once half of that, at most 5 minutes, passes without a new best).
+        // `_solveRepeat`: after the last target the queue starts over (pass 2, 3, ...), each pass with twice the minutes
+        // up to `_solveMaxMinutes`, until stopped.
         readonly List<SolveJob> _solveQueue = new List<SolveJob>();
         int _solveIndex = -1;
         float _solveMinutes = 60f, _solveMaxMinutes = 60f;
         bool _solveRepeat;
-        // `_solveUnsolved` (Solve new segments): only run segments without a route; a pass skips the ones solved since,
-        // and the run ends once every one has a route (or none of the rest can start).
-        bool _solveUnsolved;
         int _solvePass = 1;
 
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
@@ -287,20 +270,10 @@ namespace IGTAPTasMod
             return new SolveJob { course = course, caps = capabilities, label = def.Token + "_" + CapabilityLabels[capabilities] };
         }
 
-        SolveJob ChainJob(string chainName, int segment)
-        {
-            ChainDef chain = FindChain(chainName);
-            List<ChainSegment> segments = ChainSegments(chain);
-            if (segment < 0 || segment >= segments.Count) throw new InvalidOperationException("Chain " + chain.name + " has no segment " + (segment + 1) + ".");
-            return new SolveJob { course = segments[segment].target.id, caps = segments[segment].caps, chain = chain.name, segment = segment,
-                label = ChainCategory(chain, segments[segment]) };
-        }
-
-        // POST /api/solver/start: {course, capabilities}, {chain, segment}, or {queue: [either, ...]}, solved in that order;
+        // POST /api/solver/start: {course, capabilities} or {queue: [either, ...]}, solved in that order;
         // `minutes` (fractional allowed) bounds each target's search; `repeat` starts the queue over when it ends, the
-        // minutes doubling each pass up to `maxMinutes`. `unsolved` (chain segments only) implies `repeat` but passes over
-        // segments that have a route and ends once they all do. The first target's problems are the request's error; a
-        // later target that can't start when its turn comes (a chain segment whose earlier routes don't exist yet) is skipped.
+        // minutes doubling each pass up to `maxMinutes`. The first target's problems are the request's error; a
+        // later target that can't start when its turn comes is skipped.
         void StartSolver(JObject body)
         {
             if (_solverRunning) throw new InvalidOperationException("The solver is already running.");
@@ -309,8 +282,7 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
             List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
-            List<SolveJob> jobs = items.Select(i => !string.IsNullOrEmpty(Text(i, "chain")) ? ChainJob(Text(i, "chain"), Number(i, "segment", -1))
-                : CourseJob(Number(i, "course", 0), Text(i, "capabilities"))).ToList();
+            List<SolveJob> jobs = items.Select(i => CourseJob(Number(i, "course", 0), Text(i, "capabilities"))).ToList();
             if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
             float minutes = FloatNumber(body, "minutes", 60f);
             if (!(minutes >= 0.25f)) throw new InvalidOperationException("Minutes per target must be at least 0.25.");
@@ -318,9 +290,7 @@ namespace IGTAPTasMod
             _solveQueue.AddRange(jobs);
             _solveMinutes = minutes;
             _solveMaxMinutes = Math.Max(minutes, FloatNumber(body, "maxMinutes", minutes));
-            _solveUnsolved = body["unsolved"] != null && body["unsolved"].Type == JTokenType.Boolean && (bool)body["unsolved"];
-            if (_solveUnsolved && jobs.Any(j => j.chain == null)) throw new InvalidOperationException("Solving new routes only applies to run segments.");
-            _solveRepeat = _solveUnsolved || body["repeat"] != null && body["repeat"].Type == JTokenType.Boolean && (bool)body["repeat"];
+            _solveRepeat = body["repeat"] != null && body["repeat"].Type == JTokenType.Boolean && (bool)body["repeat"];
             _solvePass = 1;
             _solverLog.Clear();
             StartSolveJob(0);
@@ -329,13 +299,9 @@ namespace IGTAPTasMod
         void StartSolveJob(int index)
         {
             SolveJob job = _solveQueue[index];
-            // A chain from a new game never writes an unlock (the game's purchases make them), so the lock doesn't stop it.
-            if (CapabilitiesLocked && (job.chain == null || !FindChain(job.chain).FromNewGame)) throw new InvalidOperationException(CapabilitiesLockedError);
-            // A chain segment is solved from where the chain's routes before it end: each of them must exist.
-            if (job.chain != null) { ChainDef chain = FindChain(job.chain); ChainRoutes(chain, ChainSegments(chain), job.segment); }
+            if (CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
             _solveIndex = index;
             _solveCourse = job.course; _solveCaps = job.caps;
-            _solveChain = job.chain; _solveSegment = job.segment;
             _solveRuns = _solveFinishes = 0;
             _turboChecks = _turboSaved = 0;
             _solveBest = float.PositiveInfinity;
@@ -376,14 +342,7 @@ namespace IGTAPTasMod
             }
             _solverRunning = false;
             _solverStatus = _solveQueue.Count == 1 && !_solveRepeat ? outcome
-                : _solveUnsolved ? (_solveQueue.All(HasRoute) ? "Done: every segment has a route" : "Stopped: no segment left without a route can start")
                 : "Done: " + _solveQueue.Count + " targets, " + _solveQueue.Sum(j => j.saved) + " new routes saved";
-        }
-
-        bool HasRoute(SolveJob job)
-        {
-            ChainDef chain = FindChain(job.chain);
-            return ChainSegmentRoute(chain, ChainSegments(chain)[job.segment]) != null;
         }
 
         // Starts the first target from `from` on that can start (the ones that can't are marked skipped); false if none.
@@ -391,7 +350,6 @@ namespace IGTAPTasMod
         {
             for (int next = from; next < _solveQueue.Count; next++)
             {
-                if (_solveUnsolved && HasRoute(_solveQueue[next])) { _solveQueue[next].result = "Has a route"; continue; }
                 try { StartSolveJob(next); return true; }
                 catch (Exception ex)
                 {
@@ -419,22 +377,8 @@ namespace IGTAPTasMod
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             Movement player = FindWorldMovement();
-            if (SolverFromNewGame)
-            {
-                // A chain from a new game starts at the fresh game's first tick: back there (economy included), then let
-                // the zones settle.
-                TurboRunner.Snapshot fresh = NewGameStart();
-                if (((Vector2)player.transform.position - (Vector2)fresh.position).sqrMagnitude >= 64f * 64f)
-                {
-                    TurboRunner.Restore(fresh, player);
-                    _parkedFrame = Time.frameCount;
-                }
-                else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled()) return true;
-                _solverStatus = "Loading the new game's start";
-                return false;
-            }
-            // A chain segment's runs start where its chain starts: the chain's first segment.
-            CourseDef target = _solverPark;
+            // A run's start is where its course starts.
+            CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f;
             if (!parked)
@@ -480,7 +424,6 @@ namespace IGTAPTasMod
         {
             return new {
                 running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, speed = _solverSpeed,
-                chain = _solveChain, segment = _solveSegment,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
@@ -523,37 +466,12 @@ namespace IGTAPTasMod
         void LaunchSolve()
         {
             if (PlaybackActive || _recorder.IsRecording) return;
-            JObject target = _solveChain != null ? new JObject { ["chain"] = _solveChain, ["segment"] = _solveSegment }
-                : new JObject { ["course"] = _solveCourse, ["capabilities"] = _solveCaps };
+            JObject target = new JObject { ["course"] = _solveCourse, ["capabilities"] = _solveCaps };
             SelectSolverTarget(target);
-            // A chain from a new game needs one in the world: load it here rather than failing (the Run button does too).
             if (_newGamePhase != 0 || _bootstrapRequest != null) { _solverStatus = _newGamePhase != 0 ? "Loading a new game" : "Waiting for the bootstrap"; return; }
-            if (SolverFromNewGame && !FreshGameInWorld)
-            {
-                LoadNewGame(null);
-                _solverStatus = "Loading a new game";
-                return;
-            }
             if (!CourseLoaded()) return;
             CourseDef course = _solverTarget;
-            string name = _solverChain != null ? "optimize-chain-" + _solverChain.name + "-" + _solverSegment : "optimize-c" + course.Token + "-" + _solveCaps;
-            // A course segment right after a transition to its start gate is searched with its lead-in: from the transition's
-            // start, so the transition's last ticks (a jump before the gate) can serve the lap. Its trace runs the pair the
-            // chain plays now (EngineSimTrace). Captured first: its world export needs the world as parked at the chain's
-            // start, before the segment's capture replays the chain to its gate.
-            string leadTrace = null;
-            if (_solverChain != null && LeadSegment(_solverSegments, _solverSegment) >= 0)
-            {
-                JObject leadBody = (JObject)target.DeepClone();
-                leadBody["lead"] = true; leadBody["name"] = name + "-lead"; leadBody["world"] = true; leadBody["freshStart"] = true;
-                JObject leadCaptured = JObject.FromObject(EngineSimTrace(new WebStudioRequest(), leadBody));
-                if (leadCaptured["ok"] == null || !(bool)leadCaptured["ok"])
-                {
-                    EndSolveJob("Lead-in start state not captured: " + leadCaptured["error"]);
-                    return;
-                }
-                leadTrace = (string)leadCaptured["path"];
-            }
+            string name = "optimize-c" + course.Token + "-" + _solveCaps;
             JObject body = (JObject)target.DeepClone();
             body["ticks"] = new JArray(); body["name"] = name; body["world"] = true; body["freshStart"] = true;
             JObject captured = JObject.FromObject(EngineSimTrace(new WebStudioRequest(), body));
@@ -563,27 +481,17 @@ namespace IGTAPTasMod
                 return;
             }
             var args = new StringBuilder(Quote((string)captured["path"]));
-            if (leadTrace != null) args.Append(" --lead ").Append(Quote(leadTrace));
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
-            // Every route already made for this course seeds the search, whatever category it was made for, and every
-            // chain's routes for the same token, every occurrence ("wj/1_", "newgame/1#2_"), stale ones too: the chains
-            // included in a bigger one ("chain:wj" in newgame) are solved on their own too, and a chain's segment that
-            // starts with a quick restart ("newgame/1#2_") starts exactly like the course's category route.
+            // Every route already made for this course seeds the search, whatever category it was made for, stale ones
+            // too.
             string standalonePrefix = course.Token + "_";
-            var chainSeed = new Regex(@"^[A-Za-z0-9]+/" + Regex.Escape(course.Token) + @"(#\d+)?_", RegexOptions.IgnoreCase);
             int seeds = 0;
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
-                && (m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase) || chainSeed.IsMatch(m.name))
+                && m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase)
                 && m.steps.All(s => s.type == MacroStepType.RawInput)))
             {
                 string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
-                // A standalone route seeding a chain segment starts at its course's quick-restart point, standing (the
-                // player spawns 12 px lower), as does the first segment of a chain that starts there (not from a new
-                // game); solve carries it over from there (SeedAlign).
-                bool standalone = _solverChain != null && StartsStanding(route.name, standalonePrefix);
-                Vector2 at = new Vector2(course.x, course.y - 12f) + CurrentOrigin();
-                File.WriteAllText(seed, JsonConvert.SerializeObject(standalone
-                    ? (object)new { ticks = ToTicks(route.steps), align = new { at.x, at.y } } : new { ticks = ToTicks(route.steps) }));
+                File.WriteAllText(seed, JsonConvert.SerializeObject(new { ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);
@@ -601,18 +509,6 @@ namespace IGTAPTasMod
             _solveProcess = process;
             _solverStatus = "Solving offline on " + threads + " threads from " + seeds + " seed routes; turbo checks every new best";
             Logger.LogInfo("Optimize: " + EngineSimExe + " solve " + args);
-        }
-
-        // A route that starts standing at its course's quick-restart point: a standalone one ("1_NO_WJ 4.14"), or the
-        // first segment's of a chain that starts with a quick restart there ("wj/1_WJ 2.50"; not one from a new game).
-        bool StartsStanding(string routeName, string standalonePrefix)
-        {
-            if (routeName.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase)) return true;
-            int slash = routeName.IndexOf('/');
-            ChainDef owner = slash < 0 ? null : _chains.Find(c => string.Equals(c.name, routeName.Substring(0, slash), StringComparison.OrdinalIgnoreCase));
-            if (owner == null || owner.FromNewGame) return false;
-            try { return routeName.Substring(slash + 1).StartsWith(ChainSegments(owner)[0].key + "_", StringComparison.OrdinalIgnoreCase); }
-            catch (InvalidOperationException) { return false; }
         }
 
         static string Quote(string path) { return "\"" + path + "\""; }
@@ -658,9 +554,8 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            // A chain replay checks each segment against its own category (wall jump from the segment after a buywj on); a
-            // Full-TAS run against the unlocks its own purchases gave so far.
-            string caps = _fullTas != null ? FullTasCaps : _chainRun != null ? _chainRun.Current.caps : _solverCaps;
+            // A Full-TAS run is checked against the unlocks its own purchases gave so far.
+            string caps = _fullTas != null ? FullTasCaps : _solverCaps;
             int level = CapsLevel(caps);
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
                 || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
@@ -680,21 +575,8 @@ namespace IGTAPTasMod
             try { finished = Evaluate(inputs, out replayed, out _, out _); }
             finally { _audit = null; }
             if (!finished || Mathf.Abs(replayed - time) > .0001f)
-                audit.Insert(0, "a replay from the " + (_solverChain != null ? "segment's" : "course") + " start "
+                audit.Insert(0, "a replay from the course start "
                     + (finished ? "finished in " + replayed.ToString("0.00") : "did not finish on " + _solverTarget.Token));
-            // A segment's captured start can differ from where the chain really is when it gets there: the route must also
-            // finish, in the same time, after the chain's routes before it, replayed from the chain's start.
-            if (audit.Count == 0 && _solverChain != null)
-            {
-                List<MacroDefinition> routes = ChainRoutes(_solverChain, _solverSegments, _solverSegment);
-                routes.Add(new MacroDefinition { name = SolverCategory + " candidate", steps = ToSteps(inputs) });
-                ChainRun run = ReplayChain(_solverChain, _solverSegments, routes, -1, false);
-                bool through = run.failure == null && run.splits.Count == routes.Count;
-                if (!through || Mathf.Abs(run.splits[routes.Count - 1] - time) > .0001f)
-                    audit.Add("a replay of the chain from its start " + (through ? "finished it in " + run.splits[routes.Count - 1].ToString("0.00")
-                        : run.splits.Count == routes.Count - 1 ? "did not finish it: " + (run.failure ?? "no finish")
-                        : "stopped at segment " + (run.splits.Count + 1) + ": " + (run.failure ?? "no finish")));
-            }
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 
@@ -703,13 +585,12 @@ namespace IGTAPTasMod
         {
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot from = _startState, settling = null;
-            CourseDef course = _solverPark;
+            CourseDef course = _solverTarget;
             Vector2 savedReset = _preservedCourseResetPoint;
             bool savedHasReset = _hasPreservedCourseResetPoint;
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
-            // A chain from a new game runs with the unlocks the game gave it (its purchases); nothing is written.
-            List<(string field, object value)> savedAbilities = SolverFromNewGame ? new List<(string, object)>() : ApplyAbilities(player, _solverCaps);
+            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -726,8 +607,6 @@ namespace IGTAPTasMod
                 BeginDeterministicPhysics(player);
                 // The start state is taken at tick 0, before the first input.
                 _engine.Resume(from.engine, ToSteps(inputs), 0);
-                // A chain segment after a quick restart does it first (BeforeMovementFixedUpdate).
-                _restartBeforeTick = _solverRestart;
             }
             int lastTick = -1, idleTicks = 0;
             try
@@ -751,7 +630,6 @@ namespace IGTAPTasMod
             finally
             {
                 _pendingSilentMacro = null;
-                _restartBeforeTick = false;
                 _silentEvaluation = false;
                 _engine.Quiet = false;
                 _preservedCourseResetPoint = savedReset;
@@ -764,9 +642,9 @@ namespace IGTAPTasMod
             return _silentFinished && time > 0f;
         }
 
-        // "<course token>_<CAPS>": the solver's course and category as category routes name them ("bonus1_WJ"); a chain
-        // segment's "<chain>/<token>_<CAPS>" ("wj/2tobonus1_WJ"); a Full-TAS run's "fulltas/<run>_NO_WJ".
-        string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name) : _solverChain != null ? ChainCategory(_solverChain, _solverSegments[_solverSegment])
+        // "<course token>_<CAPS>": the solver's course and category as category routes name them ("bonus1_WJ"); a
+        // Full-TAS run's "fulltas/<run>_NO_WJ".
+        string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
             : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
 
         // The only place a category route is saved. False (and nothing saved) when the route breaks a rule.
@@ -785,7 +663,6 @@ namespace IGTAPTasMod
                 steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(route);
-            if (_solverChain != null && _solverFullTas == null) RevalidateChainTail();
             PruneSlowerRoutes();
             SaveLibrary();
             return true;

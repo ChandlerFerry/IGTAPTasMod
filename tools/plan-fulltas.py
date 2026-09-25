@@ -26,20 +26,20 @@ last checkpoint, which for Course 2 is its Checkpoint (4) at (4783, 1878) (the c
 either way it lands in End (2), which cancels a running timer, so the next start gate crossing is a start:2 goal again.
 
 Plan start (t = 0): the tick reward:bonus1 is reached. Then the route quick-restarts (to bonus1's checkpoint) and plays
-bonus1to2 to Course 2's start gate (--arrive ticks, the solved chain segment wj/bonus1to2_WJ 8.36), which is start:2.
+bonus1to2 to Course 2's start gate (--arrive ticks, the solved bonus1to2 route's 8.36), which is start:2.
 From there each step is one of: a Course 2 lap (from the gate: --lap; else restart, --lead to the gate, --lap), or a
 purchase: restart and walk to the box, or walk along the row from the box the player stands under, then stand under
 it bumping until the clones cover its cost (a wait that ends no sooner than a lap and the walk from the restart would
-is dropped: that way has more cash). A search in time order (like tools/plan-newgame.py's Course 1 search) tries all
-of these from every state; a state goes on only if no earlier one with the same or one more level of one box (and the
-same or faster clone path, the same place) would have as much cash by then standing still (clone phases are ignored in
-that test). The first state to buy dash is the plan (~30 s).
+is dropped: that way has more cash). A search in time order tries all of these from every state; a state goes on only
+if no earlier one with the same or one more level of one box (and the same or faster clone path, the same place) would
+have as much cash by then standing still (clone phases are ignored in that test). The first state to buy dash is the
+plan (~30 s).
 
 Estimates (physics ticks): walks = (distance - 50 px) / 9.2 px per tick from the restart, a box to its neighbour
-5 + 180 / 9.2, another bump at the same box 23 (Course 1's measured buys fit these; newgame/buyreward2_WJ 1.14 is 57
-from the restart). A new clone first pays one path length after it is bought. Course 1's clones pay at the reward they
-were captured with (C1_GLOBAL). Course 2's clones pay on screen at the dash box too (off screen it is 50/51 of that).
-Replace the estimates with solved times as they come.
+5 + 180 / 9.2, another bump at the same box 23 (Course 1's measured buys fit these; a solved first Course 2 reward buy
+is 57 from the restart). A new clone first pays one path length after it is bought. Course 1's clones pay at the
+reward they were captured with (C1_GLOBAL). Course 2's clones pay on screen at the dash box too (off screen it is 50/51
+of that). Replace the estimates with solved times as they come.
 
 Output: the goal tokens that follow reward:bonus1 (start:2 first), the estimated times, and `--write` replaces the
 run's goals after reward:bonus1 in fulltas.json (everything up to and including it kept), ending with the tail after

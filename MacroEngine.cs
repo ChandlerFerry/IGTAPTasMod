@@ -53,13 +53,11 @@ namespace IGTAPTasMod
         private long _runTicks;
         // Physics ticks since the run's first input tick, dash/spring ticks (which take no input) included.
         private long _physicsTicks;
-        // A chain segment (Continue) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
+        // A resumed run (Resume) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
         private bool _countEveryPhysicsTick;
         // The step whose quick restart (MacroStep.rawQuickRestart) was already done: it fires once, on the first physics
         // tick the step is due (a dash tick included, when the step's input waits for the dash to end).
         private int _quickRestartStep = -1;
-        // A purchase segment: which of its boxes (CourseDef.boxes, by index) this run bought so far.
-        private int _purchasesMade;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
         private bool _hasProgressSample;
@@ -118,7 +116,6 @@ namespace IGTAPTasMod
             _physicsTicks = 0;
             _countEveryPhysicsTick = false;
             _quickRestartStep = -1;
-            _purchasesMade = 0;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
             _hasProgressSample = false;
@@ -150,48 +147,6 @@ namespace IGTAPTasMod
             _quickRestartStep = -1;
         }
 
-        // The next segment of a chain, from exactly where the previous one ended: a chain's segments are one continuous
-        // controller stream, so the held jump and the press/release stamps the gate audits carry over (a jump held across
-        // the boundary is released by the first tick that doesn't hold it, like a real button). Only the run's own
-        // counters restart; a dash-jump the previous segment planned past its finish is dropped with its inputs.
-        public void Continue(MacroDefinition macro, bool requireCourseFinish)
-        {
-            if (macro == null || macro.steps == null || macro.steps.Count == 0)
-            {
-                Status = "Cannot run an empty macro";
-                return;
-            }
-            _steps = Expand(macro.steps);
-            NormalizeFrameTiming(_steps);
-            _macroName = macro.name;
-            ActiveMacroId = macro.id;
-            _stepIndex = 0;
-            _elapsedMs = 0f;
-            _elapsedTicks = 0;
-            _wallJumpTriggered = false;
-            _dashJumpFrame = 0;
-            _waitingForStable = false;
-            _stableTicks = 0;
-            _hasSynchronizationPosition = false;
-            _preRollTicksRemaining = _preRollTicksTotal = 0;
-            _runTicks = 0;
-            _physicsTicks = 0;
-            _countEveryPhysicsTick = true;
-            _quickRestartStep = -1;
-            _purchasesMade = 0;
-            _requireCourseFinish = requireCourseFinish;
-            _finishWaitTicks = 0;
-            _hasProgressSample = false;
-            _startStateFingerprint = null;
-            _authoritativeCompletionTime = 0f;
-            _courseStartRunTick = -1;
-            _courseStartUnityFrame = -1;
-            _courseStartPosition = Vector2.zero;
-            _earlyTrace.Clear();
-            Status = "Running: " + macro.name;
-            if (!Quiet) TasPlugin.Log.LogInfo(Status);
-        }
-
         // Movement.FixedUpdate prefix (plugin) / before it (enginesim): true once when the next step to run is a quick
         // restart; the caller then does the game's quick restart, Movement.respawn(true).
         public bool TakeQuickRestart()
@@ -213,7 +168,7 @@ namespace IGTAPTasMod
             _countEveryPhysicsTick = true;
         }
 
-        // Drops the run without ending an attempt (no AttemptEnded): a chain start capture only needed its state.
+        // Drops the run without ending an attempt (no AttemptEnded): a start capture only needed its state.
         public void Discard()
         {
             _steps = null;
@@ -251,25 +206,14 @@ namespace IGTAPTasMod
         internal const string RewardFinishReason = "Reward collected";
         // A transition's run finishes when the next course's start gate starts its timer.
         internal const string TransitionFinishReason = "Next course started";
-        // A purchase segment's run finishes when the game itself buys its upgrade box (upgradeBox.DoBuyUpgrade).
-        internal const string PurchaseFinishReason = "Upgrade bought";
 
         // A Full-TAS run finishes when the game has reached every one of its goals (FullTasTracker), in order.
         internal const string FullTasFinishReason = "Full-TAS goals reached";
 
         internal static bool IsFinishReason(string reason)
         {
-            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason || reason == PurchaseFinishReason
+            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason
                 || reason == FullTasFinishReason;
-        }
-
-        // A purchase segment's boxes (hierarchy paths; a path listed twice must be bought twice): the game just bought
-        // `bought`, which counts for the first of them not bought yet in this run. True once every one is.
-        internal bool RecordPurchase(IReadOnlyList<string> required, string bought)
-        {
-            for (int i = 0; i < required.Count; i++)
-                if ((_purchasesMade & (1 << i)) == 0 && required[i] == bought) { _purchasesMade |= 1 << i; break; }
-            return _purchasesMade == (1 << required.Count) - 1;
         }
 
         // Once per physics tick, after Movement.FixedUpdate (which takes the tick's input, if any).
@@ -570,7 +514,7 @@ namespace IGTAPTasMod
             Vector3 position = movement.transform.position;
             Vector2 velocity = ReadVector(VelocityField, movement);
             // Keep the whole normal route, not just its opening. This trace is the
-            // authoritative calibration/diagnostic input for the offline simulator.
+            // diagnostic input for enginesim fidelity checks.
             // Course 2 and later routes span many screens and routinely exceed
             // 512 fixed ticks. Retain enough authoritative samples to calibrate
             // the complete route, including its finish trigger. Quiet (solver) runs never persist it.

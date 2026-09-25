@@ -10,7 +10,7 @@
 - Inputs change only on the 50 Hz physics tick.
 - Unlocks match the category exactly, on every tick.
 - Turbo, offline and playback use identical unlocks.
-- New-game chains gain unlocks only through the game's purchases.
+- Full-TAS runs gain unlocks only through the game's purchases.
 - "Don't touch my unlocks" on: never write an unlock.
 - Bonuses run only in their first category.
 - Time runs from the course's start gate to end gate.
@@ -20,7 +20,6 @@
 - Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included.
 - Nothing after the finish is part of the route.
 - No teleports, position offsets or moving the player.
-- Chain segments start exactly where the previous segment ended.
 - Only reset: the game's quick restart, `Movement.respawn(true)`.
 - Deaths respawn at the course reset point, never a checkpoint.
 - Purchases count only when the game itself buys the box.
@@ -41,8 +40,8 @@
 - Never delete favorite routes; candidates become new routes.
 - Trace every new best and name its trick.
 
-Details: [`AGENTS.md`](AGENTS.md). Runs (chains, the new-game run, its parts): [`docs/runs.md`](docs/runs.md). The whole
-game as one run with goals: [`docs/fulltas.md`](docs/fulltas.md).
+Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
+[`docs/fulltas.md`](docs/fulltas.md).
 
 ## Layout
 
@@ -54,9 +53,9 @@ game as one run with goals: [`docs/fulltas.md`](docs/fulltas.md).
 | `Solver.cs` | Optimize tab and `SaveSolverRoute`, the only way a category route gets saved. |
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
-| `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, import, trace, playback, solve. |
+| `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`. |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `plan-fulltas.py`. |
 
 ## Build
 

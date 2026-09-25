@@ -48,24 +48,46 @@ namespace IGTAP.EngineSim
             }
         }
 
+        // A forced path (solve --via/--avoid): the player's center must pass the `Via` boxes in order before a finish
+        // counts, and a run that enters an `Avoid` box is cut. Checked on every physics tick, dash ticks included. The
+        // boxes passed so far are part of every cell, so exploration keeps a route that went the forced way apart from one
+        // at the same place that didn't. It only narrows which runs count; the game still judges every best.
+        public sealed class ForcedPath
+        {
+            public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
+            public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
+        }
+
+        public readonly struct Box
+        {
+            public readonly float X0, Y0, X1, Y1;
+            public Box(float x0, float y0, float x1, float y1) { X0 = Math.Min(x0, x1); Y0 = Math.Min(y0, y1); X1 = Math.Max(x0, x1); Y1 = Math.Max(y0, y1); }
+            public bool Contains(Vector3 p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
+            public override string ToString() { return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}"; }
+        }
+
         public readonly string Capabilities;
         readonly Func<Simulation> _createSimulation;
         readonly List<List<InputTick>> _seeds;
         readonly Memory _memory;
+        readonly ForcedPath _path;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, Drifts, BranchChecks, BranchMatches;
+        // A forced path: the most of its boxes any run has passed so far.
+        public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
         volatile int _exportGeneration;
         Worker[] _workers;
         List<Memory.Source>[] _partitions;
 
-        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null)
+        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null, ForcedPath path = null)
         {
             _createSimulation = createSimulation;
             Capabilities = capabilities;
             _seeds = seeds;
             _memory = memory;
+            _path = path != null && !path.IsEmpty ? path : null;
         }
 
         public void Stop() { _stop = true; }
@@ -279,6 +301,7 @@ namespace IGTAP.EngineSim
                 _bestArrival = arrivals;
                 _bestBody = _replayBody;
                 _bestFingerprint = _replayFingerprint;
+                _bestWaypoints = _replayWaypoints;
             }
 
             void Explore()
@@ -307,6 +330,8 @@ namespace IGTAP.EngineSim
                     double reach = _goalMode ? (_maxTimedRank > _minTimedRank ? (cell.Rank - _minTimedRank) / (double)(_maxTimedRank - _minTimedRank) : 0) : cell.Rank / _maxTimedRank;
                     w *= 1 + 10 * Math.Pow(reach, 4);
                 }
+                // A forced path: before the first finish, cells past more of its boxes are the frontier.
+                if (_owner._path != null && _bestInputs == null) w *= 1 + 10 * cell.State.Waypoints;
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
@@ -345,6 +370,15 @@ namespace IGTAP.EngineSim
                         if (d.dashJump == 0 && _rng.NextDouble() < .5)
                             holdEnd = SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
                     }
+                }
+                // A forced path: a run often clears a box coasting on a dash or bounce after its burst's inputs ran out,
+                // where no cell can be filed (nothing to resume from). The same stick and hold for a while longer keep that
+                // coast inside the inputs, so the cells past the box are filed and explored from.
+                if (_owner._path != null && inputs.Count > 0)
+                {
+                    InputTick last = inputs[inputs.Count - 1];
+                    var coast = new InputTick { x = last.x, held = last.held && !last.release };
+                    for (int i = 0; i < 25; i++) inputs.Add(coast);
                 }
                 return inputs;
             }
@@ -602,6 +636,7 @@ namespace IGTAP.EngineSim
                 _bestArrival = arrivals;
                 _bestBody = _replayBody;
                 _bestFingerprint = _replayFingerprint;
+                _bestWaypoints = _replayWaypoints;
                 if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
                 else Interlocked.Increment(ref _owner.Drifts);
             }
@@ -618,17 +653,34 @@ namespace IGTAP.EngineSim
                 {
                     _replayBody = new (float, float, float, float, float, float)[inputs.Count + 1];
                     _replayFingerprint = new int?[inputs.Count + 1];
+                    _replayWaypoints = new int[inputs.Count + 1];
                 }
+                ForcedPath path = _owner._path;
+                _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
+                _avoided = false;
+                // Every physics tick (dash ticks take no input, so afterTick skips them): the forced path's boxes.
+                Action<int> onStep = path == null ? null : _ =>
+                {
+                    Vector3 p = _sim.Player.transform.m_Position;
+                    if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
+                    {
+                        lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
+                        Console.WriteLine($"DIAG box {_waypoints} at {p.x:0},{p.y:0} step {_} runTicks {_sim.Engine.RunTicks} inputs {inputs.Count} from {from?.Tick} exhausted {_sim.Engine.InputsExhausted} running {_sim.Engine.IsRunning}");
+                    }
+                    foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
+                };
                 // A Full-TAS window can dash more often than a course: room for a physics tick without input per input.
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
+                    if (_avoided) return false;
                     if (states != null && tick < _replayBody.Length)
                     {
                         _replayBody[tick] = _sim.Physics.PlayerBody();
                         _replayFingerprint[tick] = _sim.Fingerprint();
+                        _replayWaypoints[tick] = _waypoints;
                     }
                     else if (tick >= converge && _bestFingerprint != null && tick < _bestFingerprint.Length && _bestFingerprint[tick] is int best
-                        && _sim.Physics.PlayerBody() == _bestBody[tick] && _sim.Fingerprint() == best)
+                        && _sim.Physics.PlayerBody() == _bestBody[tick] && _sim.Fingerprint() == best && _waypoints == _bestWaypoints[tick])
                     {
                         _converged = true;
                         return false;
@@ -637,7 +689,7 @@ namespace IGTAP.EngineSim
                     // Bonus and transition runs have no course timer; they are timed in physics ticks from the run start,
                     // as their finishes are.
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(_sim.Player.transform.m_Position, _sim.Progress) : CellKey(_sim.Player.transform.m_Position, timing);
+                    long key = _goalMode ? GoalCellKey(_sim.Player.transform.m_Position, _sim.Progress) : CellKey(_sim.Player.transform.m_Position, timing, _waypoints);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     if (elapsed >= 0f)
@@ -652,22 +704,27 @@ namespace IGTAP.EngineSim
                     if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
                     FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, states);
                     return !losing;
-                }, _goalMode ? 400 + inputs.Count : 400);
+                }, _goalMode ? 400 + inputs.Count : 400, onStep);
                 Interlocked.Increment(ref _owner.Runs);
                 Interlocked.Add(ref _owner.Ticks, result.Stepped);
                 time = result.Time;
                 finishTick = result.FinishTick;
                 runTicks = result.PhysicsTicks;
-                return result.Finished;
+                // A forced path's finish counts only past all of its boxes, without entering one to avoid.
+                return result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
             }
             (float, float, float, float, float, float)[] _replayBody, _bestBody;
             int?[] _replayFingerprint, _bestFingerprint;
+            int[] _replayWaypoints, _bestWaypoints;
+            // The run's forced-path state: boxes passed, and whether it entered one to avoid.
+            int _waypoints;
+            bool _avoided;
             // The last Evaluate stopped because the run was back in the best's state (it would finish exactly like it).
             bool _converged;
 
-            static long CellKey(Vector3 position, bool timing)
+            static long CellKey(Vector3 position, bool timing, int waypoints)
             {
-                long key = ((long)Mathf.FloorToInt(position.x / CellSize) << 24) ^ (Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF);
+                long key = ((long)Mathf.FloorToInt(position.x / CellSize) << 24) ^ (Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF) ^ ((long)waypoints << 52);
                 return timing ? -1 - Math.Abs(key) : key;
             }
 
@@ -687,6 +744,7 @@ namespace IGTAP.EngineSim
                 bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
                 SimSnapshot state = resumable && (better || states != null) ? _sim.Capture(tick) : null;
+                if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
                 _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };

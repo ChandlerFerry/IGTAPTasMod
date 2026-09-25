@@ -9,14 +9,8 @@ that run saw it).
   enginesim-capture.py random [N]         N random-input runs per course/category (fidelity corpus)
   enginesim-capture.py start C CAPS       just the start state (empty inputs) for course C, category CAPS
   enginesim-capture.py route NAME C CAPS  any studio route by name (e.g. a partial one), as a `solve --seed` trace
-  enginesim-capture.py chain NAME K       chain NAME's segment K (0-based) start: where the chain's routes before it end
-  enginesim-capture.py chain NAME K --lead  also its lead-in trace (a course segment right after a transition to its
-                                          start gate: from the transition's start, for `solve --lead`)
 
-C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj. Chains are in chains.json
-next to courses.json (a chain segment is solved in its own category: the chain's, WJ after a buywj segment). A chain
-that starts with "newgame" starts from a fresh new game: when the game isn't in one, `chain` loads it first
-(POST /api/session/newgame: no load, no save).
+C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj.
 """
 import json
 import random
@@ -109,24 +103,6 @@ def main():
         slug = re.sub(r"[^A-Za-z0-9.]+", "-", name).strip("-")
         r = trace({"course": course, "capabilities": caps, "routeId": route["id"], "name": f"seed-c{sys.argv[3]}-{caps}-{slug}"})
         print({k: v for k, v in r.items() if k != "path"})
-    elif mode == "chain":
-        chain, segment = sys.argv[2], int(sys.argv[3])
-        state = call("/api/state", method="GET")
-        info = next((c for c in state.get("chains", []) if c["name"].lower() == chain.lower()), None)
-        if info is None:
-            sys.exit(f"no chain named {chain!r} in chains.json")
-        if info.get("fromNewGame") and not state.get("freshGame"):
-            fresh = call("/api/session/newgame")
-            print("new game:", fresh)
-            if not fresh.get("ok"):
-                sys.exit("could not load a fresh new game")
-        # The lead trace first: its world export needs the world as parked at the chain's start, before the segment's
-        # capture replays the chain to its gate.
-        if "--lead" in sys.argv:
-            r = trace({"chain": chain, "segment": segment, "lead": True, "name": f"start-chain-{chain}-{segment}-lead"})
-            print({k: v for k, v in r.items()})
-        r = trace({"chain": chain, "segment": segment, "ticks": [], "name": f"start-chain-{chain}-{segment}"})
-        print({k: v for k, v in r.items()})
     else:
         sys.exit(__doc__)
 

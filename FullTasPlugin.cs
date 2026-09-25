@@ -14,7 +14,7 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // Full-TAS (FullTas.cs): the whole game from a fresh new game (NewGameStart, the start of chains from "newgame") as one
+    // Full-TAS (FullTas.cs): the whole game from a fresh new game (NewGameStart) as one
     // continuous input stream, scored in physics ticks from the start to its last goal. Its route
     // ("fulltas/<run>_NO_WJ <time>") is saved only by the gate (SaveSolverRoute), which replays it in turbo from the new
     // game's start with the goals tracked: unlocks come only from the run's own purchases, quick restarts are its inputs.
@@ -101,7 +101,7 @@ namespace IGTAPTasMod
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9]+)-([\d.]+)\.json$");
         // buy: tokens and their boxes (FullTasGoal.BoxId: hierarchy path in the Overworld scene plus sibling index; paths
         // aren't unique: course 2's GLOBALcashPerLoop #3 is the 55000 W global reward box, #5 bonus1's free reward box, which
-        // reward:bonus1 buys). The chains' purchase tokens with the same names buy the same boxes.
+        // reward:bonus1 buys).
         static readonly (string token, string path, int sibling)[] FullTasBoxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
             ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
@@ -111,12 +111,12 @@ namespace IGTAPTasMod
             ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult", 2),
             ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop", 3),
             ("buydash", "Courses/course 2/localUpgrades/DashUnlock", 4) };
+        // The most boxes one buy goal may name.
+        const int MaxBuyGoalBoxes = 8;
 
         string FullTasPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas.json"); } }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
-        // ImportFullTas's inputs when the chain was solved only in part: what a trace is seeded with until a route is saved.
-        string FullTasSeedPath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + "-seed.json"); }
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
         // The category the run's own purchases put it in so far (dash without wall jump is none: the audit flags it).
         string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? "wjdash" : "wj") : "none"; } }
@@ -162,7 +162,7 @@ namespace IGTAPTasMod
         // A run's goals, in order; throws on a token that doesn't resolve.
         FullTasGoal[] ResolveFullTasGoals(FullTasRunDef run)
         {
-            if (!ChainName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters and digits only (\"" + run.name + "\").");
+            if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters and digits only (\"" + run.name + "\").");
             if (run.goals == null || run.goals.Count == 0) throw new InvalidOperationException("Full-TAS run " + run.name + " has no goals.");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
         }
@@ -179,7 +179,7 @@ namespace IGTAPTasMod
             if (kind == FullTasGoal.Start || kind == FullTasGoal.Finish)
             {
                 if (!int.TryParse(arg, NumberStyles.None, CultureInfo.InvariantCulture, out int course)
-                    || !_courses.Any(c => c.id == course && !c.IsBonus && !c.IsTransition && !c.IsPurchase))
+                    || !_courses.Any(c => c.id == course && !c.IsBonus && !c.IsTransition))
                     throw new InvalidOperationException("Full-TAS goal \"" + token + "\": course " + arg + " is not in courses.json.");
                 goal.course = course;
                 goal.label = kind + ":" + course;
@@ -190,7 +190,7 @@ namespace IGTAPTasMod
                 int[] boxes = parts.Select(p => Array.FindIndex(FullTasBoxes, b => b.token == p)).ToArray();
                 if (boxes.Any(i => i < 0))
                     throw new InvalidOperationException("Full-TAS goal \"" + token + "\": boxes are " + string.Join(", ", FullTasBoxes.Select(b => b.token)) + " (joined with \"+\").");
-                if (parts.Length > MaxPurchasesPerSegment) throw new InvalidOperationException("Full-TAS goal \"" + token + "\" buys more than " + MaxPurchasesPerSegment + " boxes.");
+                if (parts.Length > MaxBuyGoalBoxes) throw new InvalidOperationException("Full-TAS goal \"" + token + "\" buys more than " + MaxBuyGoalBoxes + " boxes.");
                 goal.boxes = boxes.Select(i => FullTasGoal.BoxId(FullTasBoxes[i].path, FullTasBoxes[i].sibling)).ToArray();
                 goal.label = "buy:" + string.Join("+", parts);
             }
@@ -275,17 +275,15 @@ namespace IGTAPTasMod
         }
 
         // What Play plays: the saved best, else the offline search's best so far (a partial run: it stops at the goal it
-        // reaches last), else an import's seed. Null: nothing yet.
+        // reaches last). Null: nothing yet.
         MacroDefinition FullTasPlayableRoute(FullTasRunDef run)
         {
             MacroDefinition best = FullTasBestRoute(run.name);
             if (best != null) return best;
             FullTasOffline offline = FullTasOfflineBest(run.name);
-            if (offline != null && offline.inputs.Count > 0)
-                return new MacroDefinition { name = "fulltas/" + run.name + " offline best (" + offline.reached + " of " + run.goals.Count + " goals)",
+            return offline == null || offline.inputs.Count == 0 ? null
+                : new MacroDefinition { name = "fulltas/" + run.name + " offline best (" + offline.reached + " of " + run.goals.Count + " goals)",
                     steps = ToSteps(offline.inputs) };
-            List<SolverTick> seed = FullTasInputs(run, new JObject());
-            return seed.Count == 0 ? null : new MacroDefinition { name = "fulltas/" + run.name + " import seed", steps = ToSteps(seed) };
         }
 
         static List<FullTasSplit> FullTasSplits(FullTasTracker tracker)
@@ -344,8 +342,8 @@ namespace IGTAPTasMod
         {
             if (_fullTas == null || !_engine.IsRunning) return;
             string path = HierarchyPath(box.transform);
-            if (path == PurchaseBoxes.First(b => b.token == "buywj").box) _fullTasWallJump = true;
-            if (path == PurchaseBoxes.First(b => b.token == "buydash").box) _fullTasDash = true;
+            if (path == FullTasBoxes.First(b => b.token == "buywj").path) _fullTasWallJump = true;
+            if (path == FullTasBoxes.First(b => b.token == "buydash").path) _fullTasDash = true;
             FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 
@@ -380,8 +378,8 @@ namespace IGTAPTasMod
 
         // ---- Turbo
 
-        // The fresh new game's player is at its start with the zones there settled (as CourseLoaded waits for a chain from a
-        // new game); parks it there when it is elsewhere. Needs a fresh game in the world.
+        // The fresh new game's player is at its start with the zones there settled; parks it there when it is elsewhere.
+        // Needs a fresh game in the world.
         bool FullTasStartReady()
         {
             Movement player = FindWorldMovement();
@@ -445,7 +443,6 @@ namespace IGTAPTasMod
             finally
             {
                 _fullTas = null;
-                _restartBeforeTick = false;
                 _silentEvaluation = false;
                 _engine.Quiet = false;
             }
@@ -588,77 +585,9 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        // ---- Import: a chain from a new game as one input stream
-
-        // Goals from the chain's segments (a transition to course N: start:N; to a bonus: none; course N: start:N unless that
-        // is the goal before, then finish:N; a bonus: reward:bonusN; a purchase: buy:<tokens>), written to fulltas.json; its
-        // inputs: each segment's route up to the inputs it had consumed when it finished in a turbo replay of the chain from
-        // the new game, one after another, a quick restart on the first tick of each segment that starts with one. A chain
-        // solved to its end is judged through the gate. One solved only in part (up to its first segment with no route, or
-        // the first that no longer finishes) gives the run's seed (FullTasSeedPath): the offline search goes on from it.
-        object ImportFullTas(string name, string chainName)
-        {
-            ChainDef chain = FindChain(chainName);
-            if (!chain.FromNewGame) throw new InvalidOperationException("Chain " + chain.name + " does not start from a new game (\"newgame\" first).");
-            List<ChainSegment> segments = ChainSegments(chain);
-            var tokens = new List<string>();
-            foreach (ChainSegment s in segments)
-            {
-                CourseDef t = s.target;
-                if (t.IsPurchase) tokens.Add("buy:" + t.name);
-                else if (t.IsTransition) { if (t.toCourse > 0) tokens.Add("start:" + t.toCourse); }
-                else if (t.IsBonus) tokens.Add("reward:" + t.Token);
-                else
-                {
-                    string start = "start:" + t.id;
-                    if (tokens.Count == 0 || tokens[tokens.Count - 1] != start) tokens.Add(start);
-                    tokens.Add("finish:" + t.id);
-                }
-            }
-            FullTasRunDef run = SetFullTasGoals(name, tokens);
-            int solved = 0;
-            while (solved < segments.Count && ChainSegmentRoute(chain, segments[solved]) != null) solved++;
-            if (solved == 0) throw new InvalidOperationException("Chain " + chain.name + " has no route for its first segment.");
-            List<MacroDefinition> routes = ChainRoutes(chain, segments, solved);
-            _chainStartState = NewGameStart();
-            _chainStartKey = null;
-            _chainStartOrigin = CurrentOrigin();
-            ChainRun replay = ReplayChain(chain, segments, routes, -1, false);
-            ParkAtNewGameStart();
-            if (replay.splits.Count == 0) throw new InvalidOperationException(ChainFailure(replay));
-            // Only the segments that finished one after another carry over.
-            routes = routes.Take(replay.splits.Count).ToList();
-            var inputs = new List<SolverTick>();
-            for (int i = 0; i < routes.Count; i++)
-            {
-                List<SolverTick> ticks = ToTicks(routes[i].steps);
-                long used = replay.inputTicks[i];
-                List<SolverTick> part = ticks.Take((int)Math.Min(used, ticks.Count)).Select(k => k.Clone()).ToList();
-                // A route that ran out before its finish: the engine held the stick at rest and the jump as it was.
-                bool held = part.Count > 0 ? part[part.Count - 1].held : inputs.Count > 0 && inputs[inputs.Count - 1].held;
-                while (part.Count < used) part.Add(new SolverTick { held = held });
-                if (segments[i].restart)
-                {
-                    if (part.Count == 0) throw new InvalidOperationException("Chain " + chain.name + ": segment " + (i + 1) + " (" + segments[i].key + ") starts with a quick restart and takes no input.");
-                    part[0].reset = true;
-                }
-                inputs.AddRange(part);
-            }
-            FullTasLog("Imported chain " + chain.name + " as " + run.name + ": " + run.goals.Count + " goals, " + routes.Count + " of " + segments.Count
-                + " segments, " + inputs.Count + " inputs");
-            WriteJsonAtomic(FullTasSeedPath(run.name), new { ticks = inputs }, false);
-            if (routes.Count < segments.Count)
-                return new { ok = true, goals = run.goals, finished = false, time = 0f, saved = false, inputs = inputs.Count,
-                    reason = "imported " + routes.Count + " of " + segments.Count + " segments as the run's seed"
-                        + (routes.Count < solved ? " (" + ChainFailure(replay) + ")" : " (segment " + (solved + 1) + " has no route)")
-                        + "; the offline search goes on from where it ends" };
-            FullTasVerdict v = FullTasJudge(run, inputs);
-            return new { ok = true, goals = run.goals, finished = v.finished, time = v.time, saved = v.saved, reason = v.reason, splits = v.splits, inputs = inputs.Count };
-        }
-
         // ---- Trace
 
-        // A trace of the run from the new game's start (what enginesim's fulltas mode loads): the header chain traces have
+        // A trace of the run from the new game's start (what enginesim's fulltas mode loads): the usual trace header
         // (fixedDeltaTime, inputs, start with its economy), course 0, capabilities none and the run's goals, then the state
         // after every tick; with `world` the world export as this run saw it.
         object FullTasTrace(FullTasRunDef run, List<SolverTick> inputs, string name, bool world)
@@ -666,7 +595,7 @@ namespace IGTAPTasMod
             FullTasGoal[] goals = ResolveFullTasGoals(run);
             Directory.CreateDirectory(EngineSimDir);
             string path = Path.Combine(EngineSimDir, name + ".json");
-            // Parked at the start with no frame in between, as chain traces from a new game export it.
+            // Parked at the start with no frame in between.
             if (world) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot start = NewGameStart();
@@ -765,9 +694,9 @@ namespace IGTAPTasMod
             if (body["ticks"] != null) return body["ticks"].ToObject<List<SolverTick>>();
             MacroDefinition best = FullTasBestRoute(run.name);
             if (best != null) return ToTicks(best.steps);
-            // No gated route yet: an import's seed (a chain solved in part).
-            string seed = FullTasSeedPath(run.name);
-            return File.Exists(seed) ? JObject.Parse(File.ReadAllText(seed))["ticks"].ToObject<List<SolverTick>>() : new List<SolverTick>();
+            // No gated route yet: the offline search's best so far (a partial run).
+            FullTasOffline offline = FullTasOfflineBest(run.name);
+            return offline != null && offline.inputs.Count > 0 ? offline.inputs : new List<SolverTick>();
         }
 
         // POST /api/enginesim/trace {fulltas: <run>, ticks | routeId, name, world}.
@@ -783,7 +712,7 @@ namespace IGTAPTasMod
 
         // ---- Playback
 
-        // Studio playback in real time from a fresh new game's first tick (like a chain from "newgame"), goals tracked.
+        // Studio playback in real time from a fresh new game's first tick, goals tracked.
         void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -885,15 +814,15 @@ namespace IGTAPTasMod
             FullTasLog(EngineSimExe + " " + args);
         }
 
-        static readonly Regex FullTasSeedRoute = new Regex(@"^(?:([A-Za-z0-9]+)/)?([A-Za-z0-9]+)(#\d+)?_");
+        static readonly Regex FullTasSeedRoute = new Regex(@"^([A-Za-z0-9]+)_");
+        static readonly Regex FullTasSeedTransition = new Regex(@"^(bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
 
         // A solve's window seeds (fulltas-<run>-seed-<k>.json in the enginesim dir, the old ones deleted first), passed as
-        // --seed: every saved raw-input route of the courses, bonuses and transitions the run's goals name, standalone ones
-        // ("2_WJ 15.02", "1to2_NO_WJ 3.40") and every chain's for the same token ("newgame/1#2_NO_WJ 2.58"), stale ones too,
-        // once per distinct inputs, stale ones last, faster ones first. Each says which of the run's goals it reaches (a
-        // course: start:N, finish:N; a bonus: its reward; a transition: where it ends), its category, whether it starts
-        // standing at its course's quick-restart point (StartsStanding; `align` is that point) and whether its chain
-        // segment starts with a quick restart. Returns how many.
+        // --seed: every saved raw-input category route ("2_WJ 15.02", "1to2_NO_WJ 3.40") of the courses, bonuses and
+        // transitions the run's goals name, once per distinct inputs, faster ones first. Each says which of the run's goals
+        // it reaches (a course: start:N, finish:N; a bonus: its reward; a transition: where it ends), its category, and
+        // whether it starts standing at its course's quick-restart point (course and bonus routes do; `align` is that
+        // point). Returns how many.
         int WriteFullTasSeeds(FullTasRunDef run, StringBuilder args)
         {
             Directory.CreateDirectory(EngineSimDir);
@@ -902,17 +831,16 @@ namespace IGTAPTasMod
             foreach (string old in Directory.GetFiles(EngineSimDir, prefix + "*.json"))
                 if (numbered.IsMatch(Path.GetFileName(old))) File.Delete(old);
             var labels = new HashSet<string>(ResolveFullTasGoals(run).Select(g => g.label));
-            var chainSegments = new Dictionary<string, List<ChainSegment>>(StringComparer.OrdinalIgnoreCase);
             var found = new List<(bool stale, float time, string key, string json)>();
             foreach (MacroDefinition route in _library.macros)
             {
                 Match m = route.name == null ? Match.Empty : FullTasSeedRoute.Match(route.name);
                 if (!m.Success || !route.steps.All(s => s.type == MacroStepType.RawInput)) continue;
-                string chain = m.Groups[1].Success ? m.Groups[1].Value : null, token = m.Groups[2].Value.ToLowerInvariant();
+                string token = m.Groups[1].Value.ToLowerInvariant();
                 CourseDef target = null;
                 int course = 0;
                 var goals = new List<string>();
-                Match transition = ChainTransition.Match(token);
+                Match transition = FullTasSeedTransition.Match(token);
                 if (transition.Success)
                 {
                     string to = transition.Groups[2].Value.ToLowerInvariant();
@@ -921,7 +849,7 @@ namespace IGTAPTasMod
                 }
                 else
                 {
-                    target = _courses.Find(c => !c.IsTransition && !c.IsPurchase && string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
+                    target = _courses.Find(c => !c.IsTransition && string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
                     if (target == null) continue;
                     if (target.IsBonus) goals.Add("reward:" + token);
                     else { goals.Add("start:" + target.id); goals.Add("finish:" + target.id); course = target.id; }
@@ -938,19 +866,8 @@ namespace IGTAPTasMod
                         .First(p => category.Groups[1].Value.EndsWith("_" + p.Value, StringComparison.OrdinalIgnoreCase)).Key;
                     if (!float.TryParse(category.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out time)) time = float.MaxValue;
                 }
-                bool standing = StartsStanding(route.name, token + "_"), restart = false;
-                if (chain != null)
-                {
-                    if (!chainSegments.TryGetValue(chain, out List<ChainSegment> segments))
-                    {
-                        ChainDef owner = _chains.Find(c => string.Equals(c.name, chain, StringComparison.OrdinalIgnoreCase));
-                        try { segments = owner == null ? null : ChainSegments(owner); }
-                        catch (InvalidOperationException) { segments = null; }
-                        chainSegments[chain] = segments;
-                    }
-                    string key = m.Groups[2].Value + m.Groups[3].Value;
-                    restart = segments != null && segments.Any(s => s.restart && string.Equals(s.key, key, StringComparison.OrdinalIgnoreCase));
-                }
+                // A category route of a course or bonus starts standing at its quick-restart point; a transition's doesn't.
+                bool standing = target != null, restart = false;
                 List<SolverTick> ticks = ToTicks(route.steps);
                 object align = null;
                 if (standing && target != null)
@@ -1078,13 +995,6 @@ namespace IGTAPTasMod
                     FullTasRunDef run = SetFullTasGoals(Text(body, "name"), goals.Select(g => g.Type == JTokenType.Null ? "" : g.ToString()));
                     return new { ok = true, name = run.name, goals = run.goals };
                 }
-                case "/api/fulltas/import":
-                {
-                    string name = Text(body, "name"), chain = Text(body, "chain");
-                    if (!ChainName.IsMatch(name)) throw new InvalidOperationException("Full-TAS run names are letters and digits only.");
-                    FindChain(chain);
-                    return FullTasWhenReady(request, "Importing chain " + chain, () => ImportFullTas(name, chain));
-                }
                 case "/api/fulltas/capture":
                 {
                     // {name}: the start trace + world, seeded with the saved best's inputs.
@@ -1143,7 +1053,7 @@ namespace IGTAPTasMod
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
                     // The offline search's best so far (partial runs included): goals reached, when, and the time to the last one.
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
-                    playable = best != null || offline != null && offline.inputs.Count > 0 || File.Exists(FullTasSeedPath(r.name)),
+                    playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
             FullTasPlay play = _fullTasPlay;

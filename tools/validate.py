@@ -3,8 +3,8 @@
 Uses the solver's own replay (/api/enginesim/submit with routeId), so a category means exactly what the solver and
 the gate use (TasPlugin.CategoryAbilities). A route is never re-saved: submit only saves a strictly faster time.
 
-Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>", and every
-chain segment route "<chain>/<segment>_<CAPS> <time>" from where the chain's current routes before it end)
+Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>"; Full-TAS
+routes "fulltas/<run>_NO_WJ <time>" are skipped: the Full-TAS gate judges them from a new game)
 """
 import json, re, sys, time, urllib.error, urllib.request
 ROUTES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\routes.json"
@@ -37,17 +37,10 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     # The course of a category route is its courses.json id or name ("bonus1_WJ 13.56").
     ids = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
-    # A chain segment's index by its key, as the plugin parses chains.json (restarts, repeats "1#2", "chain:<name>").
-    with urllib.request.urlopen("http://127.0.0.1:17426/api/state", timeout=30) as response:
-        chains = {c["name"].lower(): {s["key"].lower(): s["index"] for s in c.get("segments", [])}
-                  for c in json.load(response).get("chains", [])}
     for m in json.load(open(ROUTES, encoding="utf-8-sig"))["macros"]:
-        match = re.fullmatch(r"([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+", m["name"])
-        if not match:
+        if m["name"].startswith("fulltas/"):
+            print(f"{m['name']:34} {'Full-TAS':16} skipped")
             continue
-        chain = re.fullmatch(r"([A-Za-z0-9]+)/([^_\s/]+)", match[1])
-        if chain and chain[1].lower() in chains and chain[2].lower() in chains[chain[1].lower()]:
-            segment = chains[chain[1].lower()][chain[2].lower()]
-            check(m, {"chain": chain[1], "segment": segment}, f"chain {chain[1]} #{segment}")
-        elif match[1] in ids:
+        match = re.fullmatch(r"([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+", m["name"])
+        if match and match[1] in ids:
             check(m, {"course": ids[match[1]], "capabilities": LABELS[match[2]]}, f"C{ids[match[1]]} {LABELS[match[2]]}")

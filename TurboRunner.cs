@@ -64,8 +64,8 @@ namespace IGTAPTasMod
         }
 
         // The game's economy: Cash and every upgrade (global, each course's localUpgrades), every upgrade box (times used,
-        // cost, active, buy cooldown) and every course's clones (they pay Cash). A purchase segment's start carries it, so a
-        // run restored from a snapshot can afford exactly what the chain before it could.
+        // cost, active, buy cooldown) and every course's clones (they pay Cash). A start state carries it, so a run
+        // restored from a snapshot has exactly the economy its start had.
         internal sealed class Economy
         {
             public Dictionary<globalStats.Currencies, double> currencies;
@@ -204,9 +204,9 @@ namespace IGTAPTasMod
             if (done != null) for (int k = done.Count - 1; k >= 0; k--) DestroyClone(clones, done[k]);
         }
 
-        // `beforeTick`: taken inside a tick's Movement.FixedUpdate prefix (a chain segment's start), after that tick's due
-        // Invokes fired: the restored run's first tick is the rest of this one. `economy`: false for the per-tick trace
-        // snapshots (written out, never restored).
+        // `beforeTick`: taken inside a tick's Movement.FixedUpdate prefix (CaptureNewGameStart takes it there), after that
+        // tick's due Invokes fired: the restored run's first tick is the rest of this one. `economy`: false for the
+        // per-tick trace snapshots (written out, never restored).
         public static Snapshot Capture(Movement movement, courseScript[] courses, object[] engine, int tick, bool beforeTick = false, bool economy = true)
         {
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();

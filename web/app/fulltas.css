@@ -17,3 +17,4 @@
 .fullTasEditor .buttonRow, .fullTasSolve .buttonRow { flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
 .fullTasInline { display: flex; gap: 9px; align-items: flex-end; }
 .fullTasInline .field { flex: 1; margin-top: 12px; }
+.fullTasSearch { margin-top: 18px; }
