@@ -26,12 +26,6 @@ namespace IGTAPTasMod
         object HandleEngineSim(WebStudioRequest request, JObject body)
         {
             Directory.CreateDirectory(EngineSimDir);
-            if (request.Path == "/api/enginesim/world")
-            {
-                string path = Path.Combine(EngineSimDir, (Text(body, "name") ?? "world") + ".json");
-                int objects = EngineSimExport.WriteWorld(path);
-                return new { ok = true, path = path, objects = objects };
-            }
             if (request.Path == "/api/enginesim/raycast")
                 return new { ok = true, hits = EngineSimExport.Raycasts((JArray)body["rays"]) };
             if (request.Path == "/api/enginesim/trace")

@@ -68,13 +68,6 @@ namespace IGTAP.EngineSim
             i = 0;
             foreach (JsonElement n in root.GetProperty("layerNames").EnumerateArray()) Engine.LayerNames[i++] = n.GetString();
 
-            var materials = new Dictionary<int, (float friction, float bounciness)>();
-            foreach (JsonElement m in root.GetProperty("materials").EnumerateArray())
-            {
-                JsonElement props = m.GetProperty("props");
-                materials[m.GetProperty("id").GetInt32()] = (props.GetProperty("friction").GetSingle(), props.GetProperty("bounciness").GetSingle());
-            }
-
             // Pass 1: objects, transforms and components with their instance ids.
             var parents = new List<(GameObject go, int parent, int sibling)>();
             foreach (JsonElement o in root.GetProperty("objects").EnumerateArray())
@@ -96,7 +89,7 @@ namespace IGTAP.EngineSim
                 int sibling = o.GetProperty("siblingIndex").GetInt32();
                 SiblingIndex[t] = sibling;
                 parents.Add((go, o.GetProperty("parent").GetInt32(), sibling));
-                foreach (JsonElement c in o.GetProperty("components").EnumerateArray()) CreateComponent(go, c, materials);
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray()) CreateComponent(go, c);
             }
             foreach (var (go, parent, sibling) in parents.OrderBy(p => p.sibling))
                 if (parent != 0 && Objects.TryGetValue(parent, out Object p) && p is GameObject parentGo)
@@ -109,7 +102,7 @@ namespace IGTAP.EngineSim
             foreach (JsonElement s in root.GetProperty("statics").EnumerateArray()) SetStatic(s);
         }
 
-        void CreateComponent(GameObject go, JsonElement c, Dictionary<int, (float, float)> materials)
+        void CreateComponent(GameObject go, JsonElement c)
         {
             string typeName = c.GetProperty("type").GetString();
             bool isGame = c.GetProperty("assembly").GetString() == "Assembly-CSharp";

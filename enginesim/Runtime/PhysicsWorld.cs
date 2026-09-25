@@ -842,17 +842,14 @@ namespace IGTAP.EngineSim
 
         public object Capture()
         {
-            object world;
-            try { world = _b2.SaveState(); }
-            catch (NotImplementedException) { world = null; }
-            return new PhysicsSnapshot { World = world, TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, Touching = _pairsBefore.ToArray(),
+            return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, Touching = _pairsBefore.ToArray(),
                 BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray() };
         }
 
         public void Restore(object snapshot)
         {
             var s = (PhysicsSnapshot)snapshot;
-            if (s.World != null) _b2.LoadState(s.World);
+            _b2.LoadState(s.World);
             _movers = null;
             foreach (ColliderState c in _player.Colliders) c.Fixtures.Clear();
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
