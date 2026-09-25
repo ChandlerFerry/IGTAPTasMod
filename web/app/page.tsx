@@ -83,7 +83,7 @@ export default function Studio() {
           <input type="checkbox" checked={state.capabilitiesLocked} disabled={!state.connected} onChange={e => command("/settings/lock-capabilities", { locked: e.target.checked })} />
           <strong>Don&apos;t touch my unlocks</strong>
         </label>
-        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: the player's hurtbox, spikes with their 2-step grace, and the inputs playback presses.">
+        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: the player's hurtbox, spikes with their 2-step grace, the player's velocity, and the inputs playback gave on the last 30 ticks.">
           <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
           <strong>Overlay</strong>
         </label>

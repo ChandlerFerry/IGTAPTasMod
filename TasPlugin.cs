@@ -809,10 +809,11 @@ namespace IGTAPTasMod
 
         // Real-time playback paces the game so every physics tick gets its own frame, as the route model (and the offline
         // engine) assumes. At most one tick per frame: a hitch (autosave, overlay scan) stretches the playback instead of
-        // running up to 16 ticks with no Update between them. No vsync and a 144 fps cap: under ~50 fps two ticks share a
-        // frame and fractional-delay Invokes (buffers, spring cooldown) land a tick late; exactly 50 fps does too for the
-        // 0.03 s-class ones. Turbo and the solver step their own physics. Restored as soon as the playback ends.
-        const int PlaybackFrameRate = 144;
+        // running up to 16 ticks with no Update between them. No vsync and a 280 fps cap: a delayed Invoke fires in the
+        // first frame that reaches it, and the 0.01 s / 0.03 s ones (reEnableNormalCollider, endRecentJump) leave a 10 ms
+        // window before the next tick, so a frame must come at least every 10 ms; 280 fps (3.6 ms) leaves room for jitter.
+        // Slower, they land a tick late. Turbo and the solver step their own physics. Restored as soon as the playback ends.
+        const int PlaybackFrameRate = 280;
         bool _playbackPaced;
         float _savedMaximumDeltaTime;
         int _savedVSyncCount, _savedTargetFrameRate;
