@@ -38,6 +38,10 @@ namespace IGTAPTasMod
         // With rawDashPressed: press jump on this frame of the dash it starts (1 = first dash frame). The engine
         // gets no ticks during a dash, so this is the only way to jump mid-dash (a late super jump). 0 = off.
         public int dashJumpFrame;
+        // Press dash on this spring tick after this step (1 = the first tick of a sideways spring's lock). Spring ticks
+        // take no input (Movement.FixedUpdate's spring branch skips getPlayerControlledInput), yet the branch cancels the
+        // lock when a dash is buffered: a player presses dash whenever they like during it. 0 = off.
+        public int springDashFrame;
         // The game's quick restart (the QuickReset button: Movement.respawn(true)) at the start of this step's first tick,
         // before Movement.FixedUpdate. Full-TAS routes choose where to restart.
         public bool rawQuickRestart;
@@ -52,7 +56,7 @@ namespace IGTAPTasMod
                 rawMoveX = rawMoveX, rawMoveY = rawMoveY,
                 rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
                 rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
-                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, rawQuickRestart = rawQuickRestart };
+                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, springDashFrame = springDashFrame, rawQuickRestart = rawQuickRestart };
         }
     }
 
