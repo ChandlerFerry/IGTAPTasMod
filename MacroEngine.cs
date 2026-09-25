@@ -44,6 +44,9 @@ namespace IGTAPTasMod
         private bool _rawJumpHeld;
         private int _dashJumpFrame;
         private Vector2 _dashJumpAxis;
+        // MacroStep.springDashFrame of the last input tick, and the spring ticks since it (SpringFrame).
+        private int _springDashFrame;
+        private int _springTicks;
         private bool _waitingForStable;
         private int _stableTicks;
         private bool _hasSynchronizationPosition;
@@ -119,6 +122,8 @@ namespace IGTAPTasMod
             _wallJumpTriggered = false;
             _rawJumpHeld = false;
             _dashJumpFrame = 0;
+            _springDashFrame = 0;
+            _springTicks = 0;
             LastJumpPress = LastJumpRelease = LastDashPress = Never;
             JumpHeld = false;
             _waitingForStable = synchronizeStart;
@@ -172,6 +177,19 @@ namespace IGTAPTasMod
             if (step.type != MacroStepType.RawInput || !step.rawQuickRestart) return false;
             _quickRestartStep = _stepIndex;
             return true;
+        }
+
+        // Before Movement.FixedUpdate (plugin prefix / enginesim), after the pending Invokes: counts the spring ticks
+        // (a sideways spring's lock, no input hook) after the last input tick, and presses dash on the one that tick asked
+        // for (MacroStep.springDashFrame), as a player's press in the frame before it does. The spring branch cancels the
+        // lock on a buffered dash, and the dash starts on the next tick.
+        public void SpringFrame(Movement movement)
+        {
+            if (!IsRunning || _springDashFrame <= 0
+                || !string.Equals(ReadObject(CutsceneModeField, movement), "spring", StringComparison.OrdinalIgnoreCase)) return;
+            if (++_springTicks < _springDashFrame) return;
+            _springDashFrame = 0;
+            PressDash(movement);
         }
 
         // A run resumed later from a capture taken now starts its own input count at 0 (its inputs are the ones after this
@@ -352,6 +370,10 @@ namespace IGTAPTasMod
         private void RunRawInput(Movement movement, MacroStep step, bool entering)
         {
             movement.MoveAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
+            // Only the input tick right before the spring ticks can ask for their dash (a spring-dash tick is a step of
+            // its own: ToSteps never merges the next tick into it).
+            _springDashFrame = entering ? step.springDashFrame : 0;
+            _springTicks = 0;
             if (entering)
             {
                 if (step.rawJumpPressed)
