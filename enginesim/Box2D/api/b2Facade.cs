@@ -64,15 +64,4 @@ namespace Box2D
             return output.distance < 10.0f * b2Settings.FLT_EPSILON;
         }
     }
-
-    public static class b2WorldExtensions
-    {
-        /// <summary>Exact world snapshot for branching. Implemented in the next drop.</summary>
-        public static object SaveState(this b2World world) =>
-            throw new NotImplementedException("b2World.SaveState lands in the next drop.");
-
-        /// <summary>Exact world restore for branching. Implemented in the next drop.</summary>
-        public static void LoadState(this b2World world, object state) =>
-            throw new NotImplementedException("b2World.LoadState lands in the next drop.");
-    }
 }
