@@ -254,7 +254,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        // A human's jump press on a dash frame, filed for the recording (MacroStep.dashJumpFrame).
         private static void BeforeDashFrame(Movement __instance)
         {
             if (Instance != null) Instance._recorder.DashFrame(__instance);

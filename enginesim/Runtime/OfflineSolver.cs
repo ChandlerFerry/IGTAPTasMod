@@ -574,8 +574,6 @@ namespace IGTAP.EngineSim
                         InputTick k = t[p]; k.springDash = _rng.NextDouble() < .2 ? 0 : _rng.Next(1, 26); t[p] = k;
                         break;
                     }
-                    // The stick held through a dash or spring lock (a reversed super jump: dash one way, stick and jump the
-                    // other), mostly on a dash tick; null leaves the old default.
                     case "lockstick":
                     {
                         List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();

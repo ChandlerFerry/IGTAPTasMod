@@ -30,8 +30,6 @@ namespace IGTAPTasMod
         public bool rawDashHeld;
         public int dashJumpFrame;
         public int springDashFrame;
-        // The stick held on the input-less ticks (dash frames, a spring's lock) right after this step; null: x at rest, y
-        // of the next input tick.
         public float? lockMoveX, lockMoveY;
         public bool rawQuickRestart;
 

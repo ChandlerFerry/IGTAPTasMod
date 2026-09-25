@@ -33,7 +33,9 @@ The game takes presses only in `Movement.Update` (Movement.cs:741-767), and Unit
 (`MacroEngine.BeforeTick`, before `Movement.FixedUpdate`), not at the input hook partway through it, where the game has
 already read the buttons (a wall bounce, a dash's wall jump: Movement.cs:1033-1056). A dash that hits a wall ends in
 that tick's wall branch and the tick takes its input tick after all; its presses go in at the branch's first call
-(`MacroEngine.WallTouch`, `touchedSolidGround`/`touchedMossyGround` prefix), before the branch reads the buttons.
+(`MacroEngine.WallTouch`, `touchedSolidGround`/`touchedMossyGround` prefix), before the branch reads the buttons. A dash
+whose frames run out ends in that tick's `FixedUpdate`, before its input hook; a tick in a dash or spring lock takes no
+input of its own, and the next input tick's presses wait for the first tick out of the lock.
 
 Every press and release is stamped with `MacroEngine.Clock`, which advances once per physics tick (dash ticks
 included), so each buffer can be checked against the press or release that made it. The gate's windows
