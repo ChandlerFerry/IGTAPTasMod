@@ -18,7 +18,8 @@ namespace IGTAPTasMod
 {
     // The studio's Optimize tab. The search runs offline (`IGTAP.EngineSim solve`, AGENTS.md rule 7); the game only
     // captures the start state and world the offline engine loads, and judges every offline best in turbo
-    // (/api/enginesim/submit), saving it through the gate (SaveSolverRoute) when it holds up and is faster.
+    // (/api/enginesim/submit), saving it through the gate (SaveSolverRoute) when it holds up and is faster (or as fast
+    // in fewer physics ticks from the run start: a shorter flying-start setup).
     public sealed partial class TasPlugin
     {
         public sealed class CourseDef
@@ -38,9 +39,14 @@ namespace IGTAPTasMod
             // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
             // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
             public string minCapabilities;
+            // A purchase ("buyreward", "buywj", ...; chains only, never in courses.json): the hierarchy path of the upgrade
+            // box it buys. Live and in turbo it finishes only when the game buys that box (upgradeBox.DoBuyUpgrade);
+            // offline, on touching the box's buy trigger (endX..endH, read from the live collider for the trace).
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string box;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
-            [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
+            [JsonIgnore] public bool IsPurchase { get { return !string.IsNullOrEmpty(box); } }
+            [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition && !IsPurchase; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
             // A bonus is only run in its first category (the unlocks it needs); courses and transitions in every wider one too.
@@ -89,7 +95,21 @@ namespace IGTAPTasMod
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
-        const string SolveLimits = " --minutes 60 --stall-minutes 5";
+
+        // One target of an Optimize run: a course in a category, or a chain segment.
+        sealed class SolveJob
+        {
+            public int course, segment = -1, saved;
+            public string caps, chain, label;
+            // How it ended ("Finished, best 28.41s, 1 saved", "Skipped: ..."); null until then.
+            public string result;
+        }
+
+        // The Optimize run's targets, solved one after another (the batch matrix, or a single course or segment), and how
+        // long each one's search may take (it also stops after 5 minutes without a new best).
+        readonly List<SolveJob> _solveQueue = new List<SolveJob>();
+        int _solveIndex = -1;
+        int _solveMinutes = 60;
 
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
 
@@ -107,7 +127,7 @@ namespace IGTAPTasMod
             // GLOBALclonespeedmax box, right of the course).
             _courses = new List<CourseDef> {
                 new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none" },
-                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "wj" },
+                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none" },
                 new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjdash" },
                 new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdashaj" },
                 new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdashaj" },
@@ -231,7 +251,7 @@ namespace IGTAPTasMod
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
             { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" }, { "wjdashaj", "WJ_DASH_AJ" } };
 
-        // Course 2 has no NO_WJ category, Course 3 starts at WJDASH, Course 4 at WJ_DASH_AJ (courses.json minCapabilities);
+        // Course 3 starts at WJDASH, Course 4 at WJ_DASH_AJ (courses.json minCapabilities);
         // a bonus has only its first category.
         void CheckCategory(int course, string capabilities)
         {
@@ -247,43 +267,104 @@ namespace IGTAPTasMod
             get { return typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value; }
         }
 
-        void StartSolver(int course, string capabilities)
+        SolveJob CourseJob(int course, string capabilities)
         {
-            if (_courses.All(c => c.id != course)) throw new InvalidOperationException("Unknown course " + course + ".");
-            if (!CapabilityLabels.ContainsKey(capabilities)) throw new InvalidOperationException("Unknown capabilities.");
+            CourseDef def = _courses.Find(c => c.id == course);
+            if (def == null) throw new InvalidOperationException("Unknown course " + course + ".");
+            if (!CapabilityLabels.ContainsKey(capabilities ?? "")) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, capabilities);
-            BeginSolve(course, capabilities, null, -1);
+            return new SolveJob { course = course, caps = capabilities, label = def.Token + "_" + CapabilityLabels[capabilities] };
         }
 
-        // A chain segment, from where the chain's routes before it end (each of them must exist).
-        void StartChainSolver(string chainName, int segment)
+        SolveJob ChainJob(string chainName, int segment)
         {
             ChainDef chain = FindChain(chainName);
             List<ChainSegment> segments = ChainSegments(chain);
             if (segment < 0 || segment >= segments.Count) throw new InvalidOperationException("Chain " + chain.name + " has no segment " + (segment + 1) + ".");
-            ChainRoutes(chain, segments, segment);
-            BeginSolve(segments[segment].target.id, chain.capabilities, chain.name, segment);
+            return new SolveJob { course = segments[segment].target.id, caps = segments[segment].caps, chain = chain.name, segment = segment,
+                label = ChainCategory(chain, segments[segment]) };
         }
 
-        void BeginSolve(int course, string capabilities, string chain, int segment)
+        // POST /api/solver/start: {course, capabilities}, {chain, segment}, or {queue: [either, ...]}, solved in that order;
+        // `minutes` bounds each target's search. The first target's problems are the request's error; a later target
+        // that can't start when its turn comes (a chain segment whose earlier routes don't exist yet) is skipped.
+        void StartSolver(JObject body)
         {
             if (_solverRunning) throw new InvalidOperationException("The solver is already running.");
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
-            if (CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
             string exe = EngineSimExe;
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
-            _solveCourse = course; _solveCaps = capabilities;
-            _solveChain = chain; _solveSegment = segment;
+            List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
+            List<SolveJob> jobs = items.Select(i => !string.IsNullOrEmpty(Text(i, "chain")) ? ChainJob(Text(i, "chain"), Number(i, "segment", -1))
+                : CourseJob(Number(i, "course", 0), Text(i, "capabilities"))).ToList();
+            if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
+            int minutes = Number(body, "minutes", 60);
+            if (minutes < 1) throw new InvalidOperationException("Minutes per target must be at least 1.");
+            _solveQueue.Clear();
+            _solveQueue.AddRange(jobs);
+            _solveMinutes = minutes;
+            _solverLog.Clear();
+            StartSolveJob(0);
+        }
+
+        void StartSolveJob(int index)
+        {
+            SolveJob job = _solveQueue[index];
+            // A chain from a new game never writes an unlock (the game's purchases make them), so the lock doesn't stop it.
+            if (CapabilitiesLocked && (job.chain == null || !FindChain(job.chain).FromNewGame)) throw new InvalidOperationException(CapabilitiesLockedError);
+            // A chain segment is solved from where the chain's routes before it end: each of them must exist.
+            if (job.chain != null) { ChainDef chain = FindChain(job.chain); ChainRoutes(chain, ChainSegments(chain), job.segment); }
+            _solveIndex = index;
+            _solveCourse = job.course; _solveCaps = job.caps;
+            _solveChain = job.chain; _solveSegment = job.segment;
             _solveRuns = _solveFinishes = 0;
             _turboChecks = _turboSaved = 0;
             _solveBest = float.PositiveInfinity;
             _solverSpeed = "";
-            _solverLog.Clear();
             while (_solveOutput.TryDequeue(out _)) { }
+            if (_solveQueue.Count > 1) _solverLog.Add("── " + (index + 1) + "/" + _solveQueue.Count + " " + job.label);
             _solverRunning = true;
             _solverStatus = "Capturing the start state in turbo";
             EnsureGameUnpaused();
+        }
+
+        void KillSolveProcess()
+        {
+            if (_solveProcess == null) return;
+            try { if (!_solveProcess.HasExited) _solveProcess.Kill(); }
+            catch (Exception ex) { Logger.LogWarning("Could not stop the offline solver: " + ex.Message); }
+            _solveProcess.Dispose();
+            _solveProcess = null;
+        }
+
+        // The current target is done (`outcome` says how): the next one that can start starts, or the run ends.
+        void EndSolveJob(string outcome)
+        {
+            KillSolveProcess();
+            SolveJob job = _solveQueue[_solveIndex];
+            job.saved = _turboSaved;
+            job.result = outcome + (float.IsInfinity(_solveBest) ? "" : ", best " + _solveBest.ToString("0.00", CultureInfo.InvariantCulture) + "s")
+                + ", " + _turboSaved + " saved";
+            for (int next = _solveIndex + 1; next < _solveQueue.Count; next++)
+            {
+                try { StartSolveJob(next); return; }
+                catch (Exception ex)
+                {
+                    _solveQueue[next].result = "Skipped: " + ex.Message;
+                    _solverLog.Add("Skipped " + _solveQueue[next].label + ": " + ex.Message);
+                }
+            }
+            _solverRunning = false;
+            _solverStatus = _solveQueue.Count == 1 ? outcome
+                : "Done: " + _solveQueue.Count + " targets, " + _solveQueue.Sum(j => j.saved) + " new routes saved";
+        }
+
+        // POST /api/solver/skip: ends the current target and moves on to the next.
+        void SkipSolveJob()
+        {
+            if (!_solverRunning) throw new InvalidOperationException("The solver is not running.");
+            EndSolveJob("Skipped");
         }
 
         // A course's zone loads in real frames around the player (turbo does not step the loader), and FloatingOrigin
@@ -295,9 +376,23 @@ namespace IGTAPTasMod
         bool CourseLoaded()
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
+            Movement player = FindWorldMovement();
+            if (SolverFromNewGame)
+            {
+                // A chain from a new game starts at the fresh game's first tick: back there (economy included), then let
+                // the zones settle.
+                TurboRunner.Snapshot fresh = NewGameStart();
+                if (((Vector2)player.transform.position - (Vector2)fresh.position).sqrMagnitude >= 64f * 64f)
+                {
+                    TurboRunner.Restore(fresh, player);
+                    _parkedFrame = Time.frameCount;
+                }
+                else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled()) return true;
+                _solverStatus = "Loading the new game's start";
+                return false;
+            }
             // A chain segment's runs start where its chain starts: the chain's first segment.
             CourseDef target = _solverPark;
-            Movement player = FindWorldMovement();
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f;
             if (!parked)
@@ -326,14 +421,14 @@ namespace IGTAPTasMod
             return true;
         }
 
+        // Ends the whole run: the current target is marked `status`, the ones after it never start.
         void StopSolver(string status)
         {
-            if (_solveProcess != null)
+            KillSolveProcess();
+            if (_solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count)
             {
-                try { if (!_solveProcess.HasExited) _solveProcess.Kill(); }
-                catch (Exception ex) { Logger.LogWarning("Could not stop the offline solver: " + ex.Message); }
-                _solveProcess.Dispose();
-                _solveProcess = null;
+                _solveQueue[_solveIndex].saved = _turboSaved;
+                _solveQueue[_solveIndex].result = status + ", " + _turboSaved + " saved";
             }
             _solverRunning = false;
             _solverStatus = status;
@@ -347,7 +442,9 @@ namespace IGTAPTasMod
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
-                courses = _courses.Select(c => c.id).ToArray() };
+                courses = _courses.Select(c => c.id).ToArray(),
+                minutes = _solveMinutes,
+                queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
         }
 
         // The studio's sidebar groups category routes by these: a course with a reward box is a bonus, one with `to` a
@@ -373,9 +470,9 @@ namespace IGTAPTasMod
                 _solveProcess.WaitForExit();
                 while (_solveOutput.TryDequeue(out string line)) ReadSolveLine(line);
                 int code = _solveProcess.ExitCode;
-                StopSolver(code == 0 ? "Finished" : "The offline solver exited with code " + code);
+                EndSolveJob(code == 0 ? "Finished" : "The offline solver exited with code " + code);
             }
-            catch (Exception ex) { StopSolver("Solver error: " + ex.Message); Logger.LogError(ex); }
+            catch (Exception ex) { Logger.LogError(ex); EndSolveJob("Solver error: " + ex.Message); }
         }
 
         // Once the course is loaded: a turbo trace of the start state plus the world export (what
@@ -395,30 +492,33 @@ namespace IGTAPTasMod
             JObject captured = JObject.FromObject(EngineSimTrace(new WebStudioRequest(), body));
             if (captured["ok"] == null || !(bool)captured["ok"])
             {
-                StopSolver("Start state not captured: " + captured["error"]);
+                EndSolveJob("Start state not captured: " + captured["error"]);
                 return;
             }
             var args = new StringBuilder(Quote((string)captured["path"]));
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
             // Every route already made for this course seeds the search, whatever category it was made for; a chain
-            // segment's also its own earlier (and stale) routes.
-            var prefixes = new List<string> { course.Token + "_" };
-            if (_solverChain != null) prefixes.Add(_solverChain.name + "/" + course.Token + "_");
+            // segment's also its chain's routes for the same token, every occurrence ("wj/1_", "wj/1#2_"), stale ones too.
+            string standalonePrefix = course.Token + "_";
+            Regex chainSeed = _solverChain == null ? null
+                : new Regex("^" + Regex.Escape(_solverChain.name + "/" + course.Token) + @"(#\d+)?_", RegexOptions.IgnoreCase);
             int seeds = 0;
-            foreach (MacroDefinition route in _library.macros.Where(m => prefixes.Any(p => m.name.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+            foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
+                && (m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase) || chainSeed != null && chainSeed.IsMatch(m.name))
                 && m.steps.All(s => s.type == MacroStepType.RawInput)))
             {
                 string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
                 // A standalone route seeding a chain segment starts at its course's quick-restart point, standing (the
                 // player spawns 12 px lower); solve walks there first (SeedAlign).
-                bool standalone = _solverChain != null && route.name.StartsWith(prefixes[0], StringComparison.OrdinalIgnoreCase);
+                bool standalone = _solverChain != null && route.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase);
                 Vector2 at = new Vector2(course.x, course.y - 12f) + CurrentOrigin();
                 File.WriteAllText(seed, JsonConvert.SerializeObject(standalone
                     ? (object)new { ticks = ToTicks(route.steps), align = new { at.x, at.y } } : new { ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);
-            args.Append(" --threads ").Append(threads).Append(SolveLimits);
+            args.Append(" --threads ").Append(threads).Append(" --minutes ").Append(_solveMinutes)
+                .Append(" --stall-minutes ").Append(Math.Min(5, _solveMinutes));
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, "solve " + args) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
@@ -475,12 +575,15 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            if (GetMovementBool(player, "wallJumpUnlocked", false) != (CapsLevel(_solverCaps) >= 1)
-                || GetMovementBool(player, "dashUnlocked", false) != (CapsLevel(_solverCaps) >= 2)
-                || !Equals(GetMovementField(player, "maxAirDashes"), CapsLevel(_solverCaps) >= 2 ? 1 : 0)
-                || GetMovementBool(player, "doubleJumpUnlocked", false) != (CapsLevel(_solverCaps) >= 3)
-                || !Equals(GetMovementField(player, "maxAirJumps"), CapsLevel(_solverCaps) >= 3 ? 1 : 0))
-                _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
+            // A chain replay checks each segment against its own category (wall jump from the segment after a buywj on).
+            string caps = _chainRun != null ? _chainRun.Current.caps : _solverCaps;
+            int level = CapsLevel(caps);
+            if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
+                || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
+                || !Equals(GetMovementField(player, "maxAirDashes"), level >= 2 ? 1 : 0)
+                || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
+                || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0))
+                _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[caps]);
         }
 
         // Null when the route may be saved, else why not.
@@ -507,7 +610,8 @@ namespace IGTAPTasMod
             bool savedHasReset = _hasPreservedCourseResetPoint;
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
-            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
+            // A chain from a new game runs with the unlocks the game gave it (its purchases); nothing is written.
+            List<(string field, object value)> savedAbilities = SolverFromNewGame ? new List<(string, object)>() : ApplyAbilities(player, _solverCaps);
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -603,15 +707,19 @@ namespace IGTAPTasMod
                 float time = float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
                 if (!fastest.TryGetValue(key, out float best) || time < best) fastest[key] = time;
             }
-            var kept = new HashSet<string>();
+            // Ties: keep the last route listed. The gate saves an equally fast route only when it takes fewer physics ticks
+            // from the run start (a shorter flying-start setup), and appends it.
+            var kept = new Dictionary<string, MacroDefinition>();
+            foreach (MacroDefinition m in _library.macros)
+            {
+                Match g = CategoryRoute.Match(m.name ?? "");
+                if (g.Success && !m.favorite && float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) <= fastest[g.Groups[1].Value.ToUpperInvariant()])
+                    kept[g.Groups[1].Value.ToUpperInvariant()] = m;
+            }
             int removed = _library.macros.RemoveAll(m =>
             {
                 Match g = CategoryRoute.Match(m.name ?? "");
-                if (!g.Success || m.favorite) return false;
-                string key = g.Groups[1].Value.ToUpperInvariant();
-                // Ties: keep the first route listed.
-                if (float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) > fastest[key] || !kept.Add(key)) return true;
-                return false;
+                return g.Success && !m.favorite && (!kept.TryGetValue(g.Groups[1].Value.ToUpperInvariant(), out MacroDefinition keep) || keep != m);
             });
             _library.selectedIndex = Mathf.Clamp(_library.selectedIndex, 0, Math.Max(0, _library.macros.Count - 1));
             return removed > 0;

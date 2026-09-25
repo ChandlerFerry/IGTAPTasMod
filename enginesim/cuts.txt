@@ -23,6 +23,8 @@ TeleporterScript::OnTriggerEnter2D
 TeleporterScript::OnTriggerExit2D
 # End-game credits cutscene.
 FakeCreditsControlScript::OnTriggerEnter2D
+# Tutorial text fade (DOTween on TMP_Text colour).
+TutorialTextTrigger::OnTriggerEnter2D
 
 # Presentation called from movement code.
 Movement::playSFX

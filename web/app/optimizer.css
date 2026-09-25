@@ -29,3 +29,26 @@
 /* Chains tab: one block per chain. */
 .chainBlock { margin-top: 18px; }
 .chainBlock .tableRow .buttonRow { gap: 6px; }
+
+/* Optimize tab: the single solver left, the batch matrix right. */
+.optimizeGrid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap: 18px; align-items: start; }
+@media (max-width: 1200px) { .optimizeGrid { grid-template-columns: 1fr; } }
+.matrixTools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 4px 0 14px; }
+.matrixTools .field { margin-left: auto; width: 150px; }
+.matrixScroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; }
+.matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
+.matrix th, .matrix td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.matrix thead th { position: sticky; top: 0; background: var(--panel2); }
+.matrix th button { padding: 2px 4px; border: 0; background: transparent; color: var(--text); font-weight: 700; cursor: pointer; }
+.matrix th button:hover { color: var(--cyan); }
+.matrix tbody th { color: var(--text); font-weight: 600; }
+.matrixSection th { padding-top: 10px; background: #0b1c31; color: var(--muted); font-size: 10px; letter-spacing: .1em; }
+.matrixSection th button { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
+.matrix td.na { background: repeating-linear-gradient(135deg, transparent 0 6px, #0f1d31 6px 12px); }
+.matrixCell { display: inline-flex; justify-content: flex-start; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
+.matrixCell input { accent-color: var(--cyan); margin: 0; }
+.matrixCell.on { color: var(--text); }
+.matrixQueue { margin: 14px 0 0; padding-left: 22px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.matrixQueue li strong { margin-right: 8px; color: #aac0d7; }
+.matrixQueue li.active strong, .matrixQueue li.active span { color: var(--cyan); }
+.matrixQueue li.done strong { color: var(--text); }

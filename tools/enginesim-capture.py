@@ -12,7 +12,9 @@ that run saw it).
   enginesim-capture.py chain NAME K       chain NAME's segment K (0-based) start: where the chain's routes before it end
 
 C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj. Chains are in chains.json
-next to courses.json (a chain segment is solved in the chain's category).
+next to courses.json (a chain segment is solved in its own category: the chain's, WJ after a buywj segment). A chain
+that starts with "newgame" starts from a fresh new game: when the game isn't in one, `chain` loads it first
+(POST /api/session/newgame: no load, no save).
 """
 import json
 import random
@@ -107,6 +109,15 @@ def main():
         print({k: v for k, v in r.items() if k != "path"})
     elif mode == "chain":
         chain, segment = sys.argv[2], int(sys.argv[3])
+        state = call("/api/state", method="GET")
+        info = next((c for c in state.get("chains", []) if c["name"].lower() == chain.lower()), None)
+        if info is None:
+            sys.exit(f"no chain named {chain!r} in chains.json")
+        if info.get("fromNewGame") and not state.get("freshGame"):
+            fresh = call("/api/session/newgame")
+            print("new game:", fresh)
+            if not fresh.get("ok"):
+                sys.exit("could not load a fresh new game")
         r = trace({"chain": chain, "segment": segment, "ticks": [], "name": f"start-chain-{chain}-{segment}"})
         print({k: v for k, v in r.items()})
     else:

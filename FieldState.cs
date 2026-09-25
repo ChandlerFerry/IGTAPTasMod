@@ -39,7 +39,7 @@ namespace IGTAPTasMod
             for (int i = 0; i < fields.Length; i++) fields[i].SetValue(target, Copy(values[i]));
         }
 
-        static object Copy(object value)
+        internal static object Copy(object value)
         {
             if (value is Array array) return array.Clone();
             if (value != null && value.GetType().IsGenericType)

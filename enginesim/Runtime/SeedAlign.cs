@@ -47,7 +47,8 @@ namespace IGTAP.EngineSim
             else
             {
                 int dir = Math.Sign(target.x - at.x);
-                // Full-stick ticks until the rest point passes the start, then the last tick's stick on both sides of it.
+                // Full-stick ticks until the rest point passes the start, then the last tick's stick on both sides of it
+                // (what a stick gives short of full: 0.3..0.8, MacroEngine.ControllerAxis).
                 int k = 0;
                 for (; k <= MaxWalk; k++)
                 {
@@ -57,7 +58,8 @@ namespace IGTAP.EngineSim
                 for (int full = Math.Max(0, k - 2); full <= Math.Min(k, MaxWalk); full++)
                 {
                     Consider(Walk(dir, full, 0f));
-                    for (int s = 1; s <= 20; s++) Consider(Walk(dir, full, s / 20f));
+                    for (int s = 6; s <= 16; s++) Consider(Walk(dir, full, s / 20f));
+                    Consider(Walk(dir, full, 1f));
                 }
             }
             List<InputTick> best = null;
