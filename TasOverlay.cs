@@ -7,24 +7,22 @@ using UnityEngine.Rendering;
 namespace IGTAPTasMod
 {
     // What viewers see in the game while the studio's "Show TAS overlay" is on: the player's hurtbox, every spike's
-    // collider, the spike grace count while the hurtbox is inside one, and on the left the inputs playback presses, one
-    // row per run of identical physics ticks (newest at the top; older rows fall off the bottom). Only real-time playback is listed;
-    // solver and turbo runs are not.
+    // collider, the spike grace count while the hurtbox is inside one, and in the top left corner the inputs playback
+    // gave on each of the last MaxInputRows physics ticks (newest at the top). Only real-time playback is listed;
+    // solver and turbo runs are not. The top right corner shows the player's velocity (TasOverlayVelocity.cs).
     public sealed partial class TasPlugin
     {
         sealed class InputRow
         {
-            // Set on the row that starts a route's inputs; such a row has no inputs.
-            public string header;
-            public int ticks;
-            public string ticksText;
+            public string tickText;
             // Movement.MoveAxis as the game used it: x 0, ±1 or 0.3..0.8 in size (a stick short of full), y 0 or ±1.
             public float x, y;
             public string stickText;
-            public bool jump, dash;
+            public bool jump, jumpPress, dash;
         }
 
         const int MaxInputRows = 30;
+        // Oldest first; rows are reused once the list is full.
         readonly List<InputRow> _inputRows = new List<InputRow>();
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
         Movement _overlayPlayer;
@@ -33,10 +31,10 @@ namespace IGTAPTasMod
         // PhysicsTicks of the last listed tick; 0 while no playback runs.
         long _overlayLastTick;
         long _overlayTicks;
-        string _overlayRoute;
+        string _overlayRoute, _overlayRouteText;
         string _overlayClock;
         int _overlayJumpPresses, _overlayDashPresses;
-        GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlayGraze;
+        GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze;
         int _overlayStyleHeight;
 
         // ---- Dropped frames. Turbo and enginesim give every physics tick exactly one Update after it (clones, the
@@ -55,6 +53,7 @@ namespace IGTAPTasMod
         // physics ticks ran without a frame of their own.
         void OverlayFrame()
         {
+            CountFrame();
             int ticks = _ticksSinceFrame;
             _ticksSinceFrame = 0;
             if (ticks <= 1 || !OverlayListsRun) return;
@@ -98,29 +97,31 @@ namespace IGTAPTasMod
                     _lastDropTick = 0;
                     _ticksSinceFrame = 0;
                     _overlayRoute = _engine.ActiveMacroName;
-                    _inputRows.Add(new InputRow { header = "▸ " + (_overlayRoute ?? "") });
+                    _overlayRouteText = "▸ " + (_overlayRoute ?? "");
                 }
                 _overlayLastTick = _engine.PhysicsTicks;
                 _overlayTicks++;
                 _ticksSinceFrame++;
                 _overlayClock = null;
-                float x = _overlayAxis.x, y = _overlayAxis.y;
-                bool jumpPress = _engine.JumpPresses != _overlayJumpPresses;
-                bool dash = _engine.DashPresses != _overlayDashPresses;
-                bool jump = _engine.JumpHeld || jumpPress;
-                // A press starts a row; a dash is a tap, so its row is that one tick.
-                InputRow row = _inputRows[_inputRows.Count - 1];
-                if (row.header == null && !row.dash && !dash && !jumpPress && row.x == x && row.y == y && row.jump == jump) row.ticks++;
+                InputRow row;
+                if (_inputRows.Count < MaxInputRows) row = new InputRow();
                 else
                 {
-                    row = new InputRow { ticks = 1, x = x, y = y, stickText = StickText(x, y), jump = jump, dash = dash };
-                    _inputRows.Add(row);
-                    if (_inputRows.Count > MaxInputRows) _inputRows.RemoveAt(0);
+                    row = _inputRows[0];
+                    _inputRows.RemoveAt(0);
                 }
-                row.ticksText = row.ticks.ToString();
+                row.tickText = _overlayTicks.ToString();
+                row.x = _overlayAxis.x;
+                row.y = _overlayAxis.y;
+                row.stickText = StickText(row.x, row.y);
+                row.jumpPress = _engine.JumpPresses != _overlayJumpPresses;
+                row.jump = _engine.JumpHeld || row.jumpPress;
+                row.dash = _engine.DashPresses != _overlayDashPresses;
+                _inputRows.Add(row);
             }
             _overlayJumpPresses = _engine.JumpPresses;
             _overlayDashPresses = _engine.DashPresses;
+            SampleVelocity(player);
         }
 
         // "→", "← ↑", "→ 53%" (a stick short of full), "·" for no stick.
@@ -143,6 +144,7 @@ namespace IGTAPTasMod
             DrawHitbox(scale);
             DrawGraze(scale);
             if (_inputRows.Count > 0) DrawInputPanel(scale);
+            if (_overlayPlayer != null) DrawVelocityPanel(scale);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
         }
 
@@ -157,15 +159,24 @@ namespace IGTAPTasMod
             Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), text, _overlayText, Color.white);
         }
 
+        // The panel's text is sized for its width, at most PanelWidth pixels; the graze label follows the screen.
         void BuildOverlayStyles(float scale)
         {
             _overlayStyleHeight = Screen.height;
-            _overlayTitle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(22 * scale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip, wordWrap = false };
+            float panelScale = PanelScale(scale);
+            _overlayTitle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(20 * panelScale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip, wordWrap = false };
             _overlayTitle.normal.textColor = Color.white;
-            _overlayText = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * scale) };
-            _overlayTicksStyle = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleRight };
-            _overlayGraze = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
+            _overlayTitleRight = new GUIStyle(_overlayTitle) { alignment = TextAnchor.MiddleRight };
+            _overlayText = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * panelScale), fontStyle = FontStyle.Normal };
+            _overlayTicksStyle = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Overflow };
+            _overlaySmall = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(14 * panelScale) };
+            _overlaySmallRight = new GUIStyle(_overlaySmall) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Overflow };
+            _overlayGraze = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * scale), alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
         }
+
+        // The input panel is PanelWidth pixels wide at 1080p and above, narrower (with everything in it) below.
+        const float PanelWidth = 440f;
+        static float PanelScale(float scale) { return Mathf.Min(scale, 1f); }
 
         static readonly FieldInfo NormalColliderField = AccessTools.Field(typeof(Movement), "normalCollider");
 
@@ -266,6 +277,7 @@ namespace IGTAPTasMod
         // has not run. Sampled there too, so a frame that runs several steps misses none of a graze.
         void OverlayBeforeTick(Movement player)
         {
+            _positionBeforeTick = player.transform.position;
             if (_settings.showOverlay) SampleSpikes(player, FixedStep() - 1);
         }
 
@@ -518,9 +530,22 @@ namespace IGTAPTasMod
         static readonly Color HitboxColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);
         static readonly Color GraceColor = new Color(0.35f, 1f, 0.45f, 0.95f);
-        static readonly Color JumpColor = new Color(1f, 0.85f, 0.3f);
-        static readonly Color DashColor = new Color(0.35f, 0.85f, 1f);
-        static readonly Color DimColor = new Color(1f, 1f, 1f, 0.55f);
+        // The input panel: the studio website's palette (web/app/globals.css).
+        static readonly Color PanelBack = Hex(0x0d1a2d, 0.92f);
+        static readonly Color PanelBand = Hex(0x12243d, 0.95f);
+        static readonly Color PanelStripe = Hex(0x12243d, 0.45f);
+        static readonly Color PanelLine = Hex(0x203653, 1f);
+        static readonly Color PanelCurrent = Hex(0x1976ff, 0.32f);
+        static readonly Color PanelText = Hex(0xf5f9ff, 1f);
+        static readonly Color MutedColor = Hex(0x8fa8c4, 1f);
+        static readonly Color JumpColor = Hex(0xffbf5b, 1f);
+        static readonly Color HeldColor = Hex(0xffbf5b, 0.5f);
+        static readonly Color DashColor = Hex(0x48b9ff, 1f);
+
+        static Color Hex(int rgb, float alpha)
+        {
+            return new Color((rgb >> 16 & 0xff) / 255f, (rgb >> 8 & 0xff) / 255f, (rgb & 0xff) / 255f, alpha);
+        }
 
         static void Fill(Rect r, Color color)
         {
@@ -538,46 +563,50 @@ namespace IGTAPTasMod
             GUI.contentColor = saved;
         }
 
-        void DrawInputPanel(float scale)
+        // Top left corner of the screen (0, 0): a band with the route and its clock, the column header, then one row per tick.
+        void DrawInputPanel(float screenScale)
         {
+            float scale = PanelScale(screenScale);
             if (_overlayClock == null)
                 _overlayClock = _overlayTicks + " ticks · " + (_overlayTicks * Time.fixedDeltaTime).ToString("0.00") + " s";
-            float margin = 16 * scale, pad = 14 * scale, rowHeight = 26 * scale, width = 340 * scale;
-            float headerHeight = pad + 24 * scale + 26 * scale + 4 * scale;
-            int fit = Mathf.Max(1, Mathf.FloorToInt((Screen.height - 2 * margin - headerHeight - pad) / rowHeight));
+            float pad = 20 * scale, rowHeight = 30 * scale, titleLine = 26 * scale, clockLine = 22 * scale, columnLine = 28 * scale, width = PanelWidth * scale;
+            float bandHeight = 14 * scale + titleLine + clockLine + 12 * scale;
+            float headerHeight = bandHeight + columnLine + 1;
+            int fit = Mathf.Max(1, Mathf.FloorToInt((Screen.height - headerHeight - 12 * scale) / rowHeight));
             int shown = Mathf.Min(fit, _inputRows.Count);
-            Rect panel = new Rect(margin, margin, width, headerHeight + shown * rowHeight + pad);
-            Fill(panel, new Color(0f, 0f, 0f, 0.7f));
-            Fill(new Rect(panel.x, panel.y, 4 * scale, panel.height), HitboxColor);
+            Rect panel = new Rect(0f, 0f, width, headerHeight + shown * rowHeight + 12 * scale);
+            Fill(panel, PanelBack);
+            Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
+            Fill(new Rect(panel.xMax - 1, panel.y, 1, panel.height), PanelLine);
+            Fill(new Rect(panel.x, panel.yMax - 1, width, 1), PanelLine);
 
-            float x = panel.x + pad, y = panel.y + pad;
-            Label(new Rect(x, y, width - 2 * pad, 24 * scale), _overlayClock, _overlayText, DimColor);
+            float x = panel.x + pad, y = panel.y + 14 * scale, inner = width - 2 * pad;
+            Label(new Rect(x, y, inner, titleLine), _overlayRouteText, _overlayTitle, PanelText);
+            Label(new Rect(x, y + titleLine, inner, clockLine), _overlayClock, _overlaySmall, MutedColor);
+            y = panel.y + bandHeight;
+            Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
-            // Columns: how many ticks the row's inputs are held, the stick, jump held, dash pressed.
-            float stickX = x + 64 * scale, jumpX = x + 170 * scale, dashX = x + 240 * scale, columns = y + 24 * scale;
-            Fill(new Rect(panel.x + 4 * scale, columns + 25 * scale, width - 4 * scale, 1), new Color(1f, 1f, 1f, 0.25f));
-            Label(new Rect(x, columns, 48 * scale, 24 * scale), "TICKS", _overlayTicksStyle, DimColor);
-            Label(new Rect(stickX, columns, 100 * scale, 24 * scale), "STICK", _overlayText, DimColor);
-            Label(new Rect(jumpX, columns, 70 * scale, 24 * scale), "JUMP", _overlayText, DimColor);
-            Label(new Rect(dashX, columns, 70 * scale, 24 * scale), "DASH", _overlayText, DimColor);
+            // Columns: the tick's number in the run, the stick, jump (pressed, or held from an earlier press), dash pressed.
+            float tickWidth = 56 * scale, stickX = x + 84 * scale, jumpX = x + 200 * scale, dashX = x + 290 * scale;
+            Label(new Rect(x, y, tickWidth, columnLine), "TICK", _overlaySmallRight, MutedColor);
+            Label(new Rect(stickX, y, 110 * scale, columnLine), "STICK", _overlaySmall, MutedColor);
+            Label(new Rect(jumpX, y, 80 * scale, columnLine), "JUMP", _overlaySmall, MutedColor);
+            Label(new Rect(dashX, y, 80 * scale, columnLine), "DASH", _overlaySmall, MutedColor);
+            Fill(new Rect(panel.x, y + columnLine, width, 1), PanelLine);
             y = panel.y + headerHeight;
 
             bool live = _overlayLastTick != 0;
-            // Newest first: the current row sits under the column header and older rows scroll down and off the panel.
-            // A run's "▸ route" header row is its oldest, so it sits under that run's rows.
-            for (int i = _inputRows.Count - 1; i >= _inputRows.Count - shown; i--, y += rowHeight)
+            // Newest first: the current tick sits under the column header and older ticks scroll down and off the panel.
+            for (int i = _inputRows.Count - 1, n = 0; i >= _inputRows.Count - shown; i--, n++, y += rowHeight)
             {
                 InputRow row = _inputRows[i];
-                if (row.header != null)
-                {
-                    Label(new Rect(x, y, width - 2 * pad, rowHeight), row.header, _overlayText, DimColor);
-                    continue;
-                }
-                if (live && i == _inputRows.Count - 1) Fill(new Rect(panel.x + 4 * scale, y, width - 4 * scale, rowHeight), new Color(1f, 1f, 1f, 0.14f));
-                Label(new Rect(x, y, 48 * scale, rowHeight), row.ticksText, _overlayTicksStyle, Color.white);
-                Label(new Rect(stickX, y, 100 * scale, rowHeight), row.stickText, _overlayText, row.x == 0f && row.y == 0f ? DimColor : Color.white);
-                if (row.jump) Label(new Rect(jumpX, y, 70 * scale, rowHeight), "JUMP", _overlayText, JumpColor);
-                if (row.dash) Label(new Rect(dashX, y, 70 * scale, rowHeight), "DASH", _overlayText, DashColor);
+                Rect band = new Rect(panel.x, y, width - 1, rowHeight);
+                if (live && n == 0) Fill(band, PanelCurrent);
+                else if (n % 2 == 1) Fill(band, PanelStripe);
+                Label(new Rect(x, y, tickWidth, rowHeight), row.tickText, _overlayTicksStyle, n == 0 ? PanelText : MutedColor);
+                Label(new Rect(stickX, y, 110 * scale, rowHeight), row.stickText, _overlayText, row.x == 0f && row.y == 0f ? MutedColor : PanelText);
+                if (row.jump) Label(new Rect(jumpX, y, 80 * scale, rowHeight), row.jumpPress ? "JUMP" : "held", _overlayText, row.jumpPress ? JumpColor : HeldColor);
+                if (row.dash) Label(new Rect(dashX, y, 80 * scale, rowHeight), "DASH", _overlayText, DashColor);
             }
         }
     }
