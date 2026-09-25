@@ -11,26 +11,15 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // Full-TAS search: the whole game from a fresh new game as one input stream (the trace's "fulltas" goals), searched in
-    // rolling windows of goals. A window replays the best route up to the goal before it (Simulation.Advance), searches the
-    // next `--window` goals from there (OfflineSolver in goal mode, ranked in physics ticks from the run start), and puts a
-    // faster window route back into the whole run, followed by the old route's inputs after the window's last goal. The
-    // whole run is judged again from the start and kept only when it reaches every goal in fewer physics ticks (before any
-    // run reaches every goal: when it reaches more goals, or as many sooner). When the old inputs after the window no
-    // longer reach the next goal (the state after the window differs), the following windows are searched from the new
-    // state until the run is whole again. Kept runs go to <traces>/fulltas/<run>.json, offline-best/ and (unless
-    // --no-submit) the game's gate, /api/fulltas/submit.
     sealed class FullTas
     {
         const string Api = "http://127.0.0.1:17426";
 
-        // A route judged from the start: the goals it reached and when (inputs consumed and physics ticks from the start).
         sealed class Route
         {
             public List<InputTick> Inputs;
             public int Progress;
             public long[] GoalInput, GoalPhysics;
-            // Physics ticks from the start to the last goal reached.
             public long Last { get { return Progress == 0 ? long.MaxValue : GoalPhysics[Progress - 1]; } }
         }
 
@@ -43,34 +32,24 @@ namespace IGTAP.EngineSim.Cli
         int _goals;
         float _dt;
         Func<Simulation> _create;
-        // Judges whole routes from the start and finds each window's start state (this thread's own simulation).
         Simulation _eval;
         SimSnapshot _origin;
         Route _best;
         Stopwatch _clock;
         Latest _pending;
-        // Window routes found before, by where they started (the player's state and the next goal): tried as seeds from
-        // an equal start.
         readonly Dictionary<(int, string), List<List<InputTick>>> _memo = new Dictionary<(int, string), List<List<InputTick>>>();
 
-        // A saved route of a course, bonus or transition the run's goals name (--seed <file>, TasPlugin.WriteFullTasSeeds):
-        // tried as a window's start when the window has one of its goals.
         sealed class Seed
         {
             public string Name;
             public string[] Goals;
-            // It starts standing at its course's quick-restart point (a standalone route), or with a quick restart (the
-            // seed file's "restart").
             public bool Standing, Restart;
-            // The category it was made in (CapsLevel: none 0, wj 1, wjdash 2, wjdashaj 3): a seed that needs an unlock the
-            // run hasn't bought yet at the window's start isn't tried.
             public int Level;
             public List<InputTick> Inputs;
         }
         const int MaxSeedStarts = 64, MaxSettle = 12;
         readonly List<string> _seedFiles = new List<string>();
         readonly List<Seed> _seeds = new List<Seed>();
-        // The frontier (goals reached, physics ticks at the last one) the seeds were last tried at.
         (int, long) _seededFrontier = (-1, -1);
 
         FullTas(string[] args)
@@ -79,11 +58,9 @@ namespace IGTAP.EngineSim.Cli
             _threads = Option(args, "--threads", Environment.ProcessorCount);
             _minutes = Option(args, "--minutes", 60.0);
             _windowMinutes = Option(args, "--window-minutes", 1.0);
-            // A window ends early once this many minutes pass without a better window route (after its first finish).
             _stallMinutes = Option(args, "--stall-minutes", double.PositiveInfinity);
             _window = Math.Max(1, Option(args, "--window", 2));
             _submit = !args.Contains("--no-submit");
-            // --fresh: start from the trace's inputs, not the run's saved state.
             _fresh = args.Contains("--fresh");
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
         }
@@ -117,7 +94,6 @@ namespace IGTAP.EngineSim.Cli
             _origin = _eval.Start;
             _dt = _eval.World.FixedDeltaTime;
 
-            // The run's saved state, unless the trace's inputs (the capture seeds them with the gate's saved best) do better.
             _best = Padded(Evaluate(ReadInputs(header)));
             string from = Path.GetFileName(_trace);
             if (!_fresh && File.Exists(_runFile))
@@ -139,11 +115,8 @@ namespace IGTAP.EngineSim.Cli
 
             while (!TimeUp)
             {
-                // The first goal not reached yet, when a saved route of its course reaches it: tried before anything else.
                 bool searched = false;
                 while (!TimeUp && SeedFrontier()) searched = true;
-                // While the run is incomplete, the first goal not reached is searched first and again for as long as it
-                // moves on; the windows before it are polished only when it stalls.
                 bool frontierFirst = _best.Progress < _goals;
                 for (int step = 0; !TimeUp; step++)
                 {
@@ -152,12 +125,9 @@ namespace IGTAP.EngineSim.Cli
                     int i;
                     if (frontierFirst) { if (step > reached) break; i = step == 0 ? reached : step - 1; }
                     else { if (step >= _goals) break; i = step; }
-                    // Windows start at a goal the best reached (or the run's start); the first goal it didn't reach is
-                    // searched alone, so each finish there is one more goal.
                     if (i > reached) break;
                     if (i == reached && SeedFrontier())
                     {
-                        // The frontier moved on: search from the new one first.
                         step = -1;
                         searched = true;
                         continue;
@@ -170,7 +140,6 @@ namespace IGTAP.EngineSim.Cli
                     List<List<InputTick>> found = SearchWindow("window " + (i + 1) + "/" + _goals, best, prefixLength, limit, seeds, baseline);
                     searched = true;
                     if (found.Count > 0) Merge("window " + (i + 1), best, prefixLength, limit, found);
-                    // The frontier moved on: back to it.
                     if (frontierFirst && _best.Progress > reached) { step = -1; frontierFirst = _best.Progress < _goals; }
                 }
                 if (!searched) break;
@@ -181,9 +150,6 @@ namespace IGTAP.EngineSim.Cli
 
         bool TimeUp { get { return _clock.Elapsed.TotalMinutes >= _minutes; } }
 
-        // The frontier's seeds besides the old tail: the tail with one of its first quick restarts pushed later by a few
-        // ticks (the tick before it held on). A goal the old route only brushed past (a reward box it touched and left
-        // with a restart the next tick, before the box's trigger stay could buy it) is often one wait away.
         static List<List<InputTick>> DelayedResets(List<InputTick> tail)
         {
             var variants = new List<List<InputTick>>();
@@ -209,14 +175,12 @@ namespace IGTAP.EngineSim.Cli
             return r.Progress + "/" + _goals + " goals" + (r.Progress > 0 ? " (" + (r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture) + "s)" : "");
         }
 
-        // More goals, or as many sooner.
         static bool Better(Route a, Route b)
         {
             if (a.Progress != b.Progress) return a.Progress > b.Progress;
             return a.Progress > 0 && a.Last < b.Last;
         }
 
-        // `inputs` from the start, done at goal `limit` (every goal by default).
         Route Evaluate(List<InputTick> inputs, int limit = -1)
         {
             _eval.SetStart(_origin, 0);
@@ -225,9 +189,6 @@ namespace IGTAP.EngineSim.Cli
             return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
         }
 
-        // Searches from `route`'s state after its first `prefixLength` inputs up to goal `limit` (exclusive) for the window
-        // time. Returns the window routes (from the window's start) that finish in fewer physics ticks than `baseline`,
-        // oldest (slowest) first.
         List<List<InputTick>> SearchWindow(string title, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline)
         {
             var found = new List<List<InputTick>>();
@@ -241,22 +202,18 @@ namespace IGTAP.EngineSim.Cli
                 return found;
             }
             _eval.Restore(at);
-            // A goal reached on a dash tick after the prefix's last input is still ahead of the window's start.
             int first = _eval.Progress;
             if (first >= limit) return found;
             var key = (_eval.MovementFingerprint(), _labels[first]);
-            // Dash mutations once the run bought the dash (the gate allows it from then on).
             string caps = _eval.Player.dashUnlocked ? "wjdash" : _caps;
             if (_memo.TryGetValue(key, out List<List<InputTick>> known))
                 foreach (List<InputTick> r in known)
                     if (!seeds.Any(s => s.SequenceEqual(r))) seeds.Add(r);
             string span = first == limit - 1 ? _labels[first] : _labels[first] + ".." + _labels[limit - 1];
-            // The saved routes of the window's courses (--seed) as starts; worker 0 runs them before exploring.
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, first, limit);
             foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
             if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
 
-            // A simulation runs on the thread that made it: each worker replays the prefix itself.
             Func<Simulation> create = () =>
             {
                 Simulation sim = _create();
@@ -268,7 +225,6 @@ namespace IGTAP.EngineSim.Cli
             var solver = new OfflineSolver(create, caps, seeds);
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
-            // Called under the lock on solver.Shared.
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 last = _clock.Elapsed;
@@ -303,14 +259,6 @@ namespace IGTAP.EngineSim.Cli
             if (list.Count > 4) list.RemoveAt(0);
         }
 
-        // Window starts from the seeds that have one of goals first..limit-1, for a window from state `at` (after `prefix`),
-        // each seed's likeliest first:
-        // - a standing seed after a quick restart and the ticks the player then takes to stand still (where it was made);
-        // - a seed that starts with a quick restart: the seed with the restart on its first tick;
-        // - the seed as it is;
-        // - the seed after a quick restart and 0..12 idle ticks (nearest the ticks to stand still first).
-        // No quick restart on the window's first tick right after the prefix's own (a real button is released in between).
-        // Round-robin over the seeds, deduped, at most MaxSeedStarts. Leaves _eval starting at `at`.
         List<(string how, List<InputTick> inputs)> SeedStarts(SimSnapshot at, List<InputTick> prefix, int first, int limit)
         {
             var starts = new List<(string how, List<InputTick> inputs)>();
@@ -318,7 +266,6 @@ namespace IGTAP.EngineSim.Cli
             _eval.Restore(at);
             Movement player = _eval.Player;
             int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : 3;
-            // The run's own category first (a wall-jump lap once it has wall jump), then the ones below it.
             List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
             if (matching.Count == 0) return starts;
             bool restart = prefix.Count == 0 || !prefix[prefix.Count - 1].reset;
@@ -355,8 +302,6 @@ namespace IGTAP.EngineSim.Cli
                         if (!(s.Standing && k == settle)) list.Add((s.Name + ", after a quick restart and " + k + " idle ticks", Restarted(s, k)));
                 return list;
             }).ToList();
-            // A bonus's reward from wherever the run is: a transition to the bonus (it ends at the bonus's start box), a few
-            // ticks to settle there, then a route of the bonus itself (made standing at that start).
             foreach (Seed bonus in matching.Where(s => s.Standing && s.Name.StartsWith("bonus", StringComparison.OrdinalIgnoreCase)))
             {
                 string token = bonus.Name.Substring(0, bonus.Name.IndexOf('_'));
@@ -381,9 +326,6 @@ namespace IGTAP.EngineSim.Cli
             return starts;
         }
 
-        // The first goal the best doesn't reach, when seeds have it: each seed start (SeedStarts) runs from the state after
-        // the best's last goal, and the one that reaches the most goals, soonest, goes into the run through its last goal;
-        // kept when the whole run judged from the start does better. Tried once per frontier.
         bool SeedFrontier()
         {
             Route best = _best;
@@ -399,7 +341,6 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = _eval.Advance(prefix);
             if (at == null) return false;
             _eval.Restore(at);
-            // A goal reached on a dash tick after the prefix's last input: left to the windows.
             if (_eval.Progress != reached) return false;
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, reached, reached + 1);
             string title = $"seeds for goal {reached + 1}/{_goals} {_labels[reached]}";
@@ -433,7 +374,6 @@ namespace IGTAP.EngineSim.Cli
             return true;
         }
 
-        // A --seed file: {name, goals: [labels], standing, restart, ticks} (older seeds: course or token instead of goals).
         static Seed ReadSeed(string path)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 });
@@ -457,8 +397,6 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        // A window's routes, fastest first, put back into the best run; the first whole run that beats it is kept. When
-        // none does and the fastest one's run falls short of the best's goals, the goals after it are searched again.
         void Merge(string where, Route best, int prefixLength, int limit, List<List<InputTick>> found)
         {
             Route broken = null;
@@ -472,9 +410,6 @@ namespace IGTAP.EngineSim.Cli
             if (broken != null) Repair(where, best, broken);
         }
 
-        // `head`'s first `prefixLength` inputs, the window route up to where it reaches goal `limit` - 1, and `tail`'s
-        // inputs after it reached that goal; judged from the start. Null when the window route doesn't reach its goal
-        // after the prefix or the run would quick-restart on two consecutive ticks.
         Route Splice(Route head, int prefixLength, List<InputTick> window, int limit, Route tail)
         {
             List<InputTick> inputs = head.Inputs.Take(prefixLength).Concat(window).ToList();
@@ -492,8 +427,6 @@ namespace IGTAP.EngineSim.Cli
             return Evaluate(inputs);
         }
 
-        // The old run's inputs no longer reach goal `run.Progress` after the new window: search the windows from there,
-        // seeded with the old inputs, until the run reaches the old run's goals again.
         void Repair(string where, Route old, Route run)
         {
             while (!TimeUp)
@@ -528,15 +461,12 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // The engine goes on past a route's last input (the stick at rest, the jump as it was: MacroEngine.Finish waiting
-        // for a finish), so a goal may come a few ticks after it. These inputs do the same.
         static void Pad(List<InputTick> inputs, long count)
         {
             bool held = inputs.Count > 0 && inputs[inputs.Count - 1].held;
             while (inputs.Count < count) inputs.Add(new InputTick { held = held });
         }
 
-        // `r` with its inputs through the tick of the last goal it reached (the same run when it replays the same).
         Route Padded(Route r)
         {
             if (r.Progress == 0 || r.GoalInput[r.Progress - 1] <= r.Inputs.Count) return r;
@@ -551,7 +481,6 @@ namespace IGTAP.EngineSim.Cli
             r = Padded(r);
             _best = r;
             Directory.CreateDirectory(Path.GetDirectoryName(_runFile));
-            // Written to a temporary file and moved over the old one: a kill mid-write leaves the last whole save.
             string temp = _runFile + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(new
             {
@@ -575,8 +504,6 @@ namespace IGTAP.EngineSim.Cli
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
         }
 
-        // The game reads the run file whenever it changes (FullTasPlugin.FullTasOfflineBest, ReadAllText: no delete share),
-        // so a replace can land mid-read and be denied; the read takes milliseconds.
         static void Replace(string temp, string path)
         {
             for (int attempt = 1; ; attempt++)
@@ -586,7 +513,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // A trace's or run file's "inputs" (a trace's "ticks" are its state records), or an offline best's "ticks".
         static List<InputTick> ReadInputs(JsonElement root)
         {
             JsonElement list = root.TryGetProperty("inputs", out JsonElement inputs) ? inputs : root.GetProperty("ticks");
@@ -599,7 +525,6 @@ namespace IGTAP.EngineSim.Cli
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
         }
 
-        // The latest kept run waiting for the gate (older ones are superseded).
         sealed class Latest
         {
             List<InputTick> _item;
@@ -617,7 +542,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // The game's gate replays each kept run from a new game and saves it when it is the category's fastest.
         void Submitter()
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
@@ -634,7 +558,6 @@ namespace IGTAP.EngineSim.Cli
                     JsonElement root = r.RootElement;
                     if (!root.TryGetProperty("finished", out JsonElement finished))
                     {
-                        // Busy (another check, loading): retry a while unless a newer run is already waiting.
                         Log("gate check deferred: " + reply);
                         if (++deferred < 30)
                         {

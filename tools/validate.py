@@ -1,11 +1,3 @@
-"""Re-run studio routes in the game (turbo) under their category and print the game's own timer.
-
-Uses the solver's own replay (/api/enginesim/submit with routeId), so a category means exactly what the solver and
-the gate use (TasPlugin.CategoryAbilities). A route is never re-saved: submit only saves a strictly faster time.
-
-Usage: python tools/validate.py   (checks every route named "<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>"; Full-TAS
-routes "fulltas/<run>_NO_WJ <time>" are skipped: the Full-TAS gate judges them from a new game)
-"""
 import json, re, sys, time, urllib.error, urllib.request
 
 from gamepaths import CONFIG
@@ -26,7 +18,6 @@ def submit(body):
 
 def check(route, body, label):
     body = dict(body, routeId=route["id"])
-    # The plugin parks the player at a new course's start and answers "loading" until its zone has settled.
     for _ in range(30):
         r = submit(body)
         if "loading" not in str(r.get("error", "")):
@@ -38,7 +29,6 @@ def check(route, body, label):
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    # The course of a category route is its courses.json id or name ("bonus1_WJ 13.56").
     ids = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
     for m in json.load(open(ROUTES, encoding="utf-8-sig"))["macros"]:
         if m["name"].startswith("fulltas/"):

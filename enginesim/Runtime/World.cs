@@ -11,7 +11,6 @@ using Object = UnityEngine.Object;
 
 namespace IGTAP.EngineSim
 {
-    // One exported physics shape of a collider, as Unity's Box2D sees it (Collider2D.GetShapes).
     public sealed class ShapeData
     {
         public string Type;
@@ -27,15 +26,10 @@ namespace IGTAP.EngineSim
         public float[] LocalToWorld;
         public ShapeData[] Shapes = Array.Empty<ShapeData>();
         public float Friction, Bounciness;
-        // A collider merged into a CompositeCollider2D (its compositeOperation isn't None): the composite's data.
         public ColliderData Composite;
-        // A composite whose sources a run toggles (the coloured blocks): its geometry with its sources enabled (the
-        // export's "sourceShapes"); null when the export has none.
         public ShapeData[] SourceShapes;
     }
 
-    // The game scene rebuilt from a world export (EngineSimBridge.WriteWorld): every GameObject and component, with
-    // game scripts as real instances of the game's classes and their fields as they were in the live game.
     public sealed class World
     {
         public readonly Dictionary<int, Object> Objects = new Dictionary<int, Object>();
@@ -44,7 +38,6 @@ namespace IGTAP.EngineSim
         public readonly List<Rigidbody2D> Bodies = new List<Rigidbody2D>();
         public readonly Dictionary<string, JsonElement> Physics2DSettings = new Dictionary<string, JsonElement>();
         public readonly int[] LayerCollisionMasks = new int[32];
-        // Each transform's Transform.GetSiblingIndex() in the live game (the export's "siblingIndex").
         public readonly Dictionary<Transform, int> SiblingIndex = new Dictionary<Transform, int>();
         public float FixedDeltaTime;
         public Assembly Game { get; } = typeof(Movement).Assembly;
@@ -73,7 +66,6 @@ namespace IGTAP.EngineSim
             i = 0;
             foreach (JsonElement n in root.GetProperty("layerNames").EnumerateArray()) Engine.LayerNames[i++] = n.GetString();
 
-            // Pass 1: objects, transforms and components with their instance ids.
             var parents = new List<(GameObject go, int parent, int sibling)>();
             foreach (JsonElement o in root.GetProperty("objects").EnumerateArray())
             {
@@ -100,7 +92,6 @@ namespace IGTAP.EngineSim
                 if (parent != 0 && Objects.TryGetValue(parent, out Object p) && p is GameObject parentGo)
                     go.transform.SetParent(parentGo.transform);
 
-            // Pass 2: field values, now that every reference can resolve.
             foreach (var (target, fields) in _pendingFields) FillFields(target, fields);
             foreach (var (body, props) in _pendingBodies) FillBody(body, props);
             foreach (var (data, props) in _pendingColliders) FillCollider(data, props);
@@ -205,7 +196,6 @@ namespace IGTAP.EngineSim
                 try
                 {
                     object value = Read(entry[2], field.FieldType);
-                    // Engine-side plain objects (InputAction, ...) are not exported; the shim's inert stand-in does.
                     if (value == null && field.FieldType.Assembly == _shim && !typeof(Object).IsAssignableFrom(field.FieldType)
                         && field.FieldType.IsClass && field.FieldType.GetConstructor(Type.EmptyTypes) != null)
                         value = Activator.CreateInstance(field.FieldType);
@@ -245,7 +235,6 @@ namespace IGTAP.EngineSim
             catch (Exception ex) { Warnings.Add("static " + typeName + "." + name + ": " + ex.GetType().Name); }
         }
 
-        // Converts an exported value (EngineSimJson) to `type`.
         public object Read(JsonElement e, Type type)
         {
             if (e.ValueKind == JsonValueKind.Null)

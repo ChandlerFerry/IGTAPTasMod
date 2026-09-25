@@ -1,22 +1,3 @@
-"""Every one-off upgrade box in the game (a world export), sorted into what a route has to do to get it.
-
-  python tools/upgrade-boxes.py [WORLD.world.json] [--write]
-
-A box is one-off when it can be bought once (Cap 1), is one of the game's secrets (upgradeBox.isSecret; the game
-counts 17) or unlocks movement (the tree's OmniDash toggles, so its cap is large). The repeatable economy boxes of each
-course's row are left out.
-
-- bonus: costs 0, so touching its buy trigger is the whole run. `--write` adds every bonus that courses.json doesn't
-  have yet (no bonus's end rect there is this box's trigger) as the next free "bonusN": start at the reset point of the
-  course the box belongs to (its localUpgrades; else the nearest course), end rect = the box's trigger bounds,
-  category WJ. Restart the game afterwards: the plugin reads courses.json at launch.
-- course-side: costs something and sits in its course's box row (wall jump, dash, the statue): a Full-TAS buy goal
-  next to the course, planned by plan-fulltas.py.
-- out of the way: costs something and sits away from the row.
-- not in the world yet: inactive at capture (tree segments, later rows); where they end up is unknown.
-
-WORLD defaults to the newest *.world.json in the traces folder (tools/enginesim-capture.py writes them).
-"""
 import json
 import sys
 from collections import Counter
@@ -34,8 +15,8 @@ GLOBAL = ("cashPerLoop fastCloneChance maxCloneFastness bigCloneChance maxCloneB
           "compBoostDoublesNP vmanTime startVmanSpeedrun moreWatts moreGP increasedRP moreRP RPcap "
           "GPAtomsDontResetCourses NpGenerationSpeed VmanStartsWithOmniDash wattPower MoreRpCap").split()
 MOVEMENT = "dash wallJump doubleJump swapBlocksOnce unlockBlockSwap endDemo OmniDash freeVmanOmnidash".split()
-CURRENCY = ["W", "GP", "NP", "number", "CD", "RP", "BP"]  # Cash (watts), Green/Atomic/Red/Blue power, clone dust
-ROW_BAND = 60  # px: a box this close in y to its course's row of repeatable boxes is in the row
+CURRENCY = ["W", "GP", "NP", "number", "CD", "RP", "BP"]
+ROW_BAND = 60
 
 
 def load(path):
@@ -74,7 +55,6 @@ def trigger(o):
 
 
 def courses(objects, ref):
-    """courseNumber -> (hierarchy path, reset point) from each course's start gate."""
     out = {}
     for o in objects:
         gate = component(o, "startGate")
@@ -104,7 +84,6 @@ def boxes(objects, ref, course_paths):
         out.append({"path": path, "sibling": o["siblingIndex"], "x": o["position"]["x"], "y": o["position"]["y"],
                     "active": o["activeInHierarchy"], "kind": kind, "cost": f["baseUpgradeCost"],
                     "currency": CURRENCY[f["upgradeCurrency"]], "cap": f["Cap"], "secret": secret,
-                    # A secret's achievement field holds its number in the game's count ("4"); one has none.
                     "number": int(f["achievement"]) if secret and str(f["achievement"]).isdigit() else None,
                     "course": course, "end": trigger(o)})
     return out
@@ -125,7 +104,6 @@ def main():
     objects, ref = load(world)
     course_info = courses(objects, ref)
     every = boxes(objects, ref, {n: p for n, (p, _) in course_info.items()})
-    # Each course's row: the y most of its active repeatable boxes share.
     rows = {}
     for n in course_info:
         ys = Counter(round(b["y"]) for b in every if b["course"] == n and b["active"] and b["cap"] > 1 and not b["secret"])
@@ -145,7 +123,7 @@ def main():
         return next((name for name, (x, y) in bonus_ends.items()
                      if b["end"] and abs(x - b["end"][0]) < 2 and abs(y - b["end"][1]) < 2), None)
 
-    def order(b):  # secrets by the game's number, then the unnumbered secret, then the rest along x
+    def order(b):
         return (not b["secret"], b["number"] is None, b["number"] or 0, b["course"] or 99, b["x"])
 
     print(f"{world}: {len(every)} upgrade boxes, {len(odd)} one-off, {sum(b['secret'] for b in every)} secrets")

@@ -1,4 +1,3 @@
-"""Where the game and the plugin's config live. IGTAP_GAME overrides the install (Directory.Build.props: IgtapGame)."""
 import os
 from pathlib import Path
 

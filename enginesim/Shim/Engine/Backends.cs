@@ -39,7 +39,7 @@ namespace IGTAP.EngineSim
     {
         [ThreadStatic] public static IPhysicsBackend Physics;
         [ThreadStatic] public static IScheduler Scheduler;
-        // The controller's stick (InputAction.ReadValue<Vector2>): what a run holds (MacroEngine.DeviceStick).
+        // The controller's stick (InputAction.ReadValue<Vector2>): what a run holds (MacroEngine.TickStick).
         [ThreadStatic] public static Func<Vector2> Stick;
         public static string[] LayerNames = new string[32];
         public static int NextInstanceId = -1;
@@ -48,7 +48,8 @@ namespace IGTAP.EngineSim
     // Called from hooks the retarget step injects into game methods (see enginesim/hooks.txt).
     public static class Hooks
     {
-        [ThreadStatic] public static Action<object> PlayerInput, DashFrame, Death;
+        [ThreadStatic] public static Action<object> PlayerInput, Death;
+        [ThreadStatic] public static Action<object, bool> WallTouch;
         [ThreadStatic] public static Action<object, GameObject, bool> CourseStop;
         [ThreadStatic] public static Action<object, Collider2D> UpgradeBoxStay;
         [ThreadStatic] public static Action<object, bool> ClonesOnScreen;
@@ -59,7 +60,7 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, int, float, float> PlayAudio;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
-        public static void OnDashFrame(object movement, bool isDashBounce) { DashFrame?.Invoke(movement); }
+        public static void OnWallTouch(object movement, bool touchedGround) { WallTouch?.Invoke(movement, touchedGround); }
         public static void OnDeath(object movement) { Death?.Invoke(movement); }
         public static void OnCourseStop(object course, GameObject player, bool savePositionData) { CourseStop?.Invoke(course, player, savePositionData); }
         public static void OnUpgradeBoxStay(object box, Collider2D collision) { UpgradeBoxStay?.Invoke(box, collision); }

@@ -32,12 +32,10 @@ namespace IGTAP.EngineSim.Cli
                     case "branch": return Branch(args[1], args.Length > 2 ? int.Parse(args[2]) : 200);
                     case "path":
                     {
-                        // path <start-trace> <route.json>: where the course timer starts/stops along a route.
                         var (sim, _, _) = Open(args[1]);
                         using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
                         JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
                         var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
-                        // --verbose: every tick with the movement state a trick depends on.
                         bool verbose = args.Contains("--verbose");
                         string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames" };
                         var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
@@ -50,7 +48,6 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, onStep: st =>
                         {
-                            // Spike stays (spikeScript.counter > 0): the game kills when counter > graceFrames, or at once while dashing.
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
                                     Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x:0},{s.transform.position.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
@@ -59,11 +56,12 @@ namespace IGTAP.EngineSim.Cli
                             bool timing = sim.TimingCourse() != null;
                             if (verbose)
                             {
-                                // The input this tick consumed; dash ticks consume none (the game skips its input hook).
                                 int run = (int)sim.Engine.RunTicks - 1;
                                 InputTick k = run >= 0 && run < inputs.Count ? inputs[run] : default;
                                 string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.y != 0f ? " y=" + k.y : "")}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
-                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") : "");
+                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") : "")
+                                    + (k.springDash > 0 ? " springdash@" + k.springDash : "")
+                                    + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "");
                                 lastRun = run + 1;
                                 Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}"
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()).ToString("0.00") : "") + " " + input + " | "
@@ -118,11 +116,9 @@ namespace IGTAP.EngineSim.Cli
             return (sim, trace, inputs);
         }
 
-        // Runs each trace's inputs offline from its start state and reports the first tick where any state differs.
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
-            // --contacts: the first 40 steps' contacts, offline and turbo; --contacts=A-B: steps A through B.
             string contactsArg = args.FirstOrDefault(a => a == "--contacts" || a.StartsWith("--contacts=", StringComparison.Ordinal));
             int contactsFrom = 0, contactsTo = contactsArg == null ? -1 : 39;
             if (contactsArg != null && contactsArg.Contains('='))
@@ -136,14 +132,11 @@ namespace IGTAP.EngineSim.Cli
             foreach (string path in args.Where(a => !a.StartsWith("--") && !a.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase)))
             {
                 var (sim, trace, inputs) = Open(path);
-                // Assets (audio clips, sprites) are not scene objects and never exported; compare them as null.
                 _normalize = s => assetRef.Replace(s, m => sim.World.Objects.ContainsKey(int.Parse(m.Groups[1].Value)) ? m.Value : "null");
                 JsonElement[] ticks = trace.RootElement.GetProperty("ticks").EnumerateArray().ToArray();
                 JsonElement result = trace.RootElement.GetProperty("result");
                 FieldInfo[] movementFields = FieldState.For(typeof(Movement));
                 int firstDiff = -1;
-                // The RNG state and Cash are the fields this project judges clone/economy fidelity by: report their
-                // first mismatching tick apart from the physics fields' (the diff list caps at 60 ticks).
                 int firstRandomDiff = -1, firstCashDiff = -1;
                 var diffs = new List<string>();
                 RunResult run = sim.Run(inputs, onStep: step =>
@@ -180,7 +173,6 @@ namespace IGTAP.EngineSim.Cli
                         }
                     }
                     if (t.TryGetProperty("cash", out JsonElement cash) && Compare(here, "cash", Json(sim.Shop.CashNow), cash) && firstCashDiff < 0) firstCashDiff = step;
-                    // The tick's UnityEngine.Random state (Random.State's s0..s3 in order), as the plugin exports it.
                     if (t.TryGetProperty("random", out JsonElement random))
                     {
                         UnityEngine.Random.State rng = UnityEngine.Random.state;
@@ -205,16 +197,12 @@ namespace IGTAP.EngineSim.Cli
             return failures == 0 ? 0 : 3;
         }
 
-        // Movement fields written only by presentation code the host cuts (enginesim/cuts.txt).
         static readonly HashSet<string> PresentationOnly = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
 
         static Func<string, string> _normalize = s => s;
 
-        // Returns whether the values differ.
         static bool Compare(List<string> diffs, string name, string offline, JsonElement turbo)
         {
-            // Mono and .NET format a float's G9 text differently when it ends in an exact half (2424.140625 prints as
-            // 2424.14063 in the game, 2424.14062 here); compare the float values, not their text.
             string expected = Numbers(_normalize(turbo.GetRawText()));
             string actual = Numbers(offline);
             if (actual == expected) return false;
@@ -237,7 +225,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string Short(string s) { return s.Length > 120 ? s.Substring(0, 120) + "..." : s; }
 
-        // The plugin's EngineSimJson encoding, so values compare as text.
         internal static string Json(object value)
         {
             var sb = new StringBuilder();
@@ -321,7 +308,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // Raycasts against a trace's world, in the /api/enginesim/raycast format, for differential checks against Unity.
         static int Rays(string tracePath, string raysPath)
         {
             var (sim, _, _) = Open(tracePath);
@@ -340,8 +326,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
 
-        // Branch determinism, the solver's way: new inputs resumed from an archived snapshot (taken in an earlier, possibly
-        // branched, run) must step exactly like the same inputs from the start (player, engine, courses, Invokes, body).
         static int Branch(string tracePath, int runs)
         {
             var (sim, _, route) = Open(tracePath);
@@ -387,7 +371,6 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return inputs;
             }
-            // Each stepped tick's state, and per input index the snapshot taken there with its step.
             (List<string>, Dictionary<int, (SimSnapshot, int)>) Record(List<InputTick> inputs, SimSnapshot from, int only = -1)
             {
                 var states = new List<string>();
@@ -436,7 +419,6 @@ namespace IGTAP.EngineSim.Cli
             return matches == checks ? 0 : 3;
         }
 
-        // Single-core throughput on one trace's inputs, from its start state.
         static int Bench(string[] args)
         {
             var (sim, _, inputs) = Open(args[0]);

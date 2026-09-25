@@ -108,8 +108,6 @@ namespace IGTAPTasMod
             _lastDash = dash;
         }
 
-        // Every dash frame (Movement.CheckForSuperJump prefix, before the game reads jumpBuffer): a jump press there is
-        // filed on the dash's sample as its dashJumpFrame, the frame MacroEngine.DashFrame presses it again in playback.
         public void DashFrame(Movement movement)
         {
             if (!IsRecording || movement == null || Current.samples.Count == 0) return;
@@ -148,9 +146,6 @@ namespace IGTAPTasMod
                     int outputDirection = direction;
                     if (wall)
                     {
-                        // wallCoyoteDir identifies the wall, while a walljump must steer
-                        // away from it. Raw input is often still held toward the wall on
-                        // the exact trigger tick, so using moveX reverses the recorded route.
                         int wallDirection = Direction(sample.wallSide);
                         if (wallDirection != 0) outputDirection = -wallDirection;
                     }
@@ -163,8 +158,6 @@ namespace IGTAPTasMod
                         timeoutTicks = Math.Max(1, Mathf.RoundToInt(1200f / tickMs)), timeoutMs = 1200,
                         endCondition = ActionEndCondition.FixedTicks
                     });
-                    // Keep the boundary sample. A second press can be the walljump
-                    // itself; consuming it produces a route that waits for the wrong wall.
                     i = end;
                     continue;
                 }

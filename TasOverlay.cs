@@ -6,55 +6,36 @@ using UnityEngine.Rendering;
 
 namespace IGTAPTasMod
 {
-    // What viewers see in the game while the studio's "Show TAS overlay" is on: the player's hurtbox, every spike's
-    // collider, the spike grace count while the hurtbox is inside one, and in the top left corner a "TAS - <course> -
-    // <unlocks>" title over the inputs playback gave on each of the last MaxInputRows physics ticks (newest at the top).
-    // Only real-time playback is listed; solver and turbo runs are not. The top right corner shows the player's velocity
-    // (TasOverlayVelocity.cs).
     public sealed partial class TasPlugin
     {
         sealed class InputRow
         {
             public string tickText;
-            // Movement.MoveAxis as the game used it: x 0, ±1 or 0.3..0.8 in size (a stick short of full), y 0 or ±1.
             public float x, y;
             public string stickText;
             public bool jump, jumpPress, dash;
         }
 
         const int MaxInputRows = 30;
-        // Oldest first; rows are reused once the list is full.
         readonly List<InputRow> _inputRows = new List<InputRow>();
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
         Movement _overlayPlayer;
-        // The move axis playback set on the last tick it gave input (dash ticks take none and keep it).
         Vector2 _overlayAxis;
-        // PhysicsTicks of the last listed tick; 0 while no playback runs.
         long _overlayLastTick;
         long _overlayTicks;
         string _overlayRoute;
-        // The course the listed playback runs ("1", "bonus1"): the route's course, or for a Full-TAS run the course it
-        // last started. "—" until one is known.
         string _overlayCourse = "—";
         string _overlayClock;
         int _overlayJumpPresses, _overlayDashPresses;
         GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze;
         int _overlayStyleHeight;
 
-        // ---- Dropped frames. Turbo and enginesim give every physics tick exactly one Update after it (clones, the
-        // game's per-frame timers, everything Update-driven runs once per tick at dt = fixedDeltaTime). A real-time
-        // playback that renders fewer frames than physics ticks runs two or more ticks with no Update between them,
-        // so Update-driven game state (clone pay, purchases waiting on it) can come out differently from the route's.
-        // Counted from the first listed tick of a playback: a frame that covered n ticks drops n - 1.
         int _ticksSinceFrame;
         int _droppedFrames, _worstFrameTicks;
         long _lastDropTick;
-        // Shown this long after the playback ends, so the result stays readable.
         const float DroppedFramesLingerSeconds = 10f;
         float _droppedFramesShownUntil;
 
-        // TasPlugin.Update: one render frame ended. The ticks OverlayTick counted since the previous one tell whether
-        // physics ticks ran without a frame of their own.
         void OverlayFrame()
         {
             CountFrame();
@@ -70,7 +51,6 @@ namespace IGTAPTasMod
             _droppedFramesShownUntil = Time.unscaledTime + DroppedFramesLingerSeconds;
         }
 
-        // For a playback's result line: "" when it dropped none.
         string DroppedFramesText()
         {
             return _droppedFrames == 0 ? "" : " · " + _droppedFrames + " dropped frame" + (_droppedFrames == 1 ? "" : "s")
@@ -79,20 +59,17 @@ namespace IGTAPTasMod
 
         bool OverlayListsRun { get { return _engine.IsRunning && !_engine.Quiet && !_silentEvaluation && !TurboRunner.Active; } }
 
-        // Movement.getPlayerControlledInput prefix and the dash-jump press: the axis playback just set.
         void OverlayCaptureAxis(Movement player)
         {
             if (_engine.IsRunning) _overlayAxis = player.MoveAxis;
         }
 
-        // After every physics tick of the world's player (Movement.FixedUpdate postfix), dash ticks included.
         void OverlayTick(Movement player)
         {
             _overlayPlayer = player;
             if (!OverlayListsRun) _overlayLastTick = 0;
             else if (_engine.PhysicsTicks != _overlayLastTick)
             {
-                // A run starts listing on its first timed tick; a new route or a restarted tick count starts one too.
                 if (_overlayLastTick == 0 || _engine.PhysicsTicks < _overlayLastTick || !ReferenceEquals(_engine.ActiveMacroName, _overlayRoute))
                 {
                     _inputRows.Clear();
@@ -128,7 +105,6 @@ namespace IGTAPTasMod
             SampleVelocity(player);
         }
 
-        // "→", "← ↑", "→ 53%" (a stick short of full), "·" for no stick.
         static string StickText(float x, float y)
         {
             string text = x < 0f ? "←" : x > 0f ? "→" : "";
@@ -142,7 +118,6 @@ namespace IGTAPTasMod
             if (!_settings.showOverlay || Event.current.type != EventType.Repaint) return;
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
-            // Update runs after the frame's physics steps, so this is the state after the last one.
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             DrawSpikes(scale);
             DrawHitbox(scale);
@@ -152,7 +127,6 @@ namespace IGTAPTasMod
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
         }
 
-        // Top centre, red: this playback dropped frames, so it may not play out like the route.
         void DrawDroppedFrames(float scale)
         {
             string text = "DROPPING FRAMES · " + _droppedFrames + " tick" + (_droppedFrames == 1 ? "" : "s") + " without a frame · worst "
@@ -163,7 +137,6 @@ namespace IGTAPTasMod
             Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), text, _overlayText, Color.white);
         }
 
-        // The panel's text is sized for its width, at most PanelWidth pixels; the graze label follows the screen.
         void BuildOverlayStyles(float scale)
         {
             _overlayStyleHeight = Screen.height;
@@ -178,14 +151,11 @@ namespace IGTAPTasMod
             _overlayGraze = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * scale), alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
         }
 
-        // The input panel is PanelWidth pixels wide at 1080p and above, narrower (with everything in it) below.
         const float PanelWidth = 440f;
         static float PanelScale(float scale) { return Mathf.Min(scale, 1f); }
 
         static readonly FieldInfo NormalColliderField = AccessTools.Field(typeof(Movement), "normalCollider");
 
-        // The player has two boxes: Movement.normalCollider, the body that collides with Ground, and a smaller hurtbox
-        // that collides with everything else (Default and Spikes: what spikes and gates touch). Only the hurtbox is drawn.
         static BoxCollider2D Hurtbox(Movement player, List<BoxCollider2D> buffer)
         {
             object body = NormalColliderField == null ? null : NormalColliderField.GetValue(player);
@@ -212,19 +182,12 @@ namespace IGTAPTasMod
             Fill(new Rect(r.xMax - line, r.yMin, line, r.height), color);
         }
 
-        // World bounds to a GUI rect (origin top left).
         static Rect ScreenRect(Camera cam, Bounds bounds)
         {
             Vector3 a = cam.WorldToScreenPoint(bounds.min), b = cam.WorldToScreenPoint(bounds.max);
             return Rect.MinMaxRect(Mathf.Min(a.x, b.x), Screen.height - Mathf.Max(a.y, b.y), Mathf.Max(a.x, b.x), Screen.height - Mathf.Min(a.y, b.y));
         }
 
-        // ---- Spikes ----
-        // spikeScript: the first physics step the hurtbox overlaps a spike is its trigger's Enter, which spikeScript
-        // ignores; each later step is a Stay that adds 1 to its counter, and the Stay that takes counter past
-        // graceFrames (1 on every course) kills. Any Stay while dashing kills too (killPlayerOnDash). Exit resets
-        // counter. So the hurtbox may sit inside spikes for graceFrames + 1 = 2 steps (1 while dashing): step 1 is the
-        // Enter, step 2 the Stay with counter 1, and a third step is death.
         static readonly FieldInfo SpikeCounterField = AccessTools.Field(typeof(spikeScript), "counter");
         static readonly FieldInfo SpikeGraceField = AccessTools.Field(typeof(spikeScript), "graceFrames");
         static readonly FieldInfo SpikeOnDashField = AccessTools.Field(typeof(spikeScript), "killPlayerOnDash");
@@ -241,8 +204,6 @@ namespace IGTAPTasMod
         {
             public Collider2D collider;
             public spikeScript script;
-            // Static colliders keep their shapes until their shape count or world bounds change (a scene load can
-            // place a static body after the first scan); a moving one rebuilds them every frame.
             public bool moving;
             public int shapeCount = -1;
             public Bounds bounds;
@@ -261,24 +222,18 @@ namespace IGTAPTasMod
         Material _overlayMaterial;
         bool _overlayMaterialMissing;
 
-        // The last sampled physics step: spikes the hurtbox is in, the step count of the graze (1 = Enter), how many
-        // steps it can last, and whether a spike killed the player.
         long _spikeSampleStep = long.MinValue;
         readonly HashSet<spikeScript> _grazeSpikes = new HashSet<spikeScript>();
         Bounds _grazeHurtbox;
         int _grazeTicks, _grazeLimit;
         bool _grazeKilled, _grazeGrounded, _grazeDashing;
-        // The graze that just ended, shown for GrazeLingerSeconds so viewers catch a 2-step graze (40 ms).
         const float GrazeLingerSeconds = 1.5f;
         int _lastGrazeTicks, _lastGrazeLimit;
         bool _lastGrazeKilled;
         float _lastGrazeTime = float.NegativeInfinity;
 
-        // The physics step whose results are current: in FixedUpdate the one before Time.fixedTime's, elsewhere its own.
         static long FixedStep() { return (long)System.Math.Round(Time.fixedTimeAsDouble / Time.fixedDeltaTime); }
 
-        // Movement.FixedUpdate prefix: the previous step's physics and trigger callbacks are done, this tick's movement
-        // has not run. Sampled there too, so a frame that runs several steps misses none of a graze.
         void OverlayBeforeTick(Movement player)
         {
             _positionBeforeTick = player.transform.position;
@@ -296,8 +251,6 @@ namespace IGTAPTasMod
             BoxCollider2D hurtbox = Hurtbox(player, _hitboxes);
             if (hurtbox != null)
             {
-                // The spikes a trigger overlap test finds now, with the hurtbox's own contact layers: what gets
-                // Enter/Stay at this step.
                 var filter = new ContactFilter2D { useTriggers = true, useLayerMask = true };
                 filter.layerMask = (Physics2D.GetLayerCollisionMask(hurtbox.gameObject.layer) | hurtbox.includeLayers) & ~hurtbox.excludeLayers;
                 hurtbox.Overlap(filter, _overlaps);
@@ -326,7 +279,6 @@ namespace IGTAPTasMod
             _grazeGrounded = player.onGround;
         }
 
-        // Every enabled spike collider; a tilemap collider merged into a composite is drawn as the composite.
         void ScanSpikes()
         {
             _spikeScanTime = Time.unscaledTime;
@@ -347,7 +299,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // The collider's physics shapes (Collider2D.GetShapes: what Box2D collides), in world space.
         void BuildShapes(SpikeCollider entry)
         {
             Collider2D c = entry.collider;
@@ -392,7 +343,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // Points around a circle at centre, facing away from toward: a half circle (half = 1) or the whole (half = 0).
         static Vector2[] RoundCap(Vector2 centre, Vector2 toward, float radius, int half, int segments)
         {
             Vector2 d = toward - centre;
@@ -427,8 +377,6 @@ namespace IGTAPTasMod
             return _overlayMaterial;
         }
 
-        // Every spike shape on screen, filled and outlined; the shapes of a spike the hurtbox is in, near it, in the
-        // grace colour (red once it killed).
         void DrawSpikes(float scale)
         {
             Camera cam = Camera.main;
@@ -441,8 +389,6 @@ namespace IGTAPTasMod
             Color touched = _grazeKilled ? HitboxColor : GraceColor;
             float half = Mathf.Max(0.75f, scale);
 
-            // Clipped to the camera's viewport: a window wider than the game's aspect shows black bars the spikes
-            // must not spill into.
             Rect pixels = cam.pixelRect;
             material.SetPass(0);
             GL.PushMatrix();
@@ -467,7 +413,6 @@ namespace IGTAPTasMod
                     }
                     if (shape.closed && _screenPoints.Count >= 3)
                     {
-                        // Physics polygons are convex: a fan, each triangle as a quad with its last corner doubled.
                         GL.Color(new Color(color.r, color.g, color.b, 0.18f));
                         for (int i = 1; i + 1 < _screenPoints.Count; i++)
                         {
@@ -499,8 +444,6 @@ namespace IGTAPTasMod
 
         static Rect BoundsRect(Bounds b) { return Rect.MinMaxRect(b.min.x, b.min.y, b.max.x, b.max.y); }
 
-        // Above the hurtbox: "SPIKE 1/2", "SPIKE 2/2" while inside a spike (steps so far / steps it can last), and for
-        // GrazeLingerSeconds after it leaves, how long the graze lasted.
         void DrawGraze(float scale)
         {
             Movement player = _overlayPlayer;
@@ -534,15 +477,12 @@ namespace IGTAPTasMod
         static readonly Color HitboxColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);
         static readonly Color GraceColor = new Color(0.35f, 1f, 0.45f, 0.95f);
-        // The panel title: "TAS" and each unlock in its own colour, each at least 7:1 contrast (WCAG AAA) against
-        // PanelBand even over a white scene.
         static readonly Color TasColor = Hex(0xffa3b4, 1f);
         static readonly Color WallJumpColor = Hex(0x5bf08a, 1f);
         static readonly Color DashCapColor = Hex(0x6cc8ff, 1f);
         static readonly Color AirJumpColor = Hex(0xffd84d, 1f);
         static readonly Color BlockSwapColor = Hex(0xffab70, 1f);
         static readonly Color OmniDashColor = Hex(0xdab3ff, 1f);
-        // The input panel: the studio website's palette (web/app/globals.css).
         static readonly Color PanelBack = Hex(0x0d1a2d, 0.92f);
         static readonly Color PanelBand = Hex(0x12243d, 0.95f);
         static readonly Color PanelStripe = Hex(0x12243d, 0.45f);
@@ -577,7 +517,6 @@ namespace IGTAPTasMod
 
         static readonly GUIContent OverlayMeasure = new GUIContent();
 
-        // Draws text on the title line at x, as wide as it needs; returns where the next text starts.
         static float Segment(float x, float y, float height, float gap, string text, GUIStyle style, Color color)
         {
             OverlayMeasure.text = text;
@@ -586,7 +525,6 @@ namespace IGTAPTasMod
             return x + width + gap;
         }
 
-        // "TAS - <course> - WJ DS AJ OR OM": the live player's unlocks (a category route's once playback applied them).
         void DrawPanelTitle(float x, float y, float height, float scale)
         {
             float gap = 6 * scale;
@@ -605,7 +543,6 @@ namespace IGTAPTasMod
             if (!any) Segment(x, y, height, gap, "NONE", _overlayTitle, MutedColor);
         }
 
-        // Top left corner of the screen (0, 0): a band with the TAS title and the run's clock, the column header, then one row per tick.
         void DrawInputPanel(float screenScale)
         {
             float scale = PanelScale(screenScale);
@@ -628,7 +565,6 @@ namespace IGTAPTasMod
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
-            // Columns: the tick's number in the run, the stick, jump (pressed, or held from an earlier press), dash pressed.
             float tickWidth = 56 * scale, stickX = x + 84 * scale, jumpX = x + 200 * scale, dashX = x + 290 * scale;
             Label(new Rect(x, y, tickWidth, columnLine), "TICK", _overlaySmallRight, MutedColor);
             Label(new Rect(stickX, y, 110 * scale, columnLine), "STICK", _overlaySmall, MutedColor);
@@ -638,7 +574,6 @@ namespace IGTAPTasMod
             y = panel.y + headerHeight;
 
             bool live = _overlayLastTick != 0;
-            // Newest first: the current tick sits under the column header and older ticks scroll down and off the panel.
             for (int i = _inputRows.Count - 1, n = 0; i >= _inputRows.Count - shown; i--, n++, y += rowHeight)
             {
                 InputRow row = _inputRows[i];

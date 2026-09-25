@@ -5,14 +5,10 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // Instance fields of an object, copied so a snapshot survives any number of restores.
-    // Shared with the offline engine host (enginesim/Runtime), which compiles this file against its Unity shim.
     internal static class FieldState
     {
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]> Fields =
             new System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]>();
-        // courseScript's ghost-replay recording grows every timed tick; copying it per snapshot is quadratic, and
-        // nothing a run is judged by reads it.
         static readonly HashSet<string> Skipped = new HashSet<string> { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
 
         internal static FieldInfo[] For(Type type)
@@ -49,7 +45,6 @@ namespace IGTAPTasMod
                     return Activator.CreateInstance(value.GetType(), value);
                 if (definition == typeof(Stack<>))
                 {
-                    // Enumerates top first; pushing that order back would flip the stack.
                     Array items = (Array)value.GetType().GetMethod("ToArray").Invoke(value, null);
                     Array.Reverse(items);
                     return Activator.CreateInstance(value.GetType(), items);

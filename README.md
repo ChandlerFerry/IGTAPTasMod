@@ -41,7 +41,8 @@
 - Trace every new best and name its trick.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
-[`docs/fulltas.md`](docs/fulltas.md).
+[`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:
+[`docs/human-input.md`](docs/human-input.md).
 
 ## Layout
 

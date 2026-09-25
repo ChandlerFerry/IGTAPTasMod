@@ -7,12 +7,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    // The in-game solver (Solver.cs) running offline: explore (Go-Explore over 48 px map cells x course timer
-    // running) and optimize (mutate the best finish), judged by the game's own timer, then (at the same time) by the
-    // whole run's physics ticks: a flying start's setup before its last start-gate crossing is off the timer but still
-    // worth shortening. Each worker thread owns a world and archive; workers share only the best finish, which each
-    // adopts by replaying it. A Full-TAS window (the simulation has goals, FullTas.cs in the CLI) is ranked in physics ticks
-    // from the run start, with cells per goal reached and quick restarts among the inputs a route may add.
     public sealed class OfflineSolver
     {
         public sealed class Best
@@ -23,17 +17,12 @@ namespace IGTAP.EngineSim
             public int Version;
         }
 
-        // Search state carried from one solve to the next (Solve.cs keeps it in archive/<label>.json): every explore
-        // cell's input prefix with how often it was picked, and the plateau, routes exactly as fast as the best that the
-        // workers drifted to. A solve replays the prefixes to rebuild the cells (snapshots are not saved) instead of
-        // re-finding them, and each worker resumes its drift from a plateau route instead of the saved one.
         public sealed class Memory
         {
             public long Runs;
             public List<Source> Sources = new List<Source>();
             public List<List<InputTick>> Plateau = new List<List<InputTick>>();
 
-            // One run's inputs up to its last cell, and the cells it reached first.
             public sealed class Source
             {
                 public List<InputTick> Inputs;
@@ -48,10 +37,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // A forced path (solve --via/--avoid): the player's center must pass the `Via` boxes in order before a finish
-        // counts, and a run that enters an `Avoid` box is cut. Checked on every physics tick, dash ticks included. The
-        // boxes passed so far are part of every cell, so exploration keeps a route that went the forced way apart from one
-        // at the same place that didn't. It only narrows which runs count; the game still judges every best.
         public sealed class ForcedPath
         {
             public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
@@ -73,7 +58,6 @@ namespace IGTAP.EngineSim
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, Drifts, Splices, BranchChecks, BranchMatches;
-        // A forced path: the most of its boxes any run has passed so far.
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -96,14 +80,12 @@ namespace IGTAP.EngineSim
         {
             var threads = new Thread[workers];
             _workers = new Worker[workers];
-            // The saved prefixes are split between the workers, so each replays only its share.
             _partitions = Enumerable.Range(0, workers).Select(i => _memory == null ? new List<Memory.Source>()
                 : _memory.Sources.Where((s, k) => k % workers == i).ToList()).ToArray();
             for (int i = 0; i < workers; i++)
             {
                 int index = i;
                 int seed = Environment.TickCount * 31 + i * 7919;
-                // Worker 0 evaluates the seed routes first; the others start exploring right away.
                 var seeds = i == 0 ? _seeds : new List<List<InputTick>>();
                 List<InputTick> plateau = _memory != null && _memory.Plateau.Count > 0 ? _memory.Plateau[i % _memory.Plateau.Count] : null;
                 threads[i] = new Thread(() =>
@@ -117,8 +99,6 @@ namespace IGTAP.EngineSim
             return threads;
         }
 
-        // The search state to carry to the next solve: each worker hands over its archive between runs (a worker that
-        // doesn't within `timeoutMs` counts with its last hand-over, or its unreplayed share of the saved state).
         public Memory Export(int timeoutMs)
         {
             int generation = ++_exportGeneration;
@@ -147,14 +127,12 @@ namespace IGTAP.EngineSim
                 if (!sources.TryGetValue(pair.Value.source, out Memory.Source s)) sources[pair.Value.source] = s = new Memory.Source { Inputs = pair.Value.source };
                 s.Cells.Add(new Memory.SavedCell { Key = pair.Key, Length = pair.Value.length, Picks = pair.Value.picks, Rank = pair.Value.rank });
             }
-            // A cell's prefix is resumed after its tick's input, so the replay needs that one tick more.
             foreach (Memory.Source s in sources.Values)
                 s.Inputs = s.Inputs.GetRange(0, Math.Min(s.Inputs.Count, s.Cells.Max(c => c.Length) + 1));
             memory.Sources = sources.Values.ToList();
             return memory;
         }
 
-        // Faster on the timer, or as fast (same 0.0001 s tolerance as the game's judge) in fewer physics ticks overall.
         public static bool Beats(float time, long runTicks, float bestTime, long bestRunTicks)
         {
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
@@ -162,8 +140,6 @@ namespace IGTAP.EngineSim
 
         bool Offer(float time, long runTicks, List<InputTick> inputs, string how)
         {
-            // Reported under the lock: tie-breaks come in quick bursts from many workers, and a later report of an older
-            // best would overwrite the newer one's file (same time, same name).
             lock (Shared)
             {
                 if (!Beats(time, runTicks, Shared.Time, Shared.RunTicks)) return false;
@@ -188,10 +164,6 @@ namespace IGTAP.EngineSim
         {
             const float CellSize = 48f;
             const float SegmentSlack = .2f;
-            // A best's replay keeps a snapshot and a fingerprint every StateEvery input ticks, not every tick: a mutation
-            // resumes from the snapshot at or before its first changed tick (a few ticks more to step), and convergence is
-            // checked on those ticks only. Snapshotting every tick of a long route (Course 4: ~670) on each drift made the
-            // solver spend most of its time allocating snapshots and collecting them.
             const int StateEvery = 16;
             readonly OfflineSolver _owner;
             readonly Simulation _sim;
@@ -204,20 +176,14 @@ namespace IGTAP.EngineSim
             List<InputTick> _bestInputs;
             SimSnapshot[] _bestStates;
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
-            // The best's first arrival in each cell: course time and input tick. An explore run that reaches a cell
-            // sooner than the best did continues with the best's inputs from there (Splice).
             Dictionary<long, (float time, int tick)> _bestFirst = new Dictionary<long, (float, int)>();
             int _sharedVersion;
             float _maxTimedRank;
-            // Full-TAS (the simulation has goals): cells are per goal, ranks count from the run start (a window starts late
-            // in it), and routes may quick-restart.
             readonly bool _goalMode;
             float _minTimedRank = float.PositiveInfinity;
             readonly Queue<Memory.Source> _restore;
             List<InputTick> _plateau;
 
-            // What the worker hands the saver (Export): its cells, the saved prefixes it has yet to replay, and its best
-            // when that is as fast as the shared one.
             public sealed class Handover
             {
                 public List<(long key, List<InputTick> source, int length, int picks, float rank)> Cells;
@@ -262,8 +228,6 @@ namespace IGTAP.EngineSim
                 }
             }
 
-            // Archive cells reached sooner than the best first reached them (by earlier exploration, or a saved solve's),
-            // each spliced onto the best's rest once per new best, the biggest gains first.
             void QueueSplices()
             {
                 _spliceQueue.Clear();
@@ -290,12 +254,9 @@ namespace IGTAP.EngineSim
                 Exported = generation;
             }
 
-            // Rebuilds a saved prefix's cells: the replay files every cell it reaches (as fast as it reached them before,
-            // the inputs being the same), then the saved picks carry over so well-explored cells stay less likely.
             void Restore(Memory.Source source)
             {
                 _restoreKeys = new long[source.Inputs.Count + 1];
-                // Ticks the replay never reaches (cut behind the best) carry no picks.
                 Array.Fill(_restoreKeys, long.MinValue);
                 Evaluate(source.Inputs, null, null, null, false, out _, out _, out _);
                 long[] keys = _restoreKeys;
@@ -356,9 +317,6 @@ namespace IGTAP.EngineSim
                 if (_spliceAt > chosen.Length) Splice(inputs, _spliceAt, _spliceBestTick, chosen.State);
             }
 
-            // A route is a chain of segments: a run that reaches a cell sooner than the best did may finish sooner by
-            // following the best from there. The explore run's inputs up to that cell, then the best's inputs from its
-            // first arrival in the same cell; the button's press/release flags are fixed at the seam.
             void Splice(List<InputTick> run, int at, int bestTick, SimSnapshot from)
             {
                 var t = new List<InputTick>(at + _bestInputs.Count - bestTick);
@@ -370,7 +328,6 @@ namespace IGTAP.EngineSim
                 if (!k.held) k.release = before.held;
                 if (k.press && before.held)
                 {
-                    // A new press needs the button up on the tick before it.
                     if (before.press || at - 1 <= from.Tick) return;
                     before.held = false; before.release = true; t[at - 1] = before;
                 }
@@ -379,8 +336,6 @@ namespace IGTAP.EngineSim
                 Try(t, "splice", from);
             }
 
-            // Before the first finish, timed cells reached later on the course timer (further along the course) weigh
-            // more, so exploration pushes the frontier of long courses instead of re-rolling the well-covered start.
             double Weight(long key, Cell cell)
             {
                 double w = key < 0 ? 3.0 : 1.0;
@@ -389,21 +344,16 @@ namespace IGTAP.EngineSim
                     double reach = _goalMode ? (_maxTimedRank > _minTimedRank ? (cell.Rank - _minTimedRank) / (double)(_maxTimedRank - _minTimedRank) : 0) : cell.Rank / _maxTimedRank;
                     w *= 1 + 10 * Math.Pow(reach, 4);
                 }
-                // A forced path: before the first finish, cells past more of its boxes are the frontier.
                 if (_owner._path != null && _bestInputs == null) w *= 1 + 10 * cell.State.Waypoints;
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
-            // Jump holds, in ticks. A normal jump or air jump reaches full height only when held until it rises slower
-            // than 150 (~27 ticks; a release earlier cuts it to 50 up to 13 ticks later), so holds reach past that.
             static readonly int[] Holds = { 1, 3, 6, 10, 16, 24, 30, 40 };
-            // How much longer a resumed prefix that ends mid-hold keeps holding (0 = release at once).
             static readonly int[] ResumeHolds = { 0, 3, 8, 16, 30, 60 };
 
             List<InputTick> RandomBurst(List<InputTick> inputs)
             {
                 float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f, y = inputs.Count > 0 ? inputs[inputs.Count - 1].y : 0f;
-                // Releasing at every resume would cut every jump that crosses a cell boundary.
                 int holdEnd = inputs.Count > 0 && inputs[inputs.Count - 1].held ? inputs.Count + ResumeHolds[_rng.Next(ResumeHolds.Length)] : 0;
                 for (int chunk = _rng.Next(1, 4); chunk > 0; chunk--)
                 {
@@ -412,8 +362,6 @@ namespace IGTAP.EngineSim
                     int length = _rng.Next(3, 21);
                     int start = inputs.Count;
                     for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x, y = y, held = start + i < holdEnd });
-                    // Full-TAS: now and then a chunk starts with a quick restart (never right after another one, nor on the
-                    // window's first input: the prefix before it may end with one).
                     if (_goalMode && start > 0 && !inputs[start - 1].reset && _rng.NextDouble() < .05)
                     {
                         InputTick r = inputs[start]; r.reset = true; inputs[start] = r;
@@ -426,17 +374,12 @@ namespace IGTAP.EngineSim
                         d.dash = true;
                         if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
                         inputs[at] = d;
-                        // Superbounce (Solver.cs SuperBounce): jump buffered in the first dash frames against a wall. Or,
-                        // after a chunk that pushed into something, the backwards dash-jump off it (BackDash).
                         if (d.dashJump == 0 && _rng.NextDouble() < .5)
                             holdEnd = start > 0 && inputs[start - 1].x != 0f && _rng.NextDouble() < .3
                                 ? BackDash(inputs, at, start)
                                 : SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
                     }
                 }
-                // A forced path: a run often clears a box coasting on a dash or bounce after its burst's inputs ran out,
-                // where no cell can be filed (nothing to resume from). The same stick and hold for a while longer keep that
-                // coast inside the inputs, so the cells past the box are filed and explored from.
                 if (_owner._path != null && inputs.Count > 0)
                 {
                     InputTick last = inputs[inputs.Count - 1];
@@ -446,12 +389,9 @@ namespace IGTAP.EngineSim
                 return inputs;
             }
 
-            // A stick's vertical: down (fast fall, Movement.cs:1104; a faster wall slide) most, rest, or up (a slower
-            // wall slide, ApplyWallslideFriction).
             static readonly float[] Verticals = { -1f, -1f, 0f, 0f, 1f };
             float Vertical() { return Verticals[_rng.Next(Verticals.Length)]; }
 
-            // Press at `at`, held for `hold` ticks (clipped to the list), released after; returns the release tick.
             static int Hop(List<InputTick> t, int at, int hold)
             {
                 if (at >= t.Count) return at;
@@ -464,8 +404,6 @@ namespace IGTAP.EngineSim
                 return at + hold;
             }
 
-            // Solver.cs SuperBounce: dash into a wall with jump pressed 0-5 ticks later, optionally steer away after.
-            // Returns the jump's release tick.
             int SuperBounce(List<InputTick> t, int at, float toward)
             {
                 if (at < 0 || at >= t.Count) return 0;
@@ -477,12 +415,6 @@ namespace IGTAP.EngineSim
                 return release;
             }
 
-            // Backwards dash-jump (WJ + dash): standing against a wall, turn away from it and press dash and jump on the same
-            // tick. The dash start moves the player 20 units against the dash (Movement.getPlayerControlledInput), back
-            // into the wall, and the buffered jump is a grounded dash jump from inside it. The wall side is the stick
-            // before the turn; the turn is 0-4 ticks of stick away (from `lo` on: a resumed prefix stays as it is), and
-            // the dash tick holds the stick away or, after a turn long enough to flip facing (Velocity.x < 0 after ~3
-            // ticks from a push), neutral so the dash follows facing. Returns the jump's release tick.
             int BackDash(List<InputTick> t, int at, int lo)
             {
                 if (at < lo || at >= t.Count) return 0;
@@ -496,7 +428,6 @@ namespace IGTAP.EngineSim
                 return Hop(t, at, new[] { 3, 6, 10, 16, 24 }[_rng.Next(5)]);
             }
 
-            // Where the hold that starts with the press at `q` ends (the first tick not held, or a later press).
             static int HoldEnd(List<InputTick> t, int q)
             {
                 int e = q + 1;
@@ -504,8 +435,6 @@ namespace IGTAP.EngineSim
                 return e;
             }
 
-            // Sets the hold of the press at `q` to end at `end`: held up to it, released there, not held after until the
-            // old end.
             static void SetHold(List<InputTick> t, int q, int end)
             {
                 int old = HoldEnd(t, q);
@@ -526,12 +455,12 @@ namespace IGTAP.EngineSim
                 if (at < t.Count) t.RemoveRange(at, Math.Min(count, t.Count - at));
             }
 
-            // A quick restart at `p`: not on the window's first input, never on two consecutive ticks (a real button is
-            // released in between).
             static bool CanReset(List<InputTick> t, int p)
             {
                 return p > 0 && p < t.Count && !t[p].reset && !t[p - 1].reset && (p + 1 >= t.Count || !t[p + 1].reset);
             }
+
+            static readonly float?[] LockValues = { null, -1f, 0f, 1f };
 
             void Optimize()
             {
@@ -539,7 +468,8 @@ namespace IGTAP.EngineSim
                 int n = t.Count, p = _rng.Next(n);
                 string[] kinds = _dash
                     ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
-                        "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical" }
+                        "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
+                        "springdash", "lockstick", "lockstick" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
                 if (_goalMode) kinds = kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 switch (kinds[_rng.Next(kinds.Length)])
@@ -591,7 +521,6 @@ namespace IGTAP.EngineSim
                         InputTick k = t[q]; k.press = k.dash = false; k.dashJump = 0; t[q] = k;
                         break;
                     }
-                    // Air jump height: a jump's hold length decides whether (and when) it is cut.
                     case "hold":
                     {
                         List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press).ToList();
@@ -602,8 +531,6 @@ namespace IGTAP.EngineSim
                         SetHold(t, q, end);
                         break;
                     }
-                    // Air jump timing (a stacked air jump climbs higher pressed later) and press/release order: moves a
-                    // jump press or a dash a few ticks, keeping where the jump's hold ends.
                     case "retime":
                     {
                         List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
@@ -623,7 +550,6 @@ namespace IGTAP.EngineSim
                         bool heldBefore = q > 0 && t[q - 1].held;
                         from.press = false; t[q] = from;
                         dest.press = true; dest.held = true; dest.release = false; t[to] = dest;
-                        // Earlier: hold from the new press. Later: not held before it (unless the jump was already held).
                         for (int i = Math.Min(q, to) + 1; i < Math.Max(q, to); i++) { InputTick k = t[i]; k.held = to < q || heldBefore; k.release = false; t[i] = k; }
                         if (to > q && !heldBefore) { InputTick k = t[q]; k.held = false; k.release = false; t[q] = k; }
                         if (end > to) SetHold(t, to, end);
@@ -631,22 +557,36 @@ namespace IGTAP.EngineSim
                     }
                     case "stick":
                     {
-                        // Full left, rest, full right, or a stick short of full near the current one: a stick gives
-                        // 0.3..0.8 there (MacroEngine.ControllerAxis), so full steps down to 0.8 and rest up to 0.3.
                         float was = Mathf.Abs(t[p].x), sign = t[p].x != 0f ? Mathf.Sign(t[p].x) : _rng.NextDouble() < .5 ? -1f : 1f;
                         float partial = sign * (was >= 1f ? .8f : was == 0f ? .3f : Mathf.Clamp(was + (_rng.NextDouble() < .5 ? -.1f : .1f), .3f, .8f));
                         float aim = new[] { -1f, 0f, 1f, partial }[_rng.Next(4)];
                         for (int i = p; i < Math.Min(n, p + _rng.Next(1, 15)); i++) { InputTick k = t[i]; k.x = aim; t[i] = k; }
                         break;
                     }
-                    // Fast fall or wall-slide speed over a stretch (the stick's vertical; x as it was).
                     case "vertical":
                     {
                         float aim = Vertical();
                         for (int i = p; i < Math.Min(n, p + new[] { 1, 3, 6, 12, 25, 50 }[_rng.Next(6)]); i++) { InputTick k = t[i]; k.y = aim; t[i] = k; }
                         break;
                     }
-                    // Full-TAS: add, drop or move a quick restart.
+                    case "springdash":
+                    {
+                        InputTick k = t[p]; k.springDash = _rng.NextDouble() < .2 ? 0 : _rng.Next(1, 26); t[p] = k;
+                        break;
+                    }
+                    // The stick held through a dash or spring lock (a reversed super jump: dash one way, stick and jump the
+                    // other), mostly on a dash tick; null leaves the old default.
+                    case "lockstick":
+                    {
+                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
+                        int q = dashes.Count > 0 && _rng.NextDouble() < .7 ? dashes[_rng.Next(dashes.Count)] : p;
+                        InputTick k = t[q];
+                        k.lockX = LockValues[_rng.Next(LockValues.Length)];
+                        k.lockY = LockValues[_rng.Next(LockValues.Length)];
+                        if (k.dash && k.dashJump == 0 && _rng.NextDouble() < .5) k.dashJump = _rng.Next(1, 11);
+                        t[q] = k;
+                        break;
+                    }
                     case "reset":
                     {
                         if (!CanReset(t, p)) return;
@@ -673,8 +613,6 @@ namespace IGTAP.EngineSim
                         break;
                     }
                 }
-                // A cut or insert can bring two quick restarts together, or one to the window's first input (a category
-                // seed can carry restarts too).
                 {
                     if (t.Count > 0 && t[0].reset && !_bestInputs[0].reset) { InputTick k = t[0]; k.reset = false; t[0] = k; }
                     for (int i = 1; i < t.Count; i++)
@@ -682,8 +620,6 @@ namespace IGTAP.EngineSim
                 }
                 int s = 0;
                 while (s < t.Count && s < _bestInputs.Count && t[s].Equals(_bestInputs[s])) s++;
-                // From `converge` on the inputs equal the best's at the same ticks (only when the mutation kept the length:
-                // a shift moves the time-driven world against the player). +12: a dash-jump pressed before it resolves.
                 int converge = int.MaxValue;
                 if (t.Count == _bestInputs.Count)
                 {
@@ -704,22 +640,14 @@ namespace IGTAP.EngineSim
                 bool converged = _converged;
                 if (from != null && _rng.Next(100) == 0)
                 {
-                    // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
-                    // fires inside the replayed prefix (a loop route revisiting a cell), which the branch never sees.
                     bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
-                    // The branch never judged the prefix (its source's), so the replay judges the same ticks only.
                     bool again = Evaluate(inputs, null, null, null, false, out float replay, out _, out _, from.Tick);
                     Interlocked.Increment(ref _owner.BranchChecks);
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
                 if (finished) Interlocked.Increment(ref _owner.Finishes);
-                // Neutral drift: a mutation that finishes as fast as the best (or rejoins its state, so finishes exactly
-                // like it) replaces it. Whole-tick timing makes the best sit on wide plateaus, and a faster route is often
-                // several mutations away, each alone no faster (Course 1 NO_WJ 2.14 -> 2.06 moves a press a tick, turns
-                // the stick, cuts the jump at one tick, then drops an earlier press; only the last one gains).
-                // A saved plateau route (Memory) is the drift a worker had reached, so it replaces a best as fast too.
                 bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !Beats(_best, _bestRunTicks, time, runTicks));
                 if (!drift && (!finished || !Beats(time, runTicks, _best, _bestRunTicks))) return;
                 var states = new SimSnapshot[inputs.Count];
@@ -740,10 +668,6 @@ namespace IGTAP.EngineSim
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 
-            // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best (judged
-            // only after input tick `judgeAfter`). A replay that records `states` also records each tick's player body and,
-            // every StateEvery ticks, a snapshot and fingerprint; a run whose inputs equal the best's from tick `converge`
-            // on stops once it is back in the best's state on one of those ticks (it would finish exactly like the best).
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
                 out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue)
             {
@@ -758,7 +682,6 @@ namespace IGTAP.EngineSim
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
-                // Every physics tick (dash ticks take no input, so afterTick skips them): the forced path's boxes.
                 Action<int> onStep = path == null ? null : _ =>
                 {
                     Vector3 p = _sim.Player.transform.m_Position;
@@ -766,7 +689,6 @@ namespace IGTAP.EngineSim
                         lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
                     foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
                 };
-                // A Full-TAS window can dash more often than a course: room for a physics tick without input per input.
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
                     if (_avoided) return false;
@@ -783,8 +705,6 @@ namespace IGTAP.EngineSim
                         return false;
                     }
                     courseScript active = _sim.TimingCourse();
-                    // Bonus and transition runs have no course timer; they are timed in physics ticks from the run start,
-                    // as their finishes are.
                     bool timing = _sim.TimedFromRunStart || active != null;
                     long key = _goalMode ? GoalCellKey(_sim.Player.transform.m_Position, _sim.Progress) : CellKey(_sim.Player.transform.m_Position, timing, _waypoints);
                     bool losing = false;
@@ -794,11 +714,8 @@ namespace IGTAP.EngineSim
                     {
                         if (tick > judgeAfter && elapsed > _best) losing = true;
                         if (cut && tick > judgeAfter && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
-                        // The best route's last time in each cell: a loop route revisits cells, and cutting at the first
-                        // visit would cut the best route itself once a mutation resumes past it.
                         if (arrivals != null) arrivals[key] = elapsed;
                         if (states != null && filed < inputs.Count) _replayFirst.TryAdd(key, (elapsed, filed));
-                        // An explore run past its resumed prefix, in a cell sooner than the best first reached it.
                         if (_splicing && _spliceAt < 0 && from != null && tick > from.Tick && tick < inputs.Count && !_sim.Engine.InputsExhausted
                             && _bestFirst.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
                         {
@@ -815,27 +732,19 @@ namespace IGTAP.EngineSim
                 time = result.Time;
                 finishTick = result.FinishTick;
                 runTicks = result.PhysicsTicks;
-                // A forced path's finish counts only past all of its boxes, without entering one to avoid.
                 return result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
             }
             (float, float, float, float, float, float)[] _replayBody, _bestBody;
             Dictionary<long, (float time, int tick)> _replayFirst;
-            // Explore (Splice): whether this run looks for a cell it reaches sooner than the best, the first such input tick,
-            // and the best's input tick at its first arrival in that cell.
             bool _splicing;
             int _spliceAt, _spliceBestTick;
-            // How much sooner than the best a run must reach a cell to be spliced onto the best's rest.
             const float SpliceGain = .02f;
             int?[] _replayFingerprint, _bestFingerprint;
             int[] _replayWaypoints, _bestWaypoints;
-            // The run's forced-path state: boxes passed, and whether it entered one to avoid.
             int _waypoints;
             bool _avoided;
-            // The last Evaluate stopped because the run was back in the best's state (it would finish exactly like it).
             bool _converged;
 
-            // Timed cells are negative, untimed ones non-negative (Weight and _maxTimedRank rely on it): x and y are
-            // masked to 24 bits so a negative x can't make an untimed key negative, or alias a timed one a cell below.
             static long CellKey(Vector3 position, bool timing, int waypoints)
             {
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF;
@@ -843,17 +752,12 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - key : key;
             }
 
-            // Full-TAS: always timed (from the run start), and a map per goal reached, so a place visited again later in
-            // the run is a new cell.
             static long GoalCellKey(Vector3 position, int progress)
             {
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF;
                 return -1 - (((long)progress << 48) | (x << 24) | y);
             }
 
-            // A cell keeps its earliest arrival: by course time once the timer runs (dash ticks consume no input but still
-            // cost 0.02 s each), by input tick before it. Only arrivals a run can resume from are filed: one reached after
-            // the inputs ran out has no snapshot, and exploring from it would replay its whole prefix from the start.
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
                 bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);

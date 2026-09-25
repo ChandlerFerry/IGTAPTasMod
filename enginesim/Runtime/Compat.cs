@@ -1,7 +1,6 @@
 using System;
 using System.Reflection;
 
-// The plugin files compiled into the runtime (MacroEngine, FieldState) use these plugin/Harmony members.
 namespace HarmonyLib
 {
     internal static class AccessTools

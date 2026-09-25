@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""Turn ilspycmd output of Unity's managed math types into shim sources.
-
-Unity's value types (Vector2, Mathf, ...) are plain managed code; the shim uses Unity's exact implementations so
-float results match the game bit for bit. This strips engine-only attributes and drops members that call into
-native code (extern), which the game never reaches.
-
-usage: sanitize-unity.py <decompiled.cs> <out.cs>
-"""
 import re
 import sys
 
@@ -21,7 +12,6 @@ INLINE_ATTRIBUTES = re.compile(r"\[DefaultValue\([^)]*\)\]\s*")
 
 
 def members(lines):
-    """Split a class body into top-level member chunks by brace depth (depth 1 inside the type)."""
     out, chunk, depth = [], [], 0
     for line in lines:
         chunk.append(line)
@@ -39,7 +29,6 @@ def main(src, dst):
     text = [l for l in open(src, encoding="utf-8").read().splitlines()
             if not l.startswith("You are not using the latest version") and not l.startswith("Latest version is")]
     kept = [INLINE_ATTRIBUTES.sub("", l) for l in text if not ENGINE_ATTRIBUTES.match(l) and not USINGS.match(l)]
-    # File-scoped namespace (ilspy style): header lines until the first type declaration.
     first = next(i for i, l in enumerate(kept) if re.match(r"^(public|internal)\s", l))
     header, body = kept[:first], kept[first:]
     result = []

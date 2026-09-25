@@ -16,46 +16,32 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // The studio's Optimize tab. The search runs offline (`IGTAP.EngineSim solve`, AGENTS.md rule 7); the game only
-    // captures the start state and world the offline engine loads, and judges every offline best in turbo
-    // (/api/enginesim/submit), saving it through the gate (SaveSolverRoute) when it holds up and is faster (or as fast
-    // in fewer physics ticks from the run start: a shorter flying-start setup).
     public sealed partial class TasPlugin
     {
         public sealed class CourseDef
         {
             public int id;
-            // Category routes are "<course>_<CAPS> <time>"; a named course ("bonus1") takes its name as the course.
             public string name;
             public float x, y;
-            // A bonus course has no start/stop gates: its run finishes when the player touches this box (the
-            // reward's buy trigger) and is timed in physics ticks from the run start. Zero size = a gated course.
             public float endX, endY, endW, endH;
-            // A transition runs from `from` (a course "2" or a bonus "bonus2"; start x, y) to `to`: course `toCourse`'s
-            // start gate starting its timer, or for a bonus the end box around the bonus's start. Timed in physics ticks
-            // from the run start; finishing any course on the way is not a finish.
             public string from, to;
             public int toCourse;
-            // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
-            // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
             public string minCapabilities;
-            // The widest category (bonuses only): a bonus runs from minCapabilities up to this. Missing = only its first.
             public string maxCapabilities;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
-            // Courses and transitions run in every category from their first; a bonus only up to maxCapabilities.
             [JsonIgnore] public int MaxLevel { get { return !IsBonus ? 3 : string.IsNullOrEmpty(maxCapabilities) ? MinLevel : CapsLevel(maxCapabilities); } }
             public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && level <= MaxLevel; }
         }
 
         sealed class SolverTick
         {
-            // The stick (y 0 or ±1: down is fast fall and a faster wall slide, up a slower one).
             public float x, y; public bool held, press, release, dash; public int dashJump;
-            // The game's quick restart right before this tick (MacroStep.rawQuickRestart).
+            public int springDash;
+            public float? lockX, lockY;
             public bool reset;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
@@ -70,18 +56,12 @@ namespace IGTAPTasMod
 
         bool _solverRunning;
         string _solverStatus = "Idle", _solverSpeed = "";
-        // What every turbo run is made for (set per run by SelectSolverTarget): the course, bonus or transition it is
-        // scored on.
         CourseDef _solverTarget;
         string _solverCaps = "";
         courseScript[] _solverCourses;
-        // The course start as the first turbo run reached it (respawned and settling, one tick before its first
-        // input). Every later run resumes here: a respawn alone leaves state from the previous run behind, and that
-        // produced finishes that die in real play.
         TurboRunner.Snapshot _startState;
         readonly List<string> _solverLog = new List<string>();
 
-        // The Optimize tab's run: the offline solve process and what it has reported (its stdout, read on the main thread).
         Process _solveProcess;
         readonly ConcurrentQueue<string> _solveOutput = new ConcurrentQueue<string>();
         int _solveCourse;
@@ -90,19 +70,13 @@ namespace IGTAPTasMod
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
 
-        // One target of an Optimize run: a course in a category.
         sealed class SolveJob
         {
             public int course, saved;
             public string caps, label;
-            // How it ended ("Finished, best 28.41s, 1 saved", "Skipped: ..."); null until then.
             public string result;
         }
 
-        // The Optimize run's targets, solved one after another (the batch matrix or a single course), and how long each
-        // one's search may take (it also stops once half of that, at most 5 minutes, passes without a new best).
-        // `_solveRepeat`: after the last target the queue starts over (pass 2, 3, ...), each pass with twice the minutes
-        // up to `_solveMaxMinutes`, until stopped.
         readonly List<SolveJob> _solveQueue = new List<SolveJob>();
         int _solveIndex = -1;
         float _solveMinutes = 60f, _solveMaxMinutes = 60f;
@@ -111,8 +85,6 @@ namespace IGTAPTasMod
 
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
 
-        // The game's courses (courseNumber 1-10). Start points: each course's start checkpoint (quick restarts for 1-5; the
-        // game places the player 12 px below). 6-10 need at least the full kit until a route shows otherwise.
         static CourseDef[] GameCourses()
         {
             return new[] {
@@ -135,8 +107,6 @@ namespace IGTAPTasMod
                 if (File.Exists(CoursesPath))
                 {
                     _courses = JsonConvert.DeserializeObject<List<CourseDef>>(File.ReadAllText(CoursesPath));
-                    // A courses.json from before a course was known gains it, after the courses it has (ahead of the bonuses
-                    // and transitions: a run's course is found by its start point, and some bonuses share a course's start).
                     CourseDef[] missing = GameCourses().Where(g => !_courses.Any(c => c.id == g.id)).ToArray();
                     if (missing.Length == 0) return;
                     int at = _courses.FindLastIndex(c => string.IsNullOrEmpty(c.name) && c.id < 100) + 1;
@@ -146,10 +116,6 @@ namespace IGTAPTasMod
                 }
             }
             catch (Exception ex) { Logger.LogWarning("courses.json rejected: " + ex.Message); }
-            // Course ids are the game's courseNumber; bonus areas hold 101+. Bonuses have no gates and finish on a free
-            // secret box's buy trigger: bonus1 starts in the course 2 secret shaft (box at the corridor's end); bonus2 on
-            // the ledge past Course 2's top where Course2_To_Bonus2 arrives (course 3's GLOBALcash box); bonus3 at Course
-            // 3's start (course 3's GLOBALclonespeedmax box, right of the course).
             _courses = GameCourses().ToList();
             _courses.AddRange(new[] {
                 new CourseDef { id = 101, name = "bonus1", x = 7392.427f, y = 2807.015f, minCapabilities = "wj",
@@ -168,7 +134,6 @@ namespace IGTAPTasMod
             RecordingDefinition recording = _recordings.OrderByDescending(r => r.createdUtc).FirstOrDefault();
             if (recording == null || recording.samples == null || recording.samples.Count == 0)
                 throw new InvalidOperationException("No recording to take the course start from.");
-            // The lowest unused id: bonus areas hold 101+, so the game's courses keep their own numbers.
             int id = 1;
             while (_courses.Any(c => c.id == id)) id++;
             Vector2 first = Absolute(recording.samples[0]);
@@ -180,20 +145,11 @@ namespace IGTAPTasMod
             return new { ok = true, course = id };
         }
 
-        // A recorded tick's position in courses.json's frame (FloatingOrigin moves the world once the player is far out).
         static Vector2 Absolute(RawTickSample t) { return new Vector2(t.positionX - t.originX, t.positionY - t.originY); }
 
-        // "Course1_To_Course2_WJ", "Course2_To_Bonus2", "Bonus2_To_Course3" (category suffix optional).
         static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ))?\b", RegexOptions.IgnoreCase);
-        // A transition's end box when it ends at a bonus: around where the player stands at the bonus's start.
         const float BonusArrivalSize = 32f;
 
-        // A transition from a recording named "<Course|Bonus><n>_To_<Course|Bonus><m>[_<CAPS>]". It starts at the course's
-        // start (or where the recording starts, for a bonus) and ends when course m's start gate starts its timer, or on
-        // reaching bonus m's start (a bonus course's start, a transition's from it, or a "Bonus<m>_To_..." recording's
-        // first position). Transitions hold ids 201+ and are named "<from>to<to>" ("1to2", "2tobonus2"); the
-        // recording becomes a seed route "<token>_REC <recording>". Without a category suffix the category floor is
-        // the save's unlocks (what it was recorded with).
         object AddTransitionFromRecording(RecordingDefinition recording)
         {
             if (recording.samples == null || recording.samples.Count == 0) throw new InvalidOperationException("The recording is empty.");
@@ -203,7 +159,6 @@ namespace IGTAPTasMod
             bool fromBonus = m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             bool toBonus = m.Groups[3].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             string origin = (fromBonus ? "bonus" : "") + m.Groups[2].Value, target = (toBonus ? "bonus" : "") + m.Groups[4].Value;
-            // The player stands 12 px below a start (a quick restart there).
             Vector2 start = Absolute(recording.samples[0]) + new Vector2(0f, 12f);
             if (!fromBonus)
             {
@@ -239,8 +194,6 @@ namespace IGTAPTasMod
                 _courses.Add(transition);
                 SaveCourses();
             }
-            // Recordings run to a death or a goal; a transition to a bonus ends at the end box, so its seed stops there
-            // (one tick after the player's centre is inside: the colliders overlap it by then at the latest).
             List<RawTickSample> samples = recording.samples;
             if (transition.HasFinish)
             {
@@ -254,7 +207,6 @@ namespace IGTAPTasMod
             return new { ok = true, course = transition.id, token = transition.Token };
         }
 
-        // Where a bonus ("bonus2") starts: its bonus course, a transition from it, or a "Bonus2_To_..." recording.
         bool BonusStart(string bonus, out Vector2 start)
         {
             CourseDef known = _courses.Find(c => string.Equals(c.name, bonus, StringComparison.OrdinalIgnoreCase) && c.IsBonus)
@@ -275,8 +227,6 @@ namespace IGTAPTasMod
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
             { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" }, { "wjdashaj", "WJ_DASH_AJ" } };
 
-        // Course 3 starts at WJDASH, Course 4 at WJ_DASH_AJ (courses.json minCapabilities);
-        // a bonus has only its first category unless maxCapabilities widens it.
         void CheckCategory(int course, string capabilities)
         {
             CourseDef def = _courses.Find(c => c.id == course);
@@ -288,7 +238,6 @@ namespace IGTAPTasMod
                     : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel)) + ".");
         }
 
-        // Where the build put `IGTAP.EngineSim.exe` (IGTAPTasMod.csproj: AssemblyMetadata "EngineSimExe").
         static string EngineSimExe
         {
             get { return typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value; }
@@ -303,10 +252,6 @@ namespace IGTAPTasMod
             return new SolveJob { course = course, caps = capabilities, label = def.Token + "_" + CapabilityLabels[capabilities] };
         }
 
-        // POST /api/solver/start: {course, capabilities} or {queue: [either, ...]}, solved in that order;
-        // `minutes` (fractional allowed) bounds each target's search; `repeat` starts the queue over when it ends, the
-        // minutes doubling each pass up to `maxMinutes`. The first target's problems are the request's error; a
-        // later target that can't start when its turn comes is skipped.
         void StartSolver(JObject body)
         {
             if (_solverRunning) throw new InvalidOperationException("The solver is already running.");
@@ -356,7 +301,6 @@ namespace IGTAPTasMod
             _solveProcess = null;
         }
 
-        // The current target is done (`outcome` says how): the next one that can start starts, or the run ends.
         void EndSolveJob(string outcome)
         {
             KillSolveProcess();
@@ -378,7 +322,6 @@ namespace IGTAPTasMod
                 : "Done: " + _solveQueue.Count + " targets, " + _solveQueue.Sum(j => j.saved) + " new routes saved";
         }
 
-        // Starts the first target from `from` on that can start (the ones that can't are marked skipped); false if none.
         bool StartNextSolveJob(int from)
         {
             for (int next = from; next < _solveQueue.Count; next++)
@@ -393,24 +336,18 @@ namespace IGTAPTasMod
             return false;
         }
 
-        // POST /api/solver/skip: ends the current target and moves on to the next.
         void SkipSolveJob()
         {
             if (!_solverRunning) throw new InvalidOperationException("The solver is not running.");
             EndSolveJob("Skipped");
         }
 
-        // A course's zone loads in real frames around the player (turbo does not step the loader), and FloatingOrigin
-        // shifts the world in LateUpdate once the player is far from the origin (Course 4's start is). A run captured
-        // before either settles runs through an empty course or from the wrong place, so park the player at the start
-        // (absolute course coordinates + currentOrigin) and let a few real frames pass first.
         int _parkedFrame = -1000;
 
         bool CourseLoaded()
         {
             _solverCourses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             Movement player = FindWorldMovement();
-            // A run's start is where its course starts.
             CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f;
@@ -419,8 +356,6 @@ namespace IGTAPTasMod
                 RestoreRouteStart(new MacroDefinition { name = target.Token + "_" });
                 _parkedFrame = Time.frameCount;
             }
-            // A bonus course has no courseScript of its own; settled zones are all its runs need. A transition needs the
-            // course whose start gate ends it.
             else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled() && (target.HasFinish
                 || _solverCourses.Any(c => c.courseNumber == (target.IsTransition ? target.toCourse : target.id) && c.isActiveAndEnabled))) return true;
             _solverStatus = "Loading course " + target.Token;
@@ -429,8 +364,6 @@ namespace IGTAPTasMod
 
         static readonly FieldInfo AllZonesField = AccessTools.Field(typeof(ZoneLoader), "allZones");
 
-        // ZoneLoader.LoadZone applies a zone two frames after it is asked (Movement.Start and /api/oracle/bootstrap
-        // both ask); until then every zone is live, and the first run after a launch died on Overgrowth spikes.
         static bool ZonesSettled()
         {
             ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
@@ -440,7 +373,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        // Ends the whole run: the current target is marked `status`, the ones after it never start.
         void StopSolver(string status)
         {
             KillSolveProcess();
@@ -465,8 +397,6 @@ namespace IGTAPTasMod
                 queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
         }
 
-        // The studio's sidebar groups category routes by these: a course with a reward box is a bonus, one with `to` a
-        // transition ("2" to "bonus2"). A bonus's `hint` is its reward box's reward and price as the game shows them.
         object[] BuildCourseWebState()
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus, minLevel = c.MinLevel,
@@ -476,7 +406,6 @@ namespace IGTAPTasMod
         static readonly FieldInfo BoxCurrency = AccessTools.Field(typeof(upgradeBox), "upgradeCurrency");
         static readonly Regex RichTextTag = new Regex("<[^>]*>"), Whitespace = new Regex(@"\s+");
 
-        // "Reward: 0% extra watts [Global] [+40% Per use]\nPrice: 0w"; null until the world has the box.
         string BonusHint(CourseDef bonus)
         {
             upgradeBox box = BonusRewardBox(bonus, out _);
@@ -493,7 +422,6 @@ namespace IGTAPTasMod
                 + (box.TimesUsed > 0 ? " (bought)" : "");
         }
 
-        // Snapshots hold world positions: after a FloatingOrigin shift the start state is recaptured (PrepareEngineSimRun).
         Vector2 _startOrigin;
 
         void PumpSolver()
@@ -504,7 +432,6 @@ namespace IGTAPTasMod
                 if (_solveProcess == null) { LaunchSolve(); return; }
                 while (_solveOutput.TryDequeue(out string line)) ReadSolveLine(line);
                 if (!_solveProcess.HasExited) return;
-                // Exited: the parameterless wait also waits for the redirected output to end.
                 _solveProcess.WaitForExit();
                 while (_solveOutput.TryDequeue(out string line)) ReadSolveLine(line);
                 int code = _solveProcess.ExitCode;
@@ -513,9 +440,6 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError(ex); EndSolveJob("Solver error: " + ex.Message); }
         }
 
-        // Once the course is loaded: a turbo trace of the start state plus the world export (what
-        // `tools/enginesim-capture.py start` writes), the course's library routes as seed files, then `solve`, which
-        // submits each new offline best to /api/enginesim/submit for the turbo check.
         void LaunchSolve()
         {
             if (PlaybackActive || _recorder.IsRecording) return;
@@ -535,8 +459,6 @@ namespace IGTAPTasMod
             }
             var args = new StringBuilder(Quote((string)captured["path"]));
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
-            // Every route already made for this course seeds the search, whatever category it was made for, stale ones
-            // too.
             string standalonePrefix = course.Token + "_";
             int seeds = 0;
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
@@ -566,14 +488,8 @@ namespace IGTAPTasMod
 
         static string Quote(string path) { return "\"" + path + "\""; }
 
-        // Set while `map` runs: one at a time.
         volatile bool _mapRunning;
 
-        // POST /api/enginesim/map {course, capabilities}: the Optimize tab's map of a target. `IGTAP.EngineSim map` replays,
-        // offline from the target's last start capture (what Solve wrote), the course's library routes, its fastest
-        // offline best, its archive's plateau routes and explore prefixes, and returns them with the level's colliders
-        // and the standing forced-path boxes. Only on request, at below-normal priority, off the main thread: the game
-        // and a running solve keep their pace. Answers when the process ends (a few seconds).
         object EngineSimMap(WebStudioRequest request, JObject body)
         {
             int id = Number(body, "course", 0);
@@ -649,7 +565,6 @@ namespace IGTAPTasMod
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
         static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via");
 
-        // One line of solve's output: progress updates the counters, everything else (new bests, turbo checks) goes to the log.
         void ReadSolveLine(string line)
         {
             Match m = SolveProgress.Match(line);
@@ -668,13 +583,9 @@ namespace IGTAPTasMod
             Logger.LogInfo("solve: " + line);
         }
 
-        // ---- Route rules. Every category route is saved through SaveSolverRoute, which replays it from the course start
-        // and refuses it unless every tick obeys what a human with that category's unlocks can do. The checks read the
-        // game's own state, so they hold however inputs are injected: every buffer the game holds must come from a press
-        // or release MacroEngine made within the game's window, counted in physics ticks (MacroEngine.Clock).
-        const int JumpBufferTicks = 12;   // game: 0.12 s, 0.2 s mid-dash (10 ticks), +2 slack
-        const int DashBufferTicks = 8;    // game: 0.12 s (6 ticks), +2 slack
-        const int JumpCutBufferTicks = 15; // game: 0.26 s after a release (13 ticks), +2 slack
+        const int JumpBufferTicks = 12;
+        const int DashBufferTicks = 8;
+        const int JumpCutBufferTicks = 15;
         List<string> _audit;
 
         void AuditTick(Movement player, int tick)
@@ -687,7 +598,6 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            // A Full-TAS run is checked against the unlocks its own purchases gave so far.
             string caps = _fullTas != null ? FullTasCaps : _solverCaps;
             int level = CapsLevel(caps);
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
@@ -698,7 +608,6 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[caps]);
         }
 
-        // Null when the route may be saved, else why not.
         string RouteViolation(List<SolverTick> inputs, float time)
         {
             if (_solverFullTas != null) return FullTasViolation(inputs, time);
@@ -713,7 +622,6 @@ namespace IGTAPTasMod
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 
-        // A turbo run of `inputs` from the course start (_startState; the first run from a respawn captures it).
         bool Evaluate(List<SolverTick> inputs, out float time, out int finishTick, out Vector2 end)
         {
             Movement player = FindWorldMovement();
@@ -730,7 +638,6 @@ namespace IGTAPTasMod
             _silentTime = 0f;
             if (from == null)
             {
-                // A run cut short mid-course leaves its course timing; clear it like a real restart would.
                 foreach (courseScript c in _solverCourses) if (c != null) CourseTrackingFlag.SetValue(c, false);
                 _pendingSilentMacro = new MacroDefinition { id = "solver", name = "Solver", steps = ToSteps(inputs) };
             }
@@ -738,7 +645,6 @@ namespace IGTAPTasMod
             {
                 TurboRunner.Restore(from, player);
                 BeginDeterministicPhysics(player);
-                // The start state is taken at tick 0, before the first input.
                 _engine.Resume(from.engine, ToSteps(inputs), 0);
             }
             int lastTick = -1, idleTicks = 0;
@@ -754,7 +660,6 @@ namespace IGTAPTasMod
                         int tick = (int)_engine.RunTicks;
                         if (_startState == null && tick == 0) settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
                         if (_startState == null && tick > 0) { _startState = settling; _startOrigin = CurrentOrigin(); }
-                        // Every tick, dash ticks (which take no input) included.
                         if (_audit != null) AuditTick(player, tick);
                         lastTick = tick;
                     }, from);
@@ -775,12 +680,9 @@ namespace IGTAPTasMod
             return _silentFinished && time > 0f;
         }
 
-        // "<course token>_<CAPS>": the solver's course and category as category routes name them ("bonus1_WJ"); a
-        // Full-TAS run's "fulltas/<run>_NO_WJ".
         string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
             : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
 
-        // The only place a category route is saved. False (and nothing saved) when the route breaks a rule.
         bool SaveSolverRoute(List<SolverTick> inputs, float time)
         {
             string category = SolverCategory;
@@ -803,7 +705,6 @@ namespace IGTAPTasMod
 
         static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ_DASH_AJ|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
 
-        // Keeps only the fastest "<course>_<CAPS> <time>" route per category. True if any was removed.
         bool PruneSlowerRoutes()
         {
             var fastest = new Dictionary<string, float>();
@@ -815,8 +716,6 @@ namespace IGTAPTasMod
                 float time = float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
                 if (!fastest.TryGetValue(key, out float best) || time < best) fastest[key] = time;
             }
-            // Ties: keep the last route listed. The gate saves an equally fast route only when it takes fewer physics ticks
-            // from the run start (a shorter flying-start setup), and appends it.
             var kept = new Dictionary<string, MacroDefinition>();
             foreach (MacroDefinition m in _library.macros)
             {
@@ -840,7 +739,9 @@ namespace IGTAPTasMod
                 for (int i = 0; i < Math.Max(1, s.durationTicks); i++)
                     ticks.Add(new SolverTick { x = s.rawMoveX, y = s.rawMoveY, held = s.rawJumpHeld,
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
-                        dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, reset = i == 0 && s.rawQuickRestart });
+                        dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, springDash = i == 0 ? s.springDashFrame : 0,
+                        lockX = i == 0 ? s.lockMoveX : null, lockY = i == 0 ? s.lockMoveY : null,
+                        reset = i == 0 && s.rawQuickRestart });
             return ticks;
         }
 
@@ -850,8 +751,10 @@ namespace IGTAPTasMod
             foreach (SolverTick k in ticks)
             {
                 MacroStep last = steps.Count > 0 ? steps[steps.Count - 1] : null;
-                // A press or a quick restart starts a step of its own.
-                if (last != null && !k.press && !k.release && !k.dash && !k.reset && last.rawMoveX == k.x && last.rawMoveY == k.y && last.rawJumpHeld == k.held)
+                bool arms = k.springDash != 0 || k.lockX.HasValue || k.lockY.HasValue;
+                bool lastArms = last != null && (last.springDashFrame != 0 || last.lockMoveX.HasValue || last.lockMoveY.HasValue);
+                if (last != null && !k.press && !k.release && !k.dash && !k.reset && !arms && !lastArms
+                    && last.rawMoveX == k.x && last.rawMoveY == k.y && last.rawJumpHeld == k.held)
                 {
                     last.durationTicks++;
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
@@ -861,7 +764,8 @@ namespace IGTAPTasMod
                     durationMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f), endCondition = ActionEndCondition.FixedTicks,
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
-                    dashJumpFrame = k.dash ? k.dashJump : 0, rawQuickRestart = k.reset });
+                    dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
+                    rawQuickRestart = k.reset });
             }
             return steps;
         }

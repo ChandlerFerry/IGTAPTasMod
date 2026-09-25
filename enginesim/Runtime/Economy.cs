@@ -7,21 +7,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    // The Cash a run earns offline, as the game pays it in turbo: a course's reward at the player's finish
-    // (courseScript.stopTracking), the clones (clonesScript.Update as TurboRunner.StepClones steps it: SpawnClone,
-    // DestroyClone, updateClonePath, updateCloneInterval, isOnScreen), and what the local upgrades a box buys change
-    // (upgradeBox.DoBuyUpgrade: the course's reward, its clone count, prestige's BoostOldCourses with Course 5's trip
-    // breaker, the breaker lights). Active when the start state carries the clones' state (the plugin's start economy
-    // "clones"); Shop adds what it earns to the Cash the run can spend.
-    //
-    // The clones, the local and global upgrade dictionaries and the Cash earned are kept here, per simulation (the
-    // game's are statics or clone objects offline can't instantiate). A course's reward, best time and comp boost are its
-    // own fields (captured with the course). Of the global boxes the cashPerLoop, maxCloneFastness, maxCloneBigness and
-    // unlockPrestige ones are modeled (the last also BoostOldCourses, like a local prestige box); the others end the
-    // run. The clone speed/size rolls are modeled like the game's (each spawn draws Random.Range(0, 101) per loop
-    // and picks the clone's Fastness and Bigness); what still ends the run as unmodeled is the colour clones (a
-    // UnityEngine.Random roll when a colour counter passes 100) and the other currencies' branches (clone dust, a
-    // Vman course completion).
     public sealed class Economy
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -33,8 +18,6 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo BoxCourseField = typeof(upgradeBox).GetField("course", Fields);
         static readonly FieldInfo BoxClonesField = typeof(upgradeBox).GetField("clones", Fields);
         static readonly FieldInfo BoxEffectMultField = typeof(upgradeBox).GetField("effectMult", Fields);
-        // BoostOldCourses' wiring: the courses a prestige box boosts, its trip breaker flag and what a trip breaker
-        // resets (coursesToReset, the ObjectReference box it disables, the tripBreakerScript it trips).
         static readonly FieldInfo BoxOldCoursesField = typeof(upgradeBox).GetField("oldCourses", Fields);
         static readonly FieldInfo BoxTripBreakerField = typeof(upgradeBox).GetField("tripBreaker", Fields);
         static readonly FieldInfo BoxCoursesToResetField = typeof(upgradeBox).GetField("coursesToReset", Fields);
@@ -55,7 +38,6 @@ namespace IGTAP.EngineSim
         static readonly int LocalCount = Enum.GetValues(typeof(localUpgrades.localUpgradeSet)).Cast<int>().Max() + 1;
         static readonly int GlobalCount = Enum.GetValues(typeof(globalStats.globalUpgradeSet)).Cast<int>().Max() + 1;
 
-        // One active clone: its path pointer and rolls (clonePathPointers, cloneFastness, cloneBigness; any colour flag).
         internal struct Clone
         {
             public float Pointer;
@@ -63,13 +45,11 @@ namespace IGTAP.EngineSim
             public bool Coloured;
         }
 
-        // A clonesScript's own state.
         internal struct CloneValues
         {
             public int Count, Pooled, PathSamples;
             public bool ArrayFull, OnScreen;
             public float BaseInterval, SinceLast, NextDue, OffscreenDivisor, PathLength;
-            // ColourCloneCounter: red, green, blue.
             public double Red, Green, Blue;
         }
 
@@ -77,13 +57,11 @@ namespace IGTAP.EngineSim
         {
             public clonesScript Script;
             public courseScript Course;
-            // Index into _locals of the script's localUpgrades (clonesScript.upgrades); -1: none.
             public int Local;
             public CloneValues V;
             public readonly List<Clone> Active = new List<Clone>();
         }
 
-        // Economy state after a tick (SimSnapshot).
         internal sealed class State
         {
             public double Earned;
@@ -98,24 +76,16 @@ namespace IGTAP.EngineSim
         readonly Simulation _sim;
         readonly Clones[] _clones;
         readonly Dictionary<clonesScript, Clones> _byScript = new Dictionary<clonesScript, Clones>();
-        // TurboRunner.Run steps the clones on active objects when the run starts, in this order.
         readonly Clones[] _stepped;
         readonly Dictionary<localUpgrades, int> _localIndex = new Dictionary<localUpgrades, int>();
-        // Each localUpgrades' localUpgradeDict, by localUpgradeSet. Only a purchase changes one, replacing its array
-        // (snapshots share the arrays).
         readonly double[][] _locals;
         int _localsHash;
-        // globalStats.globalUpgradeDict, by globalUpgradeSet. Only a purchase changes it, replacing the array.
         double[] _global = new double[GlobalCount];
         readonly double _gameSpeed, _vmanMult;
-        // globalStats.currentA1State == tripBreaker (a static the worker threads share, so it's kept here).
         bool _tripBroken;
 
-        // Cash earned since the start or the last trip breaker, which zeroes Cash (course rewards and clone payouts).
         public double Earned { get; private set; }
 
-        // The start state's "economy" (TasPlugin's EngineSimExport.WriteSnapshot): globalUpgrades, locals, clones,
-        // gameSpeed, vmanMult. Anything missing is read from the world export.
         internal Economy(Simulation sim, JsonElement economy)
         {
             _sim = sim;
@@ -126,7 +96,6 @@ namespace IGTAP.EngineSim
             globalStats stats = Singleton<globalStats>.Instance;
             _gameSpeed = economy.TryGetProperty("gameSpeed", out JsonElement speed) ? speed.GetDouble() : (object)stats == null ? 1.0 : stats.GameSpeed;
             _vmanMult = economy.TryGetProperty("vmanMult", out JsonElement vman) ? vman.GetDouble() : (object)stats == null ? 1.0 : stats.vmanMult;
-            // This world's own globalStats (the singleton is whichever world loaded last).
             globalStats own = world.All<globalStats>().FirstOrDefault();
             _tripBroken = (object)own != null && own.currentA1State == globalStats.area1states.tripBreaker;
 
@@ -177,7 +146,6 @@ namespace IGTAP.EngineSim
             return (object)script != null && _localIndex.TryGetValue(script, out int i) ? i : -1;
         }
 
-        // An exported clonesScript: {id, path (clonePath's length), fields: [[type, name, value], ...]}.
         void LoadClones(Clones clones, JsonElement c)
         {
             var values = new Dictionary<string, JsonElement>();
@@ -190,7 +158,6 @@ namespace IGTAP.EngineSim
             }, path);
         }
 
-        // A clonesScript without an exported state: the world export's.
         void LoadClones(Clones clones, clonesScript script)
         {
             LoadClones(clones, name => typeof(clonesScript).GetField(name, Fields).GetValue(script), script.clonePath?.Length ?? 0);
@@ -235,7 +202,6 @@ namespace IGTAP.EngineSim
 
         double Global(globalStats.globalUpgradeSet upgrade) { return _global[(int)upgrade]; }
 
-        // globalStats.globalUpgradeEffectDict / globalUpgradeBaseEffectDict (constants); a missing key throws in the game.
         bool Effect(Dictionary<globalStats.globalUpgradeSet, double> dict, globalStats.globalUpgradeSet upgrade, out double value)
         {
             if (dict != null && dict.TryGetValue(upgrade, out value)) return true;
@@ -243,7 +209,6 @@ namespace IGTAP.EngineSim
             return Unmodeled("no effect value for " + upgrade);
         }
 
-        // ---- clonesScript.Update as TurboRunner.StepClones runs it, once per physics tick after Movement.Update.
         internal void Step(float dt)
         {
             foreach (Clones c in _stepped)
@@ -257,7 +222,6 @@ namespace IGTAP.EngineSim
                 {
                     Clone clone = c.Active[i];
                     if (Mathf.FloorToInt(clone.Pointer) >= c.V.PathSamples) { (done ?? (done = new List<int>())).Add(i); continue; }
-                    // Mono: float intermediates in double, rounded on store.
                     clone.Pointer = (float)(clone.Pointer + (double)PathIncrement(clone) * (50.0 * dt));
                     c.Active[i] = clone;
                 }
@@ -267,20 +231,16 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // clonesScript.determinePathIncrement.
         static float PathIncrement(Clone clone)
         {
             return (float)((1.0 + clone.Fastness * (double)0.35f) * Mathf.Pow(0.75f, clone.Bigness));
         }
 
-        // SpawnClone's roll loop: while (i < 1 + cap) draw Random.Range(0, 101) and stop unless the roll is under
-        // both chance * (1 / (1 + i)) and 50 + cap * 5. The passes are the clone's Fastness/Bigness.
         static int RollCount(double chance, double cap)
         {
             int i = 0;
             while ((double)i < 1.0 + cap)
             {
-                // The game keeps the roll in a float and compares it as a double; 0..100 is exact either way.
                 double roll = UnityEngine.Random.Range(0, 101);
                 if (!(roll < chance * (1.0 / (1.0 + i))) || !(roll < 50.0 + cap * 5.0)) break;
                 i++;
@@ -288,9 +248,6 @@ namespace IGTAP.EngineSim
             return i;
         }
 
-        // clonesScript.SpawnClone(1.0): the speed and size roll loops draw Random.Range(0, 101) at least once each
-        // (even with no chance), decide the spawned clone's Fastness and Bigness and set the next spawn's due time.
-        // Mono float math is double with rounding on store (Prep/MonoFloat.cs), so every comparison here is double.
         bool SpawnClone(Clones c)
         {
             if (c.Local < 0) return Unmodeled("clones without local upgrades");
@@ -310,7 +267,6 @@ namespace IGTAP.EngineSim
                     c.V.Pooled--;
                     c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j });
                     c.V.SinceLast = 0f;
-                    // AssignCloneColour.
                     if (!ColourCheck(c)) return false;
                 }
                 return true;
@@ -334,7 +290,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // clonesScript.checkIfColourClone, while it finds no colour clone (one rolls UnityEngine.Random).
         bool ColourCheck(Clones c)
         {
             c.V.Green += Global(globalStats.globalUpgradeSet.greenCloneClance);
@@ -342,7 +297,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // clonesScript.DestroyClone: the clone pays and goes back to the pool.
         bool DestroyClone(Clones c, int index)
         {
             Clone clone = c.Active[index];
@@ -361,14 +315,12 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // clonesScript.updateCloneInterval.
         static void UpdateCloneInterval(Clones c)
         {
             c.V.BaseInterval = c.V.PathLength / (float)c.V.Count;
             c.V.NextDue = c.V.BaseInterval;
         }
 
-        // clonesScript.isOnScreen (the clone area's clonesLoD trigger): a change updates the course (fullUpdate).
         internal void OnScreen(clonesScript script, bool onScreen)
         {
             if (!_byScript.TryGetValue(script, out Clones c) || onScreen == c.V.OnScreen) return;
@@ -377,7 +329,6 @@ namespace IGTAP.EngineSim
             c.V.OnScreen = onScreen;
         }
 
-        // courseScript.UpdateReward (and fullUpdate: the rest is UI): the reward and the comp boost bonus.
         internal bool UpdateReward(courseScript course)
         {
             int local = LocalIndex(course.localUpgradesScript);
@@ -403,7 +354,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // courseScript.TryActivateCompBoost (the NP boost it doubles pays no Cash).
         bool TryActivateCompBoost(courseScript course)
         {
             if (Global(globalStats.globalUpgradeSet.compBoostUnlocked) == 0.0) return true;
@@ -419,8 +369,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // courseScript.stopTracking(player, savePositionData: true) after tracking stopped: `time` is the course timer
-        // (currentPathTime) it stopped at.
         internal void CourseFinished(courseScript course, float time)
         {
             if (VmanScript.isCurrentlyVman) { Unmodeled("Vman course completion"); return; }
@@ -435,7 +383,6 @@ namespace IGTAP.EngineSim
             if ((object)script == null || !_byScript.TryGetValue(script, out Clones c)) { Unmodeled("course " + course.courseNumber + " without clones"); return; }
             if (time < (float)BestPathTimeField.GetValue(course))
             {
-                // clonesScript.updateClonePath: the new best's recording, one sample per timed courseScript.FixedUpdate.
                 int samples = PathSamples(time);
                 if (samples < 0) { Unmodeled("course timer " + time + " is not a sum of physics ticks"); return; }
                 c.V.PathLength = time;
@@ -443,14 +390,12 @@ namespace IGTAP.EngineSim
                 c.V.PathSamples = samples;
                 for (int i = c.Active.Count - 1; i >= 0; i--)
                     if (!DestroyClone(c, i)) return;
-                // cloneEndVelocity reads the path's 10th sample from the end: a shorter path throws out of stopTracking.
                 if (samples < 10) { Unmodeled("a best path shorter than 10 samples"); return; }
                 BestPathTimeField.SetValue(course, time);
             }
             UpdateCloneInterval(c);
         }
 
-        // How many 0.02 steps courseScript.FixedUpdate added to reach the course timer `time` (-1: none).
         static int PathSamples(float time)
         {
             float t = 0f;
@@ -459,7 +404,6 @@ namespace IGTAP.EngineSim
             return t == time ? n : -1;
         }
 
-        // upgradeBox.DoBuyUpgrade's local upgrade (after TimesUsed and the cost, before ScaleBoxCost).
         internal bool Bought(upgradeBox box, localUpgrades.localUpgradeSet upgrade)
         {
             int local = LocalIndex(box.GetComponentInParent<localUpgrades>());
@@ -478,7 +422,6 @@ namespace IGTAP.EngineSim
                 {
                     var script = BoxClonesField.GetValue(box) as clonesScript;
                     if ((object)script == null || !_byScript.TryGetValue(script, out Clones c)) return Unmodeled("clone box without clones");
-                    // clonesScript.spawnNewCloneVisual.
                     for (int j = 0; (double)j < effectMult; j++)
                     {
                         c.V.Count++;
@@ -490,13 +433,9 @@ namespace IGTAP.EngineSim
                     return UpdateReward(course);
                 }
                 case localUpgrades.localUpgradeSet.prestige:
-                    // DoBuyUpgrade's prestige branch: BoostOldCourses, then Shop scales the cost. The Vman return
-                    // before it (no cost scaling, nothing spent) is Shop's to refuse.
                     return BoostOldCourses(box);
                 case localUpgrades.localUpgradeSet.activateNextBreakerLights:
                 {
-                    // A trip breaker's former movement box: while the breaker is tripped, the first purchase per course
-                    // colours the course's displays and lights the next area (tripBreakerScript.fixedArea).
                     var breaker = BoxTripBreakerScriptField.GetValue(box) as tripBreakerScript;
                     if ((object)breaker == null || !_tripBroken) return true;
                     if ((object)course == null) return Unmodeled("breaker lights box without a course (the game throws)");
@@ -508,9 +447,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // tripBreakerScript.fixedArea(courseNumber): the area's lights brighten (a DOTween each) and the area counts as
-        // fixed once it has a light, the next area's lights turn on (Light2D only: no colliders, no Random draws). Kept:
-        // the script's fixedAreas and activeLights.
         bool FixedArea(tripBreakerScript breaker, int courseNumber)
         {
             var areas = AreaLightsField.GetValue(breaker) as GameObject[];
@@ -523,15 +459,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // upgradeBox.DoBuyUpgrade's global upgrades that a run observes. The global dictionary first, then the
-        // switch's own step: cashPerLoop (every bonus reward box and course 2's GLOBALcashPerLoop) also updates the
-        // box's own course's reward — other courses update theirs on their 5 s UpdateReward repeat, a real-time
-        // InvokeRepeating that never fires inside a turbo run (one frame) and isn't run here either: their clones and
-        // finishes pay the old reward until something else updates it (a clone area change, a purchase there).
-        // maxCloneFastness and maxCloneBigness (the clone speed/size caps) are the switch's default branch: the
-        // dictionary only, no Cash while both clone chances are 0 (their rolls break on the first draw either way).
-        // unlockPrestige (the statue) buys a global clone multiplier instead of its own entry and boosts the old
-        // courses. The box's own cost update after the switch is Shop's.
         internal bool BoughtGlobal(upgradeBox box)
         {
             globalStats.globalUpgradeSet upgrade = box.globalUpgrade;
@@ -551,11 +478,6 @@ namespace IGTAP.EngineSim
             return (object)course == null || UpdateReward(course);
         }
 
-        // upgradeBox.BoostOldCourses (the statue and Course 4's prestige box): every old course's rewardTier becomes
-        // the buying course's tier plus its own RewardPrestigeMod (double), then its reward updates (fullUpdate: the
-        // rest is UI). Every active box under its local upgrades that isn't a global, movement or prestige box gains
-        // half its cap multiplier (Cap = round(baseCap * baseCapMult), banker's), becomes buy-max and turns back on.
-        // The buying box deactivates. A trip breaker prestige (Course 5's) then resets its courses and trips the breaker.
         bool BoostOldCourses(upgradeBox box)
         {
             var course = BoxCourseField.GetValue(box) as courseScript;
@@ -569,7 +491,6 @@ namespace IGTAP.EngineSim
                 if ((object)root == null) return Unmodeled("an old course without local upgrades");
                 old.rewardTier = course.tier + old.RewardPrestigeMod;
                 if (!UpdateReward(old)) return false;
-                // GetComponentsInChildren<upgradeBox>() picks up active boxes under the course's local upgrades only.
                 foreach (upgradeBox boosted in boxes)
                 {
                     if (!boosted.gameObject.activeInHierarchy || !Under(boosted.transform, root)) continue;
@@ -583,16 +504,10 @@ namespace IGTAP.EngineSim
                 }
             }
             _sim.Touch(box);
-            box.isActive = false;  // deactivate() on the buying box (once per old course in the game; same state)
+            box.isActive = false;
             return !(bool)BoxTripBreakerField.GetValue(box) || TripBreakerPrestige(box, course);
         }
 
-        // BoostOldCourses' trip breaker part: every course in coursesToReset (Courses 1-5, Course 5 last) resets through
-        // localUpgrades.OnPrestige. Course 5 keeps its tier (OnPrestige(true, tier, rewardTier): the A1 prestige mod
-        // of -1 + RewardPrestigeMod), Course 4 takes Course 5's tier plus its own with the A1 mod and its best time
-        // reset, Courses 1-3 the same sum as a breaker prestige (BreakerLayerTierMod, BreakerLayerRewardTierMod; their
-        // movement box becomes an activateNextBreakerLights box). After each course the ObjectReference box (Course 4's
-        // prestige box) is disabled; then tripBreakerScript.TripBreaker. The course displays it colours are UI.
         bool TripBreakerPrestige(upgradeBox box, courseScript course)
         {
             var reset = BoxCoursesToResetField.GetValue(box) as courseScript[];
@@ -615,9 +530,6 @@ namespace IGTAP.EngineSim
             return TripBreaker(breaker);
         }
 
-        // localUpgrades.OnPrestige(isResettingCloneTime, newTier, newRewardTier, isBreakerPrestige) with
-        // useA1PrestigeMod: every local upgrade to 0, then the course's clones and course, every child box, and a breaker
-        // prestige's movement box.
         bool LocalPrestige(localUpgrades script, bool resetCloneTime, double newTier, double newRewardTier, bool breakerPrestige)
         {
             int local = LocalIndex(script);
@@ -629,7 +541,6 @@ namespace IGTAP.EngineSim
             var course = parent.GetComponentInChildren<courseScript>();
             if ((object)clones == null || (object)course == null || !_byScript.TryGetValue(clones, out Clones c))
                 return Unmodeled("a course reset without its clones or course (the game throws)");
-            // clonesScript.onPrestige: every active clone is destroyed (and pays, with the local upgrades already 0).
             for (int i = c.Active.Count - 1; i >= 0; i--)
                 if (!DestroyClone(c, i)) return false;
             c.V.Count = 0;
@@ -639,7 +550,6 @@ namespace IGTAP.EngineSim
                 c.V.PathLength = 1E+16f;
             }
             UpdateCloneInterval(c);
-            // courseScript.onPrestige.
             if (breakerPrestige)
             {
                 double tierMod = (double)BreakerLayerTierModField.GetValue(course);
@@ -657,9 +567,6 @@ namespace IGTAP.EngineSim
             foreach (upgradeBox child in children)
                 if (!BoxPrestige(child)) return false;
             if (!breakerPrestige) return true;
-            // MovementBox.reactivateAndReset, then it becomes an activateNextBreakerLights box at the course's new cost
-            // (x10 when it was the wall jump box: the decompiled second branch, for wallJump again, never runs).
-            // SetBoxPromptActiveState hides its key prompt (UI).
             var movement = MovementBoxField.GetValue(script) as upgradeBox;
             if ((object)movement == null) return Unmodeled("a breaker prestige without a movement box (the game throws)");
             _sim.Touch(movement);
@@ -673,9 +580,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // upgradeBox.onPrestige(): prestige, global and movement boxes keep everything; a box exempt from prestige
-        // (with its local upgrades) puts its uses back into the (reset) local upgrades; any other box starts over at
-        // its course's tier and turns back on.
         bool BoxPrestige(upgradeBox box)
         {
             if ((object)box == null) return Unmodeled("a null child box (the game throws)");
@@ -701,11 +605,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // tripBreakerScript.TripBreaker: the coloured blocks swap to orange (colouredBlockSwapper.swapBlocks(false):
-        // orange tilemap colliders on, blue off; their composites follow, PhysicsWorld), Course 4's endDemo box goes
-        // away and Course 5's SwapBlocksOnDash box appears at its course's cost (CalcBoxCost), the TurbineBreak sound,
-        // the breaker state, Cash 0 (unless Vman), the first area's lights. The music and lights it invokes later
-        // (StartMusic, activateBreakerLights) and the lights it turns off are presentation: no colliders, no draws.
         bool TripBreaker(tripBreakerScript breaker)
         {
             colouredBlockSwapper swapper = _sim.World.All<colouredBlockSwapper>().FirstOrDefault();
@@ -730,20 +629,16 @@ namespace IGTAP.EngineSim
             on.visible = true;
             bool wasActive = on.gameObject.activeInHierarchy;
             _sim.SetActive(on.gameObject, true);
-            // upgradeBox.OnEnable on the box that just appeared: Random.Range(0.2f, 0.4f) for its buy-max text repeat
-            // and Random.Range(0f, 0.49f) for its customBoxUpdate repeat's first delay (both repeats are UI).
             if (!wasActive && on.isActiveAndEnabled)
             {
                 UnityEngine.Random.Draw();
                 UnityEngine.Random.Draw();
             }
             on.isActive = true;
-            // CalcBoxCost.
             on.upgradeCost = on.baseUpgradeCost;
             var onCourse = BoxCourseField.GetValue(on) as courseScript;
             if ((object)onCourse != null) on.upgradeCost *= Math.Pow(10.0, onCourse.tier + (double)BoxTierModField.GetValue(on));
             for (int i = 0; i < on.TimesUsed; i++) Shop.ScaleBoxCost(on);
-            // Audio.PlayAudio(TurbineBreak): its clip draw (no pitch variance).
             UnityEngine.Random.Draw();
             _tripBroken = true;
             if (!VmanScript.isCurrentlyVman)
@@ -756,7 +651,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // Whether `t` is `root` or below it in the hierarchy (Unity's Transform.IsChildOf).
         static bool Under(Transform t, Transform root)
         {
             for (Transform p = t; p != null; p = p.parent) if (p == root) return true;
@@ -803,7 +697,7 @@ namespace IGTAP.EngineSim
                 h.Add(-1);
             }
             h.Add(_localsHash);
-            foreach (double g in _global) h.Add(g);  // every global a run changes now (cashPerLoop, cloneMult, the caps)
+            foreach (double g in _global) h.Add(g);
             h.Add(_tripBroken);
         }
 

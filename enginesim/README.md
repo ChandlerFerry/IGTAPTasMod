@@ -151,19 +151,37 @@ finish ended.
   on Course 4. Unity keeps only the local position, so a world position reads back as parent + (world − parent),
   rounded (20202.4453 → 20202.4434), while the body keeps the unrounded value. A scale change (facing flip) rebuilds
   the shapes but does not move the body; a position/rotation write does.
+- Presses: the game takes them only in `Movement.Update`, never inside a `FixedUpdate`, so a route's presses go in at
+  the tick start (`MacroEngine.BeforeTick`: the plugin's `FixedUpdate` prefix, offline before `FixedUpdate`, both after
+  the pending Invokes), not at the input hook, where the game already read the buttons (Movement.cs:1033-1056). A dash
+  that hits a wall takes its input tick in that tick after all; its presses go in at the wall branch's first call
+  (`MacroEngine.WallTouch`: a `touchedSolidGround`/`touchedMossyGround` prefix). Traces captured before this pressed at
+  the hook and differ wherever a dash met a wall with a jump pressed that tick.
 - The stick: `Movement.FixedUpdate` reads the controller (`NormaliseInput(moveAction.ReadValue<Vector2>())`,
   Movement.cs:872) before the input hook, and fast fall (stick down: gravity ×1.4 while the body rises slower than 300,
   and a 1.4× fall speed cap, Movement.cs:1104-1128) and wall-slide speed (down ×1.5, up ×0.35,
   `ApplyWallslideFriction`) use that read, not the hook's `MoveAxis`. A run's stick reaches it through
-  `MacroEngine.DeviceStick`, which is the vertical of the input tick due next with x at rest (the plugin: a `NormaliseInput`
-  prefix; offline: the shim's `InputAction.ReadValue`). Nothing reads x between the two, and dash and spring ticks have
-  no hook, so x at rest is what they always got. Before this, every run held y at 0 at the read, whatever its ticks said.
+  `MacroEngine.TickStick` (the plugin: a `NormaliseInput` prefix; offline: the shim's `InputAction.ReadValue`): the
+  vertical of the input tick due next with x at rest, or on a tick in a dash or spring lock (no hook) the stick the last
+  input tick held for the lock (`lockMoveX/lockMoveY`; unset: x at rest, y of the next input tick). That x is a super
+  jump's direction (`CheckForSuperJump`).
+- Spring cancel: a sideways spring locks the player (`cutsceneModes.spring`) for its `movementLock`, and those ticks skip
+  the input hook, so they take no input tick. A player can still press dash on any of them, and the spring branch cancels
+  the lock on a buffered dash (Movement.cs:1214-1221). An input tick's `springDash` N (`MacroStep.springDashFrame`)
+  presses dash at the start of the Nth spring tick after it (`MacroEngine.BeforeTick`).
+- Triggers after a facing flip: a trigger touched only at the start of the step enters, except when the touch comes from
+  shapes the step's transform sync rebuilt for a new scale. A flip that rebuilt the player's box into a spring's trigger
+  entered in turbo one tick later, when the step's positions overlapped (`div-c4-ff` tick 322, with fast fall).
 - Every trace result matches turbo, and every tick of both `diverge-c5-*` traces. bonus1 (`seed-cbonus1-wj-*`) differs
   at one tick only: body velocity y 1.2e-14 instead of 0 from a contact on a ground seam whose normal is
   (0, 0.99999994); every later tick is identical.
 - Upgrade boxes: `hooks.txt` replaces `upgradeBox.OnTriggerStay2D` with `Runtime/Shop.cs` (the buy rule, Cash, cost,
   cap, movement unlocks, Full-TAS buy goals; clone income from the native economy, `Runtime/Economy.cs`). Traces of
   Course 1's reward and clone purchases (one waiting on clone income) match turbo's result and Cash on every tick.
+  In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
+  dash or air-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (README rule 11),
+  and whether turbo can buy the box depends on the live save (1to2 NO_WJ bought Course 1's Wall jump box offline and
+  wall-jumped; the live save had it bought already, so turbo died).
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): turbo resumes the coroutine at every tick's end
   (`TurboRunner.EndOfFrame`), `Shop.EndOfFrame` does the same offline. A 40-buy touch of Course 1's `CashPerLoop` matched
   turbo's Cash on every tick.

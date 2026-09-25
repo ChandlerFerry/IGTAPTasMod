@@ -14,13 +14,9 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // Ground truth for the offline engine host (enginesim/): the loaded world exactly as Unity's physics sees it,
-    // the solver's course-start state, and full per-tick state traces of turbo runs. Read-only for the game except
-    // that /trace runs the route in turbo exactly like the solver does.
     public sealed partial class TasPlugin
     {
         string EngineSimDir { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "enginesim"); } }
-        // Set while /api/enginesim/trace runs: called after every turbo tick of Evaluate.
         Action<Movement> _engineSimTickHook;
 
         object HandleEngineSim(WebStudioRequest request, JObject body)
@@ -40,8 +36,6 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown enginesim endpoint." };
         }
 
-        // Sets the solver's course/category and makes sure its start state exists. Returns an error
-        // response or null.
         object PrepareEngineSimRun(WebStudioRequest request, JObject body, out List<SolverTick> inputs)
         {
             inputs = null;
@@ -79,7 +73,6 @@ namespace IGTAPTasMod
             if (_startState == null)
             {
                 _engineSimStartKey = null;
-                // The solver's first run captures the start state; every later run resumes from it.
                 Evaluate(new List<SolverTick> { new SolverTick() }, out _, out _, out _);
                 if (_startState == null) throw new InvalidOperationException("The start state was not captured.");
                 _engineSimStartKey = key;
@@ -87,7 +80,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        // {course, capabilities}: what every turbo run is made for. Returns the key of its start state.
         string SelectSolverTarget(JObject body)
         {
             int course = Number(body, "course", 0);
@@ -100,8 +92,6 @@ namespace IGTAPTasMod
             return course + "_" + caps;
         }
 
-        // An offline solver's candidate: {course, capabilities, ticks}. Replayed in turbo from the start state exactly as
-        // the in-game solver judges runs; a timed finish faster than the category's best route is saved as the new route.
         object EngineSimSubmit(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
@@ -109,10 +99,6 @@ namespace IGTAPTasMod
             return Judge(inputs);
         }
 
-        // {course, capabilities}: plays the category's newest offline best (offline-best/, judged/ too: the latest solve's
-        // best, not an older solve's faster one found on physics since fixed) in real time from the course start with the
-        // category's unlocks, like a saved route, though turbo may have rejected it: to watch where the game and the
-        // offline engine part ways. Nothing is saved.
         object EngineSimPlay(JObject body)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -123,7 +109,6 @@ namespace IGTAPTasMod
             if (caps == null || !CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
             string category = def.Token + "_" + CapabilityLabels[caps];
             string root = Path.Combine(EngineSimDir, "offline-best");
-            // Moving a file to judged/ keeps its write time: newest is when the solve found it.
             var newest = new[] { root, Path.Combine(root, "judged") }.Where(Directory.Exists)
                 .SelectMany(d => Directory.GetFiles(d, course + "_" + caps + "-*.json"))
                 .Select(p => (path: p, match: OfflineBestFile.Match(Path.GetFileName(p))))
@@ -132,7 +117,6 @@ namespace IGTAPTasMod
                 .FirstOrDefault();
             if (newest.path == null) throw new InvalidOperationException("No offline best for " + category + ".");
             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
-            // The category route name gives the course start and the unlocks (RestoreRouteStart, ApplyCategoryAbilities).
             var route = new MacroDefinition { id = "offline-best", name = category + " offline " + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             EnsureGameUnpaused();
@@ -141,8 +125,6 @@ namespace IGTAPTasMod
             return new { ok = true, name = route.name, file = Path.GetFileName(newest.path) };
         }
 
-        // Turbo replay of prepared inputs; saved through the gate (SaveSolverRoute) when it beats the category's best:
-        // faster on the timer, or as fast in fewer physics ticks from the run start (a shorter flying-start setup).
         JudgeResult Judge(List<SolverTick> inputs)
         {
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
@@ -164,8 +146,6 @@ namespace IGTAPTasMod
             return result;
         }
 
-        // Back to the course start after a turbo run: the real frames until the next run then load the start's zone
-        // (and apply any FloatingOrigin shift) instead of wherever the run ended.
         void ParkAtStart()
         {
             RestoreRouteStart(new MacroDefinition { name = _solverTarget.Token + "_" });
@@ -176,28 +156,16 @@ namespace IGTAPTasMod
             public bool ok = true, finished, saved;
             public float time;
             public int finishTick;
-            // Physics ticks from the run start through the finish, and the saved route's when this one ties its time.
             public long runTicks;
             public float? previousBest;
             public long? previousRunTicks;
             public string rejected;
         }
 
-        // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json and
-        // submits it only while the game runs. Once the game is in the world and not busy (a studio solve counts
-        // as busy only while it starts a target; its running process's own category waits for that process, which submits
-        // its bests itself), the fastest waiting file per category that beats
-        // or ties the saved route is judged here like a submit (a course's in its own category and the others, as solve
-        // does), so solves run with the game closed still reach the studio. Judged or superseded
-        // files move to judged/. A Full-TAS run's (fulltas-<run>-<time>.json) goes through the Full-TAS gate; its group waits
-        // while no fresh new game is at its start.
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
         float _offlineBestCheckAt;
-        // "<file>|<label>" already judged; a category whose course is still loading is retried on a later pump.
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
 
-        // A waiting offline best: its group (one category), time, and the submits that judge it (label,
-        // body, category route name), its own first.
         sealed class OfflineBest
         {
             public string path, group;
@@ -215,8 +183,6 @@ namespace IGTAPTasMod
                 string caps = m.Groups[2].Value;
                 CourseDef course = _courses.Find(c => c.id == id);
                 if (course == null || !CapabilityLabels.ContainsKey(caps)) return null;
-                // Its own category first, then the course's others (a route may hold up in a wider category too); none when
-                // the course doesn't have its own.
                 return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
                     judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>()
                         : new[] { caps }.Concat(CapabilityLabels.Keys.Where(k => k != caps && course.HasCategory(k)))
@@ -233,7 +199,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        // How many offline bests wait to be judged (the Solve panel's "To validate").
         int _offlineWaiting;
 
         void PumpOfflineBests()
@@ -243,26 +208,21 @@ namespace IGTAPTasMod
             string dir = Path.Combine(EngineSimDir, "offline-best");
             _offlineWaiting = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.json").Length : 0;
             if (_offlineWaiting == 0) return;
-            // The solver needs the game only while it starts a target (parks the player, captures the start state in turbo);
-            // once its `solve` process runs, the game just answers its submits, and files are judged between them.
             if (CapabilitiesLocked || _solverRunning && _solveProcess == null || PlaybackActive || _recorder.IsRecording
                 || _bootstrapRequest != null || _webServer == null) return;
             Movement player = FindWorldMovement();
             if (player == null || MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(player) is bool menu && menu) return;
             var groups = Directory.GetFiles(dir, "*.json").Select(ReadOfflineBest).Where(f => f != null).GroupBy(f => f.group);
             string judged = Path.Combine(dir, "judged");
-            // The running solve submits its own bests; its group waits until the process ends (then catches what it missed).
             string solving = !_solverRunning ? null : _solveCourse + "_" + _solveCaps;
             foreach (var group in groups)
             {
                 if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
                 var files = group.OrderBy(f => f.time).ToList();
                 OfflineBest first = files[0];
-                // A course file whose own category the course doesn't have is only moved away.
                 bool judgeable = first.judgings.Count > 0;
                 float best = judgeable ? CategoryBest(first.judgings[0].category) : 0f;
                 bool started = _offlineJudged.Any(k => k.StartsWith(first.path + "|", StringComparison.Ordinal));
-                // As fast as the saved route is judged too: it may get there in fewer physics ticks from the run start.
                 if (judgeable && (started || first.time <= best + .0001f))
                 {
                     var next = first.judgings.FirstOrDefault(j => !_offlineJudged.Contains(first.path + "|" + j.label));
@@ -314,8 +274,6 @@ namespace IGTAPTasMod
             return best;
         }
 
-        // The whole run (physics ticks from the run start through the finish) of the category's saved route(s) timed
-        // `time`, replayed in turbo: what an equally fast route must beat. long.MaxValue when none replays in that time.
         long SavedRouteRunTicks(string category, float time)
         {
             long fewest = long.MaxValue;
@@ -330,9 +288,6 @@ namespace IGTAPTasMod
             return fewest;
         }
 
-        // {course, capabilities; ticks: [{x, held, press, release, dash, dashJump, reset}] or routeId, name,
-        // world, freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
-        // every stepped tick; with world: true also the world export as that run saw it. {fulltas: <run>, ...}: FullTasTrace.
         object EngineSimTrace(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
@@ -342,7 +297,6 @@ namespace IGTAPTasMod
             string caps = _solverCaps;
             string name = Text(body, "name") ?? ("trace-" + course + "_" + caps);
             string path = Path.Combine(EngineSimDir, name + ".json");
-            // The world as this run sees it: zones load in real frames, so export it with no frame in between.
             if (Truthy(body, "world")) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             Movement player = FindWorldMovement();
             bool finished;
@@ -357,16 +311,12 @@ namespace IGTAPTasMod
                 w.WritePropertyName("course"); w.WriteValue(course);
                 if (finishCourse != null && finishCourse.HasFinish)
                 {
-                    // The bonus course's reward box or a transition's end box, in this run's world coordinates, so offline
-                    // runs finish exactly where this one did.
                     Vector2 origin = CurrentOrigin();
                     w.WritePropertyName("finish"); w.WriteStartArray();
                     json.Float(finishCourse.endX + origin.x); json.Float(finishCourse.endY + origin.y);
                     json.Float(finishCourse.endW); json.Float(finishCourse.endH);
                     w.WriteEndArray();
                 }
-                // A transition (Simulation.SetTarget): timed in physics ticks, and ends at its end box or at the start gate
-                // of course `finishStart`.
                 if (finishCourse != null && finishCourse.IsTransition)
                 {
                     w.WritePropertyName("transition"); w.WriteValue(true);
@@ -409,10 +359,8 @@ namespace IGTAPTasMod
     {
         const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
-        // UnityEngine.Random.State's four private ints, in declaration order (s0, s1, s2, s3 in UnityEngine.CoreModule).
         static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
 
-        // A snapshot's RNG state ("random": [s0, s1, s2, s3]) — the start state's at the start, each tick's after it.
         static void WriteRandom(EngineSimJson json, UnityEngine.Random.State state)
         {
             object boxed = state;
@@ -457,13 +405,11 @@ namespace IGTAPTasMod
             w.WriteEndArray();
             w.WritePropertyName("pending");
             w.WriteStartArray();
-            // The player's timers (offline restores them onto the player).
             foreach (var (due, target, method) in s.pending)
                 if (target == player) { w.WriteStartArray(); w.WriteValue(due); w.WriteValue(method); w.WriteEndArray(); }
             w.WriteEndArray();
             if (s.economy != null)
             {
-                // What the offline buy rule reads (enginesim Shop): every currency, and every upgrade box's own state.
                 w.WritePropertyName("economy"); w.WriteStartObject();
                 w.WritePropertyName("currencies"); w.WriteStartArray();
                 if (s.economy.currencies != null)
@@ -482,9 +428,6 @@ namespace IGTAPTasMod
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
-                // The native offline economy (enginesim Economy): the global and every course's local upgrades, what scales
-                // a reward, and every course's clones (their own state; `path`: the clone path's length, the live one:
-                // the snapshot doesn't hold the path, only a new best replaces it).
                 if (s.economy.globalUpgrades != null) { w.WritePropertyName("globalUpgrades"); json.Value(s.economy.globalUpgrades, 0); }
                 globalStats stats = Singleton<globalStats>.Instance;
                 if (stats != null)
@@ -517,14 +460,12 @@ namespace IGTAPTasMod
             }
             if (player != null)
             {
-                // Not in the snapshot, but read by the game (facing via localScale, death via rotation).
                 w.WritePropertyName("transformRotation"); json.Value(player.transform.rotation, 0);
                 w.WritePropertyName("localScale"); json.Value(player.transform.localScale, 0);
                 if (live)
                 {
                     w.WritePropertyName("contacts");
                     WriteContacts(json, player.GetComponent<Rigidbody2D>());
-                    // After the tick's clone payouts and purchases (enginesim Shop.Cash).
                     w.WritePropertyName("cash"); w.WriteValue(globalStats.currencyLookup[globalStats.Currencies.Cash]);
                 }
             }
@@ -589,10 +530,6 @@ namespace IGTAPTasMod
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
 
-        // Every scene GameObject (active or not) with its transform, colliders' physics shapes, bodies, and the fields of
-        // every script; plus the global 2D physics settings. The coloured blocks' composites also carry "sourceShapes":
-        // their geometry with their tilemap colliders enabled (a trip breaker or a block swap turns the other colour's
-        // on at run time; the offline engine swaps to it).
         public static int WriteWorld(string path)
         {
             var gameObjects = new List<GameObject>();
@@ -644,10 +581,6 @@ namespace IGTAPTasMod
             return gameObjects.Count;
         }
 
-        // The colouredBlockSwapper's composites (one per colour object, fed by its TilemapCollider2D) with their sources
-        // enabled: the sources that are off are switched on for this frame only, the composites regenerated and read,
-        // then the sources are switched back off and the composites regenerated again. No physics step runs in
-        // between, so no contact or callback sees it; the composites must end as they started (checked).
         static Dictionary<CompositeCollider2D, PhysicsShapeGroup2D> ColouredBlockSourceShapes()
         {
             var result = new Dictionary<CompositeCollider2D, PhysicsShapeGroup2D>();
@@ -908,7 +841,6 @@ namespace IGTAPTasMod
             w.WriteEndObject();
         }
 
-        // Static fields of game classes (singleton instances, global flags such as pauseMenu.menuOpen).
         static void WriteGameStatics(EngineSimJson json)
         {
             JsonTextWriter w = json.W;
@@ -935,7 +867,6 @@ namespace IGTAPTasMod
                     w.WriteEndArray();
                 }
             }
-            // Closed generic singletons: Singleton<T>.instance for every T the game uses.
             Type singleton = typeof(Movement).Assembly.GetType("Singleton`1");
             if (singleton != null)
                 foreach (Type type in gameTypes)
@@ -958,7 +889,6 @@ namespace IGTAPTasMod
         }
     }
 
-    // Streams values with exact floats (G9 round-trips every float) and Unity objects as {"$ref": instanceId}.
     internal sealed class EngineSimJson
     {
         public readonly JsonTextWriter W;
@@ -1023,7 +953,6 @@ namespace IGTAPTasMod
                     W.WriteEndArray();
                     return;
                 }
-                // Plain classes only from the game; anything else (threads, handles, library internals) is not game state.
                 if (!type.IsValueType && type.Assembly != typeof(Movement).Assembly) { W.WriteNull(); return; }
                 W.WriteStartObject();
                 for (Type t = type; t != null && t != typeof(object) && t != typeof(ValueType); t = t.BaseType)

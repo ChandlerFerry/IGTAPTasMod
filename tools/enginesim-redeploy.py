@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Rebuild the plugin DLL (no web build), restart the game with it, and put the player on a course."""
 import filecmp
 import json
 import shutil
@@ -25,11 +23,9 @@ def post(path, body=None, timeout=120):
 def main():
     subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
                     "-nologo", "-v:q"], check=True)
-    # Only this install's game: another install may be running on its own.
     exe = str(GAME / "IGTAPfullGame.exe").replace("'", "''")
     subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process IGTAPfullGame -ErrorAction SilentlyContinue"
                     f" | Where-Object {{ $_.Path -eq '{exe}' }} | Stop-Process -Force"], capture_output=True)
-    # Offline solves (IGTAP.EngineSim.exe) submit to the game being replaced; stop them all.
     subprocess.run(["taskkill", "/IM", "IGTAP.EngineSim.exe", "/F"], capture_output=True)
     for _ in range(30):
         try:

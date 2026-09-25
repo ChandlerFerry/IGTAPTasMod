@@ -1,16 +1,10 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-// Prepares the game's own code to run outside Unity.
-//   retarget <managedDir> <outDir> <cuts.txt>   rewrite Assembly-CSharp so every Unity/third-party reference
-//                                               points at IGTAP.UnityShim, and replace presentation-only game
-//                                               methods (cuts.txt) with empty bodies.
-//   surface <managedDir> <cuts.txt> <entries.txt>  list every engine member reachable from the entry methods.
 static class Prep
 {
     public const string ShimName = "IGTAP.UnityShim";
 
-    // Assemblies the host replaces with the shim. Everything else Assembly-CSharp references (netstandard) stays.
     public static bool Replaced(string name) =>
         name.StartsWith("UnityEngine", StringComparison.Ordinal) || name.StartsWith("Unity.", StringComparison.Ordinal)
         || name is "com.rlabrecque.steamworks.net" or "DOTween" or "Assembly-CSharp-firstpass";
@@ -39,7 +33,6 @@ static class Prep
     static IEnumerable<string> Lines(string path) =>
         File.ReadAllLines(path).Select(l => l.Split('#')[0].Trim()).Where(l => l.Length > 0);
 
-    // "Type::method" (all overloads) or "Type::method(argcount)".
     static bool Matches(HashSet<string> set, MethodDefinition m) =>
         set.Contains(m.DeclaringType.FullName + "::" + m.Name) || set.Contains(m.DeclaringType.FullName + "::" + m.Name + "(" + m.Parameters.Count + ")");
 
@@ -65,8 +58,6 @@ static class Prep
             if (t.Scope is AssemblyNameReference a && Replaced(a.Name)) t.Scope = shim;
         foreach (AssemblyNameReference a in module.AssemblyReferences.Where(a => Replaced(a.Name)).ToList())
             module.AssemblyReferences.Remove(a);
-        // Exported/forwarded types and custom attribute blobs carry assembly-qualified names too; attributes on game
-        // types (SerializeField, Header, ...) are never read by the host, so strip them rather than re-encode them.
         foreach (TypeDefinition type in module.GetTypes())
         {
             StripEngineAttributes(type.CustomAttributes);
@@ -91,7 +82,6 @@ static class Prep
                 throw new InvalidOperationException("hooks.txt: " + hook[2] + " must take (self, " + method.Parameters.Count + " args)");
             InjectHook(method, module.ImportReference(handler), hook[0] == "replace");
         }
-        // The game runs on Mono without float32 mode: double-precision float arithmetic (see MonoFloat).
         int widened = 0;
         foreach (TypeDefinition type in module.GetTypes())
             foreach (MethodDefinition m in type.Methods) widened += MonoFloat.Apply(m);
@@ -105,15 +95,12 @@ static class Prep
         return 0;
     }
 
-    // Applies MonoFloat to the named types of an assembly in place (the shim's copies of Unity's managed math types,
-    // which also run on Mono in the game).
     static int MonoFloatTypes(string dll, string[] typeNames)
     {
         string temp = dll + ".tmp";
         int widened = 0;
         using (AssemblyDefinition asm = AssemblyDefinition.ReadAssembly(dll, new ReaderParameters { ReadSymbols = false }))
         {
-            // Incremental builds hand the same (already rewritten) assembly back; mark it so the pass runs once.
             if (asm.MainModule.GetType("IGTAP.MonoFloatApplied") != null) return 0;
             foreach (string name in typeNames)
             {
@@ -141,7 +128,6 @@ static class Prep
         }
     }
 
-    // Calls hook(this, args...) at method entry; "replace" makes that the whole body (void methods only).
     static void InjectHook(MethodDefinition method, MethodReference hook, bool replace)
     {
         if (replace)
@@ -162,7 +148,6 @@ static class Prep
         il.InsertBefore(first, il.Create(OpCodes.Call, hook));
     }
 
-    // Replaces a method body with "return default".
     static void Empty(MethodDefinition m)
     {
         var body = new MethodBody(m);
@@ -179,8 +164,6 @@ static class Prep
         m.Body = body;
     }
 
-    // Walks the game's call graph from the entry methods and prints every engine member it reaches, so the shim
-    // implements exactly that surface.
     static int Surface(string managedDir, string cutsPath, string entriesPath)
     {
         var cuts = Lines(cutsPath).ToHashSet();
@@ -215,7 +198,6 @@ static class Prep
             if (type.Scope is AssemblyNameReference a && Replaced(a.Name)) { External(type, "<type>", via); return; }
             TypeDefinition def = type.Resolve();
             if (def == null || def.Module != module || !seenTypes.Add(def)) return;
-            // Loading a game type loads its base type and value-type fields, and runs its static constructor.
             Type(def.BaseType, def.FullName);
             foreach (FieldDefinition f in def.Fields) Type(f.FieldType, def.FullName + "." + f.Name);
             Enqueue(def.Methods.FirstOrDefault(x => x.IsConstructor && x.IsStatic), def.FullName + " (type init)");
@@ -238,7 +220,6 @@ static class Prep
                     MethodDefinition md = mr.Resolve();
                     if (md == null || md.Module != module) return;
                     Enqueue(md, via);
-                    // A virtual call may land in any override.
                     if (md.IsVirtual)
                         foreach (TypeDefinition t in allTypes)
                             foreach (MethodDefinition o in t.Methods)

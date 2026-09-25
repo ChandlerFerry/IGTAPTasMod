@@ -2,11 +2,6 @@ using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 
-// Unity's Mono JIT (this game does not run in float32 mode) evaluates float arithmetic in double precision and rounds
-// only when a value is stored (locals, fields, array elements, arguments, return values). .NET evaluates float
-// arithmetic in single precision, so e.g. -0.3f*46f*10f/4.5f gives -30.666666 here and -30.666668 in the game.
-// This pass widens every float32 value to float64 as it is pushed on the evaluation stack; ECMA-335 stores to float32
-// locations narrow implicitly, so the JIT reproduces Mono's rounding points exactly.
 static class MonoFloat
 {
     public static int Apply(MethodDefinition method)
@@ -20,7 +15,6 @@ static class MonoFloat
         {
             if (ins.OpCode == OpCodes.Box && IsSingle(ins.Operand as TypeReference))
             {
-                // box needs a real float32 on the stack.
                 il.InsertBefore(ins, il.Create(OpCodes.Conv_R4));
                 continue;
             }
