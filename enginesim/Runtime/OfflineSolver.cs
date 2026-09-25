@@ -663,10 +663,7 @@ namespace IGTAP.EngineSim
                 {
                     Vector3 p = _sim.Player.transform.m_Position;
                     if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
-                    {
                         lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
-                        Console.WriteLine($"DIAG box {_waypoints} at {p.x:0},{p.y:0} step {_} runTicks {_sim.Engine.RunTicks} inputs {inputs.Count} from {from?.Tick} exhausted {_sim.Engine.InputsExhausted} running {_sim.Engine.IsRunning}");
-                    }
                     foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
                 };
                 // A Full-TAS window can dash more often than a course: room for a physics tick without input per input.

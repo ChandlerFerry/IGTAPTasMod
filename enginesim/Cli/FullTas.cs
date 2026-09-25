@@ -142,17 +142,23 @@ namespace IGTAP.EngineSim.Cli
                 // The first goal not reached yet, when a saved route of its course reaches it: tried before anything else.
                 bool searched = false;
                 while (!TimeUp && SeedFrontier()) searched = true;
-                for (int i = 0; i < _goals && !TimeUp; i++)
+                // While the run is incomplete, the first goal not reached is searched first and again for as long as it
+                // moves on; the windows before it are polished only when it stalls.
+                bool frontierFirst = _best.Progress < _goals;
+                for (int step = 0; !TimeUp; step++)
                 {
                     Route best = _best;
                     int reached = best.Progress;
+                    int i;
+                    if (frontierFirst) { if (step > reached) break; i = step == 0 ? reached : step - 1; }
+                    else { if (step >= _goals) break; i = step; }
                     // Windows start at a goal the best reached (or the run's start); the first goal it didn't reach is
                     // searched alone, so each finish there is one more goal.
                     if (i > reached) break;
                     if (i == reached && SeedFrontier())
                     {
-                        // The frontier moved on: go on from there.
-                        i = _best.Progress - 1;
+                        // The frontier moved on: search from the new one first.
+                        step = -1;
                         searched = true;
                         continue;
                     }
@@ -160,9 +166,12 @@ namespace IGTAP.EngineSim.Cli
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
                     long baseline = reached >= limit ? best.GoalPhysics[limit - 1] : long.MaxValue;
                     var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
+                    if (i == reached) seeds.AddRange(DelayedResets(seeds[0]));
                     List<List<InputTick>> found = SearchWindow("window " + (i + 1) + "/" + _goals, best, prefixLength, limit, seeds, baseline);
                     searched = true;
                     if (found.Count > 0) Merge("window " + (i + 1), best, prefixLength, limit, found);
+                    // The frontier moved on: back to it.
+                    if (frontierFirst && _best.Progress > reached) { step = -1; frontierFirst = _best.Progress < _goals; }
                 }
                 if (!searched) break;
             }
@@ -171,6 +180,26 @@ namespace IGTAP.EngineSim.Cli
         }
 
         bool TimeUp { get { return _clock.Elapsed.TotalMinutes >= _minutes; } }
+
+        // The frontier's seeds besides the old tail: the tail with one of its first quick restarts pushed later by a few
+        // ticks (the tick before it held on). A goal the old route only brushed past (a reward box it touched and left
+        // with a restart the next tick, before the box's trigger stay could buy it) is often one wait away.
+        static List<List<InputTick>> DelayedResets(List<InputTick> tail)
+        {
+            var variants = new List<List<InputTick>>();
+            var resets = Enumerable.Range(1, Math.Max(0, tail.Count - 1)).Where(k => tail[k].reset).Take(4).ToList();
+            foreach (int at in resets)
+                foreach (int wait in new[] { 1, 2, 3, 5, 8, 12, 20 })
+                {
+                    var v = new List<InputTick>(tail);
+                    InputTick hold = v[at - 1];
+                    hold.press = hold.release = hold.dash = hold.reset = false;
+                    hold.dashJump = 0;
+                    v.InsertRange(at, Enumerable.Repeat(hold, wait));
+                    variants.Add(v);
+                }
+            return variants;
+        }
 
         void Log(string message) { Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] {message}"); }
 
@@ -326,6 +355,25 @@ namespace IGTAP.EngineSim.Cli
                         if (!(s.Standing && k == settle)) list.Add((s.Name + ", after a quick restart and " + k + " idle ticks", Restarted(s, k)));
                 return list;
             }).ToList();
+            // A bonus's reward from wherever the run is: a transition to the bonus (it ends at the bonus's start box), a few
+            // ticks to settle there, then a route of the bonus itself (made standing at that start).
+            foreach (Seed bonus in matching.Where(s => s.Standing && s.Name.StartsWith("bonus", StringComparison.OrdinalIgnoreCase)))
+            {
+                string token = bonus.Name.Substring(0, bonus.Name.IndexOf('_'));
+                var list = new List<(string how, List<InputTick> inputs)>();
+                foreach (Seed transition in _seeds.Where(s => s.Level <= level && !s.Standing
+                    && s.Name.IndexOf("to" + token + "_", StringComparison.OrdinalIgnoreCase) > 0))
+                    foreach (int idle in new[] { 0, 3, 6, 10, 16 })
+                    {
+                        var inputs = new List<InputTick>(transition.Inputs);
+                        InputTick rest = inputs.Count > 0 ? inputs[inputs.Count - 1] : new InputTick();
+                        rest = new InputTick { held = rest.held };
+                        inputs.AddRange(Enumerable.Repeat(rest, idle));
+                        inputs.AddRange(bonus.Inputs);
+                        list.Add((transition.Name + ", " + idle + " ticks, then " + bonus.Name, inputs));
+                    }
+                if (list.Count > 0) perSeed.Insert(0, list);
+            }
             for (int tier = 0; starts.Count < MaxSeedStarts && perSeed.Any(l => tier < l.Count); tier++)
                 foreach (var list in perSeed)
                     if (tier < list.Count && starts.Count < MaxSeedStarts && !starts.Any(s => s.inputs.SequenceEqual(list[tier].inputs)))

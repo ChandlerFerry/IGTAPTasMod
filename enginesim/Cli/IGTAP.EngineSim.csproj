@@ -20,4 +20,7 @@
     <ProjectReference Include="..\Runtime\IGTAP.EngineSim.Runtime.csproj" />
     <Reference Include="Assembly-CSharp" HintPath="..\obj\game\Assembly-CSharp.dll" Private="true" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="forced-paths.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
