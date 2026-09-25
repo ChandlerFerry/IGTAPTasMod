@@ -16,7 +16,10 @@ suspected exploit of our own tooling until proven otherwise.
    game input fields (`jumpBuffer`, `dashBuffer`, `jumpCutBuffer`, ...) without the game's own timers.
 4. **The gate is the only way in.** Category routes (`<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>`) are saved only by
    `SaveSolverRoute`, which replays the route from the course start and refuses it if any tick breaks 1–3. Don't add
-   another save path, and don't loosen the gate to make a route pass.
+   another save path, and don't loosen the gate to make a route pass. A chain segment's routes
+   (`<chain>/<segment>_<CAPS> <time>`, `chains.json`) go through the same gate, replayed from where the chain's routes
+   before it end; a segment starts exactly there (no teleport), and a chain goes back only through its `restart` (the
+   game's own quick restart, `Movement.respawn(true)`, nothing else).
 5. **Never edit the game's save files** (`%USERPROFILE%/AppData/LocalLow/Pepper tango games/IGTAPfullGame/Savedata`).
    Change the running game live instead: `POST /api/session/setup {"abilities": {"dashUnlocked": true, "maxAirDashes": 1,
    "airDashesLeft": 1}}` sets Movement fields on the live player and replies with them. `/api/oracle/bootstrap` loads
@@ -28,10 +31,11 @@ suspected exploit of our own tooling until proven otherwise.
    have yet (`tools/enginesim-capture.py`: a course/category never captured, a seed route, or a fidelity check after
    the game or plugin changed), submitting an offline best that beats the saved route (`/api/enginesim/submit`,
    which `solve` does by itself), and `tools/validate.py`. No game-judged search loops, no looping over
-   `/api/enginesim/submit` as an evaluator, no in-game solver (`/api/solver/start`, the studio's Optimize tab is
-   the user's), no extra game instances. If the offline engine can't do something a search needs, fix `enginesim`.
+   `/api/enginesim/submit` as an evaluator, no in-game solver, no pressing the studio's Optimize tab
+   (`/api/solver/start`, it launches `solve` for the user), no extra game instances. If the offline engine can't do
+   something a search needs, fix `enginesim`.
 
-Current targets: `bonus1` (`WJ`) and Course 4 (`WJ_DASH_AJ`). How: [`enginesim/README.md`](enginesim/README.md#use).
+Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DASH_AJ`). How: [`enginesim/README.md`](enginesim/README.md#use).
 
 Before calling a new best real: trace it (`IGTAP.EngineSim path <trace> <route.json>`), check where the timer starts
 and stops, look at the jumps, and say what the new trick is. `python tools/audit-traces.py` checks captured traces

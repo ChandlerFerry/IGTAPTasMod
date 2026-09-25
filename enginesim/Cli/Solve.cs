@@ -34,6 +34,9 @@ namespace IGTAP.EngineSim.Cli
                 header = doc.RootElement.Clone();
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
+            // A chain segment's start trace (TasPlugin.EngineSimTrace): its bests are the segment's, submitted as {chain, segment}.
+            string chain = header.TryGetProperty("chain", out JsonElement chainName) ? chainName.GetString() : null;
+            int segment = chain != null ? header.GetProperty("segment").GetInt32() : -1;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
@@ -43,15 +46,15 @@ namespace IGTAP.EngineSim.Cli
             JsonElement start = header.GetProperty("start");
             Func<Simulation> create = () =>
             {
-                var sim = new Simulation(World.Load(worldPath)) { TargetCourse = course };
-                if (header.TryGetProperty("finish", out JsonElement finish))
-                    sim.TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
+                var sim = new Simulation(World.Load(worldPath));
+                sim.SetTarget(header);
                 sim.LoadStart(start);
                 return sim;
             };
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "offline-best");
             Directory.CreateDirectory(outDir);
-            string label = course + "_" + caps;
+            string label = chain != null ? "chain-" + chain + "-" + segment + "_" + caps : course + "_" + caps;
+            var target = new Target(course, caps, chain, segment);
             var solver = new OfflineSolver(create, caps, seeds);
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
@@ -60,13 +63,14 @@ namespace IGTAP.EngineSim.Cli
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, ticks = inputs.Select(ToJson) }));
+                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, chain, segment, time, ticks = inputs.Select(ToJson) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks) -> {Path.GetFileName(file)}");
-                if (submit && how != "seed") pending.Set(time, inputs);
+                // A chain segment's seeds come from elsewhere (standalone routes, stale ones), so its first finish is new too.
+                if (submit && (how != "seed" || chain != null)) pending.Set(time, inputs);
             };
-            Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
+            Console.WriteLine($"Solving {(chain != null ? $"chain {chain} segment {segment} (course {course})" : $"course {course}")} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
             solver.Start(threads);
-            Thread confirmer = submit ? new Thread(() => Confirm(course, caps, pending, clock)) { IsBackground = true } : null;
+            Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
             long lastRuns = 0, lastTicks = 0;
             double lastSeconds = 0;
@@ -87,6 +91,17 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static object ToJson(InputTick t) { return new { t.x, t.held, t.press, t.release, t.dash, t.dashJump }; }
+
+        // What a submit is for: a course's category, or a chain segment (judged in its chain's category only).
+        sealed record Target(int Course, string Caps, string Chain, int Segment)
+        {
+            public string Body(string caps, List<InputTick> inputs)
+            {
+                return Chain != null
+                    ? JsonSerializer.Serialize(new { chain = Chain, segment = Segment, ticks = inputs.Select(ToJson) })
+                    : JsonSerializer.Serialize(new { course = Course, capabilities = caps, ticks = inputs.Select(ToJson) });
+            }
+        }
 
         static List<InputTick> ReadInputs(JsonElement trace)
         {
@@ -129,9 +144,9 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly string[] Categories = { "none", "wj", "wjdash", "wjdashaj" };
 
-        static void SubmitOther(HttpClient http, int course, string caps, float time, List<InputTick> inputs, Stopwatch clock)
+        static void SubmitOther(HttpClient http, Target target, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
-            string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
+            string body = target.Body(caps, inputs);
             for (int attempt = 0; attempt < 5; attempt++)
             {
                 try
@@ -142,28 +157,29 @@ namespace IGTAP.EngineSim.Cli
                     if (!r.RootElement.TryGetProperty("saved", out JsonElement saved))
                     {
                         // Busy or loading: retry. Anything else (a category the course doesn't have) is final.
-                        if (!reply.Contains("loading") && !reply.Contains("Stop the solver")) return;
+                        if (!reply.Contains("loading") && !reply.Contains("Stop playback")) return;
                         Thread.Sleep(2000);
                         continue;
                     }
-                    if (saved.GetBoolean()) Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {course}_{caps}");
+                    if (saved.GetBoolean()) Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {target.Course}_{caps}");
                     return;
                 }
                 catch (Exception) { return; }
             }
         }
 
-        static void Confirm(int course, string caps, BlockingQueue pending, Stopwatch clock)
+        static void Confirm(Target target, BlockingQueue pending, Stopwatch clock)
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             while (true)
             {
                 var (time, inputs) = pending.Take();
                 // The same inputs may be valid in the course's other categories too (a WJ route never needs dash; a WJDASH
-                // route may never dash); the gate replays them under each category's unlocks and decides.
-                foreach (string other in Categories.Where(c => c != caps))
-                    SubmitOther(http, course, other, time, inputs, clock);
-                string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = inputs.Select(ToJson) });
+                // route may never dash); the gate replays them under each category's unlocks and decides. A chain has one.
+                if (target.Chain == null)
+                    foreach (string other in Categories.Where(c => c != target.Caps))
+                        SubmitOther(http, target, other, time, inputs, clock);
+                string body = target.Body(target.Caps, inputs);
                 try
                 {
                     string reply = http.PostAsync(Api + "/api/enginesim/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result

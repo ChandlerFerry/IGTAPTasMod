@@ -60,3 +60,16 @@
 .capabilityLock.on strong {
   color: #ff9aa8;
 }
+
+.capabilityLock.executable input {
+  accent-color: var(--cyan);
+}
+
+.capabilityLock.executable.on {
+  background: #0f2a44;
+  color: #b9e3ff;
+}
+
+.capabilityLock.executable.on strong {
+  color: var(--cyan);
+}

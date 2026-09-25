@@ -1,6 +1,20 @@
 .courseList { flex: 1; min-height: 0; overflow: auto; }
 .courseGroup { margin: 0 0 12px; }
 .courseName { display: block; padding: 4px 10px 6px; font-size: 13px; color: var(--text); }
+.chainHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 6px; }
+.chainHeader .courseName { flex: 1; min-width: 0; }
+.chainPlay {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  background: #10284a;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chainPlay:hover:not(:disabled) { background: var(--blue); }
+.chainPlay:disabled { opacity: .4; cursor: default; }
 .categoryRow {
   width: 100%;
   display: flex;

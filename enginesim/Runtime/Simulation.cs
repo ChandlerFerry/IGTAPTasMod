@@ -51,6 +51,7 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo TrackingField = typeof(courseScript).GetField("tracking", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly FieldInfo PathTimeField = typeof(courseScript).GetField("currentPathTime", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo FixedUpdateMethod = typeof(Movement).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly MethodInfo RespawnMethod = typeof(Movement).GetMethod("respawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         static readonly MethodInfo UpdateMethod = typeof(Movement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo CourseFixedUpdateMethod = typeof(courseScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly string[] CoursePathLists = { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
@@ -93,7 +94,7 @@ namespace IGTAP.EngineSim
             _playerColliders = Player.GetComponents<BoxCollider2D>();
             Engine.AttemptEnded += (success, reason, step, ticks) =>
             {
-                _finished = success && (reason == "Course finish detected" || reason == MacroEngine.RewardFinishReason);
+                _finished = success && MacroEngine.IsFinishReason(reason);
                 _finishTime = Engine.AuthoritativeCompletionTime;
                 _endReason = reason;
             };
@@ -120,7 +121,8 @@ namespace IGTAP.EngineSim
             foreach (string list in CoursePathLists)
                 (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
             PathTimeField.SetValue(course, 0f);
-            if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse)) Engine.CompleteFromGame("Course finish detected", time);
+            if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
+                Engine.CompleteFromGame("Course finish detected", FromRunStart ? Engine.PhysicsTicks * World.FixedDeltaTime : time);
         }
 
         // The bonus course's reward box (endX, endY, endW, endH) as a world rect the player's colliders may touch.
@@ -151,8 +153,41 @@ namespace IGTAP.EngineSim
         // The course a run is scored on (the trace's course); 0 accepts any. Finishing another course is not a finish.
         public int TargetCourse;
 
-        // The bonus course's reward box (the trace's "finish": endX, endY, endW, endH); zero size = a gated course.
+        // The bonus course's reward box, or a transition's end box (the trace's "finish": endX, endY, endW, endH); zero
+        // size = a gated course.
         public (float x, float y, float w, float h) TargetFinish;
+
+        // A transition (the trace's "transition"): timed in physics ticks from the run start (dash ticks included), and
+        // finishes at its end box or when course `TargetStart`'s start gate starts its timer (the trace's "finishStart").
+        public bool Transition { get; private set; }
+        public int TargetStart { get; private set; }
+        courseScript _targetStartCourse;
+
+        // Bonus and transition runs have no course timer of their own; they are timed from the run start.
+        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition; } }
+
+        // A chain segment (the trace's "fromRunStart"): a course segment is timed from the run start too (TasPlugin.
+        // ScoreFromRunStart), and one after a quick restart does it first (the trace's "restart").
+        public bool FromRunStart { get; private set; }
+        public bool RestartAtStart { get; private set; }
+        public bool ScoredFromRunStart { get { return TimedFromRunStart || FromRunStart; } }
+
+        // What a run is scored on, from a trace or start-trace header (TasPlugin.EngineSimTrace writes it).
+        public void SetTarget(JsonElement header)
+        {
+            TargetCourse = header.GetProperty("course").GetInt32();
+            if (header.TryGetProperty("finish", out JsonElement finish))
+                TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
+            Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
+            FromRunStart = header.TryGetProperty("fromRunStart", out JsonElement fromStart) && fromStart.GetBoolean();
+            RestartAtStart = header.TryGetProperty("restart", out JsonElement restart) && restart.GetBoolean();
+            if (header.TryGetProperty("finishStart", out JsonElement next))
+            {
+                TargetStart = next.GetInt32();
+                _targetStartCourse = Courses.FirstOrDefault(c => c.courseNumber == TargetStart)
+                    ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
+            }
+        }
 
         public courseScript TimingCourse()
         {
@@ -336,6 +371,9 @@ namespace IGTAP.EngineSim
         {
             from ??= _start;
             if (from.Tick >= inputs.Count) from = _start;
+            // A chain segment's quick restart is its first act (TasPlugin.BeforeMovementFixedUpdate), before the end-box
+            // check can see it; a run resumed past the start already did it.
+            bool restart = RestartAtStart && ReferenceEquals(from, _start);
             Restore(from);
             int step = from.Tick;
             while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
@@ -349,15 +387,28 @@ namespace IGTAP.EngineSim
             bool stop = false;
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
+                bool nextWasTracking = _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse);
                 Scheduler.FireDue();
+                if (restart)
+                {
+                    restart = false;
+                    RespawnMethod.Invoke(Player, new object[] { true });
+                }
                 _fixedUpdate();
+                Engine.CountPhysicsTick();
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 Physics.Simulate(World.FixedDeltaTime);
                 _update();
-                // TasPlugin.TryRewardFinish: a bonus run finishes on its reward box (no end gate), in run ticks.
+                // TasPlugin.BeforeMovementFixedUpdate: a bonus run finishes on its reward box (no end gate), a transition
+                // on its end box; both in physics ticks from the run start (dash ticks included).
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
-                    Engine.CompleteFromGame(MacroEngine.RewardFinishReason, Engine.RunTicks * World.FixedDeltaTime);
+                    Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
+                        Engine.PhysicsTicks * World.FixedDeltaTime);
+                // TasPlugin.BeforeCourseStart: a transition finishes when the next course's start gate starts its
+                // timer (this tick's triggers), in physics ticks from the run start.
+                if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse))
+                    Engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
                 stepped++;
                 onStep?.Invoke(stepped - 1);
                 if (!Engine.IsRunning) continue;

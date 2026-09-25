@@ -25,3 +25,7 @@
 .recordingCard p { margin: 13px 0; color: #aac0d7; font-size: 11px; line-height: 1.6; }
 .recordingCard .buttonRow { justify-content: flex-end; }
 .solverLog { margin: 12px 0 0; padding-left: 18px; color: #aac0d7; font-size: 12px; line-height: 1.7; }
+
+/* Chains tab: one block per chain. */
+.chainBlock { margin-top: 18px; }
+.chainBlock .tableRow .buttonRow { gap: 6px; }

@@ -15,15 +15,21 @@ The game (turbo) stays the judge: every offline best is replayed there before it
 
 Ground truth comes from the plugin (`EngineSimBridge.cs`):
 
-- `POST /api/enginesim/trace {course, capabilities, routeId | ticks, name, world: true, freshStart}` — a turbo run from the
-  solver's start state; writes `<name>.json` (start state + full state after every tick) and `<name>.world.json`
-  (every GameObject, collider physics shapes, bodies, script fields, statics, Physics2D settings) to
-  `BepInEx/config/IGTAPTasMod/enginesim/`.
-- `POST /api/enginesim/submit {course, capabilities, ticks}` — turbo replay of an offline candidate; saved as the
-  category's route (`<course>_<CAPS> <time>`) when it finishes faster than the current best.
+- `POST /api/enginesim/trace {course, capabilities | chain, segment; routeId | ticks, name, world: true, freshStart}` — a
+  turbo run from the solver's start state; writes `<name>.json` (start state + full state after every tick) and
+  `<name>.world.json` (every GameObject, collider physics shapes, bodies, script fields, statics, Physics2D settings) to
+  `BepInEx/config/IGTAPTasMod/enginesim/`. The header says what a run is scored on (`Simulation.SetTarget`): `course`,
+  a bonus's reward box `finish`, and for a transition `transition: true` (timed in physics ticks, `MacroEngine.PhysicsTicks`)
+  with an end box `finish` or `finishStart` (the course whose start gate ends it). A chain segment's start trace
+  (`chain`, `segment`) starts where the chain's routes before it end (replayed in turbo from the chain's start) and adds
+  `fromRunStart: true` (a course segment is timed in physics ticks too) and `restart: true` when the segment starts with
+  the game's quick restart (`Movement.respawn(true)` before its first tick's `FixedUpdate`, on runs from the start only).
+- `POST /api/enginesim/submit {course, capabilities | chain, segment; ticks}` — turbo replay of an offline candidate;
+  saved as the category's route (`<course>_<CAPS> <time>`, or the chain segment's `<chain>/<segment>_<CAPS> <time>`)
+  when it finishes faster than the current best.
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 
-`tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
+`tools/enginesim-capture.py routes|random|start|route|chain` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.
 
 ## Use
@@ -53,10 +59,11 @@ the game and solve offline.
 ```powershell
 python tools\enginesim-capture.py start bonus1 wj                     # -> start-cbonus1-wj.json + .world.json
 python tools\enginesim-capture.py route bonus1_WJ bonus1 wj           # -> seed-cbonus1-wj-bonus1-WJ.json
-python tools\enginesim-capture.py start 4 wjdashaj                    # -> start-c4-wjdashaj.json + .world.json
 python tools\enginesim-capture.py route 4_almost_completed 4 wjdashaj # partial route as a seed
+python tools\enginesim-capture.py chain wj 2                          # -> start-chain-wj-2.json: chain wj's Course 2 segment
 & $exe replay $traces\seed-cbonus1-*.json $traces\seed-c4-*.json     # fidelity on the new course first
 & $exe solve $traces\start-cbonus1-wj.json --seed $traces\seed-cbonus1-wj-bonus1-WJ.json --no-submit --minutes 60
+& $exe solve $traces\start-chain-wj-2.json --minutes 20                # its bests: offline-best\chain-wj-2_wj-<time>.json
 ```
 
 The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in

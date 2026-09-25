@@ -50,6 +50,15 @@ namespace IGTAPTasMod
         // The course the running route starts at (resolved from its name in RestoreRouteStart); a bonus course's
         // run finishes on its reward box instead of an end gate.
         private CourseDef _runCourse;
+        // After a played transition finishes the player would coast on into the next course (Bonus2_To_Course3 lands on
+        // Course 3's first spikes). Instead it brakes like a player: holds against its momentum until that is spent (not
+        // past zero: holding on would push it the other way), then lets go until it stands still.
+        // Ticks braked so far; -1 = not braking.
+        private int _brakeTicks = -1;
+        private float _brakeAxis;
+        const int MaxBrakeTicks = 150;
+        private static readonly FieldInfo MovMomentumField = AccessTools.Field(typeof(Movement), "momentum");
+        private static readonly FieldInfo MovOnGroundField = AccessTools.Field(typeof(Movement), "onGround");
         private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
         private static readonly FieldInfo CourseTrackingField = AccessTools.Field(typeof(courseScript), "tracking");
 
@@ -76,6 +85,7 @@ namespace IGTAPTasMod
             LoadResults();
             LoadCheckpoints();
             LoadCourses();
+            LoadChains();
             _engine.AttemptEnded += SaveAttemptResult;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
@@ -95,15 +105,17 @@ namespace IGTAPTasMod
                 return;
             }
             _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
-            PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), null);
+            PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), nameof(AfterMovementFixedUpdate));
             TurboRunner.Patch(_harmony);
-            PatchOptional(typeof(courseScript), "startTracking", null, nameof(AfterCourseStart));
+            PatchOptional(typeof(courseScript), "startTracking", nameof(BeforeCourseStart), nameof(AfterCourseStart));
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
             PatchOptional(typeof(Movement), "onDeath", null, nameof(AfterPlayerDeath));
             PatchOptional(typeof(Movement), "CheckForSuperJump", nameof(BeforeDashFrame), null);
             PatchOptional(typeof(Saveloader), "autosave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "manualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
+            PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
+            PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
@@ -115,9 +127,38 @@ namespace IGTAPTasMod
             return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active);
         }
 
-        private static bool BeforeMovementFixedUpdate()
+        // Course checkpoints are always off: a death respawns at the course's reset point, never at the last checkpoint
+        // touched. respawn is the flag's only reader; the settings toggle is pinned off so the menu shows the truth.
+        private static void BeforeRespawn(Movement __instance)
+        {
+            __instance.isRespawningAtCheckpoints = false;
+        }
+
+        private static void AfterToggleCheckpointUse(Movement __instance, ref bool __result)
+        {
+            __instance.isRespawningAtCheckpoints = false;
+            __result = false;
+        }
+
+        private static bool BeforeMovementFixedUpdate(Movement __instance)
         {
             if (Instance == null) return true;
+            // A bonus (its reward's buy trigger) or a transition ending at a bonus finishes on touching its end box.
+            // Checked every tick, dash ticks included, where enginesim checks it (after the previous tick's physics and
+            // Update); timed in physics ticks from the run start: there is no course timer. A segment that starts with a
+            // quick restart is not checked before it.
+            CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) && !Instance._restartBeforeTick ? Instance.RunCourse : null;
+            if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
+                Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
+                    Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
+            // A chain's next segment goes on from where the last one finished, then does its quick restart if it has one.
+            if (Instance._chainRun != null && Instance._chainRun.pendingNext && !Instance._engine.IsRunning && !IsMenuPlayer(__instance))
+                Instance.ContinueChain(__instance);
+            if (Instance._restartBeforeTick && !IsMenuPlayer(__instance))
+            {
+                Instance._restartBeforeTick = false;
+                Instance.QuickRestart(__instance);
+            }
             if (Instance._pendingSilentMacro != null && !Instance._engine.IsRunning)
             {
                 MacroDefinition macro = Instance._pendingSilentMacro;
@@ -127,6 +168,11 @@ namespace IGTAPTasMod
                 Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, true, true, 0,
                     movement == null ? (Vector2?)null : movement.transform.position);
+                return true;
+            }
+            if (Instance._pendingChain != null && !Instance._engine.IsRunning)
+            {
+                Instance.BeginChainPlayback();
                 return true;
             }
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning)
@@ -145,6 +191,18 @@ namespace IGTAPTasMod
             return true;
         }
 
+        // Every physics tick, dash and spring ticks included (they skip the input hook, so RunTicks does not count them).
+        private static void AfterMovementFixedUpdate(Movement __instance)
+        {
+            if (Instance != null && !IsMenuPlayer(__instance)) Instance._engine.CountPhysicsTick();
+        }
+
+        // The main menu's own Movement (isOnMainMenu) also runs FixedUpdate; runs only ever drive the world's player.
+        private static bool IsMenuPlayer(Movement movement)
+        {
+            return MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(movement) is bool menu && menu;
+        }
+
         private static bool BeforePlayerInput(Movement __instance)
         {
             if (Instance == null) return true;
@@ -155,34 +213,49 @@ namespace IGTAPTasMod
             // OnWall / wallCoyoteFrames / probe state the jump code will read.
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
-            // Before the tick's inputs: the same world state the recorder samples. A bonus run ends on its
-            // reward box instead of an end gate.
-            if (Instance._engine.IsRunning && Instance.TryRewardFinish(__instance)) return true;
             Instance._engine.FixedTick(__instance);
+            if (Instance._brakeTicks >= 0 && !IsMenuPlayer(__instance)) Instance.Brake(__instance);
             // This method is the movement executor, not a device sampler. The prefix
             // supplies MoveAxis and input buffers; the original must run to consume
             // them and apply movement, jumping, walljumping, and dashing.
             return true;
         }
 
-        // The bonus-area analogue of an end gate: a course with a reward box (endX/endY/endW/endH) has no
-        // gates, and its run finishes when the player touches the box's trigger. No in-game timer exists for
-        // such a run, so its time is the run's elapsed ticks, the same clock every other tick is judged on.
-        private bool TryRewardFinish(Movement player)
+        // Runs after the game sampled the controller (Movement.FixedUpdate), so the move axis replaces the real stick
+        // the way playback's does; nothing else is pressed.
+        private void Brake(Movement movement)
         {
-            CourseDef course = _silentEvaluation ? _courses.Find(c => c.id == _solverCourse) : _runCourse;
-            if (player == null || course == null || !course.HasFinish) return false;
+            if (_engine.IsRunning || ++_brakeTicks > MaxBrakeTicks) { _brakeTicks = -1; return; }
+            float momentumX = ((Vector2)MovMomentumField.GetValue(movement)).x;
+            if (_brakeTicks == 1) _brakeAxis = Mathf.Abs(momentumX) > 1f ? -Mathf.Sign(momentumX) : 0f;
+            if (momentumX * _brakeAxis >= -1f) _brakeAxis = 0f;
+            if (_brakeAxis == 0f && (bool)MovOnGroundField.GetValue(movement)
+                && Mathf.Abs(movement.GetComponent<Rigidbody2D>().linearVelocity.x) <= 1f)
+            {
+                _brakeTicks = -1;
+                return;
+            }
+            movement.MoveAxis = new Vector2(_brakeAxis, 0f);
+        }
+
+        // The course the running attempt is scored on: the chain segment's, the solver's in turbo, else the route's
+        // (RestoreRouteStart).
+        CourseDef RunCourse { get { return _chainRun != null ? _chainRun.Current.target : _silentEvaluation ? _solverTarget : _runCourse; } }
+
+        // Chain segments (played or judged) are timed in physics ticks from their start, a course's too: the chain's time
+        // is the sum, and a course's timer may already be running when its segment starts.
+        bool ScoreFromRunStart { get { return _chainRun != null || _silentEvaluation && _solverChain != null; } }
+
+        // The player's colliders overlap the course's end box (absolute coordinates, shifted by FloatingOrigin).
+        private bool TouchesEndBox(Movement player, CourseDef course)
+        {
             Vector2 origin = CurrentOrigin();
             Rect zone = new Rect(course.endX - course.endW / 2f + origin.x, course.endY - course.endH / 2f + origin.y, course.endW, course.endH);
             foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
             {
                 if (!box.enabled) continue;
                 Bounds bounds = box.bounds;
-                if (new Rect(bounds.min.x, bounds.min.y, bounds.size.x, bounds.size.y).Overlaps(zone))
-                {
-                    _engine.CompleteFromGame(MacroEngine.RewardFinishReason, _engine.RunTicks * Time.fixedDeltaTime);
-                    return true;
-                }
+                if (new Rect(bounds.min.x, bounds.min.y, bounds.size.x, bounds.size.y).Overlaps(zone)) return true;
             }
             return false;
         }
@@ -203,6 +276,17 @@ namespace IGTAPTasMod
                 postfix: postfix == null ? null : new HarmonyMethod(postfix));
         }
 
+        // A transition's run finishes when the next course's start gate starts that course's timer (a call while it
+        // already times is no start). It has no timer of its own, so its time is physics ticks from the run start.
+        private static void BeforeCourseStart(courseScript __instance)
+        {
+            if (Instance == null || __instance == null || !Instance._engine.IsRunning) return;
+            CourseDef course = Instance.RunCourse;
+            if (course == null || course.toCourse <= 0 || __instance.courseNumber != course.toCourse) return;
+            if (CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking) return;
+            Instance._engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
+        }
+
         private static void AfterCourseStart()
         {
             if (Instance != null)
@@ -219,10 +303,12 @@ namespace IGTAPTasMod
         {
             if (Instance == null) return;
             // stopTracking only finishes a course it is timing; an end gate reached without the start gate is not a run.
+            CourseDef target = Instance.RunCourse;
             Instance._pendingCourseWasTracking = __instance != null && CourseTrackingField != null
                 && CourseTrackingField.GetValue(__instance) is bool tracking && tracking
-                // A solver run is scored on its own course; finishing another course on the way is not a finish.
-                && (!Instance._silentEvaluation || __instance.courseNumber == Instance._solverCourse);
+                // A solver run or chain segment is scored on its own course; finishing another course on the way is not a finish.
+                && (!Instance._silentEvaluation && Instance._chainRun == null
+                    || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.id);
             if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
             object value = CourseCurrentPathTimeField.GetValue(__instance);
             Instance._pendingCourseTime = value is float ? (float)value : 0f;
@@ -233,7 +319,8 @@ namespace IGTAPTasMod
             if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
-            Instance._engine.CompleteFromGame("Course finish detected", Instance._pendingCourseTime);
+            Instance._engine.CompleteFromGame("Course finish detected",
+                Instance.ScoreFromRunStart ? Instance._engine.PhysicsTicks * Time.fixedDeltaTime : Instance._pendingCourseTime);
         }
 
         private static void AfterPlayerDeath(Movement __instance)
@@ -562,13 +649,14 @@ namespace IGTAPTasMod
             PumpSolver();
             PumpBootstrap();
             PumpOfflineBests();
+            PumpChains();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
             if (keyboard.f8Key.wasPressedThisFrame)
             {
                 if (_recorder.IsRecording) StopRecording("Emergency stop");
-                if (_engine.IsRunning) _engine.Abort("Emergency stop");
+                StopPlayback("Emergency stop");
                 return;
             }
 
@@ -751,10 +839,11 @@ namespace IGTAPTasMod
             Logger.LogInfo("Recording saved: " + recording.samples.Count + " physics frames, " + recording.semanticSteps.Count + " actions");
         }
 
-        private void CreateRouteFromRecording(RecordingDefinition recording)
+        // A route from the recording's inputs; `samples` limits it to a prefix (a transition's seed ends at its arrival).
+        private void CreateRouteFromRecording(RecordingDefinition recording, List<RawTickSample> samples = null)
         {
             MacroDefinition macro = new MacroDefinition { name = recording.name };
-            foreach (MacroStep step in ExactInputCompressor.Compress(recording.samples, recording.fixedDeltaMs))
+            foreach (MacroStep step in ExactInputCompressor.Compress(samples ?? recording.samples, recording.fixedDeltaMs))
                 macro.steps.Add(step);
             _library.macros.Add(macro);
             _library.selectedIndex = _library.macros.Count - 1;
@@ -773,6 +862,17 @@ namespace IGTAPTasMod
         {
             MacroDefinition macro = SelectedMacro;
             if (macro == null) return;
+            // A chain segment's route ("wj/2tobonus1_WJ 9.10") starts where the chain's routes before it end: play the
+            // chain through it.
+            Match chainRoute = Regex.Match(macro.name ?? "", @"^([A-Za-z0-9]+)/([^_\s/]+)_");
+            ChainDef chain = chainRoute.Success ? _chains.Find(c => string.Equals(c.name, chainRoute.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) : null;
+            if (chain != null)
+            {
+                ChainSegment segment = ChainSegments(chain).Find(s => string.Equals(s.token, chainRoute.Groups[2].Value, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException("Chain " + chain.name + " has no segment " + chainRoute.Groups[2].Value + ".");
+                StartChainPlayback(chain, segment.index, macro);
+                return;
+            }
             EnsureGameUnpaused();
             // Web/UI commands arrive during rendered Update frames. Queue the reset and
             // arming until the prefix of Movement's next full fixed tick.
@@ -829,6 +929,19 @@ namespace IGTAPTasMod
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 
+        // The widest category (CapsLevel) the save's unlocks cover: wall jump, then dash with an air dash, then air jump
+        // with an air jump. While a category route plays, its unlocks are applied; the save's are in _playbackSavedAbilities.
+        private int SaveUnlockLevel(Movement movement)
+        {
+            Func<string, object> saved = field => _playbackSavedAbilities.TryGetValue(field, out object value) ? value : GetMovementField(movement, field);
+            Func<string, bool> on = field => saved(field) is bool b && b;
+            Func<string, bool> some = field => saved(field) is int n && n > 0;
+            if (!on("wallJumpUnlocked")) return 0;
+            if (!on("dashUnlocked") || !some("maxAirDashes")) return 1;
+            if (!on("doubleJumpUnlocked") || !some("maxAirJumps")) return 2;
+            return 3;
+        }
+
         private void RestorePlaybackAbilities()
         {
             Movement movement = FindWorldMovement();
@@ -839,14 +952,22 @@ namespace IGTAPTasMod
 
         private void SaveAttemptResult(bool success, string reason, int action, long ticks)
         {
+            if (_chainRun != null)
+            {
+                if (ChainSegmentEnded(success, reason)) return;
+                if (_silentEvaluation) EndDeterministicPhysics();
+                else FinishChainPlayback(success, reason);
+                return;
+            }
             RestorePlaybackAbilities();
             if (_silentEvaluation)
             {
                 EndDeterministicPhysics();
-                _silentFinished = success && (reason == "Course finish detected" || reason == MacroEngine.RewardFinishReason);
+                _silentFinished = success && MacroEngine.IsFinishReason(reason);
                 _silentTime = _engine.AuthoritativeCompletionTime;
                 return;
             }
+            if (success && reason == MacroEngine.TransitionFinishReason) _brakeTicks = 0;
             bool hasGameTime = success && _engine.AuthoritativeCompletionTime > 0f;
             AttemptResult result = new AttemptResult {
                 routeId = _engine.ActiveMacroId,
@@ -854,7 +975,8 @@ namespace IGTAPTasMod
                 success = success,
                 completionTicks = ticks,
                 completionTime = hasGameTime ? _engine.AuthoritativeCompletionTime : ticks * Time.fixedDeltaTime,
-                timingSource = hasGameTime ? (reason == MacroEngine.RewardFinishReason ? "Run ticks to reward" : "In-game course timer") : "Macro elapsed time",
+                timingSource = !hasGameTime ? "Macro elapsed time" : reason == MacroEngine.RewardFinishReason ? "Physics ticks to reward"
+                    : reason == MacroEngine.TransitionFinishReason ? "Physics ticks to the transition's end" : "In-game course timer",
                 courseStartRunTick = _engine.CourseStartRunTick,
                 courseStartUnityFrame = _engine.CourseStartUnityFrame,
                 courseStartX = _engine.CourseStartPosition.x,
@@ -1133,7 +1255,8 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/solver/start")
             {
-                StartSolver(Number(body, "course", 0), Text(body, "capabilities"));
+                if (!string.IsNullOrEmpty(Text(body, "chain"))) StartChainSolver(Text(body, "chain"), Number(body, "segment", -1));
+                else StartSolver(Number(body, "course", 0), Text(body, "capabilities"));
                 return new { ok = true };
             }
             if (request.Path == "/api/solver/stop")
@@ -1206,6 +1329,12 @@ namespace IGTAPTasMod
                 ReplaySelected(Number(body, "startDelayTicks", 0));
                 return new { ok = true };
             }
+            if (request.Path == "/api/chains/run")
+            {
+                // {chain, through?}: the chain from its start through segment `through` (0-based; default all of it).
+                StartChainPlayback(FindChain(Text(body, "chain")), Number(body, "through", -1));
+                return new { ok = true };
+            }
             if (request.Path == "/api/routes/duplicate")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
@@ -1235,7 +1364,7 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/routes/delete")
             {
-                if (_engine.IsRunning)
+                if (PlaybackActive)
                     throw new InvalidOperationException("Stop playback before deleting a route.");
                 string id = Text(body, "routeId");
                 int index = _library.macros.FindIndex(r => r.id == id);
@@ -1254,9 +1383,7 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/routes/stop")
             {
-                _pendingReplay = null;
-                _pendingReplayStartDelayTicks = 0;
-                if (_engine.IsRunning) _engine.Abort("Stopped from Web Studio");
+                StopPlayback("Stopped from Web Studio");
                 if (_recorder.IsRecording) StopRecording("Stopped from Web Studio");
                 return new { ok = true };
             }
@@ -1270,6 +1397,12 @@ namespace IGTAPTasMod
             {
                 StopRecording("Stopped from Web Studio");
                 return new { ok = true };
+            }
+            if (request.Path == "/api/recordings/create-transition")
+            {
+                RecordingDefinition recording = _recordings.Find(r => r.id == Text(body, "recordingId"));
+                if (recording == null) throw new InvalidOperationException("Recording not found.");
+                return AddTransitionFromRecording(recording);
             }
             if (request.Path == "/api/recordings/create-route")
             {
@@ -1547,12 +1680,15 @@ namespace IGTAPTasMod
                     dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
                     airDashesLeft = GetMovementField(player, "airDashesLeft"),
                     airJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
+                // The widest category the save's own unlocks can run (a category playback's are not the save's).
+                unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
-                running = _engine.IsRunning,
+                running = PlaybackActive,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
                 courses = BuildCourseWebState(),
+                chains = BuildChainWebState(), chainRun = BuildChainRunWebState(),
                 solver = BuildSolverWebState() };
         }
 
@@ -1603,6 +1739,7 @@ namespace IGTAPTasMod
 
         private void OnDestroy()
         {
+            if (_solverRunning) StopSolver("Game closed");
             if (_recorder.IsRecording) StopRecording("Game closed");
             EndDeterministicPhysics();
             SaveLibrary();
