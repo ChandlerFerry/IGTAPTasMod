@@ -40,7 +40,7 @@ capture a start trace and world, and afterwards only to judge new bests.
 ```powershell
 dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release
 $exe = "enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe"
-$traces = "C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\enginesim"
+$traces = "C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer\BepInEx\config\IGTAPTasMod\enginesim"
 & $exe replay $traces\rand-*.json $traces\route-*.json   # fidelity: first tick where offline != turbo
 & $exe bench  $traces\route-c1-none-4.14.json            # single-core speed
 & $exe solve  $traces\route-c1-none-4.14.json --threads 16 --minutes 60 --stall-minutes 5
@@ -57,6 +57,13 @@ crossing (off the timer, but a player still sits through it). With the game clos
 judges every waiting `offline-best\` file that beats or ties the saved route (its category, then the course's other
 categories) as soon as the game is in the world and idle (a studio Optimize run holds the queue only while it starts
 each target, and its running target's own files until that `solve` ends), and moves it to `offline-best\judged\`.
+
+Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
+time and input tick of its first arrival in each map cell. An explore run that reaches one of those cells at least a
+tick sooner runs on with the best's inputs from that cell (`Splice`). The jump button's press and release flags are
+fixed where the two join. Each new best also tries up to 64 archive cells that are already ahead of it, biggest gain
+first, including cells from earlier solves. On Course 4 WJDASH_AJ this took the best from 16.58 to 15.04 within a
+minute: the explore archive held faster segments that the whole-route mutations couldn't reach.
 
 A solve picks up where the last solve of the same target stopped. Its search state goes to `<traces>\archive\<label>.json`
 (`<course>_<caps>`) every minute and when it ends, so a solve the studio stops (it kills the process) loses at most the
@@ -75,7 +82,9 @@ the first finish, cells past more boxes weigh more. Explore bursts get 25 extra 
 run that clears a box while coasting is saved. The search state goes to `archive\<label>-path-<--path-name>.json`,
 and bests are the category's as usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of their
 course and categories (the studio's too), with boxes relative to the course's start gate. Right now it cuts Course 3's
-right hole in WJDASH and WJDASH_AJ, which leaves the top-hole shortcut.
+right hole in WJDASH and WJDASH_AJ, which leaves the top-hole shortcut, and in Course 5 WJDASH_AJ (no orange blocks
+yet) the far left, the low left corner, everything below the start floor, and the climb up through the start room's
+ceiling hole: that hole is the finish, entered from above, and a run climbing up it never started the timer.
 
 ```powershell
 & $exe solve $traces\start-c3-wjdash.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
@@ -95,6 +104,14 @@ python tools\enginesim-capture.py route 4_almost_completed 4 wjdashaj # partial 
 The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in
 `AGENTS.md` (trace it with `path`, say what the trick is).
 
+A studio recording is a usable seed: recording turns the player body's interpolation off (as playback does), so its
+inputs replay in turbo tick for tick, and every sample carries the FloatingOrigin (`originX/Y`) so its position maps to
+`courses.json`'s frame. A seed may carry quick restarts (`"reset": true` on a tick, the game's `respawn(true)`); they
+survive `solve`'s seeds, best files and archive. Crossing a course's start gate makes the next quick restart land on
+that course's reset point, so a long transition can be seeded as "reach the gate, restart, replay the course's own
+transition" (5to4: the 5 → 3 explore prefix, a restart, then the 3to4 best). `path` prints why a run that didn't
+finish ended.
+
 ## Rules
 
 - Nothing here changes how the game or the plugin behave; the plugin only gained read-only export endpoints and
@@ -110,8 +127,16 @@ The best file in `offline-best\` reaches the studio by itself (see above); befor
 - Colliders: exact shapes from `Collider2D.GetShapes`; static colliders are world-space fixtures on one ground body;
   polygon radius = `defaultContactOffset` 0.01, linearSlop 0.005; Unity `maxTranslationSpeed` 100 = b2_maxTranslation
   per step; contact masks = `(layerMatrix[layer] | include) & ~exclude`, both sides must accept.
-- Callbacks: collisions from Box2D touching flags (start of step); triggers from an overlap test after the step; Enter on
-  the first step, Stay after; the start state primes existing contacts as already touching.
+- Callbacks: collisions from Box2D touching flags (start of step); triggers from an overlap test after the step, and a
+  trigger the pair wasn't touching also enters when its sensor contact touched at the start of the step (a wall jump's
+  push into a wall that the step undoes still enters the checkpoint behind it); Enter on the first step, Stay after; the
+  start state primes existing contacts as already touching.
+- Contact order (Box2D 2.3.x, Unity's lineage, not the 2.4.1 port's): new broadphase pairs are sorted by proxy id
+  before their contacts are created; the world contact list is oldest first (Collide order, and the first of equally
+  early TOI hits wins); a body's contact list is newest first (the island solver's order). A collider pair's contacts
+  (`Collision2D`, `GetContact(0).normal` decides a head bump) are a list: a contact that starts touching goes to the
+  end, one that stops is replaced by the last. All of it decides a player wedged in a corner of one composite
+  collider to the last bit (`diverge-c5-13.14` ticks 881-896: offline finished 13.14, turbo died).
 - Turbo restores (`TurboRunner.Restore`) match that priming: one muted physics step at the restored pose rebuilds
   Unity's contacts, so the first tick reports Stay, not a stale Exit plus a fresh Enter. Without it a start touching a
   collider (a start under an upgrade box) ran differently in turbo from run to run.
@@ -120,17 +145,61 @@ The best file in `offline-best\` reaches the studio by itself (see above); befor
   `courseScript.stopTracking` (no finish) or `clonesScript.DestroyClone` (the clone stays and pays again), at a point
   that depended on how much real time refilled the pool since the last run.
 - Raycasts: direction normalized, negative distance flips the ray, start-inside hits at fraction 0 with normal −dir,
-  triggers are hit (`queriesHitTriggers`).
+  triggers are hit (`queriesHitTriggers`), and the nearest hit wins across a composite's shapes too (the port's
+  unclipped tree walk returned the last shape in tree order: a dash step-up onto a ledge landed 2.3 units low).
 - Transforms: the player's parent (`PlayerObject`) follows the game's `FloatingOrigin` and sits at (−20200, −10539)
   on Course 4. Unity keeps only the local position, so a world position reads back as parent + (world − parent),
   rounded (20202.4453 → 20202.4434), while the body keeps the unrounded value. A scale change (facing flip) rebuilds
   the shapes but does not move the body; a position/rotation write does.
-- Every trace result matches turbo; two runs differ on their death tick only (a pair's contact order in
-  `Collision2D`, see `Box2D/NOTES.md`). bonus1 (`seed-cbonus1-wj-*`) differs at one tick only: body velocity y
-  1.2e-14 instead of 0 from a contact on a ground seam whose normal is (0, 0.99999994); every later tick is identical.
+- The stick: `Movement.FixedUpdate` reads the controller (`NormaliseInput(moveAction.ReadValue<Vector2>())`,
+  Movement.cs:872) before the input hook, and fast fall (stick down: gravity ×1.4 while the body rises slower than 300,
+  and a 1.4× fall speed cap, Movement.cs:1104-1128) and wall-slide speed (down ×1.5, up ×0.35,
+  `ApplyWallslideFriction`) use that read, not the hook's `MoveAxis`. A run's stick reaches it through
+  `MacroEngine.DeviceStick`, which is the vertical of the input tick due next with x at rest (the plugin: a `NormaliseInput`
+  prefix; offline: the shim's `InputAction.ReadValue`). Nothing reads x between the two, and dash and spring ticks have
+  no hook, so x at rest is what they always got. Before this, every run held y at 0 at the read, whatever its ticks said.
+- Every trace result matches turbo, and every tick of both `diverge-c5-*` traces. bonus1 (`seed-cbonus1-wj-*`) differs
+  at one tick only: body velocity y 1.2e-14 instead of 0 from a contact on a ground seam whose normal is
+  (0, 0.99999994); every later tick is identical.
 - Upgrade boxes: `hooks.txt` replaces `upgradeBox.OnTriggerStay2D` with `Runtime/Shop.cs` (the buy rule, Cash, cost,
   cap, movement unlocks, Full-TAS buy goals; clone income from the native economy, `Runtime/Economy.cs`). Traces of
   Course 1's reward and clone purchases (one waiting on clone income) match turbo's result and Cash on every tick.
+- Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): turbo resumes the coroutine at every tick's end
+  (`TurboRunner.EndOfFrame`), `Shop.EndOfFrame` does the same offline. A 40-buy touch of Course 1's `CashPerLoop` matched
+  turbo's Cash on every tick.
+- UnityEngine.Random is Unity's xorshift128 over `Random.State`'s four words (`Shim/Engine/Misc.cs`): `InitState(seed)`
+  fills s0 = seed, s(i) = 1812433253 * s(i-1) + 1 mod 2^32; each draw is `t = s0 ^ (s0 << 11)` then
+  `[s1, s2, s3, s3 ^ (s3 >> 19) ^ t ^ (t >> 8)]` (the new s3 is the draw); `value` = (draw & 0x7FFFFF) / 8388607;
+  `Range(int, int)` = min + draw % (max - min) over the 64-bit span (equal bounds return before the draw);
+  `Range(float, float)` = min * value + max * (1 - value). Verified on Unity's own published draws (macklinb/MoatShrimp's
+  parity tables: 50 draws word for word) and on the game's traces, where every tick carries the state (`"random"`).
+  The state is per simulation: `SimSnapshot` captures, restores and fingerprints it, and a trace's start loads it.
+- Real-time play draws Random every rendered frame (LightFlicker, anim speed, ...), so real-time playback rolls differ
+  from a turbo run's. Traces and the judge are turbo; real time is never compared.
+- Random consumer audit (every draw a turbo tick can make, and where it is kept offline):
+  - `clonesScript.SpawnClone` (clonesScript.cs:172,182): one `Random.Range(0, 101)` per speed and size roll loop, at
+    least one draw each per spawn, chance or not — modeled in `Runtime/Economy.cs` (the rolls pick the clone's
+    Fastness/Bigness and the next spawn's due time).
+  - `clonesScript.checkIfColourClone` (clonesScript.cs:379,389): drawn only when a colour counter passes 100; such a
+    run ends (`Unmodeled economy: colour clone`), so the draws are never needed.
+  - `Movement.playSFX` (Movement.cs:1866-1909): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
+    of the `Audio.PlayAudio` its land/grassLand cases make. `cuts.txt` empties it; `hooks.txt`'s `OnPlaySfx` keeps the
+    draws (`Movement::PlayFootstep` and `Movement::PlayWallSlideSfx` run un-cut: their bodies only dispatch here).
+  - `Audio.PlayAudio` (Audio.cs:52,58): a clip draw and a pitch draw when the caller passed a pitch variance. Cut;
+    `hooks.txt`'s `OnPlayAudio` keeps the draws (callers in a run: springs (SpringScript.cs:37), jiggle drops
+    (JiggleDropScript.cs:105), footsteps/landings (Movement.cs:2475-2485), the moss tired sound (Movement.cs:2392,2401),
+    the wall jump's grass step (Movement.cs:1735), tree growth (TreeController.cs:91), a box touch (upgradeBox.cs:313)).
+  - `upgradeBox.buyUpgrade` and its trigger (upgradeBox.cs:624,313): the buy's particle Emit (non-buy-max), the growth
+    sound of the tree a bought segment grows (upgradeTree.growSegments, once per 0.3 s audio cooldown) and BoxHit's
+    clip and pitch. `hooks.txt` replaces the trigger with `Runtime/Shop.cs`, which keeps the draws.
+  - Before the start snapshot, so already in its state, never in a run: `courseScript.Start`'s UpdateReward phase
+    (courseScript.cs:268), `upgradeBox.OnEnable` (upgradeBox.cs:288,292), LightFlicker.cs:26,
+    playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20, JiggleDropScript.cs:41, ObjectBobber.cs:33
+    (the pooled clone prefab is Transform + SpriteRenderer + ParticleSystem only: activating one draws nothing).
+  - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off), PlatformMover.cs:154,165.
+  - Not reproduced: the draws of a block swap's re-activated boxes' `OnEnable` (upgradeBox.cs:288,292) and of the tree
+    part it grows. A block swap ends the run (`Unmodeled purchase: block swap`), so the stream is never read past it;
+    the tree's own growth sound draws are kept (Shop.GrowTree) but its collider changes are not modeled.
 
 ## Memory
 
@@ -138,3 +207,8 @@ A snapshot (for branching) is ~38 KB: the broadphase tree stores only nodes that
 pair/move buffers only their live prefix, and unchanged fixture records are shared between snapshots. `solve` prints
 heap and working set every 10 s, and the host runs with `System.GC.HeapHardLimitPercent=40`, so a leak throws
 OutOfMemory instead of paging the machine.
+
+A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
+tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick. Snapshotting
+every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJDASH_AJ,
+30 threads: ~1,000 runs/s before, ~7,000-8,000 after).

@@ -23,6 +23,13 @@ namespace IGTAP.EngineSim
             public Vector3 BuiltScale;
             public (MonoBehaviour script, Action<object> call)[][] Handlers;
             public bool Listens;
+            // A collider merged into a composite (ColliderData.Composite): the composite's state. A composite with such
+            // sources: them, and whether each was live when the world was loaded (its exported shapes are that geometry).
+            public ColliderState Composite;
+            public ColliderState[] Sources;
+            public bool[] SourcesLiveAtLoad;
+            // Its fixtures as loaded, kept once a run first rebuilds it (it is in _changed from then on).
+            public b2Fixture[] Pristine;
         }
 
         sealed class BodyState
@@ -63,6 +70,12 @@ namespace IGTAP.EngineSim
         readonly bool _queriesHitTriggers, _queriesStartInColliders;
         HashSet<Pair> _touching = new HashSet<Pair>(), _touchingNext = new HashSet<Pair>();
         readonly BodyState _player;
+        // Colliders other than the player's that were rebuilt after loading (a collider or its object toggled): the
+        // Box2D snapshot brings back their fixtures, so a restore puts their fixture lists back with them.
+        readonly List<ColliderState> _changed = new List<ColliderState>();
+        bool _loaded;
+        // Set while Simulation.Restore puts toggled objects back: the physics snapshot restores their fixtures.
+        internal bool Suspended;
 
         public PhysicsWorld(World world, Simulation sim)
         {
@@ -132,6 +145,21 @@ namespace IGTAP.EngineSim
             }
             Movement player = sim.Player;
             _player = _bodies[player.GetComponent<Rigidbody2D>()];
+            // Composites and the colliders merged into them (the coloured blocks' tilemaps).
+            var sources = new Dictionary<ColliderState, List<ColliderState>>();
+            foreach (ColliderState s in _colliders.Values)
+                if (s.Data.Composite != null && _colliders.TryGetValue(s.Data.Composite.Collider, out ColliderState composite))
+                {
+                    s.Composite = composite;
+                    if (!sources.TryGetValue(composite, out var list)) sources[composite] = list = new List<ColliderState>();
+                    list.Add(s);
+                }
+            foreach (var (composite, list) in sources)
+            {
+                composite.Sources = list.ToArray();
+                composite.SourcesLiveAtLoad = list.Select(Live).ToArray();
+            }
+            _loaded = true;
         }
 
         float Setting(string name, float fallback)
@@ -178,6 +206,11 @@ namespace IGTAP.EngineSim
         // (Re)creates a collider's fixtures from its current properties.
         void Rebuild(ColliderState s)
         {
+            if (_loaded && s.Body != _player && s.Pristine == null)
+            {
+                s.Pristine = s.Fixtures.ToArray();
+                _changed.Add(s);
+            }
             if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
             else _movers = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
@@ -200,7 +233,7 @@ namespace IGTAP.EngineSim
                 AddFixture(s, body, shape, friction, restitution);
                 return;
             }
-            foreach (ShapeData shape in s.Data.Shapes)
+            foreach (ShapeData shape in Shapes(s))
             {
                 switch (shape.Type)
                 {
@@ -244,6 +277,27 @@ namespace IGTAP.EngineSim
             }
         }
 
+        // A collider's geometry. A composite's follows its sources (CompositeCollider2D regenerates when one is toggled):
+        // as exported while they are as they were at load, none with none live, the export's "sourceShapes" with all live.
+        ShapeData[] Shapes(ColliderState s)
+        {
+            if (s.Sources == null) return s.Data.Shapes;
+            int live = 0;
+            bool atLoad = true;
+            for (int i = 0; i < s.Sources.Length; i++)
+            {
+                bool l = Live(s.Sources[i]);
+                if (l) live++;
+                if (l != s.SourcesLiveAtLoad[i]) atLoad = false;
+            }
+            if (atLoad) return s.Data.Shapes;
+            if (live == 0) return Array.Empty<ShapeData>();
+            if (live == s.Sources.Length && s.Data.SourceShapes != null) return s.Data.SourceShapes;
+            if (_sim.Engine.IsRunning)
+                _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s composite geometry with its sources toggled is not in this world export");
+            return Array.Empty<ShapeData>();
+        }
+
         void AddFixture(ColliderState s, b2Body body, b2Shape shape, float friction, float restitution)
         {
             var def = new b2FixtureDef
@@ -258,16 +312,23 @@ namespace IGTAP.EngineSim
             s.Fixtures.Add(body.CreateFixture(def));
         }
 
-        // Unity recreates a collider's shapes as soon as one of its properties changes.
+        // Unity recreates a collider's shapes as soon as one of its properties changes (and a composite's when one of
+        // its sources changes).
         public void ColliderChanged(Collider2D collider)
         {
-            if (_colliders.TryGetValue(collider, out ColliderState s)) Rebuild(s);
+            if (!Suspended && _colliders.TryGetValue(collider, out ColliderState s)) Changed(s);
         }
 
         public void ActiveChanged(GameObject gameObject)
         {
-            if (_byObject.TryGetValue(gameObject, out var list))
-                foreach (ColliderState s in list) Rebuild(s);
+            if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
+                foreach (ColliderState s in list) Changed(s);
+        }
+
+        void Changed(ColliderState s)
+        {
+            Rebuild(s);
+            if (s.Composite != null) Rebuild(s.Composite);
         }
 
         public void TransformChanged(Transform transform, bool pose)
@@ -314,8 +375,11 @@ namespace IGTAP.EngineSim
         // Unity sends Enter on the first step a collider pair touches, Stay on later steps while it does, Exit when it
         // stops. Collisions use Box2D's touching flags (computed at the start of the step); triggers are overlap tests
         // at the positions after the step (turbo traces: a start gate starts the timer on the step the player's box
-        // first overlaps it, one step before the sensor contact's own touching flag would). Pairs keep Box2D's
-        // contact-list order so callbacks run in a deterministic order.
+        // first overlaps it, one step before the sensor contact's own touching flag would), except that a trigger the
+        // pair wasn't touching also enters when its sensor flag says it touched at the start of the step (after the
+        // game's transform writes): a wall jump's 10-unit push into a wall, which the step undoes, enters the
+        // checkpoint behind that wall (diverge-c5-13.14 tick 896). Pairs keep Box2D's contact-list order (oldest
+        // first) so callbacks run in a deterministic order.
         readonly List<Pair> _pairsNow = new List<Pair>();
         readonly Dictionary<Pair, List<b2Contact>> _contactsNow = new Dictionary<Pair, List<b2Contact>>();
         readonly Stack<List<b2Contact>> _contactLists = new Stack<List<b2Contact>>();
@@ -356,11 +420,12 @@ namespace IGTAP.EngineSim
                 if (!sa.Listens && !sb.Listens) continue;
                 b2Fixture fa = c.GetFixtureA(), fb = c.GetFixtureB();
                 bool trigger = fa.IsSensor() || fb.IsSensor();
+                var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
                 bool touching = trigger
                     ? b2TestOverlap(fa.GetShape(), c.GetChildIndexA(), fb.GetShape(), c.GetChildIndexB(), fa.GetBody().GetTransform(), fb.GetBody().GetTransform())
+                        || c.IsTouching() && !_touching.Contains(pair)
                     : c.IsTouching();
                 if (!touching) continue;
-                var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
                 if (!_contactsNow.TryGetValue(pair, out List<b2Contact> contacts))
                 {
                     contacts = _contactLists.Count > 0 ? _contactLists.Pop() : new List<b2Contact>(2);
@@ -368,7 +433,12 @@ namespace IGTAP.EngineSim
                     _pairsNow.Add(pair);
                     _touchingNext.Add(pair);
                 }
-                contacts.Add(c);
+                // Unity reports a pair's contacts in its list order (b2Contact.m_touchOrder: a contact that starts
+                // touching goes to the end, one that stops is replaced by the last). A wall/ceiling corner of one
+                // collider: whichever of the two is GetContact(0) decides whether the game head-bumps.
+                int at = contacts.Count;
+                while (at > 0 && contacts[at - 1].m_touchOrder > c.m_touchOrder) at--;
+                contacts.Insert(at, c);
             }
         }
 
@@ -500,10 +570,10 @@ namespace IGTAP.EngineSim
         readonly InsideQuery _inside;
         readonly ClosestRay _ray;
 
-        // Queries without the broadphase tree. The tree reports every proxy along a query and the callbacks keep the
-        // first containing / last hit collider in tree order, so the answer depends on that order only when two or more
-        // accepted colliders qualify: find the qualifying ones directly (static shapes from a grid, moving bodies' shapes
-        // by listing them) and fall back to the tree walk when there is more than one.
+        // Queries without the broadphase tree. The tree reports every proxy along a query; the inside query keeps the
+        // first containing collider and the ray the nearest hit (ties: the last in tree order), so the answer depends
+        // on tree order only when two or more shapes qualify: find the qualifying ones directly (static shapes from a
+        // grid, moving bodies' shapes by listing them) and fall back to the tree walk when there is more than one.
         const float CellSize = 64f;
         struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; }
         StaticShape[] _static;
@@ -772,18 +842,37 @@ namespace IGTAP.EngineSim
 
         BodyState State(Rigidbody2D body) { return (BodyState)body.BackendData; }
 
+        readonly List<b2Contact> _bodyContacts = new List<b2Contact>();
+
         public int GetContacts(Rigidbody2D body, ContactPoint2D[] results)
         {
-            int n = 0;
             BodyState state = State(body);
-            for (b2Contact c = _b2.GetContactList(); c != null && n < results.Length; c = c.GetNext())
+            // Oldest created first (the world list's order); one turbo trace (rand-c5-wjdashaj-1 tick 195) orders two
+            // colliders' contacts this way. Within one pair, the pair's list order (CollectTouching).
+            List<b2Contact> mine = _bodyContacts;
+            mine.Clear();
+            for (b2Contact c = _b2.GetContactList(); c != null; c = c.GetNext())
             {
                 if (!c.IsTouching() || !c.IsEnabled()) continue;
                 var a = (ColliderState)c.GetFixtureA().UserData;
                 var b = (ColliderState)c.GetFixtureB().UserData;
                 if (a.Body != state && b.Body != state) continue;
+                int at = mine.Count;
+                for (int i = 0; i < mine.Count; i++)
+                {
+                    var oa = (ColliderState)mine[i].GetFixtureA().UserData;
+                    var ob = (ColliderState)mine[i].GetFixtureB().UserData;
+                    if ((oa == a && ob == b || oa == b && ob == a) && mine[i].m_touchOrder > c.m_touchOrder) { at = i; break; }
+                }
+                mine.Insert(at, c);
+            }
+            int n = 0;
+            for (int i = 0; i < mine.Count && n < results.Length; i++)
+            {
+                var a = (ColliderState)mine[i].GetFixtureA().UserData;
+                var b = (ColliderState)mine[i].GetFixtureB().UserData;
                 bool selfIsB = b.Body == state;
-                Collision2D col = MakeCollision(selfIsB ? b : a, selfIsB ? a : b, new List<b2Contact> { c });
+                Collision2D col = MakeCollision(selfIsB ? b : a, selfIsB ? a : b, new List<b2Contact> { mine[i] });
                 foreach (ContactPoint2D p in col.Contacts) if (n < results.Length) results[n++] = p;
             }
             return n;
@@ -800,7 +889,7 @@ namespace IGTAP.EngineSim
                 b2Manifold m = c.GetManifold();
                 yield return $"{a.Collider.name}#{a.Collider.GetInstanceID()} / {b.Collider.name}#{b.Collider.GetInstanceID()} touching={c.IsTouching()} "
                     + $"points={m.pointCount} normal=({wm.normal.x:R},{wm.normal.y:R}) sep=({wm.separations[0]:R},{wm.separations[1]:R}) "
-                    + $"p0=({wm.points[0].x:R},{wm.points[0].y:R}) imp=({(m.pointCount > 0 ? m.points[0].normalImpulse : 0):R})";
+                    + $"p0=({wm.points[0].x:R},{wm.points[0].y:R}) imp=({(m.pointCount > 0 ? m.points[0].normalImpulse : 0):R}) touchOrder={c.m_touchOrder} toi={c.m_toiCount}";
             }
         }
 
@@ -831,19 +920,23 @@ namespace IGTAP.EngineSim
         }
 
         // Physics state a run changes: the Box2D world's dynamic state (bodies, the player's fixtures, contacts,
-        // broadphase), the player's pending transform sync, and the touching pairs the callbacks are based on.
+        // broadphase; static fixtures too once a run changed them), the player's pending transform sync, the touching
+        // pairs the callbacks are based on, and the fixture lists of the colliders a run rebuilt.
         sealed class PhysicsSnapshot
         {
             public object World;
             public bool TransformDirty, ScaleDirty;
             public Vector3[] BuiltScales;
             public Pair[] Touching;
+            public (ColliderState state, b2Fixture[] fixtures)[] Changed;
         }
 
         public object Capture()
         {
+            var changed = _changed.Count == 0 ? Array.Empty<(ColliderState, b2Fixture[])>() : new (ColliderState, b2Fixture[])[_changed.Count];
+            for (int i = 0; i < changed.Length; i++) changed[i] = (_changed[i], _changed[i].Fixtures.ToArray());
             return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, Touching = _pairsBefore.ToArray(),
-                BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray() };
+                BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray(), Changed = changed };
         }
 
         public void Restore(object snapshot)
@@ -853,6 +946,17 @@ namespace IGTAP.EngineSim
             _movers = null;
             foreach (ColliderState c in _player.Colliders) c.Fixtures.Clear();
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
+            // A collider the snapshot doesn't list wasn't changed yet when it was taken: its fixtures as loaded.
+            foreach (ColliderState c in _changed)
+            {
+                b2Fixture[] fixtures = c.Pristine;
+                foreach (var (state, saved) in s.Changed)
+                    if (state == c) { fixtures = saved; break; }
+                if (c.Fixtures.SequenceEqual(fixtures)) continue;
+                c.Fixtures.Clear();
+                c.Fixtures.AddRange(fixtures);
+                if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
+            }
             _player.TransformDirty = s.TransformDirty;
             _player.ScaleDirty = s.ScaleDirty;
             for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];

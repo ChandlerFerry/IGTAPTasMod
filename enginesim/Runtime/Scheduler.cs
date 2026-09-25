@@ -10,7 +10,7 @@ namespace IGTAP.EngineSim
     // after tick n fires at the start of tick n + floor(delay / fixedDeltaTime) + 1 (>= 50 fps frame semantics).
     // Turbo leaves other scripts' Invokes to Unity's real-time clock; here every script uses the tick rule, which is
     // what uninterrupted real-time play does. Coroutines run to their first yield, like StartCoroutine does; turbo
-    // never advances them further within a run.
+    // advances none further within a run but a buy-max box's IE_BuyMax, which Shop models (it replaces the box's trigger).
     public sealed class Scheduler : IScheduler
     {
         public struct Pending

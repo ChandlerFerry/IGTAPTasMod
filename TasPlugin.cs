@@ -111,6 +111,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
             PatchOptional(typeof(Movement), "onDeath", null, nameof(AfterPlayerDeath));
             PatchOptional(typeof(Movement), "CheckForSuperJump", nameof(BeforeDashFrame), null);
+            PatchOptional(typeof(Movement), "NormaliseInput", nameof(BeforeNormaliseInput), null);
             PatchOptional(typeof(Saveloader), "autosave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "manualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
@@ -225,6 +226,15 @@ namespace IGTAPTasMod
             return true;
         }
 
+        // The game's controller read (Movement.FixedUpdate and Update hand the raw stick to NormaliseInput): while a run
+        // plays, the stick it holds (MacroEngine.DeviceStick), as enginesim's InputAction reads it. FixedUpdate's fast
+        // fall and wall-slide speed read it before the input hook.
+        private static void BeforeNormaliseInput(Movement __instance, ref Vector2 __0)
+        {
+            if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording || !Instance._engine.IsRunning) return;
+            __0 = Instance._engine.DeviceStick;
+        }
+
         // Runs after the game sampled the controller (Movement.FixedUpdate), so the move axis replaces the real stick
         // the way playback's does; nothing else is pressed.
         private void Brake(Movement movement)
@@ -268,7 +278,9 @@ namespace IGTAPTasMod
 
         private static void BeforeDashFrame(Movement __instance)
         {
-            if (Instance == null || Instance._recorder.IsRecording) return;
+            if (Instance == null) return;
+            Instance._recorder.DashFrame(__instance);
+            if (Instance._recorder.IsRecording) return;
             int presses = Instance._engine.JumpPresses;
             Instance._engine.DashFrame(__instance);
             if (Instance._engine.JumpPresses != presses) Instance.OverlayCaptureAxis(__instance);
@@ -303,6 +315,8 @@ namespace IGTAPTasMod
             if (Instance != null)
             {
                 Instance._pendingCourseTime = 0f;
+                // A Full-TAS run has no course of its own: the overlay title shows the one it just started.
+                if (__instance != null && Instance.OverlayListsRun) Instance._overlayCourse = __instance.courseNumber.ToString();
                 Movement movement = FindWorldMovement();
                 Instance._engine.MarkCourseStart(movement);
                 Instance._recorder.MarkCourseStart();
@@ -677,7 +691,7 @@ namespace IGTAPTasMod
         WebStudioRequest _newGameRequest;
         readonly List<string> _newGameNotes = new List<string>();
         // The fresh game's first physics tick (taken in its Movement.FixedUpdate prefix, engine state as a run starts):
-        // the start state of every run from a new game, in turbo and offline. Valid while its player exists.
+        // The start state of every run from a new game, in turbo and offline. Valid while its player exists.
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
@@ -765,6 +779,9 @@ namespace IGTAPTasMod
             _engine.Quiet = true;
             _engine.Run(new MacroDefinition { name = "New game start", steps = { new MacroStep { type = MacroStepType.RawInput, durationTicks = 1 } } },
                 _library, false, true);
+            // The fixed Full-TAS seed (the one allowed RNG write, README "### Rules"): applied right before the start
+            // snapshot, so the snapshot carries the seeded state and every run from it starts there.
+            UnityEngine.Random.InitState(FullTasSeed);
             _newGameStart = TurboRunner.Capture(player, courses, _engine.CaptureState(), 0, true);
             _engine.Discard();
             _engine.Quiet = quiet;
@@ -1012,7 +1029,7 @@ namespace IGTAPTasMod
         private void DuplicateMacro()
         {
             MacroDefinition copy = JsonConvert.DeserializeObject<MacroDefinition>(JsonConvert.SerializeObject(SelectedMacro));
-            copy.id = Guid.NewGuid().ToString("N"); copy.name += " copy"; copy.hotkey = ""; copy.favorite = false; _library.macros.Add(copy); _library.selectedIndex = _library.macros.Count - 1; SaveLibrary();
+            copy.id = Guid.NewGuid().ToString("N"); copy.name += " copy"; copy.hotkey = ""; _library.macros.Add(copy); _library.selectedIndex = _library.macros.Count - 1; SaveLibrary();
         }
 
         private void StartRecording()
@@ -1020,6 +1037,9 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
             if (_engine.IsRunning) _engine.Abort("Recording started");
             string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
+            // As in playback: with interpolation on, Movement's Transform.position nudges read the render pose, so a
+            // recording's physics depends on its frame timing and its inputs don't replay the same in turbo.
+            BeginDeterministicPhysics(FindWorldMovement());
             _recorder.Start(name);
             Logger.LogInfo("Fixed-tick recording started: " + name);
         }
@@ -1027,6 +1047,7 @@ namespace IGTAPTasMod
         private void StopRecording(string reason)
         {
             RecordingDefinition recording = _recorder.Stop(reason);
+            if (!_engine.IsRunning) EndDeterministicPhysics();
             if (recording == null) return;
             _recordings.Insert(0, recording);
             SaveRecording(recording);
@@ -1474,7 +1495,9 @@ namespace IGTAPTasMod
             if (request.Path == "/api/session/setup")
             {
                 // Live changes to the running game (never the save file): {"start": {x, y},
-                // "abilities": {"dashUnlocked": true, "maxAirDashes": 1, "airDashesLeft": 1, ...}}. Replies with the fields as set.
+                // "abilities": {"dashUnlocked": true, "maxAirDashes": 1, "airDashesLeft": 1, "respawnPoint": {x, y}, ...},
+                // "currencies": {"Cash": 3.16e22, ...}} (globalStats.Currencies names), "blueActive": false (the coloured
+                // blocks through the game's own colouredBlockSwapper.swapBlocks). Replies with the fields as set.
                 if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
                 Movement player = FindWorldMovement();
                 if (body["start"] is JObject setupStart)
@@ -1487,11 +1510,29 @@ namespace IGTAPTasMod
                     foreach (JProperty ability in setupAbilities.Properties())
                     {
                         object value = ability.Value.Type == JTokenType.Boolean ? (object)(bool)ability.Value
-                            : ability.Value.Type == JTokenType.Integer ? (object)(int)ability.Value : (float)ability.Value;
+                            : ability.Value.Type == JTokenType.Integer ? (object)(int)ability.Value
+                            : ability.Value is JObject v ? (object)new Vector2((float)v["x"], (float)v["y"]) : (float)ability.Value;
                         SetMovementField(player, ability.Name, value);
-                        applied[ability.Name] = GetMovementField(player, ability.Name);
+                        object set = GetMovementField(player, ability.Name);
+                        applied[ability.Name] = set is Vector2 p ? new { x = p.x, y = p.y } : set;
                     }
-                return new { ok = true, abilities = applied };
+                var currencies = new Dictionary<string, double>();
+                if (body["currencies"] is JObject setupCurrencies)
+                    foreach (JProperty currency in setupCurrencies.Properties())
+                    {
+                        var key = (globalStats.Currencies)Enum.Parse(typeof(globalStats.Currencies), currency.Name, true);
+                        globalStats.currencyLookup[key] = (double)currency.Value;
+                        currencies[key.ToString()] = globalStats.currencyLookup[key];
+                    }
+                bool? blueActive = null;
+                if (body["blueActive"] != null)
+                {
+                    colouredBlockSwapper swapper = FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include)
+                        ?? throw new InvalidOperationException("No colouredBlockSwapper in the scene.");
+                    swapper.swapBlocks((bool)body["blueActive"]);
+                    blueActive = swapper.isBlueActive;
+                }
+                return new { ok = true, abilities = applied, currencies, blueActive };
             }
             if (request.Path == "/api/oracle/bootstrap")
             {
@@ -1534,20 +1575,11 @@ namespace IGTAPTasMod
                 string name = Text(body, "name").Trim();
                 MacroDefinition route = _library.macros.Find(r => r.id == id);
                 if (route == null) throw new InvalidOperationException("Route not found.");
-                if (route.favorite) throw new InvalidOperationException("Unfavorite this route before renaming it.");
                 if (string.IsNullOrEmpty(name)) throw new InvalidOperationException("Route name cannot be empty.");
                 RejectCategoryName(name);
                 route.name = name;
                 SaveLibrary();
                 return new { ok = true };
-            }
-            if (request.Path == "/api/routes/favorite")
-            {
-                MacroDefinition route = _library.macros.Find(r => r.id == Text(body, "routeId"));
-                if (route == null) throw new InvalidOperationException("Route not found.");
-                route.favorite = body["favorite"] == null ? !route.favorite : (bool)body["favorite"];
-                SaveLibrary();
-                return new { ok = true, favorite = route.favorite };
             }
             if (request.Path == "/api/routes/delete")
             {
@@ -1556,7 +1588,6 @@ namespace IGTAPTasMod
                 string id = Text(body, "routeId");
                 int index = _library.macros.FindIndex(r => r.id == id);
                 if (index < 0) throw new InvalidOperationException("Route not found.");
-                if (_library.macros[index].favorite) throw new InvalidOperationException("Favorited routes cannot be deleted. Unfavorite it first.");
                 _library.macros.RemoveAt(index);
                 _library.selectedIndex = Mathf.Clamp(_library.selectedIndex > index ? _library.selectedIndex - 1 : _library.selectedIndex,
                     0, Mathf.Max(0, _library.macros.Count - 1));
@@ -1603,7 +1634,6 @@ namespace IGTAPTasMod
             {
                 RecordingDefinition recording = _recordings.Find(r => r.id == Text(body, "recordingId"));
                 if (recording == null) throw new InvalidOperationException("Recording not found.");
-                if (recording.favorite) throw new InvalidOperationException("Favorited recordings cannot be deleted. Unfavorite it first.");
                 DeleteRecording(recording);
                 return new { ok = true };
             }
@@ -1612,26 +1642,16 @@ namespace IGTAPTasMod
                 RecordingDefinition recording = _recordings.Find(r => r.id == Text(body, "recordingId"));
                 string name = Text(body, "name").Trim();
                 if (recording == null) throw new InvalidOperationException("Recording not found.");
-                if (recording.favorite) throw new InvalidOperationException("Unfavorite this recording before renaming it.");
                 if (string.IsNullOrEmpty(name)) throw new InvalidOperationException("Recording name cannot be empty.");
                 recording.name = name;
                 SaveRecording(recording);
                 return new { ok = true };
-            }
-            if (request.Path == "/api/recordings/favorite")
-            {
-                RecordingDefinition recording = _recordings.Find(r => r.id == Text(body, "recordingId"));
-                if (recording == null) throw new InvalidOperationException("Recording not found.");
-                recording.favorite = body["favorite"] == null ? !recording.favorite : (bool)body["favorite"];
-                SaveRecording(recording);
-                return new { ok = true, favorite = recording.favorite };
             }
             if (request.Path == "/api/actions/split")
             {
                 MacroDefinition route = SelectedMacro;
                 int index = Number(body, "actionIndex", -1);
                 if (route == null || index < 0 || index >= route.steps.Count) throw new InvalidOperationException("Action not found.");
-                if (route.favorite) throw new InvalidOperationException("Favorited routes are read-only. Unfavorite it before editing.");
                 MacroStep action = route.steps[index];
                 if (action.rawJumpPressed || action.rawJumpReleased || action.rawDashPressed)
                     throw new InvalidOperationException("Split input blocks cannot contain button edges.");
@@ -1661,7 +1681,6 @@ namespace IGTAPTasMod
                 MacroDefinition route = SelectedMacro;
                 int index = Number(body, "actionIndex", -1);
                 if (route == null || index < 0 || index >= route.steps.Count) throw new InvalidOperationException("Action not found.");
-                if (route.favorite) throw new InvalidOperationException("Favorited routes are read-only. Unfavorite it before editing.");
                 MacroStep action = route.steps[index];
                 if (body["label"] != null) action.label = Text(body, "label");
                 if (body["type"] != null)
@@ -1707,7 +1726,6 @@ namespace IGTAPTasMod
             if (request.Path == "/api/checkpoints/assign")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
-                if (SelectedMacro.favorite) throw new InvalidOperationException("Favorited routes are read-only. Unfavorite it before changing the start state.");
                 string id = Text(body, "checkpointId");
                 if (!string.IsNullOrEmpty(id) && _checkpoints.Find(c => c.id == id) == null) throw new InvalidOperationException("Checkpoint not found.");
                 SelectedMacro.checkpointId = id;
@@ -1744,7 +1762,7 @@ namespace IGTAPTasMod
                         rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
                         dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
                     });
-                routes.Add(new { id = route.id, name = route.name, favorite = route.favorite, hotkey = HotkeyText(route), checkpointId = route.checkpointId,
+                routes.Add(new { id = route.id, name = route.name, hotkey = HotkeyText(route), checkpointId = route.checkpointId,
                     actionCount = route.steps.Count, actions = actions });
             }
             List<object> checkpoints = new List<object>();
@@ -1759,7 +1777,7 @@ namespace IGTAPTasMod
                     actions.Add(new { label = action.label, type = TypeName(action.type), direction = action.direction,
                         wallJumpHoldDirection = action.wallJumpHoldDirection, durationTicks = action.durationTicks,
                         durationMs = action.durationMs });
-                recordings.Add(new { id = recording.id, name = recording.name, favorite = recording.favorite, createdUtc = recording.createdUtc,
+                recordings.Add(new { id = recording.id, name = recording.name, createdUtc = recording.createdUtc,
                     stopReason = recording.stopReason, sampleCount = recording.samples.Count,
                     actionCount = recording.semanticSteps.Count, courseTimeSeconds = recording.courseTimeSeconds,
                     courseStartTick = recording.courseStartTick, actions = actions });

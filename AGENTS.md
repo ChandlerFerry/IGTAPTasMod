@@ -24,7 +24,8 @@ Start the game only to:
 Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/solver/start`.
 
 - Change the live game, never its save files: `POST /api/session/setup {"abilities": {...}}` sets `Movement` fields on
-  the live player. It refuses while "Don't touch my unlocks" is on, and the game autosaves these edits.
+  the live player, `{"currencies": {"Cash": 1e22}}` sets `globalStats.currencyLookup`. Abilities are refused while
+  "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
 

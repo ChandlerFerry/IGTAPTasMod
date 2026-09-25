@@ -86,6 +86,7 @@ namespace Box2D
             internal float tangentSpeed;
             internal float toi;
             internal int toiCount;
+            internal long touchOrder;
             internal b2Vec2 localNormal;
             internal b2Vec2 localPoint;
             internal b2ManifoldType type;
@@ -279,6 +280,7 @@ namespace Box2D
                     tangentSpeed = c.m_tangentSpeed,
                     toi = c.m_toi,
                     toiCount = c.m_toiCount,
+                    touchOrder = c.m_touchOrder,
                 };
 
                 b2Manifold m = c.m_manifold;
@@ -343,6 +345,7 @@ namespace Box2D
             // Drop all live contacts (they are rebuilt from the records below).
             b2Contact discarded = m_contactManager.m_contactList;
             m_contactManager.m_contactList = null;
+            m_contactManager.m_contactTail = null;
             m_contactManager.m_contactCount = 0;
             for (b2Body b = m_bodyList; b != null; b = b.m_next)
             {
@@ -439,6 +442,7 @@ namespace Box2D
                 c.m_tangentSpeed = cr.tangentSpeed;
                 c.m_toi = cr.toi;
                 c.m_toiCount = cr.toiCount;
+                c.m_touchOrder = cr.touchOrder;
 
                 b2Manifold m = c.m_manifold;
                 m.localNormal = cr.localNormal;
@@ -483,6 +487,7 @@ namespace Box2D
             }
 
             m_contactManager.m_contactList = state.contacts.Length > 0 ? state.contacts[0].contact : null;
+            m_contactManager.m_contactTail = state.contacts.Length > 0 ? state.contacts[state.contacts.Length - 1].contact : null;
             m_contactManager.m_contactCount = state.contacts.Length;
 
             // Per-body contact edge lists in saved order (incl. static bodies).
@@ -598,7 +603,6 @@ namespace Box2D
         }
 
         private Node[] _snapshotBase;
-        public static long DbgChanged, DbgSnaps; public static int DbgNodes;
 
         private static bool Same(in Node a, in Node b)
             => a.Aabb.lowerBound.x == b.Aabb.lowerBound.x && a.Aabb.lowerBound.y == b.Aabb.lowerBound.y
@@ -613,7 +617,6 @@ namespace Box2D
             var node = new List<Node>();
             for (int i = 0; i < _nodes.Length; i++)
                 if (!Same(_nodes[i], _snapshotBase[i])) { index.Add(i); node.Add(_nodes[i]); }
-            System.Threading.Interlocked.Add(ref DbgChanged, index.Count); System.Threading.Interlocked.Increment(ref DbgSnaps); DbgNodes = _nodes.Length;
             return new TreeSnapshot
             {
                 baseNodes = _snapshotBase, changedIndex = index.ToArray(), changedNode = node.ToArray(),

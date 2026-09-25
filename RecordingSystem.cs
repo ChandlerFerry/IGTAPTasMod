@@ -19,6 +19,7 @@ namespace IGTAPTasMod
         private static readonly FieldInfo Velocity = AccessTools.Field(typeof(Movement), "Velocity");
         private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
         private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
+        private static readonly FieldInfo FramesSinceLastDash = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
 
         private bool _lastJump;
         private bool _lastCut;
@@ -97,6 +98,7 @@ namespace IGTAPTasMod
                 jumpReleased = cut && !_lastCut, dashPressed = dash && !_lastDash,
                 dashHeld = dashAction != null ? dashAction.IsPressed() : dash,
                 positionX = position.x, positionY = position.y,
+                originX = TasPlugin.CurrentOrigin().x, originY = TasPlugin.CurrentOrigin().y,
                 velocityX = velocity.x, velocityY = velocity.y,
                 onGround = Read<bool>(OnGround, movement), onWall = Read<bool>(OnWall, movement),
                 wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement)
@@ -104,6 +106,18 @@ namespace IGTAPTasMod
             _lastJump = jump;
             _lastCut = cut;
             _lastDash = dash;
+        }
+
+        // Every dash frame (Movement.CheckForSuperJump prefix, before the game reads jumpBuffer): a jump press there is
+        // filed on the dash's sample as its dashJumpFrame, the frame MacroEngine.DashFrame presses it again in playback.
+        public void DashFrame(Movement movement)
+        {
+            if (!IsRecording || movement == null || Current.samples.Count == 0) return;
+            bool jump = Read<bool>(JumpBuffer, movement);
+            RawTickSample dash = Current.samples[Current.samples.Count - 1];
+            if (jump && !_lastJump && dash.dashPressed && dash.dashJumpFrame == 0)
+                dash.dashJumpFrame = Math.Max(1, (int)Read<float>(FramesSinceLastDash, movement));
+            _lastJump = jump;
         }
 
         private static T Read<T>(FieldInfo field, object instance)
@@ -240,7 +254,8 @@ namespace IGTAPTasMod
                     rawMoveX = first.moveX, rawMoveY = first.moveY,
                     rawJumpPressed = first.jumpPressed, rawJumpHeld = first.jumpHeld,
                     rawJumpReleased = first.jumpReleased,
-                    rawDashPressed = first.dashPressed, rawDashHeld = first.dashHeld
+                    rawDashPressed = first.dashPressed, rawDashHeld = first.dashHeld,
+                    dashJumpFrame = first.dashPressed ? first.dashJumpFrame : 0
                 });
                 start = end;
             }
@@ -255,7 +270,8 @@ namespace IGTAPTasMod
                 && left.jumpHeld == right.jumpHeld
                 && left.jumpReleased == right.jumpReleased
                 && left.dashPressed == right.dashPressed
-                && left.dashHeld == right.dashHeld;
+                && left.dashHeld == right.dashHeld
+                && left.dashJumpFrame == right.dashJumpFrame;
         }
 
         private static string Label(RawTickSample sample)

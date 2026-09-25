@@ -53,6 +53,11 @@ namespace Box2D
 
         private int m_bodyCount;
 
+        // Contacts number their start of touching from this (b2Contact.m_touchOrder). Only the order matters, so a
+        // restored snapshot's contacts keep theirs and this is never rewound.
+        private long m_touchCount;
+        public long NextTouchOrder() => ++m_touchCount;
+
         private b2Body m_bodyList;
         private b2DebugDraw m_debugDraw;
 
@@ -1162,7 +1167,10 @@ namespace Box2D
             m_contactManager.m_broadPhase.RayCast(m_rayCastProxy ??= RayCastProxy, in input);
         }
 
-        // Ignores the callback's return: the ray is never clipped and every hit is reported.
+        // b2WorldRayCastWrapper: the callback's return clips the ray (closest hit), -1 ignores the fixture, 0 ends
+        // the cast. The base port ignored the return and never clipped, so a ray through several shapes of one
+        // composite reported the last in tree order instead of the nearest (route-c1-wjdash-1.06 tick 41: the
+        // dash step-up ray hit a ledge's interior diagonal, 2.3 units below its top).
         private float RayCastProxy(b2RayCastInput input, int proxyId)
         {
             object userData = m_contactManager.m_broadPhase.GetUserData(proxyId);
@@ -1175,7 +1183,7 @@ namespace Box2D
             {
                 float fraction = output.fraction;
                 b2Vec2 point = (1f - fraction) * input.p1 + fraction * input.p2;
-                m_rayCastCallback.ReportFixture(fixture, point, output.normal, fraction);
+                return m_rayCastCallback.ReportFixture(fixture, point, output.normal, fraction);
             }
 
             return input.maxFraction;

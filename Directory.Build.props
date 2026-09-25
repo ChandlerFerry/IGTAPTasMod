@@ -1,0 +1,7 @@
+<Project>
+  <!-- The game install every project builds against and deploys to (tools/gamepaths.py: IGTAP_GAME). -->
+  <PropertyGroup>
+    <IgtapGame Condition="'$(IgtapGame)' == ''">$(IGTAP_GAME)</IgtapGame>
+    <IgtapGame Condition="'$(IgtapGame)' == ''">C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer</IgtapGame>
+  </PropertyGroup>
+</Project>

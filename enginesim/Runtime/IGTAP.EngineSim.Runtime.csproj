@@ -9,7 +9,7 @@
     <LangVersion>latest</LangVersion>
     <Optimize>true</Optimize>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <GameManaged>C:\Users\deafwave\Downloads\IGTAP_Real\IGTAPfullGame_Data\Managed</GameManaged>
+    <GameManaged>$(IgtapGame)\IGTAPfullGame_Data\Managed</GameManaged>
     <RetargetedGame>$(MSBuildThisFileDirectory)..\obj\game\Assembly-CSharp.dll</RetargetedGame>
     <NoWarn>$(NoWarn);CS0649;CS0169;CS0414</NoWarn>
   </PropertyGroup>

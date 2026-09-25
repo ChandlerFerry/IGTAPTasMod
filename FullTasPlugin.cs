@@ -23,10 +23,14 @@ namespace IGTAPTasMod
         // fulltas.json: [{"name": "main", "goals": ["start:1", "finish:1", "buy:buyreward", "reward:bonus1", ...]}].
         public sealed class FullTasRunDef
         {
-            // Letters and digits only: route names and offline-best files carry it.
+            // Letters, digits and "%": route names and offline-best files carry it.
             public string name;
             public List<string> goals = new List<string>();
         }
+
+        // The one RNG write (README "### Rules"): every Full-TAS new game starts Unity's RNG from this fixed seed,
+        // UnityEngine.Random.InitState(FullTasSeed) before its start snapshot (CaptureNewGameStart).
+        const int FullTasSeed = 20260925;
 
         // Physics ticks from the run start when a goal was reached (FullTasTracker.PhysicsTicks).
         public sealed class FullTasSplit
@@ -75,7 +79,7 @@ namespace IGTAPTasMod
         // is set, no course, bonus, transition or purchase target ends the run (RunCourse is null): only its last goal does.
         FullTasTracker _fullTas;
         // The unlocks the run's own purchases gave so far: the gate's unlock check (AuditTick).
-        bool _fullTasWallJump, _fullTasDash;
+        bool _fullTasWallJump, _fullTasDash, _fullTasAirJump;
         // BeforeCourseStart: the course was timing before this startTracking call.
         bool _fullTasStartWasTracking;
         // BeforeCourseFinish: the course whose timer this stopTracking call stops; -1 none.
@@ -97,11 +101,12 @@ namespace IGTAPTasMod
         readonly List<string> _fullTasLog = new List<string>();
 
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward):(.+)$");
-        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9]+)_NO_WJ ", RegexOptions.IgnoreCase);
-        static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9]+)-([\d.]+)\.json$");
-        // buy: tokens and their boxes (FullTasGoal.BoxId: hierarchy path in the Overworld scene plus sibling index; paths
-        // aren't unique: course 2's GLOBALcashPerLoop #3 is the 55000 W global reward box, #5 bonus1's free reward box, which
-        // reward:bonus1 buys).
+        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%]+)_NO_WJ ", RegexOptions.IgnoreCase);
+        static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%]+)-([\d.]+)\.json$");
+        // buy: tokens and their boxes (FullTasGoal.BoxId: hierarchy path in the Overworld scene plus sibling index —
+        // Transform.GetSiblingIndex, the index within the box's direct parent, "SwapBlocksOnce/endDemo" being one box's
+        // name; paths aren't unique: course 2's GLOBALcashPerLoop #3 is the 55000 W global reward box, #5 bonus1's free
+        // reward box, which reward:bonus1 buys).
         static readonly (string token, string path, int sibling)[] FullTasBoxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
             ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
@@ -110,7 +115,40 @@ namespace IGTAPTasMod
             ("buyclone2", "Courses/course 2/localUpgrades/Clone", 1),
             ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult", 2),
             ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop", 3),
-            ("buydash", "Courses/course 2/localUpgrades/DashUnlock", 4) };
+            ("buydash", "Courses/course 2/localUpgrades/DashUnlock", 4),
+            ("buyreward3", "Courses/course 3/localUpgrades/CashPerLoop", 0),
+            ("buyclone3", "Courses/course 3/localUpgrades/CloneCount", 1),
+            ("buyclonemult3", "Courses/course 3/localUpgrades/CloneMult", 2),
+            ("buyfast3", "Courses/course 3/localUpgrades/FastCloneChance", 3),
+            ("buyglobalreward3", "Courses/course 3/localUpgrades/GLOBALcash", 4),
+            ("buyaj", "Courses/course 3/localUpgrades/Double jump", 5),
+            ("buyfree3", "Courses/course 3/localUpgrades/GLOBALWatt", 6),
+            ("buyclonespeed", "Courses/course 3/localUpgrades/GLOBALclonespeedmax", 9),
+            ("buystatue", "Courses/course 3/localUpgrades/enablePrestige", 10),
+            ("buyreward4", "Courses/course 4/localUpgrades/CashPerloop", 0),
+            ("buyclone4", "Courses/course 4/localUpgrades/Clone", 1),
+            ("buyclonemult4", "Courses/course 4/localUpgrades/CloneMult", 2),
+            ("buybig4", "Courses/course 4/localUpgrades/BigCloneChance", 3),
+            ("buyfast4", "Courses/course 4/localUpgrades/FastCloneChance", 4),
+            ("buymaxsize4", "Courses/course 4/localUpgrades/MaxCloneSize", 5),
+            ("buyglobalreward4", "Courses/course 4/localUpgrades/MaxCloneSize", 6),
+            ("buyswap", "Courses/course 4/localUpgrades/SwapBlocksOnce/endDemo", 7),
+            ("buyfree4a", "Courses/course 4/localUpgrades/GLOBALfastCloneChance", 8),
+            ("buyfree4b", "Courses/course 4/localUpgrades/GLOBALcashperloop", 9),
+            ("buyfree4c", "Courses/course 4/localUpgrades/GLOBALcash", 10),
+            ("buyprestige4", "Courses/course 4/localUpgrades/PrestigeUpgradeBox4", 11),
+            ("buyreward5", "Courses/course 5/localUpgrades/cashPerLoop", 0),
+            ("buyclone5", "Courses/course 5/localUpgrades/Clones", 1),
+            ("buyclonemult5", "Courses/course 5/localUpgrades/Clone mult", 2),
+            ("buyglobalreward5", "Courses/course 5/localUpgrades/global cash ", 3),
+            ("buybig5", "Courses/course 5/localUpgrades/Big clone chance", 4),
+            ("buyfast5", "Courses/course 5/localUpgrades/Fast clone chance", 5),
+            ("buyprestige5", "Courses/course 5/localUpgrades/prestige upgrade box", 6),
+            ("buyblockswap5", "Courses/course 5/localUpgrades/SwapBlocksOnDash", 7),
+            ("buyfree5", "Courses/course 5/localUpgrades/GLOBALCash", 8) };
+        // Buy tokens whose box trips the breaker (upgradeBox.tripBreaker: BoostOldCourses resets Courses 1-5, Cash goes
+        // to 0 and Area 1's lights go out); the studio marks the goals from there on.
+        static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
         // The most boxes one buy goal may name.
         const int MaxBuyGoalBoxes = 8;
 
@@ -118,8 +156,9 @@ namespace IGTAPTasMod
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
-        // The category the run's own purchases put it in so far (dash without wall jump is none: the audit flags it).
-        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? "wjdash" : "wj") : "none"; } }
+        // The category the run's own purchases put it in so far (dash without wall jump, or air jump without both, is
+        // the lower label: the audit flags it).
+        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? (_fullTasAirJump ? "wjdashaj" : "wjdash") : "wj") : "none"; } }
 
         // ---- Config
 
@@ -162,7 +201,7 @@ namespace IGTAPTasMod
         // A run's goals, in order; throws on a token that doesn't resolve.
         FullTasGoal[] ResolveFullTasGoals(FullTasRunDef run)
         {
-            if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters and digits only (\"" + run.name + "\").");
+            if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters, digits and \"%\" only (\"" + run.name + "\").");
             if (run.goals == null || run.goals.Count == 0) throw new InvalidOperationException("Full-TAS run " + run.name + " has no goals.");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
         }
@@ -336,14 +375,15 @@ namespace IGTAPTasMod
             if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseFinished(course, _engine.RunTicks, _engine.PhysicsTicks));
         }
 
-        // AfterBuyUpgrade: the game bought `box` (a buy goal's box, or a bonus's reward box). Wall jump and dash come with
-        // their boxes.
+        // AfterBuyUpgrade: the game bought `box` (a buy goal's box, or a bonus's reward box). Wall jump, dash and air
+        // jump come with their boxes.
         void FullTasBought(upgradeBox box)
         {
             if (_fullTas == null || !_engine.IsRunning) return;
             string path = HierarchyPath(box.transform);
             if (path == FullTasBoxes.First(b => b.token == "buywj").path) _fullTasWallJump = true;
             if (path == FullTasBoxes.First(b => b.token == "buydash").path) _fullTasDash = true;
+            if (path == FullTasBoxes.First(b => b.token == "buyaj").path) _fullTasAirJump = true;
             FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 
@@ -360,8 +400,25 @@ namespace IGTAPTasMod
         string FullTasRewardBox(CourseDef bonus)
         {
             if (_fullTasRewardBoxes.TryGetValue(bonus.name, out string cached)) return cached;
+            upgradeBox best = BonusRewardBox(bonus, out bool loaded);
+            if (!loaded) return null;
+            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": no upgrade box near the bonus's end rect.");
+            string id = FullTasBoxId(best);
+            _fullTasRewardBoxes[bonus.name] = id;
+            return id;
+        }
+
+        // Bonus name -> its reward box (BonusRewardBox), once the world had it.
+        readonly Dictionary<string, upgradeBox> _bonusRewardBoxes = new Dictionary<string, upgradeBox>(StringComparer.OrdinalIgnoreCase);
+
+        // The upgrade box nearest the centre of the bonus's end rect, closer than FullTasGoal.RewardBoxRange; null when
+        // none is (`loaded`: false when no upgrade box is loaded at all).
+        upgradeBox BonusRewardBox(CourseDef bonus, out bool loaded)
+        {
+            loaded = true;
+            if (_bonusRewardBoxes.TryGetValue(bonus.name, out upgradeBox known) && known != null) return known;
             upgradeBox[] boxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            if (boxes.Length == 0) return null;
+            if (boxes.Length == 0) { loaded = false; return null; }
             Vector2 centre = new Vector2(bonus.endX, bonus.endY) + CurrentOrigin();
             upgradeBox best = null;
             float bestDistance = FullTasGoal.RewardBoxRange * FullTasGoal.RewardBoxRange;
@@ -370,10 +427,8 @@ namespace IGTAPTasMod
                 float d = ((Vector2)box.transform.position - centre).sqrMagnitude;
                 if (d < bestDistance) { best = box; bestDistance = d; }
             }
-            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": no upgrade box near the bonus's end rect.");
-            string id = FullTasBoxId(best);
-            _fullTasRewardBoxes[bonus.name] = id;
-            return id;
+            if (best != null) _bonusRewardBoxes[bonus.name] = best;
+            return best;
         }
 
         // ---- Turbo
@@ -416,7 +471,7 @@ namespace IGTAPTasMod
             TurboRunner.Snapshot from = NewGameStart();
             tracker = new FullTasTracker(ResolveFullTasGoals(run));
             _fullTas = tracker;
-            _fullTasWallJump = _fullTasDash = false;
+            _fullTasWallJump = _fullTasDash = _fullTasAirJump = false;
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -614,6 +669,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("capabilities"); w.WriteValue("none");
                 w.WritePropertyName("fulltas"); w.WriteStartObject();
                 w.WritePropertyName("name"); w.WriteValue(run.name);
+                w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
                 w.WritePropertyName("goals"); w.WriteStartArray();
                 foreach (FullTasGoal g in goals)
                 {
@@ -730,11 +786,15 @@ namespace IGTAPTasMod
         {
             FullTasPlay play = _fullTasPlay;
             play.started = true;
+            // The fixed seed again before the first tick (CaptureNewGameStart already seeded the start snapshot this
+            // tick's prefix captured): the real-time run starts at the same RNG state the trace records, then diverges
+            // as every rendered frame draws Random (docs/fulltas.md).
+            UnityEngine.Random.InitState(FullTasSeed);
             BeginDeterministicPhysics(movement);
             _brakeTicks = -1;
             play.tracker.Reset();
             _fullTas = play.tracker;
-            _fullTasWallJump = _fullTasDash = false;
+            _fullTasWallJump = _fullTasDash = _fullTasAirJump = false;
             _engine.Run(play.route, _library, false, true, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             // Its first tick's quick restart, where every later one is done (BeforeMovementFixedUpdate).
@@ -1050,6 +1110,8 @@ namespace IGTAPTasMod
                 if (best == null || !_fullTasSplits.TryGetValue(best.id, out splits)) splits = new List<FullTasSplit>();
                 FullTasOffline offline = FullTasOfflineBest(r.name);
                 return new { name = r.name, goals = labels, tokens = labels, error = error,
+                    // The first goal that trips the breaker (FullTasBreakerTokens); null when none does.
+                    breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
                     // The offline search's best so far (partial runs included): goals reached, when, and the time to the last one.
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
@@ -1065,6 +1127,15 @@ namespace IGTAPTasMod
                 pending = _fullTasPending?.what,
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
                     next = play.tracker.Current?.label, droppedFrames = _droppedFrames } };
+        }
+
+        // The index of the first goal ("buy:a+b" labels) buying a FullTasBreakerTokens box; null when none does.
+        static int? FullTasBreakerGoal(string[] labels)
+        {
+            for (int i = 0; i < labels.Length; i++)
+                if (labels[i].StartsWith("buy:", StringComparison.Ordinal) && labels[i].Substring(4).Split('+').Any(t => FullTasBreakerTokens.Contains(t.Trim())))
+                    return i;
+            return null;
         }
     }
 }

@@ -120,6 +120,13 @@ namespace Box2D
 				m_tree.Query(m_queryCallback ??= QueryCallback, fatAABB);
 			}
 
+			// Box2D 2.3.x (Unity's lineage) sorts the pairs by (proxyIdA, proxyIdB) and creates their contacts in that
+			// order; 2.4.1 creates them in tree query order. The order is the world's and each body's contact list
+			// order (newest first), which is the island solver's constraint order: in a corner of one composite
+			// collider (wall, ceiling and a sloped face at once) it decides the resolved velocity to the last bit
+			// (diverge-c5-13.14 tick 882). The moved-flag check above already leaves no duplicates.
+			Array.Sort(m_pairBuffer, 0, m_pairCount, PairLessThan.Instance);
+
 			for (var i = 0; i < m_pairCount; ++i)
 			{
 				Pair primaryPair = m_pairBuffer[i];
@@ -246,6 +253,17 @@ namespace Box2D
 			++m_pairCount;
 
 			return true;
+		}
+
+		sealed class PairLessThan : System.Collections.Generic.IComparer<Pair>
+		{
+			public static readonly PairLessThan Instance = new PairLessThan();
+
+			public int Compare(Pair a, Pair b)
+			{
+				if (a.proxyIdA != b.proxyIdA) return a.proxyIdA < b.proxyIdA ? -1 : 1;
+				return a.proxyIdB < b.proxyIdB ? -1 : a.proxyIdB > b.proxyIdB ? 1 : 0;
+			}
 		}
 	}
 }

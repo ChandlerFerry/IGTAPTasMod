@@ -557,40 +557,40 @@ namespace IGTAP.EngineSim.Cli
             {
                 name = _name,
                 goals = _labels,
-                inputs = r.Inputs.Select(ToJson),
+                inputs = r.Inputs.Select(t => t.ToJson()),
                 goalInputTicks = r.GoalInput,
                 goalPhysicsTicks = r.GoalPhysics,
                 total = r.Progress == _goals ? r.Last : -1,
             }));
-            File.Move(temp, _runFile, true);
+            Replace(temp, _runFile);
             string file = _runFile;
             if (r.Progress == _goals)
             {
                 float time = r.Last * _dt;
                 Directory.CreateDirectory(_outDir);
                 file = Path.Combine(_outDir, "fulltas-" + _name + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, ticks = r.Inputs.Select(ToJson) }));
+                File.WriteAllText(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, ticks = r.Inputs.Select(t => t.ToJson()) }));
                 _pending?.Set(r.Inputs);
             }
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
         }
 
-        static object ToJson(InputTick t) { return new { t.x, t.held, t.press, t.release, t.dash, t.dashJump, t.reset }; }
+        // The game reads the run file whenever it changes (FullTasPlugin.FullTasOfflineBest, ReadAllText: no delete share),
+        // so a replace can land mid-read and be denied; the read takes milliseconds.
+        static void Replace(string temp, string path)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { File.Move(temp, path, true); return; }
+                catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < 50) { Thread.Sleep(20); }
+            }
+        }
 
         // A trace's or run file's "inputs" (a trace's "ticks" are its state records), or an offline best's "ticks".
         static List<InputTick> ReadInputs(JsonElement root)
         {
             JsonElement list = root.TryGetProperty("inputs", out JsonElement inputs) ? inputs : root.GetProperty("ticks");
-            return list.EnumerateArray().Select(t => new InputTick
-            {
-                x = t.GetProperty("x").GetSingle(),
-                held = t.GetProperty("held").GetBoolean(),
-                press = t.GetProperty("press").GetBoolean(),
-                release = t.GetProperty("release").GetBoolean(),
-                dash = t.GetProperty("dash").GetBoolean(),
-                dashJump = t.GetProperty("dashJump").GetInt32(),
-                reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
-            }).ToList();
+            return list.EnumerateArray().Select(InputTick.FromJson).ToList();
         }
 
         static T Option<T>(string[] args, string name, T fallback)
@@ -625,7 +625,7 @@ namespace IGTAP.EngineSim.Cli
             while (true)
             {
                 List<InputTick> inputs = _pending.Take();
-                string body = JsonSerializer.Serialize(new { name = _name, ticks = inputs.Select(ToJson) });
+                string body = JsonSerializer.Serialize(new { name = _name, ticks = inputs.Select(t => t.ToJson()) });
                 try
                 {
                     string reply = http.PostAsync(Api + "/api/fulltas/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result

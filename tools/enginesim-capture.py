@@ -19,10 +19,12 @@ import sys
 import time
 import urllib.request
 
+from gamepaths import CONFIG
+
 API = "http://127.0.0.1:17426"
 CAPS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash", "WJ_DASH_AJ": "wjdashaj"}
 # The course of a category route is its courses.json id or name ("bonus1_WJ 13.56").
-COURSES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\courses.json"
+COURSES = CONFIG / "courses.json"
 COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
 COURSE_IDS.update({str(c): c for c in COURSE_IDS.values()})
 CATEGORIES = [(1, "wjdashaj"), (1, "wjdash"), (1, "wj"), (1, "none"), (2, "wjdashaj"), (2, "wjdash"), (2, "wj"),

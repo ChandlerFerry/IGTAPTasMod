@@ -39,6 +39,8 @@ namespace IGTAP.EngineSim
     {
         [ThreadStatic] public static IPhysicsBackend Physics;
         [ThreadStatic] public static IScheduler Scheduler;
+        // The controller's stick (InputAction.ReadValue<Vector2>): what a run holds (MacroEngine.DeviceStick).
+        [ThreadStatic] public static Func<Vector2> Stick;
         public static string[] LayerNames = new string[32];
         public static int NextInstanceId = -1;
     }
@@ -51,6 +53,10 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, Collider2D> UpgradeBoxStay;
         [ThreadStatic] public static Action<object, bool> ClonesOnScreen;
         [ThreadStatic] public static Action<object> CourseReward, Respawn;
+        // Sound methods the host cuts still draw UnityEngine.Random in a turbo run; these keep their draws
+        // (enginesim/README.md's consumer audit). Audio id: Audio.AUDIO_ID, as its underlying int.
+        [ThreadStatic] public static Action<object, string> PlaySfx;
+        [ThreadStatic] public static Action<object, int, float, float> PlayAudio;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
         public static void OnDashFrame(object movement, bool isDashBounce) { DashFrame?.Invoke(movement); }
@@ -60,5 +66,7 @@ namespace IGTAP.EngineSim
         public static void OnClonesOnScreen(object clones, bool newOnScreen) { ClonesOnScreen?.Invoke(clones, newOnScreen); }
         public static void OnCourseReward(object course) { CourseReward?.Invoke(course); }
         public static void OnRespawn(object movement, bool manuallyTriggered) { Respawn?.Invoke(movement); }
+        public static void OnPlaySfx(object movement, string code) { PlaySfx?.Invoke(movement, code); }
+        public static void OnPlayAudio(object audio, int id, float volume, float pitchVariance) { PlayAudio?.Invoke(audio, id, volume, pitchVariance); }
     }
 }

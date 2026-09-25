@@ -79,7 +79,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(ToJson) }));
+                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 // A seed's or a saved plateau route's result was found before (its file already written).
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
@@ -98,11 +98,10 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, best {solver.Shared.Time:0.00}s"
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
-                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB"
-                    + $" DBG stateCaps {OfflineSolver.DbgStateCaps} betterCaps {OfflineSolver.DbgBetterCaps} gc0 {GC.CollectionCount(0)} gc2 {GC.CollectionCount(2)} pause {GC.GetTotalPauseDuration().TotalSeconds:0.0}s");
+                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
                 // Every minute: a solve the studio stops is killed, so the search state is saved as it goes.
                 if (++beats % 6 == 0) SaveMemory(archiveFile, solver.Export(5000));
@@ -113,20 +112,18 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        static object ToJson(InputTick t) { return new { t.x, t.held, t.press, t.release, t.dash, t.dashJump }; }
-
         // What a submit is for: a course's category.
         sealed record Target(int Course, string Caps)
         {
             public string Body(string caps, List<InputTick> inputs)
             {
-                return JsonSerializer.Serialize(new { course = Course, capabilities = caps, ticks = inputs.Select(ToJson) });
+                return JsonSerializer.Serialize(new { course = Course, capabilities = caps, ticks = inputs.Select(t => t.ToJson()) });
             }
         }
 
         // forced-paths.json (next to the exe): boxes for a course's categories, relative to that course's start gate (its
         // courseScript object), since traces are captured in different world frames (the floating origin moves).
-        static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath)
+        internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath)
         {
             string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
             if (!File.Exists(file)) return;
@@ -145,7 +142,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // Where the course's courseScript object sits in a world export.
-        static Vector2 CourseGate(string worldPath, int course)
+        internal static Vector2 CourseGate(string worldPath, int course)
         {
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
             foreach (JsonElement o in world.RootElement.GetProperty("objects").EnumerateArray())
@@ -159,14 +156,14 @@ namespace IGTAP.EngineSim.Cli
             throw new InvalidOperationException("forced-paths.json: no course " + course + " start gate in " + Path.GetFileName(worldPath));
         }
 
-        static JsonElement ReadHeader(string trace)
+        internal static JsonElement ReadHeader(string trace)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(trace), new JsonDocumentOptions { MaxDepth = 256 });
             return doc.RootElement.Clone();
         }
 
         // A simulation of the trace's start, scored like the trace's run.
-        static Func<Simulation> Creator(string trace, JsonElement header)
+        internal static Func<Simulation> Creator(string trace, JsonElement header)
         {
             string worldPath = Path.ChangeExtension(trace, null) + ".world.json";
             JsonElement start = header.GetProperty("start");
@@ -179,19 +176,11 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        static List<InputTick> ReadInputs(JsonElement trace)
+        internal static List<InputTick> ReadInputs(JsonElement trace)
         {
             // A trace has "inputs"; solve's own best files (offline-best/*.json) have "ticks".
             JsonElement list = trace.TryGetProperty("inputs", out JsonElement inputs) ? inputs : trace.GetProperty("ticks");
-            return list.EnumerateArray().Select(t => new InputTick
-            {
-                x = t.GetProperty("x").GetSingle(),
-                held = t.GetProperty("held").GetBoolean(),
-                press = t.GetProperty("press").GetBoolean(),
-                release = t.GetProperty("release").GetBoolean(),
-                dash = t.GetProperty("dash").GetBoolean(),
-                dashJump = t.GetProperty("dashJump").GetInt32(),
-            }).ToList();
+            return list.EnumerateArray().Select(InputTick.FromJson).ToList();
         }
 
         static T Option<T>(string[] args, string name, T fallback)
@@ -201,7 +190,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // Inputs as runs of equal ticks, "x,flags,dashJump,count" joined by ';' (flags: held 1, press 2, release 4,
-        // dash 8): a prefix is mostly long runs of the same stick.
+        // dash 8, quick restart 16, stick down 32, stick up 64): a prefix is mostly long runs of the same stick.
         static string EncodeTicks(List<InputTick> ticks)
         {
             var text = new StringBuilder();
@@ -210,7 +199,8 @@ namespace IGTAP.EngineSim.Cli
                 int j = i + 1;
                 while (j < ticks.Count && ticks[j].Equals(ticks[i])) j++;
                 InputTick t = ticks[i];
-                int flags = (t.held ? 1 : 0) | (t.press ? 2 : 0) | (t.release ? 4 : 0) | (t.dash ? 8 : 0);
+                int flags = (t.held ? 1 : 0) | (t.press ? 2 : 0) | (t.release ? 4 : 0) | (t.dash ? 8 : 0) | (t.reset ? 16 : 0)
+                    | (t.y < 0f ? 32 : 0) | (t.y > 0f ? 64 : 0);
                 if (text.Length > 0) text.Append(';');
                 text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(j - i);
                 i = j;
@@ -229,7 +219,8 @@ namespace IGTAP.EngineSim.Cli
                 var t = new InputTick
                 {
                     x = float.Parse(f[0], CultureInfo.InvariantCulture),
-                    held = (flags & 1) != 0, press = (flags & 2) != 0, release = (flags & 4) != 0, dash = (flags & 8) != 0,
+                    y = (flags & 32) != 0 ? -1f : (flags & 64) != 0 ? 1f : 0f,
+                    held = (flags & 1) != 0, press = (flags & 2) != 0, release = (flags & 4) != 0, dash = (flags & 8) != 0, reset = (flags & 16) != 0,
                     dashJump = int.Parse(f[2], CultureInfo.InvariantCulture),
                 };
                 for (int n = int.Parse(f[3], CultureInfo.InvariantCulture); n > 0; n--) ticks.Add(t);
@@ -251,7 +242,7 @@ namespace IGTAP.EngineSim.Cli
             File.Move(temp, path, true);
         }
 
-        static OfflineSolver.Memory LoadMemory(string path)
+        internal static OfflineSolver.Memory LoadMemory(string path)
         {
             if (!File.Exists(path)) return null;
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));

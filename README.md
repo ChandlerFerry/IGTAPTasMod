@@ -12,7 +12,7 @@
 - Turbo, offline and playback use identical unlocks.
 - Full-TAS runs gain unlocks only through the game's purchases.
 - "Don't touch my unlocks" on: never write an unlock.
-- Bonuses run only in their first category.
+- Bonuses run only in their first category, or up to their `maxCapabilities` in `courses.json`.
 - Time runs from the course's start gate to end gate.
 - Finishing a different course never counts.
 - Flying starts allowed: time counts from the last start-gate crossing.
@@ -25,6 +25,7 @@
 - Purchases count only when the game itself buys the box.
 - Spike grace is allowed: up to two overlapping ticks.
 - Never replace game logic; patches only read, input, skip saves.
+- The one RNG write: the Full-TAS runs' fixed seed, `UnityEngine.Random.InitState` at the fresh new game before its start snapshot; nothing else writes the RNG.
 - Never change Unity's clock or fixed timestep.
 - Never edit the game's save files.
 - Never autosave while category unlocks or turbo are applied.
@@ -37,7 +38,6 @@
 - `enginesim` can't do something? Fix `enginesim`, don't work around.
 - Offline replay must match the game tick for tick.
 - Only save strictly faster times.
-- Never delete favorite routes; candidates become new routes.
 - Trace every new best and name its trick.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
@@ -55,7 +55,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `plan-fulltas.py`. |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `plan-fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses). |
 
 ## Build
 
@@ -63,8 +63,9 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 dotnet build .\IGTAPTasMod.csproj -c Release     # web UI + plugin, copied into the game
 ```
 
-Close the game before building (the plugin DLL is locked), then relaunch it. `python tools/enginesim-redeploy.py` does
-this for a plugin-only build.
+The game is the Steam install (`Directory.Build.props`, `tools/gamepaths.py`; `IGTAP_GAME` overrides it). Close the
+game before building (the plugin DLL is locked), then relaunch it. `python tools/enginesim-redeploy.py` does this for a
+plugin-only build.
 
 ## Solving
 

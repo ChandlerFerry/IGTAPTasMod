@@ -39,18 +39,22 @@ namespace IGTAPTasMod
             // The narrowest category the course is run in (none|wj|wjdash|wjdashaj): Course 2 needs wall jump,
             // Course 3 wall jump + dash, Course 4 all three. Missing = every category.
             public string minCapabilities;
+            // The widest category (bonuses only): a bonus runs from minCapabilities up to this. Missing = only its first.
+            public string maxCapabilities;
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
-            // A bonus is only run in its first category (the unlocks it needs); courses and transitions in every wider one too.
-            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && (!IsBonus || level == MinLevel); }
+            // Courses and transitions run in every category from their first; a bonus only up to maxCapabilities.
+            [JsonIgnore] public int MaxLevel { get { return !IsBonus ? 3 : string.IsNullOrEmpty(maxCapabilities) ? MinLevel : CapsLevel(maxCapabilities); } }
+            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && level <= MaxLevel; }
         }
 
         sealed class SolverTick
         {
-            public float x; public bool held, press, release, dash; public int dashJump;
+            // The stick (y 0 or ±1: down is fast fall and a faster wall slide, up a slower one).
+            public float x, y; public bool held, press, release, dash; public int dashJump;
             // The game's quick restart right before this tick (MacroStep.rawQuickRestart).
             public bool reset;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
@@ -107,30 +111,53 @@ namespace IGTAPTasMod
 
         string CoursesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "courses.json"); } }
 
-        void LoadCourses()
+        // The game's courses (courseNumber 1-10). Start points: each course's start checkpoint (quick restarts for 1-5; the
+        // game places the player 12 px below). 6-10 need at least the full kit until a route shows otherwise.
+        static CourseDef[] GameCourses()
         {
-            try
-            {
-                if (File.Exists(CoursesPath)) { _courses = JsonConvert.DeserializeObject<List<CourseDef>>(File.ReadAllText(CoursesPath)); return; }
-            }
-            catch (Exception ex) { Logger.LogWarning("courses.json rejected: " + ex.Message); }
-            // Start points (quick restarts for 1-5); the game places the player 12 px below. Course ids are the game's
-            // courseNumber; bonus areas hold 101+. Bonuses have no gates and finish on a free secret box's buy trigger:
-            // bonus1 starts in the course 2 secret shaft (box at the corridor's end); bonus2 on the ledge past Course 2's
-            // top where Course2_To_Bonus2 arrives (course 3's GLOBALcash box); bonus3 at Course 3's start (course 3's
-            // GLOBALclonespeedmax box, right of the course).
-            _courses = new List<CourseDef> {
+            return new[] {
                 new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none" },
                 new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none" },
                 new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjdash" },
                 new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdashaj" },
                 new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdashaj" },
+                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdashaj" } };
+        }
+
+        void LoadCourses()
+        {
+            try
+            {
+                if (File.Exists(CoursesPath))
+                {
+                    _courses = JsonConvert.DeserializeObject<List<CourseDef>>(File.ReadAllText(CoursesPath));
+                    // A courses.json from before a course was known gains it, after the courses it has (ahead of the bonuses
+                    // and transitions: a run's course is found by its start point, and some bonuses share a course's start).
+                    CourseDef[] missing = GameCourses().Where(g => !_courses.Any(c => c.id == g.id)).ToArray();
+                    if (missing.Length == 0) return;
+                    int at = _courses.FindLastIndex(c => string.IsNullOrEmpty(c.name) && c.id < 100) + 1;
+                    _courses.InsertRange(at, missing);
+                    SaveCourses();
+                    return;
+                }
+            }
+            catch (Exception ex) { Logger.LogWarning("courses.json rejected: " + ex.Message); }
+            // Course ids are the game's courseNumber; bonus areas hold 101+. Bonuses have no gates and finish on a free
+            // secret box's buy trigger: bonus1 starts in the course 2 secret shaft (box at the corridor's end); bonus2 on
+            // the ledge past Course 2's top where Course2_To_Bonus2 arrives (course 3's GLOBALcash box); bonus3 at Course
+            // 3's start (course 3's GLOBALclonespeedmax box, right of the course).
+            _courses = GameCourses().ToList();
+            _courses.AddRange(new[] {
                 new CourseDef { id = 101, name = "bonus1", x = 7392.427f, y = 2807.015f, minCapabilities = "wj",
                     endX = 5239.43f, endY = 681f, endW = 127.5f, endH = 6f },
                 new CourseDef { id = 102, name = "bonus2", x = 7670f, y = 5207.015f, minCapabilities = "wjdash",
                     endX = 8622f, endY = 5622.977f, endW = 127.5f, endH = 6f },
                 new CourseDef { id = 103, name = "bonus3", x = 9505f, y = 6967.01465f, minCapabilities = "wjdash",
-                    endX = 11200.0996f, endY = 7363.977f, endW = 127.5f, endH = 6f } };
+                    endX = 11200.0996f, endY = 7363.977f, endW = 127.5f, endH = 6f } });
             SaveCourses();
         }
 
@@ -144,13 +171,17 @@ namespace IGTAPTasMod
             // The lowest unused id: bonus areas hold 101+, so the game's courses keep their own numbers.
             int id = 1;
             while (_courses.Any(c => c.id == id)) id++;
-            _courses.Add(new CourseDef { id = id, x = recording.samples[0].positionX, y = recording.samples[0].positionY + 12f });
+            Vector2 first = Absolute(recording.samples[0]);
+            _courses.Add(new CourseDef { id = id, x = first.x, y = first.y + 12f });
             SaveCourses();
             CreateRouteFromRecording(recording);
             _library.macros[_library.macros.Count - 1].name = id + "_REC " + recording.name;
             SaveLibrary();
             return new { ok = true, course = id };
         }
+
+        // A recorded tick's position in courses.json's frame (FloatingOrigin moves the world once the player is far out).
+        static Vector2 Absolute(RawTickSample t) { return new Vector2(t.positionX - t.originX, t.positionY - t.originY); }
 
         // "Course1_To_Course2_WJ", "Course2_To_Bonus2", "Bonus2_To_Course3" (category suffix optional).
         static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ))?\b", RegexOptions.IgnoreCase);
@@ -172,9 +203,8 @@ namespace IGTAPTasMod
             bool fromBonus = m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             bool toBonus = m.Groups[3].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             string origin = (fromBonus ? "bonus" : "") + m.Groups[2].Value, target = (toBonus ? "bonus" : "") + m.Groups[4].Value;
-            RawTickSample first = recording.samples[0];
             // The player stands 12 px below a start (a quick restart there).
-            Vector2 start = new Vector2(first.positionX, first.positionY + 12f);
+            Vector2 start = Absolute(recording.samples[0]) + new Vector2(0f, 12f);
             if (!fromBonus)
             {
                 CourseDef course = _courses.Find(c => c.id == int.Parse(origin) && !c.IsBonus && !c.IsTransition);
@@ -214,8 +244,8 @@ namespace IGTAPTasMod
             List<RawTickSample> samples = recording.samples;
             if (transition.HasFinish)
             {
-                int arrival = samples.FindIndex(t => Mathf.Abs(t.positionX - transition.endX) <= transition.endW / 2f
-                    && Mathf.Abs(t.positionY - transition.endY) <= transition.endH / 2f);
+                int arrival = samples.FindIndex(t => Mathf.Abs(Absolute(t).x - transition.endX) <= transition.endW / 2f
+                    && Mathf.Abs(Absolute(t).y - transition.endY) <= transition.endH / 2f);
                 if (arrival >= 0 && arrival + 2 < samples.Count) samples = samples.GetRange(0, arrival + 2);
             }
             CreateRouteFromRecording(recording, samples);
@@ -235,7 +265,7 @@ namespace IGTAPTasMod
                 Match m = TransitionName.Match(r.name ?? "");
                 if (!m.Success || r.samples == null || r.samples.Count == 0 || !m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase)
                     || "bonus" + m.Groups[2].Value != bonus) continue;
-                start = new Vector2(r.samples[0].positionX, r.samples[0].positionY + 12f);
+                start = Absolute(r.samples[0]) + new Vector2(0f, 12f);
                 return true;
             }
             start = Vector2.zero;
@@ -246,13 +276,16 @@ namespace IGTAPTasMod
             { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" }, { "wjdashaj", "WJ_DASH_AJ" } };
 
         // Course 3 starts at WJDASH, Course 4 at WJ_DASH_AJ (courses.json minCapabilities);
-        // a bonus has only its first category.
+        // a bonus has only its first category unless maxCapabilities widens it.
         void CheckCategory(int course, string capabilities)
         {
             CourseDef def = _courses.Find(c => c.id == course);
-            if (def != null && !def.HasCategory(capabilities))
-                throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
-                    + " category; it " + (def.IsBonus ? "is only run in " : "starts at ") + CapabilityLabels[def.minCapabilities] + ".");
+            if (def == null || def.HasCategory(capabilities)) return;
+            string Label(int level) => CapabilityLabels.First(p => CapsLevel(p.Key) == level).Value;
+            throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
+                + " category; it " + (!def.IsBonus ? "starts at " + Label(def.MinLevel)
+                    : def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
+                    : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel)) + ".");
         }
 
         // Where the build put `IGTAP.EngineSim.exe` (IGTAPTasMod.csproj: AssemblyMetadata "EngineSimExe").
@@ -433,11 +466,31 @@ namespace IGTAPTasMod
         }
 
         // The studio's sidebar groups category routes by these: a course with a reward box is a bonus, one with `to` a
-        // transition ("2" to "bonus2").
+        // transition ("2" to "bonus2"). A bonus's `hint` is its reward box's reward and price as the game shows them.
         object[] BuildCourseWebState()
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus, minLevel = c.MinLevel,
-                @from = c.from, to = c.to }).ToArray();
+                maxLevel = c.MaxLevel, @from = c.from, to = c.to, hint = c.IsBonus ? BonusHint(c) : null }).ToArray();
+        }
+
+        static readonly FieldInfo BoxCurrency = AccessTools.Field(typeof(upgradeBox), "upgradeCurrency");
+        static readonly Regex RichTextTag = new Regex("<[^>]*>"), Whitespace = new Regex(@"\s+");
+
+        // "Reward: 0% extra watts [Global] [+40% Per use]\nPrice: 0w"; null until the world has the box.
+        string BonusHint(CourseDef bonus)
+        {
+            upgradeBox box = BonusRewardBox(bonus, out _);
+            if (box == null) return null;
+            var currency = (globalStats.Currencies)BoxCurrency.GetValue(box);
+            string BoxText(string field) => Whitespace.Replace(RichTextTag.Replace(Traverse.Create(box).Field(field).Property("text").GetValue<string>() ?? "", ""), " ").Trim();
+            string reward = BoxText("upgradeNameDisplay"), tier = BoxText("tierEffectDisplay");
+            if (reward.Length == 0) reward = box.upgrade == localUpgrades.localUpgradeSet.GLOBAL ? box.globalUpgrade.ToString()
+                : box.upgrade == localUpgrades.localUpgradeSet.Movement ? box.movementUpgrade.ToString() : box.upgrade.ToString();
+            string price;
+            try { price = RichTextTag.Replace(CashDisplay.updateCashDisplay(box.upgradeCost, currency).Item1, ""); }
+            catch (Exception) { price = box.upgradeCost.ToString("0.##", CultureInfo.InvariantCulture) + " " + currency; }
+            return "Reward: " + reward + (tier.Length > 0 ? " " + tier : "") + "\nPrice: " + price
+                + (box.TimesUsed > 0 ? " (bought)" : "");
         }
 
         // Snapshots hold world positions: after a FloatingOrigin shift the start state is recaptured (PrepareEngineSimRun).
@@ -512,6 +565,86 @@ namespace IGTAPTasMod
         }
 
         static string Quote(string path) { return "\"" + path + "\""; }
+
+        // Set while `map` runs: one at a time.
+        volatile bool _mapRunning;
+
+        // POST /api/enginesim/map {course, capabilities}: the Optimize tab's map of a target. `IGTAP.EngineSim map` replays,
+        // offline from the target's last start capture (what Solve wrote), the course's library routes, its fastest
+        // offline best, its archive's plateau routes and explore prefixes, and returns them with the level's colliders
+        // and the standing forced-path boxes. Only on request, at below-normal priority, off the main thread: the game
+        // and a running solve keep their pace. Answers when the process ends (a few seconds).
+        object EngineSimMap(WebStudioRequest request, JObject body)
+        {
+            int id = Number(body, "course", 0);
+            string caps = Text(body, "capabilities");
+            CourseDef course = _courses.FirstOrDefault(c => c.id == id);
+            if (course == null || (caps != "none" && CapsLevel(caps) == 0) || !course.HasCategory(caps))
+            {
+                request.StatusCode = 400;
+                return new { ok = false, error = "Unknown course " + id + " or capabilities '" + caps + "'." };
+            }
+            string trace = new[] { "optimize-c", "start-c" }.Select(p => Path.Combine(EngineSimDir, p + course.Token + "-" + caps + ".json")).FirstOrDefault(File.Exists);
+            if (trace == null)
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No start capture for " + course.Token + " " + caps + " yet: solve it once first." };
+            }
+            if (_mapRunning)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "A map is already being drawn." };
+            }
+            string name = "map-c" + course.Token + "-" + caps;
+            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
+            string output = Path.Combine(EngineSimDir, name + ".json");
+            var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output));
+            int seeds = 0;
+            foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
+                && m.name.StartsWith(course.Token + "_", StringComparison.OrdinalIgnoreCase)
+                && m.steps.All(s => s.type == MacroStepType.RawInput)))
+            {
+                string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
+                File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
+                args.Append(" --seed ").Append(Quote(seed));
+            }
+            _mapRunning = true;
+            request.AsyncHandling = true;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
+                        UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                        WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
+                    {
+                        process.Start();
+                        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
+                        var errors = process.StandardError.ReadToEndAsync();
+                        process.StandardOutput.ReadToEnd();
+                        process.WaitForExit();
+                        if (process.ExitCode == 0) request.Response = File.ReadAllText(output);
+                        else
+                        {
+                            request.StatusCode = 500;
+                            string error = errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode;
+                            request.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + error.Trim() });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    request.StatusCode = 500;
+                    request.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + ex.Message });
+                }
+                finally
+                {
+                    _mapRunning = false;
+                    request.Completed.Set();
+                }
+            });
+            return null;
+        }
 
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
         static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via");
@@ -670,7 +803,7 @@ namespace IGTAPTasMod
 
         static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ_DASH_AJ|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
 
-        // Keeps only the fastest "<course>_<CAPS> <time>" route per category; favorites are never removed. True if any was removed.
+        // Keeps only the fastest "<course>_<CAPS> <time>" route per category. True if any was removed.
         bool PruneSlowerRoutes()
         {
             var fastest = new Dictionary<string, float>();
@@ -688,13 +821,13 @@ namespace IGTAPTasMod
             foreach (MacroDefinition m in _library.macros)
             {
                 Match g = CategoryRoute.Match(m.name ?? "");
-                if (g.Success && !m.favorite && float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) <= fastest[g.Groups[1].Value.ToUpperInvariant()])
+                if (g.Success && float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) <= fastest[g.Groups[1].Value.ToUpperInvariant()])
                     kept[g.Groups[1].Value.ToUpperInvariant()] = m;
             }
             int removed = _library.macros.RemoveAll(m =>
             {
                 Match g = CategoryRoute.Match(m.name ?? "");
-                return g.Success && !m.favorite && (!kept.TryGetValue(g.Groups[1].Value.ToUpperInvariant(), out MacroDefinition keep) || keep != m);
+                return g.Success && (!kept.TryGetValue(g.Groups[1].Value.ToUpperInvariant(), out MacroDefinition keep) || keep != m);
             });
             _library.selectedIndex = Mathf.Clamp(_library.selectedIndex, 0, Math.Max(0, _library.macros.Count - 1));
             return removed > 0;
@@ -705,7 +838,7 @@ namespace IGTAPTasMod
             var ticks = new List<SolverTick>();
             foreach (MacroStep s in steps)
                 for (int i = 0; i < Math.Max(1, s.durationTicks); i++)
-                    ticks.Add(new SolverTick { x = s.rawMoveX, held = s.rawJumpHeld,
+                    ticks.Add(new SolverTick { x = s.rawMoveX, y = s.rawMoveY, held = s.rawJumpHeld,
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, reset = i == 0 && s.rawQuickRestart });
             return ticks;
@@ -718,7 +851,7 @@ namespace IGTAPTasMod
             {
                 MacroStep last = steps.Count > 0 ? steps[steps.Count - 1] : null;
                 // A press or a quick restart starts a step of its own.
-                if (last != null && !k.press && !k.release && !k.dash && !k.reset && last.rawMoveX == k.x && last.rawJumpHeld == k.held)
+                if (last != null && !k.press && !k.release && !k.dash && !k.reset && last.rawMoveX == k.x && last.rawMoveY == k.y && last.rawJumpHeld == k.held)
                 {
                     last.durationTicks++;
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
@@ -726,7 +859,7 @@ namespace IGTAPTasMod
                 }
                 steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
                     durationMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f), endCondition = ActionEndCondition.FixedTicks,
-                    direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawJumpHeld = k.held,
+                    direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, rawQuickRestart = k.reset });
             }

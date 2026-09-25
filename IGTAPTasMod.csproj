@@ -4,7 +4,7 @@
     <LangVersion>7.3</LangVersion>
     <AssemblyName>IGTAPTasMod</AssemblyName>
     <RootNamespace>IGTAPTasMod</RootNamespace>
-    <GameRoot>C:\Users\deafwave\Downloads\IGTAP_Real</GameRoot>
+    <GameRoot>$(IgtapGame)</GameRoot>
     <ManagedDir>$(GameRoot)\IGTAPfullGame_Data\Managed</ManagedDir>
     <BepInExDir>$(GameRoot)\BepInEx\core</BepInExDir>
     <PluginDir>$(GameRoot)\BepInEx\plugins</PluginDir>
@@ -14,6 +14,9 @@
     <!-- The offline engine host builds its own assemblies (including a rewritten Assembly-CSharp). -->
     <None Remove="enginesim\**" />
     <Compile Remove="enginesim\**\*.cs" />
+    <!-- Untracked scratch projects (own csproj, own build output) aren't part of the plugin. -->
+    <Compile Remove="_scratch\**\*.cs" />
+    <None Remove="_scratch\**" />
     <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
     <Reference Include="0Harmony" HintPath="$(BepInExDir)\0Harmony.dll" Private="false" />
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />

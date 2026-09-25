@@ -85,6 +85,21 @@ namespace IGTAPTasMod
         // Solver runs happen dozens of times a second; their start/end lines would flood the log.
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
+        // The stick the game reads from the controller while a run plays (Movement.FixedUpdate and Update, through
+        // NormaliseInput): the vertical of the input tick due next, x at rest. FixedUpdate reads it before the input hook,
+        // for fast fall (down, Movement.cs:1104) and wall-slide speed (ApplyWallslideFriction); the hook then sets the
+        // tick's whole stick. Nothing between the two reads x, and ticks without the hook (dash, spring) keep x at rest,
+        // as a stick held neutral does.
+        public Vector2 DeviceStick
+        {
+            get
+            {
+                if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0 || _stepIndex < 0 || _stepIndex >= _steps.Count)
+                    return Vector2.zero;
+                MacroStep step = _steps[_stepIndex];
+                return step.type == MacroStepType.RawInput ? new Vector2(0f, step.rawMoveY) : Vector2.zero;
+            }
+        }
 
         public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null)

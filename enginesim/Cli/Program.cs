@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
+                    case "map": return Map.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "branch": return Branch(args[1], args.Length > 2 ? int.Parse(args[2]) : 200);
@@ -35,11 +36,7 @@ namespace IGTAP.EngineSim.Cli
                         var (sim, _, _) = Open(args[1]);
                         using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
                         JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
-                        var inputs = list.EnumerateArray().Select(t => new InputTick
-                        {
-                            x = t.GetProperty("x").GetSingle(), held = t.GetProperty("held").GetBoolean(), press = t.GetProperty("press").GetBoolean(),
-                            release = t.GetProperty("release").GetBoolean(), dash = t.GetProperty("dash").GetBoolean(), dashJump = t.GetProperty("dashJump").GetInt32(),
-                        }).ToList();
+                        var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
                         // --verbose: every tick with the movement state a trick depends on.
                         bool verbose = args.Contains("--verbose");
                         string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames" };
@@ -65,7 +62,7 @@ namespace IGTAP.EngineSim.Cli
                                 // The input this tick consumed; dash ticks consume none (the game skips its input hook).
                                 int run = (int)sim.Engine.RunTicks - 1;
                                 InputTick k = run >= 0 && run < inputs.Count ? inputs[run] : default;
-                                string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
+                                string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.y != 0f ? " y=" + k.y : "")}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
                                     + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") : "");
                                 lastRun = run + 1;
                                 Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}"
@@ -77,7 +74,7 @@ namespace IGTAP.EngineSim.Cli
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()) : ""));
                             was = timing;
                         });
-                        Console.WriteLine($"finished {r.Finished} time {r.Time} tick {r.FinishTick}");
+                        Console.WriteLine($"finished {r.Finished} time {r.Time} tick {r.FinishTick}" + (r.Finished ? "" : " (" + r.EndReason + ")"));
                         return 0;
                     }
                     default:
@@ -95,6 +92,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         (/api/fulltas/submit) when the game runs; --seed: saved course\n"
                             + "                                         routes ({goals, standing, restart, ticks}) as window starts\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
+                            + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N]\n"
+                            + "                                         the target's routes, archive coverage, colliders and forced-path\n"
+                            + "                                         boxes as one JSON for the studio's Optimize map\n"
                             + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
                         return 2;
                 }
@@ -114,16 +114,7 @@ namespace IGTAP.EngineSim.Cli
             JsonDocument trace = JsonDocument.Parse(File.ReadAllText(tracePath), new JsonDocumentOptions { MaxDepth = 256 });
             sim.SetTarget(trace.RootElement);
             sim.LoadStart(trace.RootElement.GetProperty("start"));
-            var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(t => new InputTick
-            {
-                x = t.GetProperty("x").GetSingle(),
-                held = t.GetProperty("held").GetBoolean(),
-                press = t.GetProperty("press").GetBoolean(),
-                release = t.GetProperty("release").GetBoolean(),
-                dash = t.GetProperty("dash").GetBoolean(),
-                dashJump = t.GetProperty("dashJump").GetInt32(),
-                reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
-            }).ToList();
+            var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
             return (sim, trace, inputs);
         }
 
@@ -131,6 +122,15 @@ namespace IGTAP.EngineSim.Cli
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
+            // --contacts: the first 40 steps' contacts, offline and turbo; --contacts=A-B: steps A through B.
+            string contactsArg = args.FirstOrDefault(a => a == "--contacts" || a.StartsWith("--contacts=", StringComparison.Ordinal));
+            int contactsFrom = 0, contactsTo = contactsArg == null ? -1 : 39;
+            if (contactsArg != null && contactsArg.Contains('='))
+            {
+                string[] range = contactsArg.Substring("--contacts=".Length).Split('-');
+                contactsFrom = int.Parse(range[0], CultureInfo.InvariantCulture);
+                contactsTo = int.Parse(range[range.Length - 1], CultureInfo.InvariantCulture);
+            }
             int failures = 0;
             var assetRef = new System.Text.RegularExpressions.Regex("\\{\"\\$ref\":(-?\\d+)\\}");
             foreach (string path in args.Where(a => !a.StartsWith("--") && !a.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase)))
@@ -142,12 +142,18 @@ namespace IGTAP.EngineSim.Cli
                 JsonElement result = trace.RootElement.GetProperty("result");
                 FieldInfo[] movementFields = FieldState.For(typeof(Movement));
                 int firstDiff = -1;
+                // The RNG state and Cash are the fields this project judges clone/economy fidelity by: report their
+                // first mismatching tick apart from the physics fields' (the diff list caps at 60 ticks).
+                int firstRandomDiff = -1, firstCashDiff = -1;
                 var diffs = new List<string>();
                 RunResult run = sim.Run(inputs, onStep: step =>
                 {
-                    if (args.Contains("--contacts") && step < 40)
+                    if (step >= contactsFrom && step <= contactsTo)
                     {
                         Console.WriteLine("  step " + step + " pos " + Json(sim.Player.transform.position) + " turbo contacts " + (step < ticks.Length ? ticks[step].GetProperty("contacts").GetRawText() : ""));
+                        var mine = new UnityEngine.ContactPoint2D[16];
+                        int count = sim.Physics.GetContacts(sim.Player.GetComponent<Rigidbody2D>(), mine);
+                        Console.WriteLine("    offline contacts " + string.Join(" ", mine.Take(count).Select(p => "(" + p.point.x.ToString("R", CultureInfo.InvariantCulture) + "," + p.point.y.ToString("R", CultureInfo.InvariantCulture) + " n=" + p.normal.x.ToString("0.##", CultureInfo.InvariantCulture) + "," + p.normal.y.ToString("0.##", CultureInfo.InvariantCulture) + ")")));
                         foreach (string c in sim.Physics.DescribeContacts()) Console.WriteLine("    " + c);
                     }
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
@@ -173,7 +179,13 @@ namespace IGTAP.EngineSim.Cli
                             Compare(here, "course" + c.courseNumber + "." + name, Json(f.GetValue(c)), entry[2]);
                         }
                     }
-                    if (t.TryGetProperty("cash", out JsonElement cash)) Compare(here, "cash", Json(sim.Shop.CashNow), cash);
+                    if (t.TryGetProperty("cash", out JsonElement cash) && Compare(here, "cash", Json(sim.Shop.CashNow), cash) && firstCashDiff < 0) firstCashDiff = step;
+                    // The tick's UnityEngine.Random state (Random.State's s0..s3 in order), as the plugin exports it.
+                    if (t.TryGetProperty("random", out JsonElement random))
+                    {
+                        UnityEngine.Random.State rng = UnityEngine.Random.state;
+                        if (Compare(here, "random", Json(new[] { rng.s0, rng.s1, rng.s2, rng.s3 }), random) && firstRandomDiff < 0) firstRandomDiff = step;
+                    }
                     if (here.Count == 0) return;
                     if (firstDiff < 0) firstDiff = step;
                     if (diffs.Count < 60) diffs.Add("tick " + step + ": " + string.Join("; ", here));
@@ -182,6 +194,8 @@ namespace IGTAP.EngineSim.Cli
                     && Json(run.Time) == result.GetProperty("time").GetRawText();
                 Console.WriteLine(Path.GetFileName(path) + ": " + run.Stepped + "/" + ticks.Length + " ticks, "
                     + (firstDiff < 0 ? "every tick identical" : "first difference at tick " + firstDiff)
+                    + "; random " + (firstRandomDiff < 0 ? "identical on every tick" : "first difference at tick " + firstRandomDiff)
+                    + ", cash " + (firstCashDiff < 0 ? "identical on every tick" : "first difference at tick " + firstCashDiff)
                     + ", result " + (run.Finished ? "finish " + Json(run.Time) : "no finish (" + run.EndReason + ")")
                     + " vs turbo " + (result.GetProperty("finished").GetBoolean() ? "finish " + result.GetProperty("time").GetRawText() : "no finish")
                     + (sameResult ? " [MATCH]" : " [MISMATCH]"));
@@ -196,13 +210,16 @@ namespace IGTAP.EngineSim.Cli
 
         static Func<string, string> _normalize = s => s;
 
-        static void Compare(List<string> diffs, string name, string offline, JsonElement turbo)
+        // Returns whether the values differ.
+        static bool Compare(List<string> diffs, string name, string offline, JsonElement turbo)
         {
             // Mono and .NET format a float's G9 text differently when it ends in an exact half (2424.140625 prints as
             // 2424.14063 in the game, 2424.14062 here); compare the float values, not their text.
             string expected = Numbers(_normalize(turbo.GetRawText()));
             string actual = Numbers(offline);
-            if (actual != expected) diffs.Add(name + " " + Short(offline) + " != " + Short(turbo.GetRawText()));
+            if (actual == expected) return false;
+            diffs.Add(name + " " + Short(offline) + " != " + Short(turbo.GetRawText()));
+            return true;
         }
 
         static readonly System.Text.RegularExpressions.Regex Number = new System.Text.RegularExpressions.Regex(@"-?\d+(\.\d+)?([eE][-+]?\d+)?");
@@ -436,23 +453,6 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"{runs / s:0.0} runs/s, {ticks / s:0} ticks/s, {s * 1e6 / ticks:0.00} us/tick ({inputs.Count} inputs); "
                 + $"{sim.Physics.BodyCount} bodies, {sim.Physics.ContactCount} contacts, {sim.Physics.TouchingPairs} touching pairs, "
                 + $"GC gen0 {GC.CollectionCount(0)} gen2 {GC.CollectionCount(2)}, allocated {GC.GetTotalAllocatedBytes() / 1e9:0.0} GB");
-            {
-                var sw = Stopwatch.StartNew(); long a0 = GC.GetTotalAllocatedBytes(true); int caps = 0;
-                for (int rep = 0; rep < 5; rep++) sim.Run(inputs, afterTick: t => { if (t > 0 && t < inputs.Count) { sim.Capture(t); caps++; } return true; });
-                Console.WriteLine($"DBG capture-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run, {caps / 5} caps/run, {(GC.GetTotalAllocatedBytes(true) - a0) / 5.0 / Math.Max(1, caps / 5) / 1024:0.0} KB/cap, tree changed/snap {Box2D.b2DynamicTree.DbgChanged / (double)Math.Max(1, Box2D.b2DynamicTree.DbgSnaps):0.0} of {Box2D.b2DynamicTree.DbgNodes}");
-                sw.Restart(); for (int rep = 0; rep < 5; rep++) sim.Run(inputs); Console.WriteLine($"DBG plain-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run");
-                sw.Restart(); for (int rep = 0; rep < 5; rep++) sim.Run(inputs, afterTick: t => { sim.Fingerprint(); return true; }); Console.WriteLine($"DBG fingerprint-run {sw.Elapsed.TotalMilliseconds / 5:0} ms/run");
-                sim.Run(inputs, afterTick: t =>
-                {
-                    if (t != 400) return true;
-                    long b = GC.GetAllocatedBytesForCurrentThread(); sim.Physics.Capture(); long p = GC.GetAllocatedBytesForCurrentThread() - b;
-                    b = GC.GetAllocatedBytesForCurrentThread(); FieldState.Capture(sim.Player); long m = GC.GetAllocatedBytesForCurrentThread() - b;
-                    b = GC.GetAllocatedBytesForCurrentThread(); foreach (var c in sim.Courses) FieldState.Capture(c); long cs = GC.GetAllocatedBytesForCurrentThread() - b;
-                    b = GC.GetAllocatedBytesForCurrentThread(); sim.Capture(t); long all = GC.GetAllocatedBytesForCurrentThread() - b;
-                    Console.WriteLine($"DBG bytes physics {p} movement {m} courses {cs} ({sim.Courses.Length}) all {all}");
-                    return true;
-                });
-            }
             return 0;
         }
     }

@@ -62,6 +62,10 @@ on the same machine/runtime.
 11. Min/Max/Abs/Clamp now implement the C++ templates exactly (`a > b ? a : b`,
     `b2Clamp(a, low, high) = b2Max(low, b2Min(a, high))`); System.Math differs on
     NaN/signed-zero. All physics call sites route here.
+12. `b2World.RayCast` ignored the callback's return and `b2DynamicTree.RayCast` passed
+    every leaf the original `maxFraction`, so the ray was never clipped and a closest-hit
+    callback kept the last hit in tree order. Both now follow C++ (`b2WorldRayCastWrapper`
+    returns the callback's value; `subInput.maxFraction = maxFraction`).
 
 ### Dead Box2DX relics removed (never referenced by any code)
 
@@ -81,7 +85,7 @@ tunable.
 | Island velocity integration | `v += h * (gravityScale * gravity + invMass * force)` | `v += h * invMass * (gravityScale * mass * gravity + force)` (different rounding: `invMass * mass != 1.0`) | `b2Settings.useLegacyGravityIntegration` (default **true** = 2.3.x) |
 | GJK `b2Distance` simplex | barycentrics w/ `GetClosestPoint` divergence check | simplex rewritten (different barycentrics, radii handling reworked) | no flag (deep re-port); port lineage ≈ 2.3-era. **Next suspect for residual ulp diffs.** |
 | `b2TimeOfImpact` | separation function formulas + pure bisection root finder | reworked separation + secant/bisection mixed root finder | no flag (deep re-port) |
-| `b2DynamicTree`/`b2BroadPhase` | `m_path`, old insert/move heuristics | AVL rebalance, hugeAABB move proxy, moved-flag pair dedup | structural; affects pair/creation ORDER, no flag |
+| `b2DynamicTree`/`b2BroadPhase` | `m_path`, old insert/move heuristics, pairs sorted by (proxyIdA, proxyIdB) | AVL rebalance, hugeAABB move proxy, moved-flag pair dedup, pairs in query order | structural; `UpdatePairs` sorts like 2.3.x (contact creation order), the rest is 2.4.1 |
 | `b2PolygonShape::Set` dedup + centroid/mass reference point | `< 0.5f * linearSlop` (unsquared), origin reference | `< (0.5f*linearSlop)^2`, first-vertex reference | no flag; verify when centroid-side ulp diffs appear |
 | `b2AABB::RayCast` | old slab code | rewritten slab code | no flag |
 | Body `active`/`enabled` naming, `awake` on statics | `SetActive`, statics may be "awake" | `SetEnabled`, awake ignored for statics | API has `SetEnabled` (+2.3 naming kept where harmless) |
@@ -219,13 +223,14 @@ port's `c0 + beta * (c - c0)` rounds differently).
   (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
   still got `OnTriggerStay2D` (the `rand-c3-wjdash-2` tick 33 `courseResetPoint`
   residue). Fixed.
-- Remaining residues in the 2026-09-24 corpus are all on a death tick, in a
-  wall/floor corner (`rand-c2-wjdash-2` 90, `rand-c3-wjdash-0` 99,
-  `rand-c3-wjdash-2` 121): not GJK/TOI, but the order of a collider pair's
-  contacts in `Collision2D` (`OnCollisionStay2D` reads `GetContact(0).normal`).
-  Offline lists Box2D's newest contact first (the floor); Unity lists the wall
-  first. The manifold generators
-  (`b2CollidePolygons`, `b2CollidePolygonAndCircle`, `b2CollideCircles`),
+- Contact order, matched to Unity on the whole 2026-09-25 turbo corpus (every multi-contact pair):
+  `b2BroadPhase.UpdatePairs` sorts new pairs by proxy id (2.3.x); the world contact list is oldest first
+  (`ContactManager.AddPair` appends; Collide's update order and SolveTOI's first-wins tie between equally early
+  impacts); body contact edge lists stay newest first (island/solver order). A collider pair's contacts are reported
+  in `b2Contact.m_touchOrder` order: a contact that starts touching goes to the end, one that stops (or is destroyed
+  touching) is replaced by the pair's last (swap-remove, `LeaveTouchOrder`). `diverge-c5-13.14` (a player wedged in
+  a four-shape corner of one composite, ticks 881-896) and `diverge-c5-13.58` now match on every tick. The manifold
+  generators (`b2CollidePolygons`, `b2CollidePolygonAndCircle`, `b2CollideCircles`),
   `b2ClipSegmentToLine` and `b2Sweep` were verified expression-order-literal
   against v2.4.1.
 - The manifold generators (`src/Collision/Colliders/PolygonAndPolygonCollider.cs`,
