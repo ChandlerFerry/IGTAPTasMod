@@ -19,6 +19,7 @@
     <Compile Include="..\..\MacroEngine.cs" Link="Shared\MacroEngine.cs" />
     <Compile Include="..\..\MacroModels.cs" Link="Shared\MacroModels.cs" />
     <Compile Include="..\..\FieldState.cs" Link="Shared\FieldState.cs" />
+    <Compile Include="..\..\FullTas.cs" Link="Shared\FullTas.cs" />
     <Compile Include="..\..\TimelineEditing.cs" Link="Shared\TimelineEditing.cs" />
   </ItemGroup>
 

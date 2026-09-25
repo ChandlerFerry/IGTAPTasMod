@@ -10,8 +10,9 @@ Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DASH_AJ`). How to s
 
 - Category route: `<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>`.
 - Chain segment route: `<chain>/<segment>_<CAPS> <time>` (chains live in `chains.json`).
-- Both are saved only by `SaveSolverRoute`, which replays them from their start: a category route from the course
-  start, a segment from where the chain's earlier routes end.
+- Full-TAS route: `fulltas/<run>_NO_WJ <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).
+- All are saved only by `SaveSolverRoute`, which replays them from their start: a category route from the course
+  start, a segment from where the chain's earlier routes end, a Full-TAS route from a fresh new game.
 
 ## Using the game
 

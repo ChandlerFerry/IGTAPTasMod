@@ -86,6 +86,7 @@ namespace IGTAPTasMod
             LoadCheckpoints();
             LoadCourses();
             LoadChains();
+            LoadFullTas();
             _engine.AttemptEnded += SaveAttemptResult;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
@@ -155,6 +156,8 @@ namespace IGTAPTasMod
             if (course != null && course.HasFinish && !course.IsPurchase && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
+            // A Full-TAS run's reward goal: touching its box, checked where a bonus run's is.
+            if (Instance._fullTas != null && Instance._engine.IsRunning && !IsMenuPlayer(__instance)) Instance.FullTasRewardCheck(__instance);
             // A chain's next segment goes on from where the last one finished, then does its quick restart if it has one.
             if (Instance._chainRun != null && Instance._chainRun.pendingNext && !Instance._engine.IsRunning && !IsMenuPlayer(__instance))
                 Instance.ContinueChain(__instance);
@@ -163,6 +166,9 @@ namespace IGTAPTasMod
                 Instance._restartBeforeTick = false;
                 Instance.QuickRestart(__instance);
             }
+            // A route's own quick restart input (MacroStep.rawQuickRestart): the game's quick restart right before this tick,
+            // after the pending Invokes, where enginesim does it.
+            if (!IsMenuPlayer(__instance) && Instance._engine.TakeQuickRestart()) Instance.QuickRestart(__instance);
             if (Instance._pendingSilentMacro != null && !Instance._engine.IsRunning)
             {
                 MacroDefinition macro = Instance._pendingSilentMacro;
@@ -179,6 +185,12 @@ namespace IGTAPTasMod
             if (Instance._pendingChain != null && !Instance._pendingChain.waitingForNewGame && !Instance._engine.IsRunning)
             {
                 Instance.BeginChainPlayback();
+                return true;
+            }
+            if (Instance._fullTasPlay != null && !Instance._fullTasPlay.started && !Instance._fullTasPlay.waitingForNewGame && !Instance._engine.IsRunning
+                && !IsMenuPlayer(__instance))
+            {
+                Instance.BeginFullTasPlayback(__instance);
                 return true;
             }
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning)
@@ -248,8 +260,8 @@ namespace IGTAPTasMod
         }
 
         // The course the running attempt is scored on: the chain segment's, the solver's in turbo, else the route's
-        // (RestoreRouteStart).
-        CourseDef RunCourse { get { return _chainRun != null ? _chainRun.Current.target : _silentEvaluation ? _solverTarget : _runCourse; } }
+        // (RestoreRouteStart). None during a Full-TAS run: only its last goal ends it.
+        CourseDef RunCourse { get { return _fullTas != null ? null : _chainRun != null ? _chainRun.Current.target : _silentEvaluation ? _solverTarget : _runCourse; } }
 
         // Chain segments (played or judged) are timed in physics ticks from their start, a course's too: the chain's time
         // is the sum, and a course's timer may already be running when its segment starts.
@@ -258,8 +270,14 @@ namespace IGTAPTasMod
         // The player's colliders overlap the course's end box (absolute coordinates, shifted by FloatingOrigin).
         private bool TouchesEndBox(Movement player, CourseDef course)
         {
+            return TouchesBox(player, course.endX, course.endY, course.endW, course.endH);
+        }
+
+        // The player's colliders overlap the box (centre and size, absolute coordinates, shifted by FloatingOrigin).
+        private static bool TouchesBox(Movement player, float x, float y, float w, float h)
+        {
             Vector2 origin = CurrentOrigin();
-            Rect zone = new Rect(course.endX - course.endW / 2f + origin.x, course.endY - course.endH / 2f + origin.y, course.endW, course.endH);
+            Rect zone = new Rect(x - w / 2f + origin.x, y - h / 2f + origin.y, w, h);
             foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
             {
                 if (!box.enabled) continue;
@@ -293,13 +311,15 @@ namespace IGTAPTasMod
         private static void BeforeCourseStart(courseScript __instance)
         {
             if (Instance == null || __instance == null || !Instance._engine.IsRunning) return;
+            // A Full-TAS start goal: this call starts the course's timer (AfterCourseStart) only when it wasn't timing.
+            Instance._fullTasStartWasTracking = CourseTrackingFlag.GetValue(__instance) is bool was && was;
             CourseDef course = Instance.RunCourse;
             if (course == null || course.toCourse <= 0 || __instance.courseNumber != course.toCourse) return;
             if (CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking) return;
             Instance._engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
         }
 
-        private static void AfterCourseStart()
+        private static void AfterCourseStart(courseScript __instance)
         {
             if (Instance != null)
             {
@@ -307,6 +327,9 @@ namespace IGTAPTasMod
                 Movement movement = FindWorldMovement();
                 Instance._engine.MarkCourseStart(movement);
                 Instance._recorder.MarkCourseStart();
+                if (Instance._fullTas != null && __instance != null && Instance._engine.IsRunning && !Instance._fullTasStartWasTracking
+                    && CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking)
+                    Instance.FullTasCourseStarted(__instance.courseNumber);
             }
             if (Instance != null && Instance._recorder.IsRecording) Log.LogInfo("Recording: authoritative course start detected");
         }
@@ -316,8 +339,10 @@ namespace IGTAPTasMod
             if (Instance == null) return;
             // stopTracking only finishes a course it is timing; an end gate reached without the start gate is not a run.
             CourseDef target = Instance.RunCourse;
-            Instance._pendingCourseWasTracking = __instance != null && CourseTrackingField != null
-                && CourseTrackingField.GetValue(__instance) is bool tracking && tracking
+            bool timing = __instance != null && CourseTrackingField != null && CourseTrackingField.GetValue(__instance) is bool tracking && tracking;
+            // A Full-TAS run: the player's own finish of a course it is timing is a goal event (AfterCourseFinish), never its end.
+            Instance._fullTasFinishCourse = Instance._fullTas != null && timing ? __instance.courseNumber : -1;
+            Instance._pendingCourseWasTracking = timing && Instance._fullTas == null
                 // A solver run or chain segment is scored on its own course; finishing another course on the way is not a finish.
                 && (!Instance._silentEvaluation && Instance._chainRun == null
                     || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.id);
@@ -328,6 +353,7 @@ namespace IGTAPTasMod
 
         private static void AfterCourseFinish(bool savePositionData)
         {
+            if (Instance != null && savePositionData && Instance._fullTasFinishCourse >= 0) Instance.FullTasCourseFinished(Instance._fullTasFinishCourse);
             if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
@@ -767,6 +793,7 @@ namespace IGTAPTasMod
             _engine.Quiet = quiet;
             _newGamePlayer = player;
             if (_pendingChain != null) _pendingChain.waitingForNewGame = false;
+            if (_fullTasPlay != null) _fullTasPlay.waitingForNewGame = false;
             Vector2 position = player.transform.position;
             Vector2 respawn = GetMovementField(player, "respawnPoint") is Vector2 r ? r : Vector2.zero;
             double cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double c) ? c : 0.0;
@@ -794,6 +821,7 @@ namespace IGTAPTasMod
             }
             // A solve that loaded it would load it again every frame: it ends here.
             if (_solverRunning && SolverFromNewGame && _solveProcess == null) StopSolver("New game did not load: " + error);
+            DropPendingFullTasPlayback("the new game did not load: " + error);
             WebStudioRequest request = _newGameRequest;
             _newGameRequest = null;
             if (request == null) return;
@@ -819,6 +847,7 @@ namespace IGTAPTasMod
             PumpNewGame();
             PumpOfflineBests();
             PumpChains();
+            PumpFullTas();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -1026,6 +1055,13 @@ namespace IGTAPTasMod
         {
             MacroDefinition macro = SelectedMacro;
             if (macro == null) return;
+            // A Full-TAS route ("fulltas/main_NO_WJ 812.40") plays from a fresh new game with its run's goals.
+            Match fullTasRoute = FullTasRouteName.Match(macro.name ?? "");
+            if (fullTasRoute.Success)
+            {
+                StartFullTasPlayback(FindFullTasRun(fullTasRoute.Groups[1].Value), macro);
+                return;
+            }
             // A chain segment's route ("wj/2tobonus1_WJ 9.10") starts where the chain's routes before it end: play the
             // chain through it.
             Match chainRoute = Regex.Match(macro.name ?? "", @"^([A-Za-z0-9]+)/([^_\s/]+)_");
@@ -1121,6 +1157,11 @@ namespace IGTAPTasMod
                 if (ChainSegmentEnded(success, reason)) return;
                 if (_silentEvaluation) EndDeterministicPhysics();
                 else FinishChainPlayback(success, reason);
+                return;
+            }
+            if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
+            {
+                FinishFullTasPlayback(success, reason);
                 return;
             }
             RestorePlaybackAbilities();
@@ -1408,6 +1449,7 @@ namespace IGTAPTasMod
         {
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
             if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
+            if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -1873,7 +1915,7 @@ namespace IGTAPTasMod
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
                 courses = BuildCourseWebState(),
                 chains = BuildChainWebState(), chainRun = BuildChainRunWebState(),
-                solver = BuildSolverWebState() };
+                solver = BuildSolverWebState(), fullTas = BuildFullTasWebState() };
         }
 
         private static string Text(JObject value, string name)

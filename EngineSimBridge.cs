@@ -35,7 +35,7 @@ namespace IGTAPTasMod
             if (request.Path == "/api/enginesim/raycast")
                 return new { ok = true, hits = EngineSimExport.Raycasts((JArray)body["rays"]) };
             if (request.Path == "/api/enginesim/trace")
-                return EngineSimTrace(request, body);
+                return body["fulltas"] != null ? FullTasTraceRequest(request, body) : EngineSimTrace(request, body);
             if (request.Path == "/api/enginesim/submit")
                 return EngineSimSubmit(request, body);
             request.StatusCode = 404;
@@ -251,7 +251,8 @@ namespace IGTAPTasMod
         // its bests itself), the fastest waiting file per category that beats
         // or ties the saved route is judged here like a submit (a course's in its own category and the others, as solve does;
         // a chain segment's in its chain's), so solves run with the game closed still reach the studio. Judged or superseded
-        // files move to judged/.
+        // files move to judged/. A Full-TAS run's (fulltas-<run>-<time>.json) goes through the Full-TAS gate; its group waits
+        // while no fresh new game is at its start.
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
         static readonly Regex OfflineChainBestFile = new Regex(@"^chain-([A-Za-z0-9]+)-(\d+)_([a-z]+)(-lead)?-([\d.]+)\.json$");
         float _offlineBestCheckAt;
@@ -283,6 +284,14 @@ namespace IGTAPTasMod
                     judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>()
                         : new[] { caps }.Concat(CapabilityLabels.Keys.Where(k => k != caps && course.HasCategory(k)))
                             .Select(k => (CapabilityLabels[k], new JObject { ["course"] = id, ["capabilities"] = k }, course.Token + "_" + CapabilityLabels[k])).ToList() };
+            }
+            m = OfflineFullTasBestFile.Match(file);
+            if (m.Success)
+            {
+                FullTasRunDef run = _fullTasRuns.Find(r => string.Equals(r.name, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+                if (run == null) return null;
+                return new OfflineBest { path = path, group = "fulltas-" + run.name, time = float.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
+                    judgings = new List<(string, JObject, string)> { (CapabilityLabels["none"], new JObject { ["fulltas"] = run.name }, FullTasCategory(run.name)) } };
             }
             m = OfflineChainBestFile.Match(file);
             if (!m.Success) return null;
@@ -321,7 +330,7 @@ namespace IGTAPTasMod
             string solving = !_solverRunning ? null : _solveChain != null ? "chain-" + _solveChain + "-" + _solveSegment : _solveCourse + "_" + _solveCaps;
             foreach (var group in groups)
             {
-                if (group.Key == solving) continue;
+                if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
                 var files = group.OrderBy(f => f.time).ToList();
                 OfflineBest first = files[0];
                 // A course file whose own category the course doesn't have is only moved away.
@@ -334,17 +343,22 @@ namespace IGTAPTasMod
                     var next = first.judgings.FirstOrDefault(j => !_offlineJudged.Contains(first.path + "|" + j.label));
                     if (next.body != null)
                     {
+                        if (next.body["fulltas"] != null && !FullTasCanJudge()) continue;
                         _offlineBestCheckAt = Time.unscaledTime + 1f;
                         string line = "Offline best " + Path.GetFileName(first.path) + " as " + next.category + ": ";
                         try
                         {
-                            object error = PrepareEngineSimRun(new WebStudioRequest(), next.body, out _);
-                            if (error != null) return;
-                            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
-                            JudgeResult r = Judge(inputs);
-                            line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
-                                    + (r.previousRunTicks is long was ? ", saved route's " + was : "") + ")" : "no finish in turbo")
-                                + (r.saved ? ", saved" : r.rejected != null ? ", " + r.rejected : "");
+                            if (next.body["fulltas"] != null) line += JudgeFullTasFile(first.path, (string)next.body["fulltas"]);
+                            else
+                            {
+                                object error = PrepareEngineSimRun(new WebStudioRequest(), next.body, out _);
+                                if (error != null) return;
+                                List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
+                                JudgeResult r = Judge(inputs);
+                                line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
+                                        + (r.previousRunTicks is long was ? ", saved route's " + was : "") + ")" : "no finish in turbo")
+                                    + (r.saved ? ", saved" : r.rejected != null ? ", " + r.rejected : "");
+                            }
                         }
                         catch (Exception ex) { line += "error " + ex.Message; }
                         _offlineJudged.Add(first.path + "|" + next.label);
@@ -391,9 +405,9 @@ namespace IGTAPTasMod
             return fewest;
         }
 
-        // {course, capabilities | chain, segment; ticks: [{x, held, press, release, dash, dashJump}] or routeId, name, world,
-        // freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
-        // every stepped tick; with world: true also the world export as that run saw it.
+        // {course, capabilities | chain, segment; ticks: [{x, held, press, release, dash, dashJump, reset}] or routeId, name,
+        // world, freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
+        // every stepped tick; with world: true also the world export as that run saw it. {fulltas: <run>, ...}: FullTasTrace.
         object EngineSimTrace(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
@@ -596,6 +610,37 @@ namespace IGTAPTasMod
                     w.WriteStartObject();
                     w.WritePropertyName("id"); w.WriteValue(box.GetInstanceID());
                     w.WritePropertyName("fields"); WriteFieldValues(json, TurboRunner.EconomyFields(typeof(upgradeBox)), fields);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                // The native offline economy (enginesim Economy): the global and every course's local upgrades, what scales
+                // a reward, and every course's clones (their own state; `path`: the clone path's length, the live one:
+                // the snapshot doesn't hold the path, only a new best replaces it).
+                if (s.economy.globalUpgrades != null) { w.WritePropertyName("globalUpgrades"); json.Value(s.economy.globalUpgrades, 0); }
+                globalStats stats = Singleton<globalStats>.Instance;
+                if (stats != null)
+                {
+                    w.WritePropertyName("gameSpeed"); json.Value(stats.GameSpeed, 0);
+                    w.WritePropertyName("vmanMult"); json.Value(stats.vmanMult, 0);
+                }
+                w.WritePropertyName("locals"); w.WriteStartArray();
+                foreach (var (script, upgrades) in s.economy.locals)
+                {
+                    if (script == null || upgrades == null) continue;
+                    w.WriteStartObject();
+                    w.WritePropertyName("id"); w.WriteValue(script.GetInstanceID());
+                    w.WritePropertyName("upgrades"); json.Value(upgrades, 0);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WritePropertyName("clones"); w.WriteStartArray();
+                foreach (var (clones, fields, _) in s.economy.clones)
+                {
+                    if (clones == null) continue;
+                    w.WriteStartObject();
+                    w.WritePropertyName("id"); w.WriteValue(clones.GetInstanceID());
+                    w.WritePropertyName("path"); w.WriteValue(clones.clonePath == null ? 0 : clones.clonePath.Length);
+                    w.WritePropertyName("fields"); WriteFieldValues(json, TurboRunner.EconomyFields(typeof(clonesScript)), fields);
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();

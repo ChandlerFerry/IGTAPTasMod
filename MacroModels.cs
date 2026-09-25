@@ -38,6 +38,9 @@ namespace IGTAPTasMod
         // With rawDashPressed: press jump on this frame of the dash it starts (1 = first dash frame). The engine
         // gets no ticks during a dash, so this is the only way to jump mid-dash (a late super jump). 0 = off.
         public int dashJumpFrame;
+        // The game's quick restart (the QuickReset button: Movement.respawn(true)) at the start of this step's first tick,
+        // before Movement.FixedUpdate, like a chain's "restart". Full-TAS routes choose where to restart.
+        public bool rawQuickRestart;
 
         public MacroStep Copy()
         {
@@ -49,7 +52,7 @@ namespace IGTAPTasMod
                 rawMoveX = rawMoveX, rawMoveY = rawMoveY,
                 rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
                 rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
-                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame };
+                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, rawQuickRestart = rawQuickRestart };
         }
     }
 

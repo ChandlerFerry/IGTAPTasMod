@@ -56,6 +56,8 @@ namespace IGTAPTasMod
         sealed class SolverTick
         {
             public float x; public bool held, press, release, dash; public int dashJump;
+            // The game's quick restart right before this tick (MacroStep.rawQuickRestart).
+            public bool reset;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
 
@@ -656,8 +658,9 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            // A chain replay checks each segment against its own category (wall jump from the segment after a buywj on).
-            string caps = _chainRun != null ? _chainRun.Current.caps : _solverCaps;
+            // A chain replay checks each segment against its own category (wall jump from the segment after a buywj on); a
+            // Full-TAS run against the unlocks its own purchases gave so far.
+            string caps = _fullTas != null ? FullTasCaps : _chainRun != null ? _chainRun.Current.caps : _solverCaps;
             int level = CapsLevel(caps);
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
                 || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
@@ -670,6 +673,7 @@ namespace IGTAPTasMod
         // Null when the route may be saved, else why not.
         string RouteViolation(List<SolverTick> inputs, float time)
         {
+            if (_solverFullTas != null) return FullTasViolation(inputs, time);
             var audit = _audit = new List<string>();
             bool finished;
             float replayed;
@@ -761,8 +765,8 @@ namespace IGTAPTasMod
         }
 
         // "<course token>_<CAPS>": the solver's course and category as category routes name them ("bonus1_WJ"); a chain
-        // segment's "<chain>/<token>_<CAPS>" ("wj/2tobonus1_WJ").
-        string SolverCategory { get { return _solverChain != null ? ChainCategory(_solverChain, _solverSegments[_solverSegment])
+        // segment's "<chain>/<token>_<CAPS>" ("wj/2tobonus1_WJ"); a Full-TAS run's "fulltas/<run>_NO_WJ".
+        string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name) : _solverChain != null ? ChainCategory(_solverChain, _solverSegments[_solverSegment])
             : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
 
         // The only place a category route is saved. False (and nothing saved) when the route breaks a rule.
@@ -781,7 +785,7 @@ namespace IGTAPTasMod
                 steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(route);
-            if (_solverChain != null) RevalidateChainTail();
+            if (_solverChain != null && _solverFullTas == null) RevalidateChainTail();
             PruneSlowerRoutes();
             SaveLibrary();
             return true;
@@ -826,7 +830,7 @@ namespace IGTAPTasMod
                 for (int i = 0; i < Math.Max(1, s.durationTicks); i++)
                     ticks.Add(new SolverTick { x = s.rawMoveX, held = s.rawJumpHeld,
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
-                        dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0 });
+                        dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, reset = i == 0 && s.rawQuickRestart });
             return ticks;
         }
 
@@ -836,7 +840,8 @@ namespace IGTAPTasMod
             foreach (SolverTick k in ticks)
             {
                 MacroStep last = steps.Count > 0 ? steps[steps.Count - 1] : null;
-                if (last != null && !k.press && !k.release && !k.dash && last.rawMoveX == k.x && last.rawJumpHeld == k.held)
+                // A press or a quick restart starts a step of its own.
+                if (last != null && !k.press && !k.release && !k.dash && !k.reset && last.rawMoveX == k.x && last.rawJumpHeld == k.held)
                 {
                     last.durationTicks++;
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
@@ -846,7 +851,7 @@ namespace IGTAPTasMod
                     durationMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f), endCondition = ActionEndCondition.FixedTicks,
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
-                    dashJumpFrame = k.dash ? k.dashJump : 0 });
+                    dashJumpFrame = k.dash ? k.dashJump : 0, rawQuickRestart = k.reset });
             }
             return steps;
         }

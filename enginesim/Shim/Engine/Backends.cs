@@ -49,11 +49,16 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object> PlayerInput, DashFrame, Death;
         [ThreadStatic] public static Action<object, GameObject, bool> CourseStop;
         [ThreadStatic] public static Action<object, Collider2D> UpgradeBoxStay;
+        [ThreadStatic] public static Action<object, bool> ClonesOnScreen;
+        [ThreadStatic] public static Action<object> CourseReward, Respawn;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
         public static void OnDashFrame(object movement, bool isDashBounce) { DashFrame?.Invoke(movement); }
         public static void OnDeath(object movement) { Death?.Invoke(movement); }
         public static void OnCourseStop(object course, GameObject player, bool savePositionData) { CourseStop?.Invoke(course, player, savePositionData); }
         public static void OnUpgradeBoxStay(object box, Collider2D collision) { UpgradeBoxStay?.Invoke(box, collision); }
+        public static void OnClonesOnScreen(object clones, bool newOnScreen) { ClonesOnScreen?.Invoke(clones, newOnScreen); }
+        public static void OnCourseReward(object course) { CourseReward?.Invoke(course); }
+        public static void OnRespawn(object movement, bool manuallyTriggered) { Respawn?.Invoke(movement); }
     }
 }

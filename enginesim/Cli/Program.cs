@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
+                    case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "branch": return Branch(args[1], args.Length > 2 ? int.Parse(args[2]) : 200);
                     case "path":
@@ -85,6 +86,10 @@ namespace IGTAP.EngineSim.Cli
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit] [--fresh]\n"
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs\n"
+                            + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
+                            + "          [--no-submit] [--fresh]        Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
+                            + "                                         run state in <traces>/fulltas/<run>.json, bests to the gate\n"
+                            + "                                         (/api/fulltas/submit) when the game runs\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
                         return 2;
@@ -113,6 +118,7 @@ namespace IGTAP.EngineSim.Cli
                 release = t.GetProperty("release").GetBoolean(),
                 dash = t.GetProperty("dash").GetBoolean(),
                 dashJump = t.GetProperty("dashJump").GetInt32(),
+                reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
             }).ToList();
             return (sim, trace, inputs);
         }

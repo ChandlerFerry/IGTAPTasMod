@@ -5,6 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./favorite-ui.css";
 import "./route-sidebar.css";
+import "./fulltas.css";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -25,6 +26,13 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
 type ChainSegment = { index: number; token: string; key: string; category: string; restart: boolean; module?: string | null; bonus: boolean; purchase: boolean; from?: string; to?: string; routeId?: string | null; time?: number | null; staleRoutes: number };
 type Chain = { name: string; capabilities: string; fromNewGame?: boolean; error?: string | null; segments: ChainSegment[]; total?: number | null };
 type ChainRun = { running: { chain: string; segment: number; of: number; token: string; splits: number[] } | null; last?: string | null };
+// A Full-TAS run: the whole game from a new game as one input stream, split by its goals (config tokens, "start:1").
+// A split's `ticks` are the physics ticks from the run's start when that goal was reached.
+type FullTasSplit = { label: string; ticks: number };
+type FullTasRun = { name: string; goals: string[]; tokens?: string[]; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null; traceReady: boolean };
+// The gate's reply to an import / submit (the plugin's `lastResult` too).
+type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
+type FullTasState = { runs: FullTasRun[]; solve: { running: boolean; name?: string | null; status: string; log: string[] }; lastResult?: FullTasReply | string | null };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean;
   // The widest category the save's own unlocks can run (0 NO_WJ … 3 WJ_DASH_AJ); null when the player isn't loaded.
@@ -32,6 +40,8 @@ type StudioState = {
   // A fresh new game is loaded (/api/session/newgame): chains from "newgame" can be solved.
   freshGame?: boolean; newGameLoading?: boolean;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; chains?: Chain[]; chainRun?: ChainRun; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
+  // Missing on a plugin without Full-TAS.
+  fullTas?: FullTasState;
 };
 
 const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], results: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
@@ -59,6 +69,11 @@ export default function Studio() {
   const command = async (path: string, body: unknown = {}) => {
     try { setError(""); await request(path, body); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  // Like command, but hands back the plugin's reply (undefined on an error).
+  const query = async (path: string, body: unknown = {}): Promise<unknown> => {
+    try { setError(""); const data = await request(path, body); await refresh(); return data; }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); return undefined; }
   };
   // The chain the selected route is a segment of (its "Run route" plays the chain only through that segment).
   const routeChain = route ? chainRoutes(state.chains ?? []).get(route.id)?.chain : undefined;
@@ -98,7 +113,7 @@ export default function Studio() {
         </div>
       </header>
 
-      <nav className="tabs">{[["overview","Overview"],["timeline","Timeline"],["recordings","Recordings"],["chains","Runs"],["optimize","Optimize"],["checkpoints","Checkpoints"],["results","Results"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="tabs">{[["overview","Overview"],["timeline","Timeline"],["recordings","Recordings"],["chains","Runs"],["fulltas","Full-TAS"],["optimize","Optimize"],["checkpoints","Checkpoints"],["results","Results"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {error && <div className="errorBanner">{error}<button onClick={() => setError("")}>×</button></div>}
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
@@ -115,6 +130,8 @@ export default function Studio() {
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className={`recordingCard ${recording.favorite?"locked":""}`} key={recording.id}><div className="recordingTitle"><div><strong>{recording.favorite?"★ ":""}{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions{recording.favorite?" · read-only":""}</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button disabled={recording.favorite} onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className={`favoriteButton ${recording.favorite?"active":""}`} onClick={()=>command("/recordings/favorite",{recordingId:recording.id,favorite:!recording.favorite})}>{recording.favorite?"★ Locked":"☆ Favorite"}</button><button className="danger" disabled={recording.favorite} onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
         {tab === "chains" && <Chains chains={state.chains ?? []} chainRun={state.chainRun} solver={state.solver ?? emptyState.solver} running={state.running} freshGame={!!state.freshGame} newGameLoading={!!state.newGameLoading} onCommand={command}/>}
+
+        {tab === "fulltas" && <FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onQuery={query}/>}
 
         {tab === "optimize" && <div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} onCommand={command}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} chains={state.chains ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>}
 
@@ -136,7 +153,11 @@ function courseLabel(c: Course | undefined, id: number) {
   return c.to ? `${place(c.from ?? "")} → ${place(c.to)}` : place(c.token);
 }
 
-const PURCHASES: Record<string, string> = { buyreward: "Buy reward", buyclone: "Buy clone", buywj: "Buy wall jump", buydash: "Buy dash" };
+const PURCHASES: Record<string, string> = {
+  buyreward: "Buy reward", buyclone: "Buy clone", buywj: "Buy wall jump", buydash: "Buy dash",
+  buyreward2: "Buy reward (Course 2)", buyclone2: "Buy clone (Course 2)", buyclonemult2: "Buy clone multiplier (Course 2)",
+  buyglobalreward2: "Buy global reward (Course 2)",
+};
 
 // "wj › Course 1 #12 · WJ": a repeat shows its occurrence, a part of an included chain that chain, every segment its category.
 function segmentLabel(s: ChainSegment) {
@@ -461,5 +482,103 @@ function Chains({chains,chainRun,solver,running,freshGame,newGameLoading,onComma
         </div>
       </details>; })}
     </div>)}
+  </div>;
+}
+
+const TICK_SECONDS = 0.02;
+const tickText = (ticks: number) => `${ticks} t · ${(ticks * TICK_SECONDS).toFixed(2)}s`;
+
+// "Finished · 812.34s · saved" / "Not finished · <reason>": a gate reply in one line.
+function replyText(r: FullTasReply | string | null | undefined) {
+  if (r == null) return "";
+  if (typeof r === "string") return r;
+  const parts = [r.finished === undefined ? "" : r.finished ? "Finished" : "Not finished", r.time != null ? `${r.time.toFixed(2)}s` : "", r.saved === undefined ? "" : r.saved ? "saved" : "not saved", r.reason ?? "", r.trace ? `trace ${r.trace}` : ""];
+  return parts.filter(p => p).join(" · ");
+}
+
+// Full-TAS: the whole game from a fresh new game as one continuous input stream, scored from its first tick to its last
+// goal. The goals split it; the offline search (Solve) works through it window by window and the game's gate saves a
+// route only when it is faster.
+function FullTas({fullTas,running,onCommand,onQuery}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>;onQuery:(path:string,body?:unknown)=>Promise<unknown>}) {
+  const runs = fullTas?.runs ?? [];
+  const [selected, setSelected] = useState("");
+  const [newName, setNewName] = useState("");
+  const [chain, setChain] = useState("newgame");
+  const [importReply, setImportReply] = useState<FullTasReply | null>(null);
+  const [minutes, setMinutes] = useState(60);
+  const [windowMinutes, setWindowMinutes] = useState(1);
+  const [window_, setWindow] = useState(2);
+  const name = selected || runs[0]?.name || "";
+  const run = runs.find(r => r.name === name);
+  const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
+  const [draft, setDraft] = useState(savedGoals);
+  // The editor shows the selected run's saved goals again whenever the run or its saved goals change.
+  useEffect(() => setDraft(savedGoals), [name, savedGoals]);
+  if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
+    <p className="lede">The game plugin doesn&apos;t report Full-TAS runs (an older version, or not connected).</p></div>;
+  const solve: FullTasState["solve"] = fullTas.solve ?? { running: false, status: "", log: [] };
+  const busy = solve.running || running;
+  const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
+  const validName = /^[A-Za-z0-9]+$/.test(newName);
+  const splits = run?.best?.splits ?? [];
+  const labels = run ? (splits.length > run.goals.length ? splits.map(s => s.label) : run.goals) : [];
+  return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
+    <p className="lede">A Full-TAS run is the whole game from a fresh new game as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses). <b>Solve</b> searches offline window by window; the game replays every better route from a new game and saves it only when it holds up and is faster.</p>
+    <div className="fullTasRuns">
+      {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => { setSelected(r.name); setImportReply(null); }}>
+        <strong>{r.name}</strong><small>{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
+        {r.best?<b>{r.best.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
+        <span className={`badge ${r.traceReady?"":"missing"}`}>{r.traceReady?"Trace ready":"No trace"}</span>
+      </button>)}
+      {name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
+    </div>
+    {!name && <p className="offlineConfirmation">No Full-TAS run yet: name a new one or import one from a chain.</p>}
+    <div className="fullTasInline">
+      <Field label="New run (letters and digits)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
+      <button className="secondary" disabled={!validName || runs.some(r => r.name === newName)} onClick={() => { setSelected(newName); setNewName(""); setImportReply(null); }}>+ New run</button>
+    </div>
+    {name && <div className="fullTasGrid">
+      <div className="fullTasGoals">
+        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:""}</h2></div></div>
+        <div className="resultTable">
+          <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
+          {labels.map((label, i) => { const s = splits[i]; return <div className={`tableRow ${s?"":"pending"}`} key={i}>
+            <span>{i + 1}</span><span>{s?.label ?? label}</span>
+            <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
+            <span>{s ? tickText(s.ticks) : "—"}</span>
+          </div>; })}
+          {!labels.length && <div className="tableRow pending"><span>—</span><span>No goals</span></div>}
+        </div>
+        <div className="fullTasSolve">
+          <div className="buttonRow">
+            <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
+            <button className="secondary" disabled={busy || !run?.best} title="Plays the saved best in real time from a new game" onClick={() => onCommand("/fulltas/play", { name })}>▶ Play</button>
+            <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
+          </div>
+          <div className="offlineControls">
+            <Field label="Minutes (total)"><input type="number" min="1" value={minutes} disabled={solve.running} onChange={e => setMinutes(Number(e.target.value))}/></Field>
+            <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
+            <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
+          </div>
+          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={run?.traceReady ? "Searches offline from the captured trace" : "Captures the start first (no trace yet), then searches offline"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_ })}>⟳ Solve</button></div>
+        </div>
+      </div>
+      <div className="fullTasEditor">
+        <Field label="Goals (one token per line)"><textarea value={draft} spellCheck={false} placeholder={"start:1\nfinish:1\nbuy:buyreward"} onChange={e => setDraft(e.target.value)}/></Field>
+        <div className="buttonRow"><button className="primary" disabled={busy || !goals.length || draft === savedGoals} onClick={() => onCommand("/fulltas/goals", { name, goals })}>Save goals</button>
+          <button className="secondary" disabled={draft === savedGoals} onClick={() => setDraft(savedGoals)}>Revert</button></div>
+        <div className="fullTasInline">
+          <Field label="Import from chain"><input value={chain} onChange={e => setChain(e.target.value)}/></Field>
+          <button className="secondary" disabled={busy || !chain.trim()} title="Goals and one continuous input stream from the chain's saved routes (restarts become quick-restart inputs), judged by the gate" onClick={async () => { setImportReply(null); const reply = await onQuery("/fulltas/import", { name, chain: chain.trim() }); if (reply) setImportReply(reply as FullTasReply); }}>Import</button>
+        </div>
+        {importReply && <p className="offlineConfirmation">Import: {replyText(importReply) || "done"}</p>}
+      </div>
+    </div>}
+    <div className="chainBlock">
+      <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Solve · ${solve.name}` : "Solve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
+      <p className="offlineConfirmation">{solve.status || "Idle"}</p>
+      {fullTas.lastResult != null && <p className="offlineConfirmation">Last result: {replyText(fullTas.lastResult)}</p>}
+      {(solve.log?.length ?? 0) > 0 && <ul className="solverLog">{solve.log.map((line, i) => <li key={i}>{line}</li>)}</ul>}
+    </div>
   </div>;
 }

@@ -41,7 +41,8 @@
 - Never delete favorite routes; candidates become new routes.
 - Trace every new best and name its trick.
 
-Details: [`AGENTS.md`](AGENTS.md). Runs (chains, the new-game run, its parts): [`docs/runs.md`](docs/runs.md).
+Details: [`AGENTS.md`](AGENTS.md). Runs (chains, the new-game run, its parts): [`docs/runs.md`](docs/runs.md). The whole
+game as one run with goals: [`docs/fulltas.md`](docs/fulltas.md).
 
 ## Layout
 
@@ -53,6 +54,7 @@ Details: [`AGENTS.md`](AGENTS.md). Runs (chains, the new-game run, its parts): [
 | `Solver.cs` | Optimize tab and `SaveSolverRoute`, the only way a category route gets saved. |
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
+| `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, import, trace, playback, solve. |
 | `web/` | Next.js studio, served by the plugin. |
 | `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`. |
 

@@ -8,8 +8,6 @@ camZoneScript::OnTriggerStay2D
 camZoneScript::OnTriggerExit2D
 camSizeTrigger::OnTriggerEnter2D
 MusicController::OnTriggerEnter2D
-clonesLoD::OnTriggerEnter2D
-clonesLoD::OnTriggerExit2D
 GenericSpriteDisabler::OnTriggerEnter2D
 GenericSpriteDisabler::OnTriggerExit2D
 LoadingPopupScript::OnTriggerEnter2D
@@ -44,5 +42,3 @@ CurrencyDisplayController::swapToMiniDisplay
 CurrencyDisplayController::swapToFullDisplay
 JiggleDropScript::SetActiveVisualState
 SteamManager::get_Initialized
-# Reward bookkeeping and its UI (compBoost countdown only).
-courseScript::UpdateReward

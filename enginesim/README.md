@@ -34,6 +34,9 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   saved route is replayed for its own). The reply has both. With `lead: true` the inputs start at the transition: the
   ones up to the gate are judged as the transition's route, the rest as the lap (`runTicks` from the transition's start).
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
+- Full-TAS (`docs/fulltas.md`): `POST /api/enginesim/trace {fulltas: <run>}` writes `fulltas-<run>.json` from the fresh
+  new game with the run's goals in the header (`fulltas.goals`); `IGTAP.EngineSim fulltas <trace>` searches the whole run
+  in windows of goals and sends complete, faster runs to `POST /api/fulltas/submit`.
 
 `tools/enginesim-capture.py routes|random|start|route|chain` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.

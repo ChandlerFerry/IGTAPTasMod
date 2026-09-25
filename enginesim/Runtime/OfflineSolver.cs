@@ -11,7 +11,8 @@ namespace IGTAP.EngineSim
     // running) and optimize (mutate the best finish), judged by the game's own timer, then (at the same time) by the
     // whole run's physics ticks: a flying start's setup before its last start-gate crossing is off the timer but still
     // worth shortening. Each worker thread owns a world and archive; workers share only the best finish, which each
-    // adopts by replaying it.
+    // adopts by replaying it. A Full-TAS window (the simulation has goals, FullTas.cs in the CLI) is ranked in physics ticks
+    // from the run start, with cells per goal reached and quick restarts among the inputs a route may add.
     public sealed class OfflineSolver
     {
         public sealed class Best
@@ -178,6 +179,10 @@ namespace IGTAP.EngineSim
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
             int _sharedVersion;
             float _maxTimedRank;
+            // Full-TAS (the simulation has goals): cells are per goal, ranks count from the run start (a window starts late
+            // in it), and routes may quick-restart.
+            readonly bool _goalMode;
+            float _minTimedRank = float.PositiveInfinity;
             readonly Queue<Memory.Source> _restore;
             List<InputTick> _plateau;
 
@@ -202,6 +207,7 @@ namespace IGTAP.EngineSim
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
                 _dash = owner.Capabilities == "wjdash" || owner.Capabilities == "wjdashaj";
+                _goalMode = sim.Goals != null;
             }
 
             public void Loop()
@@ -296,7 +302,11 @@ namespace IGTAP.EngineSim
             double Weight(long key, Cell cell)
             {
                 double w = key < 0 ? 3.0 : 1.0;
-                if (key < 0 && _bestInputs == null && _maxTimedRank > 0) w *= 1 + 10 * Math.Pow(cell.Rank / _maxTimedRank, 4);
+                if (key < 0 && _bestInputs == null && _maxTimedRank > 0)
+                {
+                    double reach = _goalMode ? (_maxTimedRank > _minTimedRank ? (cell.Rank - _minTimedRank) / (double)(_maxTimedRank - _minTimedRank) : 0) : cell.Rank / _maxTimedRank;
+                    w *= 1 + 10 * Math.Pow(reach, 4);
+                }
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
@@ -317,6 +327,12 @@ namespace IGTAP.EngineSim
                     int length = _rng.Next(3, 21);
                     int start = inputs.Count;
                     for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x, held = start + i < holdEnd });
+                    // Full-TAS: now and then a chunk starts with a quick restart (never right after another one, nor on the
+                    // window's first input: the prefix before it may end with one).
+                    if (_goalMode && start > 0 && !inputs[start - 1].reset && _rng.NextDouble() < .05)
+                    {
+                        InputTick r = inputs[start]; r.reset = true; inputs[start] = r;
+                    }
                     if (_rng.NextDouble() < .4) holdEnd = Hop(inputs, start, Holds[_rng.Next(Holds.Length)]);
                     if (_dash && _rng.NextDouble() < .25)
                     {
@@ -389,6 +405,13 @@ namespace IGTAP.EngineSim
                 if (at < t.Count) t.RemoveRange(at, Math.Min(count, t.Count - at));
             }
 
+            // A quick restart at `p`: not on the window's first input, never on two consecutive ticks (a real button is
+            // released in between).
+            static bool CanReset(List<InputTick> t, int p)
+            {
+                return p > 0 && p < t.Count && !t[p].reset && !t[p - 1].reset && (p + 1 >= t.Count || !t[p + 1].reset);
+            }
+
             void Optimize()
             {
                 List<InputTick> t = _bestInputs.ToList();
@@ -397,6 +420,7 @@ namespace IGTAP.EngineSim
                     ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
                         "superbounce", "superbounce", "superbounce", "hold", "hold", "retime", "retime" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime" };
+                if (_goalMode) kinds = kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 switch (kinds[_rng.Next(kinds.Length)])
                 {
                     case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
@@ -490,6 +514,39 @@ namespace IGTAP.EngineSim
                         for (int i = p; i < Math.Min(n, p + _rng.Next(1, 15)); i++) { InputTick k = t[i]; k.x = aim; t[i] = k; }
                         break;
                     }
+                    // Full-TAS: add, drop or move a quick restart.
+                    case "reset":
+                    {
+                        if (!CanReset(t, p)) return;
+                        InputTick k = t[p]; k.reset = true; t[p] = k;
+                        break;
+                    }
+                    case "noreset":
+                    {
+                        List<int> resets = Enumerable.Range(0, n).Where(i => t[i].reset).ToList();
+                        if (resets.Count == 0) return;
+                        int q = resets[_rng.Next(resets.Count)];
+                        InputTick k = t[q]; k.reset = false; t[q] = k;
+                        break;
+                    }
+                    case "movereset":
+                    {
+                        List<int> resets = Enumerable.Range(0, n).Where(i => t[i].reset).ToList();
+                        if (resets.Count == 0) return;
+                        int q = resets[_rng.Next(resets.Count)];
+                        InputTick k = t[q]; k.reset = false; t[q] = k;
+                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)];
+                        if (to < 0 || to >= n || !CanReset(t, to)) return;
+                        k = t[to]; k.reset = true; t[to] = k;
+                        break;
+                    }
+                }
+                if (_goalMode)
+                {
+                    // A cut can bring two quick restarts together, or one to the window's first input.
+                    if (t.Count > 0 && t[0].reset && !_bestInputs[0].reset) { InputTick k = t[0]; k.reset = false; t[0] = k; }
+                    for (int i = 1; i < t.Count; i++)
+                        if (t[i].reset && t[i - 1].reset) { InputTick k = t[i]; k.reset = false; t[i] = k; }
                 }
                 int s = 0;
                 while (s < t.Count && s < _bestInputs.Count && t[s].Equals(_bestInputs[s])) s++;
@@ -562,6 +619,7 @@ namespace IGTAP.EngineSim
                     _replayBody = new (float, float, float, float, float, float)[inputs.Count + 1];
                     _replayFingerprint = new int?[inputs.Count + 1];
                 }
+                // A Full-TAS window can dash more often than a course: room for a physics tick without input per input.
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
                     if (states != null && tick < _replayBody.Length)
@@ -579,7 +637,7 @@ namespace IGTAP.EngineSim
                     // Bonus and transition runs have no course timer; they are timed in physics ticks from the run start,
                     // as their finishes are.
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = CellKey(_sim.Player.transform.m_Position, timing);
+                    long key = _goalMode ? GoalCellKey(_sim.Player.transform.m_Position, _sim.Progress) : CellKey(_sim.Player.transform.m_Position, timing);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     if (elapsed >= 0f)
@@ -594,7 +652,7 @@ namespace IGTAP.EngineSim
                     if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
                     FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, states);
                     return !losing;
-                });
+                }, _goalMode ? 400 + inputs.Count : 400);
                 Interlocked.Increment(ref _owner.Runs);
                 Interlocked.Add(ref _owner.Ticks, result.Stepped);
                 time = result.Time;
@@ -613,6 +671,14 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - Math.Abs(key) : key;
             }
 
+            // Full-TAS: always timed (from the run start), and a map per goal reached, so a place visited again later in
+            // the run is a new cell.
+            static long GoalCellKey(Vector3 position, int progress)
+            {
+                long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF;
+                return -1 - (((long)progress << 48) | (x << 24) | y);
+            }
+
             // A cell keeps its earliest arrival: by course time once the timer runs (dash ticks consume no input but still
             // cost 0.02 s each), by input tick before it. Only arrivals a run can resume from are filed: one reached after
             // the inputs ran out has no snapshot, and exploring from it would replay its whole prefix from the start.
@@ -625,6 +691,7 @@ namespace IGTAP.EngineSim
                 if (!better || state == null) return;
                 _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };
                 if (key < 0 && rank > _maxTimedRank) _maxTimedRank = rank;
+                if (_goalMode && rank < _minTimedRank) _minTimedRank = rank;
             }
         }
     }

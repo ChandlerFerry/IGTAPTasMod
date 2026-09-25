@@ -1,0 +1,19 @@
+/* Full-TAS tab: the runs as cards, the selected run's goals, editor and solve. */
+.fullTasRuns { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 10px; margin-top: 18px; }
+.fullTasRun { display: flex; flex-direction: column; gap: 5px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #101f35; color: var(--text); text-align: left; cursor: pointer; }
+.fullTasRun.selected { border-color: #247eb4; background: #10263d; }
+.fullTasRun.unsaved { border-style: dashed; }
+.fullTasRun small { color: var(--muted); font-size: 11px; }
+.fullTasRun b { color: var(--green); font-size: 16px; }
+.fullTasRun b.none { color: var(--muted); font-size: 12px; font-weight: 600; }
+.fullTasRun .badge { align-self: flex-start; }
+.fullTasRun .badge.missing { background: #2a2214; color: var(--amber); }
+.fullTasGrid { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 18px; align-items: start; margin-top: 18px; }
+@media (max-width: 1200px) { .fullTasGrid { grid-template-columns: 1fr; } }
+.fullTasGoals .tableHead, .fullTasGoals .tableRow { grid-template-columns: 40px minmax(0,1fr) 130px 130px; }
+.fullTasGoals .tableRow.pending { color: var(--muted); }
+.fullTasEditor textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 10px 11px; outline: none; font: 12px/1.6 ui-monospace,Consolas,monospace; }
+.fullTasEditor textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px #34b8ff1b; }
+.fullTasEditor .buttonRow, .fullTasSolve .buttonRow { flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
+.fullTasInline { display: flex; gap: 9px; align-items: flex-end; }
+.fullTasInline .field { flex: 1; margin-top: 12px; }
