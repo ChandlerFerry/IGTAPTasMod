@@ -25,6 +25,11 @@
     <Reference Include="Newtonsoft.Json" HintPath="$(ManagedDir)\Newtonsoft.Json.dll" Private="false" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The Optimize tab launches the offline solver from this repo (build it: enginesim\Cli, Release). -->
+    <AssemblyMetadata Include="EngineSimExe" Value="$(MSBuildProjectDirectory)\enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe" />
+  </ItemGroup>
+
   <Target Name="BuildWebStudio" BeforeTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
     <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)\web" Condition="!Exists('$(MSBuildProjectDirectory)\web\node_modules\next\package.json')" />
     <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\web" />

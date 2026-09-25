@@ -9,8 +9,10 @@ that run saw it).
   enginesim-capture.py random [N]         N random-input runs per course/category (fidelity corpus)
   enginesim-capture.py start C CAPS       just the start state (empty inputs) for course C, category CAPS
   enginesim-capture.py route NAME C CAPS  any studio route by name (e.g. a partial one), as a `solve --seed` trace
+  enginesim-capture.py chain NAME K       chain NAME's segment K (0-based) start: where the chain's routes before it end
 
-C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj.
+C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjdash|wjdashaj. Chains are in chains.json
+next to courses.json (a chain segment is solved in the chain's category).
 """
 import json
 import random
@@ -26,7 +28,7 @@ COURSES = r"C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\co
 COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
 COURSE_IDS.update({str(c): c for c in COURSE_IDS.values()})
 CATEGORIES = [(1, "wjdashaj"), (1, "wjdash"), (1, "wj"), (1, "none"), (2, "wjdashaj"), (2, "wjdash"), (2, "wj"),
-              (3, "wjdashaj"), (3, "wjdash"), (4, "wjdashaj"), (COURSE_IDS["bonus1"], "wj")]
+              (3, "wjdashaj"), (3, "wjdash"), (4, "wjdashaj"), (5, "wjdashaj"), (COURSE_IDS["bonus1"], "wj")]
 
 
 def call(path, body=None, method="POST"):
@@ -103,6 +105,10 @@ def main():
         slug = re.sub(r"[^A-Za-z0-9.]+", "-", name).strip("-")
         r = trace({"course": course, "capabilities": caps, "routeId": route["id"], "name": f"seed-c{sys.argv[3]}-{caps}-{slug}"})
         print({k: v for k, v in r.items() if k != "path"})
+    elif mode == "chain":
+        chain, segment = sys.argv[2], int(sys.argv[3])
+        r = trace({"chain": chain, "segment": segment, "ticks": [], "name": f"start-chain-{chain}-{segment}"})
+        print({k: v for k, v in r.items()})
     else:
         sys.exit(__doc__)
 

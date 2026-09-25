@@ -60,12 +60,15 @@ namespace IGTAPTasMod
             public (int due, MonoBehaviour target, string method)[] pending;
         }
 
-        public static Snapshot Capture(Movement movement, courseScript[] courses, object[] engine, int tick)
+        // `beforeTick`: taken inside a tick's Movement.FixedUpdate prefix (a chain segment's start), after that tick's due
+        // Invokes fired: the restored run's first tick is the rest of this one.
+        public static Snapshot Capture(Movement movement, courseScript[] courses, object[] engine, int tick, bool beforeTick = false)
         {
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             var pending = new (int, MonoBehaviour, string)[Pending.Count];
             // Relative to the first tick after the restore.
-            for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - _tick - 1, Pending[i].target, Pending[i].method);
+            int next = _tick + (beforeTick ? 0 : 1);
+            for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - next, Pending[i].target, Pending[i].method);
             return new Snapshot {
                 tick = tick, movement = FieldState.Capture(movement), engine = engine,
                 courses = Array.ConvertAll(courses, c => (c, FieldState.Capture(c))),

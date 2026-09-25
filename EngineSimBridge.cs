@@ -42,7 +42,8 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown enginesim endpoint." };
         }
 
-        // Sets the solver's course/category and makes sure its start state exists. Returns an error response or null.
+        // Sets the solver's course/category (or chain segment) and makes sure its start state exists. Returns an error
+        // response or null.
         object PrepareEngineSimRun(WebStudioRequest request, JObject body, out List<SolverTick> inputs)
         {
             inputs = null;
@@ -51,19 +52,12 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = CapabilitiesLockedError };
             }
-            if (_solverRunning || _engine.IsRunning || _recorder.IsRecording)
+            if (PlaybackActive || _recorder.IsRecording)
             {
                 request.StatusCode = 409;
-                return new { ok = false, error = "Stop the solver, playback and recording first." };
+                return new { ok = false, error = "Stop playback and recording first." };
             }
-            int course = Number(body, "course", 0);
-            string caps = Text(body, "capabilities") ?? "wjdash";
-            if (_courses.All(c => c.id != course)) throw new InvalidOperationException("Unknown course " + course + ".");
-            if (!CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
-            CheckCategory(course, caps);
-            _solverCourse = course;
-            _solverCaps = caps;
-            _solverBest = float.PositiveInfinity;
+            string key = SelectSolverTarget(body);
             inputs = body["ticks"] == null ? new List<SolverTick>() : body["ticks"].ToObject<List<SolverTick>>();
             string routeId = Text(body, "routeId");
             if (!string.IsNullOrEmpty(routeId))
@@ -73,21 +67,59 @@ namespace IGTAPTasMod
                     throw new InvalidOperationException("Route " + routeId + " is missing or not raw input.");
                 inputs = ToTicks(route.steps);
             }
-            _bestArrival.Clear();
-            if (Truthy(body, "freshStart") || _engineSimStartKey != course + "_" + caps || CurrentOrigin() != _startOrigin) _startState = null;
+            if (Truthy(body, "freshStart") || _engineSimStartKey != key || CurrentOrigin() != _startOrigin) _startState = null;
             if (_startState == null && !CourseLoaded())
             {
                 request.StatusCode = 409;
-                return new { ok = false, error = "Course " + course + " is loading; retry in a moment." };
+                return new { ok = false, error = "Course " + _solverPark.Token + " is loading; retry in a moment." };
             }
             if (_startState == null)
             {
-                // The solver's first run captures the start state; every later run resumes from it.
-                Evaluate(new List<SolverTick> { new SolverTick() }, null, null, null, false, out _, out _, out _);
+                _engineSimStartKey = null;
+                // The solver's first run captures the start state; every later run resumes from it. A chain segment's
+                // start is where the chain's routes before it end.
+                if (_solverChain != null) CaptureChainSegmentStart(Truthy(body, "freshStart"));
+                else Evaluate(new List<SolverTick> { new SolverTick() }, out _, out _, out _);
                 if (_startState == null) throw new InvalidOperationException("The start state was not captured.");
-                _engineSimStartKey = course + "_" + caps;
+                _engineSimStartKey = key;
             }
             return null;
+        }
+
+        // {course, capabilities} or {chain, segment} (0-based; the chain's category): what every turbo run is made for.
+        // Returns the key of its start state.
+        string SelectSolverTarget(JObject body)
+        {
+            string chainName = Text(body, "chain");
+            if (!string.IsNullOrEmpty(chainName))
+            {
+                ChainDef chain = FindChain(chainName);
+                List<ChainSegment> segments = ChainSegments(chain);
+                int index = Number(body, "segment", -1);
+                if (index < 0 || index >= segments.Count) throw new InvalidOperationException("Chain " + chain.name + " has no segment " + index + " (0-based).");
+                // Every route before it must exist: they make its start.
+                List<MacroDefinition> before = ChainRoutes(chain, segments, index);
+                _solverChain = chain;
+                _solverSegments = segments;
+                _solverSegment = index;
+                _solverTarget = segments[index].target;
+                _solverPark = segments[0].target;
+                _solverRestart = segments[index].restart;
+                _solverCaps = chain.capabilities;
+                return "chain " + chain.name + " " + index + ": " + string.Join(" | ", before.Select(r => r.id + " " + r.name));
+            }
+            int course = Number(body, "course", 0);
+            string caps = Text(body, "capabilities");
+            CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
+            if (!CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
+            CheckCategory(course, caps);
+            _solverChain = null;
+            _solverSegments = null;
+            _solverSegment = -1;
+            _solverRestart = false;
+            _solverTarget = _solverPark = def;
+            _solverCaps = caps;
+            return course + "_" + caps;
         }
 
         // An offline solver's candidate: {course, capabilities, ticks}. Replayed in turbo from the start state exactly as
@@ -102,7 +134,7 @@ namespace IGTAPTasMod
         // Turbo replay of prepared inputs; saved through the gate (SaveSolverRoute) when it beats the category's best.
         JudgeResult Judge(List<SolverTick> inputs)
         {
-            bool finished = Evaluate(inputs, null, null, null, false, out float time, out int finishTick, out _);
+            bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
             ParkAtStart();
             float best = CategoryBest(SolverCategory);
             var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick,
@@ -111,17 +143,16 @@ namespace IGTAPTasMod
             {
                 List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
                 result.saved = SaveSolverRoute(route, time);
-                if (result.saved) { _solverBest = time; _solverBestInputs = route; }
-                else result.rejected = _solverLog[_solverLog.Count - 1];
+                if (!result.saved) result.rejected = _solverLog[_solverLog.Count - 1];
             }
             return result;
         }
 
         // Back to the course start after a turbo run: the real frames until the next run then load the start's zone
-        // (and apply any FloatingOrigin shift) instead of wherever the run ended.
+        // (and apply any FloatingOrigin shift) instead of wherever the run ended. A chain segment's is its chain's start.
         void ParkAtStart()
         {
-            RestoreRouteStart(new MacroDefinition { name = _courses.Find(c => c.id == _solverCourse).Token + "_" });
+            RestoreRouteStart(new MacroDefinition { name = _solverPark.Token + "_" });
         }
 
         sealed class JudgeResult
@@ -133,58 +164,94 @@ namespace IGTAPTasMod
             public string rejected;
         }
 
-        // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json and
-        // submits it only while the game runs. Once the game is in the world and idle, the fastest waiting file per
-        // category that beats the saved route is judged here like a submit (its own category and the others, as solve
-        // does), so solves run with the game closed still reach the studio. Judged or superseded files move to judged/.
+        // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json (a chain
+        // segment's to chain-<chain>-<segment>_<caps>-<time>.json) and submits it only while the game runs. Once the game is
+        // in the world and idle, the fastest waiting file per category that beats the saved route is judged here like a
+        // submit (a course's in its own category and the others, as solve does; a chain segment's in its chain's), so
+        // solves run with the game closed still reach the studio. Judged or superseded files move to judged/.
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
+        static readonly Regex OfflineChainBestFile = new Regex(@"^chain-([A-Za-z0-9]+)-(\d+)_([a-z]+)-([\d.]+)\.json$");
         float _offlineBestCheckAt;
-        // "<file>|<caps>" already judged; a category whose course is still loading is retried on a later pump.
+        // "<file>|<label>" already judged; a category whose course is still loading is retried on a later pump.
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
+
+        // A waiting offline best: its group (one category or chain segment), time, and the submits that judge it (label,
+        // body, category route name), its own first.
+        sealed class OfflineBest
+        {
+            public string path, group;
+            public float time;
+            public List<(string label, JObject body, string category)> judgings;
+        }
+
+        OfflineBest ReadOfflineBest(string path)
+        {
+            string file = Path.GetFileName(path);
+            Match m = OfflineBestFile.Match(file);
+            if (m.Success)
+            {
+                int id = int.Parse(m.Groups[1].Value);
+                string caps = m.Groups[2].Value;
+                CourseDef course = _courses.Find(c => c.id == id);
+                if (course == null || !CapabilityLabels.ContainsKey(caps)) return null;
+                // Its own category first, then the course's others (a route may hold up in a wider category too); none when
+                // the course doesn't have its own.
+                return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
+                    judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>()
+                        : new[] { caps }.Concat(CapabilityLabels.Keys.Where(k => k != caps && course.HasCategory(k)))
+                            .Select(k => (CapabilityLabels[k], new JObject { ["course"] = id, ["capabilities"] = k }, course.Token + "_" + CapabilityLabels[k])).ToList() };
+            }
+            m = OfflineChainBestFile.Match(file);
+            if (!m.Success) return null;
+            ChainDef chain = _chains.Find(c => string.Equals(c.name, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+            if (chain == null || chain.capabilities != m.Groups[3].Value) return null;
+            List<ChainSegment> segments;
+            try { segments = ChainSegments(chain); }
+            catch (InvalidOperationException) { return null; }
+            int index = int.Parse(m.Groups[2].Value);
+            if (index >= segments.Count) return null;
+            return new OfflineBest { path = path, group = "chain-" + chain.name + "-" + index, time = float.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
+                judgings = new List<(string, JObject, string)> { (CapabilityLabels[chain.capabilities], new JObject { ["chain"] = chain.name, ["segment"] = index },
+                    ChainCategory(chain, segments[index])) } };
+        }
 
         void PumpOfflineBests()
         {
             if (Time.unscaledTime < _offlineBestCheckAt) return;
             _offlineBestCheckAt = Time.unscaledTime + 5f;
             string dir = Path.Combine(EngineSimDir, "offline-best");
-            if (CapabilitiesLocked || _solverRunning || _engine.IsRunning || _recorder.IsRecording || _bootstrapRequest != null
+            if (CapabilitiesLocked || _solverRunning || PlaybackActive || _recorder.IsRecording || _bootstrapRequest != null
                 || _webServer == null || !Directory.Exists(dir)) return;
             Movement player = FindWorldMovement();
             if (player == null || MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(player) is bool menu && menu) return;
-            var groups = Directory.GetFiles(dir, "*.json")
-                .Select(path => (path, match: OfflineBestFile.Match(Path.GetFileName(path))))
-                .Where(f => f.match.Success && CapabilityLabels.ContainsKey(f.match.Groups[2].Value))
-                .Select(f => (f.path, course: int.Parse(f.match.Groups[1].Value), caps: f.match.Groups[2].Value,
-                    time: float.Parse(f.match.Groups[3].Value, CultureInfo.InvariantCulture)))
-                .Where(f => _courses.Any(c => c.id == f.course))
-                .GroupBy(f => (f.course, f.caps));
+            var groups = Directory.GetFiles(dir, "*.json").Select(ReadOfflineBest).Where(f => f != null).GroupBy(f => f.group);
             string judged = Path.Combine(dir, "judged");
             foreach (var group in groups)
             {
                 var files = group.OrderBy(f => f.time).ToList();
-                CourseDef course = _courses.Find(c => c.id == group.Key.course);
-                float best = CategoryBest(course.Token + "_" + CapabilityLabels[group.Key.caps]);
-                bool started = _offlineJudged.Any(k => k.StartsWith(files[0].path + "|", StringComparison.Ordinal));
-                if ((started || files[0].time < best - .0001f) && CapsLevel(group.Key.caps) >= course.MinLevel)
+                OfflineBest first = files[0];
+                // A course file whose own category the course doesn't have is only moved away.
+                bool judgeable = first.judgings.Count > 0;
+                float best = judgeable ? CategoryBest(first.judgings[0].category) : 0f;
+                bool started = _offlineJudged.Any(k => k.StartsWith(first.path + "|", StringComparison.Ordinal));
+                if (judgeable && (started || first.time < best - .0001f))
                 {
-                    // Its own category first, then the course's others (a route may hold up in a wider category too).
-                    string next = new[] { group.Key.caps }.Concat(CapabilityLabels.Keys.Where(k => k != group.Key.caps && CapsLevel(k) >= course.MinLevel))
-                        .FirstOrDefault(caps => !_offlineJudged.Contains(files[0].path + "|" + caps));
-                    if (next != null)
+                    var next = first.judgings.FirstOrDefault(j => !_offlineJudged.Contains(first.path + "|" + j.label));
+                    if (next.body != null)
                     {
                         _offlineBestCheckAt = Time.unscaledTime + 1f;
-                        string line = "Offline best " + Path.GetFileName(files[0].path) + " as " + CapabilityLabels[next] + ": ";
+                        string line = "Offline best " + Path.GetFileName(first.path) + " as " + next.category + ": ";
                         try
                         {
-                            object error = PrepareEngineSimRun(new WebStudioRequest(), new JObject { ["course"] = group.Key.course, ["capabilities"] = next }, out _);
+                            object error = PrepareEngineSimRun(new WebStudioRequest(), next.body, out _);
                             if (error != null) return;
-                            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(files[0].path))["ticks"].ToObject<List<SolverTick>>();
+                            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
                             JudgeResult r = Judge(inputs);
                             line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish in turbo")
                                 + (r.saved ? ", saved" : r.rejected != null ? ", " + r.rejected : "");
                         }
                         catch (Exception ex) { line += "error " + ex.Message; }
-                        _offlineJudged.Add(files[0].path + "|" + next);
+                        _offlineJudged.Add(first.path + "|" + next.label);
                         _solverLog.Add(line);
                         Logger.LogInfo(line);
                         return;
@@ -213,14 +280,15 @@ namespace IGTAPTasMod
             return best;
         }
 
-        // {course, capabilities, ticks: [{x, held, press, release, dash, dashJump}] or routeId, name, world, freshStart} ->
-        // trace file with the start state (what every solver run resumes from) and the full state after every
-        // stepped tick; with world: true also the world export as that run saw it.
+        // {course, capabilities | chain, segment; ticks: [{x, held, press, release, dash, dashJump}] or routeId, name, world,
+        // freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
+        // every stepped tick; with world: true also the world export as that run saw it.
         object EngineSimTrace(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
             if (error != null) return error;
-            int course = _solverCourse;
+            CourseDef finishCourse = _solverTarget;
+            int course = finishCourse.id;
             string caps = _solverCaps;
             string name = Text(body, "name") ?? ("trace-" + course + "_" + caps);
             string path = Path.Combine(EngineSimDir, name + ".json");
@@ -237,16 +305,31 @@ namespace IGTAPTasMod
                 JsonTextWriter w = json.W;
                 w.WriteStartObject();
                 w.WritePropertyName("course"); w.WriteValue(course);
-                CourseDef finishCourse = _courses.Find(c => c.id == course);
                 if (finishCourse != null && finishCourse.HasFinish)
                 {
-                    // The bonus course's reward box in this run's world coordinates, so offline runs finish exactly
-                    // where this one did.
+                    // The bonus course's reward box (or a transition's end box) in this run's world coordinates, so
+                    // offline runs finish exactly where this one did.
                     Vector2 origin = CurrentOrigin();
                     w.WritePropertyName("finish"); w.WriteStartArray();
                     json.Float(finishCourse.endX + origin.x); json.Float(finishCourse.endY + origin.y);
                     json.Float(finishCourse.endW); json.Float(finishCourse.endH);
                     w.WriteEndArray();
+                }
+                // A transition (Simulation.SetTarget): timed in physics ticks, and ends at its end box or at the start gate
+                // of course `finishStart`.
+                if (finishCourse != null && finishCourse.IsTransition)
+                {
+                    w.WritePropertyName("transition"); w.WriteValue(true);
+                    if (finishCourse.toCourse > 0) { w.WritePropertyName("finishStart"); w.WriteValue(finishCourse.toCourse); }
+                }
+                // A chain segment: timed in physics ticks from its start (a course segment too: the chain's time is the sum
+                // of its segments', and the course's timer may be running already), after a quick restart if it has one.
+                if (_solverChain != null)
+                {
+                    w.WritePropertyName("chain"); w.WriteValue(_solverChain.name);
+                    w.WritePropertyName("segment"); w.WriteValue(_solverSegment);
+                    w.WritePropertyName("fromRunStart"); w.WriteValue(true);
+                    if (_solverRestart) { w.WritePropertyName("restart"); w.WriteValue(true); }
                 }
                 w.WritePropertyName("capabilities"); w.WriteValue(caps);
                 w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
@@ -259,7 +342,7 @@ namespace IGTAPTasMod
                     var snapshot = TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks);
                     EngineSimExport.WriteSnapshot(json, snapshot, p, true);
                 };
-                try { finished = Evaluate(inputs, null, null, null, false, out time, out finishTick, out end); }
+                try { finished = Evaluate(inputs, out time, out finishTick, out end); }
                 finally { _engineSimTickHook = null; }
                 ParkAtStart();
                 w.WriteEndArray();

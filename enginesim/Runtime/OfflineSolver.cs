@@ -417,11 +417,12 @@ namespace IGTAP.EngineSim
                         return false;
                     }
                     courseScript active = _sim.TimingCourse();
-                    // A bonus course has no course timer; its runs are timed in ticks from the run start.
-                    bool timing = _sim.TargetFinish.w > 0f || active != null;
+                    // Bonus and transition runs have no course timer; they are timed in physics ticks from the run start,
+                    // as their finishes are.
+                    bool timing = _sim.TimedFromRunStart || active != null;
                     long key = CellKey(_sim.Player.transform.m_Position, timing);
                     bool losing = false;
-                    float elapsed = _sim.TargetFinish.w > 0f ? tick * _sim.World.FixedDeltaTime
+                    float elapsed = _sim.ScoredFromRunStart ? _sim.Engine.PhysicsTicks * _sim.World.FixedDeltaTime
                         : active == null ? -1f : Simulation.CourseTime(active);
                     if (elapsed >= 0f)
                     {

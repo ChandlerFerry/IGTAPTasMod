@@ -48,6 +48,10 @@ namespace IGTAPTasMod
         private int _preRollTicksRemaining;
         private int _preRollTicksTotal;
         private long _runTicks;
+        // Physics ticks since the run's first input tick, dash/spring ticks (which take no input) included.
+        private long _physicsTicks;
+        // A chain segment (Continue) counts every physics tick from its start: it may start mid-dash, when ticks take no input.
+        private bool _countEveryPhysicsTick;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
         private bool _hasProgressSample;
@@ -61,6 +65,7 @@ namespace IGTAPTasMod
         public bool IsRunning { get { return _steps != null; } }
         public int StepIndex { get { return _stepIndex; } }
         public long RunTicks { get { return _runTicks; } }
+        public long PhysicsTicks { get { return _physicsTicks; } }
         public string ActiveMacroId { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
@@ -101,6 +106,8 @@ namespace IGTAPTasMod
             _preRollTicksRemaining = Mathf.Max(0, startDelayTicks);
             _preRollTicksTotal = _preRollTicksRemaining;
             _runTicks = 0;
+            _physicsTicks = 0;
+            _countEveryPhysicsTick = false;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
             _hasProgressSample = false;
@@ -131,6 +138,55 @@ namespace IGTAPTasMod
             _finishWaitTicks = 0;
         }
 
+        // The next segment of a chain, from exactly where the previous one ended: a chain's segments are one continuous
+        // controller stream, so the held jump and the press/release stamps the gate audits carry over (a jump held across
+        // the boundary is released by the first tick that doesn't hold it, like a real button). Only the run's own
+        // counters restart; a dash-jump the previous segment planned past its finish is dropped with its inputs.
+        public void Continue(MacroDefinition macro, bool requireCourseFinish)
+        {
+            if (macro == null || macro.steps == null || macro.steps.Count == 0)
+            {
+                Status = "Cannot run an empty macro";
+                return;
+            }
+            _steps = Expand(macro.steps);
+            NormalizeFrameTiming(_steps);
+            _macroName = macro.name;
+            ActiveMacroId = macro.id;
+            _stepIndex = 0;
+            _elapsedMs = 0f;
+            _elapsedTicks = 0;
+            _wallJumpTriggered = false;
+            _dashJumpFrame = 0;
+            _waitingForStable = false;
+            _stableTicks = 0;
+            _hasSynchronizationPosition = false;
+            _preRollTicksRemaining = _preRollTicksTotal = 0;
+            _runTicks = 0;
+            _physicsTicks = 0;
+            _countEveryPhysicsTick = true;
+            _requireCourseFinish = requireCourseFinish;
+            _finishWaitTicks = 0;
+            _hasProgressSample = false;
+            _startStateFingerprint = null;
+            _authoritativeCompletionTime = 0f;
+            _courseStartRunTick = -1;
+            _courseStartUnityFrame = -1;
+            _courseStartPosition = Vector2.zero;
+            _earlyTrace.Clear();
+            Status = "Running: " + macro.name;
+            if (!Quiet) TasPlugin.Log.LogInfo(Status);
+        }
+
+        // Drops the run without ending an attempt (no AttemptEnded): a chain start capture only needed its state.
+        public void Discard()
+        {
+            _steps = null;
+            _stepIndex = -1;
+            _elapsedMs = 0f;
+            _elapsedTicks = 0;
+        }
+
         public void Abort(string reason = "Stopped")
         {
             bool wasRunning = IsRunning;
@@ -157,6 +213,19 @@ namespace IGTAPTasMod
 
         // A bonus course's run finishes on its reward box (no end gate anywhere in the area).
         internal const string RewardFinishReason = "Reward collected";
+        // A transition's run finishes when the next course's start gate starts its timer.
+        internal const string TransitionFinishReason = "Next course started";
+
+        internal static bool IsFinishReason(string reason)
+        {
+            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason;
+        }
+
+        // Once per physics tick, after Movement.FixedUpdate (which takes the tick's input, if any).
+        public void CountPhysicsTick()
+        {
+            if (IsRunning && (_runTicks > 0 || _countEveryPhysicsTick)) _physicsTicks++;
+        }
 
         public void CompleteFromGame(string reason = "Course finish detected", float authoritativeTime = 0f)
         {
