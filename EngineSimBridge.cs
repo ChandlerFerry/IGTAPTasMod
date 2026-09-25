@@ -47,17 +47,23 @@ namespace IGTAPTasMod
         object PrepareEngineSimRun(WebStudioRequest request, JObject body, out List<SolverTick> inputs)
         {
             inputs = null;
-            if (CapabilitiesLocked)
-            {
-                request.StatusCode = 409;
-                return new { ok = false, error = CapabilitiesLockedError };
-            }
             if (PlaybackActive || _recorder.IsRecording)
             {
                 request.StatusCode = 409;
                 return new { ok = false, error = "Stop playback and recording first." };
             }
+            if (_newGamePhase != 0)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "A new game is loading; retry in a moment." };
+            }
             string key = SelectSolverTarget(body);
+            // A chain from a new game writes no unlock, so it runs with DO NOT MODIFY CAPABILITIES on.
+            if (CapabilitiesLocked && !SolverFromNewGame)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = CapabilitiesLockedError };
+            }
             inputs = body["ticks"] == null ? new List<SolverTick>() : body["ticks"].ToObject<List<SolverTick>>();
             string routeId = Text(body, "routeId");
             if (!string.IsNullOrEmpty(routeId))
@@ -105,7 +111,7 @@ namespace IGTAPTasMod
                 _solverTarget = segments[index].target;
                 _solverPark = segments[0].target;
                 _solverRestart = segments[index].restart;
-                _solverCaps = chain.capabilities;
+                _solverCaps = segments[index].caps;
                 return "chain " + chain.name + " " + index + ": " + string.Join(" | ", before.Select(r => r.id + " " + r.name));
             }
             int course = Number(body, "course", 0);
@@ -131,15 +137,21 @@ namespace IGTAPTasMod
             return Judge(inputs);
         }
 
-        // Turbo replay of prepared inputs; saved through the gate (SaveSolverRoute) when it beats the category's best.
+        // Turbo replay of prepared inputs; saved through the gate (SaveSolverRoute) when it beats the category's best:
+        // faster on the timer, or as fast in fewer physics ticks from the run start (a shorter flying-start setup).
         JudgeResult Judge(List<SolverTick> inputs)
         {
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
+            long runTicks = _engine.PhysicsTicks;
+            string category = SolverCategory;
+            float best = CategoryBest(category);
+            bool tie = finished && Mathf.Abs(time - best) <= .0001f;
+            long bestRunTicks = tie ? SavedRouteRunTicks(category, best) : long.MaxValue;
             ParkAtStart();
-            float best = CategoryBest(SolverCategory);
-            var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick,
-                previousBest = float.IsInfinity(best) ? (float?)null : best };
-            if (finished && time < best - .0001f)
+            var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick, runTicks = runTicks,
+                previousBest = float.IsInfinity(best) ? (float?)null : best,
+                previousRunTicks = bestRunTicks == long.MaxValue ? (long?)null : bestRunTicks };
+            if (finished && (time < best - .0001f || tie && runTicks < bestRunTicks))
             {
                 List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
                 result.saved = SaveSolverRoute(route, time);
@@ -149,9 +161,16 @@ namespace IGTAPTasMod
         }
 
         // Back to the course start after a turbo run: the real frames until the next run then load the start's zone
-        // (and apply any FloatingOrigin shift) instead of wherever the run ended. A chain segment's is its chain's start.
+        // (and apply any FloatingOrigin shift) instead of wherever the run ended. A chain segment's is its chain's start;
+        // a chain from a new game's is the fresh game's first tick (economy included: nothing a turbo run bought stays).
         void ParkAtStart()
         {
+            if (SolverFromNewGame)
+            {
+                Movement player = FindWorldMovement();
+                if (FreshGame && player == _newGamePlayer) TurboRunner.Restore(_newGameStart, player);
+                return;
+            }
             RestoreRouteStart(new MacroDefinition { name = _solverPark.Token + "_" });
         }
 
@@ -160,13 +179,16 @@ namespace IGTAPTasMod
             public bool ok = true, finished, saved;
             public float time;
             public int finishTick;
+            // Physics ticks from the run start through the finish, and the saved route's when this one ties its time.
+            public long runTicks;
             public float? previousBest;
+            public long? previousRunTicks;
             public string rejected;
         }
 
         // `IGTAP.EngineSim solve` writes every offline best to enginesim/offline-best/<course>_<caps>-<time>.json (a chain
         // segment's to chain-<chain>-<segment>_<caps>-<time>.json) and submits it only while the game runs. Once the game is
-        // in the world and idle, the fastest waiting file per category that beats the saved route is judged here like a
+        // in the world and idle, the fastest waiting file per category that beats or ties the saved route is judged here like a
         // submit (a course's in its own category and the others, as solve does; a chain segment's in its chain's), so
         // solves run with the game closed still reach the studio. Judged or superseded files move to judged/.
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
@@ -204,14 +226,15 @@ namespace IGTAPTasMod
             m = OfflineChainBestFile.Match(file);
             if (!m.Success) return null;
             ChainDef chain = _chains.Find(c => string.Equals(c.name, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
-            if (chain == null || chain.capabilities != m.Groups[3].Value) return null;
+            if (chain == null) return null;
             List<ChainSegment> segments;
             try { segments = ChainSegments(chain); }
             catch (InvalidOperationException) { return null; }
             int index = int.Parse(m.Groups[2].Value);
-            if (index >= segments.Count) return null;
+            // Judged in the segment's own category (the chain's, wall jump after a buywj).
+            if (index >= segments.Count || segments[index].caps != m.Groups[3].Value) return null;
             return new OfflineBest { path = path, group = "chain-" + chain.name + "-" + index, time = float.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
-                judgings = new List<(string, JObject, string)> { (CapabilityLabels[chain.capabilities], new JObject { ["chain"] = chain.name, ["segment"] = index },
+                judgings = new List<(string, JObject, string)> { (CapabilityLabels[segments[index].caps], new JObject { ["chain"] = chain.name, ["segment"] = index },
                     ChainCategory(chain, segments[index])) } };
         }
 
@@ -234,7 +257,8 @@ namespace IGTAPTasMod
                 bool judgeable = first.judgings.Count > 0;
                 float best = judgeable ? CategoryBest(first.judgings[0].category) : 0f;
                 bool started = _offlineJudged.Any(k => k.StartsWith(first.path + "|", StringComparison.Ordinal));
-                if (judgeable && (started || first.time < best - .0001f))
+                // As fast as the saved route is judged too: it may get there in fewer physics ticks from the run start.
+                if (judgeable && (started || first.time <= best + .0001f))
                 {
                     var next = first.judgings.FirstOrDefault(j => !_offlineJudged.Contains(first.path + "|" + j.label));
                     if (next.body != null)
@@ -247,7 +271,8 @@ namespace IGTAPTasMod
                             if (error != null) return;
                             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
                             JudgeResult r = Judge(inputs);
-                            line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish in turbo")
+                            line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
+                                    + (r.previousRunTicks is long was ? ", saved route's " + was : "") + ")" : "no finish in turbo")
                                 + (r.saved ? ", saved" : r.rejected != null ? ", " + r.rejected : "");
                         }
                         catch (Exception ex) { line += "error " + ex.Message; }
@@ -280,6 +305,22 @@ namespace IGTAPTasMod
             return best;
         }
 
+        // The whole run (physics ticks from the run start through the finish) of the category's saved route(s) timed
+        // `time`, replayed in turbo: what an equally fast route must beat. long.MaxValue when none replays in that time.
+        long SavedRouteRunTicks(string category, float time)
+        {
+            long fewest = long.MaxValue;
+            foreach (MacroDefinition m in _library.macros.ToList())
+            {
+                Match g = CategoryRoute.Match(m.name ?? "");
+                if (!g.Success || !string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase)
+                    || Mathf.Abs(float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture) - time) > .0001f) continue;
+                if (Evaluate(ToTicks(m.steps), out float replayed, out _, out _) && Mathf.Abs(replayed - time) <= .0001f)
+                    fewest = Math.Min(fewest, _engine.PhysicsTicks);
+            }
+            return fewest;
+        }
+
         // {course, capabilities | chain, segment; ticks: [{x, held, press, release, dash, dashJump}] or routeId, name, world,
         // freshStart} -> trace file with the start state (what every solver run resumes from) and the full state after
         // every stepped tick; with world: true also the world export as that run saw it.
@@ -305,15 +346,28 @@ namespace IGTAPTasMod
                 JsonTextWriter w = json.W;
                 w.WriteStartObject();
                 w.WritePropertyName("course"); w.WriteValue(course);
+                if (finishCourse.IsPurchase) ResolvePurchaseFinish(finishCourse);
                 if (finishCourse != null && finishCourse.HasFinish)
                 {
-                    // The bonus course's reward box (or a transition's end box) in this run's world coordinates, so
-                    // offline runs finish exactly where this one did.
+                    // The bonus course's reward box, a transition's end box or a purchase's buy trigger, in this run's world
+                    // coordinates, so offline runs finish exactly where this one did.
                     Vector2 origin = CurrentOrigin();
                     w.WritePropertyName("finish"); w.WriteStartArray();
                     json.Float(finishCourse.endX + origin.x); json.Float(finishCourse.endY + origin.y);
                     json.Float(finishCourse.endW); json.Float(finishCourse.endH);
                     w.WriteEndArray();
+                }
+                // A purchase (informational; offline economy is cut, so offline it finishes on touching the trigger): the box,
+                // its cost, the Cash and its buy cooldown at the segment's start. Turbo judges whether the game buys it.
+                if (finishCourse.IsPurchase)
+                {
+                    upgradeBox box = PurchaseBox(finishCourse);
+                    w.WritePropertyName("purchase"); w.WriteStartObject();
+                    w.WritePropertyName("box"); w.WriteValue(finishCourse.box);
+                    w.WritePropertyName("cost"); w.WriteValue(TurboRunner.BoxField(_startState, box, "upgradeCost") is double cost ? cost : 0.0);
+                    w.WritePropertyName("cash"); w.WriteValue(TurboRunner.Cash(_startState));
+                    w.WritePropertyName("cooldown"); json.Float(TurboRunner.BoxField(_startState, box, "boxCooldown") is float cooldown ? cooldown : 0f);
+                    w.WriteEndObject();
                 }
                 // A transition (Simulation.SetTarget): timed in physics ticks, and ends at its end box or at the start gate
                 // of course `finishStart`.
@@ -339,7 +393,7 @@ namespace IGTAPTasMod
                 w.WriteStartArray();
                 _engineSimTickHook = p =>
                 {
-                    var snapshot = TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks);
+                    var snapshot = TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks, false, false);
                     EngineSimExport.WriteSnapshot(json, snapshot, p, true);
                 };
                 try { finished = Evaluate(inputs, out time, out finishTick, out end); }

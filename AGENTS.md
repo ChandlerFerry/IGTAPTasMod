@@ -10,7 +10,8 @@ suspected exploit of our own tooling until proven otherwise.
    (user decision 2026-09-24).
 2. **Right unlocks.** Wall jump / dash / air jump are exactly the category's (`NO_WJ`: none, `WJ`: wall jump,
    `WJDASH`: wall jump + dash, `WJ_DASH_AJ`: wall jump + dash + air jump) on every tick, in turbo, offline, and in
-   playback.
+   playback. In a chain that starts from `newgame`, the unlocks are exactly the chain's starting category plus what the
+   chain has bought so far (a segment after a `buywj` is `WJ`); the plugin never writes them, the game's purchases do.
 3. **Inputs behave like real presses.** Injected jump/dash presses and releases must do exactly what `Movement.Update`
    does, including the buffer expiry timers (jump 0.12 s, 0.2 s mid-dash; dash 0.12 s; jump cut 0.26 s). Never set
    game input fields (`jumpBuffer`, `dashBuffer`, `jumpCutBuffer`, ...) without the game's own timers.

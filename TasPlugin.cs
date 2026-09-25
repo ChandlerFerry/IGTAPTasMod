@@ -114,17 +114,20 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Saveloader), "autosave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "manualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
+            PatchOptional(typeof(Saveloader), "Awake", nameof(BeforeSaveloaderAwake), null);
+            PatchOptional(typeof(upgradeBox), "DoBuyUpgrade", null, nameof(AfterBuyUpgrade));
             PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
         // The game's saves run only when nothing of ours is applied to the player: never while a category route's
-        // unlocks (playback) or a turbo/solver run are in effect, so those can't end up in the user's save. Live edits
-        // from /api/session/setup are the user's own and save normally.
+        // unlocks (playback) or a turbo/solver run are in effect, so those can't end up in the user's save, and never in a
+        // fresh new-game session. Live edits from /api/session/setup are the user's own and save normally.
         private static bool BlockSharedSave()
         {
-            return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active);
+            return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active
+                && !Instance._newGameSession);
         }
 
         // Course checkpoints are always off: a death respawns at the course's reset point, never at the last checkpoint
@@ -143,12 +146,13 @@ namespace IGTAPTasMod
         private static bool BeforeMovementFixedUpdate(Movement __instance)
         {
             if (Instance == null) return true;
+            if (!IsMenuPlayer(__instance)) Instance.OverlayBeforeTick(__instance);
             // A bonus (its reward's buy trigger) or a transition ending at a bonus finishes on touching its end box.
             // Checked every tick, dash ticks included, where enginesim checks it (after the previous tick's physics and
             // Update); timed in physics ticks from the run start: there is no course timer. A segment that starts with a
-            // quick restart is not checked before it.
+            // quick restart is not checked before it. A purchase finishes only when the game buys it (AfterBuyUpgrade).
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) && !Instance._restartBeforeTick ? Instance.RunCourse : null;
-            if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
+            if (course != null && course.HasFinish && !course.IsPurchase && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
             // A chain's next segment goes on from where the last one finished, then does its quick restart if it has one.
@@ -170,7 +174,9 @@ namespace IGTAPTasMod
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
-            if (Instance._pendingChain != null && !Instance._engine.IsRunning)
+            // A fresh new game's first tick: its start state, and a chain from a new game starts right here.
+            if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active) Instance.CaptureNewGameStart(__instance);
+            if (Instance._pendingChain != null && !Instance._pendingChain.waitingForNewGame && !Instance._engine.IsRunning)
             {
                 Instance.BeginChainPlayback();
                 return true;
@@ -344,7 +350,8 @@ namespace IGTAPTasMod
         private static Movement FindWorldMovement()
         {
             Movement[] all = FindObjectsByType<Movement>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            if (all == null || all.Length == 0) return FindWorldMovement();
+            // None while a scene loads (a new game): no player, not a retry.
+            if (all == null || all.Length == 0) return null;
             Movement fallback = null;
             foreach (Movement m in all)
             {
@@ -616,11 +623,15 @@ namespace IGTAPTasMod
 
         private object BootstrapOracle(WebStudioRequest request, JObject body)
         {
-            if (_bootstrapRequest != null)
+            if (_bootstrapRequest != null || _newGamePhase != 0)
             {
                 request.StatusCode = 409;
-                return new { ok = false, error = "A bootstrap is already in progress." };
+                return new { ok = false, error = _newGamePhase != 0 ? "A new game is loading." : "A bootstrap is already in progress." };
             }
+            // The bootstrap loads the save into the world: the fresh new-game session (if any) ends here.
+            _newGameSession = false;
+            _newGameStart = null;
+            _newGamePlayer = null;
             _bootstrapNotes.Clear();
             string sceneName = SceneManager.GetActiveScene().name;
             bool hasCamera = FindAnyObjectByType<cameraMover>() != null;
@@ -649,11 +660,153 @@ namespace IGTAPTasMod
             return null;
         }
 
+        // ---- A fresh new game in memory (POST /api/session/newgame, or a chain that starts with "newgame"): the Overworld
+        // scene loaded the way the menu's New Game loads it with no save file, except that Saveloader neither loads nor
+        // saves (BeforeSaveloaderAwake: IsSaving = isLoading = false before its Awake, so no load and no autosave, and
+        // manualSave returns). Movement.Start then runs its NORMAL case (Cash 0, zone 1, the scene's respawnPoint) and
+        // globalStats.Awake starts every currency and upgrade at 0. Nothing of ours moves the player or writes an unlock.
+        // The session stays save-free until /api/oracle/bootstrap loads the save (or the game restarts).
+        bool _newGameSession;
+        // 1 the scene is loading, 2 waiting for the player and its zone to settle, 3 capture on the next physics tick.
+        int _newGamePhase;
+        int _newGameFrame;
+        WebStudioRequest _newGameRequest;
+        readonly List<string> _newGameNotes = new List<string>();
+        // The fresh game's first physics tick (taken in its Movement.FixedUpdate prefix, engine state as a run starts):
+        // the start state of every chain from a new game, in turbo and offline. Valid while its player exists.
+        TurboRunner.Snapshot _newGameStart;
+        Movement _newGamePlayer;
+        bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
+        bool SolverFromNewGame { get { return _solverChain != null && _solverChain.FromNewGame; } }
+
+        static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
+        static readonly FieldInfo SaveloaderIsLoading = AccessTools.Field(typeof(Saveloader), "isLoading");
+
+        private static void BeforeSaveloaderAwake(Saveloader __instance)
+        {
+            if (Instance == null || !Instance._newGameSession) return;
+            SaveloaderIsSaving.SetValue(__instance, false);
+            SaveloaderIsLoading.SetValue(__instance, false);
+        }
+
+        // `request` (the endpoint's) is answered once the fresh game's first tick is captured; null for a chain's playback.
+        void StartNewGame(WebStudioRequest request)
+        {
+            if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
+            if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
+            if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
+            if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
+            _newGameSession = true;
+            // What the menu does before its scene change (pauseMenuScript.changeScene: normal difficulty, time running).
+            globalStats.difficultyLevel = 0;
+            Time.timeScale = 1f;
+            SceneManager.LoadScene("Overworld");
+            _newGameStart = null;
+            _newGamePlayer = null;
+            // Every start state belongs to the scene that is going away.
+            _startState = _chainStartState = null;
+            _engineSimStartKey = null;
+            _newGameNotes.Clear();
+            _newGameFrame = Time.frameCount;
+            _newGamePhase = 1;
+            _newGameRequest = request;
+            if (request != null) request.AsyncHandling = true;
+        }
+
+        // Update: waits for the loaded scene's player to be in the world and its zone settled (as CourseLoaded does).
+        void PumpNewGame()
+        {
+            if (_newGamePhase != 1 && _newGamePhase != 2) return;
+            int frames = Time.frameCount - _newGameFrame;
+            if (frames > 600) { FailNewGame("The new game's player did not settle within 600 frames."); return; }
+            if (_newGamePhase == 1)
+            {
+                // LoadScene applies on the next frame.
+                if (frames < 2 || SceneManager.GetActiveScene().name != "Overworld") return;
+                _newGameNotes.Add("scene Overworld loaded");
+                _newGamePhase = 2;
+                _newGameFrame = Time.frameCount;
+                return;
+            }
+            Movement player = FindWorldMovement();
+            if (player == null || IsMenuPlayer(player)) return;
+            if (!player.gameObject.activeInHierarchy)
+            {
+                if (frames < 5) return;
+                // As /api/oracle/bootstrap does, without its load and its respawn: Movement.Start then runs its NORMAL case.
+                if (player.transform.parent != null) player.transform.parent.gameObject.SetActive(true);
+                player.gameObject.SetActive(true);
+                _newGameNotes.Add("activated the world player");
+                return;
+            }
+            if (frames < 10 || !ZonesSettled()) return;
+            EnsureGameUnpaused();
+            _newGamePhase = 3;
+        }
+
+        // Movement.FixedUpdate prefix of the fresh game's first settled tick.
+        void CaptureNewGameStart(Movement player)
+        {
+            _newGamePhase = 0;
+            courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
+            // The engine as a chain from here starts it (BeginChainPlayback: no quick restart, no stable wait).
+            bool quiet = _engine.Quiet;
+            _engine.Quiet = true;
+            _engine.Run(new MacroDefinition { name = "New game start", steps = { new MacroStep { type = MacroStepType.RawInput, durationTicks = 1 } } },
+                _library, false, true);
+            _newGameStart = TurboRunner.Capture(player, courses, _engine.CaptureState(), 0, true);
+            _engine.Discard();
+            _engine.Quiet = quiet;
+            _newGamePlayer = player;
+            if (_pendingChain != null) _pendingChain.waitingForNewGame = false;
+            Vector2 position = player.transform.position;
+            Vector2 respawn = GetMovementField(player, "respawnPoint") is Vector2 r ? r : Vector2.zero;
+            double cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double c) ? c : 0.0;
+            Logger.LogInfo("New game: player at " + position.ToString("0.###") + ", respawnPoint " + respawn.ToString("0.###") + ", Cash " + cash);
+            WebStudioRequest request = _newGameRequest;
+            _newGameRequest = null;
+            if (request == null) return;
+            request.Response = JsonConvert.SerializeObject(new {
+                ok = true, position = new { x = position.x, y = position.y }, respawnPoint = new { x = respawn.x, y = respawn.y }, cash,
+                unlocks = new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false), dash = GetMovementBool(player, "dashUnlocked", false),
+                    maxAirDashes = GetMovementField(player, "maxAirDashes"), airJump = GetMovementBool(player, "doubleJumpUnlocked", false),
+                    maxAirJumps = GetMovementField(player, "maxAirJumps") },
+                notes = _newGameNotes.ToArray() });
+            request.Completed.Set();
+        }
+
+        void FailNewGame(string error)
+        {
+            _newGamePhase = 0;
+            Logger.LogWarning("New game: " + error);
+            if (_pendingChain != null && _pendingChain.waitingForNewGame)
+            {
+                _lastChainResult = "Chain " + _pendingChain.chain.name + " did not start: " + error;
+                _pendingChain = null;
+            }
+            WebStudioRequest request = _newGameRequest;
+            _newGameRequest = null;
+            if (request == null) return;
+            request.StatusCode = 500;
+            request.Response = JsonConvert.SerializeObject(new { ok = false, error, notes = _newGameNotes.ToArray() });
+            request.Completed.Set();
+        }
+
+        // The start state of a chain from a new game; only a fresh session has it.
+        TurboRunner.Snapshot NewGameStart()
+        {
+            if (!FreshGame || _newGamePlayer != FindWorldMovement())
+                throw new InvalidOperationException("This chain starts from a new game and this session is not a fresh one: POST /api/session/newgame first"
+                    + " (tools/enginesim-capture.py chain does it).");
+            return _newGameStart;
+        }
+
         private void Update()
         {
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
             PumpSolver();
             PumpBootstrap();
+            PumpNewGame();
             PumpOfflineBests();
             PumpChains();
             Keyboard keyboard = Keyboard.current;
@@ -869,7 +1022,7 @@ namespace IGTAPTasMod
             ChainDef chain = chainRoute.Success ? _chains.Find(c => string.Equals(c.name, chainRoute.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) : null;
             if (chain != null)
             {
-                ChainSegment segment = ChainSegments(chain).Find(s => string.Equals(s.token, chainRoute.Groups[2].Value, StringComparison.OrdinalIgnoreCase))
+                ChainSegment segment = ChainSegments(chain).Find(s => string.Equals(s.key, chainRoute.Groups[2].Value, StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("Chain " + chain.name + " has no segment " + chainRoute.Groups[2].Value + ".");
                 StartChainPlayback(chain, segment.index, macro);
                 return;
@@ -1256,13 +1409,17 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/solver/start")
             {
-                if (!string.IsNullOrEmpty(Text(body, "chain"))) StartChainSolver(Text(body, "chain"), Number(body, "segment", -1));
-                else StartSolver(Number(body, "course", 0), Text(body, "capabilities"));
+                StartSolver(body);
                 return new { ok = true };
             }
             if (request.Path == "/api/solver/stop")
             {
                 StopSolver("Stopped");
+                return new { ok = true };
+            }
+            if (request.Path == "/api/solver/skip")
+            {
+                SkipSolveJob();
                 return new { ok = true };
             }
             if (request.Path == "/api/courses/add-from-recording")
@@ -1304,6 +1461,13 @@ namespace IGTAPTasMod
             if (request.Path == "/api/oracle/bootstrap")
             {
                 return BootstrapOracle(request, body);
+            }
+            if (request.Path == "/api/session/newgame")
+            {
+                // A fresh new game (no load, no save for the rest of the session); replies once its player is in the world:
+                // {position, respawnPoint, cash, unlocks, notes}.
+                StartNewGame(request);
+                return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();
             if (request.Path == "/api/simulation/export")
@@ -1691,6 +1855,8 @@ namespace IGTAPTasMod
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
+                // A fresh new game (/api/session/newgame) whose start state chains from "newgame" use; loading while one loads.
+                freshGame = FreshGame, newGameLoading = _newGamePhase != 0,
                 overlayShown = _settings.showOverlay,
                 running = PlaybackActive,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,

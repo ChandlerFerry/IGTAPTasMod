@@ -24,6 +24,9 @@ namespace IGTAP.EngineSim
         public bool Finished;
         public float Time;
         public int FinishTick;
+        // Physics ticks from the run start through the finish (dash ticks included): the whole run, a flying start's
+        // setup before its last start-gate crossing included.
+        public long PhysicsTicks;
         public int Stepped;
         public Vector2 End;
         public string EndReason;
@@ -425,6 +428,7 @@ namespace IGTAP.EngineSim
                 Time = _finishTime,
                 FinishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick)),
                 Stepped = stepped,
+                PhysicsTicks = Engine.PhysicsTicks,
                 End = Player.transform.m_Position,
                 EndReason = _endReason,
             };

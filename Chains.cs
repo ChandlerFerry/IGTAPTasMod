@@ -9,6 +9,7 @@ using BepInEx;
 using HarmonyLib;
 using Newtonsoft.Json;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace IGTAPTasMod
 {
@@ -22,21 +23,35 @@ namespace IGTAPTasMod
         {
             // Letters and digits only: route names ("wj/2_WJ 14.86") and offline-best files carry it.
             public string name;
-            // The chain's category (none|wj|wjdash|wjdashaj): its unlocks on every tick of every segment.
+            // The chain's category (none|wj|wjdash|wjdashaj): its unlocks on every tick of every segment, up to wall jump
+            // from the segment after a "buywj" on.
             public string capabilities;
-            // Course ids ("2"), bonuses ("bonus1"), transitions ("<from>to<to>": "1to2", "2tobonus1", "bonus1to2") and
-            // "restart" (a quick restart right before the next segment).
+            // Course ids ("2"), bonuses ("bonus1"), transitions ("<from>to<to>": "1to2", "2tobonus1", "bonus1to2"),
+            // purchases ("buyreward", "buyclone", "buywj": Course 1's upgrade boxes) and "restart" (a quick restart right
+            // before the next segment). A token may repeat. "newgame" first (not a segment): the chain starts from a fresh
+            // new game (POST /api/session/newgame), where "newgameto<N>" runs to course N's start gate.
             public List<string> segments = new List<string>();
+            [JsonIgnore] public bool FromNewGame
+            {
+                get { return segments != null && segments.Count > 0 && string.Equals((segments[0] ?? "").Trim(), NewGameMarker, StringComparison.OrdinalIgnoreCase); }
+            }
         }
+
+        const string NewGameMarker = "newgame";
 
         internal sealed class ChainSegment
         {
             // Among the chain's segments (a restart is not a segment).
             public int index;
             public string token;
+            // Its name in route names: the token, "<token>#<k>" for its k-th occurrence (k >= 2): "1", "1#2", "1#3".
+            public string key;
+            // Its category: the chain's, at least wall jump once a buywj segment before it bought it.
+            public string caps;
             // The game's quick restart is this segment's first act.
             public bool restart;
-            // What finishes it: a course's end gate, a bonus's reward box, a transition's end box or next start gate.
+            // What finishes it: a course's end gate, a bonus's reward box, a transition's end box or next start gate, a
+            // purchase's upgrade box buying.
             public CourseDef target;
         }
 
@@ -50,6 +65,8 @@ namespace IGTAPTasMod
             public int index;
             // The current segment finished; the next one starts in the next tick's Movement.FixedUpdate prefix.
             public bool pendingNext;
+            // Studio playback of a chain from a new game: queued until the fresh game's first tick (CaptureNewGameStart).
+            public bool waitingForNewGame;
             // Physics ticks × fixedDeltaTime of every finished segment.
             public readonly List<float> splits = new List<float>();
             public string failure;
@@ -117,9 +134,16 @@ namespace IGTAPTasMod
         }
 
         static readonly Regex ChainName = new Regex(@"^[A-Za-z0-9]+$");
-        static readonly Regex ChainTransition = new Regex(@"^(bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
+        static readonly Regex ChainTransition = new Regex(@"^(newgame|bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
         // Transitions a chain names that courses.json doesn't have (their start is wherever the chain arrives): ids 1000+.
+        // Purchases are made here too (ids 901+).
         readonly Dictionary<string, CourseDef> _chainTransitions = new Dictionary<string, CourseDef>(StringComparer.OrdinalIgnoreCase);
+
+        // Purchase segments: Course 1's upgrade boxes (hierarchy paths in the Overworld scene).
+        static readonly (string token, string box)[] PurchaseBoxes = {
+            ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop"),
+            ("buyclone", "Courses/course 1/localUpgrades/Clone"),
+            ("buywj", "Courses/course 1/localUpgrades/Wall jump") };
 
         List<ChainSegment> ChainSegments(ChainDef chain)
         {
@@ -127,28 +151,42 @@ namespace IGTAPTasMod
             if (!CapabilityLabels.ContainsKey(chain.capabilities ?? ""))
                 throw new InvalidOperationException("Chain " + chain.name + ": capabilities must be none, wj, wjdash or wjdashaj.");
             var result = new List<ChainSegment>();
+            var occurrences = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            string caps = chain.capabilities;
             bool restart = false;
-            foreach (string raw in chain.segments ?? new List<string>())
+            List<string> tokens = chain.segments ?? new List<string>();
+            for (int i = chain.FromNewGame ? 1 : 0; i < tokens.Count; i++)
             {
-                string token = (raw ?? "").Trim();
+                string token = (tokens[i] ?? "").Trim();
                 if (token.Equals("restart", StringComparison.OrdinalIgnoreCase))
                 {
                     if (result.Count == 0 || restart) throw new InvalidOperationException("Chain " + chain.name + ": a restart follows a segment.");
                     restart = true;
                     continue;
                 }
+                if (token.Equals(NewGameMarker, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Chain " + chain.name + ": \"newgame\" is only the chain's first entry.");
                 CourseDef target = ChainTarget(token);
-                if (!target.HasCategory(chain.capabilities))
-                    throw new InvalidOperationException("Chain " + chain.name + ": " + token + " has no " + CapabilityLabels[chain.capabilities] + " category.");
-                if (result.Any(s => string.Equals(s.token, token, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException("Chain " + chain.name + ": " + token + " is in it twice.");
-                result.Add(new ChainSegment { index = result.Count, token = target.Token, restart = restart, target = target });
+                if (target.from == NewGameMarker && (result.Count > 0 || !chain.FromNewGame))
+                    throw new InvalidOperationException("Chain " + chain.name + ": " + token + " is only the first segment of a chain that starts with \"newgame\".");
+                if (!target.HasCategory(caps))
+                    throw new InvalidOperationException("Chain " + chain.name + ": " + token + " has no " + CapabilityLabels[caps] + " category.");
+                occurrences.TryGetValue(target.Token, out int seen);
+                occurrences[target.Token] = ++seen;
+                result.Add(new ChainSegment { index = result.Count, token = target.Token, key = seen == 1 ? target.Token : target.Token + "#" + seen,
+                    caps = caps, restart = restart, target = target });
                 restart = false;
+                // The game unlocks wall jump when the box is bought: every later segment runs with it (AGENTS.md rule 2).
+                if (target.Token == "buywj" && CapsLevel(caps) < 1) caps = "wj";
             }
             if (result.Count == 0) throw new InvalidOperationException("Chain " + chain.name + " has no segments.");
             if (restart) throw new InvalidOperationException("Chain " + chain.name + " ends with a restart.");
-            // The chain starts like a category route: a quick restart at its first segment's start.
-            if (result[0].target.IsTransition) throw new InvalidOperationException("Chain " + chain.name + " starts at a course or a bonus, not a transition.");
+            // The chain starts like a category route: a quick restart at its first segment's start. From a new game it
+            // starts where the game spawns the player.
+            if (!chain.FromNewGame && (result[0].target.IsTransition || result[0].target.IsPurchase))
+                throw new InvalidOperationException("Chain " + chain.name + " starts at a course or a bonus, not a transition or a purchase.");
+            if (chain.FromNewGame && result[0].target.IsTransition && result[0].target.from != NewGameMarker)
+                throw new InvalidOperationException("Chain " + chain.name + " starts from a new game: its first transition is newgameto<N>.");
             return result;
         }
 
@@ -157,9 +195,13 @@ namespace IGTAPTasMod
             CourseDef known = _courses.Find(c => string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
             if (known != null) return known;
             if (_chainTransitions.TryGetValue(token, out CourseDef made)) return made;
+            int purchase = Array.FindIndex(PurchaseBoxes, p => string.Equals(p.token, token, StringComparison.OrdinalIgnoreCase));
+            if (purchase >= 0)
+                return _chainTransitions[token] = new CourseDef { id = 901 + purchase, name = PurchaseBoxes[purchase].token,
+                    box = PurchaseBoxes[purchase].box, minCapabilities = "none" };
             Match m = ChainTransition.Match(token);
             if (!m.Success)
-                throw new InvalidOperationException("Unknown chain segment \"" + token + "\": a course id, a bonus name, \"<from>to<to>\" or \"restart\".");
+                throw new InvalidOperationException("Unknown chain segment \"" + token + "\": a course id, a bonus name, \"<from>to<to>\", buyreward, buyclone, buywj or \"restart\".");
             string from = m.Groups[1].Value.ToLowerInvariant(), to = m.Groups[2].Value.ToLowerInvariant();
             var transition = new CourseDef { id = 1000 + _chainTransitions.Count, name = from + "to" + to, from = from, to = to, minCapabilities = "none" };
             if (!to.StartsWith("bonus", StringComparison.Ordinal))
@@ -178,11 +220,56 @@ namespace IGTAPTasMod
             return transition;
         }
 
-        // "wj/2tobonus1_WJ": a chain segment's routes are category routes of their own ("wj/2tobonus1_WJ 9.10"), saved only
-        // by the gate, which replays them after the chain's routes before them.
+        // A purchase segment's upgrade box in the loaded scene (by its hierarchy path).
+        upgradeBox PurchaseBox(CourseDef purchase)
+        {
+            string[] path = purchase.box.Split(new[] { '/' }, 2);
+            for (int s = 0; s < SceneManager.sceneCount; s++)
+                foreach (GameObject root in SceneManager.GetSceneAt(s).GetRootGameObjects())
+                {
+                    if (root.name != path[0]) continue;
+                    Transform found = path.Length > 1 ? root.transform.Find(path[1]) : root.transform;
+                    upgradeBox box = found == null ? null : found.GetComponent<upgradeBox>();
+                    if (box != null) return box;
+                }
+            throw new InvalidOperationException("Upgrade box " + purchase.box + " is not in the loaded scene.");
+        }
+
+        static string HierarchyPath(Transform t)
+        {
+            string path = t.name;
+            for (Transform p = t.parent; p != null; p = p.parent) path = p.name + "/" + path;
+            return path;
+        }
+
+        // The purchase's buy trigger (the box's 127.5 × 6 trigger collider) in absolute coordinates: the offline engine's
+        // finish box for the segment (EngineSimTrace).
+        void ResolvePurchaseFinish(CourseDef purchase)
+        {
+            upgradeBox box = PurchaseBox(purchase);
+            BoxCollider2D strip = box.GetComponents<BoxCollider2D>().FirstOrDefault(c => c.isTrigger)
+                ?? throw new InvalidOperationException("Upgrade box " + purchase.box + " has no buy trigger.");
+            Bounds bounds = strip.bounds;
+            Vector2 origin = CurrentOrigin();
+            purchase.endX = bounds.center.x - origin.x; purchase.endY = bounds.center.y - origin.y;
+            purchase.endW = bounds.size.x; purchase.endH = bounds.size.y;
+        }
+
+        // upgradeBox.DoBuyUpgrade postfix: a purchase segment finishes when the game buys its box (enough Cash, the box
+        // active and off its 0.2 s cooldown: upgradeBox.OnTriggerStay2D decides), timed in physics ticks like a bonus.
+        private static void AfterBuyUpgrade(upgradeBox __instance)
+        {
+            if (Instance == null || !Instance._engine.IsRunning || __instance == null) return;
+            CourseDef course = Instance.RunCourse;
+            if (course == null || !course.IsPurchase || HierarchyPath(__instance.transform) != course.box) return;
+            Instance._engine.CompleteFromGame(MacroEngine.PurchaseFinishReason, Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
+        }
+
+        // "wj/2tobonus1_WJ": a chain segment's routes are category routes of their own ("wj/2tobonus1_WJ 9.10", a repeat
+        // "newgame/1#12_WJ 2.18"), saved only by the gate, which replays them after the chain's routes before them.
         static string ChainCategory(ChainDef chain, ChainSegment segment)
         {
-            return chain.name + "/" + segment.token + "_" + CapabilityLabels[chain.capabilities];
+            return chain.name + "/" + segment.key + "_" + CapabilityLabels[segment.caps];
         }
 
         // The segment's fastest gated route; null if it has none.
@@ -209,14 +296,15 @@ namespace IGTAPTasMod
             {
                 MacroDefinition route = ChainSegmentRoute(chain, segments[i]);
                 if (route == null)
-                    throw new InvalidOperationException("Chain " + chain.name + ": segment " + (i + 1) + " (" + segments[i].token + ") has no route yet; solve it first.");
+                    throw new InvalidOperationException("Chain " + chain.name + ": segment " + (i + 1) + " (" + segments[i].key + ") has no route yet; solve it first.");
                 routes.Add(route);
             }
             return routes;
         }
 
         // Studio playback in real time: the chain's first segment from a quick restart at its start (like a category route),
-        // then every next segment straight on, through segment `through`; `routeAtThrough` replaces that one's route.
+        // or from a fresh new game's first tick for a chain that starts with "newgame", then every next segment straight on,
+        // through segment `through`; `routeAtThrough` replaces that one's route.
         void StartChainPlayback(ChainDef chain, int through, MacroDefinition routeAtThrough = null)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -225,24 +313,27 @@ namespace IGTAPTasMod
             if (through < 0 || through >= segments.Count) through = segments.Count - 1;
             List<MacroDefinition> routes = ChainRoutes(chain, segments, through);
             routes.Add(routeAtThrough ?? ChainRoutes(chain, segments, through + 1)[through]);
+            if (chain.FromNewGame) StartNewGame(null);
             EnsureGameUnpaused();
-            _pendingChain = new ChainRun { chain = chain, segments = segments, routes = routes };
+            _pendingChain = new ChainRun { chain = chain, segments = segments, routes = routes, waitingForNewGame = chain.FromNewGame };
         }
 
-        // Movement.FixedUpdate prefix: the queued chain starts at its first segment's start.
+        // Movement.FixedUpdate prefix: the queued chain starts at its first segment's start; from a new game, right where
+        // the game spawned the player (no quick restart, no unlock written, no stable wait: the tick CaptureNewGameStart took).
         void BeginChainPlayback()
         {
             ChainRun run = _pendingChain;
             _pendingChain = null;
-            RestoreRouteStart(new MacroDefinition { name = run.segments[0].target.Token + "_" });
+            bool fresh = run.chain.FromNewGame;
+            if (!fresh) RestoreRouteStart(new MacroDefinition { name = run.segments[0].target.Token + "_" });
             Movement movement = FindWorldMovement();
-            if (movement != null)
+            if (movement != null && !fresh)
                 foreach (var (field, value) in ApplyAbilities(movement, run.chain.capabilities))
                     if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
             BeginDeterministicPhysics(movement);
             _brakeTicks = -1;
             _chainRun = run;
-            _engine.Run(run.routes[0], _library, true, true, 0, movement == null ? (Vector2?)null : movement.transform.position);
+            _engine.Run(run.routes[0], _library, !fresh, true, 0, movement == null || fresh ? (Vector2?)null : movement.transform.position);
         }
 
         // Movement.FixedUpdate prefix of the tick after a segment finished: the next segment goes on from here.
@@ -303,9 +394,9 @@ namespace IGTAPTasMod
             bool finished = run.failure == null && run.splits.Count == run.routes.Count;
             if (finished && reason == MacroEngine.TransitionFinishReason) _brakeTicks = 0;
             float total = run.splits.Sum();
-            string splits = string.Join(" + ", run.splits.Select((t, i) => run.segments[i].token + " " + t.ToString("0.00", CultureInfo.InvariantCulture)));
+            string splits = string.Join(" + ", run.splits.Select((t, i) => run.segments[i].key + " " + t.ToString("0.00", CultureInfo.InvariantCulture)));
             _lastChainResult = "Chain " + run.chain.name + (finished ? " finished in " + total.ToString("0.00", CultureInfo.InvariantCulture) + "s"
-                : " stopped in segment " + (run.index + 1) + " (" + run.Current.token + "): " + (run.failure ?? reason)) + (splits.Length > 0 ? " [" + splits + "]" : "");
+                : " stopped in segment " + (run.index + 1) + " (" + run.Current.key + "): " + (run.failure ?? reason)) + (splits.Length > 0 ? " [" + splits + "]" : "");
             Logger.LogInfo(_lastChainResult);
             var result = new AttemptResult {
                 routeId = "chain:" + run.chain.name,
@@ -316,7 +407,7 @@ namespace IGTAPTasMod
                 timingSource = "Physics ticks per segment: " + splits,
                 deterministicPhysics = _deterministicBody != null,
                 failureAction = finished ? -1 : run.index,
-                failureReason = finished ? null : run.Current.token + ": " + (run.failure ?? reason) };
+                failureReason = finished ? null : run.Current.key + ": " + (run.failure ?? reason) };
             _results.Insert(0, result);
             WriteJsonAtomic(Path.Combine(_resultsPath, result.timestampUtc.Replace(":", "-") + "-" + result.id + ".json"), result, false);
             EndDeterministicPhysics();
@@ -334,15 +425,14 @@ namespace IGTAPTasMod
 
         // Turbo: the chain's `routes` played from its start state (_chainStartState), each segment straight after the one
         // before, exactly as studio playback does. With `captureAt` it stops where that segment would start and keeps the
-        // state (ChainRun.captured); with `audit` every tick goes through the gate's checks (AuditTick).
+        // state (ChainRun.captured); with `audit` every tick goes through the gate's checks (AuditTick, each segment against
+        // its own category). A chain from a new game writes no unlock: the game's own purchases make them.
         ChainRun ReplayChain(ChainDef chain, List<ChainSegment> segments, List<MacroDefinition> routes, int captureAt, bool audit)
         {
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot from = _chainStartState;
             var run = new ChainRun { chain = chain, segments = segments, routes = routes, captureAt = captureAt, audit = audit ? new List<string>() : null };
-            List<(string field, object value)> savedAbilities = ApplyAbilities(player, chain.capabilities);
-            string savedCaps = _solverCaps;
-            _solverCaps = chain.capabilities;
+            List<(string field, object value)> savedAbilities = chain.FromNewGame ? new List<(string, object)>() : ApplyAbilities(player, chain.capabilities);
             _audit = run.audit;
             _silentEvaluation = true;
             _engine.Quiet = true;
@@ -370,7 +460,6 @@ namespace IGTAPTasMod
                 _audit = null;
                 _silentEvaluation = false;
                 _engine.Quiet = false;
-                _solverCaps = savedCaps;
                 foreach (var (field, value) in savedAbilities) SetMovementField(player, field, value);
             }
             return run;
@@ -379,11 +468,12 @@ namespace IGTAPTasMod
         static string ChainFailure(ChainRun run)
         {
             int at = run.splits.Count;
-            return "Chain " + run.chain.name + ": segment " + (at + 1) + " (" + run.segments[at].token + ", " + run.routes[at].name + ") "
+            return "Chain " + run.chain.name + ": segment " + (at + 1) + " (" + run.segments[at].key + ", " + run.routes[at].name + ") "
                 + (run.failure ?? "did not finish") + " from where the segments before it end; re-solve it.";
         }
 
-        // The chain's start: _startState of its first segment (a quick restart there), shared by every segment's capture.
+        // The chain's start: _startState of its first segment (a quick restart there), shared by every segment's capture;
+        // for a chain from a new game, the fresh game's first tick (_newGameStart).
         TurboRunner.Snapshot _chainStartState;
         string _chainStartKey;
         Vector2 _chainStartOrigin;
@@ -392,7 +482,13 @@ namespace IGTAPTasMod
         void CaptureChainSegmentStart(bool fresh)
         {
             string key = _solverChain.name + " " + _solverChain.capabilities + " " + _solverPark.Token;
-            if (fresh || _chainStartState == null || _chainStartKey != key || CurrentOrigin() != _chainStartOrigin)
+            if (_solverChain.FromNewGame)
+            {
+                _chainStartState = NewGameStart();
+                _chainStartKey = null;
+                _chainStartOrigin = CurrentOrigin();
+            }
+            else if (fresh || _chainStartState == null || _chainStartKey != key || CurrentOrigin() != _chainStartOrigin)
             {
                 CourseDef target = _solverTarget;
                 bool restart = _solverRestart;
@@ -441,8 +537,8 @@ namespace IGTAPTasMod
                 string category = ChainCategory(chain, segments[j]);
                 string old = routes[j].name;
                 routes[j].name = j < valid ? category + " " + run.splits[j].ToString("0.00", CultureInfo.InvariantCulture) : old + " stale";
-                string line = "Chain " + chain.name + ": " + old + (j < valid ? " still finishes after the new " + segments[_solverSegment].token + ", now " + routes[j].name
-                    : " no longer holds up after the new " + segments[_solverSegment].token + " (" + (j == valid && run.audit.Count > 0 && run.violationSegment == j
+                string line = "Chain " + chain.name + ": " + old + (j < valid ? " still finishes after the new " + segments[_solverSegment].key + ", now " + routes[j].name
+                    : " no longer holds up after the new " + segments[_solverSegment].key + " (" + (j == valid && run.audit.Count > 0 && run.violationSegment == j
                         ? run.audit[0] : run.failure ?? "no finish") + "): marked stale");
                 _solverLog.Add(line);
                 Logger.LogInfo(line);
@@ -456,17 +552,18 @@ namespace IGTAPTasMod
             {
                 List<ChainSegment> segments;
                 try { segments = ChainSegments(chain); }
-                catch (Exception ex) { return (object)new { name = chain.name, capabilities = chain.capabilities, error = ex.Message, segments = new object[0] }; }
+                catch (Exception ex) { return (object)new { name = chain.name, capabilities = chain.capabilities, fromNewGame = chain.FromNewGame, error = ex.Message, segments = new object[0] }; }
                 var rows = segments.Select(s =>
                 {
                     MacroDefinition route = ChainSegmentRoute(chain, s);
                     Match g = route == null ? null : CategoryRoute.Match(route.name);
                     string prefix = ChainCategory(chain, s) + " ";
-                    return new { index = s.index, token = s.token, restart = s.restart, bonus = s.target.IsBonus, @from = s.target.from, to = s.target.to,
+                    return new { index = s.index, token = s.token, key = s.key, category = CapabilityLabels[s.caps], restart = s.restart,
+                        bonus = s.target.IsBonus, purchase = s.target.IsPurchase, @from = s.target.from, to = s.target.to,
                         routeId = route?.id, time = g == null ? (float?)null : float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture),
                         staleRoutes = _library.macros.Count(m => m.name != null && m.name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && m.name.EndsWith(" stale", StringComparison.Ordinal)) };
                 }).ToArray();
-                return new { name = chain.name, capabilities = chain.capabilities, error = (string)null, segments = rows,
+                return new { name = chain.name, capabilities = chain.capabilities, fromNewGame = chain.FromNewGame, error = (string)null, segments = rows,
                     total = rows.All(r => r.time != null) ? rows.Sum(r => r.time.Value) : (float?)null };
             }).ToArray();
         }
@@ -474,7 +571,7 @@ namespace IGTAPTasMod
         object BuildChainRunWebState()
         {
             ChainRun run = _silentEvaluation ? null : _chainRun ?? _pendingChain;
-            return new { running = run == null ? null : new { chain = run.chain.name, segment = run.index, of = run.routes.Count, token = run.Current.token,
+            return new { running = run == null ? null : new { chain = run.chain.name, segment = run.index, of = run.routes.Count, token = run.Current.key,
                 splits = run.splits.ToArray() }, last = _lastChainResult };
         }
     }

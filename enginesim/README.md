@@ -26,7 +26,8 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   the game's quick restart (`Movement.respawn(true)` before its first tick's `FixedUpdate`, on runs from the start only).
 - `POST /api/enginesim/submit {course, capabilities | chain, segment; ticks}` — turbo replay of an offline candidate;
   saved as the category's route (`<course>_<CAPS> <time>`, or the chain segment's `<chain>/<segment>_<CAPS> <time>`)
-  when it finishes faster than the current best.
+  when it finishes faster than the current best, or as fast in fewer physics ticks from the run start (`runTicks`; the
+  saved route is replayed for its own). The reply has both.
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 
 `tools/enginesim-capture.py routes|random|start|route|chain` captures traces; `tools/enginesim-redeploy.py` rebuilds and
@@ -49,9 +50,11 @@ $traces = "C:\Users\deafwave\Downloads\IGTAP_Real\BepInEx\config\IGTAPTasMod\eng
 
 `solve` loads the trace's world and start state on every thread, seeds with the trace's inputs (plus `--seed` traces),
 writes each new best to `<traces>\offline-best\`, and sends each best that beats its seeds to the running game's
-`/api/enginesim/submit` (skip with `--no-submit`). With the game closed the best stays on disk; the plugin judges every
-waiting `offline-best\` file (its category, then the course's other categories) as soon as the game is next in the
-world and idle, and moves it to `offline-best\judged\`.
+`/api/enginesim/submit` (skip with `--no-submit`). A best is the fastest course time; at the same time, the fewest
+physics ticks from the run start (`runTicks`), which shortens a flying start's setup before its last start-gate
+crossing (off the timer, but a player still sits through it). With the game closed the best stays on disk; the plugin
+judges every waiting `offline-best\` file that beats or ties the saved route (its category, then the course's other
+categories) as soon as the game is next in the world and idle, and moves it to `offline-best\judged\`.
 
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
 the game and solve offline.

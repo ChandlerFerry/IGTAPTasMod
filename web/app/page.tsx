@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import "./action-editor.css";
 import "./frame-timeline.css";
 import "./favorite-ui.css";
@@ -16,15 +16,20 @@ type Checkpoint = { id: string; name: string; createdUtc: string; assigned: bool
 type Result = { id: string; success: boolean; completionTime: number; completionTicks: number; timingSource?: string; deterministicPhysics?: boolean; failureReason?: string; timestampUtc: string };
 // A bonus has a reward box instead of gates; a transition runs between two places: a course ("2") or a bonus ("bonus2").
 type Course = { id: number; token: string; bonus: boolean; minLevel: number; from?: string; to?: string };
-type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; chain?: string | null; segment?: number; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; best: number | null; log: string[]; courses: number[] };
-// A chain: the game in order after an unlock, each segment starting where the one before ended ("restart" = the game's quick restart first).
-type ChainSegment = { index: number; token: string; restart: boolean; bonus: boolean; from?: string; to?: string; routeId?: string | null; time?: number | null; staleRoutes: number };
-type Chain = { name: string; capabilities: string; error?: string | null; segments: ChainSegment[]; total?: number | null };
+// `queue`: the run's targets in order (one for a single Solve), each with how it ended once it has.
+type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; chain?: string | null; segment?: number; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; best: number | null; log: string[]; courses: number[]; minutes?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
+// A chain: the game in order, each segment starting where the one before ended ("restart" = the game's quick restart first).
+// `fromNewGame`: it starts from a fresh new game. A segment's `key` names its routes: its token, "<token>#<k>" for a repeat;
+// `category` is its own (the chain's, WJ after a buywj).
+type ChainSegment = { index: number; token: string; key: string; category: string; restart: boolean; bonus: boolean; purchase: boolean; from?: string; to?: string; routeId?: string | null; time?: number | null; staleRoutes: number };
+type Chain = { name: string; capabilities: string; fromNewGame?: boolean; error?: string | null; segments: ChainSegment[]; total?: number | null };
 type ChainRun = { running: { chain: string; segment: number; of: number; token: string; splits: number[] } | null; last?: string | null };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean;
   // The widest category the save's own unlocks can run (0 NO_WJ … 3 WJ_DASH_AJ); null when the player isn't loaded.
   unlockLevel?: number | null;
+  // A fresh new game is loaded (/api/session/newgame): chains from "newgame" can be solved.
+  freshGame?: boolean; newGameLoading?: boolean;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; chains?: Chain[]; chainRun?: ChainRun; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
 };
 
@@ -59,7 +64,7 @@ export default function Studio() {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   // The chain the selected route is a segment of (its "Run route" plays the chain only through that segment).
-  const routeChain = route ? (state.chains ?? []).find(c => c.segments.some(s => s.routeId === route.id)) : undefined;
+  const routeChain = route ? chainRoutes(state.chains ?? []).get(route.id)?.chain : undefined;
   const successes = state.results.filter(r => r.success);
   const successRate = state.results.length ? successes.length / state.results.length * 100 : 0;
   const bestResult = successes.length ? successes.reduce((best,current)=>current.completionTime<best.completionTime?current:best) : null;
@@ -86,7 +91,7 @@ export default function Studio() {
       <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`}>
         <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
         <strong>SHOW TAS OVERLAY</strong>
-        <span>{state.overlayShown ? "On: the game shows the player's hitbox and, on the left, the inputs playback presses." : "Off: the game draws nothing of the studio's."}</span>
+        <span>{state.overlayShown ? "On: the game shows the player's hurtbox, the spikes and their 2-step grace, and, on the left, the inputs playback presses." : "Off: the game draws nothing of the studio's."}</span>
       </label>
       <header className="topbar">
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.engineStatus}</p></div>
@@ -117,9 +122,9 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className={`recordingCard ${recording.favorite?"locked":""}`} key={recording.id}><div className="recordingTitle"><div><strong>{recording.favorite?"★ ":""}{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions{recording.favorite?" · read-only":""}</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button disabled={recording.favorite} onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className={`favoriteButton ${recording.favorite?"active":""}`} onClick={()=>command("/recordings/favorite",{recordingId:recording.id,favorite:!recording.favorite})}>{recording.favorite?"★ Locked":"☆ Favorite"}</button><button className="danger" disabled={recording.favorite} onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "chains" && <Chains chains={state.chains ?? []} chainRun={state.chainRun} solver={state.solver ?? emptyState.solver} running={state.running} onCommand={command}/>}
+        {tab === "chains" && <Chains chains={state.chains ?? []} chainRun={state.chainRun} solver={state.solver ?? emptyState.solver} running={state.running} freshGame={!!state.freshGame} newGameLoading={!!state.newGameLoading} onCommand={command}/>}
 
-        {tab === "optimize" && <Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} onCommand={command}/>} 
+        {tab === "optimize" && <div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} onCommand={command}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} chains={state.chains ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>}
 
         {tab === "checkpoints" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Section checkpoints</h2></div><button className="primary" onClick={() => command("/checkpoints/capture")}>Capture current state</button></div><p className="lede">Assign a checkpoint to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="checkpointList">{state.checkpoints.map(cp => <div className={`checkpoint ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/checkpoints/restore", { checkpointId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/checkpoints/assign", { checkpointId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
 
@@ -132,14 +137,28 @@ export default function Studio() {
 const CATEGORIES: [string, string][] = [["NO_WJ", "No wall jump"], ["WJ", "Wall jump"], ["WJDASH", "Wall jump + dash"], ["WJ_DASH_AJ", "Wall jump + dash + air jump"]];
 const CATEGORY_ROUTE = /^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) ([\d.]+)$/i;
 
-const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
+const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p === "newgame" ? "New game" : p.replace(/^bonus/i, "Bonus ");
 
 function courseLabel(c: Course | undefined, id: number) {
   if (!c) return `Course ${id}`;
   return c.to ? `${place(c.from ?? "")} → ${place(c.to)}` : c.bonus ? c.token : `Course ${c.token}`;
 }
 
-function segmentLabel(s: ChainSegment) { return s.to ? `${place(s.from ?? "")} → ${place(s.to)}` : place(s.token); }
+const PURCHASES: Record<string, string> = { buyreward: "Buy reward", buyclone: "Buy clone", buywj: "Buy wall jump" };
+
+// "Course 1 #12 · WJ": a repeat shows its occurrence, every segment its category.
+function segmentLabel(s: ChainSegment) {
+  const what = s.to ? `${place(s.from ?? "")} → ${place(s.to)}` : s.purchase ? PURCHASES[s.token] ?? s.token : place(s.token);
+  const occurrence = s.key !== s.token ? ` #${s.key.slice(s.token.length + 1)}` : "";
+  return `${what}${occurrence} · ${s.category}`;
+}
+
+// Every chain segment's route, by route id (a token may repeat, so each route maps to exactly one segment).
+function chainRoutes(chains: Chain[]) {
+  const byRoute = new Map<string, {chain: Chain; segment: ChainSegment}>();
+  for (const chain of chains) for (const segment of chain.segments) if (segment.routeId) byRoute.set(segment.routeId, {chain, segment});
+  return byRoute;
+}
 
 // A chain plays end to end only when every segment has a route.
 function chainPlayable(c: Chain) { return !c.error && c.segments.every(s => !!s.routeId); }
@@ -147,15 +166,14 @@ function chainPlayable(c: Chain) { return !c.error && c.segments.every(s => !!s.
 // The widest category a course has: a bonus only has its first one (the unlocks it needs), everything else runs in every wider one too.
 function topLevel(c: Course) { return c.bonus ? c.minLevel ?? 0 : CATEGORIES.length - 1; }
 
-// Courses in order, then transitions, bonuses last; each shows its fastest route per category, or with `maxLevel` (the
-// save's unlocks) only its fastest route those unlocks can run. Everything else is under "Other routes".
-function RouteSidebar({routes,courses,chains,activeId,maxLevel,running,onCommand}:{routes:Route[];courses:Course[];chains:Chain[];activeId?:string;maxLevel:number|null;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+// The fastest category route per "<course id>:<CAPS>"; slower ones and routes that aren't a known course's category
+// routes go to `other`. A chain's routes (listed under their chain) are in neither.
+function categoryBests(routes: Route[], courses: Course[], chains: Chain[]) {
   const best = new Map<string, {route: Route; time: number}>();
   const other: Route[] = [];
-  // A chain's routes are listed under their chain; its stale and slower ones stay under "Other routes".
-  const chainRoutes = new Set(chains.flatMap(c => c.segments.map(s => s.routeId).filter((id): id is string => !!id)));
+  const listed = chainRoutes(chains);
   for (const r of routes) {
-    if (chainRoutes.has(r.id)) continue;
+    if (listed.has(r.id)) continue;
     const m = CATEGORY_ROUTE.exec(r.name);
     const course = m && courses.find(c => c.token.toLowerCase() === m[1].toLowerCase());
     const level = m ? CATEGORIES.findIndex(([cat]) => cat === m[2].toUpperCase()) : -1;
@@ -165,28 +183,41 @@ function RouteSidebar({routes,courses,chains,activeId,maxLevel,running,onCommand
     if (!current || time < current.time) best.set(key, {route: r, time});
     else other.push(r);
   }
+  return {best, other};
+}
+
+// Courses in order, then transitions, bonuses last; each shows its fastest route per category, or with `maxLevel` (the
+// save's unlocks) only its fastest route those unlocks can run. Everything else is under "Other routes"; a chain's
+// stale and slower routes too.
+function RouteSidebar({routes,courses,chains,activeId,maxLevel,running,onCommand}:{routes:Route[];courses:Course[];chains:Chain[];activeId?:string;maxLevel:number|null;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+  const {best, other} = categoryBests(routes, courses, chains);
   const row = (key: string, title: string, b?: {route: Route; time: number}) => b
     ? <button key={key} className={`categoryRow ${b.route.id === activeId ? "active" : ""}`} onClick={() => onCommand("/routes/select", { routeId: b.route.id })} title={b.route.name}><span>{title}</span><b>{b.time.toFixed(2)}s</b></button>
     : <div key={key} className="categoryRow empty"><span>{title}</span><b>—</b></div>;
   // A route is valid in every wider category, so the fastest one the unlocks can run is the best over the categories up to them.
-  const executable = (c: Course) => {
-    const min = c.minLevel ?? 0;
-    if (maxLevel == null) return null;
-    if (maxLevel < min) return <div key="needs" className="categoryRow empty"><span>Needs {CATEGORIES[min][1].toLowerCase()}</span><b>—</b></div>;
-    let pick = min;
-    for (let level = min + 1; level <= Math.min(maxLevel, topLevel(c)); level++) {
-      const candidate = best.get(`${c.id}:${CATEGORIES[level][0]}`), current = best.get(`${c.id}:${CATEGORIES[pick][0]}`);
-      if (candidate && (!current || candidate.time < current.time)) pick = level;
+  // With the filter on, a course with no such route (none saved, or it needs more unlocks) isn't listed.
+  const executable = (c: Course, level: number) => {
+    let pick: {cat: string; title: string; b: {route: Route; time: number}} | undefined;
+    for (let l = c.minLevel ?? 0; l <= Math.min(level, topLevel(c)); l++) {
+      const [cat, title] = CATEGORIES[l], b = best.get(`${c.id}:${cat}`);
+      if (b && (!pick || b.time < pick.b.time)) pick = {cat, title, b};
     }
-    return row(CATEGORIES[pick][0], CATEGORIES[pick][1], best.get(`${c.id}:${CATEGORIES[pick][0]}`));
+    return pick;
   };
-  const section = (label: string, list: Course[]) => list.length > 0 && <>
-    <label className="sectionLabel">{label}</label>
-    {list.map(c => <div className="courseGroup" key={c.id}>
-      <strong className="courseName">{courseLabel(c, c.id)}</strong>
-      {executable(c) ?? CATEGORIES.slice(c.minLevel ?? 0, topLevel(c) + 1).map(([cat, title]) => row(cat, title, best.get(`${c.id}:${cat}`)))}
-    </div>)}
-  </>;
+  const section = (label: string, all: Course[]) => {
+    const list = all.flatMap(c => {
+      if (maxLevel == null) return [{c, rows: CATEGORIES.slice(c.minLevel ?? 0, topLevel(c) + 1).map(([cat, title]) => row(cat, title, best.get(`${c.id}:${cat}`)))}];
+      const pick = executable(c, maxLevel);
+      return pick ? [{c, rows: [row(pick.cat, pick.title, pick.b)]}] : [];
+    });
+    return list.length > 0 && <>
+      <label className="sectionLabel">{label}</label>
+      {list.map(({c, rows}) => <div className="courseGroup" key={c.id}>
+        <strong className="courseName">{courseLabel(c, c.id)}</strong>
+        {rows}
+      </div>)}
+    </>;
+  };
   return <div className="courseList">
     {chains.length > 0 && <><label className="sectionLabel">CHAINS</label>
       {chains.map(chain => <div className="courseGroup" key={chain.name}>
@@ -252,16 +283,88 @@ function Solver({solver,courses,onCommand}:{solver:SolverState;courses:Course[];
   </div>;
 }
 
+// The solver's capability values, indexed like CATEGORIES.
+const CAPS = ["none", "wj", "wjdash", "wjdashaj"];
+type SolveTarget = { key: string; body: { course: number; capabilities: string } | { chain: string; segment: number }; time?: number };
+
+// Batch optimize: every course's categories and every chain segment as a checkbox, solved one after another in the
+// matrix's order (top to bottom, left to right: a chain's earlier segments before its later ones). The selection and
+// minutes are kept in the browser.
+function SolveMatrix({routes,courses,chains,solver,onCommand}:{routes:Route[];courses:Course[];chains:Chain[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [minutes, setMinutes] = useState(15);
+  useEffect(() => {
+    setSelected(new Set(JSON.parse(window.localStorage.getItem("optimizeSelection") ?? "[]")));
+    const saved = Number(window.localStorage.getItem("optimizeMinutes"));
+    if (saved >= 1) setMinutes(saved);
+  }, []);
+  const select = (next: Set<string>) => { setSelected(next); window.localStorage.setItem("optimizeSelection", JSON.stringify([...next])); };
+  // Ticks every key, unless all of them already are: then clears them.
+  const toggle = (keys: string[]) => {
+    const next = new Set(selected), on = keys.some(k => !next.has(k));
+    for (const k of keys) { if (on) next.add(k); else next.delete(k); }
+    select(next);
+  };
+  const {best} = categoryBests(routes, courses, chains);
+  const groups: [string, Course[]][] = [
+    ["COURSES", courses.filter(c => !c.bonus && !c.to).sort((a, b) => a.id - b.id)],
+    ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
+    ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]];
+  const cells = (c: Course): (SolveTarget | null)[] => CATEGORIES.map(([cat], level) => level < (c.minLevel ?? 0) || level > topLevel(c) ? null
+    : { key: `c:${c.id}:${CAPS[level]}`, body: { course: c.id, capabilities: CAPS[level] }, time: best.get(`${c.id}:${cat}`)?.time });
+  const segments = (chain: Chain): SolveTarget[] => chain.segments.map(s => ({ key: `s:${chain.name}:${s.index}`, body: { chain: chain.name, segment: s.index }, time: s.time ?? undefined }));
+  const playable = chains.filter(c => !c.error);
+  const all = [...groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter((t): t is SolveTarget => !!t))), ...playable.flatMap(segments)];
+  const queue = all.filter(t => selected.has(t.key));
+  const checkbox = (t: SolveTarget) => <label className={`matrixCell ${selected.has(t.key) ? "on" : ""}`} title={t.time != null ? `Current best ${t.time.toFixed(2)}s` : "No route yet"}>
+    <input type="checkbox" checked={selected.has(t.key)} onChange={() => toggle([t.key])} /><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span></label>;
+  const progress = solver.queue ?? [];
+  const at = progress.findIndex(q => q.active);
+  return <div className="panel offlinePanel solveMatrix"><div className="panelTitle"><div><p className="eyebrow">BATCH SOLVER</p><h2>Optimize many</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{!solver.running ? "Idle" : at >= 0 ? `Target ${at + 1} of ${progress.length}` : "Solving"}</span></div>
+    <p className="lede">Tick what to optimize (a row or column header ticks all of it). Each target is solved in turn exactly like Solve, for up to the minutes below or until 5 minutes pass without a new best; every gain goes through the same turbo check and gate. Times are the current best.</p>
+    <div className="matrixTools">
+      <button className="secondary" onClick={() => select(new Set(all.map(t => t.key)))}>All</button>
+      <button className="secondary" onClick={() => select(new Set(all.filter(t => t.time != null).map(t => t.key)))} title="Only targets that already have a route">With a time</button>
+      <button className="secondary" onClick={() => select(new Set())}>None</button>
+      <Field label="Minutes per target"><input type="number" min={1} value={minutes} onChange={e => { const m = Math.max(1, Math.round(Number(e.target.value) || 1)); setMinutes(m); window.localStorage.setItem("optimizeMinutes", String(m)); }} /></Field>
+    </div>
+    <div className="matrixScroll"><table className="matrix">
+      <thead><tr><th />{CATEGORIES.map(([cat, title], level) => <th key={cat}><button title={`Tick every ${title.toLowerCase()} target`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter((t): t is SolveTarget => !!t).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
+      <tbody>
+        {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
+          <tr className="matrixSection"><th colSpan={5}>{label}</th></tr>
+          {list.map(c => <tr key={c.id}>
+            <th><button onClick={() => toggle(cells(c).filter((t): t is SolveTarget => !!t).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
+            {cells(c).map((t, level) => <td key={level} className={t ? "" : "na"}>{t && checkbox(t)}</td>)}
+          </tr>)}
+        </Fragment>)}
+        {playable.map(chain => <Fragment key={chain.name}>
+          <tr className="matrixSection"><th colSpan={5}><button onClick={() => toggle(segments(chain).map(t => t.key))}>CHAIN {chain.name} · {chain.capabilities.toUpperCase()}</button></th></tr>
+          {segments(chain).map((t, i) => <tr key={t.key}>
+            <th>{i + 1}. {chain.segments[i].restart ? "↺ " : ""}{segmentLabel(chain.segments[i])}</th>
+            <td colSpan={4}>{checkbox(t)}</td>
+          </tr>)}
+        </Fragment>)}
+      </tbody>
+    </table></div>
+    <div className="buttonRow">{solver.running
+      ? <><button className="secondary" onClick={() => onCommand("/solver/skip")}>Skip current target</button><button className="danger" onClick={() => onCommand("/solver/stop")}>Stop all</button></>
+      : <button className="primary" disabled={queue.length === 0} onClick={() => onCommand("/solver/start", { queue: queue.map(t => t.body), minutes })}>Optimize {queue.length} selected{queue.length > 0 ? ` · up to ${queue.length * minutes} min` : ""}</button>}</div>
+    {progress.length > 1 && <ol className="matrixQueue">{progress.map((q, i) => <li key={i} className={q.active ? "active" : q.result ? "done" : ""}><strong>{q.label}</strong><span>{q.active ? "Solving…" : q.result ?? "Waiting"}</span></li>)}</ol>}
+  </div>;
+}
+
 // Each chain in order: run it (or up to a segment), and solve a segment from where the routes before it end.
-function Chains({chains,chainRun,solver,running,onCommand}:{chains:Chain[];chainRun?:ChainRun;solver:SolverState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
+function Chains({chains,chainRun,solver,running,freshGame,newGameLoading,onCommand}:{chains:Chain[];chainRun?:ChainRun;solver:SolverState;running:boolean;freshGame:boolean;newGameLoading:boolean;onCommand:(path:string,body?:unknown)=>Promise<void>}) {
   const live = chainRun?.running;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE GAME IN ORDER</p><h2>Chains</h2></div><span className={`offlineStatus ${live?"running":""}`}>{live?"Playing":"Idle"}</span></div>
     <p className="lede">A chain plays its segments back to back: each starts exactly where the one before it ended (position, speed, held jump), so each segment is solved from there. ↺ is the game&apos;s quick restart before a segment. Solving a segment searches offline from the end of the chain&apos;s routes before it; a faster segment re-times the ones after it and marks those that no longer hold up as stale (they stay as seeds).</p>
     {live&&<p className="offlineConfirmation">Playing chain {live.chain}: segment {live.segment+1} of {live.of} ({live.token}){live.splits.length?` · ${live.splits.map(t=>t.toFixed(2)).join(" + ")}`:""}</p>}
     {chainRun?.last&&<p className="offlineConfirmation">{chainRun.last}</p>}
     {chains.map(chain=><div key={chain.name} className="chainBlock">
-      <div className="panelTitle"><div><p className="eyebrow">{chain.capabilities.toUpperCase()}</p><h2>{chain.name}{chain.total!=null?` · ${chain.total.toFixed(2)}s`:""}</h2></div>
-        <button className="primary" disabled={running||!chainPlayable(chain)} onClick={()=>onCommand("/chains/run",{chain:chain.name})}>▶ Run chain</button></div>
+      <div className="panelTitle"><div><p className="eyebrow">{chain.fromNewGame?"FROM A NEW GAME · ":""}{chain.capabilities.toUpperCase()}</p><h2>{chain.name}{chain.total!=null?` · ${chain.total.toFixed(2)}s`:""}</h2></div>
+        <span className="buttonRow">{chain.fromNewGame&&<button className="secondary" disabled={running||newGameLoading} title="Solving a segment of a chain from a new game needs a fresh game in memory (nothing is loaded or saved)" onClick={()=>onCommand("/session/newgame")}>{newGameLoading?"Loading new game…":freshGame?"↻ New game (fresh)":"Load new game"}</button>}
+        <button className="primary" disabled={running||newGameLoading||!chainPlayable(chain)} title={chain.fromNewGame?"Loads a fresh new game, then plays the chain from its first tick":undefined} onClick={()=>onCommand("/chains/run",{chain:chain.name})}>▶ Run chain</button></span></div>
       {chain.error?<p className="errorBanner">{chain.error}</p>:<div className="resultTable">
         <div className="tableHead"><span>Segment</span><span>Time</span><span>Route</span><span></span></div>
         {chain.segments.map((s,i)=>{ const ready=chain.segments.slice(0,i).every(p=>!!p.routeId); return <div className="tableRow" key={s.index}>

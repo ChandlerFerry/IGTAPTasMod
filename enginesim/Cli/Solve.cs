@@ -12,9 +12,10 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // Offline solver driver: N worker threads (one world each) from a trace's start state; every new best is
-    // written to disk and, unless --no-submit, replayed in the running game's turbo (which saves it as the category's
-    // route when the game agrees it is faster). A seed's own time is not new, so it never goes to the game.
+    // Offline solver driver: N worker threads (one world each) from a trace's start state; every new best (faster, or
+    // as fast in fewer physics ticks from the run start) is written to disk and, unless --no-submit, replayed in the
+    // running game's turbo (which saves it as the category's route when the game agrees it is better). A seed's own
+    // result is not new, so it never goes to the game.
     static class Solve
     {
         const string Api = "http://127.0.0.1:17426";
@@ -77,14 +78,14 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
-            solver.Improved += (time, inputs, how) =>
+            solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, chain, segment, time, ticks = inputs.Select(ToJson) }));
-                Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks) -> {Path.GetFileName(file)}");
+                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, chain, segment, time, runTicks, ticks = inputs.Select(ToJson) }));
+                Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 // A chain segment's seeds come from elsewhere (standalone routes, stale ones), so its first finish is new too.
-                if (submit && (how != "seed" || chain != null)) pending.Set(time, inputs);
+                if (submit && (how != "seed" || chain != null)) pending.Set(time, runTicks, inputs);
             };
             Console.WriteLine($"Solving {(chain != null ? $"chain {chain} segment {segment} (course {course})" : $"course {course}")} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
             solver.Start(threads);
@@ -99,7 +100,8 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, best {solver.Shared.Time:0.00}s, branch replays matching "
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, best {solver.Shared.Time:0.00}s"
+                    + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
             }
@@ -145,10 +147,10 @@ namespace IGTAP.EngineSim.Cli
         // Latest offline best waiting for turbo confirmation (older ones are superseded).
         sealed class BlockingQueue
         {
-            (float time, List<InputTick> inputs)? _item;
-            public void Set(float time, List<InputTick> inputs) { lock (this) { _item = (time, inputs); Monitor.Pulse(this); } }
-            public void SetIfEmpty(float time, List<InputTick> inputs) { lock (this) { if (_item == null) { _item = (time, inputs); Monitor.Pulse(this); } } }
-            public (float time, List<InputTick> inputs) Take()
+            (float time, long runTicks, List<InputTick> inputs)? _item;
+            public void Set(float time, long runTicks, List<InputTick> inputs) { lock (this) { _item = (time, runTicks, inputs); Monitor.Pulse(this); } }
+            public void SetIfEmpty(float time, long runTicks, List<InputTick> inputs) { lock (this) { if (_item == null) { _item = (time, runTicks, inputs); Monitor.Pulse(this); } } }
+            public (float time, long runTicks, List<InputTick> inputs) Take()
             {
                 lock (this)
                 {
@@ -191,7 +193,7 @@ namespace IGTAP.EngineSim.Cli
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             while (true)
             {
-                var (time, inputs) = pending.Take();
+                var (time, runTicks, inputs) = pending.Take();
                 // The same inputs may be valid in the course's other categories too (a WJ route never needs dash; a WJDASH
                 // route may never dash); the gate replays them under each category's unlocks and decides. A chain has one.
                 if (target.Chain == null)
@@ -209,13 +211,14 @@ namespace IGTAP.EngineSim.Cli
                         // Busy with another solver's submit: retry unless a newer best is already waiting.
                         Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] turbo check of {time:0.00}s deferred: {reply}");
                         Thread.Sleep(2000);
-                        pending.SetIfEmpty(time, inputs);
+                        pending.SetIfEmpty(time, runTicks, inputs);
                         continue;
                     }
                     float turbo = root.GetProperty("time").GetSingle();
-                    bool agree = finished.GetBoolean() && Math.Abs(turbo - time) < .0001f;
-                    Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] turbo check of {time:0.00}s: "
-                        + (finished.GetBoolean() ? "finish " + turbo.ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish")
+                    long turboTicks = root.GetProperty("runTicks").GetInt64();
+                    bool agree = finished.GetBoolean() && Math.Abs(turbo - time) < .0001f && turboTicks == runTicks;
+                    Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] turbo check of {time:0.00}s (run {runTicks} ticks): "
+                        + (finished.GetBoolean() ? "finish " + turbo.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + turboTicks + " ticks)" : "no finish")
                         + (agree ? " (agrees)" : " (DISAGREES with offline)")
                         + (root.GetProperty("saved").GetBoolean() ? " - saved as the new route" : "")
                         + (root.TryGetProperty("rejected", out JsonElement rejected) && rejected.ValueKind == JsonValueKind.String ? " - " + rejected.GetString() : ""));

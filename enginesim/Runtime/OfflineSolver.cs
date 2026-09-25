@@ -8,13 +8,16 @@ using UnityEngine;
 namespace IGTAP.EngineSim
 {
     // The in-game solver (Solver.cs) running offline: explore (Go-Explore over 48 px map cells x course timer
-    // running) and optimize (mutate the best finish), judged by the game's own timer. Each worker thread owns a
-    // world and archive; workers share only the best finish, which each adopts by replaying it.
+    // running) and optimize (mutate the best finish), judged by the game's own timer, then (at the same time) by the
+    // whole run's physics ticks: a flying start's setup before its last start-gate crossing is off the timer but still
+    // worth shortening. Each worker thread owns a world and archive; workers share only the best finish, which each
+    // adopts by replaying it.
     public sealed class OfflineSolver
     {
         public sealed class Best
         {
             public float Time = float.PositiveInfinity;
+            public long RunTicks = long.MaxValue;
             public List<InputTick> Inputs;
             public int Version;
         }
@@ -24,7 +27,7 @@ namespace IGTAP.EngineSim
         readonly List<List<InputTick>> _seeds;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, BranchChecks, BranchMatches;
-        public event Action<float, List<InputTick>, string> Improved;
+        public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
 
         public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds)
@@ -50,16 +53,25 @@ namespace IGTAP.EngineSim
             return threads;
         }
 
-        bool Offer(float time, List<InputTick> inputs, string how)
+        // Faster on the timer, or as fast (same 0.0001 s tolerance as the game's judge) in fewer physics ticks overall.
+        public static bool Beats(float time, long runTicks, float bestTime, long bestRunTicks)
         {
+            return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
+        }
+
+        bool Offer(float time, long runTicks, List<InputTick> inputs, string how)
+        {
+            // Reported under the lock: tie-breaks come in quick bursts from many workers, and a later report of an older
+            // best would overwrite the newer one's file (same time, same name).
             lock (Shared)
             {
-                if (time >= Shared.Time - .0001f) return false;
+                if (!Beats(time, runTicks, Shared.Time, Shared.RunTicks)) return false;
                 Shared.Time = time;
+                Shared.RunTicks = runTicks;
                 Shared.Inputs = inputs;
                 Shared.Version++;
+                Improved?.Invoke(time, runTicks, inputs, how);
             }
-            Improved?.Invoke(time, inputs, how);
             return true;
         }
 
@@ -82,6 +94,7 @@ namespace IGTAP.EngineSim
             readonly Dictionary<long, Cell> _archive = new Dictionary<long, Cell>();
             readonly bool _dash;
             float _best = float.PositiveInfinity;
+            long _bestRunTicks = long.MaxValue;
             List<InputTick> _bestInputs;
             SimSnapshot[] _bestStates;
             Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
@@ -113,18 +126,21 @@ namespace IGTAP.EngineSim
             {
                 List<InputTick> inputs;
                 float time;
+                long runTicks;
                 lock (_owner.Shared)
                 {
                     if (_owner.Shared.Version == _sharedVersion) return;
                     _sharedVersion = _owner.Shared.Version;
                     inputs = _owner.Shared.Inputs;
                     time = _owner.Shared.Time;
+                    runTicks = _owner.Shared.RunTicks;
                 }
-                if (inputs == null || time >= _best - .0001f) return;
+                if (inputs == null || !Beats(time, runTicks, _best, _bestRunTicks)) return;
                 var states = new SimSnapshot[inputs.Count];
                 var arrivals = new Dictionary<long, float>();
-                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick)) return;
+                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick, out long replayedTicks)) return;
                 _best = replayed;
+                _bestRunTicks = replayedTicks;
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
@@ -339,7 +355,11 @@ namespace IGTAP.EngineSim
                     }
                     case "stick":
                     {
-                        float aim = new[] { -1f, 0f, 1f, Mathf.Clamp(t[p].x + (_rng.NextDouble() < .5 ? -.1f : .1f), -1f, 1f) }[_rng.Next(4)];
+                        // Full left, rest, full right, or a stick short of full near the current one: a stick gives
+                        // 0.3..0.8 there (MacroEngine.ControllerAxis), so full steps down to 0.8 and rest up to 0.3.
+                        float was = Mathf.Abs(t[p].x), sign = t[p].x != 0f ? Mathf.Sign(t[p].x) : _rng.NextDouble() < .5 ? -1f : 1f;
+                        float partial = sign * (was >= 1f ? .8f : was == 0f ? .3f : Mathf.Clamp(was + (_rng.NextDouble() < .5 ? -.1f : .1f), .3f, .8f));
+                        float aim = new[] { -1f, 0f, 1f, partial }[_rng.Next(4)];
                         for (int i = p; i < Math.Min(n, p + _rng.Next(1, 15)); i++) { InputTick k = t[i]; k.x = aim; t[i] = k; }
                         break;
                     }
@@ -364,32 +384,34 @@ namespace IGTAP.EngineSim
             {
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (from != null && from.Tick >= inputs.Count) from = null;
-                bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, converge: converge);
+                bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, out long runTicks, converge: converge);
                 if (from != null && _rng.Next(100) == 0)
                 {
                     // Fidelity check: the branch must match a from-start replay. Both run uncut: the optimize cut also
                     // fires inside the replayed prefix (a loop route revisiting a cell), which the branch never sees.
-                    bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _);
+                    bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
                     // The branch never judged the prefix (its source's), so the replay judges the same ticks only.
-                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _, from.Tick);
+                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _, out _, from.Tick);
                     Interlocked.Increment(ref _owner.BranchChecks);
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
                 if (!finished) return;
                 Interlocked.Increment(ref _owner.Finishes);
-                if (time >= _best - .0001f) return;
+                if (!Beats(time, runTicks, _best, _bestRunTicks)) return;
                 var states = new SimSnapshot[inputs.Count];
                 var arrivals = new Dictionary<long, float>();
-                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick) || replayed >= _best - .0001f) return;
+                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick, out long replayedTicks)
+                    || !Beats(replayed, replayedTicks, _best, _bestRunTicks)) return;
                 _best = replayed;
+                _bestRunTicks = replayedTicks;
                 _bestInputs = inputs.Take(finishTick + 1).ToList();
                 _bestStates = states;
                 _bestArrival = arrivals;
                 _bestBody = _replayBody;
                 _bestFingerprint = _replayFingerprint;
-                _owner.Offer(replayed, _bestInputs, mode);
+                _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
             }
 
             // TasPlugin.Evaluate: files map cells as the run reaches them, cuts runs already behind the best (judged
@@ -397,7 +419,7 @@ namespace IGTAP.EngineSim
             // a run whose inputs equal the best's from tick `converge` on stops once it is back in the best's state
             // (it would finish exactly like the best).
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
-                out float time, out int finishTick, int judgeAfter = -1, int converge = int.MaxValue)
+                out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue)
             {
                 if (states != null)
                 {
@@ -439,6 +461,7 @@ namespace IGTAP.EngineSim
                 Interlocked.Add(ref _owner.Ticks, result.Stepped);
                 time = result.Time;
                 finishTick = result.FinishTick;
+                runTicks = result.PhysicsTicks;
                 return result.Finished;
             }
             (float, float, float, float, float, float)[] _replayBody, _bestBody;

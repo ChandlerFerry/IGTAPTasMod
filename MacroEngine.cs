@@ -220,10 +220,12 @@ namespace IGTAPTasMod
         internal const string RewardFinishReason = "Reward collected";
         // A transition's run finishes when the next course's start gate starts its timer.
         internal const string TransitionFinishReason = "Next course started";
+        // A purchase segment's run finishes when the game itself buys its upgrade box (upgradeBox.DoBuyUpgrade).
+        internal const string PurchaseFinishReason = "Upgrade bought";
 
         internal static bool IsFinishReason(string reason)
         {
-            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason;
+            return reason == "Course finish detected" || reason == RewardFinishReason || reason == TransitionFinishReason || reason == PurchaseFinishReason;
         }
 
         // Once per physics tick, after Movement.FixedUpdate (which takes the tick's input, if any).
@@ -346,7 +348,7 @@ namespace IGTAPTasMod
 
         private void RunRawInput(Movement movement, MacroStep step, bool entering)
         {
-            movement.MoveAxis = new Vector2(step.rawMoveX, step.rawMoveY);
+            movement.MoveAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
             if (entering)
             {
                 if (step.rawJumpPressed)
@@ -359,7 +361,7 @@ namespace IGTAPTasMod
                 {
                     PressDash(movement);
                     _dashJumpFrame = step.dashJumpFrame;
-                    _dashJumpAxis = new Vector2(step.rawMoveX, step.rawMoveY);
+                    _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
                 }
                 _rawJumpHeld = step.rawJumpHeld;
             }
@@ -502,6 +504,21 @@ namespace IGTAPTasMod
         private static void SetDirection(Movement movement, int direction)
         {
             movement.MoveAxis = new Vector2(Mathf.Clamp(direction, -1, 1), 0f);
+        }
+
+        // Movement.NormaliseInput: what the game makes of a stick position before it moves the player. Playback sets
+        // MoveAxis after the game read the controller, so it applies the same; otherwise it would play stick values no
+        // controller can give (0.1 creeps where a stick gives 0; 0.9 is 90 % where a stick gives full speed). What a
+        // controller can give: x 0, ±1 or 0.3..0.8 in size; y 0 or ±1.
+        public static Vector2 ControllerAxis(float x, float y)
+        {
+            if ((double)x > 0.8) x = 1f;
+            else if ((double)x < -0.8) x = -1f;
+            else if ((double)x > 0.4 && (double)Mathf.Abs(y) > 0.3) x = 1f;
+            else if ((double)x < -0.4 && (double)Mathf.Abs(y) > 0.3) x = -1f;
+            else if ((double)Mathf.Abs(x) < 0.3) x = 0f;
+            y = (double)y > 0.4 ? 1f : (double)y < -0.4 ? -1f : 0f;
+            return new Vector2(x, y);
         }
 
         private void CaptureProgress(Movement movement)
