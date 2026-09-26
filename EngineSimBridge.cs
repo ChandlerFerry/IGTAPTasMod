@@ -119,7 +119,7 @@ namespace IGTAPTasMod
                 .FirstOrDefault();
             if (newest.path == null) throw new InvalidOperationException("No offline best" + (human ? " with a human version" : "") + " for " + category + ".");
             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
-            var route = new MacroDefinition { id = "offline-best", name = category + (human ? " human " : " offline ") + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
+            var route = new MacroDefinition { id = human ? HumanPlaybackId : "offline-best", name = category + (human ? " human " : " offline ") + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             EnsureGameUnpaused();
             _pendingReplay = route;
@@ -167,6 +167,8 @@ namespace IGTAPTasMod
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
         // enginesim humanize's same-time versions of a best: played for practice, never judged.
         static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.json$");
+        // The playback id of a human version: the studio colors the run so it is never mistaken for the best.
+        const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
 

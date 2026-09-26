@@ -1684,6 +1684,7 @@ namespace IGTAPTasMod
                 capabilitiesLocked = _settings.lockCapabilities,
                 overlayShown = _settings.showOverlay,
                 running = PlaybackActive,
+                humanPlayback = _engine.IsRunning && _engine.ActiveMacroId == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
                 routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
                 courses = BuildCourseWebState(),

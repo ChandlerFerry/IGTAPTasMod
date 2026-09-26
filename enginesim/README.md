@@ -138,8 +138,10 @@ either way, rest, and every partial on its side; `y` −1, 0, 1. Each input is `
 value only), `free` (no limit found either way, any value), or `window N`. The report counts exact inputs in the
 best and in the human version, and lists what changed. Ticks are input ticks (dash and spring ticks take none).
 
-The human version is never a record. The plugin never judges a `-human.json` file, and the studio plays the newest one
-for the category with "Play human version" (`/api/enginesim/play {human: true}`).
+The human version is never a record and never replaces the best: it goes to its own file, a change that made it slower
+in time or physics ticks is never kept, and the plugin never judges a `-human.json` file. The studio plays the newest one
+for the category with "Play human version" (`/api/enginesim/play {human: true}`); while it plays, the studio's top bar
+turns violet with a HUMANIZED badge (`/api/state` `humanPlayback`).
 
 ## Rules
 
