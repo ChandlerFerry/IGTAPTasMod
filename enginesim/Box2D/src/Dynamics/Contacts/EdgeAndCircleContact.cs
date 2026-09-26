@@ -51,11 +51,6 @@ namespace Box2D
 
         public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            if (!b2Settings.UseLegacyEdgePolygon)
-            {
-                EdgeAndPolygonCollider241.CollideEdgeAndCircle241(out manifold, edgeA, in xfA, circleB, in xfB);
-                return;
-            }
             manifold = new b2Manifold();
 
             //manifold.pointCount = 0;

@@ -43,7 +43,6 @@
 .matrix th button:hover { color: var(--cyan); }
 .matrix tbody th { color: var(--text); font-weight: 600; }
 .matrixSection th { padding-top: 10px; background: #0b1c31; color: var(--muted); font-size: 10px; letter-spacing: .1em; }
-.matrixSection th button { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
 .matrix td.na { background: repeating-linear-gradient(135deg, transparent 0 6px, #0f1d31 6px 12px); }
 .matrixCell { display: inline-flex; justify-content: flex-start; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
 .matrixCell input { accent-color: var(--cyan); margin: 0; }

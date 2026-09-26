@@ -141,7 +141,7 @@ namespace IGTAP.EngineSim
                 .Select(n => typeof(courseScript).GetField(n, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(c) as System.Collections.IList)
                 .Where(l => l != null).ToArray()).ToArray();
             _playerColliders = Player.GetComponents<BoxCollider2D>();
-            Engine.AttemptEnded += (success, reason, step, ticks) =>
+            Engine.AttemptEnded += (success, reason) =>
             {
                 _finished = success && MacroEngine.IsFinishReason(reason);
                 _finishTime = Engine.AuthoritativeCompletionTime;

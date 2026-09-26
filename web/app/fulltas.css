@@ -27,7 +27,6 @@
 .ftProblem { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--red); border-radius: 10px; background: #3a1420; }
 .ftProblem > div:first-child { display: flex; flex-direction: column; gap: 4px; }
 .ftProblem strong { color: var(--red); }
-.ftProblem small { color: var(--muted); }
 .ftProblemButtons { display: flex; gap: 8px; flex-shrink: 0; }
 .ftNotice { margin: 0; padding: 10px 14px; border-radius: 8px; background: #2a2214; box-shadow: inset 3px 0 0 var(--amber); color: #f3d9a8; font-size: 13px; }
 .ftStats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }

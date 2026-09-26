@@ -1,8 +1,7 @@
 # IGTAP.Box2D — offline Box2D re-host notes
 
 Bit-faithful C# re-host of Unity 6.3's Box2D (2.3.x-derived fork) for offline route
-search. Everything lives in `enginesim/Box2D/` (library) and `enginesim/Box2D.Smoke/`
-(verification scenario).
+search. Everything lives in `enginesim/Box2D/`.
 
 ## Source provenance
 
@@ -19,8 +18,7 @@ search. Everything lives in `enginesim/Box2D/` (library) and `enginesim/Box2D.Sm
 - New code (not vendored): `api/b2Vec2.cs` (C++-literal vector math),
   `api/b2MathCompat.cs` (C++ b2Min/b2Max/b2Abs/b2Clamp literal semantics),
   `api/b2Facade.cs` (b2Collision free functions, b2QueryCallback/b2RayCastCallback),
-  `api/b2WorldState.cs` (SaveState/LoadState), `src/Collision/Colliders/EdgeAndPolygonCollider241.cs`
-  (literal port of v2.4.1 b2_collide_edge.cpp).
+  `api/b2WorldState.cs` (SaveState/LoadState).
 
 ## Numerics policy
 
@@ -66,6 +64,10 @@ on the same machine/runtime.
     every leaf the original `maxFraction`, so the ray was never clipped and a closest-hit
     callback kept the last hit in tree order. Both now follow C++ (`b2WorldRayCastWrapper`
     returns the callback's value; `subInput.maxFraction = maxFraction`).
+13. `b2TestOverlap(shape...)` (the trigger overlap test) used `10 * linearSlop`
+    (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
+    still got `OnTriggerStay2D` (the `rand-c3-wjds-2` tick 33 `courseResetPoint`
+    residue). Now `10 * FLT_EPSILON` like C++.
 
 ### Dead Box2DX relics removed (never referenced by any code)
 
@@ -78,9 +80,6 @@ tunable.
 
 | Area | 2.3.x (Unity lineage) | 2.4.1 | Control |
 |---|---|---|---|
-| `b2CollideEdgeAndPolygon` | `b2EPCollider` SAT (`src/Collision/Colliders/EdgeAndPolygonCollider.cs`, vendored = legacy lineage) | rewritten Gauss-map algorithm (`EdgeAndPolygonCollider241.cs`, literal v2.4.1 port) | `b2Settings.UseLegacyEdgePolygon` (default **true** = 2.3.x) |
-| `b2CollideEdgeAndCircle` | two-sided + `m_hasVertex` ghosts (vendored inline) | `m_oneSided` early-out + adjacency regions (`CollideEdgeAndCircle241`) | same flag |
-| `b2ChainShape`/`b2EdgeShape` ghosts | two-sided edges, optional ghost vertices | one-sided edges, ghosts mandatory (`m_oneSided`) | same flag (`GetChildEdge` sets `m_oneSided = !UseLegacyEdgePolygon`) |
 | Contact restitution threshold | global `b2Settings.velocityThreshold = 1.0f` (solver: `vRel < -velocityThreshold`) | per-fixture `restitutionThreshold` mixed per contact (`b2MixRestitutionThreshold`) | port keeps the 2.3.x global (matches Unity). Per-fixture variant NOT ported. |
 | Island velocity integration | `v += h * (gravityScale * gravity + invMass * force)` | `v += h * invMass * (gravityScale * mass * gravity + force)` (different rounding: `invMass * mass != 1.0`) | `b2Settings.useLegacyGravityIntegration` (default **true** = 2.3.x) |
 | GJK `b2Distance` simplex | barycentrics w/ `GetClosestPoint` divergence check | simplex rewritten (different barycentrics, radii handling reworked) | no flag (deep re-port); port lineage ≈ 2.3-era. **Next suspect for residual ulp diffs.** |
@@ -92,7 +91,7 @@ tunable.
 
 The vendored solver is 2.3-style (`velocityThreshold` global) which matches Unity;
 the solver/island/transform expression order was repaired to be literal C++
-(identical between 2.3.1 and 2.4.1 except the two flagged rows).
+(identical between 2.3.1 and 2.4.1 except the flagged row).
 
 ## Public API (namespace `Box2D`, C++ v2 names)
 
@@ -103,8 +102,8 @@ int velocityIterations, int positionIterations)`, `SetContactListener`,
 (delegates on `b2World` + `b2RayCastCallback`/`b2QueryCallback` class adapters),
 `GetBodyList`/`GetContactList`/`GetBodyCount`/`GetContactCount`/`GetGravity`/
 `SetGravity`/`SetAutoClearForces`/`GetAutoClearForces`/`ClearForces`/
-`SetContinuousPhysics`/`SetSubStepping`/`SetWarmStarting`/`SetAllowSleeping`/
-`GetProfile`, `SetDestructionListener`, `SetDebugDraw`.
+`SetContinuousPhysics`/`SetSubStepping`/`SetWarmStarting`/`SetAllowSleeping`,
+`SetDestructionListener`, `SetDebugDraw`.
 
 `b2Body`: `CreateFixture(b2FixtureDef)` (returns `b2Fixture`), `SetTransform`,
 `GetTransform`/`GetPosition`/`GetAngle`/`GetWorldCenter`/`GetLocalCenter`,
@@ -139,14 +138,13 @@ tangentImpulse/id`), `GetWorldManifold(out b2WorldManifold)` (`normal`, `points`
 
 Static functions (`using static Box2D.b2Collision;` for bare names):
 `b2Distance(out b2DistanceOutput, ref b2SimplexCache, in b2DistanceInput)`,
-`b2TimeOfImpact(out b2TOIOutput, in b2TOIInput)`, `b2TestOverlap(in b2AABB, in b2AABB)`,
 `b2TestOverlap(shapeA, iA, shapeB, iB, xfA, xfB)`.
 
 ### Branching API
 
 `object b2World.SaveState()` / `void b2World.LoadState(object state)` — exact,
 in-place snapshot/restore. After `LoadState`, stepping is bit-identical to stepping
-at `SaveState` time (verified by smoke: `SAVESTATE OK`). Contract:
+at `SaveState` time. Contract:
 - Static bodies and their fixtures must not change between save/load (level
   geometry). They are not copied; the dynamic-tree node array is (Array.Copy).
 - Non-static bodies keep identity; their mutable state and fixture lists are
@@ -161,7 +159,7 @@ at `SaveState` time (verified by smoke: `SAVESTATE OK`). Contract:
 
 `b2World.Clone()` is **not** implemented; per contract this documents the
 determinism guarantee instead: creating a fresh world and replaying yields
-bit-identical results (smoke: `DETERMINISM OK`), and `SaveState`/`LoadState`
+bit-identical results, and `SaveState`/`LoadState`
 provides exact branching at lower cost than cloning object graphs (an exact clone
 must preserve broadphase proxy ids and intrusive list order — which the in-place
 snapshot already does). If object-graph cloning is ever needed it can be layered on
@@ -170,22 +168,6 @@ snapshot already does). If object-graph cloning is ever needed it can be layered
 ## Verification
 
 `dotnet build enginesim/Box2D/IGTAP.Box2D.csproj -c Release` — 0 errors, 0 warnings.
-
-`dotnet run -c Release --project enginesim/Box2D.Smoke` prints the 60-step
-trajectory (9 significant digits) for the specced scenario (dynamic box 15x19,
-fixed rotation, polygon radius 0.01, velocity forced to (460, -939) per step,
-static ground + wall, dt = 0.0199999921f, 8/3 iterations, zero gravity) and:
-
-```
-DETERMINISM OK
-SAVESTATE OK
-EDGEPATH OK (UseLegacyEdgePolygon=false deterministic)
-EDGECOLLIDE OK (edge + chain paths executed in both modes)
-BENCH steps/sec=~200000 (120000 steps in ~0.6s)
-```
-
-Measured throughput for the smoke scenario (3 bodies, 2-3 contacts, 8 velocity /
-3 position iterations): **~190k-215k steps/sec** single-threaded Release x64.
 
 ## SaveState/LoadState correctness fixes (found via the CLI replay suite)
 
@@ -219,10 +201,6 @@ port's `c0 + beta * (c - c0)` rounds differently).
 
 ## Known gaps / next suspects
 
-- `b2TestOverlap(shape...)` (the trigger overlap test) used `10 * linearSlop`
-  (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
-  still got `OnTriggerStay2D` (the `rand-c3-wjds-2` tick 33 `courseResetPoint`
-  residue). Fixed.
 - Contact order, matched to Unity on the whole 2026-09-25 turbo corpus (every multi-contact pair):
   `b2BroadPhase.UpdatePairs` sorts new pairs by proxy id (2.3.x); the world contact list is oldest first
   (`ContactManager.AddPair` appends; Collide's update order and SolveTOI's first-wins tie between equally early
@@ -238,9 +216,9 @@ port's `c0 + beta * (c - c0)` rounds differently).
   port's rewrites and were **not** yet verified expression-order-against-C++. They
   are the next suspect for any residual 1-ulp differences (compare against
   v2.4.1 `b2_collide_polygon.cpp` / `b2_collide_circle.cpp` literally).
-- GJK `b2Distance` and `b2TimeOfImpact` remain the base port's lineage (see table).
+- GJK `b2Distance` and `TOI.TimeOfImpact` remain the base port's lineage (see table).
 - `Collision.ClipSegmentToLine` allocates its `out` array per call (hot-path GC
   churn; numerics unaffected). Same for per-step `ContactVelocityConstraint`
   allocation in `ContactSolver`. Not per-`Step`-allocating beyond these.
 - `b2Draw`/`DebugDraw` exists for parity but is unused by the offline engine.
-- Joints ARE ported (full suite) but unused by the offline engine so far.
+- Joints ARE ported (every type `b2Joint.Create` dispatches) but unused by the offline engine so far.

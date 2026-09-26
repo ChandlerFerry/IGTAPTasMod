@@ -97,23 +97,6 @@ namespace IGTAPTasMod
     }
 
     [Serializable]
-    public sealed class AttemptResult
-    {
-        public const int CurrentSchemaVersion = 6;
-        public int schemaVersion = CurrentSchemaVersion;
-        public string id = Guid.NewGuid().ToString("N");
-        public string routeId;
-        public string routeName;
-        public string timestampUtc = DateTime.UtcNow.ToString("o");
-        public bool success;
-        public long completionTicks;
-        public float completionTime;
-        public string timingSource;
-        public int failureAction = -1;
-        public string failureReason;
-    }
-
-    [Serializable]
     public sealed class StudioSettings
     {
         public const int CurrentSchemaVersion = 1;

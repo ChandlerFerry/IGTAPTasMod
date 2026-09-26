@@ -43,14 +43,7 @@ namespace Box2D
 
         public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            if (b2Settings.UseLegacyEdgePolygon)
-            {
-                collider.Collide(out manifold, edgeA, in xfA, polygonB, in xfB);
-            }
-            else
-            {
-                EdgeAndPolygonCollider241.CollideEdgeAndPolygon241(out manifold, edgeA, in xfA, polygonB, in xfB);
-            }
+            collider.Collide(out manifold, edgeA, in xfA, polygonB, in xfB);
         }
     }
 }

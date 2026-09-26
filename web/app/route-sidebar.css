@@ -18,5 +18,4 @@
 .routeRow:hover { background: #10213a; }
 .routeRow.active { background: #15335a; box-shadow: inset 3px 0 var(--cyan); }
 .routeRow .routeItem { width: 100%; min-width: 0; }
-.routeRow .routeItem:hover,
-.routeRow .routeItem.active { background: transparent; box-shadow: none; }
+.routeRow .routeItem:hover { background: transparent; box-shadow: none; }
