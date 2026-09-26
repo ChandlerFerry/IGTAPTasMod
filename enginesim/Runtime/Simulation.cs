@@ -72,6 +72,7 @@ namespace IGTAP.EngineSim
         internal FullTasTracker.State Goal;
         public UnityEngine.Random.State Random;
         public int Waypoints;
+        public double VmanTimeLeft;
     }
 
     public sealed class Simulation
@@ -101,8 +102,22 @@ namespace IGTAP.EngineSim
         string _endReason;
         readonly Dictionary<MonoBehaviour, object[]> _pristine = new Dictionary<MonoBehaviour, object[]>();
         readonly HashSet<MonoBehaviour> _touched = new HashSet<MonoBehaviour>();
+        // The last field capture of each touched script and course. A capture reuses it while nothing in it changed, so the
+        // archive's snapshots share one array per unchanged script (a Full-TAS world's ~100 touched scripts were 130 KB of
+        // each 160 KB snapshot). Sharing is safe: Restore copies what it applies, and nothing writes a captured array.
+        readonly Dictionary<object, object[]> _captured = new Dictionary<object, object[]>();
+
+        object[] CaptureShared(object target)
+        {
+            if (_captured.TryGetValue(target, out object[] last) && FieldState.Matches(target, last)) return last;
+            return _captured[target] = FieldState.Capture(target);
+        }
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
+        // A Vman speedrun's clock: VmanScript.vmanTimeLeft is a static in the game, kept per simulation here because the
+        // search's workers share the process's statics. VmanScript.isCurrentlyVman comes from the world export's statics.
+        double _vmanTimeLeft;
+        bool _vmanBlockEnding;
 
         public Simulation(World world)
         {
@@ -111,8 +126,13 @@ namespace IGTAP.EngineSim
             Player = world.All<Movement>().First(m => m.gameObject.activeInHierarchy && !(bool)typeof(Movement).GetField("isOnMainMenu",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(m));
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
+            Origin = world.All<FloatingOrigin>().Select(o => o.currentOrigin).FirstOrDefault();
             Physics = new PhysicsWorld(world, this);
             IGTAP.EngineSim.Engine.Physics = Physics;
+            // Every toggle in a run, the game's own included (colouredBlockSwapper.swapBlocks turns the blue/orange
+            // colliders on and off), is put back by Restore: a branch must not start from the last run's blocks.
+            IGTAP.EngineSim.Engine.ActiveChanging = g => _activeAsLoaded.TryAdd(g, g.activeSelf);
+            IGTAP.EngineSim.Engine.EnabledChanging = b => _enabledAsLoaded.TryAdd(b, b.enabled);
             Shop = new Shop(this, world);
             _fixedUpdate = (Action)Delegate.CreateDelegate(typeof(Action), Player, FixedUpdateMethod);
             _update = (Action)Delegate.CreateDelegate(typeof(Action), Player, UpdateMethod);
@@ -139,6 +159,7 @@ namespace IGTAP.EngineSim
             Hooks.CourseStop = CourseStop;
             Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = false;
             Hooks.UpgradeBoxStay = Shop.Stay;
+            Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
             Hooks.PlaySfx = (_, code) =>
             {
                 switch (code)
@@ -206,9 +227,13 @@ namespace IGTAP.EngineSim
             TrackingField.SetValue(course, false);
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
             if (savePositionData) Shop.CourseFinished(course, time);
-            foreach (string list in CoursePathLists)
-                (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
-            PathTimeField.SetValue(course, 0f);
+            // stopTracking returns right after a Vman completion: the path lists and time stay as they are.
+            if (!(savePositionData && VmanScript.isCurrentlyVman))
+            {
+                foreach (string list in CoursePathLists)
+                    (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
+                PathTimeField.SetValue(course, 0f);
+            }
             if (Goals != null)
             {
                 if (savePositionData && Engine.IsRunning) GoalEvent(Goals.CourseFinished(course.courseNumber, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
@@ -242,18 +267,7 @@ namespace IGTAP.EngineSim
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
         }
 
-        internal void SetActive(GameObject gameObject, bool active)
-        {
-            if (!_activeAsLoaded.ContainsKey(gameObject)) _activeAsLoaded[gameObject] = gameObject.activeSelf;
-            gameObject.SetActive(active);
-        }
-
-        internal void SetEnabled(Behaviour behaviour, bool enabled)
-        {
-            if (!_enabledAsLoaded.ContainsKey(behaviour)) _enabledAsLoaded[behaviour] = behaviour.enabled;
-            behaviour.enabled = enabled;
-        }
-
+        // The game's courseNumber of the target course: the header's `gameCourse` for Courses 11-15 (Courses 1-5 overgrown).
         public int TargetCourse;
 
         public (float x, float y, float w, float h) TargetFinish;
@@ -264,8 +278,13 @@ namespace IGTAP.EngineSim
 
         public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
 
-        // The body's unrounded world position (forced-path boxes are checked against it).
-        public Vector3 PlayerPosition { get { return Player.transform.m_Position; } }
+        // The game's FloatingOrigin at capture. The simulation never shifts it, so every position in a run is in the capture's
+        // scene frame; the game world (courses.json's frame, the map's, forced-path boxes') is scene - Origin, the same for
+        // every capture.
+        public readonly Vector3 Origin;
+
+        // The body's unrounded position in the game world (forced-path boxes are checked against it).
+        public Vector3 PlayerWorld { get { return Player.transform.m_Position - Origin; } }
 
         public float Elapsed(courseScript active)
         {
@@ -275,7 +294,7 @@ namespace IGTAP.EngineSim
 
         public void SetTarget(JsonElement header)
         {
-            TargetCourse = header.GetProperty("course").GetInt32();
+            TargetCourse = (header.TryGetProperty("gameCourse", out JsonElement gameCourse) ? gameCourse : header.GetProperty("course")).GetInt32();
             if (header.TryGetProperty("finish", out JsonElement finish))
                 TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
@@ -316,6 +335,10 @@ namespace IGTAP.EngineSim
                     if (goal.boxes == null || goal.boxes.Length == 0) throw new InvalidOperationException("Goal " + goal.label + " names no box.");
                     foreach (string box in goal.boxes)
                         if (!Shop.HasBox(box)) throw new InvalidOperationException("Goal " + goal.label + ": upgrade box " + box + " is not in this world export.");
+                }
+                else if (goal.kind == FullTasGoal.At)
+                {
+                    if (!(goal.w > 0f) || !(goal.h > 0f)) throw new InvalidOperationException("Goal " + goal.label + " has no checkpoint rect.");
                 }
                 else throw new InvalidOperationException("Goal " + goal.label + ": unknown kind " + goal.kind + ".");
                 list.Add(goal);
@@ -368,6 +391,14 @@ namespace IGTAP.EngineSim
             Physics.ResetPlayer(World.Vec2(start.GetProperty("bodyPosition")), World.Vec2(start.GetProperty("velocity")),
                 World.ReadFloat(start.GetProperty("rotation")), World.ReadFloat(start.GetProperty("angularVelocity")));
             if (start.TryGetProperty("economy", out JsonElement economy)) Shop.LoadStart(economy, ApplyFields);
+            if (start.TryGetProperty("vman", out JsonElement vman) != VmanScript.isCurrentlyVman)
+                throw new InvalidOperationException(VmanScript.isCurrentlyVman ? "The world is a Vman speedrun's, but the trace's start has no Vman clock: capture both again."
+                    : "The trace's start is a Vman speedrun's, but its world isn't: capture both again.");
+            if (VmanScript.isCurrentlyVman)
+            {
+                _vmanTimeLeft = vman.GetProperty("timeLeft").GetDouble();
+                _vmanBlockEnding = vman.GetProperty("blockEnding").GetBoolean();
+            }
             if (start.TryGetProperty("random", out JsonElement random))
                 UnityEngine.Random.state = new UnityEngine.Random.State
                 {
@@ -405,19 +436,20 @@ namespace IGTAP.EngineSim
                 Tick = tick,
                 Movement = FieldState.Capture(Player),
                 Engine = Engine.CaptureState(),
-                Courses = Courses.Select(c => FieldState.Capture(c)).ToArray(),
+                Courses = Courses.Select(CaptureShared).ToArray(),
                 Position = Player.transform.m_Position,
                 LocalScale = Player.transform.m_LocalScale,
                 Rotation = Player.transform.m_Rotation,
                 Colliders = _playerColliders.Select(c => (c.offset, c.size, c.excludeLayers.value, c.enabled)).ToArray(),
                 Pending = pending,
                 Physics = Physics.Capture(),
-                Touched = _touched.Select(s => (s, FieldState.Capture(s))).ToArray(),
+                Touched = _touched.Select(s => (s, CaptureShared(s))).ToArray(),
                 Active = _activeAsLoaded.Count == 0 ? Array.Empty<(GameObject, bool)>() : _activeAsLoaded.Keys.Select(g => (g, g.activeSelf)).ToArray(),
                 Enabled = _enabledAsLoaded.Count == 0 ? Array.Empty<(Behaviour, bool)>() : _enabledAsLoaded.Keys.Select(b => (b, b.enabled)).ToArray(),
                 Economy = Shop.Capture(),
                 Goal = Goals?.Capture(),
                 Random = UnityEngine.Random.state,
+                VmanTimeLeft = _vmanTimeLeft,
             };
         }
 
@@ -492,11 +524,16 @@ namespace IGTAP.EngineSim
                 if (b.enabled != enabled) b.enabled = enabled;
             }
             Physics.Suspended = false;
-            foreach (MonoBehaviour script in _touched) FieldState.Restore(script, _pristine[script]);
+            foreach (MonoBehaviour script in _touched)
+            {
+                FieldState.Restore(script, _pristine[script]);
+                _captured[script] = _pristine[script];
+            }
             _touched.Clear();
             foreach (var (target, fields) in s.Touched)
             {
                 FieldState.Restore(target, fields);
+                _captured[target] = fields;
                 _touched.Add(target);
             }
             FieldState.Restore(Player, s.Movement);
@@ -504,6 +541,7 @@ namespace IGTAP.EngineSim
             {
                 FieldState.Restore(Courses[i], s.Courses[i]);
                 foreach (System.Collections.IList list in _coursePathLists[i]) list.Clear();
+                _captured[Courses[i]] = s.Courses[i];
             }
             Transform t = Player.transform;
             t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
@@ -525,6 +563,7 @@ namespace IGTAP.EngineSim
             Shop.Restore(s.Economy);
             if (Goals != null) Goals.Restore(s.Goal);
             UnityEngine.Random.state = s.Random;
+            _vmanTimeLeft = s.VmanTimeLeft;
         }
 
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
@@ -555,6 +594,7 @@ namespace IGTAP.EngineSim
                 Engine.CountPhysicsTick();
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
+                VmanClock();
                 Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.Simulate(World.FixedDeltaTime);
                 _update();
@@ -569,6 +609,9 @@ namespace IGTAP.EngineSim
                 {
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                    FullTasGoal now = Goals.Current;
+                    if (now != null && now.kind == FullTasGoal.At && Touches(now.x, now.y, now.w, now.h))
+                        GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
                 stepped++;
                 onStep?.Invoke(stepped - 1);
@@ -592,6 +635,15 @@ namespace IGTAP.EngineSim
                 GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
                 GoalPhysicsTicks = Goals == null ? null : (long[])Goals.PhysicsTicks.Clone(),
             };
+        }
+
+        // VmanScript.FixedUpdate: the clock runs down by the fixed step; at 0 ExitVmanSpeedrun loads the Overworld.
+        void VmanClock()
+        {
+            if (!VmanScript.isCurrentlyVman || !(_vmanTimeLeft > 0.0)) return;
+            _vmanTimeLeft -= World.FixedDeltaTime;
+            if (_vmanTimeLeft <= 0.0 && !_vmanBlockEnding && Engine.IsRunning)
+                Engine.Abort("Unmodeled: the Vman speedrun's time ran out (ExitVmanSpeedrun loads the Overworld)");
         }
 
         static readonly FieldInfo OnGroundField = typeof(Movement).GetField("onGround", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);

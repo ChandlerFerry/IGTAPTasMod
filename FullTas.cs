@@ -4,11 +4,13 @@ namespace IGTAPTasMod
 {
     internal sealed class FullTasGoal
     {
-        public const string Start = "start", Finish = "finish", Buy = "buy", Reward = "reward";
+        public const string Start = "start", Finish = "finish", Buy = "buy", Reward = "reward", At = "at";
         public string label;
         public string kind;
         public int course;
         public string[] boxes;
+        // reward: the bonus's end rect (it finds the reward box); at: the checkpoint the player's collider must touch.
+        // Centre and size in courses.json's frame; the trace header carries them in its world frame.
         public float x, y, w, h;
         public const float RewardBoxRange = 400f;
 
@@ -55,6 +57,13 @@ namespace IGTAPTasMod
         {
             FullTasGoal g = Current;
             return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics);
+        }
+
+        // The current goal is a checkpoint: the caller checked that the player touches its rect.
+        public bool Touched(long input, long physics)
+        {
+            FullTasGoal g = Current;
+            return g != null && g.kind == FullTasGoal.At && Reach(input, physics);
         }
 
         public bool Bought(string path, string id, long input, long physics)

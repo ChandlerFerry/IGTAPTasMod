@@ -27,3 +27,6 @@ replace courseScript::fullUpdate OnCourseReward
 # playSFX also draws for the Audio.PlayAudio its land cases make (the body is empty here, so the hook draws those too).
 prefix Movement::playSFX OnPlaySfx
 prefix Audio::PlayAudio OnPlayAudio
+# Block swap on dash: Movement calls the swapper directly, not through a physics callback, so the host marks it touched
+# (Simulation.Touch) and a restore puts isBlueActive back. The colliders it toggles are tracked by Engine.EnabledChanging.
+prefix colouredBlockSwapper::swapBlocks OnSwapBlocks

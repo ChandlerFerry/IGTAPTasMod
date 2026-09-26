@@ -21,3 +21,58 @@
 .fullTasInline { display: flex; gap: 9px; align-items: flex-end; }
 .fullTasInline .field { flex: 1; margin-top: 12px; }
 .fullTasSearch { margin-top: 18px; }
+
+/* The solve dashboard (fulltas-solve.tsx). */
+.ftSolve { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.ftProblem { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--red); border-radius: 10px; background: #3a1420; }
+.ftProblem > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.ftProblem strong { color: var(--red); }
+.ftProblem small { color: var(--muted); }
+.ftProblemButtons { display: flex; gap: 8px; flex-shrink: 0; }
+.ftNotice { margin: 0; padding: 10px 14px; border-radius: 8px; background: #2a2214; box-shadow: inset 3px 0 0 var(--amber); color: #f3d9a8; font-size: 13px; }
+.ftStats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+@media (max-width: 900px) { .ftStats { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+.ftStat { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #101f35; }
+.ftStat p { margin: 0; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.ftStat strong { display: block; margin: 6px 0 3px; font-size: 22px; }
+.ftStat span { color: var(--muted); font-size: 12px; }
+.ftStat.good strong { color: var(--green); }
+.ftGoalBar { display: flex; gap: 3px; }
+.ftGoalBar span { flex: 1; height: 12px; border-radius: 3px; background: #1c304b; }
+.ftGoalBar span.reached { background: var(--green); }
+.ftGoalBar span.active { background: var(--amber); animation: ftPulse 1.2s ease-in-out infinite; }
+.ftGoalBar span.reached.active { background: linear-gradient(90deg, var(--green), var(--amber)); }
+@keyframes ftPulse { 50% { opacity: .45; } }
+.ftNow { padding: 14px 16px; border: 1px solid #294563; border-left: 4px solid var(--cyan); border-radius: 10px; background: #0d2036; }
+.ftNow.reach { border-left-color: var(--amber); }
+.ftNow.repair { border-left-color: var(--human); }
+.ftNow h3 { margin: 4px 0 6px; font-size: 17px; }
+.ftNowDetail { margin: 0 0 10px; color: #aac0d7; font-size: 13px; }
+.ftNowFacts { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted); }
+.ftNowFacts b { color: var(--text); }
+.ftNowFacts em { font-style: normal; font-weight: 700; }
+.ftNowFacts em.good { color: var(--green); }
+.ftNowFacts em.bad { color: var(--muted); }
+.ftMeter { height: 5px; margin-top: 12px; border-radius: 3px; background: #1c304b; overflow: hidden; }
+.ftMeter i { display: block; height: 100%; background: var(--cyan); transition: width .7s linear; }
+.ftMeterLabel { color: var(--muted); font-size: 11px; }
+.ftOutcome { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 8px; background: #0f1d31; box-shadow: inset 3px 0 0 var(--green); }
+.ftOutcome.bad { background: #2a1320; box-shadow: inset 3px 0 0 var(--red); }
+.ftOutcome > div { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.ftOutcome strong { font-size: 14px; font-weight: 600; }
+.ftOutcome small, .ftFeed small { color: var(--muted); font-size: 12px; }
+.ftFeed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 520px; overflow-y: auto; }
+.ftFeed li { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: baseline; padding: 7px 12px; border-radius: 6px; box-shadow: inset 2px 0 0 #294563; }
+.ftFeed li > div { display: flex; flex-direction: column; gap: 2px; }
+.ftFeed li strong { font-size: 13px; font-weight: 600; }
+.ftFeed li time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ftFeed li.best { box-shadow: inset 2px 0 0 var(--green); }
+.ftFeed li.best strong { color: var(--green); }
+.ftFeed li.progress { box-shadow: inset 2px 0 0 var(--cyan); }
+.ftFeed li.miss { color: var(--muted); padding: 4px 12px; }
+.ftFeed li.miss strong { font-weight: 400; }
+.ftFeed li.warn { box-shadow: inset 2px 0 0 var(--amber); }
+.ftFeed li.error { background: #2a1320; box-shadow: inset 2px 0 0 var(--red); }
+.ftEmpty { color: var(--muted); }
+.ftRaw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.ftRaw pre { max-height: 320px; overflow: auto; padding: 10px; border-radius: 8px; background: #081524; color: #aac0d7; font: 11px/1.6 ui-monospace,Consolas,monospace; white-space: pre-wrap; word-break: break-all; }

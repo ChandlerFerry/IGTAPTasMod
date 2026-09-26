@@ -19,12 +19,16 @@ namespace IGTAP.EngineSim
         static readonly Func<upgradeBox, globalStats.Currencies> GetCurrency =
             Getter<globalStats.Currencies>(typeof(upgradeBox).GetField("upgradeCurrency", BindingFlags.Instance | BindingFlags.NonPublic));
 
+        static readonly FieldInfo ClearedThisVmanField = typeof(courseScript).GetField("clearedThisVman", BindingFlags.Instance | BindingFlags.NonPublic);
+
         readonly Simulation _sim;
         readonly upgradeBox[] _boxes;
         readonly Dictionary<upgradeBox, string> _paths = new Dictionary<upgradeBox, string>();
         readonly Dictionary<upgradeBox, string> _ids = new Dictionary<upgradeBox, string>();
         readonly double[] _start = new double[CurrencyCount];
         double[] _spent = new double[CurrencyCount];
+        // Vman course completions' rewards (courseScript.OnVmanCourseCompletion adds them to currencyLookup).
+        double[] _awarded = new double[CurrencyCount];
         internal Economy Economy { get; private set; }
         readonly List<BuyMaxRoutine> _buyMax = new List<BuyMaxRoutine>();
 
@@ -37,7 +41,7 @@ namespace IGTAP.EngineSim
 
         internal sealed class State
         {
-            public double[] Spent;
+            public double[] Spent, Awarded;
             public Economy.State Economy;
             public BuyMaxRoutine[] BuyMax;
         }
@@ -70,6 +74,7 @@ namespace IGTAP.EngineSim
                 if (_sim.World.Objects.TryGetValue(b.GetProperty("id").GetInt32(), out UnityEngine.Object o) && o is upgradeBox box)
                     applyFields(box, b.GetProperty("fields"));
             Array.Clear(_spent, 0, _spent.Length);
+            Array.Clear(_awarded, 0, _awarded.Length);
             _buyMax.Clear();
             Economy = economy.TryGetProperty("clones", out _) ? new Economy(_sim, economy) : null;
         }
@@ -88,12 +93,12 @@ namespace IGTAP.EngineSim
 
         double Available(int currency)
         {
-            return _start[currency] - _spent[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
+            return _start[currency] - _spent[currency] + _awarded[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
         }
 
         public double CashNow
         {
-            get { return _start[Cash] - _spent[Cash] + (Economy?.Earned ?? 0.0); }
+            get { return _start[Cash] - _spent[Cash] + _awarded[Cash] + (Economy?.Earned ?? 0.0); }
         }
 
         internal void StepClones() { Economy?.Step(_sim.World.FixedDeltaTime); }
@@ -108,7 +113,22 @@ namespace IGTAP.EngineSim
             }
         }
 
-        internal void CourseFinished(courseScript course, float time) { Economy?.CourseFinished(course, time); }
+        internal void CourseFinished(courseScript course, float time)
+        {
+            if (VmanScript.isCurrentlyVman) VmanCourseCompleted(course);
+            else Economy?.CourseFinished(course, time);
+        }
+
+        // courseScript.stopTracking in a Vman speedrun: OnVmanCourseCompletion pays a course's completion reward on its
+        // first clear, and nothing else (no reward, clone path or comp boost). Boxes cost nothing in Vman, but a box
+        // still needs its price in hand.
+        void VmanCourseCompleted(courseScript course)
+        {
+            if ((bool)ClearedThisVmanField.GetValue(course)) return;
+            int currency = (int)course.completionCurrency;
+            if (course.completionReward != 0.0 && currency >= 0 && currency < CurrencyCount) _awarded[currency] += course.completionReward;
+            ClearedThisVmanField.SetValue(course, true);
+        }
 
         internal void Stay(object boxObject, Collider2D collision)
         {
@@ -207,7 +227,8 @@ namespace IGTAP.EngineSim
             else if (kind == localUpgrades.localUpgradeSet.Movement)
             {
                 modeled = player != null && (swapBlocks || move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.wallJump
-                    || move == upgradeBox.movementUpgrades.doubleJump || move == upgradeBox.movementUpgrades.unlockBlockSwap);
+                    || move == upgradeBox.movementUpgrades.doubleJump || move == upgradeBox.movementUpgrades.unlockBlockSwap
+                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash);
                 why = player == null ? " (no player at the box)" : " (movement upgrade " + move + ")";
             }
             else
@@ -234,13 +255,14 @@ namespace IGTAP.EngineSim
             if (kind == localUpgrades.localUpgradeSet.Movement)
             {
                 unlocksChange = move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.doubleJump
-                    || move == upgradeBox.movementUpgrades.wallJump && !player.wallJumpUnlocked;
+                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash || move == upgradeBox.movementUpgrades.wallJump && !player.wallJumpUnlocked;
                 switch (box.movementUpgrade)
                 {
                     case upgradeBox.movementUpgrades.dash: player.dashUnlocked = true; player.maxAirDashes++; break;
                     case upgradeBox.movementUpgrades.wallJump: player.wallJumpUnlocked = true; break;
                     case upgradeBox.movementUpgrades.doubleJump: player.doubleJumpUnlocked = true; player.maxAirJumps++; break;
                     case upgradeBox.movementUpgrades.unlockBlockSwap: player.blockSwapUnlocked = true; break;
+                    case upgradeBox.movementUpgrades.freeVmanOmnidash: player.dashUnlocked = true; player.omniDashUnlocked = true; player.maxAirDashes++; break;
                 }
                 box.isActive = false;
             }
@@ -267,9 +289,18 @@ namespace IGTAP.EngineSim
             box.upgradeCost = Math.Ceiling(box.upgradeCost);
         }
 
-        internal void ZeroCash() { _spent[Cash] = _start[Cash]; }
+        internal void ZeroCash() { _spent[Cash] = _start[Cash] + _awarded[Cash]; }
 
         internal bool HasBox(string box) { return _ids.ContainsValue(box) || _paths.ContainsValue(box); }
+
+        // The movement upgrade a box (a Full-TAS goal's id or path) gives, or null for any other box.
+        internal upgradeBox.movementUpgrades? MovementUpgrade(string box)
+        {
+            foreach (upgradeBox b in _boxes)
+                if (_ids[b] == box || _paths[b] == box)
+                    return b.upgrade == localUpgrades.localUpgradeSet.Movement ? b.movementUpgrade : null;
+            return null;
+        }
 
         internal string NearestBox(float x, float y, float range)
         {
@@ -284,11 +315,12 @@ namespace IGTAP.EngineSim
             return best;
         }
 
-        internal State Capture() { return new State { Spent = (double[])_spent.Clone(), Economy = Economy?.Capture(), BuyMax = _buyMax.ToArray() }; }
+        internal State Capture() { return new State { Spent = (double[])_spent.Clone(), Awarded = (double[])_awarded.Clone(), Economy = Economy?.Capture(), BuyMax = _buyMax.ToArray() }; }
 
         internal void Restore(State s)
         {
             Array.Copy(s.Spent, _spent, CurrencyCount);
+            Array.Copy(s.Awarded, _awarded, CurrencyCount);
             if (Economy != null && s.Economy != null) Economy.Restore(s.Economy);
             _buyMax.Clear();
             _buyMax.AddRange(s.BuyMax);
@@ -297,6 +329,7 @@ namespace IGTAP.EngineSim
         internal void AddTo(ref HashCode h)
         {
             foreach (double s in _spent) h.Add(s);
+            foreach (double a in _awarded) h.Add(a);
             Economy?.AddTo(ref h);
             foreach (BuyMaxRoutine r in _buyMax)
             {

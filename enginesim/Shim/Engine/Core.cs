@@ -73,6 +73,7 @@ namespace UnityEngine
             set
             {
                 if (m_Enabled == value) return;
+                IGTAP.EngineSim.Engine.EnabledChanging?.Invoke(this);
                 m_Enabled = value;
                 OnEnabledChanged();
             }
@@ -145,6 +146,7 @@ namespace UnityEngine
         public void SetActive(bool value)
         {
             if (m_ActiveSelf == value) return;
+            IGTAP.EngineSim.Engine.ActiveChanging?.Invoke(this);
             m_ActiveSelf = value;
             RecomputeActive(m_Transform.m_Parent == null || m_Transform.m_Parent.m_GameObject.m_ActiveInHierarchy);
         }

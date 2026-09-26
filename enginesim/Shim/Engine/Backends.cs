@@ -41,6 +41,10 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static IScheduler Scheduler;
         // The controller's stick (InputAction.ReadValue<Vector2>): what a run holds (MacroEngine.TickStick).
         [ThreadStatic] public static Func<Vector2> Stick;
+        // Before a GameObject's activeSelf or a Behaviour's enabled changes (game code included), so the host can put it
+        // back on a restore.
+        [ThreadStatic] public static Action<GameObject> ActiveChanging;
+        [ThreadStatic] public static Action<Behaviour> EnabledChanging;
         public static string[] LayerNames = new string[32];
         public static int NextInstanceId = -1;
     }
@@ -58,6 +62,7 @@ namespace IGTAP.EngineSim
         // (enginesim/README.md's consumer audit). Audio id: Audio.AUDIO_ID, as its underlying int.
         [ThreadStatic] public static Action<object, string> PlaySfx;
         [ThreadStatic] public static Action<object, int, float, float> PlayAudio;
+        [ThreadStatic] public static Action<object> SwapBlocks;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
         public static void OnWallTouch(object movement, bool touchedGround) { WallTouch?.Invoke(movement, touchedGround); }
@@ -69,5 +74,6 @@ namespace IGTAP.EngineSim
         public static void OnRespawn(object movement, bool manuallyTriggered) { Respawn?.Invoke(movement); }
         public static void OnPlaySfx(object movement, string code) { PlaySfx?.Invoke(movement, code); }
         public static void OnPlayAudio(object audio, int id, float volume, float pitchVariance) { PlayAudio?.Invoke(audio, id, volume, pitchVariance); }
+        public static void OnSwapBlocks(object swapper, bool blueActive) { SwapBlocks?.Invoke(swapper); }
     }
 }

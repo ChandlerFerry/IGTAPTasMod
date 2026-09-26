@@ -13,6 +13,7 @@ namespace IGTAPTasMod
         static readonly MethodInfo FixedUpdateMethod = AccessTools.Method(typeof(Movement), "FixedUpdate");
         static readonly MethodInfo UpdateMethod = AccessTools.Method(typeof(Movement), "Update");
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
+        static readonly MethodInfo VmanFixedUpdate = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
         static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
         static int _tick;
@@ -72,6 +73,30 @@ namespace IGTAPTasMod
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
             public (int due, MonoBehaviour target, string method)[] pending;
             public Economy economy;
+            public Vman vman;
+        }
+
+        // VmanScript's statics (the speedrun's clock and score) and its ending guard: a Vman world's run state.
+        internal sealed class Vman
+        {
+            public bool active, meta, blockEnding;
+            public double timeLeft, score;
+
+            public static Vman Capture()
+            {
+                VmanScript script = VmanScript.Instance;
+                return new Vman { active = VmanScript.isCurrentlyVman, meta = VmanScript.metaVman, timeLeft = VmanScript.vmanTimeLeft,
+                    score = VmanScript.vmanScore, blockEnding = script != null && script.BlockEnding };
+            }
+
+            public void Restore()
+            {
+                VmanScript.isCurrentlyVman = active;
+                VmanScript.metaVman = meta;
+                VmanScript.vmanTimeLeft = timeLeft;
+                VmanScript.vmanScore = score;
+                if (VmanScript.Instance != null) VmanScript.Instance.BlockEnding = blockEnding;
+            }
         }
 
         internal sealed class Economy
@@ -281,7 +306,7 @@ namespace IGTAPTasMod
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
-                pending = pending, economy = economy ? CaptureEconomy() : null };
+                pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture() };
         }
 
         public static void Restore(Snapshot s, Movement movement)
@@ -310,6 +335,7 @@ namespace IGTAPTasMod
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
             UnityEngine.Random.state = s.random;
             if (s.economy != null) RestoreEconomy(s.economy);
+            s.vman?.Restore();
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
             body.rotation = s.rotation;
@@ -397,6 +423,9 @@ namespace IGTAPTasMod
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
                         if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
+                    // Unity runs VmanScript.FixedUpdate every physics step: the speedrun's clock, which ends it at 0.
+                    if (VmanScript.isCurrentlyVman && VmanScript.Instance != null && VmanScript.Instance.isActiveAndEnabled)
+                        VmanFixedUpdate.Invoke(VmanScript.Instance, null);
                     foreach (upgradeBox box in boxes)
                     {
                         if (box == null || !box.isActiveAndEnabled) continue;

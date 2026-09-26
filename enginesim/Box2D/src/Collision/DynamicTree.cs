@@ -80,8 +80,11 @@ namespace Box2D
 							 : $"Branch at height {Height}, children: {Child1} and {Child2}")}";
 		}
 
-		public int Capacity => _nodes.Length;
+		// The pool's logical size; _nodes may be longer (a snapshot load keeps a bigger array instead of reallocating, so a
+		// branch that grew the pool and its restore don't churn large arrays). Nodes past Capacity are never read.
+		public int Capacity => _capacity;
 		private Node[] _nodes;
+		private int _capacity;
 		private Proxy _root;
 		private Proxy _freeNodes;
 		private int _nodeCount;
@@ -158,6 +161,7 @@ namespace Box2D
 		{
 			_root = ProxyFree;
 			_nodes = new Node[256];
+			_capacity = 256;
 
 			// Build a linked list for the free list.
 			ref Node node = ref _nodes[0];
@@ -169,7 +173,7 @@ namespace Box2D
 				node.Height = -1;
 			}
 
-			ref var lastNode = ref _nodes[^1];
+			ref var lastNode = ref _nodes[_capacity - 1];
 
 			lastNode.Parent = ProxyFree;
 			lastNode.Height = -1;
@@ -216,15 +220,14 @@ namespace Box2D
 					                                    "Growth function returned invalid new capacity, must be greater than current capacity.");
 				}
 
-				var oldNodes = _nodes;
-
-				_nodes = new Node[newNodeCap];
-
-				Array.Copy(oldNodes, _nodes, _nodeCount);
+				// Reuse the array when it is already long enough; the new nodes start zeroed as in a fresh array.
+				if (_nodes.Length < newNodeCap) Array.Resize(ref _nodes, newNodeCap);
+				Array.Clear(_nodes, _nodeCount, newNodeCap - _nodeCount);
+				_capacity = newNodeCap;
 
 				// Build a linked list for the free list. The parent
 				// pointer becomes the "next" pointer.
-				var l = _nodes.Length - 1;
+				var l = newNodeCap - 1;
 				ref Node node = ref _nodes[_nodeCount];
 				for (var i = _nodeCount; i < l; ++i, node = ref _nodes[i])
 				{
@@ -845,7 +848,7 @@ namespace Box2D
 
 		public void ShiftOrigin(in b2Vec2 newOrigin)
 		{
-			for (var i = 0; i < _nodes.Length; i++)
+			for (var i = 0; i < Capacity; i++)
 			{
 				ref var node = ref _nodes[i];
 				var lb = node.Aabb.lowerBound;
@@ -1095,7 +1098,7 @@ namespace Box2D
 		private IEnumerable<(Proxy, Node)> DebugAllocatedNodesEnumerable
 		{
 			get {
-				for (var i = 0; i < _nodes.Length; i++)
+				for (var i = 0; i < Capacity; i++)
 				{
 					var node = _nodes[i];
 					if (!node.IsFree)

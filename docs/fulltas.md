@@ -19,8 +19,9 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 |---|---|
 | `start:N` | Course N's start gate starts its timer (it wasn't timing). |
 | `finish:N` | The player's own finish at course N's end gate. |
-| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`; Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
+| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
 | `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
+| `at:x,y,w,h` | A checkpoint: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. |
 
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
 the game's purchases; the plugin writes none.
@@ -31,6 +32,41 @@ Run names are letters, digits and `%` (`ANY%`).
 sets Cash to 0, swaps Course 4's `buyswap` box for `buyblockswap5`, turns the Course 1–3 movement boxes into
 breaker-light boxes and turns Area 1's lights off. The studio's goal list marks that goal red and every goal after it
 dark (`/api/state` `fullTas.runs[].breaker`: the goal's index).
+
+## Vman speedrun runs
+
+`"start": "vman"` on a run (`{ "name": "VMAN", "start": "vman", "goals": [...] }`; `/api/fulltas/goals` takes `start`
+too) starts it in a Vman speedrun's world instead of a new game. `POST /api/session/newgame {"vman": true}` loads it
+(every Vman run, trace and judge does it on its own):
+
+1. a fresh new game, as above (the Vman statics a fresh process has: not in a Vman speedrun, score 0);
+2. Area 1 overgrown the way Courses 11–15 set it, `vmanTime` set to every duration box at its cap (Σ `Cap` ×
+   `effectMult`: 5174 s) and `VmanStartsWithOmniDash` to its box's (1): the one setup the plugin writes, standing in
+   for the save that bought them;
+3. the player on the floor under the 1x "Start a VMAN speedrun" box (`a1 overgrowth/StartVmanSpeedrun0`) jumps; the
+   game itself buys the box (`SetupVmanSpeedrun(1)`) and loads the Overworld as a Vman world (no save loaded,
+   `vmanTimeLeft` 5175 s, costs not deducted, the free omnidash box on Course 1's row);
+4. the Vman world's first settled tick is the run's start, seeded like a new game.
+
+The run's time is still physics ticks from that start. The snapshot carries VmanScript's clock and score (turbo steps
+`VmanScript.FixedUpdate` like Unity does; a run whose clock runs out ends there). A course's first clear pays its
+`completionReward` (Course 1 1000 W, Course 2 4e6 W) and nothing else: no clone path, no comp boost. The unlock audit
+follows the run's purchases box by box, so `buyomni` (dash, omnidash, +1 air dash) and a later `buyds` (+1) are what
+a VMAN route may have.
+
+Each search window (`IGTAP.EngineSim fulltas`) presses what the run's movement allows there: a dash once the window
+starts with one or buys one, and from `buyomni` on the omnidirectional tricks too (`OfflineSolver` `Omni`: aimed dashes,
+wavedash, ultra, dash bounce, wave bounce, WaveJump; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
+
+`VMAN` is the first such run: `buy:buyomni`, Course 1, `buy:buywj`, the climb to Course 2 (`at:2400,1500,400,1000`),
+Course 2, `buy:buyds`, then checkpoints inside Course 2's box (`at:4300,2850,400,700`), the left end of the wall at
+6080,4000 (`at:6105,4146,250,328`), the shaft up to Course 3 (`at:7645,6050,230,1500`), up the left of Course 3's box
+(`at:8320,8100,1040,1600`), the column above it to the 10000 floor (`at:9225,9535,950,1330`), up to the 11000 roof
+(`at:11500,11500,1000,1000`), the platform left of Course 4 (`at:16000,12050,3000,1000`), Course 4's start
+(`at:19000,11810,2000,2380`), up the left wall to the spike tunnel's mouth above Course 4 (`at:20090,15775,580,650`),
+out of the tunnel's right end (`at:22200,15900,500,500`) and
+into the credits trigger over the teleporters (`at:24067,13456,1440,1080`: `FakeCredits`'s box, whose
+`FakeCreditsControlScript::OnTriggerEnter2D` starts the end-game credits cutscene and stops the player).
 
 ## Seed
 
@@ -47,32 +83,48 @@ playback's rolls differ from the turbo replay's even from the same seed; the gat
 ## Routes
 
 `fulltas/<run>_NONE <time>`, saved only by the gate (`SaveSolverRoute`), only when strictly faster. The gate replays the
-route in turbo from the new game with the usual buffer audit, checks the unlocks against the run's own purchases so
+route in turbo from the run's start with the usual buffer audit, checks the unlocks against the run's own purchases so
 far, and refuses a quick restart on two ticks in a row (a real button is released in between). Splits per goal are kept
 in `fulltas-splits.json`.
 
 ## Studio: Full-TAS tab
 
 - **Goals** (`POST /api/fulltas/goals {name, goals}`), **Capture start** (`/api/fulltas/capture`: start trace + world,
-  seeded with the saved best), **Play** (real time from a new game), **Solve** / **Stop**
-  (`/api/fulltas/solve {name, minutes, windowMinutes, window}` runs `IGTAP.EngineSim fulltas`; its output shows in the
-  tab). `/api/state` has `fullTas`.
+  seeded with the saved best), **Play** (real time from a new game), **Solve** / **Solve unsolved** / **Stop**
+  (`/api/fulltas/solve {name, minutes, windowMinutes, window, unsolved}` runs `IGTAP.EngineSim fulltas`). `/api/state` has
+  `fullTas`; its `solve` has the solver's events (`events`, the latest `status` as `progress`), `error` (didn't start,
+  crashed) and the raw `log`; `lastResult` is the last Play or gate check (`kind`, `error`, `reached`, `expected`, ...).
+- **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
+  solver's `--unsolved`) reaches the goals the best misses first, starting at the first of them. Both recapture the
+  trace (seeded with the saved best) when the run's goals or start changed since it was taken: a solve searches the
+  goals in its trace's header.
+- The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
+  of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
+  events, command, log) on the clipboard.
 
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --no-submit, --fresh, --threads N
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
-- Windows of W goals (default 2): each worker replays the best up to goal i-1 (`Simulation.Advance`), starts there
-  (`SetStart`) and searches for the fastest way through goal i+W-1. The first goal's split is kept only as part of the
-  whole: a later goal reached sooner is what counts, so a lap that ends slower but sets up the next one wins.
+- By default the search polishes the goals the best reaches (all of them once it's complete); a best that reaches none
+  is reached first. `--unsolved`: a complete route first: until every goal is reached, only the first goal not reached
+  yet is searched (`reach` windows): from the last reached goal, then redoing one, two, three goals before it, each
+  round with a longer budget (`--window-minutes` × round). Polishing starts once a run reaches every goal.
+- Polishing: windows of W goals (default 2) from goal 1 up to the last goal the best reaches: each worker replays the
+  best up to goal i-1 (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal
+  i+W-1. The first goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap
+  that ends slower but sets up the next one wins.
 - A window's best is spliced into the run with the old tail after it; when the old tail no longer reaches the rest (the
-  state differs), the following windows are searched again from the new state, seeded with the old tail, and the run
-  is kept only if it ends sooner. Before a run is complete, the search pushes the first goal not reached yet.
+  state differs), the following windows are searched again from the new state (`repair`), seeded with the old tail,
+  and the run is kept only if it ends sooner.
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
+- Besides its log lines the solver prints one `@fulltas {json}` line per event (`FullTas.Emit`): `session`, `phase`
+  (`reach`/`polish`), `window` (`kind`, goals `first`..`limit`, `target`, `budget`), `status` (each second), `found`,
+  `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`. Times are seconds from the run's start.
 
 ## Offline economy
 
@@ -90,7 +142,8 @@ per tick, `TurboRunner.EndOfFrame`, `Shop.EndOfFrame`). Real-time playback rende
 faster. The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
-...`): clone speed/size/colour rolls, clone dust, Vman, the other global boxes and a prestige buy while Vman is active.
+...`): clone speed/size/colour rolls, clone dust, the other global boxes and a prestige buy while Vman is active. A Vman
+course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
 `localUpgrades.OnPrestige` (local upgrades, clones and best path reset; Courses 1–3 get the breaker layer's tier mods,

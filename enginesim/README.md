@@ -18,8 +18,9 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
 - `POST /api/enginesim/trace {course, capabilities; routeId | ticks, name, world: true, freshStart}` — a
   turbo run from the solver's start state; writes `<name>.json` (start state + full state after every tick) and
   `<name>.world.json` (every GameObject, collider physics shapes, bodies, script fields, statics, Physics2D settings) to
-  `BepInEx/config/IGTAPTasMod/enginesim/`. The header says what a run is scored on (`Simulation.SetTarget`): `course`,
-  a bonus's reward box `finish`, and for a transition `transition: true` (timed in physics ticks, `MacroEngine.PhysicsTicks`)
+  `BepInEx/config/IGTAPTasMod/enginesim/`. The header says what a run is scored on (`Simulation.SetTarget`): `course`
+  (and `gameCourse`, the game's `courseNumber`, when they differ: Courses 11–15 are Courses 1–5 overgrown), a bonus's
+  reward box `finish`, and for a transition `transition: true` (timed in physics ticks, `MacroEngine.PhysicsTicks`)
   with an end box `finish` or `finishStart` (the course whose start gate ends it).
 - `POST /api/enginesim/submit {course, capabilities; ticks}` — turbo replay of an offline candidate; saved as the
   category's record route (`<course>_<CAPS> <time>`) when it finishes faster than the current best, or as fast in fewer
@@ -28,8 +29,9 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   (`farmSaved`). The reply has both times.
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 - Full-TAS (`docs/fulltas.md`): `POST /api/enginesim/trace {fulltas: <run>}` writes `fulltas-<run>.json` from the fresh
-  new game with the run's goals in the header (`fulltas.goals`); `IGTAP.EngineSim fulltas <trace>` searches the whole run
-  in windows of goals and sends complete, faster runs to `POST /api/fulltas/submit`.
+  new game (a `"start": "vman"` run: the Vman speedrun's world) with the run's goals in the header (`fulltas.goals`);
+  `IGTAP.EngineSim fulltas <trace>` searches the whole run in windows of goals and sends complete, faster runs to
+  `POST /api/fulltas/submit`.
 
 `tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.
@@ -86,30 +88,36 @@ goes on from the frontier and doesn't start again from the course start. Each wo
 plateau route instead of the saved route. A plateau route's result is not submitted: its file was written when it
 was found. `--fresh` ignores the file for this solve but still overwrites it.
 
-A forced path limits which runs count. `--via x0,y0,x1,y1` boxes (the trace's world coordinates) must hold the
-player's center, in order, before a finish counts; a run that enters an `--avoid x0,y0,x1,y1` box is cut. Both are
-checked on every physics tick, dash ticks included. The boxes passed so far are part of every explore cell, and before
-the first finish, cells past more boxes weigh more. Explore bursts get 25 extra ticks of the same stick and hold, so a
-run that clears a box while coasting is saved. The search state goes to `archive\<label>-path-<--path-name>.json`,
-and bests are the category's as usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of their
-course and categories (the studio's too), with boxes relative to the course's start gate, or to course `gate`'s start
-gate when the rule names one (a transition has no gate of its own). Right now it cuts, in every
-category, everything left of Course 1's wall hanging right of the buy machines and two boxes on its right (1494 to 2811
-right of the gate from 275 to 531 above it, and 1160 to 1494 right from 465 below to 149 above), left of Course 2's pillar hanging right
-of its buy machines, right of its two rooms' right walls (the corridor joining them), the two rooms themselves and the drop under its start floor, and left of Course 4's rightmost buy machine; Course 3's right hole in WJ_DS and WJ_DS_DJ, which
-leaves the top-hole shortcut, plus a wall at the left side of the rightmost buy machine (CashPerLoop) so runs don't
-wander left through the machine room and the pocket over Checkpoint (1) right of the climb; everything above Course 5's
-building roof (the route goes inside); and in Course 5 WJ_DS_DJ (no orange blocks yet) the far left, the low left
-corner, everything below the start floor, and the
-climb up through the start room's ceiling hole: that hole is the finish, entered from above, and a run climbing up it
-never started the timer. For 5to4 (from Course 5's gate) it cuts Course 5's ceiling hole and everything left of its
-start gate, Courses 1 and 2 right of the pillar over each start gate (runs pass their end gates without entering), and,
+Coordinates: every position you give or read (forced-path boxes, `--via`/`--avoid`, the studio map's readout, `path`'s
+`pos`, `courses.json`, `at:x,y,w,h` goals) is in the game world's frame: the scene position minus the game's
+`FloatingOrigin.currentOrigin`. The game shifts every root object whenever the player strays 5000 from the scene
+origin, so a capture's scene frame depends on where the game was when it was taken (Course 1's start gate: scene
+x -241 in one capture, 2000 in another); the world frame doesn't. A simulation keeps its capture's origin
+(`Simulation.Origin`, never shifted offline) and checks boxes against `Simulation.PlayerWorld`. Only the trace files
+themselves (samples, the world export, the header's goal rects) stay in their capture's scene frame.
+
+A forced path limits which runs count. `--via x0,y0,x1,y1` boxes must hold the player's center, in order, before a
+finish counts; a run that enters an `--avoid x0,y0,x1,y1` box is cut. Both are checked on every physics tick, dash
+ticks included. The boxes passed so far are part of every explore cell, and before the first finish, cells past more
+boxes weigh more. Explore bursts get 25 extra ticks of the same stick and hold, so a run that clears a box while
+coasting is saved. The search state goes to `archive\<label>-path-<--path-name>.json`, and bests are the category's as
+usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of their course and categories (the
+studio's too). Right now it cuts, in every category, everything left of Course 1's wall hanging right of the buy
+machines and two boxes on its right, left of Course 2's pillar hanging right of its buy machines, right of its two
+rooms' right walls (the corridor joining them), the two rooms themselves and the drop under its start floor, and left
+of Course 4's rightmost buy machine; Course 3's right hole in WJ_DS and WJ_DS_DJ, which leaves the top-hole shortcut,
+plus a wall at the left side of the rightmost buy machine (CashPerLoop) so runs don't wander left through the machine
+room and the pocket over Checkpoint (1) right of the climb; everything above Course 5's building roof (the route goes
+inside); and in Course 5 WJ_DS_DJ (no orange blocks yet) the far left, the low left corner, everything below the start
+floor, and the climb up through the start room's ceiling hole: that hole is the finish, entered from above, and a run
+climbing up it never started the timer. For 5to4 it cuts Course 5's ceiling hole and everything left of its start
+gate, Courses 1 and 2 right of the pillar over each start gate (runs pass their end gates without entering), and,
 above Course 3's approach shaft, everything left of the shaft's left wall.
 
-A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`, same frame) that apply only when picked:
+A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `start-marker` (436 to 522 right of the gate, 213 to 32 below it), in every category.
+it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category.
 
 ```powershell
 & $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
@@ -282,12 +290,21 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
 
 ## Memory
 
-A snapshot (for branching) is ~38 KB: the broadphase tree stores only nodes that differ from a shared base, the
-pair/move buffers only their live prefix, and unchanged fixture records are shared between snapshots. `solve` prints
-heap and working set every 10 s, and the host runs with `System.GC.HeapHardLimitPercent=40`, so a leak throws
-OutOfMemory instead of paging the machine.
+A snapshot (for branching) is ~25 KB on the VMAN route: the broadphase tree stores only nodes that
+differ from a shared base, the pair/move buffers only their live prefix, and unchanged fixture records are shared
+between snapshots. So are the field captures of the touched scripts and the courses: a capture reuses the previous
+one's array while none of its fields changed (`Simulation.CaptureShared`, `FieldState.Matches`). A Full-TAS run touches
+~100 scripts (bought boxes, springs, gates); copied into every snapshot they were 130 KB of each 160 KB, and a VMAN
+search with 28 workers ran out of memory within minutes. `solve` prints heap and working set every 10 s, and the host
+runs with `System.GC.HeapHardLimitPercent=40`, so a leak throws OutOfMemory instead of paging the machine.
 
 A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
 tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick. Snapshotting
 every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJ_DS_DJ,
 30 threads: ~1,000 runs/s before, ~7,000-8,000 after).
+
+Scene queries (raycasts, point tests, `Collider2D.Distance`) read static shapes from a grid built once over the world. A
+collider whose static fixtures change, or whose static body moves, is regridded alone at the next query. Rebuilding the
+whole grid on each change cost `WJ_DS_DJ_BS` a full-world rebuild four times per dash (block swap toggles the
+blue/orange composites), with the LOH garbage stalling every worker. On C11 at 30 threads, throughput went from
+~110 runs/s (4,000 ticks/s) to ~1,800 runs/s (205,000 ticks/s).

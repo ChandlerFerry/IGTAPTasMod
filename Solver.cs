@@ -28,6 +28,10 @@ namespace IGTAPTasMod
             public int toCourse;
             public string minCapabilities;
             public string maxCapabilities;
+            // Courses 11-15 are Courses 1-5 with Area 1 overgrown (globalStats.area1states.Overgrown): the game's own
+            // courseScript, start gate and timer (courseNumber id - 10) on the overgrown terrain.
+            public bool overgrown;
+            [JsonIgnore] public int GameCourse { get { return overgrown ? id - 10 : id; } }
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
@@ -101,7 +105,12 @@ namespace IGTAPTasMod
                 new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdsdjbs" },
                 new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdsdjbs" },
                 new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdsdjbs" },
-                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdsdjbs" } };
+                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdsdjbs" },
+                new CourseDef { id = 11, x = 2241f, y = -292f, minCapabilities = "wjdsdjbs", overgrown = true },
+                new CourseDef { id = 12, x = 4783.43359f, y = 1878.2251f, minCapabilities = "wjdsdjbs", overgrown = true },
+                new CourseDef { id = 13, x = 9505f, y = 6967.01465f, minCapabilities = "wjdsdjbs", overgrown = true },
+                new CourseDef { id = 14, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdsdjbs", overgrown = true },
+                new CourseDef { id = 15, x = -3281f, y = -295.455078f, minCapabilities = "wjdsdjbs", overgrown = true } };
         }
 
         void LoadCourses()
@@ -163,6 +172,8 @@ namespace IGTAPTasMod
             bool fromBonus = m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             bool toBonus = m.Groups[3].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             string origin = (fromBonus ? "bonus" : "") + m.Groups[2].Value, target = (toBonus ? "bonus" : "") + m.Groups[4].Value;
+            if (!fromBonus && IsOvergrownCourse(origin) || !toBonus && IsOvergrownCourse(target))
+                throw new InvalidOperationException("Transitions to or from the overgrown Courses 11-15 aren't supported.");
             Vector2 start = Absolute(recording.samples[0]) + new Vector2(0f, 12f);
             if (!fromBonus)
             {
@@ -264,6 +275,117 @@ namespace IGTAPTasMod
             if (zone == 0 || zone == loader.activeZone && ZonesSettled()) return;
             LoadZoneNow.Invoke(loader, new object[] { zone });
             Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
+        }
+
+        bool IsOvergrownCourse(string token) { return int.TryParse(token, out int id) && _courses.Exists(c => c.id == id && c.overgrown); }
+
+        // The save's own Area 1 state while a route runs Area 1 in another one; saves wait until it is back (BlockSharedSave).
+        // Kept with the globalStats it belongs to: a scene load (a new game, the menu) brings back the save's own state.
+        globalStats.area1states? _savedArea1StateValue;
+        globalStats _savedArea1StateOwner;
+
+        globalStats.area1states? SavedArea1State
+        {
+            get { return _savedArea1StateOwner != null && _savedArea1StateOwner == Singleton<globalStats>.Instance ? _savedArea1StateValue : null; }
+        }
+
+        // Courses 11-15 run with Area 1 overgrown, Courses 1-5 without it (normal, or the save's tripped breaker); every
+        // other route runs in the save's own state. The state is set as the game's a1Statesetter does and applied as its
+        // ZoneLoader does (OvergrowthLoadScript.OnLoad: the overgrowth terrain, moss, spikes, zip movers and checkpoints).
+        void EnsureArea1State(CourseDef def)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if (def == null || stats == null) return;
+            globalStats.area1states want = WantedArea1State(def, stats, out globalStats.area1states own);
+            _savedArea1StateValue = want == own ? (globalStats.area1states?)null : own;
+            _savedArea1StateOwner = want == own ? null : stats;
+            if (stats.currentA1State != want) SetArea1State(stats, want, def.Token);
+        }
+
+        globalStats.area1states WantedArea1State(CourseDef def, globalStats stats, out globalStats.area1states own)
+        {
+            own = SavedArea1State ?? stats.currentA1State;
+            if (def.overgrown) return globalStats.area1states.Overgrown;
+            if (!def.IsBonus && !def.IsTransition && def.GameCourse >= 1 && def.GameCourse <= 5 && own == globalStats.area1states.Overgrown)
+                return globalStats.area1states.normal;
+            return own;
+        }
+
+        // Courses 1 and 11 (and so on) start at the same gate: being parked there is not enough, Area 1 must be in the
+        // target's state too.
+        bool Area1StateReady(CourseDef def)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            return def == null || stats == null || stats.currentA1State == WantedArea1State(def, stats, out _);
+        }
+
+        void RestoreArea1State()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if (SavedArea1State is globalStats.area1states own && stats.currentA1State != own) SetArea1State(stats, own, "the save");
+            _savedArea1StateValue = null;
+            _savedArea1StateOwner = null;
+        }
+
+        void SetArea1State(globalStats stats, globalStats.area1states state, string reason)
+        {
+            bool wasOvergrown = stats.currentA1State == globalStats.area1states.Overgrown, overgrown = state == globalStats.area1states.Overgrown;
+            stats.currentA1State = state;
+            OvergrowthLoadScript overgrowth = FindAnyObjectByType<OvergrowthLoadScript>(FindObjectsInactive.Include);
+            if (overgrowth != null) overgrowth.OnLoad();
+            else Logger.LogWarning("No OvergrowthLoadScript: Area 1's terrain was not switched.");
+            if (wasOvergrown != overgrown) SwapArea1CourseBests();
+            Logger.LogInfo("Area 1 " + state + " for " + reason + ".");
+        }
+
+        static readonly FieldInfo CourseBestPathTimeField = AccessTools.Field(typeof(courseScript), "bestPathTime");
+        static readonly FieldInfo CourseClonesField = AccessTools.Field(typeof(courseScript), "clones");
+
+        // A course's best run as the game keeps it: the time on its sign and the path its clones replay (courseScript.save).
+        sealed class CourseBest
+        {
+            public float time, pathLength;
+            public Vector2[] path, scales;
+            public Sprite[] sprites;
+            public Vector2 endVelocity;
+
+            public static CourseBest Read(courseScript course, clonesScript clones)
+            {
+                return new CourseBest { time = (float)CourseBestPathTimeField.GetValue(course), pathLength = clones.pathLength, path = clones.clonePath,
+                    scales = clones.cloneScales, sprites = clones.cloneSprites, endVelocity = clones.cloneEndVelocity };
+            }
+
+            // No best yet, as the game leaves a course when overgrowth resets it (courseScript/clonesScript.onPrestige with
+            // isResettingCloneTime): the time and the path length go, the path stays.
+            public CourseBest Reset() { var b = (CourseBest)MemberwiseClone(); b.time = 1E+11f; b.pathLength = 1E+16f; return b; }
+
+            public void Apply(courseScript course, clonesScript clones)
+            {
+                // updateClonePath first drops the clones on the way, whose path pointers index the old path.
+                if (path != null && path.Length >= 10) clones.updateClonePath(path, sprites, scales, pathLength);
+                else { clones.clonePath = path; clones.cloneSprites = sprites; clones.cloneScales = scales; clones.pathLength = pathLength; }
+                clones.cloneEndVelocity = endVelocity;
+                clones.updateCloneInterval();
+                CourseBestPathTimeField.SetValue(course, time);
+                course.updateStringLocalisations();
+            }
+        }
+
+        // Courses 1-5 and 11-15 are the same courseScripts, so the game keeps one best per course. Each Area 1 state gets
+        // its own: switching between overgrown and not puts the other state's best on the course (none the first time),
+        // so the sign shows that state's best and its finishes neither read nor replace the other's time or clone path.
+        readonly Dictionary<courseScript, CourseBest> _otherArea1Bests = new Dictionary<courseScript, CourseBest>();
+
+        void SwapArea1CourseBests()
+        {
+            foreach (courseScript course in FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (course.courseNumber < 1 || course.courseNumber > 5 || !(CourseClonesField.GetValue(course) is clonesScript clones) || clones == null) continue;
+                CourseBest current = CourseBest.Read(course, clones);
+                CourseBest other = _otherArea1Bests.TryGetValue(course, out CourseBest kept) ? kept : current.Reset();
+                _otherArea1Bests[course] = current;
+                other.Apply(course, clones);
+            }
         }
 
         static List<(startGate, int)> GateZones(GameObject[] zones)
@@ -436,14 +558,14 @@ namespace IGTAPTasMod
             Movement player = FindWorldMovement();
             CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
-            bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f;
+            bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target);
             if (!parked)
             {
                 RestoreRouteStart(new MacroDefinition { name = target.Token + "_" });
                 _parkedFrame = Time.frameCount;
             }
             else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled() && (target.HasFinish
-                || _solverCourses.Any(c => c.courseNumber == (target.IsTransition ? target.toCourse : target.id) && c.isActiveAndEnabled))) return true;
+                || _solverCourses.Any(c => c.courseNumber == (target.IsTransition ? target.toCourse : target.GameCourse) && c.isActiveAndEnabled))) return true;
             _solverStatus = "Loading course " + target.Token;
             return false;
         }
@@ -486,7 +608,8 @@ namespace IGTAPTasMod
         object[] BuildCourseWebState()
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus, minLevel = c.MinLevel,
-                maxLevel = c.MaxLevel, @from = c.from, to = c.to, hint = c.IsBonus ? BonusHint(c) : null,
+                maxLevel = c.MaxLevel, @from = c.from, to = c.to,
+                hint = c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
                 optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, capabilities = b.caps }).ToArray() }).ToArray();
         }
 
@@ -535,6 +658,8 @@ namespace IGTAPTasMod
             if (_newGamePhase != 0 || _bootstrapRequest != null) { _solverStatus = _newGamePhase != 0 ? "Loading a new game" : "Waiting for the bootstrap"; return; }
             if (!CourseLoaded()) return;
             CourseDef course = _solverTarget;
+            // Parked at the course: the live player keeps its category's unlocks, so a run can be recorded there by hand.
+            if (!CapabilitiesLocked) ApplyAbilities(FindWorldMovement(), _solveCaps);
             string name = "optimize-c" + course.Token + "-" + _solveCaps;
             JObject body = (JObject)target.DeepClone();
             body["ticks"] = new JArray(); body["name"] = name; body["world"] = true; body["freshStart"] = true;
@@ -686,15 +811,28 @@ namespace IGTAPTasMod
                 _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
-            string caps = _fullTas != null ? FullTasCaps : _solverCaps;
-            int level = CapsLevel(caps);
+            if (_fullTas != null)
+            {
+                FullTasUnlocks u = _fullTasUnlocks;
+                if (GetMovementBool(player, "wallJumpUnlocked", false) != u.wallJump
+                    || GetMovementBool(player, "dashUnlocked", false) != u.dash
+                    || !Equals(GetMovementField(player, "maxAirDashes"), u.airDashes)
+                    || GetMovementBool(player, "omniDashUnlocked", false) != u.omniDash
+                    || GetMovementBool(player, "doubleJumpUnlocked", false) != u.doubleJump
+                    || !Equals(GetMovementField(player, "maxAirJumps"), u.airJumps)
+                    || GetMovementBool(player, "blockSwapUnlocked", false) != u.blockSwap)
+                    _audit.Add("tick " + tick + ": unlocks differ from the run's purchases (" + u + ")");
+                return;
+            }
+            int level = CapsLevel(_solverCaps);
             if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
                 || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
                 || !Equals(GetMovementField(player, "maxAirDashes"), level >= 2 ? 1 : 0)
                 || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
                 || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0)
-                || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4))
-                _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[caps]);
+                || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4)
+                || GetMovementBool(player, "omniDashUnlocked", false))
+                _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
         string RouteViolation(List<SolverTick> inputs, float time)

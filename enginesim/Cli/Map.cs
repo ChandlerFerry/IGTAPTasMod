@@ -97,7 +97,7 @@ namespace IGTAP.EngineSim.Cli
                     local.Clear();
                     sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                     {
-                        Vector3 p = sim.Player.transform.position;
+                        Vector3 p = sim.PlayerWorld;
                         long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
                         float t = sim.Elapsed(sim.TimingCourse());
                         local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
@@ -106,14 +106,16 @@ namespace IGTAP.EngineSim.Cli
                 }
             })).ToArray();
             var paths = new List<Path>();
+            Vector3 origin;
             {
                 Simulation sim = create();
+                origin = sim.Origin;
                 foreach (var (name, kind, inputs) in routes)
                 {
                     var path = new Path { Name = name, Kind = kind };
                     RunResult r = sim.Run(inputs, extraTicks: 0, onStep: _ =>
                     {
-                        Vector3 p = sim.Player.transform.position;
+                        Vector3 p = sim.PlayerWorld;
                         if (path.TimerStart < 0 && sim.TimingCourse() != null) path.TimerStart = path.Points.Count / 2;
                         path.Points.Add(Round(p.x));
                         path.Points.Add(Round(p.y));
@@ -138,19 +140,15 @@ namespace IGTAP.EngineSim.Cli
             const float pad = 300f;
             x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
             var forced = new OfflineSolver.ForcedPath();
-            List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, worldPath, forced);
+            List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
-            float[] gate = null;
-            try { Vector2 g = Solve.CourseGate(worldPath, course); gate = new[] { g.x, g.y }; }
-            catch (InvalidOperationException) { }
 
             var result = new
             {
                 course, capabilities = caps, label,
                 bounds = new[] { x0, y0, x1, y1 },
-                gate,
-                solids = Solids(world.RootElement, x0, y0, x1, y1),
-                markers = Markers(world.RootElement).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
+                solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
                 avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = forced.Via.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 optional = blocks.Select(b => new
@@ -178,7 +176,8 @@ namespace IGTAP.EngineSim.Cli
 
         sealed record SourceCells(long[] Keys, float[] Times);
 
-        const int CellsVersion = 1;
+        // 2: cells keyed in the game world's frame (1 keyed them in the capture's scene frame).
+        const int CellsVersion = 2;
 
         static string Stamp(string path)
         {
@@ -273,7 +272,8 @@ namespace IGTAP.EngineSim.Cli
                 .Where(e => e.ok).OrderBy(e => e.t).Select(e => e.f).FirstOrDefault();
         }
 
-        static List<object> Solids(JsonElement world, float x0, float y0, float x1, float y1)
+        // Every map coordinate is in the game world's frame: the export's scene position minus its FloatingOrigin.
+        static List<object> Solids(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
         {
             // A collider on a Rigidbody2D exports its shapes in the body's local space (the physics puts them on that
             // body); the Grid tilemaps' body sits at the FloatingOrigin, so they're drawn at body position + rotation.
@@ -284,7 +284,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         JsonElement pos = bp.GetProperty("position");
                         double angle = bp.GetProperty("rotation").GetDouble() * Math.PI / 180.0;
-                        bodies[c.GetProperty("id").GetInt32()] = (pos.GetProperty("x").GetSingle(), pos.GetProperty("y").GetSingle(), (float)Math.Cos(angle), (float)Math.Sin(angle));
+                        bodies[c.GetProperty("id").GetInt32()] = (pos.GetProperty("x").GetSingle() - origin.x, pos.GetProperty("y").GetSingle() - origin.y, (float)Math.Cos(angle), (float)Math.Sin(angle));
                     }
             var solids = new List<object>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
@@ -313,6 +313,8 @@ namespace IGTAP.EngineSim.Cli
                                 v[i] = b.x + b.cos * lx - b.sin * ly;
                                 v[i + 1] = b.y + b.sin * lx + b.cos * ly;
                             }
+                        else
+                            for (int i = 0; i + 1 < v.Length; i += 2) { v[i] -= origin.x; v[i + 1] -= origin.y; }
                         float r = s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f;
                         float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
                         for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
@@ -326,7 +328,7 @@ namespace IGTAP.EngineSim.Cli
             return solids;
         }
 
-        static List<Marker> Markers(JsonElement world)
+        static List<Marker> Markers(JsonElement world, Vector3 origin)
         {
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint", ["SpringScript"] = "spring" };
             var markers = new List<Marker>();
@@ -337,7 +339,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (!kinds.TryGetValue(c.GetProperty("type").GetString(), out string kind)) continue;
                     JsonElement p = o.GetProperty("position");
-                    markers.Add(new Marker(kind, o.GetProperty("name").GetString(), Round(p.GetProperty("x").GetSingle()), Round(p.GetProperty("y").GetSingle())));
+                    markers.Add(new Marker(kind, o.GetProperty("name").GetString(), Round(p.GetProperty("x").GetSingle() - origin.x), Round(p.GetProperty("y").GetSingle() - origin.y)));
                     break;
                 }
             }
