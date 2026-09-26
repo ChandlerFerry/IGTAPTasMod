@@ -146,9 +146,28 @@ namespace IGTAPTasMod
             if (body != null) RestoreMembers(body, savestate.bodyFields, false);
             SetBodySimulation(body, ReadBool(savestate.bodyFields, "simulated", true));
             Physics2D.SyncTransforms();
+            SnapCamera(transform.position);
             result.Success = true;
             result.Message = "Savestate restored";
             return result;
+        }
+
+        static readonly FieldInfo CameraLerpedPos = AccessTools.Field(typeof(cameraMover), "lerpedPos"),
+            CameraPlayerSetOffset = AccessTools.Field(typeof(cameraMover), "playerSetOffset");
+
+        /// <summary>
+        /// Puts the camera where cameraMover's follow settles on the player (no lookahead, the player's set offset, the target
+        /// zoom), so a restore doesn't pan across the map from where the camera was.
+        /// </summary>
+        static void SnapCamera(Vector3 player)
+        {
+            Camera cam = Camera.main;
+            cameraMover mover = cam != null ? cam.GetComponent<cameraMover>() : null;
+            if (mover == null) return;
+            Vector3 offset = CameraPlayerSetOffset != null ? (Vector3)CameraPlayerSetOffset.GetValue(mover) : Vector3.zero;
+            CameraLerpedPos?.SetValue(mover, (Vector3)(Vector2)player);
+            mover.transform.position = new Vector3(Mathf.Round(player.x), Mathf.Round(player.y + offset.y), -100f);
+            cam.orthographicSize = mover.camSize;
         }
 
         public static CompatibilityFingerprint CreateFingerprint(Movement movement, int pluginSchemaVersion)

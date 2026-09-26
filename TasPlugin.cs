@@ -96,6 +96,8 @@ namespace IGTAPTasMod
             _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
             PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), nameof(AfterMovementFixedUpdate));
             PatchOptional(typeof(Movement), "Update", null, nameof(AfterMovementUpdate));
+            PatchOptional(typeof(courseScript), "FixedUpdate", nameof(BeforeOrderedFixedUpdate), null);
+            PatchOptional(typeof(VmanScript), "FixedUpdate", nameof(BeforeOrderedFixedUpdate), null);
             TurboRunner.Patch(_harmony);
             PatchOptional(typeof(courseScript), "startTracking", nameof(BeforeCourseStart), nameof(AfterCourseStart));
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
@@ -246,6 +248,46 @@ namespace IGTAPTasMod
             if (!Instance._recorder.IsRecording) Instance._engine.AfterFixedTick(__instance);
             Instance.OverlayTick(__instance);
             Instance.ProbeAfterTick(__instance);
+            RunDeferredFixedUpdates();
+        }
+
+        // Turbo (TurboRunner.Run) and the offline engine step a tick as Movement.FixedUpdate, then every courseScript's, then
+        // VmanScript's. Unity's own order between them isn't fixed: after a new game it can run a course's first, which sets
+        // courseResetPoint to its resetPoint before the player's quick restart reads it (a route whose quick restart falls on
+        // the tick its start gate starts tracking then respawns elsewhere at 1x and dies). While a route plays at 1x, a course's
+        // or Vman's FixedUpdate that comes before the player's this tick waits and runs right after it, in turbo's order.
+        static readonly MethodInfo CourseFixedUpdateMethod = AccessTools.Method(typeof(courseScript), "FixedUpdate");
+        static readonly MethodInfo VmanFixedUpdateMethod = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
+        static readonly List<MonoBehaviour> DeferredFixedUpdates = new List<MonoBehaviour>();
+        static float _playerFixedTime = -1f;
+        static bool _runningDeferred;
+
+        private static bool BeforeOrderedFixedUpdate(MonoBehaviour __instance)
+        {
+            if (Instance == null || TurboRunner.Active || _runningDeferred || !Instance._engine.IsRunning || _playerFixedTime == Time.fixedTime) return true;
+            if (!DeferredFixedUpdates.Contains(__instance)) DeferredFixedUpdates.Add(__instance);
+            return false;
+        }
+
+        static void RunDeferredFixedUpdates()
+        {
+            if (TurboRunner.Active) return;
+            _playerFixedTime = Time.fixedTime;
+            if (DeferredFixedUpdates.Count == 0) return;
+            _runningDeferred = true;
+            try
+            {
+                var scripts = new List<MonoBehaviour>(DeferredFixedUpdates);
+                foreach (bool courses in new[] { true, false })
+                    foreach (MonoBehaviour script in scripts)
+                        if (script != null && script.isActiveAndEnabled && script is courseScript == courses)
+                            (courses ? CourseFixedUpdateMethod : VmanFixedUpdateMethod).Invoke(script, null);
+            }
+            finally
+            {
+                _runningDeferred = false;
+                DeferredFixedUpdates.Clear();
+            }
         }
 
         private static bool IsMenuPlayer(Movement movement)

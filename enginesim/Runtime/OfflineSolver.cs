@@ -215,17 +215,65 @@ namespace IGTAP.EngineSim
             }
         }
 
-        void Extend(long key, float rank, int progress, float distance)
+        void Extend(long key, Cell cell, int progress)
         {
+            float rank = cell.Rank, distance = cell.Distance;
             if (key < 0 && rank > _maxTimedRank) lock (_extent) _maxTimedRank = Math.Max(_maxTimedRank, rank);
             if (progress < 0) return;
-            if (progress < _minProgress || progress > _maxProgress || distance < _near[progress])
+            if (progress < _minProgress || progress > _maxProgress || distance < _near[progress] || Closer(cell, progress, _closest))
                 lock (_extent)
                 {
                     _minProgress = Math.Min(_minProgress, progress);
                     _maxProgress = Math.Max(_maxProgress, progress);
                     if (distance < _near[progress]) _near[progress] = distance;
+                    if (Closer(cell, progress, _closest)) _closest = new ClosestCell(cell, progress);
                 }
+        }
+
+        /// <summary>Goal mode: from the player to the next at: goal's rect, in the capture frame; NaN for any other next goal.</summary>
+        public static float GoalDistance(Simulation sim)
+        {
+            FullTasGoal goal = sim.Goals.Current;
+            if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
+            Vector3 p = sim.PlayerAtCapture;
+            float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
+            return MathF.Sqrt(dx * dx + dy * dy);
+        }
+
+        sealed class ClosestCell
+        {
+            public readonly Cell Cell;
+            public readonly int Progress;
+            public ClosestCell(Cell cell, int progress) { Cell = cell; Progress = progress; }
+        }
+        volatile ClosestCell _closest;
+
+        // Goal mode: the cell with the most goals reached, then nearest the next at: goal (no distance counts as farthest),
+        // then earliest.
+        static bool Closer(Cell cell, int progress, ClosestCell than)
+        {
+            if (than == null || progress != than.Progress) return than == null || progress > than.Progress;
+            float d = float.IsNaN(cell.Distance) ? float.PositiveInfinity : cell.Distance;
+            float old = float.IsNaN(than.Cell.Distance) ? float.PositiveInfinity : than.Cell.Distance;
+            return d < old || d == old && cell.Rank < than.Cell.Rank;
+        }
+
+        public sealed class Attempt
+        {
+            public int Progress;
+            public float Distance, Rank;
+            public List<InputTick> Inputs;
+        }
+
+        /// <summary>
+        /// Goal mode: the search's attempt furthest toward the goals so far (most goals reached, then nearest the next area
+        /// goal), as the window's inputs up to that cell; null before any. Changes whenever a closer cell is filed.
+        /// </summary>
+        public Attempt Closest()
+        {
+            ClosestCell c = _closest;
+            return c == null ? null : new Attempt { Progress = c.Progress, Distance = c.Cell.Distance, Rank = c.Cell.Rank,
+                Inputs = c.Cell.Source.GetRange(0, Math.Min(c.Cell.Length, c.Cell.Source.Count)) };
         }
 
         sealed class Worker
@@ -1080,7 +1128,7 @@ namespace IGTAP.EngineSim
                 var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell };
                 if (!_owner.File(key, filed)) return;
                 Keep(filed, state);
-                _owner.Extend(key, rank, _goalMode ? GoalProgress(key) : -1, distance);
+                _owner.Extend(key, filed, _goalMode ? GoalProgress(key) : -1);
             }
         }
     }

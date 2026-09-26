@@ -27,7 +27,7 @@ namespace IGTAP.EngineSim.Cli
         readonly int _threads, _window, _onlyGoal;
         readonly double _minutes, _windowMinutes, _stallMinutes;
         readonly bool _submit, _fresh, _unsolved;
-        string _name, _caps, _runFile, _outDir;
+        string _name, _caps, _runFile, _closestFile, _outDir;
         string[] _labels;
         int _goals;
         float _dt;
@@ -87,6 +87,7 @@ namespace IGTAP.EngineSim.Cli
             _caps = header.GetProperty("capabilities").GetString();
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _runFile = Path.Combine(dir, "fulltas", _name + ".json");
+            _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
             _outDir = Path.Combine(dir, "offline-best");
             string worldPath = Path.ChangeExtension(_trace, null) + ".world.json";
             JsonElement start = header.GetProperty("start");
@@ -343,7 +344,12 @@ namespace IGTAP.EngineSim.Cli
                     shown = _clock.Elapsed;
                     Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates), {Interlocked.Read(ref solver.Runs)} runs, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB");
                 }
-                if ((_clock.Elapsed - emitted).TotalSeconds >= 1) { emitted = _clock.Elapsed; Emit(Progress()); }
+                if ((_clock.Elapsed - emitted).TotalSeconds >= 1)
+                {
+                    emitted = _clock.Elapsed;
+                    Emit(Progress());
+                    if (kind == "reach") OfferClosest(solver.Closest(), prefix);
+                }
                 if ((_clock.Elapsed - saved).TotalSeconds >= 60) { saved = _clock.Elapsed; Solve.SaveMemory(archiveFile, solver.Export(5000)); }
             }
             Solve.SaveMemory(archiveFile, solver.Export(10000));
@@ -351,6 +357,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (Thread t in threads) t.Join(60000);
             List<InputTick> bestInputs;
             lock (solver.Shared) bestInputs = solver.Shared.Inputs;
+            if (kind == "reach") OfferClosest(solver.Closest(), prefix);
             if (bestInputs != null) Remember(key, bestInputs);
             SaveVisits(solver.Visits());
             Status();
@@ -359,6 +366,44 @@ namespace IGTAP.EngineSim.Cli
                 Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });
                 return found.ToList();
             }
+        }
+
+        OfflineSolver.Attempt _closest;
+        (int, float, int) _closestClaim = (-1, 0f, -1);
+
+        // The reach windows' attempt furthest toward the goals this session (most goals reached, then nearest the next area
+        // goal, then fewest inputs), from the run's start, for the studio's Test best. Written when it gets closer. The
+        // solver's claim comes from a cell, which a worker may have filed while branching from a snapshot its inputs don't
+        // reproduce, so the attempt is replayed from the start and judged by where that replay ends.
+        void OfferClosest(OfflineSolver.Attempt a, List<InputTick> prefix)
+        {
+            if (a == null) return;
+            var claim = (a.Progress, a.Distance, a.Inputs.Count);
+            if (claim.Equals(_closestClaim)) return;
+            _closestClaim = claim;
+            List<InputTick> inputs = prefix.Concat(a.Inputs).ToList();
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot end = _eval.Advance(inputs);
+            if (end == null) return;
+            _eval.Restore(end);
+            var replayed = new OfflineSolver.Attempt { Progress = _eval.Progress, Distance = OfflineSolver.GoalDistance(_eval), Inputs = inputs };
+            float Far(float d) => float.IsNaN(d) ? float.PositiveInfinity : d;
+            if (_closest != null && (replayed.Progress < _closest.Progress || replayed.Progress == _closest.Progress
+                && (Far(replayed.Distance) > Far(_closest.Distance) || Far(replayed.Distance) == Far(_closest.Distance) && inputs.Count >= _closest.Inputs.Count))) return;
+            _closest = replayed;
+            Directory.CreateDirectory(Path.GetDirectoryName(_closestFile));
+            string temp = _closestFile + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new
+            {
+                name = _name,
+                goals = _labels,
+                reached = replayed.Progress,
+                next = replayed.Progress < _goals ? _labels[replayed.Progress] : null,
+                distance = float.IsFinite(replayed.Distance) ? Math.Round(replayed.Distance, 1) : (double?)null,
+                inputs = inputs.Select(t => t.ToJson()),
+            }));
+            Solve.Replace(temp, _closestFile);
         }
 
         string WindowCaps(int first, int limit)

@@ -148,7 +148,8 @@ above Course 3's approach shaft, everything left of the shaft's left wall.
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category.
+it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category; Course 3 has
+`box-9447-7370` (x 9446.9 to 9694.1, y 7369.6 to 7484.0), in `WJ_DS` and `WJ_DS_DJ`.
 
 A rule with `"fulltas": ["VMAN", ...]` instead of `course`/`capabilities` holds a Full-TAS run's avoid boxes: every
 search window of those runs cuts a run entering one (its `via` isn't used; the run's `at:` goals are its waypoints).

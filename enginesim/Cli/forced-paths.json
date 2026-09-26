@@ -27,7 +27,15 @@
       "capabilities": ["wjds", "wjdsdj"],
       "note": "Top-hole shortcut out of the first room: runs through the right hole are cut. Buy-machine room: a wall on the left side of CashPerLoop (the rightmost machine) cuts runs heading left past it; every route turns back right of it, and the search otherwise spends most of its runs out there. The pocket above and right of the climb, over Checkpoint (1)'s floor (from the floor's left edge to the wall right of the spiked block, up to the hanging pillar's spikes), is cut: every route climbs left of it.",
       "avoid": [[10350, 6950, 11000, 7800], [8833.5, 6815, 9033.5, 7815], [10016, 7881, 10496, 8233]],
-      "via": []
+      "via": [],
+      "optional": [
+        {
+          "name": "box-9447-7370",
+          "note": "x 9446.9 to 9694.1, y 7369.6 to 7484.0. Off unless picked.",
+          "avoid": [[9446.9, 7369.6, 9694.1, 7484.0]],
+          "via": []
+        }
+      ]
     },
     {
       "course": 4,
@@ -116,7 +124,13 @@
       "fulltas": ["Test-No-Omni-Skip"],
       "note": "Drawn on the Full-TAS map.",
       "drawn": true,
-      "avoid": [[18043.5, 14288.9, 20423.9, 14959.4], [18174.5, 14812.6, 19868.4, 15776.6], [19638.2, 15747.7, 19870.9, 17520.6], [19847.3, 16081.6, 20533.6, 16324.2], [21854.0, 16754.5, 26736.2, 17473.8], [24119.8, 12850.7, 25403.6, 17109.6]]
+      "avoid": [[18174.5, 14812.6, 19868.4, 15776.6], [19638.2, 15747.7, 19870.9, 17520.6], [19847.3, 16081.6, 20533.6, 16324.2], [21854.0, 16754.5, 26736.2, 17473.8], [24119.8, 12850.7, 25403.6, 17109.6], [19710.9, 14666.0, 20433.5, 14877.6]]
+    },
+    {
+      "fulltas": ["TrueEnding-ANY%"],
+      "note": "Drawn on the Full-TAS map.",
+      "drawn": true,
+      "avoid": [[126.0, 299.1, 1450.1, 2736.4], [3599.4, 11806.7, 10426.5, 16991.2], [16449.2, 9985.6, 16899.1, 10323.1], [7198.2, 6900.4, 7476.9, 7786.2], [9273.8, 6874.6, 9930.1, 7793.5]]
     }
   ]
 }
