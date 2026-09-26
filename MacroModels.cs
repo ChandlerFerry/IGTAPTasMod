@@ -5,7 +5,6 @@ namespace IGTAPTasMod
 {
     public enum MacroStepType { Move, Jump, Dash, Wait, WallJump, Bundle, RawInput }
     public enum ActionEndCondition { Duration, FixedTicks }
-    public enum ActionTimeoutPolicy { AbortAttempt }
 
     [Serializable]
     public sealed class MacroStep
@@ -35,16 +34,9 @@ namespace IGTAPTasMod
 
         public MacroStep Copy()
         {
-            return new MacroStep { id = Guid.NewGuid().ToString("N"), enabled = enabled,
-                label = label, type = type, durationMs = durationMs,
-                timeoutMs = timeoutMs, direction = direction, wallJumpHoldDirection = wallJumpHoldDirection,
-                endCondition = endCondition,
-                durationTicks = durationTicks, timeoutTicks = timeoutTicks,
-                rawMoveX = rawMoveX, rawMoveY = rawMoveY,
-                rawJumpPressed = rawJumpPressed, rawJumpHeld = rawJumpHeld,
-                rawJumpReleased = rawJumpReleased, rawDashPressed = rawDashPressed,
-                rawDashHeld = rawDashHeld, dashJumpFrame = dashJumpFrame, springDashFrame = springDashFrame,
-                lockMoveX = lockMoveX, lockMoveY = lockMoveY, rawQuickRestart = rawQuickRestart };
+            MacroStep copy = (MacroStep)MemberwiseClone();
+            copy.id = Guid.NewGuid().ToString("N");
+            return copy;
         }
     }
 
@@ -53,13 +45,8 @@ namespace IGTAPTasMod
     {
         public string id = Guid.NewGuid().ToString("N");
         public string name = "New macro";
-        public string hotkey = "";
-        public bool hotkeyCtrl;
-        public bool hotkeyShift;
-        public bool hotkeyAlt;
         public string checkpointId = "";
         public List<MacroStep> steps = new List<MacroStep>();
-        public TimelineDocument timeline = new TimelineDocument();
     }
 
     [Serializable]
@@ -87,8 +74,6 @@ namespace IGTAPTasMod
         public float positionY;
         public float originX;
         public float originY;
-        public float velocityX;
-        public float velocityY;
         public bool onGround;
         public bool onWall;
         public float wallCoyoteFrames;
@@ -124,14 +109,6 @@ namespace IGTAPTasMod
         public long completionTicks;
         public float completionTime;
         public string timingSource;
-        public long courseStartRunTick = -1;
-        public int courseStartUnityFrame = -1;
-        public float courseStartX;
-        public float courseStartY;
-        public string startStateFingerprint;
-        public string earlyTrace;
-        public float firstJumpPositionOffsetX;
-        public float courseStartPositionOffsetX;
         public int failureAction = -1;
         public string failureReason;
     }

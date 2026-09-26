@@ -159,7 +159,7 @@ namespace IGTAPTasMod
                 Instance._pendingSilentMacro = null;
                 Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
-                Instance._engine.Run(macro, Instance._library, true, true, 0,
+                Instance._engine.Run(macro, true, true, 0,
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
@@ -180,7 +180,7 @@ namespace IGTAPTasMod
                 Movement movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
+                Instance._engine.Run(macro, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
             }
             return true;
         }
@@ -287,8 +287,6 @@ namespace IGTAPTasMod
             {
                 Instance._pendingCourseTime = 0f;
                 if (__instance != null && Instance.OverlayListsRun) Instance._overlayCourse = __instance.courseNumber.ToString();
-                Movement movement = FindWorldMovement();
-                Instance._engine.MarkCourseStart(movement);
                 Instance._recorder.MarkCourseStart();
                 if (Instance._fullTas != null && __instance != null && Instance._engine.IsRunning && !Instance._fullTasStartWasTracking
                     && CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking)
@@ -720,7 +718,7 @@ namespace IGTAPTasMod
             bool quiet = _engine.Quiet;
             _engine.Quiet = true;
             _engine.Run(new MacroDefinition { name = "New game start", steps = { new MacroStep { type = MacroStepType.RawInput, durationTicks = 1 } } },
-                _library, false, true);
+                false, true);
             UnityEngine.Random.InitState(FullTasSeed);
             _newGameStart = TurboRunner.Capture(player, courses, _engine.CaptureState(), 0, true);
             _engine.Discard();
@@ -833,28 +831,6 @@ namespace IGTAPTasMod
                 StopPlayback("Emergency stop");
                 return;
             }
-
-
-            foreach (MacroDefinition macro in _library.macros)
-            {
-                if (HotkeyPressed(keyboard, macro))
-                {
-                    _runCourse = null;
-                    _engine.Run(macro, _library);
-                    break;
-                }
-            }
-        }
-
-        private static bool HotkeyPressed(Keyboard keyboard, MacroDefinition macro)
-        {
-            Key key;
-            if (string.IsNullOrEmpty(macro.hotkey) || !Enum.TryParse(macro.hotkey, true, out key)) return false;
-            if (!keyboard[key].wasPressedThisFrame) return false;
-            bool ctrl = keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed;
-            bool shift = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-            bool alt = keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed;
-            return (!macro.hotkeyCtrl || ctrl) && (!macro.hotkeyShift || shift) && (!macro.hotkeyAlt || alt);
         }
 
         private void CaptureCheckpoint()
@@ -953,7 +929,7 @@ namespace IGTAPTasMod
         private void DuplicateMacro()
         {
             MacroDefinition copy = JsonConvert.DeserializeObject<MacroDefinition>(JsonConvert.SerializeObject(SelectedMacro));
-            copy.id = Guid.NewGuid().ToString("N"); copy.name += " copy"; copy.hotkey = ""; _library.macros.Add(copy); _library.selectedIndex = _library.macros.Count - 1; SaveLibrary();
+            copy.id = Guid.NewGuid().ToString("N"); copy.name += " copy"; _library.macros.Add(copy); _library.selectedIndex = _library.macros.Count - 1; SaveLibrary();
         }
 
         private void StartRecording()
@@ -1091,14 +1067,8 @@ namespace IGTAPTasMod
                 success = success,
                 completionTicks = ticks,
                 completionTime = hasGameTime ? _engine.AuthoritativeCompletionTime : ticks * Time.fixedDeltaTime,
-                timingSource = !hasGameTime ? "Macro elapsed time" : reason == MacroEngine.RewardFinishReason ? "Physics ticks to reward"
+                timingSource = !hasGameTime ? "Macro elapsed time"                     : reason == MacroEngine.RewardFinishReason ? "Physics ticks to reward"
                     : reason == MacroEngine.TransitionFinishReason ? "Physics ticks to the transition's end" : "In-game course timer",
-                courseStartRunTick = _engine.CourseStartRunTick,
-                courseStartUnityFrame = _engine.CourseStartUnityFrame,
-                courseStartX = _engine.CourseStartPosition.x,
-                courseStartY = _engine.CourseStartPosition.y,
-                startStateFingerprint = _engine.StartStateFingerprint,
-                earlyTrace = _engine.EarlyTrace,
                 failureAction = action,
                 failureReason = success ? null : reason
             };
@@ -1114,11 +1084,6 @@ namespace IGTAPTasMod
         }
 
         private static string TypeName(MacroStepType type) { return type == MacroStepType.WallJump ? "WALLJUMP" : type.ToString().ToUpperInvariant(); }
-        private static string HotkeyText(MacroDefinition m)
-        {
-            if (string.IsNullOrEmpty(m.hotkey)) return "No hotkey";
-            return (m.hotkeyCtrl ? "CTRL + " : "") + (m.hotkeyShift ? "SHIFT + " : "") + (m.hotkeyAlt ? "ALT + " : "") + m.hotkey.ToUpperInvariant();
-        }
 
         private void LoadLibrary()
         {
@@ -1260,7 +1225,7 @@ namespace IGTAPTasMod
             if (library.macros == null)
                 throw new InvalidDataException("Required route collection is missing.");
             foreach (MacroDefinition route in library.macros)
-                if (route == null || string.IsNullOrEmpty(route.id) || route.steps == null || route.timeline == null || route.timeline.actions == null)
+                if (route == null || string.IsNullOrEmpty(route.id) || route.steps == null)
                     throw new InvalidDataException("A route is incomplete.");
         }
 
@@ -1278,11 +1243,7 @@ namespace IGTAPTasMod
             bool changed = false;
             int tickMs = Mathf.Max(1, Mathf.RoundToInt(Time.fixedDeltaTime * 1000f));
             foreach (MacroDefinition route in library.macros)
-            {
                 foreach (MacroStep step in route.steps) changed |= NormalizeStepFrameTiming(step, tickMs);
-                foreach (TimelineAction action in route.timeline.actions)
-                    if (action != null && action.step != null) changed |= NormalizeStepFrameTiming(action.step, tickMs);
-            }
             return changed;
         }
 
@@ -1549,35 +1510,6 @@ namespace IGTAPTasMod
                 SaveRecording(recording);
                 return new { ok = true };
             }
-            if (request.Path == "/api/actions/split")
-            {
-                MacroDefinition route = SelectedMacro;
-                int index = Number(body, "actionIndex", -1);
-                if (route == null || index < 0 || index >= route.steps.Count) throw new InvalidOperationException("Action not found.");
-                MacroStep action = route.steps[index];
-                if (action.rawJumpPressed || action.rawJumpReleased || action.rawDashPressed)
-                    throw new InvalidOperationException("Split input blocks cannot contain button edges.");
-                int firstTicks = Number(body, "firstDurationTicks", 1);
-                if (firstTicks < 1 || firstTicks >= action.durationTicks)
-                    throw new InvalidOperationException("Split point must be inside the action duration.");
-                MacroStep first = action.Copy();
-                MacroStep second = action.Copy();
-                first.durationTicks = firstTicks;
-                first.durationMs = Mathf.RoundToInt(firstTicks * Time.fixedDeltaTime * 1000f);
-                second.durationTicks = action.durationTicks - firstTicks;
-                second.durationMs = Mathf.RoundToInt(second.durationTicks * Time.fixedDeltaTime * 1000f);
-                if (body["firstRawMoveX"] != null)
-                    first.rawMoveX = Mathf.Clamp(FloatNumber(body, "firstRawMoveX", first.rawMoveX), -1f, 1f);
-                if (body["firstRawMoveY"] != null)
-                    first.rawMoveY = Mathf.Clamp(FloatNumber(body, "firstRawMoveY", first.rawMoveY), -1f, 1f);
-                first.label = action.label + " (split 1)";
-                second.label = action.label + " (split 2)";
-                route.steps[index] = first;
-                route.steps.Insert(index + 1, second);
-                route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
-                SaveLibrary();
-                return new { ok = true };
-            }
             if (request.Path == "/api/actions/update")
             {
                 MacroDefinition route = SelectedMacro;
@@ -1609,7 +1541,6 @@ namespace IGTAPTasMod
                 if (body["rawDashHeld"] != null) action.rawDashHeld = (bool)body["rawDashHeld"];
                 if (body["dashJumpFrame"] != null) action.dashJumpFrame = Math.Max(0, Number(body, "dashJumpFrame", 0));
                 if (body["enabled"] != null) action.enabled = (bool)body["enabled"];
-                route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -1661,7 +1592,7 @@ namespace IGTAPTasMod
                         rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
                         dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
                     });
-                routes.Add(new { id = route.id, name = route.name, hotkey = HotkeyText(route), checkpointId = route.checkpointId,
+                routes.Add(new { id = route.id, name = route.name, checkpointId = route.checkpointId,
                     actionCount = route.steps.Count, actions = actions });
             }
             List<object> checkpoints = new List<object>();

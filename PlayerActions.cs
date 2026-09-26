@@ -23,8 +23,6 @@ namespace IGTAPTasMod
 
         static readonly Regex RunName = new Regex(@"^[A-Za-z0-9%]+$");
 
-        static readonly Regex TransitionToken = new Regex(@"^(newgame|bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
-
         bool PlaybackActive { get { return _engine.IsRunning || _fullTasPlay != null; } }
 
         void StopPlayback(string reason)

@@ -30,8 +30,8 @@ namespace IGTAP.EngineSim.Cli
         public static int Run(string[] args)
         {
             string trace = args[0];
-            string output = Option(args, "--out") ?? throw new ArgumentException("map needs --out <file>");
-            int threads = int.Parse(Option(args, "--threads") ?? Math.Max(1, Environment.ProcessorCount / 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            string output = Solve.Option(args, "--out", (string)null) ?? throw new ArgumentException("map needs --out <file>");
+            int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount / 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
@@ -221,12 +221,6 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             return markers;
-        }
-
-        static string Option(string[] args, string name)
-        {
-            int i = Array.IndexOf(args, name);
-            return i < 0 || i + 1 >= args.Length ? null : args[i + 1];
         }
     }
 }

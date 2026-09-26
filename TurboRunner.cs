@@ -15,7 +15,6 @@ namespace IGTAPTasMod
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
         static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
-        static Movement _movement;
         static int _tick;
 
         public static bool Active { get; private set; }
@@ -252,11 +251,6 @@ namespace IGTAPTasMod
             }
         }
 
-        public static double Cash(Snapshot s)
-        {
-            return s.economy?.currencies != null && s.economy.currencies.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0;
-        }
-
         static void StepClones(clonesScript clones, float dt)
         {
             ref float sinceLast = ref CloneTimeSinceLast(clones);
@@ -383,7 +377,6 @@ namespace IGTAPTasMod
             float dt = Time.fixedDeltaTime;
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
-            _movement = movement;
             Pending.Clear();
             BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
@@ -432,7 +425,6 @@ namespace IGTAPTasMod
                 }
                 Pending.Clear();
                 BuyMax.Clear();
-                _movement = null;
             }
         }
     }
