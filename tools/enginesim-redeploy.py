@@ -10,7 +10,9 @@ from gamepaths import GAME
 
 ROOT = Path(__file__).resolve().parent.parent
 DLL = ROOT / "bin" / "Release" / "netstandard2.1" / "IGTAPTasMod.dll"
+WEB = ROOT / "web" / "out"
 TARGET = GAME / "BepInEx" / "plugins" / "IGTAPTasMod.dll"
+TARGET_WEB = GAME / "BepInEx" / "plugins" / "IGTAPTasWeb"
 API = "http://127.0.0.1:17426"
 
 
@@ -23,6 +25,7 @@ def post(path, body=None, timeout=120):
 def main():
     subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
                     "-nologo", "-v:q"], check=True)
+    subprocess.run("npm run build", cwd=ROOT / "web", shell=True, check=True)
     exe = str(GAME / "IGTAPfullGame.exe").replace("'", "''")
     subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process IGTAPfullGame -ErrorAction SilentlyContinue"
                     f" | Where-Object {{ $_.Path -eq '{exe}' }} | Stop-Process -Force"], capture_output=True)
@@ -35,6 +38,8 @@ def main():
             time.sleep(1)
     if not filecmp.cmp(DLL, TARGET, shallow=False):
         raise SystemExit("deploy failed: plugin DLL is still locked")
+    shutil.rmtree(TARGET_WEB, ignore_errors=True)
+    shutil.copytree(WEB, TARGET_WEB)
     subprocess.Popen([str(GAME / "IGTAPfullGame.exe")], cwd=GAME)
     for _ in range(90):
         time.sleep(2)

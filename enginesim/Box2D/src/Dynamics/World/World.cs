@@ -1169,7 +1169,7 @@ namespace Box2D
 
         // b2WorldRayCastWrapper: the callback's return clips the ray (closest hit), -1 ignores the fixture, 0 ends
         // the cast. The base port ignored the return and never clipped, so a ray through several shapes of one
-        // composite reported the last in tree order instead of the nearest (route-c1-wjdash-1.06 tick 41: the
+        // composite reported the last in tree order instead of the nearest (route-c1-wjds-1.06 tick 41: the
         // dash step-up ray hit a ledge's interior diagonal, 2.3 units below its top).
         private float RayCastProxy(b2RayCastInput input, int proxyId)
         {

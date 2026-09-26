@@ -77,7 +77,8 @@ namespace IGTAPTasMod
         private static readonly string[] MovementFieldNames = {
             "Velocity", "momentum", "MoveAxis", "onGround", "OnWall", "wallCoyoteFrames",
             "wallCoyoteDir", "coyoteFrames", "jumpBuffer", "jumpCutBuffer", "dashBuffer",
-            "airJumpsLeft", "airDashesLeft", "dashActive", "dashCooldown", "dashDirection",
+            "airJumpsLeft", "airDashesLeft", "wallJumpsLeft", "isFinalWallClingActive", "finalWallClingTimeLeft",
+            "currentGroundType", "tiredSoundCooldown", "dashActive", "dashCooldown", "dashDirection",
             "atJumpApex", "isDead", "cutsceneMode", "facingRight", "blocked", "movementMode"
         };
         private static readonly string[] BodyFieldNames = {

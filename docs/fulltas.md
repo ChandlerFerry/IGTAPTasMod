@@ -19,7 +19,7 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 |---|---|
 | `start:N` | Course N's start gate starts its timer (it wasn't timing). |
 | `finish:N` | The player's own finish at course N's end gate. |
-| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`; Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buydash`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buyaj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
+| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`; Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
 | `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
 
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
@@ -46,7 +46,7 @@ playback's rolls differ from the turbo replay's even from the same seed; the gat
 
 ## Routes
 
-`fulltas/<run>_NO_WJ <time>`, saved only by the gate (`SaveSolverRoute`), only when strictly faster. The gate replays the
+`fulltas/<run>_NONE <time>`, saved only by the gate (`SaveSolverRoute`), only when strictly faster. The gate replays the
 route in turbo from the new game with the usual buffer audit, checks the unlocks against the run's own purchases so
 far, and refuses a quick restart on two ticks in a row (a real button is released in between). Splits per goal are kept
 in `fulltas-splits.json`.
@@ -107,12 +107,12 @@ changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights
 
 - `main` has 609 goals, all from `python tools/plan-fulltas.py --write` after `reward:bonus1`: Course 2's economy up
   to dash (~236 s), the dash bonuses, then Course 3 to `buyclonespeed` and `buystatue`, Courses 1 and 2 bought to
-  their boosted caps with a lap each, Course 3 to `buyaj`, and Course 4 lapped, `buyprestige4`, then `buyswap`, with
+  their boosted caps with a lap each, Course 3 to `buydj`, and Course 4 lapped, `buyprestige4`, then `buyswap`, with
   clone speed/size chance buys on Courses 3 and 4 (the plan counts their rolls at their average; ~15.8 min in the
   plan; its 3 -> 1 and 3 -> 4 transitions are guesses, no route exists yet).
 - Not in the goals: the free global boxes with no known route (`buyfree3`, `buyfree4a/b/c`) and Course 4's 3e12 W
   `buyglobalreward4`.
-- `ANY%` has 789 goals from `python tools/plan-fulltas.py --any-pct --out FILE`: `main`'s goals through `buy:buyaj`,
+- `ANY%` has 789 goals from `python tools/plan-fulltas.py --any-pct --out FILE`: `main`'s goals through `buy:buydj`,
   `reward:bonus5`, Course 5 farmed (with `reward:bonus4`, `reward:bonus15`, `buyfree5`, two `buyglobalreward5`) to
   `buy:buyprestige5`, then Course 4 farmed (its reward tier is 29.5 after the breaker; Course 5's 16.5 would take
   ~1e15 ticks to 9.49e34 W) to `buy:buyblockswap5` (~19.7 min in the plan). Its 3 -> 5 and 5 -> 4 transitions and the

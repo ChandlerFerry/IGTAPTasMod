@@ -8,6 +8,8 @@
     <ManagedDir>$(GameRoot)\IGTAPfullGame_Data\Managed</ManagedDir>
     <BepInExDir>$(GameRoot)\BepInEx\core</BepInExDir>
     <PluginDir>$(GameRoot)\BepInEx\plugins</PluginDir>
+    <!-- References come only from their HintPaths: a stray Assembly-CSharp.dll in a scratch folder must not win. -->
+    <AssemblySearchPath_UseCandidateAssemblyFiles>false</AssemblySearchPath_UseCandidateAssemblyFiles>
   </PropertyGroup>
 
   <ItemGroup>

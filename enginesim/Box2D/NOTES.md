@@ -221,7 +221,7 @@ port's `c0 + beta * (c - c0)` rounds differently).
 
 - `b2TestOverlap(shape...)` (the trigger overlap test) used `10 * linearSlop`
   (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
-  still got `OnTriggerStay2D` (the `rand-c3-wjdash-2` tick 33 `courseResetPoint`
+  still got `OnTriggerStay2D` (the `rand-c3-wjds-2` tick 33 `courseResetPoint`
   residue). Fixed.
 - Contact order, matched to Unity on the whole 2026-09-25 turbo corpus (every multi-contact pair):
   `b2BroadPhase.UpdatePairs` sorts new pairs by proxy id (2.3.x); the world contact list is oldest first

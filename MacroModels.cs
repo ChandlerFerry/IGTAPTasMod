@@ -132,7 +132,6 @@ namespace IGTAPTasMod
         public string earlyTrace;
         public float firstJumpPositionOffsetX;
         public float courseStartPositionOffsetX;
-        public bool deterministicPhysics;
         public int failureAction = -1;
         public string failureReason;
     }

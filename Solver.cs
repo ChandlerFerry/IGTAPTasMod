@@ -66,6 +66,7 @@ namespace IGTAPTasMod
         readonly ConcurrentQueue<string> _solveOutput = new ConcurrentQueue<string>();
         int _solveCourse;
         string _solveCaps = "";
+        string[] _solveOptional = new string[0];
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
@@ -74,6 +75,7 @@ namespace IGTAPTasMod
         {
             public int course, saved;
             public string caps, label;
+            public string[] optional;
             public string result;
         }
 
@@ -90,14 +92,14 @@ namespace IGTAPTasMod
             return new[] {
                 new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none" },
                 new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none" },
-                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjdash" },
-                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdashaj" },
-                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdashaj" } };
+                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjds" },
+                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdsdj" },
+                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdsdj" } };
         }
 
         void LoadCourses()
@@ -120,9 +122,9 @@ namespace IGTAPTasMod
             _courses.AddRange(new[] {
                 new CourseDef { id = 101, name = "bonus1", x = 7392.427f, y = 2807.015f, minCapabilities = "wj",
                     endX = 5239.43f, endY = 681f, endW = 127.5f, endH = 6f },
-                new CourseDef { id = 102, name = "bonus2", x = 7670f, y = 5207.015f, minCapabilities = "wjdash",
+                new CourseDef { id = 102, name = "bonus2", x = 7670f, y = 5207.015f, minCapabilities = "wjds",
                     endX = 8622f, endY = 5622.977f, endW = 127.5f, endH = 6f },
-                new CourseDef { id = 103, name = "bonus3", x = 9505f, y = 6967.01465f, minCapabilities = "wjdash",
+                new CourseDef { id = 103, name = "bonus3", x = 9505f, y = 6967.01465f, minCapabilities = "wjds",
                     endX = 11200.0996f, endY = 7363.977f, endW = 127.5f, endH = 6f } });
             SaveCourses();
         }
@@ -147,7 +149,7 @@ namespace IGTAPTasMod
 
         static Vector2 Absolute(RawTickSample t) { return new Vector2(t.positionX - t.originX, t.positionY - t.originY); }
 
-        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ))?\b", RegexOptions.IgnoreCase);
+        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NONE|WJ_DS_DJ|WJ_DS|WJ))?\b", RegexOptions.IgnoreCase);
         const float BonusArrivalSize = 32f;
 
         object AddTransitionFromRecording(RecordingDefinition recording)
@@ -155,7 +157,7 @@ namespace IGTAPTasMod
             if (recording.samples == null || recording.samples.Count == 0) throw new InvalidOperationException("The recording is empty.");
             Match m = TransitionName.Match(recording.name ?? "");
             if (!m.Success)
-                throw new InvalidOperationException("Name the recording \"Course1_To_Course2\" or \"Course2_To_Bonus2\" (optionally with _WJ, _WJDASH, ...) first.");
+                throw new InvalidOperationException("Name the recording \"Course1_To_Course2\" or \"Course2_To_Bonus2\" (optionally with _WJ, _WJ_DS, ...) first.");
             bool fromBonus = m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             bool toBonus = m.Groups[3].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
             string origin = (fromBonus ? "bonus" : "") + m.Groups[2].Value, target = (toBonus ? "bonus" : "") + m.Groups[4].Value;
@@ -225,7 +227,7 @@ namespace IGTAPTasMod
         }
 
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
-            { "none", "NO_WJ" }, { "wj", "WJ" }, { "wjdash", "WJDASH" }, { "wjdashaj", "WJ_DASH_AJ" } };
+            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" } };
 
         void CheckCategory(int course, string capabilities)
         {
@@ -243,13 +245,56 @@ namespace IGTAPTasMod
             get { return typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value; }
         }
 
-        SolveJob CourseJob(int course, string capabilities)
+        SolveJob CourseJob(int course, string capabilities, string[] optional)
         {
             CourseDef def = _courses.Find(c => c.id == course);
             if (def == null) throw new InvalidOperationException("Unknown course " + course + ".");
             if (!CapabilityLabels.ContainsKey(capabilities ?? "")) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, capabilities);
-            return new SolveJob { course = course, caps = capabilities, label = def.Token + "_" + CapabilityLabels[capabilities] };
+            string[] known = OptionalBlocks(course).Where(b => b.caps.Contains(capabilities)).Select(b => b.name).ToArray();
+            string missing = optional.FirstOrDefault(n => !known.Contains(n));
+            if (missing != null) throw new InvalidOperationException("No optional block '" + missing + "' for " + def.Token + " " + capabilities + ".");
+            return new SolveJob { course = course, caps = capabilities, optional = optional,
+                label = def.Token + "_" + CapabilityLabels[capabilities] + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional)) };
+        }
+
+        static string[] OptionalNames(JObject body)
+        {
+            return body["optional"] is JArray names ? names.Select(n => (string)n).Where(n => !string.IsNullOrEmpty(n)).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToArray() : new string[0];
+        }
+
+        static StringBuilder AppendOptional(StringBuilder args, string[] optional)
+        {
+            foreach (string name in optional) args.Append(" --optional ").Append(Quote(name));
+            return args;
+        }
+
+        sealed class OptionalBlock
+        {
+            public int course;
+            public string name, note;
+            public string[] caps;
+        }
+
+        OptionalBlock[] _optionalBlocks = new OptionalBlock[0];
+        DateTime _optionalBlocksRead;
+
+        // The optional blocks of forced-paths.json next to the offline solver, reread when the file changes.
+        IEnumerable<OptionalBlock> OptionalBlocks(int course)
+        {
+            string exe = EngineSimExe;
+            string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
+            DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
+            if (stamp != _optionalBlocksRead)
+            {
+                _optionalBlocksRead = stamp;
+                _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
+                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>()
+                        .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
+                            course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "",
+                            caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
+            }
+            return _optionalBlocks.Where(b => b.course == course);
         }
 
         void StartSolver(JObject body)
@@ -260,7 +305,7 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
             List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
-            List<SolveJob> jobs = items.Select(i => CourseJob(Number(i, "course", 0), Text(i, "capabilities"))).ToList();
+            List<SolveJob> jobs = items.Select(i => CourseJob(Number(i, "course", 0), Text(i, "capabilities"), OptionalNames(i))).ToList();
             if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
             float minutes = FloatNumber(body, "minutes", 60f);
             if (!(minutes >= 0.25f)) throw new InvalidOperationException("Minutes per target must be at least 0.25.");
@@ -279,7 +324,7 @@ namespace IGTAPTasMod
             SolveJob job = _solveQueue[index];
             if (CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
             _solveIndex = index;
-            _solveCourse = job.course; _solveCaps = job.caps;
+            _solveCourse = job.course; _solveCaps = job.caps; _solveOptional = job.optional;
             _solveRuns = _solveFinishes = 0;
             _turboChecks = _turboSaved = 0;
             _solveBest = float.PositiveInfinity;
@@ -388,7 +433,7 @@ namespace IGTAPTasMod
         object BuildSolverWebState()
         {
             return new {
-                running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, speed = _solverSpeed,
+                running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = _solverSpeed,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
@@ -400,7 +445,8 @@ namespace IGTAPTasMod
         object[] BuildCourseWebState()
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus, minLevel = c.MinLevel,
-                maxLevel = c.MaxLevel, @from = c.from, to = c.to, hint = c.IsBonus ? BonusHint(c) : null }).ToArray();
+                maxLevel = c.MaxLevel, @from = c.from, to = c.to, hint = c.IsBonus ? BonusHint(c) : null,
+                optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, capabilities = b.caps }).ToArray() }).ToArray();
         }
 
         static readonly FieldInfo BoxCurrency = AccessTools.Field(typeof(upgradeBox), "upgradeCurrency");
@@ -470,7 +516,7 @@ namespace IGTAPTasMod
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);
-            args.Append(" --threads ").Append(threads)
+            AppendOptional(args, _solveOptional).Append(" --threads ").Append(threads)
                 .Append(" --minutes ").Append(_solveMinutes.ToString(CultureInfo.InvariantCulture))
                 .Append(" --stall-minutes ").Append(Math.Min(5f, _solveMinutes / 2f).ToString(CultureInfo.InvariantCulture));
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, "solve " + args) {
@@ -524,6 +570,7 @@ namespace IGTAPTasMod
                 File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
+            AppendOptional(args, OptionalNames(body));
             _mapRunning = true;
             request.AsyncHandling = true;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -644,7 +691,6 @@ namespace IGTAPTasMod
             else
             {
                 TurboRunner.Restore(from, player);
-                BeginDeterministicPhysics(player);
                 _engine.Resume(from.engine, ToSteps(inputs), 0);
             }
             int lastTick = -1, idleTicks = 0;
@@ -683,19 +729,29 @@ namespace IGTAPTasMod
         string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
             : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
 
-        bool SaveSolverRoute(List<SolverTick> inputs, float time)
+        // Farm routes: a course's fewest physics ticks from the route start (the quick restart) to the finish. Bonuses and
+        // transitions are timed in those ticks already, and Full-TAS runs have no laps, so only courses keep one.
+        bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
+
+        static string FarmSeconds(long ticks) { return (ticks * (double)Time.fixedDeltaTime).ToString("0.00", CultureInfo.InvariantCulture); }
+
+        static long FarmTicks(float seconds) { return (long)Math.Round(seconds / Time.fixedDeltaTime); }
+
+        bool SaveSolverRoute(List<SolverTick> inputs, float time, long farmTicks = 0)
         {
             string category = SolverCategory;
+            string name = category + (farmTicks > 0 ? " farm " + FarmSeconds(farmTicks) : " " + time.ToString("0.00", CultureInfo.InvariantCulture));
             string violation = RouteViolation(inputs, time);
+            if (violation == null && farmTicks > 0 && _engine.PhysicsTicks != farmTicks)
+                violation = "a replay from the course start took " + _engine.PhysicsTicks + " physics ticks, not " + farmTicks;
             if (violation != null)
             {
-                string line = "REJECTED " + category + " " + time.ToString("0.00") + ": " + violation;
+                string line = "REJECTED " + name + ": " + violation;
                 _solverLog.Add(line);
                 Logger.LogWarning(line);
                 return false;
             }
-            var route = new MacroDefinition { name = category + " " + time.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
-                steps = ToSteps(inputs) };
+            var route = new MacroDefinition { name = name, steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(route);
             PruneSlowerRoutes();
@@ -703,31 +759,28 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NO_WJ|WJDASH|WJ_DASH_AJ|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
+
+        // A record route ranks by its name's game time, a farm route by its name's farm time; each kind keeps its own best.
+        static bool RankedRoute(string name, out string key, out float time)
+        {
+            Match g = CategoryRoute.Match(name ?? "");
+            bool farm = !g.Success && (g = FarmRoute.Match(name ?? "")).Success;
+            key = g.Success ? g.Groups[1].Value.ToUpperInvariant() + (farm ? " FARM" : "") : null;
+            time = g.Success ? float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture) : 0f;
+            return g.Success;
+        }
 
         bool PruneSlowerRoutes()
         {
             var fastest = new Dictionary<string, float>();
             foreach (MacroDefinition m in _library.macros)
-            {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (!g.Success) continue;
-                string key = g.Groups[1].Value.ToUpperInvariant();
-                float time = float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
-                if (!fastest.TryGetValue(key, out float best) || time < best) fastest[key] = time;
-            }
+                if (RankedRoute(m.name, out string key, out float time) && (!fastest.TryGetValue(key, out float best) || time < best)) fastest[key] = time;
             var kept = new Dictionary<string, MacroDefinition>();
             foreach (MacroDefinition m in _library.macros)
-            {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (g.Success && float.Parse(g.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) <= fastest[g.Groups[1].Value.ToUpperInvariant()])
-                    kept[g.Groups[1].Value.ToUpperInvariant()] = m;
-            }
-            int removed = _library.macros.RemoveAll(m =>
-            {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                return g.Success && (!kept.TryGetValue(g.Groups[1].Value.ToUpperInvariant(), out MacroDefinition keep) || keep != m);
-            });
+                if (RankedRoute(m.name, out string key, out float time) && time <= fastest[key]) kept[key] = m;
+            int removed = _library.macros.RemoveAll(m => RankedRoute(m.name, out string key, out _) && kept[key] != m);
             _library.selectedIndex = Mathf.Clamp(_library.selectedIndex, 0, Math.Max(0, _library.macros.Count - 1));
             return removed > 0;
         }

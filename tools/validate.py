@@ -4,7 +4,7 @@ from gamepaths import CONFIG
 
 ROUTES = CONFIG / "routes.json"
 COURSES = CONFIG / "courses.json"
-LABELS = {"NO_WJ": "none", "WJ": "wj", "WJDASH": "wjdash", "WJ_DASH_AJ": "wjdashaj"}
+LABELS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj"}
 
 
 def submit(body):
@@ -24,7 +24,9 @@ def check(route, body, label):
             break
         time.sleep(1)
     ok = r.get("finished")
-    print(f"{route['name']:34} {label:16} {'OK  ' + format(r['time'], '.2f') + 's' if ok else 'FAIL ' + json.dumps(r)}")
+    saved = "".join(f", saved as {kind}" for kind, key in (("record", "saved"), ("farm", "farmSaved")) if r.get(key))
+    result = f"OK  {r['time']:.2f}s, run {r['runTicks']} ticks{saved}" if ok else "FAIL " + json.dumps(r)
+    print(f"{route['name']:34} {label:16} {result}")
 
 
 if __name__ == "__main__":
@@ -34,6 +36,6 @@ if __name__ == "__main__":
         if m["name"].startswith("fulltas/"):
             print(f"{m['name']:34} {'Full-TAS':16} skipped")
             continue
-        match = re.fullmatch(r"([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+", m["name"])
+        match = re.fullmatch(r"([^_\s]+)_(NONE|WJ_DS_DJ|WJ_DS|WJ) (?:farm )?[\d.]+", m["name"])
         if match and match[1] in ids:
             check(m, {"course": ids[match[1]], "capabilities": LABELS[match[2]]}, f"C{ids[match[1]]} {LABELS[match[2]]}")

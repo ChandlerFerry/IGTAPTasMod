@@ -33,7 +33,7 @@ TO = {b: round((RESET_X - x - 50) / 9.2) for b, x in BOX_X.items()}
 ROW = {"D": 0, "G": 1, "M": 2, "C": 3, "R": 4}
 REPEAT = 23
 CAP = {"R": 45, "C": 35, "M": 10, "G": 2, "D": 1}
-TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglobalreward2", "D": "buydash"}
+TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglobalreward2", "D": "buyds"}
 OFFSCREEN = 51
 TAIL = ["start:2", "finish:2", "reward:bonus2", "start:3", "reward:bonus3", "start:3", "finish:3"]
 FOREVER = 10 ** 8
@@ -372,7 +372,7 @@ def late_courses(dash):
                                             "C": Box("buyclone3", 8934, 3645254.3426605626, 1.27, cap=40, kind="C"),
                                             "M": Box("buyclonemult3", 8594, 12679145.539688913, 2.0, cap=12, kind="M"),
                                             "G": Box("buyglobalreward3", 8384, 110942523.47227798, 3.0, cap=4, kind="G"),
-                                            "J": Box("buyaj", 7951, 554712617361.3899),
+                                            "J": Box("buydj", 7951, 554712617361.3899),
                                             "P": Box("buystatue", 7308, 11094252347.227798),
                                             "S": Box("buyclonespeed", 6072, 475467957.73833424),
                                             "F": Box("buyfast3", 8764, 6339572.769844457, 1.45, cap=12, kind="F")},
@@ -539,7 +539,7 @@ def late_greedy(s0, lap_income=False):
 MAIN_PHASES = [(3, "RCMGFSP", {"S": 1, "P": 1}, False, "clone speed max + statue"),
                (1, "RC", "caps", True, "Course 1 bought out"),
                (2, "RCM", "caps", True, "Course 2 bought out"),
-               (3, "RCMGFJ", {"J": 1}, True, "air jump"),
+               (3, "RCMGFJ", {"J": 1}, True, "double jump"),
                (4, "RCMFBZQ", {"Q": 1}, True, "Boost all previous courses"),
                (4, "RCMFBZW", {"W": 1}, False, "Activate orange blocks")]
 
@@ -548,7 +548,7 @@ class Late:
 
     def __init__(self, dash, verbose, quiet=False):
         self.cs = late_courses(dash)
-        self.g, self.aj = GLOBAL0 + dash.g, False
+        self.g, self.dj = GLOBAL0 + dash.g, False
         self.glob = {"gm": 0, "max_fast": 0, "max_big": 0}
         self.t, self.cash = dash.t, dash.cash
         self.tokens, self.here, self.where = [], 3, "done"
@@ -611,8 +611,8 @@ class Late:
         if token == "buystatue":
             self.glob["gm"] += 1
             self.boost(self.cs[3].tier, (1, 2))
-        elif token == "buyaj":
-            self.aj = True
+        elif token == "buydj":
+            self.dj = True
         elif token == "buyprestige4":
             self.boost(self.cs[4].tier, (1, 2, 3))
         elif token == "buyprestige5":
@@ -647,7 +647,7 @@ class Late:
         keys = [k for k in keys if k in c.boxes]
         if required == "caps":
             required = {k: c.cap(k) for k in keys}
-        ph = Phase(c, keys, required, need_lap, self.other_rate(course), self.glob, LATE_LAP[course][1 if self.aj else 0])
+        ph = Phase(c, keys, required, need_lap, self.other_rate(course), self.glob, LATE_LAP[course][1 if self.dj else 0])
         s0 = LateState.__new__(LateState)
         t0 = self.t
         s0.ph, s0.t, s0.cash, s0.lv, s0.g, s0.P = ph, t0, self.cash, tuple(c.level[k] for k in keys), self.g, c.P
@@ -709,17 +709,17 @@ def goal_course(cs, goal):
 def any_prefix(run_name, verbose):
     runs = json.load(open(FULLTAS, encoding="utf-8"))
     run = next((r for r in runs if r.get("name") == run_name), None)
-    if run is None or "buy:buyaj" not in run["goals"] or "reward:bonus1" not in run["goals"]:
-        raise SystemExit(f"fulltas.json has no run {run_name} with reward:bonus1 and buy:buyaj")
-    keep = run["goals"][:run["goals"].index("buy:buyaj") + 1]
+    if run is None or "buy:buydj" not in run["goals"] or "reward:bonus1" not in run["goals"]:
+        raise SystemExit(f"fulltas.json has no run {run_name} with reward:bonus1 and buy:buydj")
+    keep = run["goals"][:run["goals"].index("buy:buydj") + 1]
     after = keep[keep.index("reward:bonus1") + 1:]
-    if after[0] != "start:2" or "buy:buydash" not in after:
-        raise SystemExit(f"run {run_name} doesn't go on from reward:bonus1 to Course 2 and buy:buydash")
-    d = after.index("buy:buydash") + 1
+    if after[0] != "start:2" or "buy:buyds" not in after:
+        raise SystemExit(f"run {run_name} doesn't go on from reward:bonus1 to Course 2 and buy:buyds")
+    d = after.index("buy:buyds") + 1
     dash = replay(start_state(CASH), after[1:d], stage1_options)
     late = Late(dash, verbose, quiet=True)
     if after[d:d + len(TAIL)] != TAIL:
-        raise SystemExit(f"run {run_name}'s goals after buy:buydash aren't TAIL")
+        raise SystemExit(f"run {run_name}'s goals after buy:buyds aren't TAIL")
     late.tail()
     rest = after[d + len(TAIL):]
     for course, keys, required, need_lap, name in MAIN_PHASES:
@@ -792,9 +792,9 @@ def invalid_goals(goals):
 
 def any_plan(run_name, out, verbose):
     keep, base = any_prefix(run_name, verbose)
-    t_aj = base.t
-    print(f"ANY%: {run_name}'s {len(keep)} goals through buy:buyaj, replayed: tick {t_aj} after reward:bonus1 (the run's"
-          f" ~{BONUS1_TICK + t_aj}, {(BONUS1_TICK + t_aj) * 0.02 / 60:.1f} min), {base.cash:.4g} W, G {base.g},"
+    t_dj = base.t
+    print(f"ANY%: {run_name}'s {len(keep)} goals through buy:buydj, replayed: tick {t_dj} after reward:bonus1 (the run's"
+          f" ~{BONUS1_TICK + t_dj}, {(BONUS1_TICK + t_dj) * 0.02 / 60:.1f} min), {base.cash:.4g} W, G {base.g},"
           f" global clone mult {base.glob['gm']}, max clone speed tier {base.glob['max_fast']}")
     print("Guesses (no routes): detours from the course's restart " + ", ".join(f"{g} {t}" for g, t in DETOUR.items())
           + f"; transits 3 -> 5 {TRANSIT[(3, 5)]}, 5 -> 4 {TRANSIT[(5, 4)]}")
@@ -810,7 +810,7 @@ def any_plan(run_name, out, verbose):
               f" ({flipped - end:+6d})")
     print("    G5 (end tick): " + ", ".join(f"{g}: {any_tail(base, dict(choice, G5=g), True).t}" for g in range(5)))
 
-    print("\nPlan after buy:buyaj:")
+    print("\nPlan after buy:buydj:")
     run = any_tail(base, choice, False, verbose)
 
     c4, c5 = run.cs[4], run.cs[5]
@@ -835,13 +835,13 @@ def any_plan(run_name, out, verbose):
 
     goals = keep + run.tokens
     print(f"\nANY% phases (ticks after reward:bonus1; the run's tick is {BONUS1_TICK} more):")
-    print(f"  {'main through buy:buyaj':44s} {0:6d} -> {t_aj:6d} {t_aj:6d} ticks {t_aj * 0.02:6.1f} s"
+    print(f"  {'main through buy:buydj':44s} {0:6d} -> {t_dj:6d} {t_dj:6d} ticks {t_dj * 0.02:6.1f} s"
           f"  {base.cash:10.4g} W  {len(keep)} goals")
     for what, a, b, cash, n in run.steps:
         print(f"  {what:44s} {a:6d} -> {b:6d} {b - a:6d} ticks {(b - a) * 0.02:6.1f} s  {cash:10.4g} W  {n} goals")
     total = BONUS1_TICK + run.t
     print(f"ANY% ends at buy:buyblockswap5: tick {run.t} after reward:bonus1, the run's ~{total} ({total * 0.02:.1f} s,"
-          f" {total * 0.02 / 60:.1f} min; estimates); {len(goals)} goals, {len(run.tokens)} after buy:buyaj")
+          f" {total * 0.02 / 60:.1f} min; estimates); {len(goals)} goals, {len(run.tokens)} after buy:buydj")
     bad = invalid_goals(goals)
     if bad:
         raise SystemExit(f"not Full-TAS goals: {bad}")
@@ -863,7 +863,7 @@ def main():
     ap.add_argument("--first-lap", type=int, default=FIRST_LAP, help="Course 2's best run in ticks when the plan starts")
     ap.add_argument("--write", action="store_true", help="replace the run's goals after reward:bonus1 in fulltas.json")
     ap.add_argument("--verbose", action="store_true", help="print every step after dash, not only each phase's end")
-    ap.add_argument("--any-pct", action="store_true", help="plan ANY%%: --run's goals through buy:buyaj, then its own")
+    ap.add_argument("--any-pct", action="store_true", help="plan ANY%%: --run's goals through buy:buydj, then its own")
     ap.add_argument("--out", help="--any-pct: write the whole goal list (JSON) here")
     ap.add_argument("--detour", action="append", default=[], metavar="GOAL=TICKS",
                     help="--any-pct: ticks from the course's restart to an optional box (DETOUR), e.g. reward:bonus4=150")

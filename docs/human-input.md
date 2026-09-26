@@ -43,7 +43,12 @@ included), so each buffer can be checked against the press or release that made 
 `JumpCutBufferTicks` 15 (game 0.26 s after a release = 13 ticks), each +2 slack. `tools/audit-traces.py` checks
 captured traces against the same windows.
 
-A new press needs the button up on the tick before it: two presses with no release in between is not a human input.
+The game reads two jump actions (`Jump`, `Jump2`) and two dash actions (`Dash`, `Dash2`), and only a press or a jump
+release reaches it (`Movement.Update`); holding is never read. A jump press while one jump button is down is the other
+going down; with both down, one is released and pressed again within the tick, where the press clears the release's jump
+cut before the tick reads it. A release lifts both. Dash presses on consecutive ticks alternate the two dash buttons. The
+overlay's JUMP and DASH columns and the pad under the input list show each tick this way (J1/J2 and D1/D2: bright on the
+tick a button goes down, dim while held), with "release" and "cut" while a release's jump cut is armed.
 
 ## Ticks that take no input
 
@@ -81,9 +86,9 @@ starts dash-ready (the -1 floor a wait reaches) with the dash's flags cleared.
 
 ## Jump holds and cuts
 
-A normal jump or air jump reaches full height only while held: held until it rises slower than 150 (~27 ticks). A
+A normal jump or double jump reaches full height only while held: held until it rises slower than 150 (~27 ticks). A
 release earlier cuts it (to 50, up to 13 ticks later), and the cut is the release's jump-cut buffer (0.26 s). A
-stacked air jump climbs higher the later it is pressed. The solver's holds reach past full height and its mutations
+stacked double jump climbs higher the later it is pressed. The solver's holds reach past full height and its mutations
 move a press or a dash a few ticks while keeping where the hold ends.
 
 ## Recording what a human did

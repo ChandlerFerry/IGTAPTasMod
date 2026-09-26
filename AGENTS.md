@@ -3,15 +3,18 @@
 The route rules are the `### Rules` section of [`README.md`](README.md). Read them first. They are non-negotiable, and
 a route that breaks any of them doesn't count, however fast it is.
 
-Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DASH_AJ`). How to search:
+Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DS_DJ`). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
 
 ## Route names
 
-- Category route: `<course>_<NO_WJ|WJ|WJDASH|WJ_DASH_AJ> <time>`.
-- Full-TAS route: `fulltas/<run>_NO_WJ <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).
-- Both are saved only by `SaveSolverRoute`, which replays them from their start: a category route from the course
-  start, a Full-TAS route from a fresh new game.
+- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ> <time>`.
+- Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
+  start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
+- Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).
+- All are saved only by `SaveSolverRoute`, which replays them from their start: a category or farm route from the
+  course start, a Full-TAS route from a fresh new game. Every judged candidate is checked for both: a new record and
+  fewer physics ticks than the farm route.
 
 ## Using the game
 

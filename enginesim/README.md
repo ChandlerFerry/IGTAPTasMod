@@ -22,8 +22,10 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   a bonus's reward box `finish`, and for a transition `transition: true` (timed in physics ticks, `MacroEngine.PhysicsTicks`)
   with an end box `finish` or `finishStart` (the course whose start gate ends it).
 - `POST /api/enginesim/submit {course, capabilities; ticks}` — turbo replay of an offline candidate; saved as the
-  category's route (`<course>_<CAPS> <time>`) when it finishes faster than the current best, or as fast in fewer physics
-  ticks from the run start (`runTicks`; the saved route is replayed for its own). The reply has both.
+  category's record route (`<course>_<CAPS> <time>`) when it finishes faster than the current best, or as fast in fewer
+  physics ticks from the run start (`runTicks`; the saved route is replayed for its own). On a course it is also saved as
+  the farm route (`<course>_<CAPS> farm <runTicks × 0.02>`) when it takes fewer `runTicks` than the farm route
+  (`farmSaved`). The reply has both times.
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 - Full-TAS (`docs/fulltas.md`): `POST /api/enginesim/trace {fulltas: <run>}` writes `fulltas-<run>.json` from the fresh
   new game with the run's goals in the header (`fulltas.goals`); `IGTAP.EngineSim fulltas <trace>` searches the whole run
@@ -54,17 +56,25 @@ writes each new best to `<traces>\offline-best\`, and sends each best that beats
 exactly as fast (or rejoins the best's state) replaces it (`drifts` in the progress line), since a faster route is often
 several mutations away, each alone no faster. A best is the fastest course time; at the same time, the fewest
 physics ticks from the run start (`runTicks`), which shortens a flying start's setup before its last start-gate
-crossing (off the timer, but a player still sits through it). With the game closed the best stays on disk; the plugin
-judges every waiting `offline-best\` file that beats or ties the saved route (its category, then the course's other
-categories) as soon as the game is in the world and idle (a studio Optimize run holds the queue only while it starts
-each target, and its running target's own files until that `solve` ends), and moves it to `offline-best\judged\`.
+crossing (off the timer, but a player still sits through it). The search never finishes a run slower on the course
+timer than its best, so it doesn't search for farm routes: those come from the judged candidates. With the game closed
+the best stays on disk; the plugin judges every waiting `offline-best\` file that beats or ties the saved route (its
+category, then the course's other categories), and the group's file with the fewest `runTicks` when that beats the farm
+route, as soon as the game is in the world and idle (a studio Optimize run holds the queue only while it starts
+each target, and its running target's own files until that `solve` ends), and moves them to `offline-best\judged\`.
 
 Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
 time and input tick of its first arrival in each map cell. An explore run that reaches one of those cells at least a
 tick sooner runs on with the best's inputs from that cell (`Splice`). The jump button's press and release flags are
 fixed where the two join. Each new best also tries up to 64 archive cells that are already ahead of it, biggest gain
-first, including cells from earlier solves. On Course 4 WJDASH_AJ this took the best from 16.58 to 15.04 within a
+first, including cells from earlier solves. On Course 4 WJ_DS_DJ this took the best from 16.58 to 15.04 within a
 minute: the explore archive held faster segments that the whole-route mutations couldn't reach.
+
+A map cell is a 48×48 square (plus the forced-path boxes passed, or a Full-TAS run's goal progress). Ground-tagged
+surfaces refill wall jumps, double jumps and air dashes on every touch; `Moss`-tagged ones refill nothing
+(`Movement.touchedMossyGround`; the Overworld's `moss` tilemap and the upgrade trees' `Tree*Ground`). While the last
+surface touched is moss, the counts left are part of the cell, so an earlier arrival with fewer left doesn't replace,
+cut or splice over a later one that has them (`OfflineSolver.CellKey`).
 
 A solve picks up where the last solve of the same target stopped. Its search state goes to `<traces>\archive\<label>.json`
 (`<course>_<caps>`) every minute and when it ends, so a solve the studio stops (it kills the process) loses at most the
@@ -82,13 +92,27 @@ checked on every physics tick, dash ticks included. The boxes passed so far are 
 the first finish, cells past more boxes weigh more. Explore bursts get 25 extra ticks of the same stick and hold, so a
 run that clears a box while coasting is saved. The search state goes to `archive\<label>-path-<--path-name>.json`,
 and bests are the category's as usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of their
-course and categories (the studio's too), with boxes relative to the course's start gate. Right now it cuts Course 3's
-right hole in WJDASH and WJDASH_AJ, which leaves the top-hole shortcut, and in Course 5 WJDASH_AJ (no orange blocks
-yet) the far left, the low left corner, everything below the start floor, and the climb up through the start room's
-ceiling hole: that hole is the finish, entered from above, and a run climbing up it never started the timer.
+course and categories (the studio's too), with boxes relative to the course's start gate, or to course `gate`'s start
+gate when the rule names one (a transition has no gate of its own). Right now it cuts, in every
+category, everything left of Course 1's wall hanging right of the buy machines and two boxes on its right (1494 to 2811
+right of the gate from 275 to 531 above it, and 1160 to 1494 right from 465 below to 149 above), left of Course 2's pillar hanging right
+of its buy machines, right of its two rooms' right walls (the corridor joining them), the two rooms themselves and the drop under its start floor, and left of Course 4's rightmost buy machine; Course 3's right hole in WJ_DS and WJ_DS_DJ, which
+leaves the top-hole shortcut, plus a wall at the left side of the rightmost buy machine (CashPerLoop) so runs don't
+wander left through the machine room and the pocket over Checkpoint (1) right of the climb; everything above Course 5's
+building roof (the route goes inside); and in Course 5 WJ_DS_DJ (no orange blocks yet) the far left, the low left
+corner, everything below the start floor, and the
+climb up through the start room's ceiling hole: that hole is the finish, entered from above, and a run climbing up it
+never started the timer. For 5to4 (from Course 5's gate) it cuts Course 5's ceiling hole and everything left of its
+start gate, Courses 1 and 2 right of the pillar over each start gate (runs pass their end gates without entering), and,
+above Course 3's approach shaft, everything left of the shaft's left wall.
+
+A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`, same frame) that apply only when picked:
+`--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
+blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
+it's off. Course 1 has `start-marker` (436 to 522 right of the gate, 213 to 32 below it), in every category.
 
 ```powershell
-& $exe solve $traces\start-c3-wjdash.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
+& $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
 ```
 
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
@@ -97,7 +121,7 @@ the game and solve offline.
 ```powershell
 python tools\enginesim-capture.py start bonus1 wj                     # -> start-cbonus1-wj.json + .world.json
 python tools\enginesim-capture.py route bonus1_WJ bonus1 wj           # -> seed-cbonus1-wj-bonus1-WJ.json
-python tools\enginesim-capture.py route 4_almost_completed 4 wjdashaj # partial route as a seed
+python tools\enginesim-capture.py route 4_almost_completed 4 wjdsdj # partial route as a seed
 & $exe replay $traces\seed-cbonus1-*.json $traces\seed-c4-*.json     # fidelity on the new course first
 & $exe solve $traces\start-cbonus1-wj.json --seed $traces\seed-cbonus1-wj-bonus1-WJ.json --no-submit --minutes 60
 ```
@@ -105,7 +129,7 @@ python tools\enginesim-capture.py route 4_almost_completed 4 wjdashaj # partial 
 The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in
 `AGENTS.md` (trace it with `path`, say what the trick is).
 
-A studio recording is a usable seed: recording turns the player body's interpolation off (as playback does), so its
+A studio recording is a usable seed: the plugin keeps the player body's interpolation permanently off, so its
 inputs replay in turbo tick for tick, and every sample carries the FloatingOrigin (`originX/Y`) so its position maps to
 `courses.json`'s frame. A seed may carry quick restarts (`"reset": true` on a tick, the game's `respawn(true)`); they
 survive `solve`'s seeds, best files and archive. Crossing a course's start gate makes the next quick restart land on
@@ -210,8 +234,8 @@ turns violet with a HUMANIZED badge (`/api/state` `humanPlayback`).
   cap, movement unlocks, Full-TAS buy goals; clone income from the native economy, `Runtime/Economy.cs`). Traces of
   Course 1's reward and clone purchases (one waiting on clone income) match turbo's result and Cash on every tick.
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
-  dash or air-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (README rule 11),
-  and whether turbo can buy the box depends on the live save (1to2 NO_WJ bought Course 1's Wall jump box offline and
+  dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (README rule 11),
+  and whether turbo can buy the box depends on the live save (1to2 NONE bought Course 1's Wall jump box offline and
   wall-jumped; the live save had it bought already, so turbo died).
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): turbo resumes the coroutine at every tick's end
   (`TurboRunner.EndOfFrame`), `Shop.EndOfFrame` does the same offline. A 40-buy touch of Course 1's `CashPerLoop` matched
@@ -259,5 +283,5 @@ OutOfMemory instead of paging the machine.
 
 A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
 tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick. Snapshotting
-every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJDASH_AJ,
+every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJ_DS_DJ,
 30 threads: ~1,000 runs/s before, ~7,000-8,000 after).
