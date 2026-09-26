@@ -296,9 +296,7 @@ namespace IGTAPTasMod
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Instance.ApplyTechAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                // The camera eases on the wall clock until the fixed clock starts, so a fixed-clock probe starts it settled on
-                // the player: the clones it frames (clonesLoD) then pay the same from the first tick.
-                if (Instance._probe != null && Instance._probe.fixedClock && movement != null) SavestateService.SnapCamera(movement.transform.position);
+                Instance.SnapCameraForFixedClock(movement);
                 Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }
             return true;
@@ -1067,6 +1065,15 @@ namespace IGTAPTasMod
 
         /// <summary>A 1x playback on the fixed clock (a probe's <c>fixedClock</c>): game time and freezes ignore the wall clock.</summary>
         bool FixedClock { get { return _playbackPaced && _probe != null && _probe.fixedClock; } }
+
+        /// <summary>
+        /// At a fixed-clock probe's start: the camera eased on the wall clock until now, so it starts settled on the player,
+        /// and the clones it frames (clonesLoD) pay the same from the first tick.
+        /// </summary>
+        void SnapCameraForFixedClock(Movement movement)
+        {
+            if (_probe != null && _probe.fixedClock && movement != null) SavestateService.SnapCamera(movement.transform.position);
+        }
 
         /// <summary>
         /// The next frame's game-time step (<c>Time.captureDeltaTime</c>) for a fixed clock: frames fall on a grid anchored to

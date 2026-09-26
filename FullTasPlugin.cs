@@ -974,6 +974,7 @@ namespace IGTAPTasMod
             // Only a complete route waits for its last goal after its inputs; a partial one (the offline best so far, Test best's
             // attempt) ends with its inputs, instead of idling on until the player falls, dies and respawns at the world start.
             bool complete = play.expected == play.tracker.Goals.Length;
+            SnapCameraForFixedClock(movement);
             _engine.Run(play.route, false, complete && !IsTechDemo(play.route) && play.route.id != ProbeRouteId, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
