@@ -265,6 +265,9 @@ namespace IGTAP.EngineSim
 
         public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
 
+        // The body's unrounded world position (forced-path boxes are checked against it).
+        public Vector3 PlayerPosition { get { return Player.transform.m_Position; } }
+
         public float Elapsed(courseScript active)
         {
             if (TimedFromRunStart) return Engine.PhysicsTicks * World.FixedDeltaTime;

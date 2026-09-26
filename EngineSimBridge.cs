@@ -108,16 +108,18 @@ namespace IGTAPTasMod
             CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
             if (caps == null || !CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
             string category = def.Token + "_" + CapabilityLabels[caps];
+            bool human = Truthy(body, "human");
+            Regex pattern = human ? HumanBestFile : OfflineBestFile;
             string root = Path.Combine(EngineSimDir, "offline-best");
             var newest = new[] { root, Path.Combine(root, "judged") }.Where(Directory.Exists)
                 .SelectMany(d => Directory.GetFiles(d, course + "_" + caps + "-*.json"))
-                .Select(p => (path: p, match: OfflineBestFile.Match(Path.GetFileName(p))))
+                .Select(p => (path: p, match: pattern.Match(Path.GetFileName(p))))
                 .Where(f => f.match.Success)
                 .OrderByDescending(f => File.GetLastWriteTimeUtc(f.path))
                 .FirstOrDefault();
-            if (newest.path == null) throw new InvalidOperationException("No offline best for " + category + ".");
+            if (newest.path == null) throw new InvalidOperationException("No offline best" + (human ? " with a human version" : "") + " for " + category + ".");
             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
-            var route = new MacroDefinition { id = "offline-best", name = category + " offline " + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
+            var route = new MacroDefinition { id = human ? HumanPlaybackId : "offline-best", name = category + (human ? " human " : " offline ") + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
             route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             EnsureGameUnpaused();
             _pendingReplay = route;
@@ -163,6 +165,10 @@ namespace IGTAPTasMod
         }
 
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
+        // enginesim humanize's same-time versions of a best: played for practice, never judged.
+        static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.json$");
+        // The playback id of a human version: the studio colors the run so it is never mistaken for the best.
+        const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
 
@@ -206,7 +212,8 @@ namespace IGTAPTasMod
             if (Time.unscaledTime < _offlineBestCheckAt) return;
             _offlineBestCheckAt = Time.unscaledTime + 5f;
             string dir = Path.Combine(EngineSimDir, "offline-best");
-            _offlineWaiting = Directory.Exists(dir) ? Directory.GetFiles(dir, "*.json").Length : 0;
+            _offlineWaiting = !Directory.Exists(dir) ? 0 : Directory.GetFiles(dir, "*.json")
+                .Count(p => OfflineBestFile.IsMatch(Path.GetFileName(p)) || OfflineFullTasBestFile.IsMatch(Path.GetFileName(p)));
             if (_offlineWaiting == 0) return;
             if (CapabilitiesLocked || _solverRunning && _solveProcess == null || PlaybackActive || _recorder.IsRecording
                 || _bootstrapRequest != null || _webServer == null) return;
