@@ -43,8 +43,7 @@ namespace IGTAPTasMod
         private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
-        private Rigidbody2D _deterministicBody;
-        private RigidbodyInterpolation2D _savedBodyInterpolation;
+        private Rigidbody2D _playerBody;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
         private CourseDef _runCourse;
@@ -138,7 +137,11 @@ namespace IGTAPTasMod
         private static bool BeforeMovementFixedUpdate(Movement __instance)
         {
             if (Instance == null) return true;
-            if (!IsMenuPlayer(__instance)) Instance.OverlayBeforeTick(__instance);
+            if (!IsMenuPlayer(__instance))
+            {
+                Instance.LockInterpolation(__instance);
+                Instance.OverlayBeforeTick(__instance);
+            }
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
             if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
@@ -156,7 +159,6 @@ namespace IGTAPTasMod
                 Instance._pendingSilentMacro = null;
                 Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
-                Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, true, true, 0,
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
@@ -178,7 +180,6 @@ namespace IGTAPTasMod
                 Movement movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                Instance.BeginDeterministicPhysics(movement);
                 Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
             }
             return true;
@@ -736,7 +737,7 @@ namespace IGTAPTasMod
             request.Response = JsonConvert.SerializeObject(new {
                 ok = true, position = new { x = position.x, y = position.y }, respawnPoint = new { x = respawn.x, y = respawn.y }, cash,
                 unlocks = new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false), dash = GetMovementBool(player, "dashUnlocked", false),
-                    maxAirDashes = GetMovementField(player, "maxAirDashes"), airJump = GetMovementBool(player, "doubleJumpUnlocked", false),
+                    maxAirDashes = GetMovementField(player, "maxAirDashes"), doubleJump = GetMovementBool(player, "doubleJumpUnlocked", false),
                     maxAirJumps = GetMovementField(player, "maxAirJumps") },
                 notes = _newGameNotes.ToArray() });
             request.Completed.Set();
@@ -763,9 +764,13 @@ namespace IGTAPTasMod
         }
 
         const int PlaybackFrameRate = 280;
+        const float DefaultWalkSlowdown = 10f;
         bool _playbackPaced;
         float _savedMaximumDeltaTime;
         int _savedVSyncCount, _savedTargetFrameRate;
+        float _walkSlowdown;
+        bool _walkScaled;
+        string _playbackSpeedText = "1x";
 
         void PacePlayback(bool on)
         {
@@ -788,9 +793,30 @@ namespace IGTAPTasMod
             }
         }
 
+        // A walk slows game time, not frames: fixed ticks arrive at 1/slowdown of their usual rate whatever the frame rate.
+        // The game sets timeScale itself (0 for hitstop and the pause menu, then back), so this reasserts it every frame.
+        void PaceWalk()
+        {
+            if (!PlaybackActive && _pendingReplay == null) _walkSlowdown = 0f;
+            bool on = _walkSlowdown > 0f && _engine.IsRunning && !TurboRunner.Active;
+            if (on)
+            {
+                if (!_walkScaled) _playbackSpeedText = (1f / _walkSlowdown).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "x";
+                _walkScaled = true;
+                if (Time.timeScale != 0f) Time.timeScale = globalStats.baseGameSpeed / _walkSlowdown;
+            }
+            else if (_walkScaled)
+            {
+                _walkScaled = false;
+                _playbackSpeedText = "1x";
+                if (Time.timeScale != 0f) Time.timeScale = globalStats.baseGameSpeed;
+            }
+        }
+
         private void Update()
         {
             PacePlayback(PlaybackActive && !TurboRunner.Active);
+            PaceWalk();
             OverlayFrame();
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
             PumpSolver();
@@ -813,7 +839,6 @@ namespace IGTAPTasMod
             {
                 if (HotkeyPressed(keyboard, macro))
                 {
-                    BeginDeterministicPhysics(FindWorldMovement());
                     _runCourse = null;
                     _engine.Run(macro, _library);
                     break;
@@ -918,22 +943,11 @@ namespace IGTAPTasMod
             return false;
         }
 
-        private void BeginDeterministicPhysics(Movement movement)
+        private void LockInterpolation(Movement movement)
         {
-            Rigidbody2D body = movement == null ? null : movement.GetComponent<Rigidbody2D>();
-            if (body == null || body == _deterministicBody) return;
-            EndDeterministicPhysics();
-            _deterministicBody = body;
-            _savedBodyInterpolation = body.interpolation;
-            body.interpolation = RigidbodyInterpolation2D.None;
-        }
-
-        private void EndDeterministicPhysics()
-        {
-            if (_deterministicBody == null) return;
-            try { _deterministicBody.interpolation = _savedBodyInterpolation; }
-            catch (Exception ex) { Logger.LogWarning("Could not restore Rigidbody2D interpolation: " + ex.Message); }
-            _deterministicBody = null;
+            if (_playerBody == null || _playerBody.gameObject != movement.gameObject) _playerBody = movement.GetComponent<Rigidbody2D>();
+            if (_playerBody != null && _playerBody.interpolation != RigidbodyInterpolation2D.None)
+                _playerBody.interpolation = RigidbodyInterpolation2D.None;
         }
 
         private void DuplicateMacro()
@@ -947,7 +961,6 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
             if (_engine.IsRunning) _engine.Abort("Recording started");
             string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
-            BeginDeterministicPhysics(FindWorldMovement());
             _recorder.Start(name);
             Logger.LogInfo("Fixed-tick recording started: " + name);
         }
@@ -955,7 +968,6 @@ namespace IGTAPTasMod
         private void StopRecording(string reason)
         {
             RecordingDefinition recording = _recorder.Stop(reason);
-            if (!_engine.IsRunning) EndDeterministicPhysics();
             if (recording == null) return;
             _recordings.Insert(0, recording);
             SaveRecording(recording);
@@ -980,10 +992,11 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError("Could not delete recording: " + ex.Message); }
         }
 
-        private void ReplaySelected(int startDelayTicks = 0)
+        private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f)
         {
             MacroDefinition macro = SelectedMacro;
             if (macro == null) return;
+            _walkSlowdown = walkSlowdown;
             Match fullTasRoute = FullTasRouteName.Match(macro.name ?? "");
             if (fullTasRoute.Success)
             {
@@ -999,12 +1012,12 @@ namespace IGTAPTasMod
 
         internal static int CapsLevel(string caps)
         {
-            return caps == "wjdashaj" ? 3 : caps == "wjdash" ? 2 : caps == "wj" ? 1 : 0;
+            return caps == "wjdsdj" ? 3 : caps == "wjds" ? 2 : caps == "wj" ? 1 : 0;
         }
 
         internal static string CapsFor(string label)
         {
-            return label == "NO_WJ" ? "none" : label == "WJ_DASH_AJ" ? "wjdashaj" : label.ToLowerInvariant();
+            return label.Replace("_", "").ToLowerInvariant();
         }
 
         internal static (string field, object value)[] CategoryAbilities(string caps)
@@ -1030,7 +1043,7 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ)(?: |$)");
+            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
             if (!category.Success || movement == null) return;
             string caps = CapsFor(category.Groups[2].Value);
             foreach (var (field, value) in ApplyAbilities(movement, caps))
@@ -1066,7 +1079,6 @@ namespace IGTAPTasMod
             RestorePlaybackAbilities();
             if (_silentEvaluation)
             {
-                EndDeterministicPhysics();
                 _silentFinished = success && MacroEngine.IsFinishReason(reason);
                 _silentTime = _engine.AuthoritativeCompletionTime;
                 return;
@@ -1087,14 +1099,12 @@ namespace IGTAPTasMod
                 courseStartY = _engine.CourseStartPosition.y,
                 startStateFingerprint = _engine.StartStateFingerprint,
                 earlyTrace = _engine.EarlyTrace,
-                deterministicPhysics = _deterministicBody != null,
                 failureAction = action,
                 failureReason = success ? null : reason
             };
             _results.Insert(0, result);
             string path = Path.Combine(_resultsPath, result.timestampUtc.Replace(":", "-") + "-" + result.id + ".json");
             WriteJsonAtomic(path, result, false);
-            EndDeterministicPhysics();
         }
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
@@ -1449,6 +1459,12 @@ namespace IGTAPTasMod
                 ReplaySelected(Number(body, "startDelayTicks", 0));
                 return new { ok = true };
             }
+            if (request.Path == "/api/routes/walk")
+            {
+                if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
+                ReplaySelected(Number(body, "startDelayTicks", 0), Mathf.Clamp(FloatNumber(body, "slowdown", DefaultWalkSlowdown), 1f, 1000f));
+                return new { ok = true };
+            }
             if (request.Path == "/api/routes/duplicate")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
@@ -1623,7 +1639,7 @@ namespace IGTAPTasMod
 
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NO_WJ|WJDASH|WJ_DASH_AJ|WJ) [\d.]+$", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
@@ -1670,7 +1686,6 @@ namespace IGTAPTasMod
                 if (selected != null && result.routeId == selected.id)
                     results.Add(new { id = result.id, success = result.success, completionTime = result.completionTime,
                         completionTicks = result.completionTicks, timingSource = result.timingSource,
-                        deterministicPhysics = result.deterministicPhysics,
                         failureReason = result.failureReason, timestampUtc = result.timestampUtc });
 
             Movement player = FindWorldMovement();
@@ -1678,7 +1693,7 @@ namespace IGTAPTasMod
                 unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
                     dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
                     airDashesLeft = GetMovementField(player, "airDashesLeft"),
-                    airJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
+                    doubleJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
@@ -1740,7 +1755,6 @@ namespace IGTAPTasMod
         {
             if (_solverRunning) StopSolver("Game closed");
             if (_recorder.IsRecording) StopRecording("Game closed");
-            EndDeterministicPhysics();
             PacePlayback(false);
             SaveLibrary();
             SaveSettings();

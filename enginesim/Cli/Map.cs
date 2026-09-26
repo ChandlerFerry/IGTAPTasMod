@@ -36,6 +36,7 @@ namespace IGTAP.EngineSim.Cli
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
+            List<string> optional = Solve.Optional(args);
             string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
             Func<Simulation> create = Solve.Creator(trace, header);
@@ -52,7 +53,7 @@ namespace IGTAP.EngineSim.Cli
             if (best != null)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(best), new JsonDocumentOptions { MaxDepth = 256 }))
                     routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", Solve.ReadInputs(doc.RootElement)));
-            OfflineSolver.Memory memory = Solve.LoadMemory(System.IO.Path.Combine(dir, "archive", label + ".json"));
+            OfflineSolver.Memory memory = Solve.LoadMemory(System.IO.Path.Combine(dir, "archive", Solve.ArchiveName(label, optional) + ".json"));
             if (memory != null)
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
                     routes.Add(("plateau " + (i + 1), "plateau", p));
@@ -102,7 +103,7 @@ namespace IGTAP.EngineSim.Cli
             const float pad = 300f;
             x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
             var forced = new OfflineSolver.ForcedPath();
-            Solve.AddStandingPaths(forced, course, caps, worldPath);
+            List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, worldPath, forced);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
             float[] gate = null;
             try { Vector2 g = Solve.CourseGate(worldPath, course); gate = new[] { g.x, g.y }; }
@@ -117,6 +118,12 @@ namespace IGTAP.EngineSim.Cli
                 markers = Markers(world.RootElement).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
                 avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = forced.Via.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
+                optional = blocks.Select(b => new
+                {
+                    name = b.Name, note = b.Note, on = optional.Contains(b.Name),
+                    avoid = b.Boxes.Avoid.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
+                    via = b.Boxes.Via.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
+                }),
                 routes = paths.Select(p => new { name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = p.TimerStart, points = p.Points }),
                 explored = new
                 {
@@ -147,6 +154,17 @@ namespace IGTAP.EngineSim.Cli
 
         static List<object> Solids(JsonElement world, float x0, float y0, float x1, float y1)
         {
+            // A collider on a Rigidbody2D exports its shapes in the body's local space (the physics puts them on that
+            // body); the Grid tilemaps' body sits at the FloatingOrigin, so they're drawn at body position + rotation.
+            var bodies = new Dictionary<int, (float x, float y, float cos, float sin)>();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                    if (c.GetProperty("type").GetString() == "UnityEngine.Rigidbody2D" && c.TryGetProperty("props", out JsonElement bp))
+                    {
+                        JsonElement pos = bp.GetProperty("position");
+                        double angle = bp.GetProperty("rotation").GetDouble() * Math.PI / 180.0;
+                        bodies[c.GetProperty("id").GetInt32()] = (pos.GetProperty("x").GetSingle(), pos.GetProperty("y").GetSingle(), (float)Math.Cos(angle), (float)Math.Sin(angle));
+                    }
             var solids = new List<object>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
@@ -161,10 +179,19 @@ namespace IGTAP.EngineSim.Cli
                     if (props.TryGetProperty("isActiveAndEnabled", out JsonElement live) && !live.GetBoolean()) continue;
                     bool trigger = props.TryGetProperty("isTrigger", out JsonElement t) && t.GetBoolean();
                     if (trigger && !spike) continue;
+                    (float x, float y, float cos, float sin)? body = props.TryGetProperty("attachedRigidbody", out JsonElement rb) && rb.ValueKind == JsonValueKind.Object
+                        && rb.TryGetProperty("$ref", out JsonElement id) && bodies.TryGetValue(id.GetInt32(), out var found) ? found : null;
                     foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
                     {
                         float[] v = s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray();
                         if (v.Length < 2) continue;
+                        if (body is { } b)
+                            for (int i = 0; i + 1 < v.Length; i += 2)
+                            {
+                                float lx = v[i], ly = v[i + 1];
+                                v[i] = b.x + b.cos * lx - b.sin * ly;
+                                v[i + 1] = b.y + b.sin * lx + b.cos * ly;
+                            }
                         float r = s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f;
                         float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
                         for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }

@@ -205,7 +205,7 @@ namespace IGTAP.EngineSim.Cli
             int first = _eval.Progress;
             if (first >= limit) return found;
             var key = (_eval.MovementFingerprint(), _labels[first]);
-            string caps = _eval.Player.dashUnlocked ? "wjdash" : _caps;
+            string caps = _eval.Player.dashUnlocked ? "wjds" : _caps;
             if (_memo.TryGetValue(key, out List<List<InputTick>> known))
                 foreach (List<InputTick> r in known)
                     if (!seeds.Any(s => s.SequenceEqual(r))) seeds.Add(r);
@@ -392,7 +392,7 @@ namespace IGTAP.EngineSim.Cli
                 Standing = Flag("standing"),
                 Restart = Flag("restart"),
                 Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
-                    : caps.GetString() == "wjdashaj" ? 3 : caps.GetString() == "wjdash" ? 2 : caps.GetString() == "wj" ? 1 : 0,
+                    : caps.GetString() == "wjdsdj" ? 3 : caps.GetString() == "wjds" ? 2 : caps.GetString() == "wj" ? 1 : 0,
                 Inputs = ReadInputs(root),
             };
         }
@@ -491,26 +491,17 @@ namespace IGTAP.EngineSim.Cli
                 goalPhysicsTicks = r.GoalPhysics,
                 total = r.Progress == _goals ? r.Last : -1,
             }));
-            Replace(temp, _runFile);
+            Solve.Replace(temp, _runFile);
             string file = _runFile;
             if (r.Progress == _goals)
             {
                 float time = r.Last * _dt;
                 Directory.CreateDirectory(_outDir);
                 file = Path.Combine(_outDir, "fulltas-" + _name + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, ticks = r.Inputs.Select(t => t.ToJson()) }));
+                Solve.WriteShared(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, ticks = r.Inputs.Select(t => t.ToJson()) }));
                 _pending?.Set(r.Inputs);
             }
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
-        }
-
-        static void Replace(string temp, string path)
-        {
-            for (int attempt = 1; ; attempt++)
-            {
-                try { File.Move(temp, path, true); return; }
-                catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < 50) { Thread.Sleep(20); }
-            }
         }
 
         static List<InputTick> ReadInputs(JsonElement root)

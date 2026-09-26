@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Threading;
 using UnityEngine;
 
@@ -202,7 +204,7 @@ namespace IGTAP.EngineSim
                 _seeds.Enqueue(new List<InputTick>());
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
-                _dash = owner.Capabilities == "wjdash" || owner.Capabilities == "wjdashaj";
+                _dash = owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj";
                 _goalMode = sim.Goals != null;
             }
 
@@ -704,7 +706,7 @@ namespace IGTAP.EngineSim
                     }
                     courseScript active = _sim.TimingCourse();
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(_sim.Player.transform.m_Position, _sim.Progress) : CellKey(_sim.Player.transform.m_Position, timing, _waypoints);
+                    long key = _goalMode ? GoalCellKey(_sim.Player, _sim.Progress) : CellKey(_sim.Player, timing, _waypoints);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     int filed = Math.Min(tick, inputs.Count);
@@ -743,17 +745,39 @@ namespace IGTAP.EngineSim
             bool _avoided;
             bool _converged;
 
-            static long CellKey(Vector3 position, bool timing, int waypoints)
+            // Cell key bits: y 0-17, x 18-35, moss resources 36-48, waypoints/goal progress 49-62; the sign marks timed
+            // cells. Touching Ground refills wall jumps, double jumps and air dashes; touching Moss refills nothing
+            // (Movement.touchedMossyGround). So while the last surface touched was moss, what's left is part of the
+            // cell: a faster arrival with fewer jumps left must not replace, cut or splice over one that has them.
+            static readonly Func<Movement, int> GroundType = GroundTypeGetter();
+
+            static Func<Movement, int> GroundTypeGetter()
             {
-                long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF;
-                long key = ((long)waypoints << 48) | (x << 24) | y;
+                FieldInfo field = typeof(Movement).GetField("currentGroundType", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?? throw new MissingFieldException(nameof(Movement), "currentGroundType");
+                ParameterExpression player = Expression.Parameter(typeof(Movement));
+                return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
+            }
+
+            static long Place(Movement player)
+            {
+                Vector3 position = player.transform.m_Position;
+                long x = Mathf.FloorToInt(position.x / CellSize) & 0x3FFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0x3FFFF;
+                long key = (x << 18) | y;
+                if (GroundType(player) == 0) return key;
+                long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
+                return key | (1L << 48) | (wall << 44) | (air << 40) | (dash << 36);
+            }
+
+            static long CellKey(Movement player, bool timing, int waypoints)
+            {
+                long key = ((long)waypoints << 49) | Place(player);
                 return timing ? -1 - key : key;
             }
 
-            static long GoalCellKey(Vector3 position, int progress)
+            static long GoalCellKey(Movement player, int progress)
             {
-                long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFFFF;
-                return -1 - (((long)progress << 48) | (x << 24) | y);
+                return -1 - (((long)progress << 49) | Place(player));
             }
 
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)

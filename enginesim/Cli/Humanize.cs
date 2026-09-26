@@ -591,7 +591,7 @@ namespace IGTAP.EngineSim.Cli
         public static string Write(string bestPath, int course, string caps, Humanizer.Result r)
         {
             int exact = r.After.Count(e => e.Exact), exactBefore = r.Before.Count(e => e.Exact);
-            File.WriteAllText(OutputPath(bestPath, ".json"), JsonSerializer.Serialize(new
+            Solve.WriteShared(OutputPath(bestPath, ".json"), JsonSerializer.Serialize(new
             {
                 course, capabilities = caps, time = r.Time, runTicks = r.RunTicks, human = true, source = Path.GetFileName(bestPath),
                 exact, exactBefore, changes = r.Changes,
@@ -603,7 +603,7 @@ namespace IGTAP.EngineSim.Cli
                 ticks = r.Inputs.Select(t => t.ToJson()),
             }));
             string report = Report(Path.GetFileName(bestPath), course, caps, r, exact, exactBefore);
-            File.WriteAllText(OutputPath(bestPath, ".md"), report);
+            Solve.WriteShared(OutputPath(bestPath, ".md"), report);
             return report;
         }
 

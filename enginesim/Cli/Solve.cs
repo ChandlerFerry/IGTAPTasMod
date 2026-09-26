@@ -26,12 +26,22 @@ namespace IGTAP.EngineSim.Cli
             bool fresh = args.Contains("--fresh");
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
+            var forced = new OfflineSolver.ForcedPath();
+            for (int i = 0; i < args.Length - 1; i++)
+                if (args[i] == "--via" || args[i] == "--avoid")
+                {
+                    float[] c = args[i + 1].Split(',').Select(v => float.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+                    if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
+                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                }
+            string pathName = Option(args, "--path-name", "forced");
+            bool customPath = !forced.IsEmpty;
+            List<string> optional = Optional(args);
+
             JsonElement header = ReadHeader(startTrace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
-            OfflineSolver.ForcedPath forced = ForcedPaths(args, course, caps, startTrace);
-            string pathName = Option(args, "--path-name", "forced");
-            bool customPath = args.Contains("--via") || args.Contains("--avoid");
+            AddStandingPaths(forced, course, caps, Path.ChangeExtension(startTrace, null) + ".world.json", optional);
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
@@ -43,14 +53,14 @@ namespace IGTAP.EngineSim.Cli
             string label = course + "_" + caps;
             var target = new Target(course, caps);
             string archiveDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "archive");
-            string archiveFile = Path.Combine(archiveDir, label + (customPath ? "-path-" + pathName : "") + ".json");
+            string archiveFile = Path.Combine(archiveDir, ArchiveName(label, optional) + (customPath ? "-path-" + pathName : "") + ".json");
             OfflineSolver.Memory memory = fresh ? null : LoadMemory(archiveFile);
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
             var solver = new OfflineSolver(create, caps, seeds, memory, forced);
             if (!forced.IsEmpty)
-                Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
+                Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
@@ -59,7 +69,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
+                WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
                 humanize.Set(file, inputs);
@@ -100,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // --via/--avoid boxes plus forced-paths.json's standing rules for the course and category.
+        // --via/--avoid boxes plus forced-paths.json's standing rules (and --optional blocks) for the course and category.
         internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps, string trace)
         {
             var forced = new OfflineSolver.ForcedPath();
@@ -111,22 +121,88 @@ namespace IGTAP.EngineSim.Cli
                     if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
                     (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
                 }
-            AddStandingPaths(forced, course, caps, Path.ChangeExtension(trace, null) + ".world.json");
+            AddStandingPaths(forced, course, caps, Path.ChangeExtension(trace, null) + ".world.json", Optional(args));
             return forced;
         }
 
-        internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath)
+        // offline-best files are read by the plugin and the map while a search rewrites them (same time, fewer ticks):
+        // write beside the file, then swap it in, waiting out a reader's open handle instead of dying on it.
+        internal static void WriteShared(string path, string contents)
         {
+            string temp = path + ".tmp";
+            File.WriteAllText(temp, contents);
+            Replace(temp, path);
+        }
+
+        internal static void Replace(string temp, string path)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { File.Move(temp, path, true); return; }
+                catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < 50) { Thread.Sleep(20); }
+            }
+        }
+
+        internal sealed record OptionalBlock(string Name, string Note, OfflineSolver.ForcedPath Boxes);
+
+        internal static List<string> Optional(string[] args)
+        {
+            var names = new List<string>();
+            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--optional" && !names.Contains(args[i + 1])) names.Add(args[i + 1]);
+            names.Sort(StringComparer.Ordinal);
+            return names;
+        }
+
+        // Each set of optional blocks searches its own archive: explored cells inside a block would be cut on every resume.
+        internal static string ArchiveName(string label, List<string> optional)
+        {
+            return label + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional));
+        }
+
+        internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath, List<string> optional)
+        {
+            var blocks = OptionalBlocks(course, caps, worldPath, forced);
+            string missing = optional.FirstOrDefault(n => !blocks.Any(b => b.Name == n));
+            if (missing != null)
+                throw new ArgumentException("forced-paths.json: no optional block '" + missing + "' for course " + course + " " + caps
+                    + (blocks.Count == 0 ? "" : " (has " + string.Join(", ", blocks.Select(b => b.Name)) + ")"));
+            foreach (OptionalBlock block in blocks.Where(b => optional.Contains(b.Name)))
+            {
+                forced.Via.AddRange(block.Boxes.Via);
+                forced.Avoid.AddRange(block.Boxes.Avoid);
+            }
+        }
+
+        // Adds the standing boxes to `standing` and returns the optional blocks (off unless asked for) of the matching rules.
+        internal static List<OptionalBlock> OptionalBlocks(int course, string caps, string worldPath, OfflineSolver.ForcedPath standing)
+        {
+            var blocks = new List<OptionalBlock>();
             string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
-            if (!File.Exists(file)) return;
+            if (!File.Exists(file)) return blocks;
             using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
             var matching = rules.RootElement.GetProperty("paths").EnumerateArray()
                 .Where(r => r.GetProperty("course").GetInt32() == course && r.GetProperty("capabilities").EnumerateArray().Any(c => c.GetString() == caps)).ToList();
-            if (matching.Count == 0) return;
-            Vector2 gate = CourseGate(worldPath, course);
             foreach (JsonElement rule in matching)
-                foreach (string kind in new[] { "via", "avoid" })
-                    foreach (JsonElement b in rule.GetProperty(kind).EnumerateArray())
+            {
+                Vector2 gate = CourseGate(worldPath, rule.TryGetProperty("gate", out JsonElement frame) ? frame.GetInt32() : course);
+                AddBoxes(standing, rule, gate);
+                if (rule.TryGetProperty("optional", out JsonElement optional))
+                    foreach (JsonElement block in optional.EnumerateArray())
+                    {
+                        var boxes = new OfflineSolver.ForcedPath();
+                        AddBoxes(boxes, block, gate);
+                        blocks.Add(new OptionalBlock(block.GetProperty("name").GetString(),
+                            block.TryGetProperty("note", out JsonElement note) ? note.GetString() : "", boxes));
+                    }
+            }
+            return blocks;
+        }
+
+        static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule, Vector2 gate)
+        {
+            foreach (string kind in new[] { "via", "avoid" })
+                if (rule.TryGetProperty(kind, out JsonElement list))
+                    foreach (JsonElement b in list.EnumerateArray())
                     {
                         float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
                         (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(gate.x + c[0], gate.y + c[1], gate.x + c[2], gate.y + c[3]));
@@ -272,7 +348,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        static readonly string[] Categories = { "none", "wj", "wjdash", "wjdashaj" };
+        static readonly string[] Categories = { "none", "wj", "wjds", "wjdsdj" };
 
         static void SubmitOther(HttpClient http, Target target, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
@@ -291,6 +367,8 @@ namespace IGTAP.EngineSim.Cli
                         continue;
                     }
                     if (saved.GetBoolean()) Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {target.Course}_{caps}");
+                    if (r.RootElement.TryGetProperty("farmSaved", out JsonElement farm) && farm.GetBoolean())
+                        Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {target.Course}_{caps}'s farm route");
                     return;
                 }
                 catch (Exception) { return; }
@@ -326,6 +404,7 @@ namespace IGTAP.EngineSim.Cli
                         + (finished.GetBoolean() ? "finish " + turbo.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + turboTicks + " ticks)" : "no finish")
                         + (agree ? " (agrees)" : " (DISAGREES with offline)")
                         + (root.GetProperty("saved").GetBoolean() ? " - saved as the new route" : "")
+                        + (root.TryGetProperty("farmSaved", out JsonElement farmSaved) && farmSaved.GetBoolean() ? " - saved as the new farm route" : "")
                         + (root.TryGetProperty("rejected", out JsonElement rejected) && rejected.ValueKind == JsonValueKind.String ? " - " + rejected.GetString() : ""));
                 }
                 catch (Exception ex)

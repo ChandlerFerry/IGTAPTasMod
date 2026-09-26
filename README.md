@@ -16,7 +16,8 @@
 - Time runs from the course's start gate to end gate.
 - Finishing a different course never counts.
 - Flying starts allowed: time counts from the last start-gate crossing.
-- Score courses by the game timer, not tick counts.
+- Score courses by the game timer, not tick counts: that is the runs record.
+- A course's farm time counts physics ticks from the route start (the quick restart) to the finish.
 - Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included.
 - Nothing after the finish is part of the route.
 - No teleports, position offsets or moving the player.
@@ -37,7 +38,7 @@
 - Agents never start the studio's Optimize tab.
 - `enginesim` can't do something? Fix `enginesim`, don't work around.
 - Offline replay must match the game tick for tick.
-- Only save strictly faster times.
+- Only save strictly faster times: record by the game timer, farm by physics ticks.
 - Trace every new best and name its trick.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:

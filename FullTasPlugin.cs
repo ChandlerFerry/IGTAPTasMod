@@ -62,7 +62,7 @@ namespace IGTAPTasMod
         Dictionary<string, List<FullTasSplit>> _fullTasSplits = new Dictionary<string, List<FullTasSplit>>();
 
         FullTasTracker _fullTas;
-        bool _fullTasWallJump, _fullTasDash, _fullTasAirJump;
+        bool _fullTasWallJump, _fullTasDash, _fullTasDoubleJump;
         bool _fullTasStartWasTracking;
         int _fullTasFinishCourse = -1;
         FullTasRunDef _solverFullTas;
@@ -79,7 +79,7 @@ namespace IGTAPTasMod
         readonly List<string> _fullTasLog = new List<string>();
 
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward):(.+)$");
-        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%]+)_NO_WJ ", RegexOptions.IgnoreCase);
+        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%]+)_NONE ", RegexOptions.IgnoreCase);
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%]+)-([\d.]+)\.json$");
         static readonly (string token, string path, int sibling)[] FullTasBoxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
@@ -89,13 +89,13 @@ namespace IGTAPTasMod
             ("buyclone2", "Courses/course 2/localUpgrades/Clone", 1),
             ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult", 2),
             ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop", 3),
-            ("buydash", "Courses/course 2/localUpgrades/DashUnlock", 4),
+            ("buyds", "Courses/course 2/localUpgrades/DashUnlock", 4),
             ("buyreward3", "Courses/course 3/localUpgrades/CashPerLoop", 0),
             ("buyclone3", "Courses/course 3/localUpgrades/CloneCount", 1),
             ("buyclonemult3", "Courses/course 3/localUpgrades/CloneMult", 2),
             ("buyfast3", "Courses/course 3/localUpgrades/FastCloneChance", 3),
             ("buyglobalreward3", "Courses/course 3/localUpgrades/GLOBALcash", 4),
-            ("buyaj", "Courses/course 3/localUpgrades/Double jump", 5),
+            ("buydj", "Courses/course 3/localUpgrades/Double jump", 5),
             ("buyfree3", "Courses/course 3/localUpgrades/GLOBALWatt", 6),
             ("buyclonespeed", "Courses/course 3/localUpgrades/GLOBALclonespeedmax", 9),
             ("buystatue", "Courses/course 3/localUpgrades/enablePrestige", 10),
@@ -127,7 +127,7 @@ namespace IGTAPTasMod
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
-        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? (_fullTasAirJump ? "wjdashaj" : "wjdash") : "wj") : "none"; } }
+        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? (_fullTasDoubleJump ? "wjdsdj" : "wjds") : "wj") : "none"; } }
 
 
         void LoadFullTas()
@@ -333,8 +333,8 @@ namespace IGTAPTasMod
             if (_fullTas == null || !_engine.IsRunning) return;
             string path = HierarchyPath(box.transform);
             if (path == FullTasBoxes.First(b => b.token == "buywj").path) _fullTasWallJump = true;
-            if (path == FullTasBoxes.First(b => b.token == "buydash").path) _fullTasDash = true;
-            if (path == FullTasBoxes.First(b => b.token == "buyaj").path) _fullTasAirJump = true;
+            if (path == FullTasBoxes.First(b => b.token == "buyds").path) _fullTasDash = true;
+            if (path == FullTasBoxes.First(b => b.token == "buydj").path) _fullTasDoubleJump = true;
             FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 
@@ -406,7 +406,7 @@ namespace IGTAPTasMod
             TurboRunner.Snapshot from = NewGameStart();
             tracker = new FullTasTracker(ResolveFullTasGoals(run));
             _fullTas = tracker;
-            _fullTasWallJump = _fullTasDash = _fullTasAirJump = false;
+            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = false;
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -415,7 +415,6 @@ namespace IGTAPTasMod
             try
             {
                 TurboRunner.Restore(from, player);
-                BeginDeterministicPhysics(player);
                 _engine.Resume(from.engine, ToSteps(inputs), 0);
                 TurboRunner.Run(player, () => _engine.IsRunning && idleTicks < 20, inputs.Count + 300 * (tracker.Goals.Length + 1), () =>
                 {
@@ -699,11 +698,10 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             play.started = true;
             UnityEngine.Random.InitState(FullTasSeed);
-            BeginDeterministicPhysics(movement);
             _brakeTicks = -1;
             play.tracker.Reset();
             _fullTas = play.tracker;
-            _fullTasWallJump = _fullTasDash = _fullTasAirJump = false;
+            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = false;
             _engine.Run(play.route, _library, false, true, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
@@ -733,12 +731,10 @@ namespace IGTAPTasMod
                 completionTicks = Mathf.RoundToInt(time / Time.fixedDeltaTime),
                 completionTime = time,
                 timingSource = "Physics ticks from the new game's start to the last goal: " + splitText,
-                deterministicPhysics = _deterministicBody != null,
                 failureAction = finished ? -1 : tracker.Next,
                 failureReason = finished ? null : reason };
             _results.Insert(0, result);
             WriteJsonAtomic(Path.Combine(_resultsPath, result.timestampUtc.Replace(":", "-") + "-" + result.id + ".json"), result, false);
-            EndDeterministicPhysics();
         }
 
         void DropPendingFullTasPlayback(string reason)
@@ -816,7 +812,9 @@ namespace IGTAPTasMod
                 goals.RemoveAll(g => !labels.Contains(g));
                 if (goals.Count == 0) continue;
                 bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
-                Match category = CategoryRoute.Match(stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name);
+                string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;
+                Match category = CategoryRoute.Match(plain);
+                if (!category.Success) category = FarmRoute.Match(plain);
                 string caps = string.IsNullOrEmpty(target?.minCapabilities) ? "none" : target.minCapabilities;
                 float time = float.MaxValue;
                 if (category.Success)

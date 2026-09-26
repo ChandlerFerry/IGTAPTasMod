@@ -30,8 +30,6 @@ namespace IGTAPTasMod
             }
         }
 
-        bool InterpolationLocked { get { return _deterministicBody != null && _deterministicBody.interpolation == RigidbodyInterpolation2D.None; } }
-
         const float FpsWindowSeconds = 0.5f, SlowFrameSeconds = 0.01f;
         int _fpsFrames;
         float _fpsElapsed, _fpsWorst, _fpsShownWorst;
@@ -83,7 +81,7 @@ namespace IGTAPTasMod
             bool platform = _velocityPlatform != Vector2.zero;
             int parts = platform ? 3 : 2;
             float bandHeight = 14 * scale + titleLine + 12 * scale;
-            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 2 * rowHeight + rowHeight + 12 * scale;
+            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 3 * rowHeight + 12 * scale;
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
             Fill(panel, PanelBack);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
@@ -120,21 +118,21 @@ namespace IGTAPTasMod
                 Label(new Rect(xColumn, y, columnWidth, rowHeight), _velocityText[2 * i], _overlayText, color);
                 Label(new Rect(yColumn, y, columnWidth, rowHeight), _velocityText[2 * i + 1], _overlayText, color);
                 y += rowHeight;
+                if (i != 1) continue;
+                float age = Time.unscaledTime - _nudgeTime;
+                Label(new Rect(x, y, labelWidth, rowHeight), "NUDGE", _overlaySmall, MutedColor);
+                if (age < NudgeLingerSeconds)
+                    Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _nudgeText, _overlayText, new Color(JumpColor.r, JumpColor.g, JumpColor.b, 1f - age / NudgeLingerSeconds));
+                else Label(new Rect(xColumn, y, columnWidth, rowHeight), "0", _overlayText, MutedColor);
+                y += rowHeight;
             }
 
             y += 8 * scale;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
             y += 1 + 8 * scale;
-            bool locked = InterpolationLocked;
+            bool locked = _playerBody != null && _playerBody.interpolation == RigidbodyInterpolation2D.None;
             Label(new Rect(x, y, labelWidth, rowHeight), "INTERPOLATION", _overlaySmall, MutedColor);
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), locked ? "OFF (locked)" : "ON", _overlayText, locked ? GraceColor : MutedColor);
-            y += rowHeight;
-            float age = Time.unscaledTime - _nudgeTime;
-            Label(new Rect(x, y, labelWidth, rowHeight), "NUDGE", _overlaySmall, MutedColor);
-            if (age < NudgeLingerSeconds)
-                Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _nudgeText, _overlayText, new Color(JumpColor.r, JumpColor.g, JumpColor.b, 1f - age / NudgeLingerSeconds));
-            else Label(new Rect(xColumn, y, columnWidth, rowHeight), "0", _overlayText, MutedColor);
-
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
         }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 
 namespace IGTAPTasMod
@@ -13,7 +14,8 @@ namespace IGTAPTasMod
             public string tickText;
             public float x, y;
             public string stickText;
-            public bool jump, jumpPress, dash;
+            public bool jumpPress, jumpRelease, jumpCut, dash;
+            public bool jump1, jump2, jump1Press, jump2Press, dash1, dash2, dash1Press, dash2Press;
         }
 
         const int MaxInputRows = 30;
@@ -26,8 +28,10 @@ namespace IGTAPTasMod
         string _overlayRoute;
         string _overlayCourse = "—";
         string _overlayClock;
-        int _overlayJumpPresses, _overlayDashPresses;
-        GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze;
+        int _overlayJumpPresses, _overlayDashPresses, _overlayJumpRelease;
+        bool _padJump1, _padJump2, _padJump2Newer, _padDash1Last;
+        static readonly FieldInfo JumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
+        GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
         int _overlayStyleHeight;
 
         int _ticksSinceFrame;
@@ -39,6 +43,7 @@ namespace IGTAPTasMod
         void OverlayFrame()
         {
             CountFrame();
+            SampleLiveInput();
             int ticks = _ticksSinceFrame;
             _ticksSinceFrame = 0;
             if (ticks <= 1 || !OverlayListsRun) return;
@@ -49,6 +54,55 @@ namespace IGTAPTasMod
             _worstFrameTicks = Mathf.Max(_worstFrameTicks, ticks);
             _lastDropTick = _engine.PhysicsTicks;
             _droppedFramesShownUntil = Time.unscaledTime + DroppedFramesLingerSeconds;
+        }
+
+        // Outside playback the pad shows the player's own buttons as the game's input actions see them, so a keyboard or
+        // controller can be checked against the rules: a press or a release lights for LiveFlashSeconds, JUMP CUT follows
+        // Movement.jumpCutBuffer.
+        const float LiveFlashSeconds = 0.15f;
+        InputAction _liveJump1, _liveJump2, _liveDash1, _liveDash2;
+        float _liveJump1At = float.NegativeInfinity, _liveJump2At = float.NegativeInfinity, _liveDash1At = float.NegativeInfinity,
+            _liveDash2At = float.NegativeInfinity, _liveReleaseAt = float.NegativeInfinity;
+        readonly InputRow _liveRow = new InputRow();
+
+        void SampleLiveInput()
+        {
+            if (_liveJump1 == null)
+            {
+                InputActionAsset actions = InputSystem.actions;
+                if (actions == null) return;
+                _liveJump1 = actions.FindAction("Jump");
+                _liveJump2 = actions.FindAction("Jump2");
+                _liveDash1 = actions.FindAction("Dash");
+                _liveDash2 = actions.FindAction("Dash2");
+                if (_liveJump1 == null || _liveJump2 == null || _liveDash1 == null || _liveDash2 == null) { _liveJump1 = null; return; }
+            }
+            float now = Time.unscaledTime;
+            if (_liveJump1.WasPressedThisFrame()) _liveJump1At = now;
+            if (_liveJump2.WasPressedThisFrame()) _liveJump2At = now;
+            if (_liveDash1.WasPressedThisFrame()) _liveDash1At = now;
+            if (_liveDash2.WasPressedThisFrame()) _liveDash2At = now;
+            if (_liveJump1.WasReleasedThisFrame() || _liveJump2.WasReleasedThisFrame()) _liveReleaseAt = now;
+        }
+
+        InputRow LiveRow(Movement player)
+        {
+            if (_liveJump1 == null || player == null) return null;
+            float now = Time.unscaledTime;
+            InputRow row = _liveRow;
+            row.x = player.MoveAxis.x;
+            row.y = player.MoveAxis.y;
+            row.jump1 = _liveJump1.IsPressed();
+            row.jump2 = _liveJump2.IsPressed();
+            row.dash1 = _liveDash1.IsPressed();
+            row.dash2 = _liveDash2.IsPressed();
+            row.jump1Press = now - _liveJump1At < LiveFlashSeconds;
+            row.jump2Press = now - _liveJump2At < LiveFlashSeconds;
+            row.dash1Press = now - _liveDash1At < LiveFlashSeconds;
+            row.dash2Press = now - _liveDash2At < LiveFlashSeconds;
+            row.jumpRelease = now - _liveReleaseAt < LiveFlashSeconds;
+            row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+            return row;
         }
 
         string DroppedFramesText()
@@ -77,6 +131,7 @@ namespace IGTAPTasMod
                     _droppedFrames = _worstFrameTicks = 0;
                     _lastDropTick = 0;
                     _ticksSinceFrame = 0;
+                    _padJump1 = _padJump2 = _padJump2Newer = _padDash1Last = false;
                     _overlayRoute = _engine.ActiveMacroName;
                     _overlayCourse = _runCourse != null ? _runCourse.Token : "—";
                 }
@@ -96,13 +151,41 @@ namespace IGTAPTasMod
                 row.y = _overlayAxis.y;
                 row.stickText = StickText(row.x, row.y);
                 row.jumpPress = _engine.JumpPresses != _overlayJumpPresses;
-                row.jump = _engine.JumpHeld || row.jumpPress;
+                row.jumpRelease = _engine.LastJumpRelease != _overlayJumpRelease;
+                row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
                 row.dash = _engine.DashPresses != _overlayDashPresses;
+                AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
                 _inputRows.Add(row);
             }
             _overlayJumpPresses = _engine.JumpPresses;
             _overlayDashPresses = _engine.DashPresses;
+            _overlayJumpRelease = _engine.LastJumpRelease;
             SampleVelocity(player);
+        }
+
+        // The game reads two jump actions (Jump, Jump2) and two dash actions (Dash, Dash2); only presses and jump releases
+        // reach it. A jump press while one is down is the other one going down; a press while both are down is the older one
+        // released and pressed again inside the tick (the press clears that release's jump cut); a release lifts both. A dash
+        // is a tap, on the other button when the previous tick pressed dash on the first.
+        void AssignPadButtons(InputRow row, bool jumpDown)
+        {
+            if (!jumpDown) _padJump1 = _padJump2 = false;
+            else if (row.jumpPress)
+            {
+                bool second = _padJump1 && (!_padJump2 || !_padJump2Newer);
+                if (second) _padJump2 = true; else _padJump1 = true;
+                _padJump2Newer = second;
+            }
+            else if (!_padJump1 && !_padJump2) _padJump1 = true;
+            row.jump1 = _padJump1;
+            row.jump2 = _padJump2;
+            row.jump1Press = row.jumpPress && !_padJump2Newer;
+            row.jump2Press = row.jumpPress && _padJump2Newer;
+            row.dash1 = row.dash && !_padDash1Last;
+            row.dash2 = row.dash && _padDash1Last;
+            _padDash1Last = row.dash1;
+            row.dash1Press = row.dash1;
+            row.dash2Press = row.dash2;
         }
 
         static string StickText(float x, float y)
@@ -122,7 +205,9 @@ namespace IGTAPTasMod
             DrawSpikes(scale);
             DrawHitbox(scale);
             DrawGraze(scale);
-            if (_inputRows.Count > 0) DrawInputPanel(scale);
+            InputRow live = OverlayListsRun ? null : LiveRow(_overlayPlayer);
+            if (_inputRows.Count > 0) DrawInputPanel(scale, live);
+            else if (live != null) DrawInputPad(new Rect(0f, 0f, PanelWidth * PanelScale(scale), PadHeight * PanelScale(scale)), live, PanelScale(scale));
             if (_overlayPlayer != null) DrawVelocityPanel(scale);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
         }
@@ -148,6 +233,7 @@ namespace IGTAPTasMod
             _overlayTicksStyle = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Overflow };
             _overlaySmall = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(14 * panelScale) };
             _overlaySmallRight = new GUIStyle(_overlaySmall) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Overflow };
+            _overlayPadButton = new GUIStyle(_overlaySmall) { alignment = TextAnchor.MiddleCenter };
             _overlayGraze = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * scale), alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
         }
 
@@ -180,6 +266,43 @@ namespace IGTAPTasMod
             Fill(new Rect(r.xMin, r.yMax - line, r.width, line), color);
             Fill(new Rect(r.xMin, r.yMin, line, r.height), color);
             Fill(new Rect(r.xMax - line, r.yMin, line, r.height), color);
+            DrawHitboxBadge(r, line);
+        }
+
+        const string BadgeText = "TAS";
+        const float BadgeSpeed = 0.9f; // box heights per second
+        static readonly GUIContent BadgeContent = new GUIContent(BadgeText);
+        GUIStyle _badgeStyle;
+        Vector2 _badgeT = new Vector2(0.3f, 0.7f), _badgeDir = new Vector2(1f, 1f);
+
+        // DVD-logo bounce: position is a 0..1 fraction of the free space on each axis, so it survives the box moving and zooming.
+        void DrawHitboxBadge(Rect box, float line)
+        {
+            Rect inner = new Rect(box.x + line, box.y + line, box.width - 2 * line, box.height - 2 * line);
+            if (inner.width < 6f || inner.height < 6f) return;
+            if (_badgeStyle == null)
+                _badgeStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false, padding = new RectOffset(), margin = new RectOffset() };
+            int size = Mathf.Max(6, Mathf.FloorToInt(inner.height * 0.45f));
+            if (_badgeStyle.fontSize != size) _badgeStyle.fontSize = size;
+            Vector2 text = _badgeStyle.CalcSize(BadgeContent);
+            if (text.x > inner.width)
+            {
+                _badgeStyle.fontSize = size = Mathf.Max(6, Mathf.FloorToInt(size * inner.width / text.x));
+                text = _badgeStyle.CalcSize(BadgeContent);
+            }
+            Vector2 free = new Vector2(inner.width - text.x, inner.height - text.y);
+            float step = BadgeSpeed * inner.height * Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+            for (int axis = 0; axis < 2; axis++)
+            {
+                if (free[axis] <= 0f) { _badgeT[axis] = 0.5f; continue; }
+                float t = _badgeT[axis] + _badgeDir[axis] * step / free[axis];
+                if (t > 1f) { t = 2f - t; _badgeDir[axis] = -1f; }
+                if (t < 0f) { t = -t; _badgeDir[axis] = 1f; }
+                _badgeT[axis] = Mathf.Clamp01(t);
+            }
+            Rect at = new Rect(inner.x + Mathf.Max(0f, free.x) * _badgeT.x, inner.y + Mathf.Max(0f, free.y) * _badgeT.y, text.x, text.y);
+            Label(new Rect(at.x + 1, at.y + 1, at.width, at.height), BadgeText, _badgeStyle, new Color(0f, 0f, 0f, 0.6f));
+            Label(at, BadgeText, _badgeStyle, TasColor);
         }
 
         static Rect ScreenRect(Camera cam, Bounds bounds)
@@ -480,7 +603,7 @@ namespace IGTAPTasMod
         static readonly Color TasColor = Hex(0xffa3b4, 1f);
         static readonly Color WallJumpColor = Hex(0x5bf08a, 1f);
         static readonly Color DashCapColor = Hex(0x6cc8ff, 1f);
-        static readonly Color AirJumpColor = Hex(0xffd84d, 1f);
+        static readonly Color DoubleJumpColor = Hex(0xffd84d, 1f);
         static readonly Color BlockSwapColor = Hex(0xffab70, 1f);
         static readonly Color OmniDashColor = Hex(0xdab3ff, 1f);
         static readonly Color PanelBack = Hex(0x0d1a2d, 0.92f);
@@ -537,13 +660,13 @@ namespace IGTAPTasMod
             bool any = false;
             if (p.wallJumpUnlocked) { x = Segment(x, y, height, gap, "WJ", _overlayTitle, WallJumpColor); any = true; }
             if (p.dashUnlocked) { x = Segment(x, y, height, gap, "DS", _overlayTitle, DashCapColor); any = true; }
-            if (p.doubleJumpUnlocked) { x = Segment(x, y, height, gap, "AJ", _overlayTitle, AirJumpColor); any = true; }
+            if (p.doubleJumpUnlocked) { x = Segment(x, y, height, gap, "DJ", _overlayTitle, DoubleJumpColor); any = true; }
             if (p.blockSwapUnlocked) { x = Segment(x, y, height, gap, "OR", _overlayTitle, BlockSwapColor); any = true; }
             if (p.omniDashUnlocked) { x = Segment(x, y, height, gap, "OM", _overlayTitle, OmniDashColor); any = true; }
             if (!any) Segment(x, y, height, gap, "NONE", _overlayTitle, MutedColor);
         }
 
-        void DrawInputPanel(float screenScale)
+        void DrawInputPanel(float screenScale, InputRow liveInput)
         {
             float scale = PanelScale(screenScale);
             if (_overlayClock == null)
@@ -551,7 +674,8 @@ namespace IGTAPTasMod
             float pad = 20 * scale, rowHeight = 30 * scale, titleLine = 26 * scale, clockLine = 22 * scale, columnLine = 28 * scale, width = PanelWidth * scale;
             float bandHeight = 14 * scale + titleLine + clockLine + 12 * scale;
             float headerHeight = bandHeight + columnLine + 1;
-            int fit = Mathf.Max(1, Mathf.FloorToInt((Screen.height - headerHeight - 12 * scale) / rowHeight));
+            float padHeight = PadHeight * scale;
+            int fit = Mathf.Max(1, Mathf.FloorToInt((Screen.height - headerHeight - 12 * scale - padHeight) / rowHeight));
             int shown = Mathf.Min(fit, _inputRows.Count);
             Rect panel = new Rect(0f, 0f, width, headerHeight + shown * rowHeight + 12 * scale);
             Fill(panel, PanelBack);
@@ -562,6 +686,7 @@ namespace IGTAPTasMod
             float x = panel.x + pad, y = panel.y + 14 * scale, inner = width - 2 * pad;
             DrawPanelTitle(x, y, titleLine, scale);
             Label(new Rect(x, y + titleLine, inner, clockLine), _overlayClock, _overlaySmall, MutedColor);
+            Label(new Rect(x, y, inner, titleLine), _playbackSpeedText, _overlaySmallRight, _walkScaled ? TasColor : MutedColor);
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
@@ -582,9 +707,49 @@ namespace IGTAPTasMod
                 else if (n % 2 == 1) Fill(band, PanelStripe);
                 Label(new Rect(x, y, tickWidth, rowHeight), row.tickText, _overlayTicksStyle, n == 0 ? PanelText : MutedColor);
                 Label(new Rect(stickX, y, 110 * scale, rowHeight), row.stickText, _overlayText, row.x == 0f && row.y == 0f ? MutedColor : PanelText);
-                if (row.jump) Label(new Rect(jumpX, y, 80 * scale, rowHeight), row.jumpPress ? "JUMP" : "held", _overlayText, row.jumpPress ? JumpColor : HeldColor);
-                if (row.dash) Label(new Rect(dashX, y, 80 * scale, rowHeight), "DASH", _overlayText, DashColor);
+                if (row.jump1) Label(new Rect(jumpX, y, 40 * scale, rowHeight), "J1", _overlayText, row.jump1Press ? JumpColor : HeldColor);
+                if (row.jump2) Label(new Rect(jumpX + 40 * scale, y, 40 * scale, rowHeight), "J2", _overlayText, row.jump2Press ? JumpColor : HeldColor);
+                if (!row.jump1 && !row.jump2 && (row.jumpRelease || row.jumpCut))
+                    Label(new Rect(jumpX, y, 90 * scale, rowHeight), row.jumpRelease ? "release" : "cut", _overlayText, row.jumpRelease ? PanelText : MutedColor);
+                if (row.dash1) Label(new Rect(dashX, y, 40 * scale, rowHeight), "D1", _overlayText, DashColor);
+                if (row.dash2) Label(new Rect(dashX + 40 * scale, y, 40 * scale, rowHeight), "D2", _overlayText, DashColor);
             }
+            DrawInputPad(new Rect(0f, panel.yMax, width, padHeight), liveInput ?? _inputRows[_inputRows.Count - 1], scale);
+        }
+
+        const float PadHeight = 150f;
+
+        // Below the input list: the newest tick as buttons a player would use (outside playback: the player's own buttons, see
+        // SampleLiveInput). The stick's dot sits where MoveAxis points; a button is bright when it goes down and dim while held
+        // (the game never reads holding). JUMP CUT lights while a release's 0.26 s jump cut is armed (bright on the release);
+        // a jump press clears it.
+        void DrawInputPad(Rect pad, InputRow row, float scale)
+        {
+            Fill(pad, PanelBack);
+            Fill(new Rect(pad.xMax - 1, pad.y, 1, pad.height), PanelLine);
+            Fill(new Rect(pad.x, pad.yMax - 1, pad.width, 1), PanelLine);
+            float inset = 16 * scale, size = pad.height - 2 * inset;
+            Rect stick = new Rect(pad.x + 20 * scale, pad.y + inset, size, size);
+            Fill(stick, PanelBand);
+            Fill(new Rect(stick.center.x, stick.y, 1, stick.height), PanelLine);
+            Fill(new Rect(stick.x, stick.center.y, stick.width, 1), PanelLine);
+            float dot = 14 * scale, reach = (size - dot) / 2f;
+            bool neutral = row.x == 0f && row.y == 0f;
+            Fill(new Rect(stick.center.x + row.x * reach - dot / 2f, stick.center.y - row.y * reach - dot / 2f, dot, dot), neutral ? MutedColor : PanelText);
+
+            float gap = 8 * scale, left = stick.xMax + 28 * scale, button = (pad.xMax - 20 * scale - left - gap) / 2f, height = (size - 2 * gap) / 3f;
+            float middle = stick.y + height + gap, bottom = middle + height + gap;
+            PadButton(new Rect(left, stick.y, button, height), "JUMP 1", row.jump1, row.jump1Press, JumpColor);
+            PadButton(new Rect(left + button + gap, stick.y, button, height), "JUMP 2", row.jump2, row.jump2Press, JumpColor);
+            PadButton(new Rect(left, middle, button, height), "DASH 1", row.dash1, row.dash1Press, DashColor);
+            PadButton(new Rect(left + button + gap, middle, button, height), "DASH 2", row.dash2, row.dash2Press, DashColor);
+            PadButton(new Rect(left, bottom, 2 * button + gap, height), "JUMP CUT", row.jumpCut || row.jumpRelease, row.jumpRelease, PanelText);
+        }
+
+        void PadButton(Rect r, string text, bool down, bool pressed, Color color)
+        {
+            Fill(r, !down ? PanelBand : new Color(color.r, color.g, color.b, pressed ? 0.9f : 0.35f));
+            Label(r, text, _overlayPadButton, pressed ? PanelBack : down ? PanelText : MutedColor);
         }
     }
 }
