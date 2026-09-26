@@ -12,6 +12,7 @@ namespace IGTAPTasMod
         void QuickRestart(Movement movement)
         {
             RespawnMethod.Invoke(movement, new object[] { true });
+            if (_fullTas != null && _engine.IsRunning) _fullTas.QuickRestarted();
         }
 
         static string HierarchyPath(Transform t)

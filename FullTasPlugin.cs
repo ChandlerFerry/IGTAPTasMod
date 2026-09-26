@@ -187,7 +187,11 @@ namespace IGTAPTasMod
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     _fullTasWritten = File.GetLastWriteTimeUtc(FullTasPath);
+                    List<FullTasRunDef> previous = _fullTasRuns;
                     _fullTasRuns = JsonConvert.DeserializeObject<List<FullTasRunDef>>(text) ?? new List<FullTasRunDef>();
+                    foreach (FullTasRunDef run in _fullTasRuns)
+                        RetireOutdatedFullTasRoutes(run, previous != null
+                            && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
                     return;
                 }
             }
@@ -200,6 +204,40 @@ namespace IGTAPTasMod
         {
             WriteJsonAtomic(FullTasPath, _fullTasRuns, false);
             _fullTasWritten = File.GetLastWriteTimeUtc(FullTasPath);
+        }
+
+        // The run's goal labels, or its raw tokens while one doesn't resolve.
+        string[] FullTasLabels(FullTasRunDef run)
+        {
+            try { return ResolveFullTasGoals(run).Select(g => g.label).ToArray(); }
+            catch (InvalidOperationException) { return (run.goals ?? new List<string>()).ToArray(); }
+        }
+
+        bool FullTasRunChanged(FullTasRunDef old, FullTasRunDef run)
+        {
+            return old == null || old.start != run.start || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
+        }
+
+        // A gate route replays the goals it was judged against: once the run's goals or start change, its inputs chase the
+        // old goals and its time is no record of the new ones, so it's renamed "<name> stale" (out of FullTasBestRoute and
+        // CategoryBest). Its splits name its goals; a route without splits is retired only when a change is seen.
+        void RetireOutdatedFullTasRoutes(FullTasRunDef run, bool changed)
+        {
+            string[] labels;
+            try { labels = ResolveFullTasGoals(run).Select(g => g.label).ToArray(); }
+            catch (InvalidOperationException) { return; }
+            string category = FullTasCategory(run.name);
+            bool retired = false;
+            foreach (MacroDefinition m in _library.macros)
+            {
+                Match g = CategoryRoute.Match(m.name ?? "");
+                if (!g.Success || !string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
+                if (_fullTasSplits.TryGetValue(m.id, out List<FullTasSplit> splits) ? splits.Select(s => s.label).SequenceEqual(labels) : !changed) continue;
+                FullTasLog("Retired " + m.name + ": solved for other goals than " + run.name + "'s");
+                m.name += " stale";
+                retired = true;
+            }
+            if (retired) SaveLibrary();
         }
 
         FullTasRunDef FindFullTasRun(string name)
@@ -221,7 +259,7 @@ namespace IGTAPTasMod
         {
             string text = (token ?? "").Trim().ToLowerInvariant();
             Match m = FullTasToken.Match(text);
-            if (!m.Success) throw new InvalidOperationException("Unknown Full-TAS goal \"" + token + "\": start:<course>, finish:<course>, buy:<box>[+<box>...], reward:bonus<N> or at:<x>,<y>,<width>,<height>.");
+            if (!m.Success) throw new InvalidOperationException("Unknown Full-TAS goal \"" + token + "\": start:<course>, finish:<course>, buy:<box>[+<box>...], reward:bonus<N> or at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]].");
             string kind = m.Groups[1].Value, arg = m.Groups[2].Value.Trim();
             var goal = new FullTasGoal { kind = kind };
             if (kind == FullTasGoal.Start || kind == FullTasGoal.Finish)
@@ -244,11 +282,25 @@ namespace IGTAPTasMod
             }
             else if (kind == FullTasGoal.At)
             {
-                float[] rect = arg.Split(',').Select(p => float.TryParse(p.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : float.NaN).ToArray();
+                List<string> parts = arg.Split(',').Select(p => p.Trim()).ToList();
+                string from = parts.Count == 5 && parts[4].StartsWith("from=", StringComparison.Ordinal) ? parts[4].Substring("from=".Length) : null;
+                if (from != null) parts.RemoveAt(4);
+                float[] rect = parts.Select(p => float.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : float.NaN).ToArray();
                 if (rect.Length != 4 || rect.Any(float.IsNaN) || !(rect[2] > 0f) || !(rect[3] > 0f))
-                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": at:<x>,<y>,<width>,<height>, the checkpoint rect's centre and size in courses.json's frame.");
+                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]], the checkpoint rect's centre and size in courses.json's frame; sides "
+                        + string.Join(", ", FullTasGoal.SideNames) + ".");
                 goal.x = rect[0]; goal.y = rect[1]; goal.w = rect[2]; goal.h = rect[3];
                 goal.label = "at:" + string.Join(",", rect.Select(v => v.ToString("0.##", CultureInfo.InvariantCulture)));
+                if (from != null)
+                {
+                    foreach (string side in from.Split('+').Select(s => s.Trim()))
+                    {
+                        int bit = Array.IndexOf(FullTasGoal.SideNames, side);
+                        if (bit < 0) throw new InvalidOperationException("Full-TAS goal \"" + token + "\": from=" + side + " is not a side (" + string.Join(", ", FullTasGoal.SideNames) + ", joined with \"+\").");
+                        goal.from |= 1 << bit;
+                    }
+                    goal.label += ",from=" + string.Join("+", FullTasGoal.SideNames.Where((s, i) => (goal.from & 1 << i) != 0));
+                }
             }
             else
             {
@@ -273,6 +325,7 @@ namespace IGTAPTasMod
             if (at >= 0) _fullTasRuns[at] = run;
             else _fullTasRuns.Add(run);
             SaveFullTasRuns();
+            RetireOutdatedFullTasRoutes(run, FullTasRunChanged(old, run));
             return run;
         }
 
@@ -296,7 +349,7 @@ namespace IGTAPTasMod
         {
             public DateTime written;
             public List<string> goals;
-            public List<long> ticks;
+            public List<long> ticks, inputTicks;
             public List<SolverTick> inputs;
         }
         sealed class FullTasOffline
@@ -318,7 +371,7 @@ namespace IGTAPTasMod
             {
                 JObject o = JObject.Parse(File.ReadAllText(path));
                 var file = new FullTasOfflineFile { written = written, goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
-                    inputs = o["inputs"].ToObject<List<SolverTick>>() };
+                    inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
                 _fullTasOffline[run] = file;
                 return file;
             }
@@ -331,15 +384,18 @@ namespace IGTAPTasMod
 
         // The offline best measured against the run's current goals: its splits hold only while its goals match them, so
         // after a goals edit it reaches just the unchanged leading goals (a goal's time depends only on the goals before it).
+        // Its inputs end at the last of them: past it they head for a changed goal, or are a solver's miss at the next one.
         FullTasOffline FullTasOfflineBest(string run, IList<string> labels)
         {
             FullTasOfflineFile file = ReadFullTasOffline(run);
             if (file == null) return null;
-            var offline = new FullTasOffline { inputs = file.inputs, splits = new List<FullTasSplit>() };
+            var offline = new FullTasOffline { splits = new List<FullTasSplit>() };
             for (int i = 0; i < labels.Count && i < file.goals.Count && i < file.ticks.Count && file.ticks[i] >= 0 && file.goals[i] == labels[i]; i++)
                 offline.splits.Add(new FullTasSplit { label = labels[i], ticks = file.ticks[i] });
             offline.reached = offline.splits.Count;
             offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].ticks * Time.fixedDeltaTime;
+            int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
+            offline.inputs = file.inputs.GetRange(0, keep);
             return offline;
         }
 
@@ -401,12 +457,31 @@ namespace IGTAPTasMod
         }
 
         // Checked where the category finish boxes are (before the next tick's inputs): the offline engine checks the same
-        // collider overlap right after the tick.
+        // collider overlap right after the tick. A from= side needs the player's bounds at the check before.
         void FullTasCheckpoint(Movement player)
         {
+            Rect previous = _fullTasPlayerBounds;
+            _fullTasPlayerBounds = PlayerBounds(player);
             FullTasGoal g = _fullTas?.Current;
             if (g == null || g.kind != FullTasGoal.At || !_engine.IsRunning || !TouchesBox(player, g.x, g.y, g.w, g.h)) return;
+            Vector2 origin = CurrentOrigin();
+            float x0 = g.x - g.w / 2f + origin.x, y0 = g.y - g.h / 2f + origin.y;
+            if (!g.EnteredFrom(x0, x0 + g.w, y0, y0 + g.h, previous.xMin, previous.xMax, previous.yMin, previous.yMax)) return;
             FullTasEvent(_fullTas.Touched(_engine.RunTicks, _engine.PhysicsTicks));
+        }
+
+        Rect _fullTasPlayerBounds;
+
+        static Rect PlayerBounds(Movement player)
+        {
+            float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
+            foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
+            {
+                if (!box.enabled) continue;
+                Bounds b = box.bounds;
+                x0 = Mathf.Min(x0, b.min.x); y0 = Mathf.Min(y0, b.min.y); x1 = Mathf.Max(x1, b.max.x); y1 = Mathf.Max(y1, b.max.y);
+            }
+            return Rect.MinMaxRect(x0, y0, x1, y1);
         }
 
         void FullTasBought(upgradeBox box)
@@ -743,6 +818,7 @@ namespace IGTAPTasMod
                         w.WritePropertyName("rect"); w.WriteStartArray();
                         json.Float(g.x + origin.x); json.Float(g.y + origin.y); json.Float(g.w); json.Float(g.h);
                         w.WriteEndArray();
+                        if (g.from != 0) { w.WritePropertyName("from"); w.WriteValue(g.from); }
                     }
                     w.WriteEndObject();
                 }
@@ -802,8 +878,7 @@ namespace IGTAPTasMod
             if (body["ticks"] != null) return body["ticks"].ToObject<List<SolverTick>>();
             MacroDefinition best = FullTasBestRoute(run.name);
             if (best != null) return ToTicks(best.steps);
-            FullTasOfflineFile offline = ReadFullTasOffline(run.name);
-            return offline != null && offline.inputs.Count > 0 ? offline.inputs : new List<SolverTick>();
+            return FullTasOfflineBest(run.name, ResolveFullTasGoals(run).Select(g => g.label).ToList())?.inputs ?? new List<SolverTick>();
         }
 
         object FullTasTraceRequest(WebStudioRequest request, JObject body)
@@ -1191,6 +1266,7 @@ namespace IGTAPTasMod
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
                     command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog },
                 lastResult = _fullTasLastResult,
+                goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
                     next = play.tracker.Current?.label, droppedFrames = _droppedFrames } };

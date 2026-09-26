@@ -261,6 +261,24 @@ namespace IGTAP.EngineSim
             return false;
         }
 
+        // The player's enabled colliders' bounds (x0, x1, y0, y1): an at: goal's from= side checks them after the tick before.
+        (float, float, float, float) PlayerBounds()
+        {
+            float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
+            foreach (BoxCollider2D box in _playerColliders)
+            {
+                if (!box.enabled) continue;
+                Vector3 scale = box.transform.m_LossyScale;
+                Vector3 center = Player.transform.m_Position;
+                center.x += box.offset.x * scale.x;
+                center.y += box.offset.y * scale.y;
+                float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
+                x0 = MathF.Min(x0, center.x - hx); x1 = MathF.Max(x1, center.x + hx);
+                y0 = MathF.Min(y0, center.y - hy); y1 = MathF.Max(y1, center.y + hy);
+            }
+            return (x0, x1, y0, y1);
+        }
+
         internal void Touch(MonoBehaviour script)
         {
             if (script == Player || script is courseScript || !_touched.Add(script)) return;
@@ -320,6 +338,7 @@ namespace IGTAP.EngineSim
                 {
                     goal.x = rect[0].GetSingle(); goal.y = rect[1].GetSingle(); goal.w = rect[2].GetSingle(); goal.h = rect[3].GetSingle();
                 }
+                if (g.TryGetProperty("from", out JsonElement from)) goal.from = from.GetInt32();
                 if (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish)
                 {
                     if (!Courses.Any(c => c.courseNumber == goal.course)) throw new InvalidOperationException("Goal " + goal.label + ": course " + goal.course + " is not active in this world export.");
@@ -588,7 +607,12 @@ namespace IGTAP.EngineSim
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
                 bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
                 Scheduler.FireDue();
-                if (Engine.TakeQuickRestart()) RespawnMethod.Invoke(Player, new object[] { true });
+                (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
+                if (Engine.TakeQuickRestart())
+                {
+                    RespawnMethod.Invoke(Player, new object[] { true });
+                    Goals?.QuickRestarted();
+                }
                 Engine.BeforeTick(Player);
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
@@ -610,7 +634,8 @@ namespace IGTAP.EngineSim
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                     FullTasGoal now = Goals.Current;
-                    if (now != null && now.kind == FullTasGoal.At && Touches(now.x, now.y, now.w, now.h))
+                    if (now != null && now.kind == FullTasGoal.At && Touches(now.x, now.y, now.w, now.h)
+                        && now.EnteredFrom(now.x - now.w / 2f, now.x + now.w / 2f, now.y - now.h / 2f, now.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
                 stepped++;

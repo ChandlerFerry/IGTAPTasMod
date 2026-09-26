@@ -205,9 +205,12 @@ namespace IGTAPTasMod
 
         private void OnGUI()
         {
-            if (!_settings.showOverlay || Event.current.type != EventType.Repaint) return;
+            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun);
+            if (!(_settings.showOverlay || goals) || Event.current.type != EventType.Repaint) return;
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
+            if (goals) DrawFullTasGoals(scale);
+            if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             DrawSpikes(scale);
             DrawHitbox(scale);
@@ -619,6 +622,51 @@ namespace IGTAPTasMod
             Fill(new Rect(label.x + width / 2 - 130 * scale, label.y, 260 * scale, height), new Color(0f, 0f, 0f, 0.55f * color.a));
             Label(label, text, _overlayGraze, color);
         }
+
+        FullTasRunDef _goalOverlayRun;
+        FullTasGoal[] _goalOverlayGoals;
+
+        // The chosen run's checkpoint (at:) and bonus end (reward:) rects where TouchesBox tests them: courses.json's frame
+        // plus CurrentOrigin. While that run plays, reached goals are green and the next one yellow.
+        void DrawFullTasGoals(float scale)
+        {
+            Camera cam = Camera.main;
+            FullTasRunDef run = _fullTasRuns?.Find(r => string.Equals(r.name, _settings.fullTasGoalsRun, System.StringComparison.OrdinalIgnoreCase));
+            if (cam == null || run == null) return;
+            if (!ReferenceEquals(run, _goalOverlayRun))
+            {
+                _goalOverlayRun = run;
+                try { _goalOverlayGoals = ResolveFullTasGoals(run); }
+                catch (System.InvalidOperationException) { _goalOverlayGoals = new FullTasGoal[0]; }
+            }
+            FullTasTracker tracker = _fullTasPlay != null && _fullTasPlay.run.name == run.name ? _fullTasPlay.tracker : null;
+            Vector2 origin = CurrentOrigin();
+            float line = Mathf.Max(1f, Mathf.Round(2 * scale)), labelHeight = 22 * scale;
+            for (int i = 0; i < _goalOverlayGoals.Length; i++)
+            {
+                FullTasGoal g = _goalOverlayGoals[i];
+                if (g.kind != FullTasGoal.At && g.kind != FullTasGoal.Reward) continue;
+                var world = new Bounds(new Vector3(g.x + origin.x, g.y + origin.y, 0f), new Vector3(g.w, g.h, 0f));
+                Rect r = ScreenRect(cam, world);
+                if (r.xMax < 0 || r.yMax < 0 || r.xMin > Screen.width || r.yMin > Screen.height) continue;
+                Color color = tracker == null ? GoalColor : i < tracker.Next ? GoalReachedColor : i == tracker.Next ? GoalNextColor : GoalColor;
+                Fill(r, new Color(color.r, color.g, color.b, 0.12f));
+                Fill(new Rect(r.xMin, r.yMin, r.width, line), color);
+                Fill(new Rect(r.xMin, r.yMax - line, r.width, line), color);
+                Fill(new Rect(r.xMin, r.yMin, line, r.height), color);
+                Fill(new Rect(r.xMax - line, r.yMin, line, r.height), color);
+                float thick = line * 4;
+                if ((g.from & FullTasGoal.FromLeft) != 0) Fill(new Rect(r.xMin - thick, r.yMin, thick, r.height), color);
+                if ((g.from & FullTasGoal.FromRight) != 0) Fill(new Rect(r.xMax, r.yMin, thick, r.height), color);
+                if ((g.from & FullTasGoal.FromBottom) != 0) Fill(new Rect(r.xMin, r.yMax, r.width, thick), color);
+                if ((g.from & FullTasGoal.FromTop) != 0) Fill(new Rect(r.xMin, r.yMin - thick, r.width, thick), color);
+                Label(new Rect(r.xMin + 4 * scale, r.yMin - labelHeight, Mathf.Max(r.width, 420 * scale), labelHeight), (i + 1) + "  " + g.label, _overlaySmall, color);
+            }
+        }
+
+        static readonly Color GoalColor = new Color(0.3f, 0.85f, 1f, 0.95f);
+        static readonly Color GoalNextColor = new Color(1f, 0.85f, 0.2f, 0.95f);
+        static readonly Color GoalReachedColor = new Color(0.35f, 1f, 0.45f, 0.95f);
 
         static readonly Color HitboxColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);

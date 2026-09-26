@@ -100,7 +100,12 @@ namespace IGTAP.EngineSim.Cli
             if (!_fresh && File.Exists(_runFile))
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
-                Route run = Padded(Evaluate(Solve.ReadInputs(saved.RootElement)));
+                List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
+                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
+                if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
+                Route run = Padded(Evaluate(inputs));
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
@@ -221,6 +226,20 @@ namespace IGTAP.EngineSim.Cli
             _eval.Goals.Limit = limit < 0 ? _goals : limit;
             RunResult r = _eval.Run(inputs, null, null, 1000000);
             return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
+        }
+
+        // How many of a saved best's inputs still serve the trace's goals. Goals before the first changed one are unchanged;
+        // once the best reached all of them, what follows chased the changed goal, so it ends at the last one. A best that
+        // stops short of the change still heads for an unchanged goal and keeps all of its inputs.
+        static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
+        {
+            int changed = 0;
+            while (changed < solved.Length && changed < labels.Length && solved[changed] == labels[changed]) changed++;
+            if (changed == solved.Length && changed == labels.Length) return count;
+            int reached = 0;
+            while (reached < changed && reached < goalInputTicks.Length && goalInputTicks[reached] >= 0) reached++;
+            if (reached < changed) return count;
+            return changed == 0 ? 0 : (int)Math.Min(goalInputTicks[changed - 1], count);
         }
 
         // kind: "reach" (a goal the best never reached), "polish" (faster through goals it reaches), "repair" (re-finding later goals).
@@ -344,7 +363,8 @@ namespace IGTAP.EngineSim.Cli
             int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : !player.blockSwapUnlocked ? 3 : 4;
             List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
             if (matching.Count == 0) return starts;
-            bool restart = prefix.Count == 0 || !prefix[prefix.Count - 1].reset;
+            // A quick restart right after a checkpoint takes it back (FullTasTracker.QuickRestarted): those seeds only as they are.
+            bool restart = (prefix.Count == 0 || !prefix[prefix.Count - 1].reset) && (first == 0 || !_labels[first - 1].StartsWith("at:", StringComparison.Ordinal));
             _eval.SetStart(at, prefix.Count);
             _eval.Goals.Limit = _goals;
             int settle = -1;
