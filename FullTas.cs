@@ -9,11 +9,7 @@ namespace IGTAPTasMod
         public string kind;
         public int course;
         public string[] boxes;
-        // reward: the bonus's end rect (it finds the reward box); at: the area goal's rect the player's collider must touch.
-        // Centre and size in courses.json's frame; the trace header carries them in its world frame.
         public float x, y, w, h;
-        // at: the sides it must be entered from (FromLeft...; 0: any). Entered: the player's colliders overlap the rect
-        // after a tick and, after the tick before, were wholly outside it on one of these sides.
         public int from;
         public const int FromLeft = 1, FromRight = 2, FromBottom = 4, FromTop = 8;
         public static readonly string[] SideNames = { "left", "right", "bottom", "top" };
@@ -24,7 +20,6 @@ namespace IGTAPTasMod
             return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        // The player's collider bounds after the tick before (px0..px1, py0..py1, same frame as the rect) allow the entry.
         public bool EnteredFrom(float rx0, float rx1, float ry0, float ry1, float px0, float px1, float py0, float py1)
         {
             return from == 0
@@ -72,15 +67,12 @@ namespace IGTAPTasMod
             return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics);
         }
 
-        // The current goal is an area goal: the caller checked that the player touches its rect.
         public bool Touched(long input, long physics)
         {
             FullTasGoal g = Current;
             return g != null && g.kind == FullTasGoal.At && Reach(input, physics);
         }
 
-        // A quick restart right after an area goal (the last goal reached is an at:) takes that goal back: the run
-        // must pass it again on the way to the next goal, so it can't restart to hand the next window a fresh start.
         public void QuickRestarted()
         {
             if (Next == 0 || Next > Limit || Goals[Next - 1].kind != FullTasGoal.At) return;

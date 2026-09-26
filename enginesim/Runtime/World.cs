@@ -38,6 +38,8 @@ namespace IGTAP.EngineSim
         public readonly Dictionary<string, JsonElement> Physics2DSettings = new Dictionary<string, JsonElement>();
         public readonly int[] LayerCollisionMasks = new int[32];
         public readonly Dictionary<Transform, int> SiblingIndex = new Dictionary<Transform, int>();
+        /// <summary>The root transforms of the scene FloatingOrigin moves (UpdateAllScenes off: the active scene; the export's `activeScene`).</summary>
+        public readonly List<Transform> MovedRoots = new List<Transform>();
         public float FixedDeltaTime;
         public Assembly Game { get; } = typeof(Movement).Assembly;
         readonly Assembly _shim = typeof(Object).Assembly;
@@ -65,6 +67,7 @@ namespace IGTAP.EngineSim
             foreach (JsonElement n in root.GetProperty("layerNames").EnumerateArray()) Engine.LayerNames[i++] = n.GetString();
 
             var parents = new List<(GameObject go, int parent, int sibling)>();
+            var scenes = new Dictionary<GameObject, string>();
             foreach (JsonElement o in root.GetProperty("objects").EnumerateArray())
             {
                 var go = new GameObject(o.GetProperty("name").GetString());
@@ -84,6 +87,7 @@ namespace IGTAP.EngineSim
                 int sibling = o.GetProperty("siblingIndex").GetInt32();
                 SiblingIndex[t] = sibling;
                 parents.Add((go, o.GetProperty("parent").GetInt32(), sibling));
+                scenes[go] = o.TryGetProperty("scene", out JsonElement scene) ? scene.GetString() : "";
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray()) CreateComponent(go, c);
             }
             foreach (var (go, parent, sibling) in parents.OrderBy(p => p.sibling))
@@ -94,6 +98,12 @@ namespace IGTAP.EngineSim
             foreach (var (body, props) in _pendingBodies) FillBody(body, props);
             foreach (var (data, props) in _pendingColliders) FillCollider(data, props);
             foreach (JsonElement s in root.GetProperty("statics").EnumerateArray()) SetStatic(s);
+            FloatingOrigin floating = All<FloatingOrigin>().FirstOrDefault();
+            string active = root.TryGetProperty("activeScene", out JsonElement activeScene) ? activeScene.GetString()
+                : floating != null ? scenes[floating.gameObject] : null;
+            foreach (GameObject go in GameObjects)
+                if (go.transform.m_Parent == null && scenes[go] == active) MovedRoots.Add(go.transform);
+            MovedRoots.Sort((a, b) => SiblingIndex[a].CompareTo(SiblingIndex[b]));
         }
 
         void CreateComponent(GameObject go, JsonElement c)
@@ -153,7 +163,13 @@ namespace IGTAP.EngineSim
             Collider2D c = data.Collider;
             c.InitCollider(Vec2(props.GetProperty("offset")), props.GetProperty("isTrigger").GetBoolean(),
                 props.GetProperty("excludeLayers").GetInt32(), props.GetProperty("includeLayers").GetInt32(), props.GetProperty("enabled").GetBoolean());
-            if (c is BoxCollider2D box) box.InitSize(Vec2(props.GetProperty("size")));
+            if (c is BoxCollider2D box)
+            {
+                box.InitSize(Vec2(props.GetProperty("size")));
+                box.edgeRadius = props.GetProperty("edgeRadius").GetSingle();
+            }
+            if (c is CapsuleCollider2D capsule)
+                capsule.InitShape(Vec2(props.GetProperty("size")), props.GetProperty("direction").GetInt32());
             c.attachedRigidbody = Ref(props, "attachedRigidbody") as Rigidbody2D;
             c.usedByEffector = props.GetProperty("usedByEffector").GetBoolean();
             data.Friction = props.GetProperty("friction").GetSingle();

@@ -2,9 +2,6 @@
 
 import { useState } from "react";
 
-// The Full-TAS solve as the Studio shows it: the record, what the search is doing, what it found, and errors to copy.
-// Everything comes from the solver's "@fulltas" events (enginesim/Cli/FullTas.cs Emit), relayed by FullTasPlugin.
-
 export type FullTasSplit = { label: string; ticks: number };
 export type RouteJson = { progress: number; time: number | null; splits: number[] };
 export type FullTasEvent = { type: string; at: number } & Record<string, unknown>;
@@ -28,7 +25,6 @@ function upgradeName(token: string) {
   return `${what[m[1]]} (Course ${m[2] || "1"}${m[3] ? " " + m[3] : ""})`;
 }
 
-// A goal token in words: start:1 → "Start Course 1", at:7645,6050,230,1500,from=left → "Reach (7645, 6050) from the left".
 export function goalName(label: string | undefined | null): string {
   if (!label) return "?";
   const m = /^(start|finish|buy|reward|at):(.+)$/.exec(label);
@@ -58,7 +54,6 @@ const num = (v: unknown) => typeof v === "number" ? v : null;
 const str = (v: unknown) => typeof v === "string" ? v : "";
 
 type Tone = "best" | "progress" | "miss" | "info" | "warn" | "error";
-// `fold`: consecutive misses of the same kind collapse into one line.
 type Item = { key: string; at: number; tone: Tone; title: string; detail?: string; count?: number; fold?: "reach" | "polish" };
 type Window = { id: number; kind: string; first: number; limit: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; at: number };
 
@@ -83,7 +78,6 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
   return { key: `r${e.at}`, at: e.at, tone: "best", title: `Goal ${best.progress}/${of} now at ${s2(best.time)} (${delta(d)})`, detail: how };
 }
 
-// The feed, oldest first; runs of fruitless windows fold into one line.
 function feed(events: FullTasEvent[], goals: string[]): Item[] {
   const windows = new Map<number, Window>();
   const items: Item[] = [];
@@ -151,7 +145,6 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
   return items;
 }
 
-// Sentences joined with one period each: the reason may or may not end in one.
 function sentences(...parts: (string | null | undefined)[]) {
   return parts.filter(p => p && p.trim()).map(p => p!.trim().replace(/[.:]?$/, ".")).join(" ") || undefined;
 }
@@ -172,7 +165,7 @@ function outcomeText(r: FullTasOutcome): { title: string; detail?: string } {
 }
 
 async function copy(text: string) {
-  try { await navigator.clipboard.writeText(text); return; } catch { /* not a secure context: fall back */ }
+  try { await navigator.clipboard.writeText(text); return; } catch {  }
   const area = document.createElement("textarea");
   area.value = text;
   document.body.appendChild(area);
@@ -186,8 +179,6 @@ function CopyButton({ text, label = "Copy details" }: { text: () => string; labe
   return <button className="secondary copyButton" onClick={async () => { await copy(text()); setDone(true); window.setTimeout(() => setDone(false), 2000); }}>{done ? "Copied" : label}</button>;
 }
 
-// `goals`: the run's current goals; `route`: its best measured against them (the plugin trims splits to the goals that still
-// match). A finished solve against other goals is outdated: the panel shows the current goals and hides that solve's results.
 export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay, canPlay }: { solve: FullTasSolveState; goals: string[]; route: RouteJson | null;
   run: string; lastResult?: FullTasOutcome | null; onPlay: () => void; canPlay: boolean }) {
   const [dismissed, setDismissed] = useState<string>("");
@@ -211,7 +202,6 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
   const items = feed(events, labels);
   const lastRecord = records[records.length - 1];
 
-  // The newest solve problem worth reporting (a failed playback shows in its own outcome box).
   const problems: { key: string; text: string }[] = [];
   if (solve.error) problems.push({ key: `solve:${solve.error}`, text: solve.error });
   for (const e of events) {

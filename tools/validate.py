@@ -6,7 +6,6 @@ ROUTES = CONFIG / "routes.json"
 COURSES = CONFIG / "courses.json"
 LABELS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj", "WJ_DS_DJ_BS": "wjdsdjbs"}
 
-
 def submit(body):
     request = urllib.request.Request("http://127.0.0.1:17426/api/enginesim/submit", json.dumps(body).encode())
     try:
@@ -14,7 +13,6 @@ def submit(body):
             return json.load(response)
     except urllib.error.HTTPError as error:
         return json.loads(error.read())
-
 
 def check(route, body, label):
     body = dict(body, routeId=route["id"])
@@ -27,7 +25,6 @@ def check(route, body, label):
     saved = "".join(f", saved as {kind}" for kind, key in (("record", "saved"), ("farm", "farmSaved")) if r.get(key))
     result = f"OK  {r['time']:.2f}s, run {r['runTicks']} ticks{saved}" if ok else "FAIL " + json.dumps(r)
     print(f"{route['name']:34} {label:16} {result}")
-
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")

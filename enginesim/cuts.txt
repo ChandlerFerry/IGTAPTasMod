@@ -33,6 +33,7 @@ Movement::FallingSquashStretch
 Movement::DisableAllWallslideParticles
 Movement::DoReverseCurrentAch
 # Freezes Time.timeScale for a moment; turbo steps with an explicit fixed dt and nothing reached reads timeScale.
+# hooks.txt still reports the call (OnTimeStop) so `probe` can model the freeze's extra Update frames.
 Movement::TimeStop
 cameraMover::NewPlayersetOffset
 cameraMover::playerRespawned

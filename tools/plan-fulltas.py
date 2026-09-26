@@ -38,10 +38,8 @@ OFFSCREEN = 51
 TAIL = ["start:2", "finish:2", "reward:bonus2", "start:3", "reward:bonus3", "start:3", "finish:3"]
 FOREVER = 10 ** 8
 
-
 def f32(x):
     return struct.unpack("f", struct.pack("f", x))[0]
-
 
 @functools.lru_cache(maxsize=None)
 def reward(base, tier, n, g):
@@ -49,21 +47,17 @@ def reward(base, tier, n, g):
     r = r * (1.0 + 0.0) * (1.0 + 0.0 * (100.0 / 100.0)) * 1.0 * 1.0 * math.pow(10.0, tier)
     return math.ceil(math.pow(math.ceil(r), 1.0 + 0.0))
 
-
 def mult(m):
     return 0.1 + 0.0 * 0.2 + m * 0.1
-
 
 @functools.lru_cache(maxsize=None)
 def clone_pay(r, m):
     return math.ceil(r * 1.0 * mult(m) * 1.0)
 
-
 def offscreen_pay(r, m, clones, path_ticks):
     if clones == 0:
         return 0
     return math.ceil(r * 1.0 * mult(m) * 1.0 * 1.0 / f32(f32(f32(path_ticks * 0.02) / clones) / 1.0))
-
 
 @functools.lru_cache(maxsize=None)
 def box_cost(b, k):
@@ -81,14 +75,11 @@ def box_cost(b, k):
             c = math.ceil(c * 1.45)
     return c
 
-
 C1_PAY = offscreen_pay(reward(1, 0, C1_BUYS, C1_GLOBAL), 0, C1_CLONES, C1_PATH)
-
 
 def move(a, b):
     k = abs(ROW[a] - ROW[b])
     return REPEAT if k == 0 else round(5 + 180 * k / 9.2)
-
 
 def wait_for(s, cost, deadline):
     need = cost - s.cash
@@ -105,7 +96,6 @@ def wait_for(s, cost, deadline):
             lo = mid
     s.advance(hi)
     return True
-
 
 class State:
     __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "clones", "c1next", "where", "prev", "tokens", "what")
@@ -183,7 +173,6 @@ class State:
         s.where = b
         return s
 
-
 def start_state(cash):
     s = State.__new__(State)
     s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, FIRST_LAP
@@ -192,7 +181,6 @@ def start_state(cash):
     s.advance(ARRIVE)
     s.tokens, s.what = ("start:2",), "restart, bonus1to2 to Course 2's start gate"
     return s
-
 
 def dominated(best, s):
     levels = (s.n, s.N, s.m, s.g)
@@ -206,7 +194,6 @@ def dominated(best, s):
                 if e is not None and e[0] + e[1] * s.t >= s.cash:
                     return True
     return False
-
 
 def search(s0):
     order = itertools.count()
@@ -226,7 +213,6 @@ def search(s0):
             heapq.heappush(heap, (x.t, next(order), x))
     raise SystemExit("dash is never affordable")
 
-
 def stage1_options(s, force=False):
     options = [s.lap()]
     for b in "RCMGD":
@@ -234,7 +220,6 @@ def stage1_options(s, force=False):
         if s.where in ROW:
             options.append(s.buy(b, True, force))
     return [x for x in options if x is not None]
-
 
 def replay(s, goals, options):
     i = 0
@@ -249,8 +234,6 @@ def replay(s, goals, options):
         i += len(s.tokens)
     return s
 
-
-
 LATE_LAP = {1: (53, 47),
             2: (89, 78),
             3: (233, 217),
@@ -260,11 +243,9 @@ TAIL_STEPS = [("restart, Course 2 lap", LEAD + 89, 0), ("2tobonus2 + bonus2", 34
               ("bonus2to3 to Course 3's gate", 189, 0), ("bonus3", 170, 1), ("restart, Course 3 lap", 29 + 233, 0)]
 TRANSIT = {(3, 1): 600, (1, 2): 242, (2, 3): 537, (3, 4): 1200, (3, 5): 600 + 620, (5, 4): 620 + 242 + 537 + 1200}
 
-
 def guess_ticks(frm, to):
     dx, dy = to[0] - frm[0], to[1] - frm[1]
     return round(20 + abs(dx) / 9.2 + max(dy, 0) / 6 + max(-dy, 0) / 20)
-
 
 DETOUR = {"reward:bonus5": guess_ticks((9505, 6971), (6350, 6088)),
           "reward:bonus4": guess_ticks((-3282, -294), (-3104, -2102)),
@@ -274,7 +255,6 @@ DETOUR = {"reward:bonus5": guess_ticks((9505, 6971), (6350, 6088)),
           "reward:bonus7": guess_ticks((20201, 10556), (15277, 11802)),
           "reward:bonus6": guess_ticks((20201, 10556), (10032, 14330)),
           "reward:bonus16": guess_ticks((20201, 10556), (-325, 14330))}
-
 
 @functools.lru_cache(maxsize=None)
 def roll_mult(fast, big, max_fast, max_big):
@@ -288,7 +268,6 @@ def roll_mult(fast, big, max_fast, max_big):
         return dist + [p_reach]
     return sum(pi * pj * (2 * j + 1) * (1 + 0.35 * i) * 0.75 ** j
                for i, pi in enumerate(tiers(fast * 5.0, max_fast)) for j, pj in enumerate(tiers(big * 5.0, max_big)))
-
 
 class Box:
 
@@ -307,7 +286,6 @@ class Box:
             c = self._costs[-1] + self.add
             self._costs.append(round(c * self.scale) if self.kind == "G" else math.ceil(math.ceil(c * self.scale)))
         return self._costs[k]
-
 
 class Course:
 
@@ -352,7 +330,6 @@ class Course:
         self.tier, self.rtier = tier, rtier
         if reset_path:
             self.P = None
-
 
 def late_courses(dash):
     c1 = Course(1, 1, 0.0, 1.0, 2241, 29, {"R": Box("buyreward", 1744, 1, 1.1, cap=40, kind="R"),
@@ -400,7 +377,6 @@ def late_courses(dash):
                                               "e": Box("reward:bonus15", -8477, 0, kind="G", off=DETOUR["reward:bonus15"])})
     return {1: c1, 2: c2, 3: c3, 4: c4, 5: c5}
 
-
 class Phase:
 
     def __init__(self, course, keys, required, need_lap, other_rate, glob, lap):
@@ -422,7 +398,6 @@ class Phase:
         roll = roll_mult(lv[a["F"]] if "F" in a else self.c.level.get("F", 0), lv[a["B"]] if "B" in a else self.c.level.get("B", 0),
                          self.max_fast + (lv[a["S"]] if "S" in a else 0), self.max_big + (lv[a["Z"]] if "Z" in a else 0))
         return math.ceil(self.reward(lv, g) * (0.1 + self.gm * 0.2 + m * 0.1)) * roll
-
 
 class LateState:
     __slots__ = ("ph", "t", "cash", "lv", "g", "P", "clones", "where", "lapped", "prev", "tokens", "what")
@@ -491,7 +466,6 @@ class LateState:
         s.where = k
         return s
 
-
 def late_options(s, force=False):
     options = [s.lap()]
     c = s.ph.c
@@ -500,7 +474,6 @@ def late_options(s, force=False):
         if c.on_row(s.where) and c.on_row(k):
             options.append(s.buy(i, True, force))
     return [x for x in options if x is not None]
-
 
 def late_greedy(s0, lap_income=False):
     ph = s0.ph
@@ -517,14 +490,12 @@ def late_greedy(s0, lap_income=False):
         steps += 1
     return s, steps
 
-
 MAIN_PHASES = [(3, "RCMGFSP", {"S": 1, "P": 1}, False, "clone speed max + statue"),
                (1, "RC", "caps", True, "Course 1 bought out"),
                (2, "RCM", "caps", True, "Course 2 bought out"),
                (3, "RCMGFJ", {"J": 1}, True, "double jump"),
                (4, "RCMFBZQ", {"Q": 1}, True, "Boost all previous courses"),
                (4, "RCMFBZW", {"W": 1}, False, "Activate orange blocks")]
-
 
 class Late:
 
@@ -666,7 +637,6 @@ class Late:
             if c.boxes[k].kind == "X" and c.level[k] > before[k]:
                 self.bought(c.boxes[k].token)
 
-
 def late_plan(dash, verbose):
     run = Late(dash, verbose)
     run.tail()
@@ -674,19 +644,15 @@ def late_plan(dash, verbose):
         run.phase(*phase)
     return run.tokens[len(TAIL):], run.t
 
-
-
 ANY_OPTIONS = {"reward:bonus5": (3, None), "reward:bonus4": (5, "d"), "reward:bonus15": (5, "e"), "buyfree5": (5, "X"),
                "buyglobalreward4": (4, "H"), "reward:bonus7": (4, "a"), "reward:bonus6": (4, "b"),
                "reward:bonus16": (4, "c")}
-
 
 def goal_course(cs, goal):
     kind, _, arg = goal.partition(":")
     if kind in ("start", "finish"):
         return int(arg)
     return next((n for n, c in cs.items() if any(b.goal == goal for b in c.boxes.values())), None)
-
 
 def any_prefix(run_name, verbose):
     runs = json.load(open(FULLTAS, encoding="utf-8"))
@@ -725,7 +691,6 @@ def any_prefix(run_name, verbose):
     assert stage1 + late.tokens == after, "the replay's goals differ from the run's"
     return keep, late
 
-
 def any_tail(base, choice, quiet, verbose=False):
     run = copy.deepcopy(base)
     run.quiet, run.verbose, run.tokens, run.steps, run.lap_income = quiet, verbose, [], [], True
@@ -741,7 +706,6 @@ def any_tail(base, choice, quiet, verbose=False):
     run.phase(4, "RCMFBZV" + "".join(extra[4]), dict(V=1, **extra[4]), True, "SwapBlocksOnDash")
     return run
 
-
 def any_choose(base):
     choice = dict({goal: False for goal in ANY_OPTIONS}, G5=0)
     end = any_tail(base, choice, True).t
@@ -756,7 +720,6 @@ def any_choose(base):
             return choice, end, tried
         end, _, choice = best
 
-
 def invalid_goals(goals):
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "..", "FullTasPlugin.cs"), encoding="utf-8") as f:
@@ -770,7 +733,6 @@ def invalid_goals(goals):
                 or kind == "reward" and arg in bonuses):
             bad.append(g)
     return bad
-
 
 def any_plan(run_name, out, verbose):
     keep, base = any_prefix(run_name, verbose)
@@ -832,7 +794,6 @@ def any_plan(run_name, out, verbose):
         with open(out, "w", encoding="utf-8") as f:
             json.dump(goals, f, indent=2)
         print(f"wrote {len(goals)} goals to {out}")
-
 
 def main():
     global LAP, LEAD, ARRIVE, FIRST_LAP
@@ -921,7 +882,6 @@ def main():
         with open(FULLTAS, "w", encoding="utf-8") as f:
             json.dump(runs, f, indent=2)
         print(f"wrote {len(run['goals'])} goals ({len(keep)} kept) to {FULLTAS} run {a.run}")
-
 
 if __name__ == "__main__":
     main()

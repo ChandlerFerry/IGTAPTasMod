@@ -27,7 +27,6 @@
   color: #ffe1ad;
 }
 
-/* Settings: one row of toggles; each explains itself on hover. */
 .toggleBar {
   background: #0b1c31;
   border-bottom: 1px solid var(--line);
@@ -94,4 +93,3 @@
 .capabilityLock.executable.on strong {
   color: var(--cyan);
 }
-

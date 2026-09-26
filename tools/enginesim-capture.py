@@ -29,7 +29,6 @@ CATEGORIES = [(1, "wjdsdj"), (1, "wjds"), (1, "wj"), (1, "none"), (2, "wjdsdj"),
               (3, "wjdsdj"), (3, "wjds"), (4, "wjdsdj"), (5, "wjdsdj"), (COURSE_IDS["bonus1"], "wj"),
               (11, "wjdsdjbs"), (12, "wjdsdjbs"), (13, "wjdsdjbs"), (14, "wjdsdjbs"), (15, "wjdsdjbs")]
 
-
 def call(path, body=None, method="POST"):
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(API + path, data=data, method=method)
@@ -39,7 +38,6 @@ def call(path, body=None, method="POST"):
     except urllib.error.HTTPError as error:
         return json.loads(error.read())
 
-
 def trace(body):
     body = dict(body, world=True, freshStart=True)
     for _ in range(20):
@@ -48,7 +46,6 @@ def trace(body):
             return result
         time.sleep(3)
     return result
-
 
 def random_inputs(rng, n, dash):
     ticks, x = [], 1.0
@@ -70,7 +67,6 @@ def random_inputs(rng, n, dash):
             if rng.random() < .4:
                 d["dashJump"] = rng.randint(1, 10)
     return ticks
-
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "routes"
@@ -106,7 +102,6 @@ def main():
         print({k: v for k, v in r.items() if k != "path"})
     else:
         sys.exit(__doc__)
-
 
 if __name__ == "__main__":
     main()

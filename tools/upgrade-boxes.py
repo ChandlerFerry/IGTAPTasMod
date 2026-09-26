@@ -18,7 +18,6 @@ MOVEMENT = "dash wallJump doubleJump swapBlocksOnce unlockBlockSwap endDemo Omni
 CURRENCY = ["W", "GP", "NP", "number", "CD", "RP", "BP"]
 ROW_BAND = 60
 
-
 def load(path):
     world = json.load(open(path, encoding="utf-8-sig"))
     objects = world["objects"]
@@ -33,7 +32,6 @@ def load(path):
                 origin = (p["x"], p["y"])
     return objects, ref, origin
 
-
 def hierarchy(o, ref):
     names = []
     while o:
@@ -41,19 +39,14 @@ def hierarchy(o, ref):
         o = ref.get(o.get("parent"))
     return "/".join(reversed(names))
 
-
 def component(o, kind):
     return next((c for c in o["components"] if c["type"] == kind), None)
-
 
 def fields(c):
     return {f[1]: f[2] for f in c.get("fields", [])}
 
-
-# The export's positions are in its capture's scene frame; courses.json's are the game world's (scene - FloatingOrigin).
 def place(p, origin):
     return p["x"] - origin[0], p["y"] - origin[1]
-
 
 def trigger(o, origin):
     for c in o["components"]:
@@ -61,7 +54,6 @@ def trigger(o, origin):
             b = c["props"]["bounds"]
             return (*place(b["m_Center"], origin), 2 * b["m_Extents"]["x"], 2 * b["m_Extents"]["y"])
     return None
-
 
 def courses(objects, ref, origin):
     out = {}
@@ -75,7 +67,6 @@ def courses(objects, ref, origin):
         reset = place(ref[fields(gate)["resetPoint"]["$ref"]]["position"], origin)
         out[fields(component(course, "courseScript"))["courseNumber"]] = (hierarchy(course, ref), reset)
     return out
-
 
 def boxes(objects, ref, course_paths, origin):
     out = []
@@ -98,7 +89,6 @@ def boxes(objects, ref, course_paths, origin):
                     "course": course, "end": trigger(o, origin)})
     return out
 
-
 def classify(box, rows):
     if not box["active"]:
         return "not in the world yet"
@@ -106,7 +96,6 @@ def classify(box, rows):
         return "bonus"
     row = rows.get(box["course"])
     return "course-side" if row is not None and abs(box["y"] - row) <= ROW_BAND else "out of the way"
-
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -164,7 +153,6 @@ def main():
         next_name += 1
     json.dump(known, open(CONFIG / "courses.json", "w", encoding="utf-8"), indent=2)
     print("\ncourses.json: " + ("\n  ".join(["added"] + added) if added else "nothing new"))
-
 
 if __name__ == "__main__":
     main()

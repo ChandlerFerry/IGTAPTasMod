@@ -28,8 +28,6 @@ namespace IGTAPTasMod
             public int toCourse;
             public string minCapabilities;
             public string maxCapabilities;
-            // Courses 11-15 are Courses 1-5 with Area 1 overgrown (globalStats.area1states.Overgrown): the game's own
-            // courseScript, start gate and timer (courseNumber id - 10) on the overgrown terrain.
             public bool overgrown;
             [JsonIgnore] public int GameCourse { get { return overgrown ? id - 10 : id; } }
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
@@ -37,8 +35,6 @@ namespace IGTAPTasMod
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
-            // A bonus runs only in its first category unless courses.json gives maxCapabilities; a course or transition
-            // runs up to its maxCapabilities, or to the top category when it has none.
             [JsonIgnore] public int MaxLevel { get { return !string.IsNullOrEmpty(maxCapabilities) ? CapsLevel(maxCapabilities) : IsBonus ? MinLevel : TopLevel; } }
             public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && level <= MaxLevel; }
         }
@@ -48,10 +44,10 @@ namespace IGTAPTasMod
             public float x, y; public bool held, press, release, dash; public int dashJump;
             public int springDash;
             public float? lockX, lockY;
+            public float? turnX;
             public bool reset;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
-
 
         static readonly FieldInfo CourseTrackingFlag = AccessTools.Field(typeof(courseScript), "tracking");
 
@@ -255,10 +251,6 @@ namespace IGTAPTasMod
         static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
         List<(startGate gate, int zone)> _gateZones = new List<(startGate, int)>();
 
-        // A start gate is on only while its zone is loaded: it sits under a DisableBits object in that zone's
-        // ZoneDisableLoadList (Courses 1-5 zone 1, Courses 6-10 zone 2), and Movement.respawn never changes zone. Load
-        // the zone of the start gate nearest a route's start the way the game's zone activators do (ZoneLoader), minus
-        // their two-frame wait and loading text. Starts with no gate within 1000 units keep the loaded zone.
         void EnsureZone(CourseDef def)
         {
             ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
@@ -279,8 +271,6 @@ namespace IGTAPTasMod
 
         bool IsOvergrownCourse(string token) { return int.TryParse(token, out int id) && _courses.Exists(c => c.id == id && c.overgrown); }
 
-        // The save's own Area 1 state while a route runs Area 1 in another one; saves wait until it is back (BlockSharedSave).
-        // Kept with the globalStats it belongs to: a scene load (a new game, the menu) brings back the save's own state.
         globalStats.area1states? _savedArea1StateValue;
         globalStats _savedArea1StateOwner;
 
@@ -289,9 +279,6 @@ namespace IGTAPTasMod
             get { return _savedArea1StateOwner != null && _savedArea1StateOwner == Singleton<globalStats>.Instance ? _savedArea1StateValue : null; }
         }
 
-        // Courses 11-15 run with Area 1 overgrown, Courses 1-5 without it (normal, or the save's tripped breaker); every
-        // other route runs in the save's own state. The state is set as the game's a1Statesetter does and applied as its
-        // ZoneLoader does (OvergrowthLoadScript.OnLoad: the overgrowth terrain, moss, spikes, zip movers and checkpoints).
         void EnsureArea1State(CourseDef def)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -311,8 +298,6 @@ namespace IGTAPTasMod
             return own;
         }
 
-        // Courses 1 and 11 (and so on) start at the same gate: being parked there is not enough, Area 1 must be in the
-        // target's state too.
         bool Area1StateReady(CourseDef def)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -341,7 +326,6 @@ namespace IGTAPTasMod
         static readonly FieldInfo CourseBestPathTimeField = AccessTools.Field(typeof(courseScript), "bestPathTime");
         static readonly FieldInfo CourseClonesField = AccessTools.Field(typeof(courseScript), "clones");
 
-        // A course's best run as the game keeps it: the time on its sign and the path its clones replay (courseScript.save).
         sealed class CourseBest
         {
             public float time, pathLength;
@@ -355,13 +339,10 @@ namespace IGTAPTasMod
                     scales = clones.cloneScales, sprites = clones.cloneSprites, endVelocity = clones.cloneEndVelocity };
             }
 
-            // No best yet, as the game leaves a course when overgrowth resets it (courseScript/clonesScript.onPrestige with
-            // isResettingCloneTime): the time and the path length go, the path stays.
             public CourseBest Reset() { var b = (CourseBest)MemberwiseClone(); b.time = 1E+11f; b.pathLength = 1E+16f; return b; }
 
             public void Apply(courseScript course, clonesScript clones)
             {
-                // updateClonePath first drops the clones on the way, whose path pointers index the old path.
                 if (path != null && path.Length >= 10) clones.updateClonePath(path, sprites, scales, pathLength);
                 else { clones.clonePath = path; clones.cloneSprites = sprites; clones.cloneScales = scales; clones.pathLength = pathLength; }
                 clones.cloneEndVelocity = endVelocity;
@@ -371,9 +352,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // Courses 1-5 and 11-15 are the same courseScripts, so the game keeps one best per course. Each Area 1 state gets
-        // its own: switching between overgrown and not puts the other state's best on the course (none the first time),
-        // so the sign shows that state's best and its finishes neither read nor replace the other's time or clone path.
         readonly Dictionary<courseScript, CourseBest> _otherArea1Bests = new Dictionary<courseScript, CourseBest>();
 
         void SwapArea1CourseBests()
@@ -442,7 +420,6 @@ namespace IGTAPTasMod
         OptionalBlock[] _optionalBlocks = new OptionalBlock[0];
         DateTime _optionalBlocksRead;
 
-        // The optional blocks of forced-paths.json next to the offline solver, reread when the file changes.
         IEnumerable<OptionalBlock> OptionalBlocks(int course)
         {
             string exe = EngineSimExe;
@@ -633,6 +610,8 @@ namespace IGTAPTasMod
         }
 
         Vector2 _startOrigin;
+        /// <summary>A tech demo's own start for the next start capture (EngineSimTechTrace): its savestate and the omnidirectional dash.</summary>
+        TechDef _techStart;
 
         void PumpSolver()
         {
@@ -658,7 +637,6 @@ namespace IGTAPTasMod
             if (_newGamePhase != 0 || _bootstrapRequest != null) { _solverStatus = _newGamePhase != 0 ? "Loading a new game" : "Waiting for the bootstrap"; return; }
             if (!CourseLoaded()) return;
             CourseDef course = _solverTarget;
-            // Parked at the course: the live player keeps its category's unlocks, so a run can be recorded there by hand.
             if (!CapabilitiesLocked) ApplyAbilities(FindWorldMovement(), _solveCaps);
             string name = "optimize-c" + course.Token + "-" + _solveCaps;
             JObject body = (JObject)target.DeepClone();
@@ -740,7 +718,28 @@ namespace IGTAPTasMod
             return RunEngineSimMap(request, args.ToString(), output);
         }
 
-        // Runs `IGTAP.EngineSim map ...` off the request thread and answers with the map JSON it writes to `output`.
+        // The Ultra map: every floor a hyper lands on in the VMAN Full-TAS run's world (the Vman speedrun's start, the
+        // only place with the omnidirectional dash) and the ultras (the game's "Did an ultra!" hyper) two chained
+        // wavedashes reach from launch points along them. Served from the last result unless `refresh`.
+        object EngineSimUltras(WebStudioRequest request, JObject body)
+        {
+            string trace = FullTasTracePath("VMAN");
+            if (!File.Exists(trace))
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No VMAN trace yet: capture the VMAN Full-TAS run's start or solve it once first." };
+            }
+            string output = Path.Combine(EngineSimDir, "ultras-VMAN.json");
+            if (File.Exists(output) && !Truthy(body, "refresh"))
+            {
+                request.AsyncHandling = true;
+                request.Response = File.ReadAllText(output);
+                request.Completed.Set();
+                return null;
+            }
+            return RunEngineSimMap(request, "ultras " + Quote(trace) + " --courses " + Quote(CoursesPath) + " --out " + Quote(output), output);
+        }
+
         object RunEngineSimMap(WebStudioRequest request, string args, string output)
         {
             if (_mapRunning)
@@ -870,6 +869,11 @@ namespace IGTAPTasMod
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
             List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
+            if (_techStart != null && _techStart.omniDash)
+            {
+                savedAbilities.Add(("omniDashUnlocked", GetMovementField(player, "omniDashUnlocked")));
+                SetMovementField(player, "omniDashUnlocked", true);
+            }
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -877,7 +881,8 @@ namespace IGTAPTasMod
             if (from == null)
             {
                 foreach (courseScript c in _solverCourses) if (c != null) CourseTrackingFlag.SetValue(c, false);
-                _pendingSilentMacro = new MacroDefinition { id = "solver", name = "Solver", steps = ToSteps(inputs) };
+                _pendingSilentMacro = new MacroDefinition { id = "solver", name = "Solver", steps = ToSteps(inputs),
+                    savestateId = _techStart == null ? null : TechRoute(_techStart)?.savestateId };
             }
             else
             {
@@ -920,8 +925,6 @@ namespace IGTAPTasMod
         string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
             : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
 
-        // Farm routes: a course's fewest physics ticks from the route start (the quick restart) to the finish. Bonuses and
-        // transitions are timed in those ticks already, and Full-TAS runs have no laps, so only courses keep one.
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
 
         static string FarmSeconds(long ticks) { return (ticks * (double)Time.fixedDeltaTime).ToString("0.00", CultureInfo.InvariantCulture); }
@@ -952,7 +955,6 @@ namespace IGTAPTasMod
         static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
 
-        // A record route ranks by its name's game time, a farm route by its name's farm time; each kind keeps its own best.
         static bool RankedRoute(string name, out string key, out float time)
         {
             Match g = CategoryRoute.Match(name ?? "");
@@ -984,6 +986,7 @@ namespace IGTAPTasMod
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, springDash = i == 0 ? s.springDashFrame : 0,
                         lockX = i == 0 ? s.lockMoveX : null, lockY = i == 0 ? s.lockMoveY : null,
+                        turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null,
                         reset = i == 0 && s.rawQuickRestart });
             return ticks;
         }
@@ -1008,6 +1011,7 @@ namespace IGTAPTasMod
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
+                    dashTurnX = k.dash ? k.turnX : null,
                     rawQuickRestart = k.reset });
             }
             return steps;

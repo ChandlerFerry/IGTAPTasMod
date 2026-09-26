@@ -15,13 +15,15 @@ namespace IGTAP.EngineSim
         public int dashJump;
         public int springDash;
         public float? lockX, lockY;
+        /// <summary>On a dash tick: the stick x held in the dash's freeze, before the next tick (MacroStep.dashTurnX).</summary>
+        public float? turnX;
         public bool reset;
 
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
-        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && reset == o.reset; }
+        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && reset == o.reset; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
-        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, reset)); }
+        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, reset)); }
 
         public static InputTick FromJson(JsonElement t)
         {
@@ -37,11 +39,12 @@ namespace IGTAP.EngineSim
                 springDash = t.TryGetProperty("springDash", out JsonElement springDash) ? springDash.GetInt32() : 0,
                 lockX = t.TryGetProperty("lockX", out JsonElement lockX) && lockX.ValueKind == JsonValueKind.Number ? lockX.GetSingle() : null,
                 lockY = t.TryGetProperty("lockY", out JsonElement lockY) && lockY.ValueKind == JsonValueKind.Number ? lockY.GetSingle() : null,
+                turnX = t.TryGetProperty("turnX", out JsonElement turnX) && turnX.ValueKind == JsonValueKind.Number ? turnX.GetSingle() : null,
                 reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
             };
         }
 
-        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, reset }; }
+        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, turnX, reset }; }
     }
     public sealed class RunResult
     {
@@ -73,6 +76,10 @@ namespace IGTAP.EngineSim
         public UnityEngine.Random.State Random;
         public int Waypoints;
         public double VmanTimeLeft;
+        /// <summary>The FloatingOrigin rebases so far (each MoveOrigin's reference position, in order), and one waiting for the next physics step.</summary>
+        public Vector3[] Rebases;
+        public Vector3 RebasePending;
+        public bool RebaseDue;
     }
 
     public sealed class Simulation
@@ -102,9 +109,6 @@ namespace IGTAP.EngineSim
         string _endReason;
         readonly Dictionary<MonoBehaviour, object[]> _pristine = new Dictionary<MonoBehaviour, object[]>();
         readonly HashSet<MonoBehaviour> _touched = new HashSet<MonoBehaviour>();
-        // The last field capture of each touched script and course. A capture reuses it while nothing in it changed, so the
-        // archive's snapshots share one array per unchanged script (a Full-TAS world's ~100 touched scripts were 130 KB of
-        // each 160 KB snapshot). Sharing is safe: Restore copies what it applies, and nothing writes a captured array.
         readonly Dictionary<object, object[]> _captured = new Dictionary<object, object[]>();
 
         object[] CaptureShared(object target)
@@ -114,8 +118,6 @@ namespace IGTAP.EngineSim
         }
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
-        // A Vman speedrun's clock: VmanScript.vmanTimeLeft is a static in the game, kept per simulation here because the
-        // search's workers share the process's statics. VmanScript.isCurrentlyVman comes from the world export's statics.
         double _vmanTimeLeft;
         bool _vmanBlockEnding;
 
@@ -126,11 +128,16 @@ namespace IGTAP.EngineSim
             Player = world.All<Movement>().First(m => m.gameObject.activeInHierarchy && !(bool)typeof(Movement).GetField("isOnMainMenu",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(m));
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
-            Origin = world.All<FloatingOrigin>().Select(o => o.currentOrigin).FirstOrDefault();
+            _floating = world.All<FloatingOrigin>().FirstOrDefault();
+            Origin = _floating?.currentOrigin ?? Vector3.zero;
+            _rebaseThreshold = _floating?.Threshold ?? float.PositiveInfinity;
+            _rebase2D = _floating?.Use2DDistance ?? false;
+            var moved = new List<Transform>();
+            foreach (Transform root in world.MovedRoots) CollectTree(root, moved);
+            _moved = moved.ToArray();
+            _movedPristine = _moved.Select(t => (t.m_Position, t.m_LocalPosition)).ToArray();
             Physics = new PhysicsWorld(world, this);
             IGTAP.EngineSim.Engine.Physics = Physics;
-            // Every toggle in a run, the game's own included (colouredBlockSwapper.swapBlocks turns the blue/orange
-            // colliders on and off), is put back by Restore: a branch must not start from the last run's blocks.
             IGTAP.EngineSim.Engine.ActiveChanging = g => _activeAsLoaded.TryAdd(g, g.activeSelf);
             IGTAP.EngineSim.Engine.EnabledChanging = b => _enabledAsLoaded.TryAdd(b, b.enabled);
             Shop = new Shop(this, world);
@@ -148,7 +155,7 @@ namespace IGTAP.EngineSim
                 _endReason = reason;
             };
             Hooks.PlayerInput = m => Engine.FixedTick((Movement)m);
-            IGTAP.EngineSim.Engine.Stick = () => Engine.TickStick;
+            IGTAP.EngineSim.Engine.Stick = () => Engine.StickFor(Player);
             Hooks.WallTouch = (m, touchedGround) => Engine.WallTouch((Movement)m, touchedGround);
             Hooks.Death = m =>
             {
@@ -160,6 +167,7 @@ namespace IGTAP.EngineSim
             Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns;
             Hooks.UpgradeBoxStay = Shop.Stay;
             Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
+            Hooks.SteppedUp = (_, stepUpAmount) => Engine.AllowStepUp(Player.transform, stepUpAmount);
             Hooks.PlaySfx = (_, code) =>
             {
                 switch (code)
@@ -227,7 +235,6 @@ namespace IGTAP.EngineSim
             TrackingField.SetValue(course, false);
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
             if (savePositionData) Shop.CourseFinished(course, time);
-            // stopTracking returns right after a Vman completion: the path lists and time stay as they are.
             if (!(savePositionData && VmanScript.isCurrentlyVman))
             {
                 foreach (string list in CoursePathLists)
@@ -242,7 +249,11 @@ namespace IGTAP.EngineSim
                 Engine.CompleteFromGame("Course finish detected", time);
         }
 
-        bool TouchesReward() { return Touches(TargetFinish.x, TargetFinish.y, TargetFinish.w, TargetFinish.h); }
+        bool TouchesReward()
+        {
+            Vector2 at = Now(TargetFinish.x, TargetFinish.y);
+            return Touches(at.x, at.y, TargetFinish.w, TargetFinish.h);
+        }
 
         bool Touches(float x, float y, float w, float h)
         {
@@ -261,7 +272,6 @@ namespace IGTAP.EngineSim
             return false;
         }
 
-        // The player's enabled colliders' bounds (x0, x1, y0, y1): an at: goal's from= side checks them after the tick before.
         (float, float, float, float) PlayerBounds()
         {
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
@@ -285,7 +295,6 @@ namespace IGTAP.EngineSim
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
         }
 
-        // The game's courseNumber of the target course: the header's `gameCourse` for Courses 11-15 (Courses 1-5 overgrown).
         public int TargetCourse;
 
         public (float x, float y, float w, float h) TargetFinish;
@@ -296,17 +305,103 @@ namespace IGTAP.EngineSim
 
         public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
 
-        // The studio's "Checkpoint respawns" setting at capture (TasPlugin.CheckpointRespawns): a death respawns at the last
-        // checkpoint when on, at the course's reset point when off. Traces without it were captured with it off.
         public bool CheckpointRespawns;
 
-        // The game's FloatingOrigin at capture. The simulation never shifts it, so every position in a run is in the capture's
-        // scene frame; the game world (courses.json's frame, the map's, forced-path boxes') is scene - Origin, the same for
-        // every capture.
+        /// <summary>FloatingOrigin.currentOrigin when the world was captured: the frame of the trace's rects and goals.</summary>
         public readonly Vector3 Origin;
 
-        // The body's unrounded position in the game world (forced-path boxes are checked against it).
-        public Vector3 PlayerWorld { get { return Player.transform.m_Position - Origin; } }
+        /// <summary>FloatingOrigin.currentOrigin now: each rebase lowers it by the position it moved the world back by.</summary>
+        public Vector3 CurrentOrigin { get { return _floating?.currentOrigin ?? Vector3.zero; } }
+
+        public Vector3 PlayerWorld { get { return Player.transform.m_Position - CurrentOrigin; } }
+
+        /// <summary>The player's position in the capture's scene frame (the trace's rects, goals and map cells).</summary>
+        public Vector3 PlayerAtCapture { get { return _rebases.Length == 0 ? Player.transform.m_Position : PlayerWorld + Origin; } }
+
+        /// <summary>A capture-frame point in the scene frame now.</summary>
+        Vector2 Now(float x, float y)
+        {
+            if (_rebases.Length == 0) return new Vector2(x, y);
+            Vector3 origin = CurrentOrigin;
+            return new Vector2(x - Origin.x + origin.x, y - Origin.y + origin.y);
+        }
+
+        /// <summary>
+        /// FloatingOrigin's rebase, as turbo and 1x run it (on by default). `ultras` turns it off: it models the rebase itself
+        /// on starts placed anywhere.
+        /// </summary>
+        public bool Rebases = true;
+
+        internal bool Rebased { get { return _rebases.Length > 0; } }
+
+        readonly FloatingOrigin _floating;
+        readonly float _rebaseThreshold;
+        readonly bool _rebase2D;
+        readonly Transform[] _moved;
+        readonly (Vector3 position, Vector3 local)[] _movedPristine;
+        Vector3[] _rebases = Array.Empty<Vector3>();
+        Vector3 _rebasePending;
+        bool _rebaseDue;
+
+        static void CollectTree(Transform t, List<Transform> into)
+        {
+            into.Add(t);
+            foreach (Transform child in t.m_Children) CollectTree(child, into);
+        }
+
+        /// <summary>
+        /// FloatingOrigin.LateUpdate, after the tick's Update: past Threshold from scene (0, 0), the reference (the player)
+        /// starts MoveOrigin, which waits for the next physics step (WaitForFixedUpdate).
+        /// </summary>
+        void FloatingOriginFrame()
+        {
+            if (!Rebases || _rebaseDue || _floating == null || !_floating.isActiveAndEnabled) return;
+            Vector3 reference = (_floating.ReferenceObject ?? Player.transform).m_Position;
+            if (_rebase2D) reference.y = 0f;
+            if (reference.magnitude <= _rebaseThreshold) return;
+            _rebasePending = reference;
+            _rebaseDue = true;
+        }
+
+        /// <summary>MoveOrigin after the next physics step: every root object of the active scene moves back by the reference.</summary>
+        void ResumeRebase()
+        {
+            if (!_rebaseDue) return;
+            _rebaseDue = false;
+            Vector3 by = _rebasePending;
+            var rebases = new Vector3[_rebases.Length + 1];
+            _rebases.CopyTo(rebases, 0);
+            rebases[_rebases.Length] = by;
+            _rebases = rebases;
+            MoveWorld(by);
+            Physics.WorldMoved();
+        }
+
+        /// <summary>
+        /// MoveRootTransforms (`transform.position -= offset` on each root) and `currentOrigin -= offset`. A child keeps its
+        /// local position and its world position moves by the same offset. Camera, background, particles and trails are
+        /// presentation (cut).
+        /// </summary>
+        void MoveWorld(Vector3 by)
+        {
+            foreach (Transform t in _moved)
+            {
+                t.m_Position -= by;
+                if (t.m_Parent == null) t.m_LocalPosition = t.m_Position;
+            }
+            _floating.currentOrigin -= by;
+        }
+
+        /// <summary>The world as a snapshot's rebases left it: from the capture's poses, each rebase again in order.</summary>
+        void MaterializeRebases(Vector3[] rebases)
+        {
+            if (rebases.AsSpan().SequenceEqual(_rebases)) return;
+            for (int i = 0; i < _moved.Length; i++) (_moved[i].m_Position, _moved[i].m_LocalPosition) = _movedPristine[i];
+            _floating.currentOrigin = Origin;
+            foreach (Vector3 by in rebases) MoveWorld(by);
+            _rebases = rebases;
+            Physics.WorldMoved();
+        }
 
         public float Elapsed(courseScript active)
         {
@@ -429,7 +524,11 @@ namespace IGTAP.EngineSim
                     s0 = random[0].GetInt32(), s1 = random[1].GetInt32(), s2 = random[2].GetInt32(), s3 = random[3].GetInt32(),
                 };
             else UnityEngine.Random.InitState(0);
-            _start = Capture(0);
+            MaterializeRebases(Array.Empty<Vector3>());
+            _rebasePending = Vector3.zero;
+            _rebaseDue = false;
+            // A tech demo's trace starts after its first input tick (the demo starts inside a tick, as its playback does).
+            _start = Capture(start.TryGetProperty("tick", out JsonElement startTick) ? startTick.GetInt32() : 0);
         }
 
         void ApplyFields(object target, JsonElement fields)
@@ -446,6 +545,9 @@ namespace IGTAP.EngineSim
         }
 
         public SimSnapshot Start { get { return _start; } }
+
+        /// <summary>One more Movement.Update between physics ticks, as a rendered frame at 1x runs it (probe).</summary>
+        public void ExtraUpdate() { _update(); }
 
         public SimSnapshot Capture(int tick)
         {
@@ -474,6 +576,9 @@ namespace IGTAP.EngineSim
                 Goal = Goals?.Capture(),
                 Random = UnityEngine.Random.state,
                 VmanTimeLeft = _vmanTimeLeft,
+                Rebases = _rebases,
+                RebasePending = _rebasePending,
+                RebaseDue = _rebaseDue,
             };
         }
 
@@ -507,6 +612,8 @@ namespace IGTAP.EngineSim
             UnityEngine.Random.State rng = UnityEngine.Random.state;
             h.Add(rng.s0); h.Add(rng.s1); h.Add(rng.s2); h.Add(rng.s3);
             if (Goals != null) h.Add(Goals.Hash());
+            foreach (Vector3 by in _rebases) h.Add(by);
+            h.Add(_rebaseDue); h.Add(_rebasePending);
             return h.ToHashCode();
         }
 
@@ -534,6 +641,7 @@ namespace IGTAP.EngineSim
 
         public void Restore(SimSnapshot s)
         {
+            MaterializeRebases(s.Rebases);
             Physics.Suspended = true;
             foreach (var (g, loaded) in _activeAsLoaded)
             {
@@ -588,6 +696,8 @@ namespace IGTAP.EngineSim
             if (Goals != null) Goals.Restore(s.Goal);
             UnityEngine.Random.state = s.Random;
             _vmanTimeLeft = s.VmanTimeLeft;
+            _rebasePending = s.RebasePending;
+            _rebaseDue = s.RebaseDue;
         }
 
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
@@ -613,22 +723,27 @@ namespace IGTAP.EngineSim
                 bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
                 Scheduler.FireDue();
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
+                int rebasesBefore = _rebases.Length;
                 if (Engine.TakeQuickRestart())
                 {
                     RespawnMethod.Invoke(Player, new object[] { true });
                     Goals?.QuickRestarted();
                 }
+                Engine.BeginStepUpWindow();
                 Engine.BeforeTick(Player);
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
+                Engine.AfterFixedTick(Player);
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 VmanClock();
                 Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.Simulate(World.FixedDeltaTime);
+                ResumeRebase();
                 _update();
                 Shop.StepClones();
                 Shop.EndOfFrame();
+                FloatingOriginFrame();
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                         Engine.PhysicsTicks * World.FixedDeltaTime);
@@ -639,8 +754,14 @@ namespace IGTAP.EngineSim
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                     FullTasGoal now = Goals.Current;
-                    if (now != null && now.kind == FullTasGoal.At && Touches(now.x, now.y, now.w, now.h)
-                        && now.EnteredFrom(now.x - now.w / 2f, now.x + now.w / 2f, now.y - now.h / 2f, now.y + now.h / 2f, px0, px1, py0, py1))
+                    Vector2 goalAt = now != null ? Now(now.x, now.y) : default;
+                    if (_rebases.Length != rebasesBefore)
+                    {
+                        Vector3 by = _rebases[_rebases.Length - 1];
+                        px0 -= by.x; px1 -= by.x; py0 -= by.y; py1 -= by.y;
+                    }
+                    if (now != null && now.kind == FullTasGoal.At && Touches(goalAt.x, goalAt.y, now.w, now.h)
+                        && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
                 stepped++;
@@ -667,7 +788,6 @@ namespace IGTAP.EngineSim
             };
         }
 
-        // VmanScript.FixedUpdate: the clock runs down by the fixed step; at 0 ExitVmanSpeedrun loads the Overworld.
         void VmanClock()
         {
             if (!VmanScript.isCurrentlyVman || !(_vmanTimeLeft > 0.0)) return;
@@ -723,6 +843,7 @@ namespace IGTAP.EngineSim
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
+                    dashTurnX = k.dash ? k.turnX : null,
                     rawQuickRestart = k.reset });
             }
             if (steps.Count == 0) steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,

@@ -2,8 +2,6 @@ using System;
 
 namespace UnityEngine
 {
-    // Managed members are Unity's; Unity's native Euler conversions are replaced with the standard ZXY formulas
-    // (only used for respawn/death rotations, never for movement).
     public struct Quaternion : IEquatable<Quaternion>
     {
         public float x, y, z, w;
@@ -60,7 +58,6 @@ namespace UnityEngine
             float cx = MathF.Cos(euler.x * d2r), sx = MathF.Sin(euler.x * d2r);
             float cy = MathF.Cos(euler.y * d2r), sy = MathF.Sin(euler.y * d2r);
             float cz = MathF.Cos(euler.z * d2r), sz = MathF.Sin(euler.z * d2r);
-            // Unity order: Z, then X, then Y (q = qy * qx * qz).
             var qx = new Quaternion(sx, 0f, 0f, cx);
             var qy = new Quaternion(0f, sy, 0f, cy);
             var qz = new Quaternion(0f, 0f, sz, cz);

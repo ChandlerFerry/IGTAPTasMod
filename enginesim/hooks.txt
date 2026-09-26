@@ -30,3 +30,9 @@ prefix Audio::PlayAudio OnPlayAudio
 # Block swap on dash: Movement calls the swapper directly, not through a physics callback, so the host marks it touched
 # (Simulation.Touch) and a restore puts isBlueActive back. The colliders it toggles are tracked by Engine.EnabledChanging.
 prefix colouredBlockSwapper::swapBlocks OnSwapBlocks
+# The dash's freeze (TimeStop, cut) stops physics for a moment of real time while Update keeps running every rendered
+# frame. Turbo never freezes; the hook only reports the call so `probe --fps` can run those Update frames.
+prefix Movement::TimeStop OnTimeStop
+# The step-up gate (MacroEngine.AllowStepUp, as the plugin's BeforeSteppedUp): the animation's body is cut; the hook puts
+# the player back from a second step-up between two physics ticks (only `probe`/`clip` extra frames can make one).
+prefix StepUpAnimationScript::onSteppedUp OnSteppedUp

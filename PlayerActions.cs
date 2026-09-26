@@ -22,7 +22,7 @@ namespace IGTAPTasMod
             return path;
         }
 
-        static readonly Regex RunName = new Regex(@"^[A-Za-z0-9%]+$");
+        static readonly Regex RunName = new Regex(@"^[A-Za-z0-9%-]+$");
 
         bool PlaybackActive { get { return _engine.IsRunning || _fullTasPlay != null; } }
 

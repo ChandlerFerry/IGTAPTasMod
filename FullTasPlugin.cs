@@ -20,8 +20,9 @@ namespace IGTAPTasMod
         public sealed class FullTasRunDef
         {
             public string name;
-            // "vman": the run starts in a Vman speedrun's world (LoadNewGame's Vman start); unset: a fresh new game.
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string start;
+            /// <summary>A savestate id: the run starts from it, restored in the new game (or Vman world) with the unlocks it carries.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string savestate;
             public List<string> goals = new List<string>();
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
         }
@@ -52,6 +53,8 @@ namespace IGTAPTasMod
             public FullTasTracker tracker;
             public int expected;
             public bool waitingForNewGame = true, started;
+            /// <summary>Input ticks still to run in turbo before 1x (a tech demo's fastForward: it starts where the tech begins).</summary>
+            public int fastForward;
         }
 
         sealed class FullTasPending
@@ -85,15 +88,14 @@ namespace IGTAPTasMod
         string _fullTasSolveRun;
         string _fullTasSolveStatus = "Idle";
         readonly List<string> _fullTasLog = new List<string>();
-        // The running solve's "@fulltas {...}" events (FullTas.Emit), stamped with "at" (Unix ms); "status" events only keep the latest.
         readonly List<JObject> _fullTasEvents = new List<JObject>();
         JObject _fullTasProgress;
         string _fullTasSolveError, _fullTasCommand;
         const int MaxFullTasEvents = 400, MaxFullTasLog = 300;
 
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
-        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%]+)_NONE ", RegexOptions.IgnoreCase);
-        static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%]+)-([\d.]+)\.json$");
+        static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
+        static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%-]+)-([\d.]+)\.json$");
         static readonly (string token, string path, int sibling)[] FullTasBoxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
             ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
@@ -142,11 +144,19 @@ namespace IGTAPTasMod
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
 
-        // The unlocks a Full-TAS run has bought so far, as the game's boxes grant them (upgradeBox.DoBuyUpgrade).
         struct FullTasUnlocks
         {
             public bool wallJump, dash, doubleJump, blockSwap, omniDash;
             public int airDashes, airJumps;
+
+            public static FullTasUnlocks Of(Movement player)
+            {
+                return new FullTasUnlocks {
+                    wallJump = GetMovementBool(player, "wallJumpUnlocked", false), dash = GetMovementBool(player, "dashUnlocked", false),
+                    doubleJump = GetMovementBool(player, "doubleJumpUnlocked", false), blockSwap = GetMovementBool(player, "blockSwapUnlocked", false),
+                    omniDash = GetMovementBool(player, "omniDashUnlocked", false),
+                    airDashes = GetMovementField(player, "maxAirDashes") is int d ? d : 0, airJumps = GetMovementField(player, "maxAirJumps") is int j ? j : 0 };
+            }
 
             public void Bought(string token)
             {
@@ -170,7 +180,6 @@ namespace IGTAPTasMod
                 return parts.Count == 0 ? "none" : string.Join(", ", parts);
             }
         }
-
 
         void LoadFullTas()
         {
@@ -206,7 +215,6 @@ namespace IGTAPTasMod
             _fullTasWritten = File.GetLastWriteTimeUtc(FullTasPath);
         }
 
-        // The run's goal labels, or its raw tokens while one doesn't resolve.
         string[] FullTasLabels(FullTasRunDef run)
         {
             try { return ResolveFullTasGoals(run).Select(g => g.label).ToArray(); }
@@ -215,12 +223,9 @@ namespace IGTAPTasMod
 
         bool FullTasRunChanged(FullTasRunDef old, FullTasRunDef run)
         {
-            return old == null || old.start != run.start || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
+            return old == null || old.start != run.start || old.savestate != run.savestate || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
         }
 
-        // A gate route replays the goals it was judged against: once the run's goals or start change, its inputs chase the
-        // old goals and its time is no record of the new ones, so it's renamed "<name> stale" (out of FullTasBestRoute and
-        // CategoryBest). Its splits name its goals; a route without splits is retired only when a change is seen.
         void RetireOutdatedFullTasRoutes(FullTasRunDef run, bool changed)
         {
             string[] labels;
@@ -248,10 +253,12 @@ namespace IGTAPTasMod
 
         FullTasGoal[] ResolveFullTasGoals(FullTasRunDef run)
         {
-            if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters, digits and \"%\" only (\"" + run.name + "\").");
+            if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters, digits, \"%\" and \"-\" only (\"" + run.name + "\").");
             if (run.goals == null || run.goals.Count == 0) throw new InvalidOperationException("Full-TAS run " + run.name + " has no goals.");
             if (run.start != null && run.start != VmanStart)
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": start is \"" + VmanStart + "\" (a Vman speedrun's world) or unset (a new game), not \"" + run.start + "\".");
+            if (run.savestate != null && _savestates.Find(s => s.id == run.savestate) == null)
+                throw new InvalidOperationException("Full-TAS run " + run.name + ": no savestate " + run.savestate + ".");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
         }
 
@@ -314,12 +321,11 @@ namespace IGTAPTasMod
             return goal;
         }
 
-        // start: null keeps the run's own, "" a new game, "vman" a Vman speedrun's world.
         FullTasRunDef SetFullTasGoals(string name, IEnumerable<string> tokens, string start)
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
@@ -344,7 +350,6 @@ namespace IGTAPTasMod
             return best;
         }
 
-        // The solver's best as written (enginesim/fulltas/<run>.json), with the goals it was solved against.
         sealed class FullTasOfflineFile
         {
             public DateTime written;
@@ -382,9 +387,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // The offline best measured against the run's current goals: its splits hold only while its goals match them, so
-        // after a goals edit it reaches just the unchanged leading goals (a goal's time depends only on the goals before it).
-        // Its inputs end at the last of them: past it they head for a changed goal, or are a solver's miss at the next one.
         FullTasOffline FullTasOfflineBest(string run, IList<string> labels)
         {
             FullTasOfflineFile file = ReadFullTasOffline(run);
@@ -432,13 +434,11 @@ namespace IGTAPTasMod
             Logger.LogInfo("Full-TAS: " + line);
         }
 
-        // detail: what the Web Studio shows (kind "play" or "judge"); a plain line shows as a note.
         void SetFullTasResult(string line, object detail = null, bool error = false)
         {
             _fullTasLastResult = detail ?? new { kind = "note", text = line, error };
             FullTasLog(line);
         }
-
 
         void FullTasEvent(bool reached)
         {
@@ -456,8 +456,6 @@ namespace IGTAPTasMod
             if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseFinished(course, _engine.RunTicks, _engine.PhysicsTicks));
         }
 
-        // Checked where the category finish boxes are (before the next tick's inputs): the offline engine checks the same
-        // collider overlap right after the tick. A from= side needs the player's bounds at the check before.
         void FullTasAreaGoal(Movement player)
         {
             Rect previous = _fullTasPlayerBounds;
@@ -528,11 +526,10 @@ namespace IGTAPTasMod
             return best;
         }
 
-
         bool FullTasStartReady(FullTasRunDef run)
         {
             Movement player = FindWorldMovement();
-            TurboRunner.Snapshot fresh = NewGameStart(run.Vman);
+            TurboRunner.Snapshot fresh = NewGameStart(run);
             if (((Vector2)player.transform.position - (Vector2)fresh.position).sqrMagnitude >= 64f * 64f)
             {
                 TurboRunner.Restore(fresh, player);
@@ -542,7 +539,7 @@ namespace IGTAPTasMod
             return Time.frameCount - _fullTasParkedFrame >= 10 && ZonesSettled();
         }
 
-        bool FreshGameFor(FullTasRunDef run) { return FreshGameInWorld && _newGameVman == run.Vman; }
+        bool FreshGameFor(FullTasRunDef run) { return FreshGameInWorld && NewGameIs(run); }
 
         bool FullTasCanJudge(FullTasRunDef run)
         {
@@ -601,6 +598,23 @@ namespace IGTAPTasMod
             _engine.Quiet = _vmanSetupQuiet;
         }
 
+        void ApplyNewGameSavestate(Movement player)
+        {
+            Savestate state = _savestates.Find(s => s.id == _newGameSavestate);
+            if (state == null) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
+            if (CapabilitiesLocked && state.movementFields.Keys.Any(SavestateService.IsUnlockField))
+            {
+                FailNewGame("Savestate " + state.name + " sets unlocks: " + CapabilitiesLockedError);
+                return;
+            }
+            SavestateResult restored = SavestateService.Restore(player, state, MacroLibrary.CurrentSchemaVersion);
+            if (!restored.Success) { FailNewGame(restored.Message); return; }
+            _newGameSavestateApplied = true;
+            _newGameNotes.Add("restored savestate " + state.name);
+            _newGamePhase = 2;
+            _newGameFrame = Time.frameCount;
+        }
+
         void ParkAtNewGameStart()
         {
             Movement player = FindWorldMovement();
@@ -610,10 +624,10 @@ namespace IGTAPTasMod
         bool EvaluateFullTas(FullTasRunDef run, List<SolverTick> inputs, out float time, out int finishTick, out FullTasTracker tracker)
         {
             Movement player = FindWorldMovement();
-            TurboRunner.Snapshot from = NewGameStart(run.Vman);
+            TurboRunner.Snapshot from = NewGameStart(run);
             tracker = new FullTasTracker(ResolveFullTasGoals(run));
             _fullTas = tracker;
-            _fullTasUnlocks = default;
+            _fullTasUnlocks = _newGameUnlocks;
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -723,7 +737,7 @@ namespace IGTAPTasMod
             if (!fresh && _newGamePhase == 0)
             {
                 if (_solverRunning) throw new InvalidOperationException("A Full-TAS run needs a fresh new game: stop the Optimize run first.");
-                LoadNewGame(null, run.Vman);
+                LoadNewGame(null, run.Vman, run.savestate);
                 pending.loaded = true;
             }
             _fullTasPending = pending;
@@ -745,10 +759,10 @@ namespace IGTAPTasMod
             {
                 if (pending.loaded || _solverRunning)
                 {
-                    CompleteFullTasPending(500, new { ok = false, error = pending.what + ": no fresh " + (pending.run.Vman ? "Vman speedrun" : "new game") + " in the world." });
+                    CompleteFullTasPending(500, new { ok = false, error = pending.what + ": no fresh " + (pending.run.Vman ? "Vman speedrun" : "new game") + (pending.run.savestate == null ? "" : " from savestate " + pending.run.savestate) + " in the world." });
                     return;
                 }
-                LoadNewGame(null, pending.run.Vman);
+                LoadNewGame(null, pending.run.Vman, pending.run.savestate);
                 pending.loaded = true;
                 return;
             }
@@ -774,7 +788,6 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-
         object FullTasTrace(FullTasRunDef run, List<SolverTick> inputs, string name, bool world)
         {
             FullTasGoal[] goals = ResolveFullTasGoals(run);
@@ -782,7 +795,7 @@ namespace IGTAPTasMod
             string path = Path.Combine(EngineSimDir, name + ".json");
             if (world) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             Movement player = FindWorldMovement();
-            TurboRunner.Snapshot start = NewGameStart(run.Vman);
+            TurboRunner.Snapshot start = NewGameStart(run);
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             Vector2 origin = CurrentOrigin();
             bool finished;
@@ -801,6 +814,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("name"); w.WriteValue(run.name);
                 w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
+                if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
                 w.WritePropertyName("goals"); w.WriteStartArray();
                 foreach (FullTasGoal g in goals)
                 {
@@ -892,7 +906,6 @@ namespace IGTAPTasMod
             return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, world));
         }
 
-
         void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -900,12 +913,12 @@ namespace IGTAPTasMod
             if (_fullTasPending != null) throw new InvalidOperationException("Busy: " + _fullTasPending.what + ".");
             if (route == null) throw new InvalidOperationException("Full-TAS run " + run.name + " has no route yet.");
             var tracker = new FullTasTracker(ResolveFullTasGoals(run));
-            StartNewGame(null, run.Vman);
+            StartNewGame(null, run.Vman, run.savestate);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
-            // A tech demo is a prefix of a run: it reaches no goal it has to.
-            int expected = IsTechDemo(route) ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0;
-            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected };
+            int expected = IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0;
+            TechDef tech = _techs.Find(t => t.routeId == route.id);
+            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = tech?.fastForward ?? 0 };
         }
 
         void BeginFullTasPlayback(Movement movement)
@@ -916,10 +929,30 @@ namespace IGTAPTasMod
             _brakeTicks = -1;
             play.tracker.Reset();
             _fullTas = play.tracker;
-            _fullTasUnlocks = default;
-            _engine.Run(play.route, false, !IsTechDemo(play.route), 0, null);
+            _fullTasUnlocks = _newGameUnlocks;
+            _engine.Run(play.route, false, !IsTechDemo(play.route) && play.route.id != ProbeRouteId, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
+        }
+
+        /// <summary>
+        /// A demo's fast-forward (plugin Update, outside the physics loop): its first input ticks in turbo, the way the gate replays
+        /// a run, so it starts at 1x where the tech begins, in the world the run made (boxes, unlocks, economy, FloatingOrigin
+        /// rebases), which a savestate can't hold.
+        /// </summary>
+        void PumpFastForward()
+        {
+            FullTasPlay play = _fullTasPlay;
+            if (play == null || !play.started || play.fastForward <= 0 || !_engine.IsRunning || TurboRunner.Active) return;
+            int until = play.fastForward;
+            play.fastForward = 0;
+            Movement player = FindWorldMovement();
+            TurboRunner.Run(player, () => _engine.IsRunning && _engine.RunTicks < until, until * 4 + 1000, () =>
+            {
+                _engine.Clock++;
+                _engineSimTickHook?.Invoke(player);
+            });
+            Logger.LogInfo("Fast-forwarded " + play.route.name + " to input tick " + _engine.RunTicks + " in turbo.");
         }
 
         void FinishFullTasPlayback(bool success, string reason)
@@ -951,7 +984,6 @@ namespace IGTAPTasMod
             _fullTasPlay = null;
         }
 
-
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
             var args = new StringBuilder("fulltas ").Append(Quote(trace));
@@ -964,6 +996,8 @@ namespace IGTAPTasMod
             if (windowMinutes > 0f) args.Append(" --window-minutes ").Append(windowMinutes.ToString(CultureInfo.InvariantCulture));
             if (stallMinutes > 0f) args.Append(" --stall-minutes ").Append(stallMinutes.ToString(CultureInfo.InvariantCulture));
             if (window > 0) args.Append(" --window ").Append(window);
+            int goal = Number(body, "goal", 0);
+            if (goal > 0 && !Truthy(body, "unsolved")) args.Append(" --goal ").Append(goal);
             if (Truthy(body, "fresh")) args.Append(" --fresh");
             if (Truthy(body, "unsolved")) args.Append(" --unsolved");
             if (Truthy(body, "noSubmit")) args.Append(" --no-submit");
@@ -1052,8 +1086,6 @@ namespace IGTAPTasMod
             return count;
         }
 
-        // unsolved: the search reaches the goals the best misses first (IGTAP.EngineSim fulltas --unsolved); otherwise it
-        // polishes the goals the best reaches, from goal 1.
         object StartFullTasSolve(WebStudioRequest request, JObject body)
         {
             if (_fullTasProcess != null) throw new InvalidOperationException("A Full-TAS solve is already running (" + _fullTasSolveRun + ").");
@@ -1098,8 +1130,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // A trace searches the goals in its header, so one captured before the run's goals, start or checkpoint respawns
-        // changed is recaptured.
         bool FullTasTraceCurrent(FullTasRunDef run, string trace)
         {
             if (!File.Exists(trace)) return false;
@@ -1109,7 +1139,6 @@ namespace IGTAPTasMod
                 bool checkpoints = false;
                 using (var reader = new JsonTextReader(new StreamReader(trace)))
                 {
-                    // The header (checkpointRespawns, then fulltas) precedes the per-tick states; read only up to it.
                     header = null;
                     while (reader.Read())
                     {
@@ -1125,7 +1154,7 @@ namespace IGTAPTasMod
                 }
                 if (header == null) return false;
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
-                return checkpoints == CheckpointRespawns && (string)header["start"] == run.start
+                return checkpoints == CheckpointRespawns && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)
@@ -1196,7 +1225,6 @@ namespace IGTAPTasMod
             PumpFullTasPending();
             PumpFullTasSolve();
         }
-
 
         object HandleFullTas(WebStudioRequest request, JObject body)
         {
@@ -1283,7 +1311,7 @@ namespace IGTAPTasMod
                 if (best == null || !_fullTasSplits.TryGetValue(best.id, out splits)) splits = new List<FullTasSplit>();
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
                 FullTasOffline offline = FullTasOfflineBest(r.name, labels);
-                return new { name = r.name, start = r.start, goals = labels, tokens = labels, error = error,
+                return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
@@ -1310,9 +1338,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        // forced-paths.json's Full-TAS avoid boxes, edited from the map: the source copy (enginesim\Cli, what the build copies)
-        // and the solver's own copy beside its exe (what a solve reads, each window). A drawn box goes into the rule drawn for
-        // exactly these runs; removing takes the box out of every rule of these runs. Returns the boxes added or removed.
         int EditFullTasAvoids(string[] runs, float[] b, bool remove)
         {
             string exe = EngineSimExe;
@@ -1356,8 +1381,6 @@ namespace IGTAPTasMod
             return changed;
         }
 
-        // A run's avoid boxes (x0, y0, x1, y1, game world) from the solver's forced-paths.json, reread when the file changes
-        // (checked at most once a second: the goals overlay asks every repaint).
         List<float[]> FullTasAvoids(string run)
         {
             if (Time.unscaledTime >= _fullTasAvoidsChecked + 1f)
@@ -1392,9 +1415,7 @@ namespace IGTAPTasMod
         float _fullTasAvoidsChecked = float.NegativeInfinity;
         static readonly List<float[]> NoAvoids = new List<float[]>();
 
-        // An array of numbers or strings on one line, as forced-paths.json writes its boxes and capabilities.
         static readonly Regex CompactScalarArrays = new Regex(@"\[((?:\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*,)*\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*)\]");
-        // Then a list of those (the avoid and via boxes) on one line too.
         static readonly Regex CompactBoxLists = new Regex(@"\[((?:\s*\[[^\[\]{}]*\]\s*,)*\s*\[[^\[\]{}]*\]\s*)\]");
         static readonly Regex InnerArrays = new Regex(@"\[[^\[\]]*\]");
     }

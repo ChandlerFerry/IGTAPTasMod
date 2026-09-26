@@ -22,6 +22,17 @@ dash or spring lock (no hook), the read is all there is: it is the stick the las
 (`Movement.CheckForSuperJump`), so a dash one way with the stick held the other way and a jump on a dash frame is a
 reversed super jump.
 
+The dash freeze is the one place a player moves the stick between two physics ticks: a dash's `TimeStop` holds physics
+for ~0.05 s of real time while `Movement.Update` keeps running every frame. A dash pressed with no sideways stick goes
+the way the player faces and takes the first sideways stick an `Update` reads before the next tick
+(`WaitingForDashInput`, Movement.cs:817-834). A dash tick's `turnX` (`MacroStep.dashTurnX`) is that stick: the dash
+turns to it, as a player tilting the stick during the freeze turns it. It is legal (README "### Rules"): the one input
+that changes between two ticks. Nothing else reads the stick in that window. The recorder writes it when a recorded
+dash's first dash frame goes the other way from its start (`InputRecorder.DashFrame`). It stays its own field and not
+part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no sideways stick
+and hold `lockMoveX` sideways, and reading the lock stick in the freeze would turn the ones whose lock points against
+the dash.
+
 ## Presses, releases and the buffer timers
 
 A press or release does exactly what `Movement.Update` does for a real one, including the buffer expiry timers: a jump
@@ -115,9 +126,38 @@ move a press or a dash a few ticks while keeping where the hold ends.
   (`Movement.getPlayerControlledInput`), back into the wall, and the buffered jump is a grounded dash jump from inside
   it. The wall side is the stick before the turn; the turn is 0-4 ticks of stick away, and the dash tick holds the
   stick away, or neutral after a turn long enough to flip facing (~3 ticks from a push) so the dash follows facing.
-- **Flip jump** (Course 1 NONE): rising against a wall, flick the stick lightly away and back. The facing flip moves the
-  ground rays to the other side (Movement.cs:911-931), they hit the wall, the player counts as grounded mid-air, and a
-  jump pressed on the flick back is a full ground jump. It needs no unlock.
+- **GC Wall Clip** (game controller; Course 1 NONE): rising with your back to a wall, flick the stick lightly toward it
+  and back. The player's box is offset 5 units to the front (`defaultColliderOffset`/`dashColliderOffset` x 5, width
+  41), so the facing flip swings its back edge 10 units into the wall; depenetration pushes it only part way out, and
+  the next tick the front ground ray (x−25, Movement.cs:926-940) starts inside the wall and grounds the player mid-air
+  while vertical speed is under 200. A jump buffered then is a full ground jump. It needs no unlock. The turn must start
+  with the box's back edge within ~8 units of the wall (after the push, the ray must still be 0.5 inside); the light
+  flick back keeps the player within that, so the 1.64 route clips the same wall twice.
+- **KB Wall Clip** (keyboard): the same clip with full tilt. 1-3 ticks toward the wall, with jump pressed up to 0.12 s
+  before or on the turn tick or the tick after, clip the same way (Course 1 NONE: any tick from 43 to 59). A full-tilt
+  turn back ends ~0.6 units further out than the light flick (8.3 from the wall where the 1.64 route's second clip
+  needs at most 8.0), so a second clip on the same wall needs another way back in.
+- **Inwall wallbounce** (turned-dash step climb; `WJ_DS` and up, Course 1's hanging wall in issue #10): slide down a
+  wall holding down, dash with the stick straight down (no sideways stick: from a full cling the dash flips away from the
+  wall, Movement.cs:1635-1642), tilt the stick toward the wall during the dash freeze (`turnX`), and press jump. The
+  turned dash reaches the wall facing it while `wallJumpFacing`, set at the top of that FixedUpdate, still points away.
+  So `Movement.Update`'s step-up (806-816) finds its forward rays clear and its down ray starting inside the wall (a hit
+  at fraction 0 at its own origin), and lifts the dot to that hit + 36: 56 units up (the down ray starts 20 up while
+  dashing). The game does so in every `Update` until the next FixedUpdate turns the rays around, each from the new
+  height, and stops on the wall's top (the ray's hit is then the top face). The jump next tick is the dash-into-wall
+  wallbounce (`SpecialWallJump(0.6, …)`, 1093-1131 u/s) from wherever the climb stopped. Every dash from the cling
+  flips away and turns back for another climb (dash, turned tick, two cling ticks), so a chain of them climbs the wall;
+  the speed the dot fell at doesn't change it (the dash replaces `Velocity` and zeroes `momentum`).
+
+  How many lifts one tick gets depends on the frame rate and the body's interpolation. Ungated, in the game at 1x
+  (`probe.py --fps`, from a `lab/` savestate clinging at y −88): 1, 2, 3, 4 and 6 lifts at 50, 100, 150, 200 and 280
+  fps with interpolation off; with it on, as the game ships it, 0, 0, 1, 1 and 2. The Course 1 demo chain at 280 fps
+  with interpolation on climbs 112, 56, 56, 56 and its wallbounce reaches the roof (494), so a player can do it. Turbo
+  runs one `Update` per tick: one lift. The step-up gate (`MacroEngine.AllowStepUp`, README "### Rules") holds playback
+  and the offline engine's extra frames to that same one lift per tick, so the chain climbs 56 per dash everywhere and a
+  turbo-judged route plays back the same at 1x. The overlay labels the chain and its wallbounce INWALL WALLBOUNCE
+  (`Tech.InwallWallBounce`: a step-up whose forward rays, `wallJumpFacing`, looked away from the dot's facing, then a
+  wall kick within 6 ticks).
 
 ### Omnidirectional dash (Vman)
 
@@ -127,27 +167,120 @@ second dash (`buy:buyds`). The omnidash aims the dash with the stick, 8 ways (`M
 from an offline lab on a flat Ground floor from a 460 u/s run, over 40 ticks (0.8 s); a run covers 377 u and a
 ground dash 623 u, and a full jump peaks 258 u high.
 
-- **Wavedash**: hop, dash down-diagonal, and press jump in the dash. The landing turns the dash horizontal with 3 more
-  dash ticks (`canHyper`), and the jump, 4+ dash ticks after the landing, is the hyper (`CheckForSuperJump`). It covers
-  1310 u, and on a Ground floor the hyper refills the dashes, so one dash is enough.
-- **Ultra**: two wavedashes chained. The second dash starts in the air from the first one's jump. It covers 1400 u in
-  40 ticks and 1957 u in 60 (a run covers 561 u).
-- **Dash bounce**: dash straight down onto the floor and press jump in the dash. The landing ends the dash with
-  `DashBounceFrames` 4, and a jump then adds `dashBounceMagnitude`: it peaks 556 u high.
-- **Wave bounce**: a dash bounce from a wavedash's jump. It is as high as a dash bounce (555 u) and keeps the
-  wavedash's speed (1437 u across in 40 ticks).
-- **WaveJump** (wall jump): dash up-diagonal into a wall. The dash turns straight up at full dash speed (1670 u/s, not
-  the diagonal's 1181), and the wall touch refills the dash. A jump in it is the wall bounce (507 u high).
+Terms, as the Tech tab locks them in: a **super** is a flat dash on the ground then a jump, a **high super** the same
+with an up-diagonal dash, a **hyper** a down-diagonal dash then a jump, an **ultra** a hyper 4 units lower (the game's own
+bonus), and a **ground bounce** a straight-down dash into the ground then a jump.
+
+- **Hyper** (also called wavedash): hop, dash down-diagonal from the air, and press jump in the dash. The landing turns
+  the dash horizontal with 3 more dash ticks (`canHyper`), and the jump, which the game takes no sooner than 4 dash ticks
+  after the landing, is the hyper (`CheckForSuperJump`): it leaves the ground with 547 up and 1650 sideways momentum,
+  but only with the stick held sideways at that jump (`MoveAxis.x`; a route holds it with the dash tick's `lockX`, else
+  the hyper gets no momentum at all). It covers 1310 u, and on a Ground floor the hyper refills the dashes, so one dash
+  is enough.
+- **Ultra**: a hyper whose jump is at least 4 u below the last hyper's height (`lastHyperY`), with the dash going the
+  way the dot already moved: the game adds back the momentum from before the dash (`preDashMomentum.x`).
+- **Chained hyper**: two hypers chained. The second dash starts in the air from the first one's jump. It covers 1400 u
+  in 40 ticks and 1957 u in 60 (a run covers 561 u); it is an ultra when the second jumps 4 u lower.
+- **Float Ultra**: a chained hyper whose drop comes from `FloatingOrigin`. `lastHyperY` is a scene-frame height, and
+  the rebase moves the world (and the dot) back by the dot's scene position without touching it. Cross the sphere
+  (17500 around scene (0, 0) in the Vman world) in the first hyper's air, with no ground stay before the second hyper,
+  and the second hyper is ~11,700 u under `lastHyperY` on the same floor: the game adds back the pre-dash momentum
+  (1609 + 1131 = 2740 in the demo). In the VMAN world the sphere's edge crosses the platform above and left of Course 4
+  (floor y 11625). The Tech tab's Float Ultra demo loads a fresh VMAN game and fast-forwards the run's best to its quick
+  restart on that platform in turbo (`fastForward` 635 input ticks: the whole world as the run left it, boxes and
+  unlocks included, which a savestate can't hold), then plays at 1x: walk, hyper, hyper (the float ultra, world moved
+  by (−13030, −11704)), then back down the way the run came up to the left end of Course 1's floor, where the dot
+  leaves the new sphere and the world moves again, by (12794, 11947). The route down was found with `fulltas
+  --floating-origin` (goals in reverse through the run's area goals). While it plays the overlay
+  (`TasOverlayOrigin.cs`) draws the sphere's edge, scene (0, 0), the dot's scene and world coordinates,
+  `currentOrigin`, the distance to the edge, the ultra line (`lastHyperY − 4`) and a world minimap with every sphere
+  the playback was in, the jumps between their centres and the dot's path. A tech with `floatingOrigin` gets that
+  overlay and is never cut to a savestate: a savestate holds the player, not the world's origin.
+- **High super**: dash up-diagonal on the ground and press jump in the dash, on any of its first 6 dash ticks. The
+  dash lifts off, but `onGround` lasts through the coyote frames, so the jump is a super (805 up, the same 900 sideways
+  momentum as a flat super) from up to 129 u above the floor, and it gives the dash back: one dash is enough. The
+  dash's end (`endDash`, dash tick 11) still cuts `Velocity` to 35 %, so from standing it peaks 167 u (jump on dash
+  tick 1) to 232 u (tick 6), against a flat super's 240 u.
+- **Ground bounce**: dash straight down onto the floor and press jump in the dash. The landing ends the dash with
+  `DashBounceFrames` 4, and a jump then adds `dashBounceMagnitude`: 805 + 600 up, it peaks 556 u high.
+- **Hyper ground bounce**: a ground bounce from a hyper's jump (diagonal down dash, jump, dash down and jump). A
+  straight-down dash gives back 95 % of the momentum from before it when it lands (`endDash`, `dashDirection.y == -1`),
+  so the bounce has both: 1390 up and ~1840 sideways (a ground bounce alone: 0). It is as high as a ground bounce and
+  covers 1437 u across in 40 ticks.
+- **Super ground bounce**: the same from a super's jump: 1390 up and ~870 sideways momentum, a bit less than from a
+  hyper (~1740).
+- **Wallbounce** (wall jump): dash up-diagonal into a wall and jump in it. The dash turns straight up at full dash speed
+  (1670 u/s, not the diagonal's 1181), the wall touch refills the dash, and the jump is the wall bounce (507 u high).
 - **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
   one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
 
+The studio's **Ultra map** tab (`POST /api/enginesim/ultras`, `IGTAP.EngineSim ultras`) shows where the game's ultra
+bonus can be had in the VMAN run's world. The game's check (`Sign(preDashMomentum.x) == Sign(dashDirection.x)` and the
+lifted `y < lastHyperY - 4`) compares against `lastHyperY`, which is the height of the last hyper or of the floor last
+stood on (written on every grounded tick), so an ultra joins two floors: the one it comes from and a lower one where
+the ultra's hyper happens. First the map finds every floor a hyper can land on: the top face of a Ground-layer
+collider, triggers included (the ground rays hit upgrade boxes too), where the dash box fits and no spike is near (floors only in the zone the capture had
+loaded, Zone 1; the level drawn shows every zone). Then it pairs every floor with every other floor more than 4 lower,
+at most 2600 across and 2000 down, joined by a flight line no solid crosses; a floor sloping more than 4 pairs with
+itself. A flight line runs between the dot's centres over the two floors, from either end or the middle of the upper
+floor or just past either end (walking off it), to the same spots on the lower one (coming in beside it, under a
+ledge), straight or over a hop as high as a held jump (measured in the engine, 237 u). The pair's drop is the biggest
+height difference over a clear line. These are lines, not jump arcs. To check them, from launch points every 32 u along
+the floors the dot can stand on, the engine plays a hop plus wavedash and a second wavedash 1–14 input ticks later, each
+way, with the unlocks a VMAN route has there (dash, omnidash, wall jump, 2 air dashes). Every ultra it gets confirms
+the pair it joins (from the launch floor, or the first hyper's floor for the second hyper of a chain, to the ultra's
+floor), and adds the pair if the lines missed it (dashed on the map).
+
+The trees' ground (the platforms each `TreeController` segment turns on as its tree upgrade is bought) is drawn as
+dashed tan outlines, **Tree ground + purchase order**, each numbered with the fewest tree purchases that grow it: Plant
+Tree is 1 and grows the first segments, each grown segment shows its own box, and that box's purchase grows the
+segments it names (`upgradeBox.SegmentsToTrigger`; `autoTriggerNext` segments come along). Hovering a number names the
+box that grows it and the box it carries. A fresh world has none of it grown, so it has no floors or pairs, and the
+engine doesn't model growing it. Spikes are red; coloured blocks and spikes are drawn in both colours (blue and
+orange, the export's `sourceShapes`), only the active colour being solid. Springs are level too: their trigger box in
+yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
+level is always drawn. **Gates, checkpoints, teleporters, refills** marks start and end gates, checkpoints, teleporters
+and dash, jump and full refill orbs in every zone. The
+course and Full-TAS maps draw all of this the same way (`ultra-level.tsx`, shared with the public viewer's `level.tsx`).
+
+With nothing selected, each floor is coloured by the biggest drop onto it. Clicking a floor draws arrows to every floor
+its ultras reach (coloured by drop) and from every floor whose ultras reach it (cyan), and lists the biggest drops.
+Clicking a listed pair picks out its arrow and, for an engine-confirmed pair, draws the engine ultra's moves and its
+inputs. **Pairs** switches between every height drop, only engine-confirmed ones, and origin-shift ultras;
+**Selected floor** shows its ultras out, in, or both. The result is cached in `enginesim\ultras-VMAN.json`;
+**Recompute** reruns it (about a minute and a half on all cores). The engine never moves its origin, so the search
+models `FloatingOrigin`'s rebase itself (the VMAN world's scene sets `Threshold` 17500, `Use2DDistance` off): once the
+player is more than 17500 from the origin, the next physics step moves the world by the player's position but leaves
+`lastHyperY` alone, and the next hyper passes the check on any floor. A pair only such an ultra makes is green. The
+search only models a rebase for launches that start inside the threshold, from origin 0. The map also draws that first
+rebase line (dashed green) and, for each later rebase the VMAN run's best so far makes, the line it crossed. The
+**First shift at** slider moves the first rebase along its line (it starts at the run's) and draws the next line
+around it (cyan).
+
 While a route plays, the in-game input list marks the ticks of each trick with a colored bar (`TasOverlayTechs.cs`):
-the superbounce, reversed super and backwards dash-jump, the flip jump, coyote and wall-coyote jumps, super jumps,
-wavedashes, ultras, dash and wave bounces, wall bounces, WaveJumps, spring dashes, spike grace (overlay on) and the
-game's own ultra bonus (a hyper that gives back the pre-dash momentum, "Did an ultra!"), each read from the game's state
-as it happens. Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`).
-The first time a playback does a tech that has no demo route yet, the tab saves one: that playback's inputs up to 25
-ticks after the tech, from the same start (`tech/<name>` in the route library).
+the superbounce, reversed super and backwards dash-jump, the wall clip, coyote and wall-coyote jumps, super jumps,
+hypers, chained hypers, ground bounces and hyper ground bounces, wall bounces, spring dashes, spike grace
+(overlay on), the ultra (a hyper that gives back the pre-dash momentum, "Did an ultra!") and the float ultra (a chained
+hyper that passes that check only because a rebase moved the dot since the first hyper), each read from the game's
+state as it happens.
+Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`).
+The first time a playback does a tech that has no demo route yet, the tab saves one (`tech/<name>` in the route
+library): while a route plays, the overlay keeps a player savestate for each of the last 256 input ticks, and the demo
+gets its own copy of the latest one at least 25 ticks before the tech starts, taken on a tick with no dash or cutscene
+running, as a savestate of the same name that is attached to it. Its inputs run from that tick to 25 ticks after the
+tech. Playing an older demo that has no savestate gives it one the same way; removing a demo or its tech deletes its
+savestate. A savestate holds only the player (position, velocity, buffers), so a demo cut from a Full-TAS run plays in
+whatever world is loaded, with the unlocks you have now. Starting from a savestate also takes the dot off every course
+(no course tracking, `courseResetPoint` zero), so a quick restart goes to the last checkpoint, not to the start of a
+course an earlier run left timing. A course demo still sets the course's zone and its
+category's unlocks. A demo with no savestate (nothing clean in the window, or **Use selected route** on a route
+without one) starts from its route's start.
+
+A tech is **confirmed** only while it has a demo route: the Tech tab lists techs with one under Confirmed and the rest
+under Unconfirmed (reported, not reproduced). A reproduction found offline becomes a demo with `POST /api/techs/demo
+{id, from: "ticks", start: "1_WJ_DS_DJ", ticks, savestateId?}`: raw input ticks with that category's unlocks, from its
+quick restart or from a savestate (a `lab/` one from `/api/savestates/place` puts the dot right where the tech starts).
+With `start: "fulltas/VMAN_NONE"` and no savestate the ticks play from a new game of that Full-TAS run.
 
 ## The gate
 

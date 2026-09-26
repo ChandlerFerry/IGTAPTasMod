@@ -33,16 +33,8 @@ namespace UnityEngine
         public static void DrawLine(Vector3 start, Vector3 end, Color color, float duration) { }
     }
 
-    // UnityEngine.Random exactly as the game's engine (6000.3.17f1) runs it: Marsaglia xorshift128 over the four
-    // uints of UnityEngine.Random.State (s0..s3, UnityEngine.CoreModule's declaration order). Every call draws once
-    // (Range(int, int) draws not at all when the bounds are equal), so the state advances one word per draw whatever
-    // the call. Verified against Unity's own published draws (macklinb/MoatShrimp's parity tables: the xorshift step,
-    // the MT19937 seed expansion, `value` = (draw & 0x7FFFFF) / (2^23 - 1), Range(int) = min + draw % (max - min),
-    // Range(float) = min * unit + max * (1 - unit)) and against the game's traces, whose ticks carry the state.
-    // State is per thread (one Simulation per solver worker thread): Simulation captures and restores it.
     public static class Random
     {
-        // UnityEngine.Random.State; the trace's "random" is its four fields in order.
         public struct State
         {
             public int s0, s1, s2, s3;
@@ -50,7 +42,6 @@ namespace UnityEngine
 
         [ThreadStatic] static uint _s0, _s1, _s2, _s3;
 
-        // InitState: the seed expands with Mersenne Twister's initialization (1812433253 = 0x6C078965).
         public static void InitState(int seed)
         {
             unchecked
@@ -68,7 +59,6 @@ namespace UnityEngine
             set { _s0 = (uint)value.s0; _s1 = (uint)value.s1; _s2 = (uint)value.s2; _s3 = (uint)value.s3; }
         }
 
-        // The uint32 draw: the new s3 is the number every other call is built from.
         public static uint Draw()
         {
             unchecked
@@ -79,20 +69,15 @@ namespace UnityEngine
             }
         }
 
-        // The unit float of a draw (Random.value): its low 23 bits over 2^23 - 1.
         public static float value { get { return (Draw() & 0x7FFFFFu) / 8388607f; } }
 
         public static int Range(int minInclusive, int maxExclusive)
         {
-            // Equal bounds return before the draw (Unity's own test vectors show the state unchanged).
             if (maxExclusive == minInclusive) return minInclusive;
             long range = (long)maxExclusive - minInclusive, draw = Draw();
-            // Unity's own test vectors cover both directions and negative bounds: one modulo over the 64-bit span.
             return maxExclusive < minInclusive ? (int)(minInclusive - draw % range) : (int)(minInclusive + draw % range);
         }
 
-        // Unity mixes the bounds with the unit float (overflow-free at float's extremes, where a difference of the
-        // bounds would be infinite): min * unit + max * (1 - unit). Float upper bounds are inclusive.
         public static float Range(float minInclusive, float maxInclusive)
         {
             float unit = value;
@@ -109,7 +94,6 @@ namespace UnityEngine
         public static string LayerToName(int layer) { return layer >= 0 && layer < 32 ? Engine.LayerNames[layer] ?? "" : ""; }
         public static int NameToLayer(string layerName) { return Array.IndexOf(Engine.LayerNames, layerName); }
 
-        // Unity's managed GetMask.
         public static int GetMask(params string[] layerNames)
         {
             if (layerNames == null) throw new ArgumentNullException("layerNames");
@@ -292,8 +276,6 @@ namespace UnityEngine.Localization.Components
 
 namespace UnityEngine.InputSystem
 {
-    // No buttons offline: presses are injected into Movement's fields by the macro engine, as in the plugin. The stick
-    // reads the host's (Engine.Stick), as the plugin's NormaliseInput prefix hands the game.
     public class InputAction
     {
         public TValue ReadValue<TValue>() where TValue : struct

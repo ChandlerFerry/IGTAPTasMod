@@ -26,7 +26,7 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<float> Points = new List<float>();
         }
 
-        sealed record Marker(string kind, string name, float x, float y);
+        internal sealed record Marker(string kind, string name, float x, float y);
 
         public static int Run(string[] args)
         {
@@ -45,8 +45,6 @@ namespace IGTAP.EngineSim.Cli
             string best = FastestOfflineBest(dir, label);
             List<string> seedFiles = Enumerable.Range(1, Math.Max(0, args.Length - 2)).Where(i => args[i] == "--seed").Select(i => args[i + 1]).ToList();
 
-            // Replays are deterministic in the start trace, its world and the engine build, so the map only changes when one
-            // of those or a drawn input changes: an unchanged request returns the last map as is.
             string engine = EngineStamp();
             string simKey = engine + "|" + Stamp(trace) + "|" + Stamp(worldPath);
             string outputKey = string.Join("\n", new[] { simKey, Stamp(archivePath), best ?? "-", Stamp(best),
@@ -75,7 +73,6 @@ namespace IGTAP.EngineSim.Cli
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
                     routes.Add(("plateau " + (i + 1), "plateau", p));
 
-            // Each explore prefix's cells are cached by its inputs' hash, so only prefixes new since the last map replay.
             List<List<InputTick>> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<List<InputTick>>();
             string cellsPath = System.IO.Path.ChangeExtension(archivePath, ".mapcells.bin");
             Dictionary<Hash, SourceCells> cached = ReadCells(cellsPath, simKey);
@@ -144,11 +141,13 @@ namespace IGTAP.EngineSim.Cli
             List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
 
+            TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
             var result = new
             {
                 course, capabilities = caps, label,
                 bounds = new[] { x0, y0, x1, y1 },
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
                 avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = forced.Via.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
@@ -173,8 +172,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        // A Full-TAS run's map: where its search windows went (FullTas's visits file, colored by the run time of the first
-        // arrival), the run's best so far, its at: goals (green boxes, numbered markers) and its avoid boxes (pink).
         static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string output)
         {
             string name = fulltas.GetProperty("name").GetString();
@@ -242,11 +239,13 @@ namespace IGTAP.EngineSim.Cli
             x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
 
+            TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
             var result = new
             {
                 course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name, fulltas = name,
                 bounds = new[] { x0, y0, x1, y1 },
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
                     .Concat(goals.Select(g => new Marker("goal", "goal " + g.index + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
                 avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
@@ -269,18 +268,16 @@ namespace IGTAP.EngineSim.Cli
 
         sealed record SourceCells(long[] Keys, float[] Times);
 
-        // 2: cells keyed in the game world's frame (1 keyed them in the capture's scene frame).
         const int CellsVersion = 2;
 
-        static string Stamp(string path)
+        internal static string Stamp(string path)
         {
             if (path == null || !File.Exists(path)) return "-";
             var info = new FileInfo(path);
             return info.Length + "@" + info.LastWriteTimeUtc.Ticks;
         }
 
-        // The simulator's code (this build and the game assembly it runs) decides every replay.
-        static string EngineStamp()
+        internal static string EngineStamp()
         {
             return string.Join(";", Directory.GetFiles(AppContext.BaseDirectory, "*.dll").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                 .Select(f => System.IO.Path.GetFileName(f) + "=" + Stamp(f)));
@@ -295,12 +292,12 @@ namespace IGTAP.EngineSim.Cli
                 BinaryPrimitives.WriteSingleLittleEndian(b, t.x);
                 BinaryPrimitives.WriteSingleLittleEndian(b[4..], t.y);
                 b[8] = (byte)((t.held ? 1 : 0) | (t.press ? 2 : 0) | (t.release ? 4 : 0) | (t.dash ? 8 : 0) | (t.reset ? 16 : 0)
-                    | (t.lockX.HasValue ? 32 : 0) | (t.lockY.HasValue ? 64 : 0));
+                    | (t.lockX.HasValue ? 32 : 0) | (t.lockY.HasValue ? 64 : 0) | (t.turnX.HasValue ? 128 : 0));
                 BinaryPrimitives.WriteInt32LittleEndian(b[9..], t.dashJump);
                 BinaryPrimitives.WriteInt32LittleEndian(b[13..], t.springDash);
                 BinaryPrimitives.WriteSingleLittleEndian(b[17..], t.lockX ?? 0f);
                 BinaryPrimitives.WriteSingleLittleEndian(b[21..], t.lockY ?? 0f);
-                BinaryPrimitives.WriteInt32LittleEndian(b[25..], 0);
+                BinaryPrimitives.WriteSingleLittleEndian(b[25..], t.turnX ?? 0f);
                 b = b[29..];
             }
             Span<byte> digest = stackalloc byte[32];
@@ -365,74 +362,280 @@ namespace IGTAP.EngineSim.Cli
                 .Where(e => e.ok).OrderBy(e => e.t).Select(e => e.f).FirstOrDefault();
         }
 
-        // Every map coordinate is in the game world's frame: the export's scene position minus its FloatingOrigin.
-        static List<object> Solids(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
+        // One collider shape of an enabled collider on an object that is on, in game-world coordinates. `Tone`: "blue" or
+        // "orange" for a coloured block or spike (colouredBlockSwapper), which only collides while its colour is active.
+        // `Up`: a spring's launch direction (its trigger box is the shape).
+        internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null);
+
+        // The objects that are on. With `allStates` (a map of the whole world): as if every zone were loaded. The export
+        // holds the world with only the player's zone loaded, and a run loads each zone it enters (ZoneLoader._LoadZone:
+        // the zone's root and its ZoneDisableLoadList.toLoad on).
+        internal static HashSet<int> OnObjects(JsonElement world, bool allStates)
         {
-            // A collider on a Rigidbody2D exports its shapes in the body's local space (the physics puts them on that
-            // body); the Grid tilemaps' body sits at the FloatingOrigin, so they're drawn at body position + rotation.
-            var bodies = new Dictionary<int, (float x, float y, float cos, float sin)>();
+            var on = new HashSet<int>();
+            var objects = world.GetProperty("objects").EnumerateArray().ToList();
+            if (!allStates)
+            {
+                foreach (JsonElement o in objects) if (o.GetProperty("activeInHierarchy").GetBoolean()) on.Add(o.GetProperty("id").GetInt32());
+                return on;
+            }
+            var zoned = new HashSet<int>();
+            foreach (JsonElement o in objects)
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    string type = c.GetProperty("type").GetString();
+                    if ((type != "ZoneLoader" && type != "ZoneDisableLoadList") || !c.TryGetProperty("fields", out JsonElement fields)) continue;
+                    foreach (JsonElement f in fields.EnumerateArray())
+                        if ((f[1].GetString() == "allZones" || f[1].GetString() == "toLoad") && f[2].ValueKind == JsonValueKind.Array)
+                            foreach (JsonElement r in f[2].EnumerateArray())
+                                if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out JsonElement id)) zoned.Add(id.GetInt32());
+                }
+            var nodes = objects.ToDictionary(o => o.GetProperty("id").GetInt32(),
+                o => (parent: o.GetProperty("parent").GetInt32(), self: o.GetProperty("activeSelf").GetBoolean()));
+            var known = new Dictionary<int, bool>();
+            bool On(int id)
+            {
+                if (id == 0 || !nodes.TryGetValue(id, out var n)) return true;
+                if (known.TryGetValue(id, out bool v)) return v;
+                return known[id] = (n.self || zoned.Contains(id)) && On(n.parent);
+            }
+            foreach (int id in nodes.Keys) if (On(id)) on.Add(id);
+            return on;
+        }
+
+        static Dictionary<int, (float x, float y, float cos, float sin, bool moving)> Bodies(JsonElement world, Vector3 origin)
+        {
+            var bodies = new Dictionary<int, (float x, float y, float cos, float sin, bool moving)>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
                     if (c.GetProperty("type").GetString() == "UnityEngine.Rigidbody2D" && c.TryGetProperty("props", out JsonElement bp))
                     {
                         JsonElement pos = bp.GetProperty("position");
                         double angle = bp.GetProperty("rotation").GetDouble() * Math.PI / 180.0;
-                        bodies[c.GetProperty("id").GetInt32()] = (pos.GetProperty("x").GetSingle() - origin.x, pos.GetProperty("y").GetSingle() - origin.y, (float)Math.Cos(angle), (float)Math.Sin(angle));
+                        bool moving = bp.TryGetProperty("bodyType", out JsonElement bt) && bt.GetInt32() != (int)RigidbodyType2D.Static;
+                        bodies[c.GetProperty("id").GetInt32()] = (pos.GetProperty("x").GetSingle() - origin.x, pos.GetProperty("y").GetSingle() - origin.y, (float)Math.Cos(angle), (float)Math.Sin(angle), moving);
                     }
-            var solids = new List<object>();
+            return bodies;
+        }
+
+        // Shape or path vertices (relative to the collider's attached body, or scene positions without one) in
+        // game-world coordinates, in place.
+        static void ToWorld(float[] v, (float x, float y, float cos, float sin, bool moving)? body, Vector3 origin)
+        {
+            if (body is { } b)
+                for (int i = 0; i + 1 < v.Length; i += 2)
+                {
+                    float lx = v[i], ly = v[i + 1];
+                    v[i] = b.x + b.cos * lx - b.sin * ly;
+                    v[i + 1] = b.y + b.sin * lx + b.cos * ly;
+                }
+            else
+                for (int i = 0; i + 1 < v.Length; i += 2) { v[i] -= origin.x; v[i + 1] -= origin.y; }
+        }
+
+        static (float x, float y, float cos, float sin, bool moving)? BodyOf(JsonElement props, Dictionary<int, (float x, float y, float cos, float sin, bool moving)> bodies)
+        {
+            return props.TryGetProperty("attachedRigidbody", out JsonElement rb) && rb.ValueKind == JsonValueKind.Object
+                && rb.TryGetProperty("$ref", out JsonElement id) && bodies.TryGetValue(id.GetInt32(), out var found) ? found : null;
+        }
+
+        // With `allStates`, both colours of coloured blocks too: each coloured composite's geometry with its tilemap on
+        // (`sourceShapes`), whichever colour is active.
+        internal static List<WorldShape> Shapes(JsonElement world, Vector3 origin, bool allStates)
+        {
+            var bodies = Bodies(world, origin);
+            HashSet<int> on = OnObjects(world, allStates);
+            var tones = new Dictionary<int, string>();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                    if (c.GetProperty("type").GetString() == "colouredBlockSwapper" && c.TryGetProperty("fields", out JsonElement fields))
+                        foreach (JsonElement f in fields.EnumerateArray())
+                            if ((f[1].GetString() == "blue" || f[1].GetString() == "orange") && f[2].ValueKind == JsonValueKind.Array)
+                                foreach (JsonElement r in f[2].EnumerateArray())
+                                    if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out JsonElement id)) tones[id.GetInt32()] = f[1].GetString();
+            var shapesOut = new List<WorldShape>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
-                if (!o.GetProperty("activeInHierarchy").GetBoolean()) continue;
+                int oid = o.GetProperty("id").GetInt32();
+                if (!on.Contains(oid)) continue;
+                string tone = tones.TryGetValue(oid, out string t0) ? t0 : null;
                 var components = o.GetProperty("components").EnumerateArray().ToList();
                 bool spike = components.Any(c => c.GetProperty("type").GetString() == "spikeScript");
+                bool player = components.Any(c => c.GetProperty("type").GetString() == "Movement");
+                // A spring launches along its transform.up (SpringScript.OnTriggerStay2D → Movement.hitSpring).
+                float[] up = null;
+                if (components.Any(c => c.GetProperty("type").GetString() == "SpringScript"))
+                {
+                    JsonElement q = o.GetProperty("rotation");
+                    float qx = q.GetProperty("x").GetSingle(), qy = q.GetProperty("y").GetSingle(), qz = q.GetProperty("z").GetSingle(), qw = q.GetProperty("w").GetSingle();
+                    up = new[] { 2f * (qx * qy - qw * qz), 1f - 2f * (qx * qx + qz * qz) };
+                }
+                int layer = o.GetProperty("layer").GetInt32();
+                string tag = o.GetProperty("tag").GetString();
                 foreach (JsonElement c in components)
                 {
-                    if (!c.TryGetProperty("shapes", out JsonElement shapes) || shapes.ValueKind != JsonValueKind.Object) continue;
-                    if (c.TryGetProperty("enabled", out JsonElement enabled) && !enabled.GetBoolean()) continue;
+                    bool both = allStates && tone != null && c.GetProperty("type").GetString() == "UnityEngine.CompositeCollider2D";
+                    if (!c.TryGetProperty(both ? "sourceShapes" : "shapes", out JsonElement shapes) || shapes.ValueKind != JsonValueKind.Object) continue;
+                    if (!both && c.TryGetProperty("enabled", out JsonElement enabled) && !enabled.GetBoolean()) continue;
                     JsonElement props = c.GetProperty("props");
-                    if (props.TryGetProperty("isActiveAndEnabled", out JsonElement live) && !live.GetBoolean()) continue;
                     bool trigger = props.TryGetProperty("isTrigger", out JsonElement t) && t.GetBoolean();
-                    if (trigger && !spike) continue;
-                    (float x, float y, float cos, float sin)? body = props.TryGetProperty("attachedRigidbody", out JsonElement rb) && rb.ValueKind == JsonValueKind.Object
-                        && rb.TryGetProperty("$ref", out JsonElement id) && bodies.TryGetValue(id.GetInt32(), out var found) ? found : null;
+                    (float x, float y, float cos, float sin, bool moving)? body = BodyOf(props, bodies);
                     foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
                     {
                         float[] v = s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray();
                         if (v.Length < 2) continue;
-                        if (body is { } b)
-                            for (int i = 0; i + 1 < v.Length; i += 2)
-                            {
-                                float lx = v[i], ly = v[i + 1];
-                                v[i] = b.x + b.cos * lx - b.sin * ly;
-                                v[i + 1] = b.y + b.sin * lx + b.cos * ly;
-                            }
-                        else
-                            for (int i = 0; i + 1 < v.Length; i += 2) { v[i] -= origin.x; v[i + 1] -= origin.y; }
+                        ToWorld(v, body, origin);
                         float r = s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f;
-                        float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
-                        for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
-                        if (sx1 + r < x0 || sx0 - r > x1 || sy1 + r < y0 || sy0 - r > y1) continue;
-                        string type = s.GetProperty("type").GetString();
-                        string k = type == "Polygon" ? "poly" : type == "Circle" ? "circle" : type == "Capsule" ? "capsule" : "line";
-                        solids.Add(new { k, spike, p = v.Select(Round), r });
+                        shapesOut.Add(new WorldShape(s.GetProperty("type").GetString(), v, r, layer, tag, trigger, spike, body is { moving: true }, player, tone, up));
                     }
                 }
+            }
+            return shapesOut;
+        }
+
+        internal static List<object> Solids(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
+        {
+            var solids = new List<object>();
+            foreach (WorldShape s in Shapes(world, origin, allStates: true))
+            {
+                if (s.Trigger && !s.Spike && s.Up == null) continue;
+                float[] v = s.V;
+                float r = s.R;
+                float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
+                for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
+                if (sx1 + r < x0 || sx0 - r > x1 || sy1 + r < y0 || sy0 - r > y1) continue;
+                string k = s.Type == "Polygon" ? "poly" : s.Type == "Circle" ? "circle" : s.Type == "Capsule" ? "capsule" : "line";
+                solids.Add(new { k, spike = s.Spike, p = v.Select(Round), r, tone = s.Tone, spring = s.Up?.Select(e => (float)Math.Round(e, 3)) });
             }
             return solids;
         }
 
-        static List<Marker> Markers(JsonElement world, Vector3 origin)
+        // The ground the game's trees grow: TreeController's segments, each turned on when an upgrade box that names
+        // it in SegmentsToTrigger is bought (TreeSegmentActivationComponent.growTreePart), as polygons in Solids'
+        // format. A fresh world has none of it grown, so the engine and the other layers don't have it; this is where it
+        // will be. Off composites keep their outlines (`paths`) but no shapes, so a tree platform is its outline.
+        //
+        // `Steps`: one label per segment, the fewest tree purchases that grow it. Plant Tree is purchase 1 and grows its
+        // segments; each grown segment shows its own box, whose purchase grows the segments it names (one more
+        // purchase), and a segment with autoTriggerNext grows the next one along with it. `via`: the box that grows it,
+        // `box`: the box it carries.
+        internal sealed record TreeGround(List<object> Shapes, List<object> Steps);
+
+        internal static TreeGround Grown(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
         {
-            var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint", ["SpringScript"] = "spring" };
+            var objects = world.GetProperty("objects").EnumerateArray().ToList();
+            var byId = objects.ToDictionary(o => o.GetProperty("id").GetInt32());
+            var owner = new Dictionary<int, int>();
+            var components = new Dictionary<int, JsonElement>();
+            foreach (JsonElement o in objects)
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    owner[c.GetProperty("id").GetInt32()] = o.GetProperty("id").GetInt32();
+                    components[c.GetProperty("id").GetInt32()] = c;
+                }
+            JsonElement? Field(JsonElement c, string name)
+            {
+                if (c.TryGetProperty("fields", out JsonElement fields))
+                    foreach (JsonElement f in fields.EnumerateArray()) if (f[1].GetString() == name) return f[2];
+                return null;
+            }
+            int Ref(JsonElement? v) => v is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("$ref", out JsonElement id) ? id.GetInt32() : 0;
+            string Name(int objectId) => byId.TryGetValue(objectId, out JsonElement o) ? o.GetProperty("name").GetString() : "?";
+
+            // Segment GameObject → (tree number, step, via, box).
+            var steps = new Dictionary<int, (int tree, int step, string via, string box)>();
+            foreach (JsonElement o in objects)
+                foreach (JsonElement tc in o.GetProperty("components").EnumerateArray())
+                {
+                    if (tc.GetProperty("type").GetString() != "TreeController" || Field(tc, "TreeSegments") is not { ValueKind: JsonValueKind.Array } list) continue;
+                    int treeId = tc.GetProperty("id").GetInt32(), tree = Field(tc, "treeNumber")?.GetInt32() ?? 0;
+                    var segs = list.EnumerateArray().Select(r => components.TryGetValue(Ref(r), out JsonElement s) ? s : (JsonElement?)null).ToList();
+                    // Every box on this tree: its GameObject → the segments its purchase grows.
+                    var triggers = new Dictionary<int, int[]>();
+                    foreach (JsonElement b in components.Values)
+                        if (b.GetProperty("type").GetString() == "upgradeBox" && Ref(Field(b, "upgradeTree")) == treeId && Field(b, "SegmentsToTrigger") is { ValueKind: JsonValueKind.Array } grows)
+                            triggers[owner[b.GetProperty("id").GetInt32()]] = grows.EnumerateArray().Select(e => e.GetInt32()).ToArray();
+                    var queue = new Queue<(int box, int step)>();
+                    int plant = owner.TryGetValue(Ref(Field(tc, "plantTreeBox")), out int p) ? p : 0;
+                    queue.Enqueue((plant, 1));
+                    var seen = new HashSet<int>();
+                    void Grow(int index, int step, int via)
+                    {
+                        if (index < 0 || index >= segs.Count || segs[index] is not { } s || !seen.Add(index)) return;
+                        int box = Ref(Field(s, "box"));
+                        steps[owner[s.GetProperty("id").GetInt32()]] = (tree, step, Name(via), box != 0 ? Name(box) : null);
+                        if (box != 0) queue.Enqueue((box, step + 1));
+                        if (Field(s, "autoTriggerNext") is { ValueKind: JsonValueKind.True }) Grow(Field(s, "NextSegmentToAutoTriggerIndex")?.GetInt32() ?? -1, step, via);
+                    }
+                    while (queue.Count > 0)
+                    {
+                        var (box, step) = queue.Dequeue();
+                        if (triggers.TryGetValue(box, out int[] grows)) foreach (int index in grows) Grow(index, step, box);
+                    }
+                    // A segment no box grows (none found) keeps its ground, with no step.
+                    for (int index = 0; index < segs.Count; index++)
+                        if (segs[index] is { } s && !seen.Contains(index))
+                            steps[owner[s.GetProperty("id").GetInt32()]] = (tree, 0, null, Ref(Field(s, "box")) is var b and not 0 ? Name(b) : null);
+                }
+
+            var parent = objects.ToDictionary(o => o.GetProperty("id").GetInt32(), o => o.GetProperty("parent").GetInt32());
+            int SegmentOf(int id)
+            {
+                for (; id != 0 && parent.ContainsKey(id); id = parent[id]) if (steps.ContainsKey(id)) return id;
+                return 0;
+            }
+            var bodies = Bodies(world, origin);
+            HashSet<int> on = OnObjects(world, allStates: true);
+            var shapes = new List<object>();
+            var extent = new Dictionary<int, (float x0, float y0, float x1, float y1)>();
+            foreach (JsonElement o in objects)
+            {
+                int oid = o.GetProperty("id").GetInt32(), segment = SegmentOf(oid);
+                if (on.Contains(oid) || segment == 0) continue;
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    if (!c.TryGetProperty("props", out JsonElement props) || !props.TryGetProperty("isTrigger", out JsonElement trigger) || trigger.GetBoolean()) continue;
+                    if (props.TryGetProperty("compositeOperation", out JsonElement op) && op.ValueKind == JsonValueKind.Number && op.GetInt32() != 0) continue;
+                    var polygons = new List<float[]>();
+                    if (c.TryGetProperty("paths", out JsonElement paths) && c.GetProperty("type").GetString() == "UnityEngine.CompositeCollider2D")
+                        foreach (JsonElement path in paths.EnumerateArray()) polygons.Add(path.EnumerateArray().Select(e => e.GetSingle()).ToArray());
+                    else if (c.TryGetProperty("shapes", out JsonElement list) && list.ValueKind == JsonValueKind.Object)
+                        foreach (JsonElement s in list.GetProperty("list").EnumerateArray())
+                            if (s.GetProperty("type").GetString() == "Polygon") polygons.Add(s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray());
+                    var body = BodyOf(props, bodies);
+                    foreach (float[] v in polygons.Where(v => v.Length >= 6))
+                    {
+                        ToWorld(v, body, origin);
+                        float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
+                        for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
+                        if (sx1 < x0 || sx0 > x1 || sy1 < y0 || sy0 > y1) continue;
+                        shapes.Add(new { k = "poly", spike = false, p = v.Select(Round), r = 0f });
+                        extent[segment] = extent.TryGetValue(segment, out var e) ? (Math.Min(e.x0, sx0), Math.Min(e.y0, sy0), Math.Max(e.x1, sx1), Math.Max(e.y1, sy1)) : (sx0, sy0, sx1, sy1);
+                    }
+                }
+            }
+            var labels = extent.Select(kv => (object)new { tree = steps[kv.Key].tree, step = steps[kv.Key].step, via = steps[kv.Key].via, box = steps[kv.Key].box,
+                x = Round((kv.Value.x0 + kv.Value.x1) / 2f), y = Round((kv.Value.y0 + kv.Value.y1) / 2f) }).ToList();
+            return new TreeGround(shapes, labels);
+        }
+
+        internal static List<Marker> Markers(JsonElement world, Vector3 origin)
+        {
+            // Refill orbs (JiggleDropScript on a trigger capsule) by what they give back: the name says which.
+            var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint",
+                ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill" };
             var markers = new List<Marker>();
+            HashSet<int> on = OnObjects(world, allStates: true);
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
-                if (!o.GetProperty("activeInHierarchy").GetBoolean()) continue;
+                if (!on.Contains(o.GetProperty("id").GetInt32())) continue;
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
                 {
                     if (!kinds.TryGetValue(c.GetProperty("type").GetString(), out string kind)) continue;
+                    string name = o.GetProperty("name").GetString();
+                    if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
                     JsonElement p = o.GetProperty("position");
-                    markers.Add(new Marker(kind, o.GetProperty("name").GetString(), Round(p.GetProperty("x").GetSingle() - origin.x), Round(p.GetProperty("y").GetSingle() - origin.y)));
+                    markers.Add(new Marker(kind, name, Round(p.GetProperty("x").GetSingle() - origin.x), Round(p.GetProperty("y").GetSingle() - origin.y)));
                     break;
                 }
             }

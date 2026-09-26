@@ -14,8 +14,12 @@ namespace IGTAPTasMod
         static readonly MethodInfo UpdateMethod = AccessTools.Method(typeof(Movement), "Update");
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly MethodInfo VmanFixedUpdate = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
+        static readonly MethodInfo OriginLateUpdate = AccessTools.Method(typeof(FloatingOrigin), "LateUpdate");
+        static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
         static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
+        // FloatingOrigin.MoveOrigin, started by its LateUpdate and waiting for the next physics step (WaitForFixedUpdate).
+        static IEnumerator _rebase;
         static int _tick;
 
         public static bool Active { get; private set; }
@@ -46,10 +50,65 @@ namespace IGTAPTasMod
 
         static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
         {
-            if (!Active || !(__instance is upgradeBox box) || routine == null || !routine.GetType().Name.Contains("IE_BuyMax")) return true;
+            if (!Active || routine == null) return true;
+            if (__instance is FloatingOrigin)
+            {
+                // MoveOrigin runs to its WaitForFixedUpdate here (RebaseInProgress set); Run resumes it after the next physics step.
+                __result = null;
+                if (routine.MoveNext()) _rebase = routine;
+                return false;
+            }
+            if (!(__instance is upgradeBox box) || !routine.GetType().Name.Contains("IE_BuyMax")) return true;
             __result = null;
             if (routine.MoveNext()) BuyMax.Add((box, routine));
             return false;
+        }
+
+        /// <summary>
+        /// FloatingOrigin.LateUpdate, as a rendered frame runs it after Update: past Threshold from scene (0, 0) it starts
+        /// MoveOrigin, which moves every root object back by the player's scene position after the next physics step.
+        /// </summary>
+        static void OriginFrame()
+        {
+            FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
+            if (origin != null && origin.isActiveAndEnabled && origin.ReferenceObject != null) OriginLateUpdate.Invoke(origin, null);
+        }
+
+        static void ResumeRebase()
+        {
+            IEnumerator routine = _rebase;
+            _rebase = null;
+            routine?.MoveNext();
+        }
+
+        /// <summary>A rebase still waiting when the run ends goes back to Unity's loop, which resumes it after the next physics step.</summary>
+        static IEnumerator AfterNextFixedStep(IEnumerator routine)
+        {
+            yield return new WaitForFixedUpdate();
+            routine.MoveNext();
+        }
+
+        /// <summary>
+        /// Puts the world back at a snapshot's FloatingOrigin: what MoveOrigin does, by the difference (every root object, the
+        /// camera, the background scrollers, particles, trails, lines, currentOrigin).
+        /// </summary>
+        static void ShiftOrigin(FloatingOrigin origin, Vector3 offset)
+        {
+            foreach (string method in new[] { "MoveRootTransforms", "MoveParticles", "MoveTrailRenderers", "MoveLineRenderers" })
+            {
+                if (method == "MoveParticles" && !origin.UpdateParticles || method == "MoveTrailRenderers" && !origin.UpdateTrailRenderers
+                    || method == "MoveLineRenderers" && !origin.UpdateLineRenderers) continue;
+                AccessTools.Method(typeof(FloatingOrigin), method).Invoke(origin, new object[] { offset });
+            }
+            Camera cam = Camera.main;
+            if (cam != null)
+            {
+                cameraMover mover = cam.GetComponent<cameraMover>();
+                if (mover != null) mover.Translate(-offset);
+                cam.transform.position += offset;
+            }
+            foreach (backgroundScroller scroller in UnityEngine.Object.FindObjectsByType<backgroundScroller>(FindObjectsSortMode.None)) scroller.Translate(offset);
+            origin.currentOrigin -= offset;
         }
 
         static void EndOfFrame()
@@ -74,9 +133,11 @@ namespace IGTAPTasMod
             public (int due, MonoBehaviour target, string method)[] pending;
             public Economy economy;
             public Vman vman;
+            /// <summary>FloatingOrigin.currentOrigin, and whether a MoveOrigin was waiting for the next physics step.</summary>
+            public Vector3 origin;
+            public bool rebasing;
         }
 
-        // VmanScript's statics (the speedrun's clock and score) and its ending guard: a Vman world's run state.
         internal sealed class Vman
         {
             public bool active, meta, blockEnding;
@@ -119,10 +180,6 @@ namespace IGTAPTasMod
             public bool blueActive;
         }
 
-        static readonly AccessTools.FieldRef<tripBreakerScript, bool[]> BreakerActiveLights = AccessTools.FieldRefAccess<tripBreakerScript, bool[]>("activeLights");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerGlobalLight = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("globalLight");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerAllLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("allLights");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject[]> BreakerAreaLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject[]>("areaLights");
         static readonly FieldInfo BreakerPlayerLight = AccessTools.Field(typeof(tripBreakerScript), "playerLight");
         static readonly AccessTools.FieldRef<colouredBlockSwapper, GameObject[]> OrangeBlocks = AccessTools.FieldRefAccess<colouredBlockSwapper, GameObject[]>("orange");
         static readonly AccessTools.FieldRef<colouredBlockSwapper, GameObject[]> BlueBlocks = AccessTools.FieldRefAccess<colouredBlockSwapper, GameObject[]>("blue");
@@ -132,11 +189,9 @@ namespace IGTAPTasMod
             var breakers = new List<(tripBreakerScript, bool[], bool[], (GameObject, bool)[], Behaviour, bool, float, float)>();
             foreach (tripBreakerScript t in UnityEngine.Object.FindObjectsByType<tripBreakerScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
-                var objects = new List<(GameObject, bool)>();
-                foreach (GameObject o in new[] { BreakerGlobalLight(t), BreakerAllLights(t) }.Concat(BreakerAreaLights(t) ?? new GameObject[0]))
-                    if (o != null) objects.Add((o, o.activeSelf));
+                (GameObject, bool)[] objects = TasPlugin.GameBreakerLights(t).ToArray();
                 var light = BreakerPlayerLight.GetValue(t) as Behaviour;
-                breakers.Add((t, (bool[])BreakerActiveLights(t)?.Clone(), (bool[])t.fixedAreas?.Clone(), objects.ToArray(),
+                breakers.Add((t, (bool[])TasPlugin.BreakerActiveLights(t)?.Clone(), (bool[])t.fixedAreas?.Clone(), objects,
                     light, light != null && light.enabled, LightRadius(light, "pointLightOuterRadius"), LightRadius(light, "pointLightInnerRadius")));
             }
             colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
@@ -168,7 +223,7 @@ namespace IGTAPTasMod
             {
                 if (script == null) continue;
                 script.CancelInvoke();
-                if (activeLights != null) BreakerActiveLights(script) = (bool[])activeLights.Clone();
+                if (activeLights != null) TasPlugin.BreakerActiveLights(script) = (bool[])activeLights.Clone();
                 if (fixedAreas != null) script.fixedAreas = (bool[])fixedAreas.Clone();
                 foreach (var (obj, active) in objects) if (obj != null && obj.activeSelf != active) obj.SetActive(active);
                 if (light == null) continue;
@@ -296,6 +351,7 @@ namespace IGTAPTasMod
         public static Snapshot Capture(Movement movement, courseScript[] courses, object[] engine, int tick, bool beforeTick = false, bool economy = true)
         {
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
             var pending = new (int, MonoBehaviour, string)[Pending.Count];
             int next = _tick + (beforeTick ? 0 : 1);
             for (int i = 0; i < pending.Length; i++) pending[i] = (Pending[i].due - next, Pending[i].target, Pending[i].method);
@@ -306,12 +362,14 @@ namespace IGTAPTasMod
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
-                pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture() };
+                pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture(),
+                origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null };
         }
 
         public static void Restore(Snapshot s, Movement movement)
         {
             movement.CancelInvoke();
+            PutOrigin(s.origin);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             var own = new List<Collider2D>();
             body.GetAttachedColliders(own);
@@ -342,6 +400,21 @@ namespace IGTAPTasMod
             body.linearVelocity = s.velocity;
             body.angularVelocity = s.angularVelocity;
             Physics2D.SyncTransforms();
+        }
+
+        /// <summary>
+        /// The world at a FloatingOrigin a turbo run started from (a run may rebase it on the way), with no MoveOrigin waiting
+        /// (a Unity-scheduled one from real frames included). A snapshot taken while one waited gets it back when its run
+        /// starts (Run's resume).
+        /// </summary>
+        public static void PutOrigin(Vector3 target)
+        {
+            _rebase = null;
+            FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
+            if (origin == null) return;
+            origin.StopAllCoroutines();
+            OriginRebasing(origin) = false;
+            if (origin.currentOrigin != target) ShiftOrigin(origin, origin.currentOrigin - target);
         }
 
         static readonly List<Collider2D> Overlaps = new List<Collider2D>();
@@ -407,6 +480,7 @@ namespace IGTAPTasMod
             BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
             Active = true;
+            if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
             Physics2D.simulationMode = SimulationMode2D.Script;
             try
@@ -423,7 +497,6 @@ namespace IGTAPTasMod
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
                         if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
-                    // Unity runs VmanScript.FixedUpdate every physics step: the speedrun's clock, which ends it at 0.
                     if (VmanScript.isCurrentlyVman && VmanScript.Instance != null && VmanScript.Instance.isActiveAndEnabled)
                         VmanFixedUpdate.Invoke(VmanScript.Instance, null);
                     foreach (upgradeBox box in boxes)
@@ -433,9 +506,11 @@ namespace IGTAPTasMod
                         if (cooldown >= 0f) cooldown -= dt;
                     }
                     Physics2D.Simulate(dt);
+                    ResumeRebase();
                     UpdateMethod.Invoke(movement, null);
                     foreach (clonesScript c in clones)
                         if (c != null && c.isActiveAndEnabled) StepClones(c, dt);
+                    OriginFrame();
                     EndOfFrame();
                     afterTick?.Invoke();
                 }
@@ -454,6 +529,12 @@ namespace IGTAPTasMod
                 }
                 Pending.Clear();
                 BuyMax.Clear();
+                if (_rebase != null)
+                {
+                    FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
+                    if (origin != null) origin.StartCoroutine(AfterNextFixedStep(_rebase));
+                    _rebase = null;
+                }
             }
         }
     }

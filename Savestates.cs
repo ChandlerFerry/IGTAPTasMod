@@ -62,6 +62,10 @@ namespace IGTAPTasMod
         public float scaleX = 1f;
         public float scaleY = 1f;
         public float scaleZ = 1f;
+        /// <summary>The FloatingOrigin at capture: a restore moves the position by the origin's change since (world frame kept).</summary>
+        public bool hasOrigin;
+        public float originX;
+        public float originY;
         public Dictionary<string, SnapshotValue> movementFields = new Dictionary<string, SnapshotValue>();
         public Dictionary<string, SnapshotValue> bodyFields = new Dictionary<string, SnapshotValue>();
     }
@@ -98,6 +102,10 @@ namespace IGTAPTasMod
                 rotationZ = transform.rotation.z, rotationW = transform.rotation.w,
                 scaleX = transform.localScale.x, scaleY = transform.localScale.y, scaleZ = transform.localScale.z
             };
+            Vector2 origin = TasPlugin.CurrentOrigin();
+            result.hasOrigin = true;
+            result.originX = origin.x;
+            result.originY = origin.y;
             CaptureMembers(movement, MovementFieldNames, result.movementFields);
             Component body = movement.GetComponent("Rigidbody2D");
             if (body != null) CaptureMembers(body, BodyFieldNames, result.bodyFields);
@@ -125,11 +133,17 @@ namespace IGTAPTasMod
             Transform transform = movement.transform;
             Component body = movement.GetComponent("Rigidbody2D");
             SetBodySimulation(body, false);
-            transform.position = new Vector3(savestate.positionX, savestate.positionY, savestate.positionZ);
+            Vector3 position = new Vector3(savestate.positionX, savestate.positionY, savestate.positionZ);
+            if (savestate.hasOrigin)
+            {
+                Vector2 origin = TasPlugin.CurrentOrigin();
+                position += new Vector3(origin.x - savestate.originX, origin.y - savestate.originY, 0f);
+            }
+            transform.position = position;
             transform.rotation = new Quaternion(savestate.rotationX, savestate.rotationY, savestate.rotationZ, savestate.rotationW);
             transform.localScale = new Vector3(savestate.scaleX, savestate.scaleY, savestate.scaleZ);
-            RestoreMembers(movement, savestate.movementFields);
-            if (body != null) RestoreMembers(body, savestate.bodyFields);
+            RestoreMembers(movement, savestate.movementFields, TasPlugin.UnlocksLocked);
+            if (body != null) RestoreMembers(body, savestate.bodyFields, false);
             SetBodySimulation(body, ReadBool(savestate.bodyFields, "simulated", true));
             Physics2D.SyncTransforms();
             result.Success = true;
@@ -161,11 +175,18 @@ namespace IGTAPTasMod
             }
         }
 
-        private static void RestoreMembers(object target, Dictionary<string, SnapshotValue> values)
+        /// <summary>An unlock (not a per-jump count like airDashesLeft): savestates capture none, but one may carry them (a Full-TAS savestate start).</summary>
+        public static bool IsUnlockField(string name)
+        {
+            return name.EndsWith("Unlocked", StringComparison.Ordinal) || name == "maxAirDashes" || name == "maxAirJumps";
+        }
+
+        private static void RestoreMembers(object target, Dictionary<string, SnapshotValue> values, bool skipUnlocks)
         {
             if (values == null) return;
             Type type = target.GetType();
             foreach (KeyValuePair<string, SnapshotValue> pair in values) {
+                if (skipUnlocks && IsUnlockField(pair.Key)) continue;
                 FieldInfo field = AccessTools.Field(type, pair.Key);
                 PropertyInfo property = field == null ? AccessTools.Property(type, pair.Key) : null;
                 Type valueType = field != null ? field.FieldType : property != null && property.CanWrite ? property.PropertyType : null;
@@ -221,14 +242,20 @@ namespace IGTAPTasMod
             return values != null && values.TryGetValue(key, out value) && bool.TryParse(value.value, out parsed) ? parsed : fallback;
         }
 
-
+        private static Assembly _hashedAssembly;
+        private static string _assemblyHash;
 
         private static string HashAssembly(Assembly assembly)
         {
+            if (assembly == _hashedAssembly) return _assemblyHash;
+            string hash;
             try {
                 using (SHA256 sha = SHA256.Create()) using (FileStream stream = File.OpenRead(assembly.Location))
-                    return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-            } catch { return "unavailable"; }
+                    hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            } catch { hash = "unavailable"; }
+            _hashedAssembly = assembly;
+            _assemblyHash = hash;
+            return hash;
         }
 
         private static string F(float value) { return value.ToString("R", CultureInfo.InvariantCulture); }

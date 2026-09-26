@@ -34,6 +34,7 @@ namespace IGTAPTasMod
         private static readonly FieldInfo CanHyperField = AccessTools.Field(typeof(Movement), "canHyper");
         private static readonly FieldInfo WallBouncePossibleField = AccessTools.Field(typeof(Movement), "wallBouncePossible");
         private static readonly FieldInfo HitDashResetterField = AccessTools.Field(typeof(Movement), "hitDashResetterWhileInCurrentDash");
+        private static readonly FieldInfo WaitingForDashInputField = AccessTools.Field(typeof(Movement), "WaitingForDashInput");
 
         private List<MacroStep> _steps;
         private string _macroName;
@@ -48,6 +49,9 @@ namespace IGTAPTasMod
         private int _springTicks;
         private bool _lockArmed;
         private float? _lockX, _lockY;
+        private float? _pendingTurnX;
+        private bool _turnArmed;
+        private float _turnX;
         private int _pressedStep = -1;
         private bool _tickLocked;
         private Vector2 _tickStick;
@@ -78,6 +82,60 @@ namespace IGTAPTasMod
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
+        /// <summary>
+        /// The stick the game reads (Movement.NormaliseInput). Between a dash's start and the next FixedUpdate — at 1x the
+        /// dash's TimeStop frames — a dash started without a sideways stick waits for one (<c>WaitingForDashInput</c>,
+        /// Movement.Update 817-834): a step's <c>dashTurnX</c> is the stick x a player holds then, so the dash turns to it.
+        /// </summary>
+        public Vector2 StickFor(Movement movement)
+        {
+            Vector2 stick = TickStick;
+            if (_turnArmed && ReadBool(WaitingForDashInputField, movement)) stick.x = _turnX;
+            return stick;
+        }
+
+        /// <summary>
+        /// After Movement.FixedUpdate: a pressed dash's turn arms once the dash has started this tick waiting for a sideways
+        /// stick, for the frames up to the next tick (<see cref="BeforeTick"/> disarms it).
+        /// </summary>
+        public void AfterFixedTick(Movement movement)
+        {
+            if (!IsRunning || !_pendingTurnX.HasValue) return;
+            if (!string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase)
+                || ReadFloat(FramesSinceLastDashField, movement) != 0f) return;
+            _turnArmed = ReadBool(WaitingForDashInputField, movement);
+            _turnX = _pendingTurnX.Value;
+            _pendingTurnX = null;
+        }
+
+        /// <summary>
+        /// The step-up gate: <c>Movement.Update</c>'s step-up (806-816) lifts the player at most once between two physics
+        /// ticks, as turbo (the judge, and the offline engine) runs it: one Update per tick. The TAS keeps the player body's
+        /// interpolation off, and with it off the step-up lifts again in every rendered frame until the next tick (Inwall
+        /// wallbounce: six 56-unit lifts at 280 fps), so playback would leave the route turbo judged
+        /// (docs/human-input.md, Inwall wallbounce). A lift is at most 56 units (the dash's down ray starts 20 up).
+        /// </summary>
+        public const int MaxStepUpLift = 56;
+        private bool _steppedUp;
+
+        /// <summary>Before Movement.FixedUpdate: a new step-up window starts.</summary>
+        public void BeginStepUpWindow() { _steppedUp = false; }
+
+        /// <summary>
+        /// At a step-up (<c>StepUpAnimationScript.onSteppedUp</c>, its argument the position before minus after): false, and
+        /// the player put back where the step-up found it, when this window already stepped up.
+        /// </summary>
+        public bool AllowStepUp(Transform player, Vector3 offset)
+        {
+            if (_steppedUp)
+            {
+                player.position += offset;
+                return false;
+            }
+            _steppedUp = true;
+            return true;
+        }
+
         public void Run(MacroDefinition macro, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null)
         {
@@ -99,6 +157,8 @@ namespace IGTAPTasMod
             _springDashFrame = 0;
             _springTicks = 0;
             _lockArmed = false;
+            _pendingTurnX = null;
+            _turnArmed = false;
             _pressedStep = -1;
             _tickLocked = false;
             _tickStick = Vector2.zero;
@@ -149,6 +209,7 @@ namespace IGTAPTasMod
 
         public void BeforeTick(Movement movement)
         {
+            _turnArmed = false;
             if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0) { _tickStick = Vector2.zero; return; }
             string mode = ReadObject(CutsceneModeField, movement);
             bool dash = string.Equals(mode, "dash", StringComparison.OrdinalIgnoreCase);
@@ -195,6 +256,7 @@ namespace IGTAPTasMod
             {
                 PressDash(movement);
                 _dashJumpFrame = step.dashJumpFrame;
+                _pendingTurnX = step.dashTurnX;
                 _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
             }
             _rawJumpHeld = step.rawJumpHeld;
@@ -365,13 +427,11 @@ namespace IGTAPTasMod
             if (_elapsedTicks >= Mathf.Max(1, step.durationTicks)) Advance(movement, false);
         }
 
-
         private static int WallJumpHoldDirection(MacroStep step)
         {
             return step.wallJumpHoldDirection >= -1 && step.wallJumpHoldDirection <= 1
                 ? step.wallJumpHoldDirection : step.direction;
         }
-
 
         private void Advance(Movement movement, bool releaseJump)
         {
@@ -531,8 +591,6 @@ namespace IGTAPTasMod
             if (body != null) body.position = _synchronizationPosition;
             Physics2D.SyncTransforms();
         }
-
-
 
         private static bool ReadBool(FieldInfo field, object instance)
         {

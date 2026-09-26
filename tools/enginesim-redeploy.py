@@ -15,12 +15,10 @@ TARGET = GAME / "BepInEx" / "plugins" / "IGTAPTasMod.dll"
 TARGET_WEB = GAME / "BepInEx" / "plugins" / "IGTAPTasWeb"
 API = "http://127.0.0.1:17426"
 
-
 def post(path, body=None, timeout=120):
     request = urllib.request.Request(API + path, data=json.dumps(body or {}).encode(), method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
-
 
 def main():
     subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
@@ -49,7 +47,6 @@ def main():
         except OSError:
             continue
     print(json.dumps(post("/api/oracle/bootstrap"))[:300])
-
 
 if __name__ == "__main__":
     main()

@@ -10,8 +10,6 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // A same-time version of a best that is easier to play, and how much slack each of its inputs has
-    // (enginesim/README.md "Humanize").
     sealed class Humanizer
     {
         const float Tie = .0001f;
@@ -66,8 +64,6 @@ namespace IGTAP.EngineSim.Cli
         float _time;
         long _runTicks;
 
-        // Every judge owns one simulation on its own thread (the shim's backends are thread-static): the calling thread's
-        // and threads - 1 workers.
         public Humanizer(Func<Simulation> create, OfflineSolver.ForcedPath path, int threads)
         {
             _main = new Judge(create(), path);
@@ -120,7 +116,6 @@ namespace IGTAP.EngineSim.Cli
             return true;
         }
 
-        // A partial stick to full tilt or to rest.
         List<InputTick> Snap(List<InputTick> route, List<string> changes)
         {
             foreach (var (start, end, value) in Runs(route, false))
@@ -136,7 +131,6 @@ namespace IGTAP.EngineSim.Cli
             return route;
         }
 
-        // A partial that has to stay: the middle of the band of partials (same side) that works.
         List<InputTick> Widen(List<InputTick> route, List<string> changes)
         {
             foreach (var (start, end, value) in Runs(route, false))
@@ -155,8 +149,6 @@ namespace IGTAP.EngineSim.Cli
             return route;
         }
 
-        // A stick run takes its neighbour's value (one stick change fewer); a vertical goes back to rest first, and leaves
-        // rest only to fill a gap in one hold.
         List<InputTick> Merge(List<InputTick> route, bool y, List<string> changes)
         {
             string axis = y ? "y" : "x";
@@ -300,7 +292,6 @@ namespace IGTAP.EngineSim.Cli
             return events.OrderBy(e => e.Tick).ThenBy(e => e.Kind).ToList();
         }
 
-        // The event moved d ticks (a stick change's boundary, a press, a release, a dash); null where the route has no room.
         static List<InputTick> Shift(List<InputTick> route, Event e, int d, out int first)
         {
             int q = e.Tick + d;
@@ -367,8 +358,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        // A jump press at p pressed at q instead. The button's state around it moves with it: a press after the button was
-        // up keeps it up before the press; a second button's press (the first one held) changes no hold.
         static List<InputTick> MovePress(List<InputTick> route, int p, int q)
         {
             if (q < 0 || q >= route.Count || route[p].release) return null;
@@ -390,7 +379,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        // The release that ends a hold at r made at q instead.
         static List<InputTick> MoveRelease(List<InputTick> route, int r, int q)
         {
             if (q < 1 || q >= route.Count || route[r].held) return null;
@@ -414,7 +402,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        // Without the press: a press after the button was up takes its whole hold (and the release that ended it) with it.
         static List<InputTick> DropPress(List<InputTick> route, int p)
         {
             var c = new List<InputTick>(route);
@@ -437,8 +424,8 @@ namespace IGTAP.EngineSim.Cli
                 if (j != d && (route[j].dash || route[j].ArmsLock)) return null;
             var c = new List<InputTick>(route);
             InputTick from = c[d], to = c[q];
-            to.dash = true; to.dashJump = from.dashJump; to.lockX = from.lockX; to.lockY = from.lockY;
-            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null;
+            to.dash = true; to.dashJump = from.dashJump; to.lockX = from.lockX; to.lockY = from.lockY; to.turnX = from.turnX;
+            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null; from.turnX = null;
             c[d] = from;
             c[q] = to;
             return c;
@@ -450,6 +437,7 @@ namespace IGTAP.EngineSim.Cli
             InputTick k = c[d];
             k.dash = false;
             k.dashJump = 0;
+            k.turnX = null;
             c[d] = k;
             return c;
         }
@@ -465,7 +453,7 @@ namespace IGTAP.EngineSim.Cli
             if (k.press) parts.Add("press");
             if (k.release) parts.Add("release");
             parts.Add(k.held ? "held" : "up");
-            if (k.dash) parts.Add("dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : ""));
+            if (k.dash) parts.Add("dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue ? " turn " + Num(k.turnX.Value) : ""));
             return string.Join(" ", parts);
         }
 
@@ -488,7 +476,6 @@ namespace IGTAP.EngineSim.Cli
 
             public bool Valid { get; private set; }
 
-            // Replays the route from the start, keeping states to resume candidates that match it up to their first change.
             public RunResult Record(List<InputTick> route)
             {
                 if (ReferenceEquals(route, _recorded)) { Valid = _recordedValid; return _recordedResult; }
@@ -501,7 +488,6 @@ namespace IGTAP.EngineSim.Cli
                 return r;
             }
 
-            // The candidate finishes in the same time, in no more physics ticks, on the forced path.
             public bool Accepts(List<InputTick> inputs, int first, float time, long runTicks)
             {
                 int s = Math.Min(first, _states.Length - 1);
@@ -587,7 +573,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        // Writes <best>-human.json (a studio-playable route, never a record) and <best>-human.md; returns the report.
         public static string Write(string bestPath, int course, string caps, Humanizer.Result r)
         {
             int exact = r.After.Count(e => e.Exact), exactBefore = r.Before.Count(e => e.Exact);
@@ -674,7 +659,6 @@ namespace IGTAP.EngineSim.Cli
             return lo == hi ? "only " + Humanizer.Num(lo) : Humanizer.Num(lo) + ".." + Humanizer.Num(hi);
         }
 
-        // Humanizes each new best of a solve on one background thread; a newer best replaces one still waiting.
         public sealed class Background
         {
             readonly Func<Simulation> _create;
@@ -702,7 +686,6 @@ namespace IGTAP.EngineSim.Cli
                 lock (this) { _next = (file, inputs); Monitor.PulseAll(this); }
             }
 
-            // Waits for the waiting best (and the one being humanized) to be done.
             public void Finish()
             {
                 lock (this)

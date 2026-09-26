@@ -46,7 +46,6 @@ namespace UnityEngine
 
     public sealed class Rigidbody2D : Component
     {
-        // Owned by the physics backend.
         public object BackendData;
 
         public RigidbodyType2D bodyType { get; set; }
@@ -88,7 +87,6 @@ namespace UnityEngine
 
     public class Collider2D : Behaviour
     {
-        // Owned by the physics backend: the collider's exported physics shapes and live fixture.
         public object BackendData;
         internal Vector2 m_Offset;
         internal LayerMask m_ExcludeLayers, m_IncludeLayers;
@@ -110,7 +108,6 @@ namespace UnityEngine
         protected void Changed() { Engine.Physics?.ColliderChanged(this); }
         internal override void OnEnabledChanged() { Changed(); }
 
-        // Host-side setup without physics notification.
         public void InitCollider(Vector2 offset, bool isTrigger, int excludeLayers, int includeLayers, bool enabled)
         {
             m_Offset = offset; m_IsTrigger = isTrigger; m_ExcludeLayers = excludeLayers; m_IncludeLayers = includeLayers; m_Enabled = enabled;
@@ -127,7 +124,16 @@ namespace UnityEngine
     }
 
     public sealed class CircleCollider2D : Collider2D { public float radius { get; set; } }
-    public sealed class CapsuleCollider2D : Collider2D { public Vector2 size { get; set; } }
+    public enum CapsuleDirection2D { Vertical, Horizontal }
+
+    public sealed class CapsuleCollider2D : Collider2D
+    {
+        internal Vector2 m_Size = Vector2.one;
+        internal CapsuleDirection2D m_Direction;
+        public Vector2 size { get { return m_Size; } set { if (m_Size != value) { m_Size = value; Changed(); } } }
+        public CapsuleDirection2D direction { get { return m_Direction; } set { if (m_Direction != value) { m_Direction = value; Changed(); } } }
+        public void InitShape(Vector2 size, int direction) { m_Size = size; m_Direction = (CapsuleDirection2D)direction; }
+    }
     public sealed class PolygonCollider2D : Collider2D { public int pathCount { get; set; } }
     public sealed class EdgeCollider2D : Collider2D { public float edgeRadius { get; set; } }
     public sealed class CompositeCollider2D : Collider2D { public int pathCount { get; set; } }

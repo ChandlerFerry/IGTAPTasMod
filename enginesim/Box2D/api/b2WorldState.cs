@@ -3,25 +3,6 @@ using System.Collections.Generic;
 
 namespace Box2D
 {
-    /// <summary>
-    ///  Exact world snapshot for route branching. Created by b2World.SaveState()
-    ///  and consumed by b2World.LoadState(). After LoadState, stepping is
-    ///  bit-identical to stepping the world at SaveState time.
-    ///
-    ///  Invariants (per contract):
-    ///   - Static bodies and static fixtures are not copied; their geometry is
-    ///     covered by the broadphase/dynamic-tree snapshot. They must not change
-    ///     between save and load.
-    ///   - Non-static bodies keep identity; their mutable state and fixture lists
-    ///     are restored exactly as saved (saved b2Fixture objects are restored
-    ///     themselves; UserData is preserved).
-    ///   - Contacts restore manifolds (impulses + ids), flags and link order
-    ///     exactly; live contact objects are reused when the fixture pair is
-    ///     unchanged, otherwise contacts are re-created through the same factory
-    ///     b2ContactManager uses.
-    ///   - Body creation/destruction between save and load is not supported;
-    ///     LoadState throws InvalidOperationException if the body count differs.
-    /// </summary>
     public sealed class b2WorldState
     {
         internal b2Vec2 gravity;
@@ -55,16 +36,12 @@ namespace Box2D
             internal float linearDamping;
             internal float angularDamping;
             internal b2Fixture[] fixtures;
-            internal int staticEpoch; // m_staticValuesEpoch when these fixture records were taken
+            internal int staticEpoch;
 
-            // Fixture proxy bookkeeping (FixtureProxy objects are shared with the
-            // dynamic tree and mutate across save/load: proxyId is cleared and
-            // m_proxyCount zeroed on teardown, aabb updates on sync).
             internal int[] fixtureProxyCount;
             internal int[][] fixtureProxyIds;
             internal b2AABB[][] fixtureProxyAabbs;
 
-            // Fixture value state (so setter changes between save/load are undone).
             internal bool[] fixtureSensor;
             internal b2Filter[] fixtureFilter;
             internal float[] fixtureDensity;
@@ -112,9 +89,6 @@ namespace Box2D
 
     public partial class b2World
     {
-        // Static bodies' fixtures change only through the b2Body calls that report StaticChanged. Each change starts a
-        // new epoch; m_staticValuesEpoch names the static configuration the world holds now (a load brings back the
-        // snapshot's), so a snapshot from the same epoch has nothing static to restore.
         private int m_staticEpoch, m_staticValuesEpoch;
 
         internal void StaticChanged(b2Body body)
@@ -148,7 +122,6 @@ namespace Box2D
             return i == prev.fixtures.Length;
         }
 
-        /// <summary>Snapshot the whole world (exact, in-place restorable).</summary>
         public object SaveState()
         {
             var state = new b2WorldState
@@ -162,11 +135,6 @@ namespace Box2D
                 staticEpoch = m_staticValuesEpoch,
             };
 
-            // All bodies are recorded. Value state is restored for every body too
-            // (cheap); what matters for static level geometry is that fixture lists
-            // and fixture value state restore exactly — Unity rebuilds static
-            // colliders on activation as well, and the broadphase restore must
-            // stay consistent with the restored fixture set.
             int nonStatic = 0;
             for (b2Body b = m_bodyList; b != null; b = b.m_next)
             {
@@ -198,8 +166,6 @@ namespace Box2D
                     angularDamping = b.m_angularDamping,
                 };
 
-                // Fixture records rarely change between snapshots (static level geometry never does); share the
-                // previous snapshot's arrays when identical so per-tick snapshots don't copy the level each time.
                 if (m_savedBodyRecs.TryGetValue(b, out b2WorldState.BodyRec prev)
                     && (b.m_type == b2BodyType.Static && prev.type == b2BodyType.Static && prev.staticEpoch == m_staticValuesEpoch || FixturesMatch(b, prev)))
                 {
@@ -307,10 +273,6 @@ namespace Box2D
                 state.contacts[ci++] = cr;
             }
 
-            // Capture contact-edge link order per body (affects island build order).
-            // A body's edge list mixes m_nodeA and m_nodeB edges (contact (P,Q) puts
-            // nodeA on P's list, contact (R,P) puts nodeB on P's list), so each link
-            // is identified by (record index, side).
             for (int i = 0; i < state.contacts.Length; i++)
             {
                 b2Contact c = state.contacts[i].contact;
@@ -324,7 +286,6 @@ namespace Box2D
             return state;
         }
 
-        /// <summary>Restore a snapshot in place. See b2WorldState for invariants.</summary>
         public void LoadState(object stateObject)
         {
             var state = (b2WorldState)stateObject;
@@ -342,7 +303,6 @@ namespace Box2D
             m_inv_dt0 = state.invDt0;
             m_allowSleep = state.allowSleep;
 
-            // Drop all live contacts (they are rebuilt from the records below).
             b2Contact discarded = m_contactManager.m_contactList;
             m_contactManager.m_contactList = null;
             m_contactManager.m_contactTail = null;
@@ -352,7 +312,6 @@ namespace Box2D
                 b.m_contactList = null;
             }
 
-            // Non-static bodies: value state + fixture list exactly as saved.
             bool staticCurrent = state.staticEpoch == m_staticValuesEpoch;
             m_staticValuesEpoch = state.staticEpoch;
             foreach (b2WorldState.BodyRec rec in state.bodies)
@@ -379,9 +338,6 @@ namespace Box2D
                     continue;
                 }
 
-                // Detach fixtures dropped by the restore (created after the save);
-                // their proxies vanish with the broadphase restore. Usually the list
-                // is unchanged (a level body has thousands of fixtures): skip the scan.
                 int same = 0;
                 b2Fixture rest = b.m_fixtureList;
                 while (rest != null && same < rec.fixtures.Length && ReferenceEquals(rest, rec.fixtures[same]))
@@ -426,7 +382,6 @@ namespace Box2D
                 }
             }
 
-            // Contacts: reuse matching live objects where possible.
             for (int i = 0; i < state.contacts.Length; i++)
             {
                 b2WorldState.ContactRec cr = state.contacts[i];
@@ -478,7 +433,6 @@ namespace Box2D
                 cr.contact = c;
             }
 
-            // World contact list in saved order.
             for (int i = 0; i < state.contacts.Length; i++)
             {
                 b2Contact c = state.contacts[i].contact;
@@ -490,7 +444,6 @@ namespace Box2D
             m_contactManager.m_contactTail = state.contacts.Length > 0 ? state.contacts[state.contacts.Length - 1].contact : null;
             m_contactManager.m_contactCount = state.contacts.Length;
 
-            // Per-body contact edge lists in saved order (incl. static bodies).
             foreach (b2WorldState.ContactRec cr in state.contacts)
             {
                 b2Contact c = cr.contact;
@@ -590,12 +543,9 @@ namespace Box2D
 
     public sealed partial class b2DynamicTree
     {
-        // Snapshots store only the nodes that differ from a shared base copy (static geometry never changes; a
-        // moving proxy touches a handful of nodes), so a route's worth of per-tick snapshots stays small. There is one
-        // base per pool capacity: a block swap grows the pool, and branches before and after it alternate capacities.
         private sealed class TreeSnapshot
         {
-            internal Node[] baseNodes;       // shared between snapshots, never mutated
+            internal Node[] baseNodes;
             internal int[] changedIndex;
             internal Node[] changedNode;
             internal int root;
@@ -662,7 +612,6 @@ namespace Box2D
             var snap = new BroadPhaseSnapshot
             {
                 tree = m_tree.SaveSnapshot(),
-                // Only the live prefix; the lengths are kept so capacity growth replays identically.
                 moveBuffer = new int[m_moveCount],
                 moveLength = m_moveBuffer.Length,
                 moveCapacity = m_moveCapacity,

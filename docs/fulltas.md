@@ -5,7 +5,10 @@ happen in order; its time is the physics ticks from the new game's first settled
 the run for display and for the offline search; nothing restarts, teleports or re-times between them. A quick restart
 (`Movement.respawn(true)`, the game's QuickReset) is an input the route chooses (`reset` on a tick), so a route can
 restart or run on, whichever is faster. The new game is loaded by `POST /api/session/newgame`: the menu's New Game with
-no save file, except that `Saveloader` neither loads nor saves for the rest of the session.
+no save file, except that `Saveloader` neither loads nor saves for the rest of the session. A loaded new game stays fresh
+(runs, traces and judgings reuse its start) only while `FloatingOrigin` is where it was when the start was taken: real-time
+play far from it rebases the world, and the start's player position would then lie elsewhere, so the next run loads a new
+game.
 
 ## fulltas.json
 
@@ -32,7 +35,7 @@ untouched.
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
 the game's purchases; the plugin writes none.
 
-Run names are letters, digits and `%` (`ANY%`).
+Run names are letters, digits, `%` and `-` (`ANY%`, `Test-No-Omni-Skip`).
 
 `buy:buyprestige5` is Course 5's prestige box with `tripBreaker` set: after `BoostOldCourses` it resets Courses 1–5,
 sets Cash to 0, swaps Course 4's `buyswap` box for `buyblockswap5`, turns the Course 1–3 movement boxes into
@@ -52,7 +55,10 @@ too) starts it in a Vman speedrun's world instead of a new game. `POST /api/sess
 3. the player on the floor under the 1x "Start a VMAN speedrun" box (`a1 overgrowth/StartVmanSpeedrun0`) jumps; the
    game itself buys the box (`SetupVmanSpeedrun(1)`) and loads the Overworld as a Vman world (no save loaded,
    `vmanTimeLeft` 5175 s, costs not deducted, the free omnidash box on Course 1's row);
-4. the Vman world's first settled tick is the run's start, seeded like a new game.
+4. the Vman world's player spawns in the air; once it has stood still on the ground (grounded, no x velocity, no
+   cutscene) for 10 physics ticks, that tick is the run's start, seeded like a new game. A new game's start waits for
+   the same rest. Capturing on a frame count instead caught the player mid-fall on a frame-rate-dependent tick, so each
+   load had a different start and a route found from one trace's start died in the gate's.
 
 The run's time is still physics ticks from that start. The snapshot carries VmanScript's clock and score (turbo steps
 `VmanScript.FixedUpdate` like Unity does; a run whose clock runs out ends there). A course's first clear pays its
@@ -62,21 +68,38 @@ a VMAN route may have.
 
 Each search window (`IGTAP.EngineSim fulltas`) presses what the run's movement allows there: a dash once the window
 starts with one or buys one, and from `buyomni` on the omnidirectional tricks too (`OfflineSolver` `Omni`: aimed dashes,
-wavedash, ultra, dash bounce, wave bounce, WaveJump; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
+hyper, chained hyper, ground bounce, hyper ground bounce, the up-diagonal dash into a wall; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
 
 `VMAN` is the first such run: `buy:buyomni`, Course 1, `buy:buywj`, the climb to Course 2 (`at:2400,1500,400,1000`),
 Course 2, `buy:buyds`, then area goals inside Course 2's box (`at:4300,2850,400,700`), the left end of the wall at
 6080,4000 (`at:6105,4146,250,328`), the shaft up to Course 3 (`at:7645,6050,230,1500`), up the left of Course 3's box
-(`at:8320,8100,1040,1600`), the column above it to the 10000 floor (`at:9225,9535,950,1330`), up to the 11000 roof
-(`at:11500,11500,1000,1000`), the platform left of Course 4 (`at:16000,12050,3000,1000`), Course 4's start
-(`at:19000,11810,2000,2380`), up the left wall to the spike tunnel's mouth above Course 4 (`at:20090,15775,580,650`),
+(`at:8320,8100,1040,1600`), the column above it to the 10000 floor (`at:9225,9585,950,1030`), a 300 by 300 box at
+9139,10326 (`at:9139,10326,300,300`), up past the 11000 roof (`at:12500,11950,1000,500`), the platform left of Course 4
+(`at:16400,12050,2200,1000`), Course 4's start
+(`at:19250,12060,1500,1880`), a 100 by 1000 column at 20200.4,13553.8 (`at:20200.4,13553.8,100,1000`), up the left
+wall past a 220 by 200 box at 20489.1,15030 (`at:20489.1,15030,220,200`), out of the tunnel floor's top-left corner
+with both dashes (`at:20495,15785,130,30,from=bottom`, see below), up into the spike tunnel above Course 4
+(`at:20940,15925,480,350`),
 out of the tunnel's right end (`at:22200,15900,500,500`) and
 into the credits trigger over the teleporters (`at:24067,13456,1440,1080`: `FakeCredits`'s box, whose
-`FakeCreditsControlScript::OnTriggerEnter2D` starts the end-game credits cutscene and stops the player).
+`FakeCreditsControlScript::OnTriggerEnter2D` starts the end-game credits cutscene and stops the player). The Vman
+credits end by crashing the game on purpose (`Utils.ForceCrash`, after a PlayerPrefs write that adds 10 Vman score at
+the next `VmanScript.Start`); the plugin drops both calls, so judging this goal no longer kills the game.
 
-`VMANDJ` is `VMAN` with Course 3 and double jump in place of goal 12: `VMAN`'s goals 1–11 (through the shaft up to
-Course 3), `start:3`, `finish:3` (its first Vman clear pays 604712617361 W), `buy:buydj` (+1 midair jump), then
-`VMAN`'s goals from the column above Course 3 (`at:9225,9535,950,1330`) on.
+The corner is where the run gets its dashes back for the tunnel. The tunnel floor block's top-left corner at
+20416,15689 has spikes on its left face (up to y 15686) and along its top (from x 20419), so the only ground is the
+3-unit gap between them, and the ground rays find it only in a few units of landing x. The run arrives with no dash
+left, and landing there dies on the top spikes unless it leaves within spike grace; a jump (16 per tick) is too slow.
+What works is a dash pressed up to 4 ticks before the landing (the game's dash buffer, which holds it while no dash
+is left): it fires on the tick the ground rays refill the dashes, right with a jump on dash frame 3 (superjump), and
+leaves the corner with both dashes, which is enough to arc straight into the tunnel and dash twice right out of it.
+
+The goal is on that arc, not on the corner: x 20430–20560, y 15770–15800, entered from below (the hurtbox, x−15..x+25,
+y−27..y+27, wholly under y 15770 the tick before). A run can be below it there only by leaving the corner, so a
+landing that dies on the spikes (it falls in from above) never reaches it. The old corner goal
+(`at:20422,15697,4,16,from=top`) did the opposite: every fatal landing in x 20395–20439 counted, so the best reached
+goal 20 on the tick before a spike death and the search for goal 21 started from a dead player, while a living exit
+that slid in from the left missed its `from=top`.
 
 ### Avoids and the map
 
@@ -96,6 +119,26 @@ Goals chain, and a window's search follows that: its explore cells keep what the
 jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn't replace one that still has it for the
 next goal, and until the window reaches its last goal, cells that have reached more of the run's goals are picked more
 (`OfflineSolver` `Weight`; run time doesn't count there: a run that wanders longer isn't closer to the next goal).
+While the next goal is an `at:` rect, cells nearer it are picked more among those with the same goals reached: a
+cell's nearness is (nearest + 48) / (its distance + 48), the distance from the player to the rect and the nearest any
+of the worker's cells came (`GoalReach`), so avoid boxes cut the corridor's dead ends and the rect pulls the search
+along it.
+
+## Savestate starts
+
+`"savestate": "<id>"` on a run (a file in `savestates/`) starts it from that savestate: once the new game (with
+`"start": "vman"`, the Vman world) has settled, the savestate is restored, and the run's start is the player's next
+rest there (10 grounded, still ticks), after `FloatingOrigin` has rebased around the new position. The start's
+unlocks are what the savestate carries: a savestate captures none, but its `movementFields` may list
+`wallJumpUnlocked`, `dashUnlocked`, `omniDashUnlocked`, `doubleJumpUnlocked`, `blockSwapUnlocked`, `maxAirDashes` and
+`maxAirJumps`, and the unlock audit starts from them (then follows the run's purchases). With "Don't touch my
+unlocks" on, a restore skips those fields and a savestate start that has them fails. `POST /api/session/newgame`
+takes `savestate` too. Changing a run's savestate retires its routes like a goals edit.
+
+`Test-No-Omni-Skip` is the first: `VMAN`'s last four goals (the tunnel floor's corner exit, the spike tunnel, its
+right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df724bcc92c07a3cd8c577df`), standing at
+world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
+stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
 ## Seed
 
@@ -126,13 +169,14 @@ inputs past the last unchanged goal the same way.
 
 - **Goals** (`POST /api/fulltas/goals {name, goals}`), **Capture start** (`/api/fulltas/capture`: start trace + world,
   seeded with the saved best), **Play** (real time from a new game), **Solve** / **Solve unsolved** / **Stop**
-  (`/api/fulltas/solve {name, minutes, windowMinutes, window, unsolved}` runs `IGTAP.EngineSim fulltas`). `/api/state` has
+  (`/api/fulltas/solve {name, minutes, windowMinutes, window, threads, goal, unsolved}` runs `IGTAP.EngineSim fulltas`). `/api/state` has
   `fullTas`; its `solve` has the solver's events (`events`, the latest `status` as `progress`), `error` (didn't start,
   crashed) and the raw `log`; `lastResult` is the last Play or gate check (`kind`, `error`, `reached`, `expected`, ...).
 - **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
   solver's `--unsolved`) reaches the goals the best misses first, starting at the first of them. Both recapture the
   trace (seeded with the saved best) when the run's goals or start changed since it was taken: a solve searches the
-  goals in its trace's header.
+  goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just goal N−1
+  to goal N, window after window, keeping the rest of the route as it is; **Threads** 0 is cores − 2.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.
@@ -145,14 +189,16 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
 - By default the search polishes the goals the best reaches (all of them once it's complete); a best that reaches none
   is reached first. `--unsolved`: a complete route first: until every goal is reached, only the first goal not reached
   yet is searched (`reach` windows): from the last reached goal, then redoing one, two, three goals before it, each
-  round with a longer budget (`--window-minutes` × round). Polishing starts once a run reaches every goal.
+  round with a longer budget (`--window-minutes` × round). A reach window ends as soon as it finds a route to its goal:
+  that route is spliced in and saved right away, and the next window searches on from it (the rest of the budget isn't
+  spent). Polishing starts once a run reaches every goal.
 - Polishing: windows of W goals (default 2) from goal 1 up to the last goal the best reaches: each worker replays the
   best up to goal i-1 (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal
   i+W-1. The first goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap
@@ -161,6 +207,9 @@ inputs past the last unchanged goal the same way.
   state differs), the following windows are searched again from the new state (`repair`), seeded with the old tail,
   and the run is kept only if it ends sooner.
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
+- Each window's explore archive (input prefixes, as a course solve's) is kept in
+  `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
+  resumes it; `--fresh` ignores it.
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
 - Besides its log lines the solver prints one `@fulltas {json}` line per event (`FullTas.Emit`): `session`, `phase`
   (`reach`/`polish`), `window` (`kind`, goals `first`..`limit`, `target`, `budget`), `status` (each second), `found`,
@@ -194,7 +243,10 @@ to orange (Courses 4–5 collide differently afterwards). The swap needs both co
 writes each coloured-block composite's `sourceShapes` (its geometry with its tilemap on); an older export stops the run
 at the breaker (`Unmodeled physics: ...`). `buyblockswap5` sets `blockSwapUnlocked` and ends the run (`Unmodeled
 purchase: block swap on dash`), so it works as a run's last goal. The turbo gate's snapshot restores what the breaker
-changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights, the blocks' colliders).
+changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights, the blocks' colliders). The lights it
+keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on unless Area 1 is overgrown, GlobalLight
+off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
+Vman speedrun's start is lit with no breaker light on.
 
 ## Status (2026-09-25)
 
