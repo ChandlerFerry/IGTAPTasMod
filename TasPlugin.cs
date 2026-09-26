@@ -32,11 +32,11 @@ namespace IGTAPTasMod
         private MacroLibrary _library;
         private string _libraryPath;
         private string _recordingsPath;
-        private string _checkpointsPath;
+        private string _savestatesPath;
         private string _settingsPath;
         private StudioSettings _settings = new StudioSettings();
         private readonly List<RecordingDefinition> _recordings = new List<RecordingDefinition>();
-        private readonly List<SectionCheckpoint> _checkpoints = new List<SectionCheckpoint>();
+        private readonly List<Savestate> _savestates = new List<Savestate>();
         private float _pendingCourseTime;
         private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
@@ -67,14 +67,15 @@ namespace IGTAPTasMod
             Log = Logger;
             _libraryPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "routes.json");
             _recordingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "recordings");
-            _checkpointsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "checkpoints");
+            _savestatesPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "savestates");
             _settingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "settings.json");
             LoadSettings();
             LoadLibrary();
             LoadRecordings();
-            LoadCheckpoints();
+            LoadSavestates();
             LoadCourses();
             LoadFullTas();
+            LoadTechs();
             _engine.AttemptEnded += OnAttemptEnded;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
@@ -129,15 +130,20 @@ namespace IGTAPTasMod
             return true;
         }
 
+        internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
+
+        // The game's checkpoint toggle always matches the studio's setting: before each respawn, every tick (so a trace's
+        // start snapshot carries it), and after the pause menu's toggle.
         private static void BeforeRespawn(Movement __instance)
         {
-            __instance.isRespawningAtCheckpoints = false;
+            if (Instance != null) __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
         }
 
         private static void AfterToggleCheckpointUse(Movement __instance, ref bool __result)
         {
-            __instance.isRespawningAtCheckpoints = false;
-            __result = false;
+            if (Instance == null) return;
+            __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
+            __result = Instance.CheckpointRespawns;
         }
 
         private static bool BeforeMovementFixedUpdate(Movement __instance)
@@ -146,13 +152,14 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance))
             {
                 Instance.LockInterpolation(__instance);
+                __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
                 Instance.OverlayBeforeTick(__instance);
             }
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
             if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
-            if (!IsMenuPlayer(__instance)) Instance.FullTasCheckpoint(__instance);
+            if (!IsMenuPlayer(__instance)) Instance.FullTasAreaGoal(__instance);
             if (!IsMenuPlayer(__instance) && Instance._engine.TakeQuickRestart()) Instance.QuickRestart(__instance);
             if (!IsMenuPlayer(__instance) && !Instance._recorder.IsRecording)
             {
@@ -186,11 +193,11 @@ namespace IGTAPTasMod
                 Movement movement = FindWorldMovement();
                 // Before the restart too: Movement.respawn resets the block colours only with block swap unlocked.
                 Instance.ApplyCategoryAbilities(macro, movement);
-                bool checkpointRestored = Instance.RestoreRouteStart(macro);
+                bool savestateRestored = Instance.RestoreRouteStart(macro);
                 movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                Instance._engine.Run(macro, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
+                Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }
             return true;
         }
@@ -510,7 +517,7 @@ namespace IGTAPTasMod
                     float ry = _bootstrapBody != null && _bootstrapBody["respawnPointY"] != null ? (float)_bootstrapBody["respawnPointY"] : 1878.2251f;
                     SetMovementField(world, "respawnPoint", new Vector2(rx, ry));
                     SetMovementField(world, "courseResetPoint", Vector2.zero);
-                    SetMovementField(world, "isRespawningAtCheckpoints", false);
+                    SetMovementField(world, "isRespawningAtCheckpoints", CheckpointRespawns);
                     SetMovementField(world, "init", false);
 
                     try
@@ -890,20 +897,20 @@ namespace IGTAPTasMod
             }
         }
 
-        private void CaptureCheckpoint()
+        private void CaptureSavestate()
         {
             Movement movement = FindWorldMovement();
             if (movement == null) return;
-            SectionCheckpoint checkpoint = SectionCheckpointService.Capture(movement,
+            Savestate savestate = SavestateService.Capture(movement,
                 (SelectedMacro == null ? "Section" : SelectedMacro.name) + " start", MacroLibrary.CurrentSchemaVersion);
-            _checkpoints.Insert(0, checkpoint);
-            WriteJsonAtomic(Path.Combine(_checkpointsPath, SafeId(checkpoint.id) + ".json"), checkpoint, false);
+            _savestates.Insert(0, savestate);
+            WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
         }
 
-        private void RestoreCheckpoint(SectionCheckpoint checkpoint)
+        private void RestoreSavestate(Savestate savestate)
         {
             Movement movement = FindWorldMovement();
-            CheckpointOperationResult result = SectionCheckpointService.Restore(movement, checkpoint, MacroLibrary.CurrentSchemaVersion);
+            SavestateResult result = SavestateService.Restore(movement, savestate, MacroLibrary.CurrentSchemaVersion);
             if (!result.Success) Logger.LogError(result.Message); else Logger.LogInfo(result.Message);
         }
 
@@ -915,10 +922,10 @@ namespace IGTAPTasMod
             _runCourse = named;
             EnsureArea1State(named);
             EnsureZone(named);
-            SectionCheckpoint checkpoint = string.IsNullOrEmpty(route.checkpointId) ? null : _checkpoints.Find(c => c.id == route.checkpointId);
-            if (movement != null && checkpoint != null)
+            Savestate savestate = string.IsNullOrEmpty(route.savestateId) ? null : _savestates.Find(c => c.id == route.savestateId);
+            if (movement != null && savestate != null)
             {
-                CheckpointOperationResult restored = SectionCheckpointService.Restore(movement, checkpoint, MacroLibrary.CurrentSchemaVersion);
+                SavestateResult restored = SavestateService.Restore(movement, savestate, MacroLibrary.CurrentSchemaVersion);
                 if (restored.Success) return true;
                 Logger.LogWarning(restored.Message + "; using quick restart.");
             }
@@ -967,7 +974,7 @@ namespace IGTAPTasMod
                     Physics2D.SyncTransforms();
                 }
             }
-            else Logger.LogWarning("No checkpoint or quick restart was available.");
+            else Logger.LogWarning("No savestate or quick restart was available.");
             return false;
         }
 
@@ -1031,7 +1038,7 @@ namespace IGTAPTasMod
 
         private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f)
         {
-            MacroDefinition macro = SelectedMacro;
+            MacroDefinition macro = TechPlayable(SelectedMacro);
             if (macro == null) return;
             _walkSlowdown = walkSlowdown;
             Match fullTasRoute = FullTasRouteName.Match(macro.name ?? "");
@@ -1117,6 +1124,7 @@ namespace IGTAPTasMod
 
         private void OnAttemptEnded(bool success, string reason)
         {
+            if (!_silentEvaluation) FillTechDemos();
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
                 FinishFullTasPlayback(success, reason);
@@ -1214,29 +1222,29 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError("Could not load recordings: " + ex); }
         }
 
-        private void LoadCheckpoints()
+        private void LoadSavestates()
         {
             try
             {
-                Directory.CreateDirectory(_checkpointsPath);
-                foreach (string path in Directory.GetFiles(_checkpointsPath, "*.json"))
+                Directory.CreateDirectory(_savestatesPath);
+                foreach (string path in Directory.GetFiles(_savestatesPath, "*.json"))
                 {
                     try
                     {
-                        SectionCheckpoint checkpoint = JsonConvert.DeserializeObject<SectionCheckpoint>(File.ReadAllText(path));
-                        if (checkpoint == null || checkpoint.schemaVersion != SectionCheckpoint.CurrentSchemaVersion || string.IsNullOrEmpty(checkpoint.id))
-                            throw new InvalidDataException("Unsupported or incomplete checkpoint.");
-                        _checkpoints.Add(checkpoint);
+                        Savestate savestate = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path));
+                        if (savestate == null || savestate.schemaVersion != Savestate.CurrentSchemaVersion || string.IsNullOrEmpty(savestate.id))
+                            throw new InvalidDataException("Unsupported or incomplete savestate.");
+                        _savestates.Add(savestate);
                     }
                     catch (Exception ex)
                     {
-                        Logger.LogWarning("Checkpoint rejected " + Path.GetFileName(path) + ": " + ex.Message);
+                        Logger.LogWarning("Savestate rejected " + Path.GetFileName(path) + ": " + ex.Message);
                         Quarantine(path);
                     }
                 }
-                _checkpoints.Sort((a, b) => string.CompareOrdinal(b.createdUtc, a.createdUtc));
+                _savestates.Sort((a, b) => string.CompareOrdinal(b.createdUtc, a.createdUtc));
             }
-            catch (Exception ex) { Logger.LogError("Could not load checkpoints: " + ex); }
+            catch (Exception ex) { Logger.LogError("Could not load savestates: " + ex); }
         }
 
         private void SaveRecording(RecordingDefinition recording)
@@ -1344,6 +1352,7 @@ namespace IGTAPTasMod
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
             if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
             if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
+            if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -1387,6 +1396,17 @@ namespace IGTAPTasMod
                 _settings.forceBreakerLights = Truthy(body, "on");
                 SaveSettings();
                 return new { ok = true, on = _settings.forceBreakerLights };
+            }
+            if (request.Path == "/api/settings/checkpoint-respawns")
+            {
+                // Traces, offline bests and the gate all assume one setting: never switch it under a run or a search.
+                if (PlaybackActive || _solverRunning || _fullTasProcess != null || _recorder.IsRecording)
+                    throw new InvalidOperationException("Stop playback, recording and solving before switching checkpoint respawns.");
+                _settings.checkpointRespawns = Truthy(body, "on");
+                SaveSettings();
+                Movement player = FindWorldMovement();
+                if (player != null) player.isRespawningAtCheckpoints = _settings.checkpointRespawns;
+                return new { ok = true, on = _settings.checkpointRespawns };
             }
             if (request.Path == "/api/settings/fulltas-goals")
             {
@@ -1585,24 +1605,24 @@ namespace IGTAPTasMod
                 SaveLibrary();
                 return new { ok = true };
             }
-            if (request.Path == "/api/checkpoints/capture")
+            if (request.Path == "/api/savestates/capture")
             {
-                CaptureCheckpoint();
+                CaptureSavestate();
                 return new { ok = true };
             }
-            if (request.Path == "/api/checkpoints/restore")
+            if (request.Path == "/api/savestates/restore")
             {
-                SectionCheckpoint checkpoint = _checkpoints.Find(c => c.id == Text(body, "checkpointId"));
-                if (checkpoint == null) throw new InvalidOperationException("Checkpoint not found.");
-                RestoreCheckpoint(checkpoint);
+                Savestate savestate = _savestates.Find(c => c.id == Text(body, "savestateId"));
+                if (savestate == null) throw new InvalidOperationException("Savestate not found.");
+                RestoreSavestate(savestate);
                 return new { ok = true };
             }
-            if (request.Path == "/api/checkpoints/assign")
+            if (request.Path == "/api/savestates/assign")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
-                string id = Text(body, "checkpointId");
-                if (!string.IsNullOrEmpty(id) && _checkpoints.Find(c => c.id == id) == null) throw new InvalidOperationException("Checkpoint not found.");
-                SelectedMacro.checkpointId = id;
+                string id = Text(body, "savestateId");
+                if (!string.IsNullOrEmpty(id) && _savestates.Find(c => c.id == id) == null) throw new InvalidOperationException("Savestate not found.");
+                SelectedMacro.savestateId = id;
                 SaveLibrary();
                 return new { ok = true };
             }
@@ -1634,10 +1654,10 @@ namespace IGTAPTasMod
                     });
                 routes.Add(new { id = route.id, name = route.name, actionCount = route.steps.Count, actions = actions });
             }
-            List<object> checkpoints = new List<object>();
-            foreach (SectionCheckpoint checkpoint in _checkpoints)
-                checkpoints.Add(new { id = checkpoint.id, name = checkpoint.name, createdUtc = checkpoint.createdUtc,
-                    assigned = selected != null && selected.checkpointId == checkpoint.id });
+            List<object> savestates = new List<object>();
+            foreach (Savestate savestate in _savestates)
+                savestates.Add(new { id = savestate.id, name = savestate.name, createdUtc = savestate.createdUtc,
+                    assigned = selected != null && selected.savestateId == savestate.id });
             List<object> recordings = new List<object>();
             foreach (RecordingDefinition recording in _recordings)
             {
@@ -1656,12 +1676,13 @@ namespace IGTAPTasMod
                 capabilitiesLocked = _settings.lockCapabilities,
                 overlayShown = _settings.showOverlay,
                 breakerLightsForced = _settings.forceBreakerLights,
+                checkpointRespawns = _settings.checkpointRespawns,
                 running = PlaybackActive,
-                humanPlayback = _engine.IsRunning && _engine.ActiveMacroId == HumanPlaybackId,
+                humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                routes = routes, recordings = recordings, checkpoints = checkpoints,
+                routes = routes, recordings = recordings, savestates = savestates,
                 courses = BuildCourseWebState(),
-                solver = BuildSolverWebState(), fullTas = BuildFullTasWebState() };
+                solver = BuildSolverWebState(), fullTas = BuildFullTasWebState(), techs = BuildTechWebState() };
         }
 
         private static string Text(JObject value, string name)

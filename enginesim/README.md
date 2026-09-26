@@ -120,6 +120,13 @@ A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) tha
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
 it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category.
 
+A rule with `"fulltas": ["VMAN", ...]` instead of `course`/`capabilities` holds a Full-TAS run's avoid boxes: every
+search window of those runs cuts a run entering one (its `via` isn't used; the run's `at:` goals are its waypoints).
+`map` on a Full-TAS trace (`fulltas-<run>.json`, the Full-TAS tab's **Show map**) draws where the run's windows went
+(`archive\fulltas-<run>.visits.json`: every 16-unit cell a window run stepped through, with the earliest run time
+there, kept across solves of the same goals and reset by `--fresh` or a goals change), the best so far, the run's
+`at:` goals (green) and its avoid boxes.
+
 ```powershell
 & $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
 ```

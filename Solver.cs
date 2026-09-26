@@ -737,13 +737,24 @@ namespace IGTAPTasMod
                 args.Append(" --seed ").Append(Quote(seed));
             }
             AppendOptional(args, OptionalNames(body));
+            return RunEngineSimMap(request, args.ToString(), output);
+        }
+
+        // Runs `IGTAP.EngineSim map ...` off the request thread and answers with the map JSON it writes to `output`.
+        object RunEngineSimMap(WebStudioRequest request, string args, string output)
+        {
+            if (_mapRunning)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "A map is already being drawn." };
+            }
             _mapRunning = true;
             request.AsyncHandling = true;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
-                    using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
+                    using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
                         UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                         WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
                     {

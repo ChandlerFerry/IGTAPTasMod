@@ -6,6 +6,7 @@ import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
 import { FullTasSolvePanel, place, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { TechPanel, type TechState } from "./techs";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -13,7 +14,7 @@ type Action = { id: string; label: string; type: string; direction: number; wall
 type Route = { id: string; name: string; actionCount: number; actions: Action[] };
 type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
-type Checkpoint = { id: string; name: string; createdUtc: string; assigned: boolean };
+type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
@@ -21,13 +22,14 @@ type FullTasRun = { name: string; start?: string | null; goals: string[]; tokens
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean;
   unlockLevel?: number | null;
-  selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; checkpoints: Checkpoint[]; solver: SolverState;
+  selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
+  techs?: TechState;
 };
 
-const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], checkpoints: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
+const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], savestates: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
 
 async function request(path: string, body?: unknown) {
   const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -76,6 +78,10 @@ export default function Studio() {
           <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
           <strong>Breaker lights</strong>
         </label>
+        <label className={`capabilityLock executable ${state.checkpointRespawns ? "on" : ""}`} title="The game's pause-menu setting, for every route, trace and search: on, a death on a course respawns at the last checkpoint touched; off, at the course's start. Off a course, deaths and quick restarts go to the last checkpoint either way. Switch it only with nothing playing or solving; the in-game overlay shows it under INTERPOLATION.">
+          <input type="checkbox" checked={!!state.checkpointRespawns} disabled={!state.connected || state.running || state.recording || state.solver?.running || state.fullTas?.solve?.running} onChange={e => command("/settings/checkpoint-respawns", { on: e.target.checked })} />
+          <strong>Checkpoint respawns</strong>
+        </label>
       </div>
       <header className={`topbar ${state.humanPlayback ? "humanized" : ""}`}>
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Playing the human version of an offline best (enginesim humanize): same time, fewer perfect inputs. It is not the best route and is never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
@@ -89,7 +95,7 @@ export default function Studio() {
         </div>
       </header>
 
-      <nav className="tabs">{[["fulltas","Full-TAS"],["optimize","Optimize"],["recordings","Recordings"],["checkpoints","Checkpoints"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="tabs">{[["fulltas","Full-TAS"],["tech","Tech"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {error && <div className="errorBanner">{error}<button onClick={() => setError("")}>×</button></div>}
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
@@ -98,11 +104,13 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "fulltas" && <FullTas fullTas={state.fullTas} running={state.running} onCommand={command}/>}
+        {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} onClose={() => setMapTarget(null)}/>}</>}
+
+        {tab === "tech" && <TechPanel techs={state.techs} running={state.running || state.recording} selectedRoute={route} onCommand={command} onEditInputs={async routeId => { if (await command("/routes/select", { routeId })) setTab("timeline"); }}/>}
 
         {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
-        {tab === "checkpoints" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Section checkpoints</h2></div><button className="primary" onClick={() => command("/checkpoints/capture")}>Capture current state</button></div><p className="lede">Assign a checkpoint to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="checkpointList">{state.checkpoints.map(cp => <div className={`checkpoint ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/checkpoints/restore", { checkpointId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/checkpoints/assign", { checkpointId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
+        {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Assign a savestate to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="savestateList">{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
       </div>
     </section>
   </main>;
@@ -275,18 +283,18 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   </div>;
 }
 
-type MapTarget = { course: number; capabilities: string; optional: string[] };
+type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
 // Every map coordinate is in the game world's frame (courses.json's, forced-paths.json's, --via/--avoid's, at:x,y goals'):
 // the same for every capture of a place, whatever FloatingOrigin the game had then.
-type MapData = { course: number; capabilities: string; label: string; bounds: number[]; solids: MapSolid[];
+type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
   markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 type MapLayers = { explored: boolean; level: boolean; boxes: boolean; markers: boolean };
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
-function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];onClose:()=>void}) {
+function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course[];runs?:string[];onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
@@ -296,13 +304,20 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
   const latest = useMemo(() => data?.explored.cells.reduce((m, v) => Math.max(m, v[2]), 0) || 1, [data]);
   const canvas = useRef<HTMLCanvasElement>(null);
+  // Full-TAS: an avoid box drawn on the map (world x0, y0, x1, y1 as dragged) and the runs it goes to.
+  const [drawing, setDrawing] = useState(false);
+  const [sketch, setSketch] = useState<number[] | null>(null);
+  const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
+  const [saving, setSaving] = useState(false);
+  const sketchStart = useRef<{ x: number; y: number } | null>(null);
   const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
   const view = useRef({ ox: 0, oy: 0, scale: 1 });
   const drag = useRef<{ x: number; y: number } | null>(null);
+  const fitted = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true); setFailure("");
-    try { const d: MapData = await request("/enginesim/map", target); setData(d); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0))); fit(d); }
+    try { const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas }) : await request("/enginesim/map", target); setData(d); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0))); if (!fitted.current) { fit(d); fitted.current = true; } }
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }, [target]);
@@ -340,17 +355,22 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
       if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
     }
-    if (layers.boxes) for (const [boxes, color] of [[data.avoid, "#ff4fd8"], [data.via, "#3ddc97"]] as [number[][], string][])
+    if (layers.boxes) for (const [boxes, color] of [[data.avoid, "#ff3030"], [data.via, "#3ddc97"]] as [number[][], string][])
       for (const [x0, y0, x1, y1] of boxes) {
         g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
         g.strokeStyle = color; g.lineWidth = 2 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
       }
     if (layers.boxes) for (const block of data.optional ?? [])
-      for (const [boxes, color] of [[block.avoid, "#ff4fd8"], [block.via, "#3ddc97"]] as [number[][], string][])
+      for (const [boxes, color] of [[block.avoid, "#ff3030"], [block.via, "#3ddc97"]] as [number[][], string][])
         for (const [x0, y0, x1, y1] of boxes) {
           if (block.on) { g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1; }
           g.strokeStyle = color; g.lineWidth = 2 * px; g.setLineDash(block.on ? [] : [6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
         }
+    if (sketch) {
+      const [x0, y0, x1, y1] = sketch;
+      g.fillStyle = "#ff3030"; g.globalAlpha = .28; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
+    }
     data.routes.forEach((r, i) => {
       if (hidden.has(i) || r.points.length < 4) return;
       g.strokeStyle = colors[i]; g.lineWidth = (r.kind === "best" ? 3 : r.kind === "plateau" ? 1 : 2) * px; g.lineJoin = "round";
@@ -362,11 +382,11 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
       if (r.timerStart >= 0) { g.beginPath(); g.arc(r.points[r.timerStart * 2], r.points[r.timerStart * 2 + 1], 5 * px, 0, Math.PI * 2); g.lineWidth = 1.5 * px; g.strokeStyle = "#fff"; g.stroke(); }
     });
     if (layers.markers) for (const m of data.markers) {
-      g.fillStyle = m.kind === "start" ? "#3ddc97" : m.kind === "end" ? "#ff6b6b" : m.kind === "spring" ? "#ffd54f" : "#4fc3f7";
+      g.fillStyle = m.kind === "start" ? "#3ddc97" : m.kind === "end" ? "#ff6b6b" : m.kind === "spring" ? "#ffd54f" : m.kind === "goal" ? "#b9f6ca" : "#4fc3f7";
       const s = (m.kind === "checkpoint" ? 4 : 6) * px;
       g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, hidden, colors, latest]);
+  }, [data, layers, hidden, colors, latest, sketch]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -382,27 +402,62 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
     return () => c.removeEventListener("wheel", onWheel);
   }, [draw]);
 
+  const world = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const v = view.current, rect = e.currentTarget.getBoundingClientRect();
+    return { x: v.ox + (e.clientX - rect.left) / v.scale, y: v.oy - (e.clientY - rect.top) / v.scale };
+  };
+  const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!drawing) { drag.current = { x: e.clientX, y: e.clientY }; return; }
+    const p = world(e);
+    sketchStart.current = p;
+    setSketch([p.x, p.y, p.x, p.y]);
+  };
+  const onUp = () => {
+    drag.current = null;
+    if (!sketchStart.current) return;
+    sketchStart.current = null;
+    setDrawing(false);
+    setSketch(s => s && Math.abs(s[2] - s[0]) > 1 && Math.abs(s[3] - s[1]) > 1 ? s : null);
+  };
   const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const v = view.current, rect = e.currentTarget.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const v = view.current;
     if (drag.current) { v.ox -= (e.clientX - drag.current.x) / v.scale; v.oy += (e.clientY - drag.current.y) / v.scale; drag.current = { x: e.clientX, y: e.clientY }; draw(); }
-    const x = v.ox + mx / v.scale, y = v.oy - my / v.scale, reach = 10 / v.scale;
+    const { x, y } = world(e), reach = 10 / v.scale;
+    if (sketchStart.current) setSketch([sketchStart.current.x, sketchStart.current.y, x, y]);
     const near = layers.markers ? data?.markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
     setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(`${Math.floor(x / size)},${Math.floor(y / size)}`) });
   };
+  const editAvoid = async (box: number[], names: string[], remove: boolean) => {
+    setSaving(true); setFailure("");
+    try { await request("/fulltas/avoid", { box, runs: names, remove }); if (!remove) setSketch(null); await load(); }
+    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+  const boxText = (b: number[]) => `${Math.min(b[0], b[2]).toFixed(1)}, ${Math.min(b[1], b[3]).toFixed(1)} to ${Math.max(b[0], b[2]).toFixed(1)}, ${Math.max(b[1], b[3]).toFixed(1)}`;
   const toggle = (key: keyof MapLayers) => setLayers(l => ({ ...l, [key]: !l[key] }));
-  return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</h2></div>
+  return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{target.fulltas ? `Full-TAS · ${target.fulltas}` : <>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</>}</h2></div>
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
-    <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (pink: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>
+    {target.fulltas
+      ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
+      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["explored", "Explored"], ["level", "Level"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, springs"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+      {([["explored", "Explored"], ["level", "Level"], ["boxes", "Forced-path boxes"], ["markers", "Gates, in-game checkpoints, springs"]] as [keyof MapLayers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
-      {data && <span className="hint">{data.explored.prefixes.toLocaleString()} explore prefixes · {data.explored.runs.toLocaleString()} runs</span>}
-      {data && <span className="hint">timer at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</span>}
+      {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
+      {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
+      {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
     </div>
-    <canvas ref={canvas} className="mapCanvas" onMouseDown={e => { drag.current = { x: e.clientX, y: e.clientY }; }} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; setCursor(null); }} onMouseMove={onMove}/>
+    <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
+    {sketch && !sketchStart.current && <div className="buttonRow">
+      <span className="hint">Avoid {boxText(sketch)} for</span>
+      {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
+      <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
+      <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
+    {data?.fulltas && data.avoid.length > 0 && <ul className="mapRoutes">{data.avoid.map((b, i) => <li key={i}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
+      <button className="secondary" disabled={saving} title={`Takes this box out of every forced-paths.json rule of ${data.fulltas} (a box shared with other runs goes for them too)`} onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
     {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>
       <span className="mapSwatch" style={{ background: colors[i] }}/>{r.name}<small>{r.finished ? `${r.time.toFixed(2)}s` : "no finish"} · {r.points.length / 2} ticks</small></label></li>)}</ul>}
   </div>;
@@ -491,7 +546,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
 const TICK_SECONDS = 0.02;
 const tickText = (ticks: number) => `${ticks} t · ${(ticks * TICK_SECONDS).toFixed(2)}s`;
 
-function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
+function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(name:string)=>void}) {
   const runs = fullTas?.runs ?? [];
   const [selected, setSelected] = useState("");
   const [newName, setNewName] = useState("");
@@ -512,7 +567,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
-    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or a checkpoint <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after a checkpoint takes that checkpoint back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
+    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or an area goal <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after an area goal takes that goal back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
@@ -543,7 +598,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
             <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
             <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
-            <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: this run's checkpoint (at:) and bonus end (reward:) rects, numbered, where the goal check tests them. While the run plays, reached goals turn green and the next one yellow.">
+            <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: this run's area goal (at:) and bonus end (reward:) rects, numbered, where the goal check tests them. While the run plays, reached goals turn green and the next one yellow.">
               <input type="checkbox" checked={!!run && fullTas.goalsOverlay === name} disabled={!run} onChange={e => onCommand("/settings/fulltas-goals", { name: e.target.checked ? name : "" })} />
               <strong>Goals in game</strong>
             </label>
@@ -554,7 +609,8 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
             <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
           </div>
           <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title="Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_ })}>Solve</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button></div>
+            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
+            <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
         </div>
       </div>
       <div className="fullTasEditor">

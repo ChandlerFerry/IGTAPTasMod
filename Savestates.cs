@@ -26,7 +26,7 @@ namespace IGTAPTasMod
 
         public string DescribeMismatch(CompatibilityFingerprint other)
         {
-            if (other == null) return "checkpoint has no compatibility fingerprint";
+            if (other == null) return "savestate has no compatibility fingerprint";
             List<string> differences = new List<string>();
             if (gameVersion != other.gameVersion) differences.Add("game version");
             if (assemblySha256 != other.assemblySha256) differences.Add("Assembly-CSharp hash");
@@ -44,12 +44,12 @@ namespace IGTAPTasMod
     }
 
     [Serializable]
-    public sealed class SectionCheckpoint
+    public sealed class Savestate
     {
         public const int CurrentSchemaVersion = 1;
         public int schemaVersion = CurrentSchemaVersion;
         public string id = Guid.NewGuid().ToString("N");
-        public string name = "Section checkpoint";
+        public string name = "Savestate";
         public string createdUtc = DateTime.UtcNow.ToString("o");
         public CompatibilityFingerprint fingerprint;
         public float positionX;
@@ -66,13 +66,13 @@ namespace IGTAPTasMod
         public Dictionary<string, SnapshotValue> bodyFields = new Dictionary<string, SnapshotValue>();
     }
 
-    public sealed class CheckpointOperationResult
+    public sealed class SavestateResult
     {
         public bool Success { get; internal set; }
         public string Message { get; internal set; }
     }
 
-    public static class SectionCheckpointService
+    public static class SavestateService
     {
         private static readonly string[] MovementFieldNames = {
             "Velocity", "momentum", "MoveAxis", "onGround", "OnWall", "wallCoyoteFrames",
@@ -86,12 +86,12 @@ namespace IGTAPTasMod
             "angularDamping", "angularDrag", "bodyType", "constraints", "simulated"
         };
 
-        public static SectionCheckpoint Capture(Movement movement, string name, int pluginSchemaVersion)
+        public static Savestate Capture(Movement movement, string name, int pluginSchemaVersion)
         {
             if (movement == null) throw new ArgumentNullException(nameof(movement));
             Transform transform = movement.transform;
-            SectionCheckpoint result = new SectionCheckpoint {
-                name = string.IsNullOrWhiteSpace(name) ? "Section checkpoint" : name,
+            Savestate result = new Savestate {
+                name = string.IsNullOrWhiteSpace(name) ? "Savestate" : name,
                 fingerprint = CreateFingerprint(movement, pluginSchemaVersion),
                 positionX = transform.position.x, positionY = transform.position.y, positionZ = transform.position.z,
                 rotationX = transform.rotation.x, rotationY = transform.rotation.y,
@@ -104,36 +104,36 @@ namespace IGTAPTasMod
             return result;
         }
 
-        public static CheckpointOperationResult Restore(Movement movement, SectionCheckpoint checkpoint,
+        public static SavestateResult Restore(Movement movement, Savestate savestate,
             int pluginSchemaVersion)
         {
-            CheckpointOperationResult result = new CheckpointOperationResult();
-            if (movement == null || checkpoint == null) {
-                result.Message = "Movement or checkpoint is missing";
+            SavestateResult result = new SavestateResult();
+            if (movement == null || savestate == null) {
+                result.Message = "Movement or savestate is missing";
                 return result;
             }
-            if (checkpoint.schemaVersion != SectionCheckpoint.CurrentSchemaVersion) {
-                result.Message = "Unsupported checkpoint schema " + checkpoint.schemaVersion;
+            if (savestate.schemaVersion != Savestate.CurrentSchemaVersion) {
+                result.Message = "Unsupported savestate schema " + savestate.schemaVersion;
                 return result;
             }
             CompatibilityFingerprint current = CreateFingerprint(movement, pluginSchemaVersion);
-            if (!current.Matches(checkpoint.fingerprint)) {
-                result.Message = "Checkpoint rejected: " + current.DescribeMismatch(checkpoint.fingerprint);
+            if (!current.Matches(savestate.fingerprint)) {
+                result.Message = "Savestate rejected: " + current.DescribeMismatch(savestate.fingerprint);
                 return result;
             }
 
             Transform transform = movement.transform;
             Component body = movement.GetComponent("Rigidbody2D");
             SetBodySimulation(body, false);
-            transform.position = new Vector3(checkpoint.positionX, checkpoint.positionY, checkpoint.positionZ);
-            transform.rotation = new Quaternion(checkpoint.rotationX, checkpoint.rotationY, checkpoint.rotationZ, checkpoint.rotationW);
-            transform.localScale = new Vector3(checkpoint.scaleX, checkpoint.scaleY, checkpoint.scaleZ);
-            RestoreMembers(movement, checkpoint.movementFields);
-            if (body != null) RestoreMembers(body, checkpoint.bodyFields);
-            SetBodySimulation(body, ReadBool(checkpoint.bodyFields, "simulated", true));
+            transform.position = new Vector3(savestate.positionX, savestate.positionY, savestate.positionZ);
+            transform.rotation = new Quaternion(savestate.rotationX, savestate.rotationY, savestate.rotationZ, savestate.rotationW);
+            transform.localScale = new Vector3(savestate.scaleX, savestate.scaleY, savestate.scaleZ);
+            RestoreMembers(movement, savestate.movementFields);
+            if (body != null) RestoreMembers(body, savestate.bodyFields);
+            SetBodySimulation(body, ReadBool(savestate.bodyFields, "simulated", true));
             Physics2D.SyncTransforms();
             result.Success = true;
-            result.Message = "Checkpoint restored";
+            result.Message = "Savestate restored";
             return result;
         }
 

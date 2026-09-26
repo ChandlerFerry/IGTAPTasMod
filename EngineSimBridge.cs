@@ -375,6 +375,7 @@ namespace IGTAPTasMod
                     if (finishCourse.toCourse > 0) { w.WritePropertyName("finishStart"); w.WriteValue(finishCourse.toCourse); }
                 }
                 w.WritePropertyName("capabilities"); w.WriteValue(caps);
+                w.WritePropertyName("checkpointRespawns"); w.WriteValue(CheckpointRespawns);
                 w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
                 w.WritePropertyName("inputs"); w.WriteRawValue(JsonConvert.SerializeObject(inputs));
                 w.WritePropertyName("start"); EngineSimExport.WriteSnapshot(json, _startState, player, false);

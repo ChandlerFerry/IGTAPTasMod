@@ -27,25 +27,28 @@ namespace IGTAPTasMod
             WaveJump,          // an up-diagonal dash into a wall turns straight up at full dash speed (wall jump unlocked)
             SpringDash,        // enginesim springDash: a dash that cancels a sideways spring's lock
             SpikeGrace,        // inside a spike for the ticks the spike's graceFrames allow
+            UltraBonus,        // the game's own ultra ("Did an ultra!"): a hyper's jump adds back preDashMomentum.x (CheckForSuperJump)
         }
 
         static readonly string[] TechNames =
         {
             "FLIP JUMP", "COYOTE JUMP", "WALL COYOTE JUMP", "SUPER JUMP", "REVERSED SUPER", "BACKWARDS DASH-JUMP", "WAVEDASH", "ULTRA",
-            "DASH BOUNCE", "WAVE BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "WAVEJUMP", "SPRING DASH", "SPIKE GRACE",
+            "DASH BOUNCE", "WAVE BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "WAVEJUMP", "SPRING DASH", "SPIKE GRACE", "ULTRA BONUS",
         };
 
         static readonly Color[] TechColors =
         {
             Hex(0xff3b3b, 1f), Hex(0xffc93c, 1f), Hex(0xa3e635, 1f), Hex(0x38bdf8, 1f), Hex(0x6366f1, 1f), Hex(0xc084fc, 1f), Hex(0xf472b6, 1f),
             Hex(0xfb923c, 1f), Hex(0xfde68a, 1f), Hex(0xe879f9, 1f), Hex(0x10b981, 1f), Hex(0x2dd4bf, 1f), Hex(0x60a5fa, 1f), Hex(0xd4a373, 1f),
-            Hex(0x86efac, 1f),
+            Hex(0x86efac, 1f), Hex(0xf43f5e, 1f),
         };
 
         sealed class TechSpan
         {
             public Tech tech;
             public long start, end;
+            // The route's input ticks played by the span's end (MacroEngine.RunTicks): a demo cut there performs it.
+            public long input;
             public int lane;
         }
 
@@ -58,8 +61,14 @@ namespace IGTAPTasMod
         static readonly FieldInfo TechDashBounceField = AccessTools.Field(typeof(Movement), "DashBounceFrames");
         static readonly FieldInfo TechCanHyperField = AccessTools.Field(typeof(Movement), "canHyper");
         static readonly FieldInfo TechDashDirectionField = AccessTools.Field(typeof(Movement), "dashDirection");
+        static readonly FieldInfo TechPreDashMomentumField = AccessTools.Field(typeof(Movement), "preDashMomentum");
+        static readonly FieldInfo TechLastHyperYField = AccessTools.Field(typeof(Movement), "lastHyperY");
 
         readonly List<TechSpan> _techSpans = new List<TechSpan>();
+        // Every span of the run, kept after it scrolls out of the list (the Tech tab's last playback), and the route played.
+        readonly List<TechSpan> _techSeen = new List<TechSpan>();
+        MacroDefinition _techSeenRoute;
+        bool _techSeenFilled;
         readonly List<(Tech tech, long start)> _techPending = new List<(Tech, long)>();
         readonly int[] _techCounts = new int[TechNames.Length];
         readonly List<Tech> _techOrder = new List<Tech>();
@@ -80,7 +89,7 @@ namespace IGTAPTasMod
         bool _techInputJumpBuffer, _techInputGround, _techWallKick;
         float _techInputCoyote, _techInputWallCoyote;
         int _techInputAirJumps, _techInputWallJumps, _techInputDashBounce;
-        bool _techSuperJumpBuffer, _techSuperHyper;
+        bool _techSuperJumpBuffer, _techSuperHyper, _techSuperUltra;
 
         void PatchTechHooks()
         {
@@ -146,6 +155,10 @@ namespace IGTAPTasMod
             TasPlugin p = Instance;
             p._techSuperJumpBuffer = TechRead<bool>(TechJumpBufferField, __instance);
             p._techSuperHyper = TechRead<bool>(TechCanHyperField, __instance);
+            // The hyper branch's own test, on the position after its 2-unit lift (Movement.CheckForSuperJump).
+            float lifted = __instance.transform.position.y + 2f;
+            p._techSuperUltra = Mathf.Sign(TechRead<Vector2>(TechPreDashMomentumField, __instance).x) == Mathf.Sign(TechRead<Vector2>(TechDashDirectionField, __instance).x)
+                && lifted < TechRead<float>(TechLastHyperYField, __instance) - 4f;
         }
 
         private static void AfterTechSuperJump(Movement __instance)
@@ -162,6 +175,7 @@ namespace IGTAPTasMod
                     p._techWaveStart = p._techDashStart;
                 }
                 p._techWaveAir = true;
+                if (p._techSuperUltra) p.PendTech(Tech.UltraBonus, p._techDashStart);
             }
             else if (p._techBackwardsDash == p._techDashStart && p._techDashStart != NoTick) p.PendTech(Tech.BackwardsDashJump, p._techBackwardsStart);
             else
@@ -187,6 +201,9 @@ namespace IGTAPTasMod
         void ResetTechs(Movement player)
         {
             _techSpans.Clear();
+            _techSeen.Clear();
+            _techSeenRoute = _engine.ActiveMacro;
+            _techSeenFilled = false;
             _techPending.Clear();
             _techOrder.Clear();
             System.Array.Clear(_techCounts, 0, _techCounts.Length);
@@ -267,7 +284,7 @@ namespace IGTAPTasMod
             {
                 TechSpan span = _techSpans[i];
                 if (span.end < tick - 1) break;
-                if (span.tech == tech && span.end == tick - 1) { span.end = tick; return; }
+                if (span.tech == tech && span.end == tick - 1) { span.end = tick; span.input = _engine.RunTicks; return; }
             }
             AddTech(tech, tick, tick);
         }
@@ -282,16 +299,18 @@ namespace IGTAPTasMod
                 if (other.end >= start && other.start <= end) used[other.lane] = true;
             int lane = 0;
             while (lane < TechLanes - 1 && used[lane]) lane++;
-            _techSpans.Add(new TechSpan { tech = tech, start = start, end = end, lane = lane });
+            var span = new TechSpan { tech = tech, start = start, end = end, input = _engine.RunTicks, lane = lane };
+            _techSpans.Add(span);
+            _techSeen.Add(span);
             if (_techCounts[(int)tech]++ == 0) _techOrder.Add(tech);
-            // Spans that scrolled out of the list are gone for good.
+            // Spans that scrolled out of the list leave it for good (_techSeen keeps them).
             _techSpans.RemoveAll(s => s.end < end - rows);
         }
 
         string TechSummary(Tech tech)
         {
             int count = _techCounts[(int)tech];
-            return count > 1 && tech != Tech.SpikeGrace ? TechNames[(int)tech] + " ×" + count : TechNames[(int)tech];
+            return count > 1 && tech != Tech.SpikeGrace ? TechLabel(tech) + " ×" + count : TechLabel(tech);
         }
 
         void DrawTechSummary(float x, float y, float width, float height, float scale)
@@ -328,7 +347,7 @@ namespace IGTAPTasMod
                 Matrix4x4 saved = GUI.matrix;
                 GUIUtility.RotateAroundPivot(-90f, pivot);
                 label.center = pivot;
-                Label(label, TechNames[(int)span.tech], _overlayTech, color);
+                Label(label, TechLabel(span.tech), _overlayTech, color);
                 GUI.matrix = saved;
             }
         }

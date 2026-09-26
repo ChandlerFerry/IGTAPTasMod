@@ -68,13 +68,15 @@ namespace IGTAP.EngineSim
         Worker[] _workers;
         List<Memory.Source>[] _partitions;
 
-        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null, ForcedPath path = null)
+        public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null, ForcedPath path = null,
+            float visitCell = 0f)
         {
             _createSimulation = createSimulation;
             Capabilities = capabilities;
             _seeds = seeds;
             _memory = memory;
             _path = path != null && !path.IsEmpty ? path : null;
+            VisitCell = visitCell;
         }
 
         public void Stop() { _stop = true; }
@@ -136,6 +138,25 @@ namespace IGTAP.EngineSim
             return memory;
         }
 
+        // With a VisitCell (> 0) the workers note every world cell (PlayerWorld / VisitCell, floored) their runs step through,
+        // with the earliest Elapsed there: where the search went, for a map. Read after the workers stopped.
+        public readonly float VisitCell;
+
+        public static long VisitKey(Vector3 world, float cell)
+        {
+            return ((long)Mathf.FloorToInt(world.x / cell) << 32) | (uint)Mathf.FloorToInt(world.y / cell);
+        }
+
+        public Dictionary<long, float> Visits()
+        {
+            var all = new Dictionary<long, float>();
+            foreach (Worker w in _workers ?? Array.Empty<Worker>())
+                if (w?.Visits != null)
+                    foreach (var v in w.Visits)
+                        if (!all.TryGetValue(v.Key, out float t) || v.Value < t) all[v.Key] = v.Value;
+            return all;
+        }
+
         public static bool Beats(float time, long runTicks, float bestTime, long bestRunTicks)
         {
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
@@ -184,7 +205,8 @@ namespace IGTAP.EngineSim
             int _sharedVersion;
             float _maxTimedRank;
             readonly bool _goalMode;
-            float _minTimedRank = float.PositiveInfinity;
+            // Goal mode: the lowest and highest goal progress among the archive's cells.
+            int _minProgress = int.MaxValue, _maxProgress = -1;
             readonly Queue<Memory.Source> _restore;
             List<InputTick> _plateau;
 
@@ -210,7 +232,12 @@ namespace IGTAP.EngineSim
                 _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
                 _swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
+                if (owner.VisitCell > 0f) _visits = new Dictionary<long, float>();
             }
+
+            // Every world cell this worker's runs stepped through, with the earliest Elapsed there (OfflineSolver.VisitCell).
+            readonly Dictionary<long, float> _visits;
+            public Dictionary<long, float> Visits { get { return _visits; } }
 
             public void Loop()
             {
@@ -345,9 +372,13 @@ namespace IGTAP.EngineSim
             double Weight(long key, Cell cell)
             {
                 double w = key < 0 ? 3.0 : 1.0;
-                if (key < 0 && _bestInputs == null && _maxTimedRank > 0)
+                // Before a finish, cells further along weigh more: a course run's by its timer (a proxy for how far it got), a
+                // Full-TAS window's by the goals it has chained so far. Run time is no measure of that there: a run that
+                // wanders for longer isn't closer to the next goal.
+                if (key < 0 && _bestInputs == null)
                 {
-                    double reach = _goalMode ? (_maxTimedRank > _minTimedRank ? (cell.Rank - _minTimedRank) / (double)(_maxTimedRank - _minTimedRank) : 0) : cell.Rank / _maxTimedRank;
+                    double reach = !_goalMode ? (_maxTimedRank > 0 ? cell.Rank / _maxTimedRank : 0)
+                        : _maxProgress > _minProgress ? (GoalProgress(key) - _minProgress) / (double)(_maxProgress - _minProgress) : 0;
                     w *= 1 + 10 * Math.Pow(reach, 4);
                 }
                 if (_owner._path != null && _bestInputs == null) w *= 1 + 10 * cell.State.Waypoints;
@@ -785,9 +816,17 @@ namespace IGTAP.EngineSim
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
-                Action<int> onStep = path == null ? null : _ =>
+                Dictionary<long, float> visits = _visits;
+                Action<int> onStep = path == null && visits == null ? null : _ =>
                 {
                     Vector3 p = _sim.PlayerWorld;
+                    if (visits != null)
+                    {
+                        long cell = VisitKey(p, _owner.VisitCell);
+                        float t = _sim.Elapsed(null);
+                        if (!visits.TryGetValue(cell, out float seen) || t < seen) visits[cell] = t;
+                    }
+                    if (path == null) return;
                     if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
                         lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
                     foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
@@ -809,7 +848,7 @@ namespace IGTAP.EngineSim
                     }
                     courseScript active = _sim.TimingCourse();
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(Place(_sim.Player, _swapper), _sim.Progress) : CellKey(Place(_sim.Player, _swapper), timing, _waypoints);
+                    long key = _goalMode ? GoalCellKey(Place(_sim.Player, _swapper, true), _sim.Progress) : CellKey(Place(_sim.Player, _swapper, false), timing, _waypoints);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     int filed = Math.Min(tick, inputs.Count);
@@ -848,11 +887,13 @@ namespace IGTAP.EngineSim
             bool _avoided;
             bool _converged;
 
-            // Cell key bits: y 0-17, x 18-35, moss resources 36-48, waypoints/goal progress 49-61, blue blocks 62; the sign
-            // marks timed cells. Touching Ground refills wall jumps, double jumps and air dashes; touching Moss refills
+            // Cell key bits: y 0-17, x 18-35, jumps/dashes left 36-47, moss 48, waypoints/goal progress 49-61, blue blocks 62; the
+            // sign marks timed cells. Touching Ground refills wall jumps, double jumps and air dashes; touching Moss refills
             // nothing (Movement.touchedMossyGround). So while the last surface touched was moss, what's left is part of the
-            // cell: a faster arrival with fewer jumps left must not replace, cut or splice over one that has them. Which
-            // blocks are solid (block swap on dash) is part of it too: the same place with the other colour is another state.
+            // cell: a faster arrival with fewer jumps left must not replace, cut or splice over one that has them. A Full-TAS
+            // window (goal mode) keys what's left everywhere: its goals chain, so an arrival that spent its dash in the air to get
+            // somewhere sooner must not replace one that still has it for the next goal. Which blocks are solid (block swap on
+            // dash) is part of it too: the same place with the other colour is another state.
             static readonly Func<Movement, int> GroundType = GroundTypeGetter();
 
             static Func<Movement, int> GroundTypeGetter()
@@ -863,15 +904,16 @@ namespace IGTAP.EngineSim
                 return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
             }
 
-            static long Place(Movement player, colouredBlockSwapper swapper)
+            static long Place(Movement player, colouredBlockSwapper swapper, bool resources)
             {
                 Vector3 position = player.transform.m_Position;
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0x3FFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0x3FFFF;
                 long key = (x << 18) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
-                if (GroundType(player) == 0) return key;
+                bool moss = GroundType(player) != 0;
+                if (!moss && !resources) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
-                return key | (1L << 48) | (wall << 44) | (air << 40) | (dash << 36);
+                return key | (moss ? 1L << 48 : 0L) | (wall << 44) | (air << 40) | (dash << 36);
             }
 
             static long CellKey(long place, bool timing, int waypoints)
@@ -885,6 +927,8 @@ namespace IGTAP.EngineSim
                 return -1 - (((long)progress << 49) | place);
             }
 
+            static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> 49) & 0x1FFF); }
+
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
                 bool better = !_archive.TryGetValue(key, out Cell cell) || cell.Rank > rank || (cell.Rank == rank && cell.Length > tick);
@@ -895,7 +939,12 @@ namespace IGTAP.EngineSim
                 if (!better || state == null) return;
                 _archive[key] = new Cell { Source = inputs, Length = tick, State = state, Rank = rank };
                 if (key < 0 && rank > _maxTimedRank) _maxTimedRank = rank;
-                if (_goalMode && rank < _minTimedRank) _minTimedRank = rank;
+                if (_goalMode)
+                {
+                    int progress = GoalProgress(key);
+                    if (progress < _minProgress) _minProgress = progress;
+                    if (progress > _maxProgress) _maxProgress = progress;
+                }
             }
         }
     }

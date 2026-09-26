@@ -9,7 +9,7 @@ namespace IGTAPTasMod
         public string kind;
         public int course;
         public string[] boxes;
-        // reward: the bonus's end rect (it finds the reward box); at: the checkpoint the player's collider must touch.
+        // reward: the bonus's end rect (it finds the reward box); at: the area goal's rect the player's collider must touch.
         // Centre and size in courses.json's frame; the trace header carries them in its world frame.
         public float x, y, w, h;
         // at: the sides it must be entered from (FromLeft...; 0: any). Entered: the player's colliders overlap the rect
@@ -72,14 +72,14 @@ namespace IGTAPTasMod
             return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics);
         }
 
-        // The current goal is a checkpoint: the caller checked that the player touches its rect.
+        // The current goal is an area goal: the caller checked that the player touches its rect.
         public bool Touched(long input, long physics)
         {
             FullTasGoal g = Current;
             return g != null && g.kind == FullTasGoal.At && Reach(input, physics);
         }
 
-        // A quick restart right after a checkpoint (the last goal reached is an at:) takes that checkpoint back: the run
+        // A quick restart right after an area goal (the last goal reached is an at:) takes that goal back: the run
         // must pass it again on the way to the next goal, so it can't restart to hand the next window a fresh start.
         public void QuickRestarted()
         {

@@ -21,11 +21,11 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 | `finish:N` | The player's own finish at course N's end gate. |
 | `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
 | `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
-| `at:x,y,w,h` | A checkpoint: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. |
-| `at:x,y,w,h,from=left+bottom` | The same checkpoint, entered from one of these sides (`left`, `right`, `bottom`, `top`): on the tick the colliders first touch the rect, after the tick before they were wholly outside it on that side. Touching it any other way doesn't count; the player must leave and come in again. |
+| `at:x,y,w,h` | An area goal: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. Not the game's checkpoints (`checkpointScript`), which set where a death or quick restart off a course respawns. |
+| `at:x,y,w,h,from=left+bottom` | The same area goal, entered from one of these sides (`left`, `right`, `bottom`, `top`): on the tick the colliders first touch the rect, after the tick before they were wholly outside it on that side. Touching it any other way doesn't count; the player must leave and come in again. |
 
-A quick restart right after a checkpoint (the last goal reached is an `at:`) takes that checkpoint back: the run has to
-pass it again before the next goal counts. A checkpoint marks the way the run goes on, so a window can't touch it and
+A quick restart right after an area goal (the last goal reached is an `at:`) takes that goal back: the run has to
+pass it again before the next goal counts. An area goal marks the way the run goes on, so a window can't touch it and
 restart to hand the next window a standing start. Quick restarts after any other goal (a purchase, a finish) are
 untouched.
 
@@ -65,7 +65,7 @@ starts with one or buys one, and from `buyomni` on the omnidirectional tricks to
 wavedash, ultra, dash bounce, wave bounce, WaveJump; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
 
 `VMAN` is the first such run: `buy:buyomni`, Course 1, `buy:buywj`, the climb to Course 2 (`at:2400,1500,400,1000`),
-Course 2, `buy:buyds`, then checkpoints inside Course 2's box (`at:4300,2850,400,700`), the left end of the wall at
+Course 2, `buy:buyds`, then area goals inside Course 2's box (`at:4300,2850,400,700`), the left end of the wall at
 6080,4000 (`at:6105,4146,250,328`), the shaft up to Course 3 (`at:7645,6050,230,1500`), up the left of Course 3's box
 (`at:8320,8100,1040,1600`), the column above it to the 10000 floor (`at:9225,9535,950,1330`), up to the 11000 roof
 (`at:11500,11500,1000,1000`), the platform left of Course 4 (`at:16000,12050,3000,1000`), Course 4's start
@@ -73,6 +73,29 @@ Course 2, `buy:buyds`, then checkpoints inside Course 2's box (`at:4300,2850,400
 out of the tunnel's right end (`at:22200,15900,500,500`) and
 into the credits trigger over the teleporters (`at:24067,13456,1440,1080`: `FakeCredits`'s box, whose
 `FakeCreditsControlScript::OnTriggerEnter2D` starts the end-game credits cutscene and stops the player).
+
+`VMANDJ` is `VMAN` with Course 3 and double jump in place of goal 12: `VMAN`'s goals 1–11 (through the shaft up to
+Course 3), `start:3`, `finish:3` (its first Vman clear pays 604712617361 W), `buy:buydj` (+1 midair jump), then
+`VMAN`'s goals from the column above Course 3 (`at:9225,9535,950,1330`) on.
+
+### Avoids and the map
+
+`enginesim\Cli\forced-paths.json` rules with `"fulltas": ["<run>", ...]` list a run's `avoid` boxes (game-world
+`x0,y0,x1,y1`): every search window of the run cuts a run that enters one, which keeps the search in the corridor
+between area goals. The Full-TAS tab's **Show map** (`POST /api/fulltas/map {name}`) draws where the run's windows
+went (`archive\fulltas-<run>.visits.json`, every solve of its current goals), the best so far, the `at:` goals and the
+avoid boxes, with a world-coordinate readout. On the map, **Draw avoid** and drag a box, tick the runs it's for and
+**Add avoid** (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...]}`): it goes into the `"drawn": true` rule
+for exactly those runs. **Remove** under the map (`remove: true`, `name`) takes a box out of every rule of the run, and
+so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
+copy beside its exe, and a solve rereads the boxes before every window, so a box drawn mid-solve applies from the next
+window on. A hand edit of the source file needs an engine rebuild
+(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy.
+
+Goals chain, and a window's search follows that: its explore cells keep what the player has left in the air (wall
+jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn't replace one that still has it for the
+next goal, and until the window reaches its last goal, cells that have reached more of the run's goals are picked more
+(`OfflineSolver` `Weight`; run time doesn't count there: a run that wanders longer isn't closer to the next goal).
 
 ## Seed
 
@@ -116,7 +139,8 @@ inputs past the last unchanged goal the same way.
 - **Goals in game** (`POST /api/settings/fulltas-goals {name}`, `""` turns it off; settings `fullTasGoalsRun`, `/api/state`
   `fullTas.goalsOverlay`) draws the run's `at:` and `reward:` rects in game, numbered, where the goal check tests them
   (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
-  goals are green and the next one yellow.
+  goals are green and the next one yellow. The run's avoid boxes (forced-paths.json, the solver's copy) are drawn in
+  red, and a box added or removed on the map shows up within a second.
 
 ## Offline search
 
