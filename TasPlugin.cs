@@ -1035,13 +1035,15 @@ namespace IGTAPTasMod
         /// the last physics tick, half a frame off it (offset + k/fps), so every tick sees the same frame times whatever the
         /// wall clock does and no frame lands on a tick boundary. With interpolation on, the render position a FixedUpdate
         /// write starts from (the last frame's blend) is then the same every run. Re-anchored every frame, so the float
-        /// step's rounding never accumulates.
+        /// step's rounding never accumulates. The step goes to the grid point after the one nearest now: a frame that lands a
+        /// hair short of its grid point (the float step's rounding) would otherwise get a near-zero next step, an extra
+        /// Movement.Update in that tick.
         /// </summary>
         static float FixedClockStep(int fps)
         {
             double frame = 1.0 / fps, offset = frame / 2, tick = Time.fixedDeltaTime;
             double since = Time.timeAsDouble - Time.fixedTimeAsDouble;
-            double next = offset + (Math.Floor((since - offset) / frame) + 1) * frame;
+            double next = offset + (Math.Floor((since - offset) / frame + 0.5) + 1) * frame;
             if (next >= tick) next = tick + offset;
             return (float)(next - since);
         }
