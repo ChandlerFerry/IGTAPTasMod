@@ -55,6 +55,10 @@ archive/
 *.log
 *.jsonl
 
+# Scratch output (unexpanded %TEMP% paths, temp routes)
+/%TEMP%*/
+/local_tmp_route.json
+
 # OS artifacts
 .DS_Store
 Thumbs.db
