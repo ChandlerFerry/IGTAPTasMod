@@ -113,7 +113,6 @@ namespace IGTAPTasMod
             if (newest.path == null) throw new InvalidOperationException("No offline best" + (human ? " with a human version" : "") + " for " + category + ".");
             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
             var route = new MacroDefinition { id = human ? HumanPlaybackId : "offline-best", name = category + (human ? " human " : " offline ") + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
-            route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             EnsureGameUnpaused();
             _pendingReplay = route;
             _pendingReplayStartDelayTicks = 0;
@@ -151,9 +150,7 @@ namespace IGTAPTasMod
                 bool same = farm ? (long?)json["runTicks"] == FarmTicks(routeTime)
                     : json["time"] != null && ((float)json["time"]).ToString("0.00", CultureInfo.InvariantCulture) == routeTime.ToString("0.00", CultureInfo.InvariantCulture);
                 if (!same) continue;
-                var human = new MacroDefinition { id = HumanPlaybackId, name = route.name + " human", steps = ToSteps(json["ticks"].ToObject<List<SolverTick>>()) };
-                human.timeline = TimelineDocument.FromSequentialSteps(human.steps, Time.fixedDeltaTime * 1000f);
-                return human;
+                return new MacroDefinition { id = HumanPlaybackId, name = route.name + " human", steps = ToSteps(json["ticks"].ToObject<List<SolverTick>>()) };
             }
             return null;
         }

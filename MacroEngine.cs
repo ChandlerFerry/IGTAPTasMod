@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Globalization;
 using HarmonyLib;
 using UnityEngine;
 
@@ -64,13 +63,7 @@ namespace IGTAPTasMod
         private int _quickRestartStep = -1;
         private bool _requireCourseFinish;
         private int _finishWaitTicks;
-        private bool _hasProgressSample;
-        private string _startStateFingerprint;
         private float _authoritativeCompletionTime;
-        private long _courseStartRunTick;
-        private int _courseStartUnityFrame;
-        private Vector2 _courseStartPosition;
-        private readonly List<string> _earlyTrace = new List<string>();
 
         public bool IsRunning { get { return _steps != null; } }
         public int StepIndex { get { return _stepIndex; } }
@@ -79,18 +72,13 @@ namespace IGTAPTasMod
         public string ActiveMacroId { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
-        public string StartStateFingerprint { get { return _startStateFingerprint; } }
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
-        public long CourseStartRunTick { get { return _courseStartRunTick; } }
-        public int CourseStartUnityFrame { get { return _courseStartUnityFrame; } }
-        public Vector2 CourseStartPosition { get { return _courseStartPosition; } }
-        public string EarlyTrace { get { return string.Join(";", _earlyTrace.ToArray()); } }
         public event Action<bool, string, int, long> AttemptEnded;
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
-        public void Run(MacroDefinition macro, MacroLibrary library, bool synchronizeStart = false, bool requireCourseFinish = false,
+        public void Run(MacroDefinition macro, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null)
         {
             if (macro == null || macro.steps == null || macro.steps.Count == 0)
@@ -128,13 +116,7 @@ namespace IGTAPTasMod
             _quickRestartStep = -1;
             _requireCourseFinish = requireCourseFinish;
             _finishWaitTicks = 0;
-            _hasProgressSample = false;
-            _startStateFingerprint = null;
             _authoritativeCompletionTime = 0f;
-            _courseStartRunTick = -1;
-            _courseStartUnityFrame = -1;
-            _courseStartPosition = Vector2.zero;
-            _earlyTrace.Clear();
             Status = synchronizeStart ? "Waiting for 3 stable ticks: " + macro.name : "Running: " + macro.name;
             if (!Quiet) TasPlugin.Log.LogInfo(Status);
         }
@@ -285,16 +267,6 @@ namespace IGTAPTasMod
             if (AttemptEnded != null) AttemptEnded(true, reason, -1, ticks);
         }
 
-        public void MarkCourseStart(Movement movement)
-        {
-            if (!IsRunning || _courseStartRunTick >= 0) return;
-            _courseStartRunTick = _runTicks;
-            _courseStartUnityFrame = Time.frameCount;
-            if (movement != null) _courseStartPosition = movement.transform.position;
-        }
-
-
-
         public void FixedTick(Movement movement)
         {
             if (!IsRunning)
@@ -320,7 +292,6 @@ namespace IGTAPTasMod
                 Status = "Start alignment: " + (_preRollTicksTotal - _preRollTicksRemaining) + "/" + _preRollTicksTotal + " ticks";
                 return;
             }
-            CaptureProgress(movement);
             _runTicks++;
             if (_stepIndex < 0 || _stepIndex >= _steps.Count)
             {
@@ -529,42 +500,6 @@ namespace IGTAPTasMod
             return new Vector2(x, y);
         }
 
-        private void CaptureProgress(Movement movement)
-        {
-            Vector3 position = movement.transform.position;
-            Vector2 velocity = ReadVector(VelocityField, movement);
-            if (!Quiet && _runTicks < 8192)
-            {
-                Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
-                Vector2 bodyPosition = body == null ? (Vector2)position : body.position;
-                _earlyTrace.Add(string.Join(",", new[] {
-                    _runTicks.ToString(CultureInfo.InvariantCulture),
-                    position.x.ToString("0.###", CultureInfo.InvariantCulture),
-                    position.y.ToString("0.###", CultureInfo.InvariantCulture),
-                    bodyPosition.x.ToString("0.###", CultureInfo.InvariantCulture),
-                    bodyPosition.y.ToString("0.###", CultureInfo.InvariantCulture),
-                    velocity.x.ToString("0.###", CultureInfo.InvariantCulture),
-                    velocity.y.ToString("0.###", CultureInfo.InvariantCulture)
-                }));
-            }
-            if (!_hasProgressSample)
-            {
-                _hasProgressSample = true;
-                _startStateFingerprint = string.Join("|", new[] {
-                    position.x.ToString("0.###", CultureInfo.InvariantCulture),
-                    position.y.ToString("0.###", CultureInfo.InvariantCulture),
-                    velocity.x.ToString("0.###", CultureInfo.InvariantCulture),
-                    velocity.y.ToString("0.###", CultureInfo.InvariantCulture),
-                    ReadBool(OnGroundField, movement) ? "G1" : "G0",
-                    ReadBool(OnWallField, movement) ? "W1" : "W0",
-                    ReadFloat(WallCoyoteField, movement) > 0f ? "WC1" : "WC0",
-                    ReadBool(FacingRightField, movement) ? "F1" : "F0",
-                    "WL" + ReadFloat(WallJumpLockField, movement).ToString("0.###", CultureInfo.InvariantCulture),
-                    "WD" + ReadFloat(WallJumpDirectionField, movement).ToString("0.###", CultureInfo.InvariantCulture)
-                });
-            }
-        }
-
         private static void NormalizeQuickRestartState(Movement movement)
         {
             SetDirection(movement, 0);
@@ -612,13 +547,6 @@ namespace IGTAPTasMod
             if (field == null) return 0f;
             object value = field.GetValue(instance);
             return value is float ? (float)value : 0f;
-        }
-
-        private static Vector2 ReadVector(FieldInfo field, object instance)
-        {
-            if (field == null) return Vector2.zero;
-            object value = field.GetValue(instance);
-            return value is Vector2 ? (Vector2)value : Vector2.zero;
         }
 
         private static string ReadObject(FieldInfo field, object instance)

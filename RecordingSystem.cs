@@ -16,7 +16,6 @@ namespace IGTAPTasMod
         private static readonly FieldInfo OnWall = AccessTools.Field(typeof(Movement), "OnWall");
         private static readonly FieldInfo WallCoyote = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
         private static readonly FieldInfo WallSide = AccessTools.Field(typeof(Movement), "wallCoyoteDir");
-        private static readonly FieldInfo Velocity = AccessTools.Field(typeof(Movement), "Velocity");
         private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
         private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
         private static readonly FieldInfo FramesSinceLastDash = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
@@ -89,7 +88,6 @@ namespace IGTAPTasMod
             bool dash = Read<bool>(DashBuffer, movement);
             InputAction jumpAction = Read<InputAction>(JumpAction, movement);
             InputAction dashAction = Read<InputAction>(DashAction, movement);
-            Vector2 velocity = Read<Vector2>(Velocity, movement);
             Vector3 position = movement.transform.position;
             Current.samples.Add(new RawTickSample {
                 tick = _tick++,
@@ -99,7 +97,6 @@ namespace IGTAPTasMod
                 dashHeld = dashAction != null ? dashAction.IsPressed() : dash,
                 positionX = position.x, positionY = position.y,
                 originX = TasPlugin.CurrentOrigin().x, originY = TasPlugin.CurrentOrigin().y,
-                velocityX = velocity.x, velocityY = velocity.y,
                 onGround = Read<bool>(OnGround, movement), onWall = Read<bool>(OnWall, movement),
                 wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement)
             });

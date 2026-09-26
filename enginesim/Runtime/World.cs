@@ -23,7 +23,6 @@ namespace IGTAP.EngineSim
     public sealed class ColliderData
     {
         public Collider2D Collider;
-        public float[] LocalToWorld;
         public ShapeData[] Shapes = Array.Empty<ShapeData>();
         public float Friction, Bounciness;
         public ColliderData Composite;
@@ -45,7 +44,6 @@ namespace IGTAP.EngineSim
         readonly List<(Object target, JsonElement fields)> _pendingFields = new List<(Object, JsonElement)>();
         readonly List<(Rigidbody2D body, JsonElement props)> _pendingBodies = new List<(Rigidbody2D, JsonElement)>();
         readonly List<(ColliderData data, JsonElement props)> _pendingColliders = new List<(ColliderData, JsonElement)>();
-        public readonly List<string> Warnings = new List<string>();
 
         public static World Load(string path)
         {
@@ -124,7 +122,6 @@ namespace IGTAP.EngineSim
                 collider.BackendData = data;
                 if (c.TryGetProperty("shapes", out JsonElement shapes) && shapes.ValueKind == JsonValueKind.Object)
                 {
-                    data.LocalToWorld = shapes.GetProperty("localToWorld").EnumerateArray().Select(v => v.GetSingle()).ToArray();
                     data.Shapes = shapes.GetProperty("list").EnumerateArray().Select(ReadShape).ToArray();
                 }
                 if (c.TryGetProperty("sourceShapes", out JsonElement source) && source.ValueKind == JsonValueKind.Object)
@@ -201,7 +198,7 @@ namespace IGTAP.EngineSim
                         value = Activator.CreateInstance(field.FieldType);
                     field.SetValue(target, value);
                 }
-                catch (Exception ex) { Warnings.Add(target.GetType().Name + "." + name + ": " + ex.GetType().Name); }
+                catch (Exception) { }
             }
         }
 
@@ -232,7 +229,7 @@ namespace IGTAP.EngineSim
                 if (field == null || field.IsLiteral || field.IsInitOnly && field.FieldType.IsValueType) return;
                 field.SetValue(null, Read(entry[2], field.FieldType));
             }
-            catch (Exception ex) { Warnings.Add("static " + typeName + "." + name + ": " + ex.GetType().Name); }
+            catch (Exception) { }
         }
 
         public object Read(JsonElement e, Type type)

@@ -794,7 +794,6 @@ namespace IGTAPTasMod
                 return false;
             }
             var route = new MacroDefinition { name = name, steps = ToSteps(inputs) };
-            route.timeline = TimelineDocument.FromSequentialSteps(route.steps, Time.fixedDeltaTime * 1000f);
             _library.macros.Add(route);
             PruneSlowerRoutes();
             SaveLibrary();
