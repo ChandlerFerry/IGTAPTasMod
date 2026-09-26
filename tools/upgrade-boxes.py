@@ -23,11 +23,15 @@ def load(path):
     world = json.load(open(path, encoding="utf-8-sig"))
     objects = world["objects"]
     ref = {}
+    origin = (0.0, 0.0)
     for o in objects:
         ref[o["id"]] = ref[o["transformId"]] = o
         for c in o["components"]:
             ref[c["id"]] = o
-    return objects, ref
+            if c["type"] == "FloatingOrigin":
+                p = fields(c)["currentOrigin"]
+                origin = (p["x"], p["y"])
+    return objects, ref, origin
 
 
 def hierarchy(o, ref):
@@ -46,15 +50,20 @@ def fields(c):
     return {f[1]: f[2] for f in c.get("fields", [])}
 
 
-def trigger(o):
+# The export's positions are in its capture's scene frame; courses.json's are the game world's (scene - FloatingOrigin).
+def place(p, origin):
+    return p["x"] - origin[0], p["y"] - origin[1]
+
+
+def trigger(o, origin):
     for c in o["components"]:
         if c["type"] == "UnityEngine.BoxCollider2D" and c["props"]["isTrigger"]:
             b = c["props"]["bounds"]
-            return b["m_Center"]["x"], b["m_Center"]["y"], 2 * b["m_Extents"]["x"], 2 * b["m_Extents"]["y"]
+            return (*place(b["m_Center"], origin), 2 * b["m_Extents"]["x"], 2 * b["m_Extents"]["y"])
     return None
 
 
-def courses(objects, ref):
+def courses(objects, ref, origin):
     out = {}
     for o in objects:
         gate = component(o, "startGate")
@@ -63,12 +72,12 @@ def courses(objects, ref):
         course = o
         while course and not component(course, "courseScript"):
             course = ref.get(course.get("parent"))
-        reset = ref[fields(gate)["resetPoint"]["$ref"]]["position"]
-        out[fields(component(course, "courseScript"))["courseNumber"]] = (hierarchy(course, ref), (reset["x"], reset["y"]))
+        reset = place(ref[fields(gate)["resetPoint"]["$ref"]]["position"], origin)
+        out[fields(component(course, "courseScript"))["courseNumber"]] = (hierarchy(course, ref), reset)
     return out
 
 
-def boxes(objects, ref, course_paths):
+def boxes(objects, ref, course_paths, origin):
     out = []
     for o in objects:
         c = component(o, "upgradeBox")
@@ -81,11 +90,12 @@ def boxes(objects, ref, course_paths):
         path = hierarchy(o, ref)
         course = next((n for n, p in course_paths.items() if path.startswith(p + "/localUpgrades/")), None)
         secret = f["isSecret"]
-        out.append({"path": path, "sibling": o["siblingIndex"], "x": o["position"]["x"], "y": o["position"]["y"],
+        x, y = place(o["position"], origin)
+        out.append({"path": path, "sibling": o["siblingIndex"], "x": x, "y": y,
                     "active": o["activeInHierarchy"], "kind": kind, "cost": f["baseUpgradeCost"],
                     "currency": CURRENCY[f["upgradeCurrency"]], "cap": f["Cap"], "secret": secret,
                     "number": int(f["achievement"]) if secret and str(f["achievement"]).isdigit() else None,
-                    "course": course, "end": trigger(o)})
+                    "course": course, "end": trigger(o, origin)})
     return out
 
 
@@ -101,9 +111,9 @@ def classify(box, rows):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     world = args[0] if args else str(max(TRACES.glob("*.world.json"), key=lambda p: p.stat().st_mtime))
-    objects, ref = load(world)
-    course_info = courses(objects, ref)
-    every = boxes(objects, ref, {n: p for n, (p, _) in course_info.items()})
+    objects, ref, origin = load(world)
+    course_info = courses(objects, ref, origin)
+    every = boxes(objects, ref, {n: p for n, (p, _) in course_info.items()}, origin)
     rows = {}
     for n in course_info:
         ys = Counter(round(b["y"]) for b in every if b["course"] == n and b["active"] and b["cap"] > 1 and not b["secret"])

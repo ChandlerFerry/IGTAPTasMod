@@ -517,7 +517,7 @@ namespace IGTAP.EngineSim.Cli
                 _avoided = false;
                 Action<int> onStep = _path.IsEmpty ? null : _ =>
                 {
-                    UnityEngine.Vector3 p = _sim.PlayerPosition;
+                    UnityEngine.Vector3 p = _sim.PlayerWorld;
                     if (_waypoints < _path.Via.Count && _path.Via[_waypoints].Contains(p)) _waypoints++;
                     foreach (OfflineSolver.Box box in _path.Avoid) if (box.Contains(p)) _avoided = true;
                 };
@@ -570,7 +570,7 @@ namespace IGTAP.EngineSim.Cli
             JsonElement header = Solve.ReadHeader(trace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
-            OfflineSolver.ForcedPath forced = Solve.ForcedPaths(args, course, caps, trace);
+            OfflineSolver.ForcedPath forced = Solve.ForcedPaths(args, course, caps);
             List<InputTick> best;
             using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(bestPath), new JsonDocumentOptions { MaxDepth = 256 }))
                 best = Solve.ReadInputs(doc.RootElement);

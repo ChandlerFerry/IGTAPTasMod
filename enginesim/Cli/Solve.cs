@@ -26,14 +26,7 @@ namespace IGTAP.EngineSim.Cli
             bool fresh = args.Contains("--fresh");
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
-            var forced = new OfflineSolver.ForcedPath();
-            for (int i = 0; i < args.Length - 1; i++)
-                if (args[i] == "--via" || args[i] == "--avoid")
-                {
-                    float[] c = args[i + 1].Split(',').Select(v => float.Parse(v, CultureInfo.InvariantCulture)).ToArray();
-                    if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
-                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
-                }
+            OfflineSolver.ForcedPath forced = CliBoxes(args);
             string pathName = Option(args, "--path-name", "forced");
             bool customPath = !forced.IsEmpty;
             List<string> optional = Optional(args);
@@ -41,7 +34,7 @@ namespace IGTAP.EngineSim.Cli
             JsonElement header = ReadHeader(startTrace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
-            AddStandingPaths(forced, course, caps, Path.ChangeExtension(startTrace, null) + ".world.json", optional);
+            AddStandingPaths(forced, course, caps, optional);
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
@@ -110,8 +103,8 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // --via/--avoid boxes plus forced-paths.json's standing rules (and --optional blocks) for the course and category.
-        internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps, string trace)
+        // --via/--avoid boxes, in the game world's frame (the map's readout).
+        static OfflineSolver.ForcedPath CliBoxes(string[] args)
         {
             var forced = new OfflineSolver.ForcedPath();
             for (int i = 0; i < args.Length - 1; i++)
@@ -121,7 +114,14 @@ namespace IGTAP.EngineSim.Cli
                     if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
                     (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
                 }
-            AddStandingPaths(forced, course, caps, Path.ChangeExtension(trace, null) + ".world.json", Optional(args));
+            return forced;
+        }
+
+        // --via/--avoid boxes plus forced-paths.json's standing rules (and --optional blocks) for the course and category.
+        internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps)
+        {
+            OfflineSolver.ForcedPath forced = CliBoxes(args);
+            AddStandingPaths(forced, course, caps, Optional(args));
             return forced;
         }
 
@@ -159,9 +159,9 @@ namespace IGTAP.EngineSim.Cli
             return label + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional));
         }
 
-        internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath, List<string> optional)
+        internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, List<string> optional)
         {
-            var blocks = OptionalBlocks(course, caps, worldPath, forced);
+            var blocks = OptionalBlocks(course, caps, forced);
             string missing = optional.FirstOrDefault(n => !blocks.Any(b => b.Name == n));
             if (missing != null)
                 throw new ArgumentException("forced-paths.json: no optional block '" + missing + "' for course " + course + " " + caps
@@ -174,7 +174,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // Adds the standing boxes to `standing` and returns the optional blocks (off unless asked for) of the matching rules.
-        internal static List<OptionalBlock> OptionalBlocks(int course, string caps, string worldPath, OfflineSolver.ForcedPath standing)
+        internal static List<OptionalBlock> OptionalBlocks(int course, string caps, OfflineSolver.ForcedPath standing)
         {
             var blocks = new List<OptionalBlock>();
             string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
@@ -184,13 +184,12 @@ namespace IGTAP.EngineSim.Cli
                 .Where(r => r.GetProperty("course").GetInt32() == course && r.GetProperty("capabilities").EnumerateArray().Any(c => c.GetString() == caps)).ToList();
             foreach (JsonElement rule in matching)
             {
-                Vector2 gate = CourseGate(worldPath, rule.TryGetProperty("gate", out JsonElement frame) ? frame.GetInt32() : course);
-                AddBoxes(standing, rule, gate);
+                AddBoxes(standing, rule);
                 if (rule.TryGetProperty("optional", out JsonElement optional))
                     foreach (JsonElement block in optional.EnumerateArray())
                     {
                         var boxes = new OfflineSolver.ForcedPath();
-                        AddBoxes(boxes, block, gate);
+                        AddBoxes(boxes, block);
                         blocks.Add(new OptionalBlock(block.GetProperty("name").GetString(),
                             block.TryGetProperty("note", out JsonElement note) ? note.GetString() : "", boxes));
                     }
@@ -198,29 +197,15 @@ namespace IGTAP.EngineSim.Cli
             return blocks;
         }
 
-        static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule, Vector2 gate)
+        static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule)
         {
             foreach (string kind in new[] { "via", "avoid" })
                 if (rule.TryGetProperty(kind, out JsonElement list))
                     foreach (JsonElement b in list.EnumerateArray())
                     {
                         float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                        (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(gate.x + c[0], gate.y + c[1], gate.x + c[2], gate.y + c[3]));
+                        (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
                     }
-        }
-
-        internal static Vector2 CourseGate(string worldPath, int course)
-        {
-            using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
-            foreach (JsonElement o in world.RootElement.GetProperty("objects").EnumerateArray())
-                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
-                    if (c.GetProperty("type").GetString() == "courseScript" && c.TryGetProperty("fields", out JsonElement fields)
-                        && fields.EnumerateArray().Any(f => f[1].GetString() == "courseNumber" && f[2].ValueKind == JsonValueKind.Number && f[2].GetInt32() == course))
-                    {
-                        JsonElement p = o.GetProperty("position");
-                        return new Vector2(p.GetProperty("x").GetSingle(), p.GetProperty("y").GetSingle());
-                    }
-            throw new InvalidOperationException("forced-paths.json: no course " + course + " start gate in " + Path.GetFileName(worldPath));
         }
 
         internal static JsonElement ReadHeader(string trace)

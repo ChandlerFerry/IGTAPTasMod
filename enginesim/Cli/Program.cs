@@ -48,11 +48,12 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, onStep: st =>
                         {
+                            Vector3 pos = sim.PlayerWorld;
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
-                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x:0},{s.transform.position.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
+                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x - sim.Origin.x:0},{s.transform.position.y - sim.Origin.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
                                         + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
-                                        + $" player {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}");
+                                        + $" player {pos.x:0.0},{pos.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
                             if (verbose)
                             {
@@ -63,12 +64,12 @@ namespace IGTAP.EngineSim.Cli
                                     + (k.springDash > 0 ? " springdash@" + k.springDash : "")
                                     + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "");
                                 lastRun = run + 1;
-                                Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0}"
+                                Console.WriteLine($"tick {st}: pos {pos.x:0.0},{pos.y:0.0}"
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()).ToString("0.00") : "") + " " + input + " | "
                                     + string.Join(" ", fields.Select((f, i) => f + "=" + infos[i]?.GetValue(sim.Player))));
                             }
                             else if (timing != was || st % 25 == 0)
-                                Console.WriteLine($"tick {st}: pos {sim.Player.transform.position.x:0.0},{sim.Player.transform.position.y:0.0} timing {timing}"
+                                Console.WriteLine($"tick {st}: pos {pos.x:0.0},{pos.y:0.0} timing {timing}"
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()) : ""));
                             was = timing;
                         });
@@ -89,11 +90,12 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--seed <file>]... [--no-submit] [--fresh]\n"
+                            + "          [--seed <file>]... [--no-submit] [--fresh] [--unsolved]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
-                            + "                                         run state in <traces>/fulltas/<run>.json, bests to the gate\n"
-                            + "                                         (/api/fulltas/submit) when the game runs; --seed: saved course\n"
-                            + "                                         routes ({goals, standing, restart, ticks}) as window starts\n"
+                            + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
+                            + "                                         the goals it misses first); run state in <traces>/fulltas/<run>.json,\n"
+                            + "                                         bests to the gate (/api/fulltas/submit) when the game runs; --seed:\n"
+                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N] [--optional name]...\n"
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"

@@ -280,7 +280,9 @@ namespace IGTAPTasMod
                 }
                 if (first != null)
                 {
-                    if (next.body["fulltas"] != null && !FullTasCanJudge()) continue;
+                    FullTasRunDef fullTasRun = next.body["fulltas"] == null ? null
+                        : _fullTasRuns.Find(r => string.Equals(r.name, (string)next.body["fulltas"], StringComparison.OrdinalIgnoreCase));
+                    if (fullTasRun != null && !FullTasCanJudge(fullTasRun)) continue;
                     _offlineBestCheckAt = Time.unscaledTime + 1f;
                     string line = "Offline best " + Path.GetFileName(first.path) + " as " + next.category + ": ";
                     try
@@ -358,6 +360,7 @@ namespace IGTAPTasMod
                 JsonTextWriter w = json.W;
                 w.WriteStartObject();
                 w.WritePropertyName("course"); w.WriteValue(course);
+                if (finishCourse.GameCourse != course) { w.WritePropertyName("gameCourse"); w.WriteValue(finishCourse.GameCourse); }
                 if (finishCourse != null && finishCourse.HasFinish)
                 {
                     Vector2 origin = CurrentOrigin();
@@ -457,6 +460,14 @@ namespace IGTAPTasMod
             foreach (var (due, target, method) in s.pending)
                 if (target == player) { w.WriteStartArray(); w.WriteValue(due); w.WriteValue(method); w.WriteEndArray(); }
             w.WriteEndArray();
+            if (s.vman != null && s.vman.active)
+            {
+                w.WritePropertyName("vman"); w.WriteStartObject();
+                w.WritePropertyName("timeLeft"); w.WriteValue(s.vman.timeLeft);
+                w.WritePropertyName("score"); w.WriteValue(s.vman.score);
+                w.WritePropertyName("blockEnding"); w.WriteValue(s.vman.blockEnding);
+                w.WriteEndObject();
+            }
             if (s.economy != null)
             {
                 w.WritePropertyName("economy"); w.WriteStartObject();

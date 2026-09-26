@@ -3,14 +3,14 @@
     {
       "course": 1,
       "capabilities": ["none", "wj", "wjds", "wjdsdj"],
-      "note": "Left side: everything left of the wall hanging right of the buy machines (its left edge, x -204 in the frame where the gate is at -241), straight down through the floor, is cut. Right side: two boxes are cut, 1494 to 2811 right of the gate from 275 to 531 above it, and 1160 to 1494 right of the gate from 465 below to 149 above it. Every route stays between them; the search otherwise spends most of its runs out there.",
-      "avoid": [[-9000, -6000, 37, 6000], [1494, 275, 2811, 531], [1160, -465, 1494, 149]],
+      "note": "Left side: everything left of the wall hanging right of the buy machines (its left edge, x 2037), straight down through the floor, is cut. Right side: two boxes are cut, x 3494 to 4811 from y 127 to 383, and x 3160 to 3494 from y -613 to 1. Every route stays between them; the search otherwise spends most of its runs out there.",
+      "avoid": [[-7000, -6148, 2037, 5852], [3494, 127, 4811, 383], [3160, -613, 3494, 1]],
       "via": [],
       "optional": [
         {
           "name": "start-marker",
-          "note": "Around the Start marker (493, 70 below the gate), 436 to 522 right of the gate, from 213 below it (into the floor) to 32 below it. Off unless picked.",
-          "avoid": [[436, -213, 522, -32]],
+          "note": "Around the Start marker (2493, -218): x 2436 to 2522, y -361 (into the floor) to -180. Off unless picked.",
+          "avoid": [[2436, -361, 2522, -180]],
           "via": []
         }
       ]
@@ -18,44 +18,92 @@
     {
       "course": 2,
       "capabilities": ["none", "wj", "wjds", "wjdsdj"],
-      "note": "Left side: everything left of the pillar hanging down right of the buy machines (its left edge, 41 left of the start gate), top to bottom, is cut. Right side: everything right of the two rooms' right walls (the upper room's wall's left edge, 2455 right of the start gate), top to bottom, is cut, which closes the corridor joining the rooms past Checkpoints (2) and (3). Both rooms right of the start (850 to 2488 right of the start gate, 1039 below to 1030 above it) and the drop under the start floor (475 to 880 right, 338 to 931 below) are cut. Every route climbs over the pillar right of the start to RealEnd above it; the search otherwise spends most of its runs out there.",
-      "avoid": [[-8041, -6000, -41, 6000], [2455, -6000, 10455, 6000], [850, -1039, 2488, 1030], [475, -931, 880, -338]],
+      "note": "Left side: everything left of the pillar hanging down right of the buy machines (its left edge, x 4512), top to bottom, is cut. Right side: everything right of the two rooms' right walls (the upper room's wall's left edge, x 7008), top to bottom, is cut, which closes the corridor joining the rooms past Checkpoints (2) and (3). Both rooms right of the start (x 5403 to 7041, y 997 to 3066) and the drop under the start floor (x 5028 to 5433, y 1105 to 1698) are cut. Every route climbs over the pillar right of the start to RealEnd above it; the search otherwise spends most of its runs out there.",
+      "avoid": [[-3488, -3964, 4512, 8036], [7008, -3964, 15008, 8036], [5403, 997, 7041, 3066], [5028, 1105, 5433, 1698]],
       "via": []
     },
     {
       "course": 3,
       "capabilities": ["wjds", "wjdsdj"],
       "note": "Top-hole shortcut out of the first room: runs through the right hole are cut. Buy-machine room: a wall on the left side of CashPerLoop (the rightmost machine) cuts runs heading left past it; every route turns back right of it, and the search otherwise spends most of its runs out there. The pocket above and right of the climb, over Checkpoint (1)'s floor (from the floor's left edge to the wall right of the spiked block, up to the hanging pillar's spikes), is cut: every route climbs left of it.",
-      "avoid": [[1085, -165, 1735, 685], [-431.5, -300, -231.5, 700], [751, 766, 1231, 1118]],
+      "avoid": [[10350, 6950, 11000, 7800], [8833.5, 6815, 9033.5, 7815], [10016, 7881, 10496, 8233]],
       "via": []
     },
     {
       "course": 4,
       "capabilities": ["none", "wj", "wjds", "wjdsdj"],
-      "note": "Left side: everything left of the rightmost buy machine's left edge (x -555.5 in the frame where the gate is at -240), top to bottom, is cut. Every route goes right from the start; the search otherwise spends most of its runs out west.",
-      "avoid": [[-30000, -15000, -315.5, 15000]],
+      "note": "Left side: everything left of the rightmost buy machine's left edge (x 19644.9), top to bottom, is cut. Every route goes right from the start; the search otherwise spends most of its runs out west.",
+      "avoid": [[-10039.6, -4300, 19644.9, 25700]],
       "via": []
     },
     {
       "course": 5,
       "capabilities": ["wjdsdj"],
       "note": "No orange blocks (the upgrade after double jump): runs that go far left, into the low left corner, or deep below the start floor are cut (the super jump off the bottom wall left of the floor dips about 110 below it, so that stays open); the way left under the maze to Checkpoint (1) stays open. Forward only: runs that go back right past the course entry (into the shop room and the hub) are cut. The start room's ceiling hole is the finish (RealEnd, a trigger just under the ceiling), entered from above: a run climbing up through it never started the timer (the start gate is left, and End (1) cancels a timed run coming back right), so the hole's column below RealEnd is cut.",
-      "avoid": [[-8959, -2850, -2959, 6150], [-2959, -550, -1559, 450], [-2959, -2850, 341, -550], [-79, -2850, 23000, 1450], [-319, 300, -191, 389]],
+      "avoid": [[-12000, -3000, -6000, 6000], [-6000, -700, -4600, 300], [-6000, -3000, -2700, -700], [-3120, -3000, 19959, 1300], [-3360, 150, -3232, 239]],
       "via": []
     },
     {
       "course": 5,
       "capabilities": ["none", "wj", "wjds", "wjdsdj"],
-      "note": "Roof: the route goes inside the building, so everything from the roof's underside (3231 above the start gate) up, from the far-left cut rightward, is cut, which closes the climb over the building's top left corner.",
-      "avoid": [[-2959, 3231, 23000, 9000]],
+      "note": "Roof: the route goes inside the building, so everything from the roof's underside (y 3081) up, from the far-left cut rightward, is cut, which closes the climb over the building's top left corner.",
+      "avoid": [[-6000, 3081, 19959, 8850]],
+      "via": []
+    },
+    {
+      "course": 6,
+      "capabilities": ["wjdsdjbs"],
+      "note": "x 25507 to 25621, y -396 to 220, is cut.",
+      "avoid": [[25506.6, -396.43, 25620.6, 219.57]],
+      "via": []
+    },
+    {
+      "course": 7,
+      "capabilities": ["wjdsdjbs"],
+      "note": "x 20301 to 20582, y 2941 to 4703, is cut.",
+      "avoid": [[20301, 2941, 20582, 4703]],
+      "via": []
+    },
+    {
+      "course": 8,
+      "capabilities": ["wjdsdjbs"],
+      "note": "x 26057 to 26249, y -2445 to -1663, is cut.",
+      "avoid": [[26056.6, -2445.43, 26248.6, -1663.43]],
+      "via": []
+    },
+    {
+      "course": 9,
+      "capabilities": ["wjdsdjbs"],
+      "note": "x 17436 to 17577, y 6575 to 7130; x 16448 to 16895, y 6910 to 7144; and x 16703 to 17404, y 3138 to 3784, are cut.",
+      "avoid": [[17435.6, 6574.57, 17576.6, 7129.57], [16447.6, 6909.57, 16894.6, 7143.57], [16703, 3137.97, 17404, 3783.97]],
+      "via": []
+    },
+    {
+      "course": 10,
+      "capabilities": ["wjdsdjbs"],
+      "note": "x 29520 to 29761, y 5709 to 7448, is cut.",
+      "avoid": [[29519.6, 5708.57, 29760.6, 7447.57]],
+      "via": []
+    },
+    {
+      "course": 11,
+      "capabilities": ["wjdsdjbs"],
+      "note": "Course 1 overgrown. x 1759 to 1998, y -361 to 435, is cut.",
+      "avoid": [[1759, -361, 1998, 435]],
+      "via": []
+    },
+    {
+      "course": 12,
+      "capabilities": ["wjdsdjbs"],
+      "note": "Course 2 overgrown. x 4317 to 4528, y 1801 to 2562, is cut.",
+      "avoid": [[4317, 1801, 4528, 2562]],
       "via": []
     },
     {
       "course": 206,
-      "gate": 5,
       "capabilities": ["wjdsdj"],
-      "note": "5to4 (boxes from Course 5's start gate). Course 5's start room: its ceiling hole (RealEnd, between the two ceiling blocks) and everything left of the Course 5 start gate (the pocket under the spiked pillar) are cut. Courses 1 and 2 stay closed: right of the pillar hanging over each start gate, floor to the pillar's top, is cut, so runs pass their end gates without entering. Course 3's approach: once out the top of the shaft onto the floor above, everything left of the shaft's left wall is cut.",
-      "avoid": [[-319, 390, -191, 480], [-5959, -2850, -489, 6150], [5571, -250, 6041, 450], [8136, 1850, 8741, 2700], [7041, 7070, 10541, 12150]],
+      "note": "5to4. Course 5's start room: its ceiling hole (RealEnd, between the two ceiling blocks) and everything left of the Course 5 start gate (the pocket under the spiked pillar) are cut. Courses 1 and 2 stay closed: right of the pillar hanging over each start gate, floor to the pillar's top, is cut, so runs pass their end gates without entering. Course 3's approach: once out the top of the shaft onto the floor above, everything left of the shaft's left wall is cut.",
+      "avoid": [[-3360, 240, -3232, 330], [-9000, -3000, -3530, 6000], [2530, -400, 3000, 300], [5095, 1700, 5700, 2550], [4000, 6920, 7500, 12000]],
       "via": []
     }
   ]

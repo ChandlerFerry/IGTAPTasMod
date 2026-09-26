@@ -35,6 +35,35 @@ namespace IGTAPTasMod
             for (int i = 0; i < fields.Length; i++) fields[i].SetValue(target, Copy(values[i]));
         }
 
+        // Whether the target's fields still hold what `values` captured: arrays, lists, queues and stacks element by element;
+        // a HashSet never matches (a copy may iterate in another order); anything else by Equals.
+        public static bool Matches(object target, object[] values)
+        {
+            FieldInfo[] fields = For(target.GetType());
+            for (int i = 0; i < fields.Length; i++)
+                if (!Same(fields[i].GetValue(target), values[i])) return false;
+            return true;
+        }
+
+        static bool Same(object live, object captured)
+        {
+            if (live == null || captured == null) return live == captured;
+            if (live.GetType() != captured.GetType()) return false;
+            Type type = live.GetType();
+            Type definition = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
+            if (definition == typeof(HashSet<>)) return false;
+            if (!(live is Array) && definition != typeof(List<>) && definition != typeof(Queue<>) && definition != typeof(Stack<>))
+                return Equals(live, captured);
+            System.Collections.IEnumerator a = ((System.Collections.IEnumerable)live).GetEnumerator(), b = ((System.Collections.IEnumerable)captured).GetEnumerator();
+            while (true)
+            {
+                bool more = a.MoveNext();
+                if (more != b.MoveNext()) return false;
+                if (!more) return true;
+                if (!Equals(a.Current, b.Current)) return false;
+            }
+        }
+
         internal static object Copy(object value)
         {
             if (value is Array array) return array.Clone();

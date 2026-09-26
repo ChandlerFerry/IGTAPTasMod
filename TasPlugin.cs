@@ -118,10 +118,19 @@ namespace IGTAPTasMod
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
+        // Saves also wait while a route has Area 1 in a state other than the save's (Courses 11-15 overgrown, Courses
+        // 1-5 not): the first save the game would write (off a course: Saveloader writes only with no course reset
+        // point) with nothing of the studio's running puts the save's state back first.
         private static bool BlockSharedSave()
         {
-            return Instance == null || (Instance._playbackSavedAbilities.Count == 0 && !Instance._silentEvaluation && !TurboRunner.Active
-                && !Instance._newGameSession);
+            if (Instance == null) return true;
+            if (Instance._playbackSavedAbilities.Count != 0 || Instance._silentEvaluation || TurboRunner.Active || Instance._newGameSession) return false;
+            if (Instance.SavedArea1State == null) return true;
+            if (Instance._solverRunning || Instance.PlaybackActive || Instance._recorder.IsRecording) return false;
+            Movement player = FindWorldMovement();
+            if (player != null && player.courseResetPoint != Vector2.zero) return true;
+            Instance.RestoreArea1State();
+            return true;
         }
 
         private static void BeforeRespawn(Movement __instance)
@@ -147,6 +156,7 @@ namespace IGTAPTasMod
             if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
+            if (!IsMenuPlayer(__instance)) Instance.FullTasCheckpoint(__instance);
             if (!IsMenuPlayer(__instance) && Instance._engine.TakeQuickRestart()) Instance.QuickRestart(__instance);
             if (!IsMenuPlayer(__instance) && !Instance._recorder.IsRecording)
             {
@@ -307,7 +317,7 @@ namespace IGTAPTasMod
             Instance._fullTasFinishCourse = Instance._fullTas != null && timing ? __instance.courseNumber : -1;
             Instance._pendingCourseWasTracking = timing && Instance._fullTas == null
                 && (!Instance._silentEvaluation
-                    || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.id);
+                    || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.GameCourse);
             if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
             object value = CourseCurrentPathTimeField.GetValue(__instance);
             Instance._pendingCourseTime = value is float ? (float)value : 0f;
@@ -468,8 +478,8 @@ namespace IGTAPTasMod
                             isOnMainMenu = onMenu,
                             hasCam = GetMovementField(m, "cam") != null,
                             hasCollider = GetMovementField(m, "normalCollider") != null,
-                            x = m.transform.position.x,
-                            y = m.transform.position.y
+                            x = m.transform.position.x - CurrentOrigin().x,
+                            y = m.transform.position.y - CurrentOrigin().y
                         });
                         if (!onMenu && world == null) world = m;
                     }
@@ -648,6 +658,10 @@ namespace IGTAPTasMod
         readonly List<string> _newGameNotes = new List<string>();
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
+        // The fresh game is a Vman speedrun's world (LoadNewGame's Vman start) rather than a plain new game.
+        bool _newGameVman;
+        Movement _vmanSetupPlayer;
+        bool _vmanSetupQuiet;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
         bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement(); } }
 
@@ -661,23 +675,36 @@ namespace IGTAPTasMod
             SaveloaderIsLoading.SetValue(__instance, false);
         }
 
-        void StartNewGame(WebStudioRequest request)
+        void StartNewGame(WebStudioRequest request, bool vman)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
-            LoadNewGame(request);
+            LoadNewGame(request, vman);
         }
 
-        void LoadNewGame(WebStudioRequest request)
+        // vman: the Vman start. The fresh new game gets Area 1 overgrown (as the courses 11-15 routes set it), every Vman
+        // duration box's full effect in vmanTime and VmanStartsWithOmniDash, and the player on the floor under the 1x
+        // "Start a VMAN speedrun" box; the player jumps into it, the game itself buys it (SetupVmanSpeedrun) and loads the
+        // Vman world, which is the run's start.
+        void LoadNewGame(WebStudioRequest request, bool vman)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
             _newGameSession = true;
             globalStats.difficultyLevel = 0;
             Time.timeScale = 1f;
+            // A new game starts with the Vman statics a fresh process has: none of an earlier Vman world survives the load
+            // (VmanScript.Awake would re-enter it, or pay out its score with AfterExitedVmanSpeedrun).
+            VmanScript.isCurrentlyVman = false;
+            VmanScript.metaVman = false;
+            VmanScript.vmanScore = 0.0;
+            VmanScript.vmanTimeLeft = 0.0;
+            VmanScript.VmanStatingUpgrades = null;
             SceneManager.LoadScene("Overworld");
             _newGameStart = null;
             _newGamePlayer = null;
+            _newGameVman = vman;
+            _vmanSetupPlayer = null;
             _startState = null;
             _engineSimStartKey = null;
             _newGameNotes.Clear();
@@ -689,8 +716,33 @@ namespace IGTAPTasMod
 
         void PumpNewGame()
         {
-            if (_newGamePhase != 1 && _newGamePhase != 2) return;
+            if (_newGamePhase != 1 && _newGamePhase != 2 && _newGamePhase != 4 && _newGamePhase != 5) return;
             int frames = Time.frameCount - _newGameFrame;
+            if (_newGamePhase == 4)
+            {
+                if (VmanScript.isCurrentlyVman)
+                {
+                    _newGameNotes.Add("the game bought the Vman start box");
+                    EndVmanSetupJump();
+                    _newGamePhase = 5;
+                    _newGameFrame = Time.frameCount;
+                }
+                else if (frames > 300) { EndVmanSetupJump(); FailNewGame("The player under the Vman start box did not buy it within 300 frames."); }
+                return;
+            }
+            if (_newGamePhase == 5)
+            {
+                Movement next = FindWorldMovement();
+                if (next != null && next != _vmanSetupPlayer && SceneManager.GetActiveScene().name == "Overworld")
+                {
+                    _newGameNotes.Add("the Vman world loaded");
+                    _vmanSetupPlayer = null;
+                    _newGamePhase = 2;
+                    _newGameFrame = Time.frameCount;
+                }
+                else if (frames > 900) FailNewGame("The Vman world did not load within 900 frames of the start box's purchase.");
+                return;
+            }
             if (frames > 600) { FailNewGame("The new game's player did not settle within 600 frames."); return; }
             if (_newGamePhase == 1)
             {
@@ -717,6 +769,7 @@ namespace IGTAPTasMod
 
         void CaptureNewGameStart(Movement player)
         {
+            if (_newGameVman && !VmanScript.isCurrentlyVman) { BuyVmanStart(player); return; }
             _newGamePhase = 0;
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             bool quiet = _engine.Quiet;
@@ -729,7 +782,7 @@ namespace IGTAPTasMod
             _engine.Quiet = quiet;
             _newGamePlayer = player;
             if (_fullTasPlay != null) _fullTasPlay.waitingForNewGame = false;
-            Vector2 position = player.transform.position;
+            Vector2 position = (Vector2)player.transform.position - CurrentOrigin();
             Vector2 respawn = GetMovementField(player, "respawnPoint") is Vector2 r ? r : Vector2.zero;
             double cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double c) ? c : 0.0;
             Logger.LogInfo("New game: player at " + position.ToString("0.###") + ", respawnPoint " + respawn.ToString("0.###") + ", Cash " + cash);
@@ -740,7 +793,9 @@ namespace IGTAPTasMod
                 ok = true, position = new { x = position.x, y = position.y }, respawnPoint = new { x = respawn.x, y = respawn.y }, cash,
                 unlocks = new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false), dash = GetMovementBool(player, "dashUnlocked", false),
                     maxAirDashes = GetMovementField(player, "maxAirDashes"), doubleJump = GetMovementBool(player, "doubleJumpUnlocked", false),
-                    maxAirJumps = GetMovementField(player, "maxAirJumps") },
+                    maxAirJumps = GetMovementField(player, "maxAirJumps"), omniDash = GetMovementBool(player, "omniDashUnlocked", false) },
+                vman = !VmanScript.isCurrentlyVman ? null : new { timeLeft = VmanScript.vmanTimeLeft,
+                    omniDashBox = globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.VmanStartsWithOmniDash] },
                 notes = _newGameNotes.ToArray() });
             request.Completed.Set();
         }
@@ -758,10 +813,11 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        TurboRunner.Snapshot NewGameStart()
+        TurboRunner.Snapshot NewGameStart(bool vman)
         {
-            if (!FreshGameInWorld)
-                throw new InvalidOperationException("A run from a new game needs a fresh one: POST /api/session/newgame first.");
+            if (!FreshGameInWorld || _newGameVman != vman)
+                throw new InvalidOperationException("A run from " + (vman ? "a Vman speedrun" : "a new game") + " needs a fresh one: POST /api/session/newgame"
+                    + (vman ? " {\"vman\": true}" : "") + " first.");
             return _newGameStart;
         }
 
@@ -861,6 +917,7 @@ namespace IGTAPTasMod
             if (movement != null) _engine.ClearInjectedInput(movement);
             CourseDef named = CourseOfRoute(route.name);
             _runCourse = named;
+            EnsureArea1State(named);
             EnsureZone(named);
             SectionCheckpoint checkpoint = string.IsNullOrEmpty(route.checkpointId) ? null : _checkpoints.Find(c => c.id == route.checkpointId);
             if (movement != null && checkpoint != null)
@@ -1009,7 +1066,8 @@ namespace IGTAPTasMod
             return label.Replace("_", "").ToLowerInvariant();
         }
 
-        // Block swap on dash (Movement.blockSwapUnlocked) is the fourth unlock: on in WJ_DS_DJ_BS, off below it.
+        // Block swap on dash (Movement.blockSwapUnlocked) is the fourth unlock: on in WJ_DS_DJ_BS, off below it. No category
+        // has the omnidirectional dash (the OmniDash box's toggle): it is off in every one.
         internal static (string field, object value)[] CategoryAbilities(string caps)
         {
             int level = CapsLevel(caps);
@@ -1018,7 +1076,7 @@ namespace IGTAPTasMod
             return new (string, object)[] { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
                 ("maxAirDashes", dashes), ("airDashesLeft", dashes),
                 ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps),
-                ("blockSwapUnlocked", level >= 4) };
+                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", false) };
         }
 
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
@@ -1422,7 +1480,7 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/newgame")
             {
-                StartNewGame(request);
+                StartNewGame(request, Truthy(body, "vman"));
                 return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();

@@ -370,7 +370,6 @@ namespace IGTAP.EngineSim
 
         internal void CourseFinished(courseScript course, float time)
         {
-            if (VmanScript.isCurrentlyVman) { Unmodeled("Vman course completion"); return; }
             double reward = course.reward;
             if (course.compBoostTimeLeft > 0.0) reward *= course.compBoostBonus;
             Earned += Math.Ceiling(reward);
@@ -524,7 +523,7 @@ namespace IGTAP.EngineSim
                     ? LocalPrestige(local, true, course.tier, course.rewardTier, false)
                     : LocalPrestige(local, four, course.tier + reset1.tier, course.tier + reset1.tier, !four);
                 if (!ok) return false;
-                _sim.SetEnabled(referenceBox, false);
+                referenceBox.enabled = false;
             }
             return TripBreaker(breaker);
         }
@@ -618,16 +617,16 @@ namespace IGTAP.EngineSim
                 {
                     var collider = (object)o == null ? null : o.GetComponent<UnityEngine.Tilemaps.TilemapCollider2D>();
                     if ((object)collider == null) return Unmodeled("coloured blocks without a tilemap collider (the game throws)");
-                    _sim.SetEnabled(collider, enabled);
+                    collider.enabled = enabled;
                 }
             _sim.Touch(off);
             off.visible = false;
-            _sim.SetActive(off.gameObject, false);
+            off.gameObject.SetActive(false);
             off.isActive = false;
             _sim.Touch(on);
             on.visible = true;
             bool wasActive = on.gameObject.activeInHierarchy;
-            _sim.SetActive(on.gameObject, true);
+            on.gameObject.SetActive(true);
             if (!wasActive && on.isActiveAndEnabled)
             {
                 UnityEngine.Random.Draw();

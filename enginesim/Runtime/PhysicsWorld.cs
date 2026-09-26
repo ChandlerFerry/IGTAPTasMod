@@ -25,6 +25,9 @@ namespace IGTAP.EngineSim
             public bool[] SourcesLiveAtLoad;
             public b2Fixture[] Pristine;
             public bool Rescaled;
+            // Slots of this collider's shapes in the static grid, and whether it waits for a regrid (PhysicsWorld.EnsureGrid).
+            public readonly List<int> GridSlots = new List<int>();
+            public bool Regrid;
         }
 
         sealed class BodyState
@@ -63,6 +66,8 @@ namespace IGTAP.EngineSim
         HashSet<Pair> _touching = new HashSet<Pair>(), _touchingNext = new HashSet<Pair>();
         readonly BodyState _player;
         readonly List<ColliderState> _changed = new List<ColliderState>();
+        // Static bodies that were ever moved: a restore can put them back, so their shapes are regridded after one.
+        readonly List<BodyState> _movedStatic = new List<BodyState>();
         bool _loaded;
         internal bool Suspended;
 
@@ -196,7 +201,7 @@ namespace IGTAP.EngineSim
                 s.Pristine = s.Fixtures.ToArray();
                 _changed.Add(s);
             }
-            if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
+            if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(s);
             else _movers = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
             b2Body body = s.Body?.Body ?? _ground;
@@ -326,7 +331,7 @@ namespace IGTAP.EngineSim
                 Transform t = b.Rigidbody.transform;
                 if (b.TransformDirty)
                 {
-                    Moving(b.Body);
+                    Moving(b);
                     b.Body.SetTransform(new b2Vec2(t.m_Position.x, t.m_Position.y), t.m_Rotation.eulerAngles.z * (MathF.PI / 180f));
                 }
                 b.TransformDirty = b.ScaleDirty = false;
@@ -533,11 +538,18 @@ namespace IGTAP.EngineSim
         readonly InsideQuery _inside;
         readonly ClosestRay _ray;
 
+        // Static shapes by grid cell, for the scene queries. Built once over every static fixture; a collider whose static
+        // fixtures change (a block swap toggles the blue/orange composites on each dash) or whose static body moves is
+        // only regridded, so that doesn't rebuild the whole world's grid. Queries only accept one hit and fall back to
+        // Box2D otherwise, so the order of shapes in a cell doesn't matter.
         const float CellSize = 64f;
-        struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; }
-        StaticShape[] _static;
-        int[][] _cells;
-        int[] _seen;
+        struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; public b2AABB Box; }
+        StaticShape[] _static = Array.Empty<StaticShape>();
+        int _staticCount;
+        readonly Stack<int> _freeSlots = new Stack<int>();
+        readonly List<ColliderState> _regrid = new List<ColliderState>();
+        List<int>[] _cells;
+        int[] _seen = Array.Empty<int>();
         int _stamp, _cellsX, _cellsY;
         float _gridX, _gridY;
         List<(b2Fixture fixture, ColliderState state)>[] _movers;
@@ -555,45 +567,114 @@ namespace IGTAP.EngineSim
                     }
         }
 
+        void RegridLater(ColliderState s)
+        {
+            if (_cells == null || s.Regrid) return;
+            s.Regrid = true;
+            _regrid.Add(s);
+        }
+
+        void EnsureGrid()
+        {
+            if (_cells == null) { BuildGrid(); return; }
+            if (_regrid.Count == 0) return;
+            bool inBounds = true;
+            foreach (ColliderState s in _regrid)
+            {
+                s.Regrid = false;
+                if (inBounds) inBounds = Regrid(s);
+            }
+            _regrid.Clear();
+            if (!inBounds) BuildGrid();
+        }
+
+        static b2AABB GridBox(b2Fixture f, int child)
+        {
+            f.GetShape().ComputeAABB(out b2AABB box, f.GetBody().GetTransform(), child);
+            box.lowerBound -= new b2Vec2(1f, 1f);
+            box.upperBound += new b2Vec2(1f, 1f);
+            return box;
+        }
+
         void BuildGrid()
         {
-            var shapes = new List<StaticShape>();
-            var boxes = new List<b2AABB>();
+            foreach (ColliderState s in _colliders.Values) { s.GridSlots.Clear(); s.Regrid = false; }
+            _regrid.Clear();
+            _freeSlots.Clear();
+            _staticCount = 0;
+            bool first = true;
+            float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
             for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
             {
                 if (body.Type() != b2BodyType.Static) continue;
                 for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
                     for (int c = 0; c < f.m_proxyCount; c++)
                     {
-                        f.GetShape().ComputeAABB(out b2AABB box, body.GetTransform(), c);
-                        box.lowerBound -= new b2Vec2(1f, 1f);
-                        box.upperBound += new b2Vec2(1f, 1f);
-                        shapes.Add(new StaticShape { Fixture = f, Child = c, State = (ColliderState)f.UserData });
-                        boxes.Add(box);
+                        b2AABB box = GridBox(f, c);
+                        if (first) { minX = box.lowerBound.x; minY = box.lowerBound.y; maxX = box.upperBound.x; maxY = box.upperBound.y; first = false; }
+                        minX = MathF.Min(minX, box.lowerBound.x); minY = MathF.Min(minY, box.lowerBound.y);
+                        maxX = MathF.Max(maxX, box.upperBound.x); maxY = MathF.Max(maxY, box.upperBound.y);
                     }
-            }
-            _static = shapes.ToArray();
-            _seen = new int[_static.Length];
-            float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
-            for (int i = 0; i < boxes.Count; i++)
-            {
-                if (i == 0) { minX = boxes[0].lowerBound.x; minY = boxes[0].lowerBound.y; maxX = boxes[0].upperBound.x; maxY = boxes[0].upperBound.y; }
-                minX = MathF.Min(minX, boxes[i].lowerBound.x); minY = MathF.Min(minY, boxes[i].lowerBound.y);
-                maxX = MathF.Max(maxX, boxes[i].upperBound.x); maxY = MathF.Max(maxY, boxes[i].upperBound.y);
             }
             _gridX = minX; _gridY = minY;
             _cellsX = (int)((maxX - minX) / CellSize) + 1;
             _cellsY = (int)((maxY - minY) / CellSize) + 1;
-            var lists = new List<int>[_cellsX * _cellsY];
-            for (int i = 0; i < boxes.Count; i++)
+            _cells = new List<int>[_cellsX * _cellsY];
+            for (int i = 0; i < _cells.Length; i++) _cells[i] = new List<int>();
+            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
             {
-                CellRange(boxes[i], out int x0, out int y0, out int x1, out int y1);
+                if (body.Type() != b2BodyType.Static) continue;
+                for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
+                    for (int c = 0; c < f.m_proxyCount; c++)
+                        AddShape(f, c, (ColliderState)f.UserData, GridBox(f, c));
+            }
+        }
+
+        // False when a new shape reaches outside the grid: the caller rebuilds it with new bounds.
+        bool Regrid(ColliderState s)
+        {
+            foreach (int i in s.GridSlots)
+            {
+                CellRange(_static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
                     for (int x = x0; x <= x1; x++)
-                        (lists[y * _cellsX + x] ??= new List<int>()).Add(i);
+                        _cells[y * _cellsX + x].Remove(i);
+                _static[i] = default;
+                _freeSlots.Push(i);
             }
-            _cells = new int[lists.Length][];
-            for (int i = 0; i < lists.Length; i++) _cells[i] = lists[i]?.ToArray() ?? Array.Empty<int>();
+            s.GridSlots.Clear();
+            if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return true;
+            float right = _gridX + _cellsX * CellSize, top = _gridY + _cellsY * CellSize;
+            foreach (b2Fixture f in s.Fixtures)
+                for (int c = 0; c < f.m_proxyCount; c++)
+                {
+                    b2AABB box = GridBox(f, c);
+                    if (box.lowerBound.x < _gridX || box.lowerBound.y < _gridY || box.upperBound.x >= right || box.upperBound.y >= top) return false;
+                    AddShape(f, c, s, box);
+                }
+            return true;
+        }
+
+        void AddShape(b2Fixture f, int child, ColliderState s, in b2AABB box)
+        {
+            int i;
+            if (_freeSlots.Count > 0) i = _freeSlots.Pop();
+            else
+            {
+                if (_staticCount == _static.Length)
+                {
+                    int size = System.Math.Max(256, _static.Length * 2);
+                    Array.Resize(ref _static, size);
+                    Array.Resize(ref _seen, size);
+                }
+                i = _staticCount++;
+            }
+            _static[i] = new StaticShape { Fixture = f, Child = child, State = s, Box = box };
+            s.GridSlots.Add(i);
+            CellRange(box, out int x0, out int y0, out int x1, out int y1);
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                    _cells[y * _cellsX + x].Add(i);
         }
 
         void CellRange(in b2AABB box, out int x0, out int y0, out int x1, out int y1)
@@ -606,7 +687,7 @@ namespace IGTAP.EngineSim
 
         ColliderState FindInside(b2Vec2 p, int layerMask)
         {
-            if (_static == null) BuildGrid();
+            EnsureGrid();
             ColliderState found = null;
             int count = 0;
             CellRange(new b2AABB { lowerBound = p, upperBound = p }, out int x0, out int y0, out int x1, out int y1);
@@ -634,7 +715,7 @@ namespace IGTAP.EngineSim
 
         bool FindRayHit(b2Vec2 p1, b2Vec2 p2, int layerMask)
         {
-            if (_static == null) BuildGrid();
+            EnsureGrid();
             _ray.Reset(layerMask);
             b2RayCastInput input;
             input.maxFraction = 1.0f;
@@ -747,7 +828,7 @@ namespace IGTAP.EngineSim
 
         bool NearbyDistance(ColliderState sa, ColliderState sb, out float best)
         {
-            if (_static == null) BuildGrid();
+            EnsureGrid();
             best = float.PositiveInfinity;
             b2AABB box = default;
             bool first = true;
@@ -777,11 +858,17 @@ namespace IGTAP.EngineSim
         }
 
         public Vector2 GetPosition(Rigidbody2D body) { b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
-        public void SetPosition(Rigidbody2D body, Vector2 position) { b2Body b = State(body).Body; Moving(b); b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
+        public void SetPosition(Rigidbody2D body, Vector2 position) { BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
         public float GetRotation(Rigidbody2D body) { return State(body).Body.GetAngle() * (180f / MathF.PI); }
-        public void SetRotation(Rigidbody2D body, float degrees) { b2Body b = State(body).Body; Moving(b); b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
+        public void SetRotation(Rigidbody2D body, float degrees) { BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
 
-        void Moving(b2Body body) { if (body.Type() == b2BodyType.Static) _static = null; }
+        // Before the body's transform changes; the grid reads its shapes' new place at the next query.
+        void Moving(BodyState body)
+        {
+            if (body.Body.Type() != b2BodyType.Static) return;
+            if (!_movedStatic.Contains(body)) _movedStatic.Add(body);
+            foreach (ColliderState s in body.Colliders) RegridLater(s);
+        }
         public Vector2 GetVelocity(Rigidbody2D body) { b2Vec2 v = State(body).Body.GetLinearVelocity(); return new Vector2(v.x, v.y); }
         public void SetVelocity(Rigidbody2D body, Vector2 velocity) { State(body).Body.SetLinearVelocity(new b2Vec2(velocity.x, velocity.y)); }
         public float GetAngularVelocity(Rigidbody2D body) { return State(body).Body.GetAngularVelocity() * (180f / MathF.PI); }
@@ -876,8 +963,10 @@ namespace IGTAP.EngineSim
                 if (c.Fixtures.SequenceEqual(fixtures)) continue;
                 c.Fixtures.Clear();
                 c.Fixtures.AddRange(fixtures);
-                if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) _static = null;
+                if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(c);
             }
+            foreach (BodyState b in _movedStatic)
+                foreach (ColliderState c in b.Colliders) RegridLater(c);
             _player.TransformDirty = s.TransformDirty;
             _player.ScaleDirty = s.ScaleDirty;
             for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];

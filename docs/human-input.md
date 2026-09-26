@@ -119,9 +119,32 @@ move a press or a dash a few ticks while keeping where the hold ends.
   ground rays to the other side (Movement.cs:911-931), they hit the wall, the player counts as grounded mid-air, and a
   jump pressed on the flick back is a full ground jump. It needs no unlock.
 
+### Omnidirectional dash (Vman)
+
+A Vman run has three movement sets: omnidash with one dash (`buy:buyomni`), plus wall jump (`buy:buywj`), plus a
+second dash (`buy:buyds`). The omnidash aims the dash with the stick, 8 ways (`Movement.getPlayerControlledInput`: y
+±1 with `|x| < 1` drops x). Each trick's jump is pressed inside the dash (`dashJump`), buffered 0.2 s. Numbers are
+from an offline lab on a flat Ground floor from a 460 u/s run, over 40 ticks (0.8 s); a run covers 377 u and a
+ground dash 623 u, and a full jump peaks 258 u high.
+
+- **Wavedash**: hop, dash down-diagonal, and press jump in the dash. The landing turns the dash horizontal with 3 more
+  dash ticks (`canHyper`), and the jump, 4+ dash ticks after the landing, is the hyper (`CheckForSuperJump`). It covers
+  1310 u, and on a Ground floor the hyper refills the dashes, so one dash is enough.
+- **Ultra**: two wavedashes chained. The second dash starts in the air from the first one's jump. It covers 1400 u in
+  40 ticks and 1957 u in 60 (a run covers 561 u).
+- **Dash bounce**: dash straight down onto the floor and press jump in the dash. The landing ends the dash with
+  `DashBounceFrames` 4, and a jump then adds `dashBounceMagnitude`: it peaks 556 u high.
+- **Wave bounce**: a dash bounce from a wavedash's jump. It is as high as a dash bounce (555 u) and keeps the
+  wavedash's speed (1437 u across in 40 ticks).
+- **WaveJump** (wall jump): dash up-diagonal into a wall. The dash turns straight up at full dash speed (1670 u/s, not
+  the diagonal's 1181), and the wall touch refills the dash. A jump in it is the wall bounce (507 u high).
+- **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
+  one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
+
 While a route plays, the in-game input list marks the ticks of each trick with a colored bar (`TasOverlayTechs.cs`):
-these three, the flip jump, coyote and wall-coyote jumps, super, hyper and ultra jumps, dash bounce, wall bounce, spring
-dash and spike grace, each read from the game's state as it happens.
+the superbounce, reversed super and backwards dash-jump, the flip jump, coyote and wall-coyote jumps, super jumps,
+wavedashes, ultras, dash and wave bounces, wall bounces, WaveJumps, spring dashes and spike grace, each read from the
+game's state as it happens.
 
 ## The gate
 

@@ -591,7 +591,8 @@ namespace Box2D
     public sealed partial class b2DynamicTree
     {
         // Snapshots store only the nodes that differ from a shared base copy (static geometry never changes; a
-        // moving proxy touches a handful of nodes), so a route's worth of per-tick snapshots stays small.
+        // moving proxy touches a handful of nodes), so a route's worth of per-tick snapshots stays small. There is one
+        // base per pool capacity: a block swap grows the pool, and branches before and after it alternate capacities.
         private sealed class TreeSnapshot
         {
             internal Node[] baseNodes;       // shared between snapshots, never mutated
@@ -602,7 +603,7 @@ namespace Box2D
             internal int nodeCount;
         }
 
-        private Node[] _snapshotBase;
+        private readonly Dictionary<int, Node[]> _snapshotBases = new Dictionary<int, Node[]>();
 
         private static bool Same(in Node a, in Node b)
             => a.Aabb.lowerBound.x == b.Aabb.lowerBound.x && a.Aabb.lowerBound.y == b.Aabb.lowerBound.y
@@ -612,14 +613,15 @@ namespace Box2D
 
         internal object SaveSnapshot()
         {
-            if (_snapshotBase == null || _snapshotBase.Length != _nodes.Length) _snapshotBase = (Node[])_nodes.Clone();
+            if (!_snapshotBases.TryGetValue(_capacity, out Node[] baseNodes))
+                _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
             var index = new List<int>();
             var node = new List<Node>();
-            for (int i = 0; i < _nodes.Length; i++)
-                if (!Same(_nodes[i], _snapshotBase[i])) { index.Add(i); node.Add(_nodes[i]); }
+            for (int i = 0; i < _capacity; i++)
+                if (!Same(_nodes[i], baseNodes[i])) { index.Add(i); node.Add(_nodes[i]); }
             return new TreeSnapshot
             {
-                baseNodes = _snapshotBase, changedIndex = index.ToArray(), changedNode = node.ToArray(),
+                baseNodes = baseNodes, changedIndex = index.ToArray(), changedNode = node.ToArray(),
                 root = _root, freeNodes = _freeNodes, nodeCount = _nodeCount,
             };
         }
@@ -627,9 +629,11 @@ namespace Box2D
         internal void LoadSnapshot(object snapshot)
         {
             var snap = (TreeSnapshot)snapshot;
-            if (_nodes.Length != snap.baseNodes.Length) _nodes = new Node[snap.baseNodes.Length];
-            Array.Copy(snap.baseNodes, _nodes, _nodes.Length);
+            int capacity = snap.baseNodes.Length;
+            if (_nodes.Length < capacity) _nodes = new Node[capacity];
+            Array.Copy(snap.baseNodes, _nodes, capacity);
             for (int i = 0; i < snap.changedIndex.Length; i++) _nodes[snap.changedIndex[i]] = snap.changedNode[i];
+            _capacity = capacity;
             _root = snap.root;
             _freeNodes = snap.freeNodes;
             _nodeCount = snap.nodeCount;

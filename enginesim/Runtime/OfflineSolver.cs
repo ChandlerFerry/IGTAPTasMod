@@ -39,6 +39,7 @@ namespace IGTAP.EngineSim
             }
         }
 
+        // Boxes are in the game world (Simulation.PlayerWorld's frame), so one box holds for every capture of a place.
         public sealed class ForcedPath
         {
             public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
@@ -169,10 +170,11 @@ namespace IGTAP.EngineSim
             const int StateEvery = 16;
             readonly OfflineSolver _owner;
             readonly Simulation _sim;
+            readonly colouredBlockSwapper _swapper;
             readonly System.Random _rng;
             readonly Queue<List<InputTick>> _seeds;
             readonly Dictionary<long, Cell> _archive = new Dictionary<long, Cell>();
-            readonly bool _dash;
+            readonly bool _dash, _omni;
             float _best = float.PositiveInfinity;
             long _bestRunTicks = long.MaxValue;
             List<InputTick> _bestInputs;
@@ -204,8 +206,10 @@ namespace IGTAP.EngineSim
                 _seeds.Enqueue(new List<InputTick>());
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
-                _dash = owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
+                _omni = owner.Capabilities == "omni";
+                _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
+                _swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
             }
 
             public void Loop()
@@ -372,14 +376,18 @@ namespace IGTAP.EngineSim
                     if (_dash && _rng.NextDouble() < .25)
                     {
                         int at = start + _rng.Next(Math.Min(length, 4));
-                        InputTick d = inputs[at];
-                        d.dash = true;
-                        if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
-                        inputs[at] = d;
-                        if (d.dashJump == 0 && _rng.NextDouble() < .5)
-                            holdEnd = start > 0 && inputs[start - 1].x != 0f && _rng.NextDouble() < .3
-                                ? BackDash(inputs, at, start)
-                                : SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
+                        if (_omni && _rng.NextDouble() < .5) holdEnd = Omni(inputs, at, start, OmniKinds[_rng.Next(OmniKinds.Length)]);
+                        else
+                        {
+                            InputTick d = inputs[at];
+                            d.dash = true;
+                            if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
+                            inputs[at] = d;
+                            if (d.dashJump == 0 && _rng.NextDouble() < .5)
+                                holdEnd = start > 0 && inputs[start - 1].x != 0f && _rng.NextDouble() < .3
+                                    ? BackDash(inputs, at, start)
+                                    : SuperBounce(inputs, at, d.x == 0f ? (_rng.NextDouble() < .5 ? -1f : 1f) : Math.Sign(d.x));
+                        }
                     }
                 }
                 if (_owner._path != null && inputs.Count > 0)
@@ -430,6 +438,90 @@ namespace IGTAP.EngineSim
                 return Hop(t, at, new[] { 3, 6, 10, 16, 24 }[_rng.Next(5)]);
             }
 
+            // Omnidirectional dash techs (a Vman run's free omnidash; docs/human-input.md). A dash goes where its input tick's stick
+            // points (8 ways), and the jump that makes each tech is pressed inside the dash (dashJump N: on its Nth tick).
+            static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
+            static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump" };
+            static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
+
+            // One omni tech at input tick `at` (nothing before `lo` changes); returns the input tick its jump's hold ends on.
+            int Omni(List<InputTick> t, int at, int lo, string kind)
+            {
+                if (at < lo || at >= t.Count) return at;
+                float side = t[at].x != 0f ? Math.Sign(t[at].x) : _rng.NextDouble() < .5 ? -1f : 1f;
+                switch (kind)
+                {
+                    case "aim":
+                    {
+                        var (x, y) = Aims[_rng.Next(Aims.Length)];
+                        return OmniDash(t, at, x, y, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, x != 0f ? x : side);
+                    }
+                    // Wavedash: a down-diagonal dash that lands turns horizontal (canHyper); its jump, 4+ dash ticks after the landing, is a hyper.
+                    case "wavedash":
+                        Airborne(t, at, lo);
+                        return WaveDash(t, at, side);
+                    // Ultra: a second wavedash from the first one's jump.
+                    case "ultra":
+                        Airborne(t, at, lo);
+                        WaveDash(t, at, side);
+                        return WaveDash(t, at + 1 + _rng.Next(1, 13), side);
+                    // Dash bounce: a straight-down dash that lands ends on the ground (DashBounceFrames); the jump goes ~2x a jump's height.
+                    case "dashbounce":
+                        Airborne(t, at, lo);
+                        return DashBounce(t, at, side);
+                    // Wave bounce: a dash bounce from a wavedash's jump keeps the wavedash's speed.
+                    case "wavebounce":
+                        Airborne(t, at, lo);
+                        WaveDash(t, at, side);
+                        return DashBounce(t, at + 1 + _rng.Next(1, 15), side);
+                    // WaveJump: an up-diagonal dash into a wall turns straight up at full dash speed (wall jump unlocked) and the wall
+                    // touch refills the dash; a jump in it is a wall bounce.
+                    case "wavejump":
+                        return OmniDash(t, at, side, 1f, _rng.NextDouble() < .6 ? _rng.Next(1, 11) : 0, side);
+                }
+                return at;
+            }
+
+            int WaveDash(List<InputTick> t, int at, float side) { return OmniDash(t, at, side, -1f, _rng.NextDouble() < .85 ? _rng.Next(4, 11) : 0, side); }
+
+            int DashBounce(List<InputTick> t, int at, float side) { return OmniDash(t, at, 0f, -1f, _rng.Next(1, 11), side); }
+
+            // A wavedash or dash bounce needs the dash to start in the air (a ground dash's down part is dropped): a short hop
+            // 1-4 input ticks before it, half the time.
+            void Airborne(List<InputTick> t, int at, int lo)
+            {
+                int from = at - _rng.Next(1, 5);
+                if (from >= lo && _rng.NextDouble() < .5) Hop(t, from, _rng.Next(1, 4));
+            }
+
+            // A dash aimed (x, y) at input tick `at`, the stick on `side` for 8 input ticks after it; with `jump` > 0 the jump is
+            // pressed on that dash tick and held for a while after. Returns the input tick the hold ends on (`at` without one).
+            int OmniDash(List<InputTick> t, int at, float x, float y, int jump, float side)
+            {
+                int hold = jump > 0 ? DashHolds[_rng.Next(DashHolds.Length)] : 0;
+                Pad(t, at + 1 + Math.Max(8, hold + 1));
+                InputTick d = t[at];
+                d.dash = true; d.x = x; d.y = y; d.dashJump = jump;
+                if (jump > 0) d.press = false;
+                t[at] = d;
+                for (int i = at + 1; i < at + 9; i++) { InputTick k = t[i]; k.x = side; k.y = 0f; t[i] = k; }
+                if (jump == 0) return at;
+                int end = at + 1 + hold;
+                for (int i = at + 1; i < end; i++) { InputTick k = t[i]; k.held = true; k.press = false; k.release = false; t[i] = k; }
+                for (int i = end; i < t.Count && t[i].held && !t[i].press; i++) { InputTick k = t[i]; k.held = false; k.release = false; t[i] = k; }
+                InputTick r = t[end]; r.release = true; t[end] = r;
+                return end;
+            }
+
+            // Room for a tech past the end of the inputs: the last input tick's stick and hold, nothing pressed.
+            static void Pad(List<InputTick> t, int count)
+            {
+                if (t.Count == 0) return;
+                InputTick last = t[t.Count - 1];
+                var coast = new InputTick { x = last.x, y = last.y, held = last.held && !last.release };
+                while (t.Count < count) t.Add(coast);
+            }
+
             static int HoldEnd(List<InputTick> t, int q)
             {
                 int e = q + 1;
@@ -474,8 +566,19 @@ namespace IGTAP.EngineSim
                         "springdash", "lockstick", "lockstick" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
                 if (_goalMode) kinds = kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
-                switch (kinds[_rng.Next(kinds.Length)])
+                if (_omni) kinds = kinds.Concat(OmniKinds).ToArray();
+                string kind = kinds[_rng.Next(kinds.Length)];
+                switch (kind)
                 {
+                    case "aim":
+                    {
+                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
+                        Omni(t, dashes.Count > 0 && _rng.NextDouble() < .7 ? dashes[_rng.Next(dashes.Count)] : p, 0, kind);
+                        break;
+                    }
+                    case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump":
+                        Cut(t, Omni(t, p, 0, kind) + _rng.Next(1, 25), _rng.Next(0, 20));
+                        break;
                     case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
                     case "insert":
                         float x = new[] { -1f, 0f, 1f }[_rng.Next(3)];
@@ -684,7 +787,7 @@ namespace IGTAP.EngineSim
                 _avoided = false;
                 Action<int> onStep = path == null ? null : _ =>
                 {
-                    Vector3 p = _sim.Player.transform.m_Position;
+                    Vector3 p = _sim.PlayerWorld;
                     if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
                         lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
                     foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
@@ -706,7 +809,7 @@ namespace IGTAP.EngineSim
                     }
                     courseScript active = _sim.TimingCourse();
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(_sim.Player, _sim.Progress) : CellKey(_sim.Player, timing, _waypoints);
+                    long key = _goalMode ? GoalCellKey(Place(_sim.Player, _swapper), _sim.Progress) : CellKey(Place(_sim.Player, _swapper), timing, _waypoints);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     int filed = Math.Min(tick, inputs.Count);
@@ -745,10 +848,11 @@ namespace IGTAP.EngineSim
             bool _avoided;
             bool _converged;
 
-            // Cell key bits: y 0-17, x 18-35, moss resources 36-48, waypoints/goal progress 49-62; the sign marks timed
-            // cells. Touching Ground refills wall jumps, double jumps and air dashes; touching Moss refills nothing
-            // (Movement.touchedMossyGround). So while the last surface touched was moss, what's left is part of the
-            // cell: a faster arrival with fewer jumps left must not replace, cut or splice over one that has them.
+            // Cell key bits: y 0-17, x 18-35, moss resources 36-48, waypoints/goal progress 49-61, blue blocks 62; the sign
+            // marks timed cells. Touching Ground refills wall jumps, double jumps and air dashes; touching Moss refills
+            // nothing (Movement.touchedMossyGround). So while the last surface touched was moss, what's left is part of the
+            // cell: a faster arrival with fewer jumps left must not replace, cut or splice over one that has them. Which
+            // blocks are solid (block swap on dash) is part of it too: the same place with the other colour is another state.
             static readonly Func<Movement, int> GroundType = GroundTypeGetter();
 
             static Func<Movement, int> GroundTypeGetter()
@@ -759,25 +863,26 @@ namespace IGTAP.EngineSim
                 return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
             }
 
-            static long Place(Movement player)
+            static long Place(Movement player, colouredBlockSwapper swapper)
             {
                 Vector3 position = player.transform.m_Position;
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0x3FFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0x3FFFF;
                 long key = (x << 18) | y;
+                if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
                 if (GroundType(player) == 0) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
                 return key | (1L << 48) | (wall << 44) | (air << 40) | (dash << 36);
             }
 
-            static long CellKey(Movement player, bool timing, int waypoints)
+            static long CellKey(long place, bool timing, int waypoints)
             {
-                long key = ((long)waypoints << 49) | Place(player);
+                long key = ((long)waypoints << 49) | place;
                 return timing ? -1 - key : key;
             }
 
-            static long GoalCellKey(Movement player, int progress)
+            static long GoalCellKey(long place, int progress)
             {
-                return -1 - (((long)progress << 49) | Place(player));
+                return -1 - (((long)progress << 49) | place);
             }
 
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)

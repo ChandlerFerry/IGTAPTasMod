@@ -5,6 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
+import { FullTasSolvePanel, place, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -17,11 +18,9 @@ type Result = { id: string; success: boolean; completionTime: number; completion
 type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
-type FullTasSplit = { label: string; ticks: number };
-type FullTasRun = { name: string; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+type FullTasRun = { name: string; start?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
-type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
-type FullTasState = { runs: FullTasRun[]; solve: { running: boolean; name?: string | null; status: string; log: string[] }; lastResult?: FullTasReply | string | null };
+type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean;
   unlockLevel?: number | null;
@@ -128,8 +127,6 @@ const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"]
 // ticks from the quick restart to the finish, what a farming lap costs. Bonuses and transitions are timed from the run
 // start already, so their record is their farm time.
 const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
-
-const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
 const BONUS_WHERE: Record<string, string> = {
   bonus1: "Below Course 2, a little right of its restart. The run starts right of Course 2, up a bit (where Course 2 → Bonus 1 ends).",
@@ -296,7 +293,9 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 type MapTarget = { course: number; capabilities: string; optional: string[] };
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
-type MapData = { course: number; capabilities: string; label: string; bounds: number[]; gate: number[] | null; solids: MapSolid[];
+// Every map coordinate is in the game world's frame (courses.json's, forced-paths.json's, --via/--avoid's, at:x,y goals'):
+// the same for every capture of a place, whatever FloatingOrigin the game had then.
+type MapData = { course: number; capabilities: string; label: string; bounds: number[]; solids: MapSolid[];
   markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 type MapLayers = { explored: boolean; level: boolean; boxes: boolean; markers: boolean };
@@ -406,11 +405,10 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
     const size = data?.explored.cell ?? 1;
     setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(`${Math.floor(x / size)},${Math.floor(y / size)}`) });
   };
-  const gate = data?.gate;
   const toggle = (key: keyof MapLayers) => setLayers(l => ({ ...l, [key]: !l[key] }));
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</h2></div>
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
-    <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (pink: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Wheel to zoom, drag to pan.</p>
+    <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (pink: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
       {([["explored", "Explored"], ["level", "Level"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, springs"]] as [keyof MapLayers, string][]).map(([key, label]) =>
@@ -419,7 +417,7 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
       {data && <span className="hint">timer at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</span>}
     </div>
     <canvas ref={canvas} className="mapCanvas" onMouseDown={e => { drag.current = { x: e.clientX, y: e.clientY }; }} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; setCursor(null); }} onMouseMove={onMove}/>
-    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(0)}, {cursor.y.toFixed(0)}{gate && <> · from the course gate {(cursor.x - gate[0]).toFixed(0)}, {(cursor.y - gate[1]).toFixed(0)}</>}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
+    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>
       <span className="mapSwatch" style={{ background: colors[i] }}/>{r.name}<small>{r.finished ? `${r.time.toFixed(2)}s` : "no finish"} · {r.points.length / 2} ticks</small></label></li>)}</ul>}
   </div>;
@@ -508,13 +506,6 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
 const TICK_SECONDS = 0.02;
 const tickText = (ticks: number) => `${ticks} t · ${(ticks * TICK_SECONDS).toFixed(2)}s`;
 
-function replyText(r: FullTasReply | string | null | undefined) {
-  if (r == null) return "";
-  if (typeof r === "string") return r;
-  const parts = [r.finished === undefined ? "" : r.finished ? "Finished" : "Not finished", r.time != null ? `${r.time.toFixed(2)}s` : "", r.saved === undefined ? "" : r.saved ? "saved" : "not saved", r.reason ?? "", r.trace ? `trace ${r.trace}` : ""];
-  return parts.filter(p => p).join(" · ");
-}
-
 function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const runs = fullTas?.runs ?? [];
   const [selected, setSelected] = useState("");
@@ -529,17 +520,17 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
     <p className="lede">The game plugin doesn&apos;t report Full-TAS runs (an older version, or not connected).</p></div>;
-  const solve: FullTasState["solve"] = fullTas.solve ?? { running: false, status: "", log: [] };
+  const solve: FullTasSolveState = fullTas.solve ?? { running: false, status: "", log: [] };
   const busy = solve.running || running;
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
   const validName = /^[A-Za-z0-9%]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
-  const labels = run ? (splits.length > run.goals.length ? splits.map(s => s.label) : run.goals) : [];
+  const labels = run?.goals ?? [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
-    <p className="lede">A Full-TAS run is the whole game from a fresh new game as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses). <b>Solve</b> searches offline window by window; the game replays every better route from a new game and saves it only when it holds up and is faster.</p>
+    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or a checkpoint <code>at:x,y,width,height</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
-        <strong>{r.name}</strong><small>{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
+        <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
         {r.best?<b>{r.best.time.toFixed(2)}s</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {r.offline.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
         <span className={`badge ${r.traceReady?"":"missing"}`}>{r.traceReady?"Trace ready":"No trace"}</span>
       </button>)}
@@ -555,8 +546,8 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
         <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached} OF ${run.goals.length} GOALS · NOT SAVED (ONLY COMPLETE RUNS GO TO THE GATE)`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:run?.offline?` · ${run.offline.time.toFixed(2)}s to goal ${run.offline.reached}`:""}</h2></div></div>
         <div className="resultTable">
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
-          {labels.map((label, i) => { const s = splits[i]; const b = run?.breaker; const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(s?.label ?? label) ?? ""].filter(Boolean).join("\n"); return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"}`} key={i} title={title || undefined}>
-            <span>{i + 1}</span><span>{s?.label ?? label}</span>
+          {labels.map((label, i) => { const s = splits[i]; const b = run?.breaker; const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? ""].filter(Boolean).join("\n"); return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"}`} key={i} title={title || undefined}>
+            <span>{i + 1}</span><span>{label}</span>
             <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
             <span>{s ? tickText(s.ticks) : "—"}</span>
           </div>; })}
@@ -565,7 +556,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
         <div className="fullTasSolve">
           <div className="buttonRow">
             <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
-            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>▶ Play</button>
+            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
           </div>
           <div className="offlineControls">
@@ -573,7 +564,8 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
             <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
             <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
           </div>
-          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={run?.traceReady ? "Searches offline from the captured trace" : "Captures the start first (no trace yet), then searches offline"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_ })}>⟳ Solve</button></div>
+          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title="Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_ })}>Solve</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button></div>
         </div>
       </div>
       <div className="fullTasEditor">
@@ -584,9 +576,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
     </div>}
     <div className="fullTasSearch">
       <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Solve · ${solve.name}` : "Solve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
-      <p className="offlineConfirmation">{solve.status || "Idle"}</p>
-      {fullTas.lastResult != null && <p className="offlineConfirmation">Last result: {replyText(fullTas.lastResult)}</p>}
-      {(solve.log?.length ?? 0) > 0 && <ul className="solverLog">{solve.log.map((line, i) => <li key={i}>{line}</li>)}</ul>}
+      <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? splits[splits.length - 1].ticks * TICK_SECONDS : null, splits: splits.map(s => s.ticks * TICK_SECONDS) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}/>
     </div>
   </div>;
 }

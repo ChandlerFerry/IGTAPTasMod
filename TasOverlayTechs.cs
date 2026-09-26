@@ -18,25 +18,28 @@ namespace IGTAPTasMod
             SuperJump,         // community "dash jump (the super)": Movement.CheckForSuperJump on a ground dash
             ReversedSuper,     // docs/human-input.md: the super jump's stick opposes the dash
             BackwardsDashJump, // docs/human-input.md: dash and jump on one tick, turned away from a wall right behind
-            Hyper,             // the game's canHyper branch of CheckForSuperJump (a down-diagonal dash landing)
-            Ultra,             // the hyper that adds the pre-dash momentum (the game logs "Did an ultra!")
+            Wavedash,          // a down-diagonal dash that lands turns horizontal (canHyper) and jumps: CheckForSuperJump's hyper branch
+            Ultra,             // two wavedashes chained: the second one's dash started in the air of the first one's jump
             DashBounce,        // a ground jump inside DashBounceFrames (a straight-down dash onto the ground)
+            WaveBounce,        // a dash bounce whose down dash started in the air of a wavedash's jump (it keeps the wavedash's speed)
             Superbounce,       // docs/human-input.md: dash into a wall and jump, SpecialWallJump(0.6, …) (the game's dash boost)
             WallBounce,        // the game's wallBouncePossible: an up-diagonal dash into a wall and jump, SpecialWallJump(1, …)
+            WaveJump,          // an up-diagonal dash into a wall turns straight up at full dash speed (wall jump unlocked)
             SpringDash,        // enginesim springDash: a dash that cancels a sideways spring's lock
             SpikeGrace,        // inside a spike for the ticks the spike's graceFrames allow
         }
 
         static readonly string[] TechNames =
         {
-            "FLIP JUMP", "COYOTE JUMP", "WALL COYOTE JUMP", "SUPER JUMP", "REVERSED SUPER", "BACKWARDS DASH-JUMP", "HYPER", "ULTRA",
-            "DASH BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "SPRING DASH", "SPIKE GRACE",
+            "FLIP JUMP", "COYOTE JUMP", "WALL COYOTE JUMP", "SUPER JUMP", "REVERSED SUPER", "BACKWARDS DASH-JUMP", "WAVEDASH", "ULTRA",
+            "DASH BOUNCE", "WAVE BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "WAVEJUMP", "SPRING DASH", "SPIKE GRACE",
         };
 
         static readonly Color[] TechColors =
         {
             Hex(0xff3b3b, 1f), Hex(0xffc93c, 1f), Hex(0xa3e635, 1f), Hex(0x38bdf8, 1f), Hex(0x6366f1, 1f), Hex(0xc084fc, 1f), Hex(0xf472b6, 1f),
-            Hex(0xfb923c, 1f), Hex(0xfde68a, 1f), Hex(0x10b981, 1f), Hex(0x2dd4bf, 1f), Hex(0xd4a373, 1f), Hex(0x86efac, 1f),
+            Hex(0xfb923c, 1f), Hex(0xfde68a, 1f), Hex(0xe879f9, 1f), Hex(0x10b981, 1f), Hex(0x2dd4bf, 1f), Hex(0x60a5fa, 1f), Hex(0xd4a373, 1f),
+            Hex(0x86efac, 1f),
         };
 
         sealed class TechSpan
@@ -55,8 +58,6 @@ namespace IGTAPTasMod
         static readonly FieldInfo TechDashBounceField = AccessTools.Field(typeof(Movement), "DashBounceFrames");
         static readonly FieldInfo TechCanHyperField = AccessTools.Field(typeof(Movement), "canHyper");
         static readonly FieldInfo TechDashDirectionField = AccessTools.Field(typeof(Movement), "dashDirection");
-        static readonly FieldInfo TechPreDashMomentumField = AccessTools.Field(typeof(Movement), "preDashMomentum");
-        static readonly FieldInfo TechLastHyperYField = AccessTools.Field(typeof(Movement), "lastHyperY");
 
         readonly List<TechSpan> _techSpans = new List<TechSpan>();
         readonly List<(Tech tech, long start)> _techPending = new List<(Tech, long)>();
@@ -67,15 +68,19 @@ namespace IGTAPTasMod
 
         // Before the tick (OverlayBeforeTick) and at the end of the previous one (OverlayTick).
         bool _techPreGround, _techPreDashing, _techPreSpring, _techWasSpring, _techFacing;
+        Vector2 _techPreDashDirection;
         float _techEndVelocityY;
         // Overlay ticks where the setup of a tech began.
         long _techLastFlip = NoTick, _techFlipStart = NoTick, _techDashStart = NoTick, _techSpringStart = NoTick, _techSpringCancel = NoTick;
         long _techLastGround = NoTick, _techLastWall = NoTick, _techBackwardsDash = NoTick, _techBackwardsStart = NoTick;
+        // In the air of a wavedash's jump since the first wavedash's dash (_techWaveStart); whether the current dash started there.
+        bool _techWaveAir, _techDashInWave;
+        long _techWaveStart = NoTick;
         // Inside a hooked call.
         bool _techInputJumpBuffer, _techInputGround, _techWallKick;
         float _techInputCoyote, _techInputWallCoyote;
         int _techInputAirJumps, _techInputWallJumps, _techInputDashBounce;
-        bool _techSuperJumpBuffer, _techSuperHyper, _techSuperUltra;
+        bool _techSuperJumpBuffer, _techSuperHyper;
 
         void PatchTechHooks()
         {
@@ -124,7 +129,11 @@ namespace IGTAPTasMod
             else if (__instance.airJumpsLeft < p._techInputAirJumps) { }
             else if (p._techInputGround)
             {
-                if (p._techInputDashBounce > 0) p.PendTech(Tech.DashBounce, p._techDashStart);
+                if (p._techInputDashBounce > 0)
+                {
+                    if (p._techDashInWave) p.PendTech(Tech.WaveBounce, p._techWaveStart);
+                    else p.PendTech(Tech.DashBounce, p._techDashStart);
+                }
                 else if (p._techInputCoyote < __instance.maxCoyoteFrames) p.PendTech(Tech.CoyoteJump, p._techLastGround + 1);
                 else if (!p._techPreGround && p._techEndVelocityY > 0f && tick - p._techLastFlip <= FlipWindowTicks)
                     p.PendTech(Tech.FlipJump, p._techFlipStart);
@@ -137,10 +146,6 @@ namespace IGTAPTasMod
             TasPlugin p = Instance;
             p._techSuperJumpBuffer = TechRead<bool>(TechJumpBufferField, __instance);
             p._techSuperHyper = TechRead<bool>(TechCanHyperField, __instance);
-            Vector2 dash = TechRead<Vector2>(TechDashDirectionField, __instance);
-            // CheckForSuperJump lifts the player 2 units before it compares with lastHyperY.
-            p._techSuperUltra = p._techSuperHyper && Mathf.Sign(TechRead<Vector2>(TechPreDashMomentumField, __instance).x) == Mathf.Sign(dash.x)
-                && __instance.transform.position.y + 2f < TechRead<float>(TechLastHyperYField, __instance) - 4f;
         }
 
         private static void AfterTechSuperJump(Movement __instance)
@@ -148,8 +153,16 @@ namespace IGTAPTasMod
             if (!TechWatching(__instance)) return;
             TasPlugin p = Instance;
             if (!p._techSuperJumpBuffer || TechRead<bool>(TechJumpBufferField, __instance)) return;
-            if (p._techSuperUltra) p.PendTech(Tech.Ultra, p._techDashStart);
-            else if (p._techSuperHyper) p.PendTech(Tech.Hyper, p._techDashStart);
+            if (p._techSuperHyper)
+            {
+                if (p._techDashInWave) p.PendTech(Tech.Ultra, p._techWaveStart);
+                else
+                {
+                    p.PendTech(Tech.Wavedash, p._techDashStart);
+                    p._techWaveStart = p._techDashStart;
+                }
+                p._techWaveAir = true;
+            }
             else if (p._techBackwardsDash == p._techDashStart && p._techDashStart != NoTick) p.PendTech(Tech.BackwardsDashJump, p._techBackwardsStart);
             else
             {
@@ -179,7 +192,8 @@ namespace IGTAPTasMod
             System.Array.Clear(_techCounts, 0, _techCounts.Length);
             _techLastFlip = _techFlipStart = _techDashStart = _techSpringStart = _techSpringCancel = NoTick;
             _techLastGround = _techLastWall = _techBackwardsDash = _techBackwardsStart = NoTick;
-            _techWasSpring = false;
+            _techWasSpring = _techWaveAir = _techDashInWave = false;
+            _techWaveStart = NoTick;
             _techFacing = player.facingRight;
             _techEndVelocityY = player.Velocity.y;
         }
@@ -190,6 +204,7 @@ namespace IGTAPTasMod
             _techPreGround = player.onGround;
             _techPreDashing = player.dashActive;
             _techPreSpring = player.cutsceneMode == Movement.cutsceneModes.spring;
+            _techPreDashDirection = TechRead<Vector2>(TechDashDirectionField, player);
         }
 
         // After the tick's row is added: `tick` is its number.
@@ -211,6 +226,7 @@ namespace IGTAPTasMod
             if (player.dashActive && !_techPreDashing && player.framesSinceLastDash == 0f)
             {
                 _techDashStart = tick;
+                _techDashInWave = _techWaveAir;
                 if (tick - _techSpringCancel <= 1) AddTech(Tech.SpringDash, _techSpringStart, tick);
                 Vector2 dash = TechRead<Vector2>(TechDashDirectionField, player);
                 // The dash went away from the facing it had before the turn, and the dash start's 20-unit shift back
@@ -221,6 +237,11 @@ namespace IGTAPTasMod
                     _techBackwardsStart = _techFlipStart;
                 }
             }
+            // The dash branch turns an up-diagonal dash that meets a wall straight up (Movement.FixedUpdate, wall jump unlocked).
+            Vector2 heading = TechRead<Vector2>(TechDashDirectionField, player);
+            if (player.dashActive && _techPreDashing && _techPreDashDirection.x != 0f && _techPreDashDirection.y > 0f && heading.x == 0f && heading.y > 0f)
+                AddTech(Tech.WaveJump, _techDashStart, tick);
+            if (player.onGround && !player.dashActive) _techWaveAir = false;
 
             foreach (var (tech, start) in _techPending) AddTech(tech, start, tick);
             _techPending.Clear();

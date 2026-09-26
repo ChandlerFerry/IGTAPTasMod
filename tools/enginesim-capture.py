@@ -26,7 +26,8 @@ COURSES = CONFIG / "courses.json"
 COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
 COURSE_IDS.update({str(c): c for c in COURSE_IDS.values()})
 CATEGORIES = [(1, "wjdsdj"), (1, "wjds"), (1, "wj"), (1, "none"), (2, "wjdsdj"), (2, "wjds"), (2, "wj"),
-              (3, "wjdsdj"), (3, "wjds"), (4, "wjdsdj"), (5, "wjdsdj"), (COURSE_IDS["bonus1"], "wj")]
+              (3, "wjdsdj"), (3, "wjds"), (4, "wjdsdj"), (5, "wjdsdj"), (COURSE_IDS["bonus1"], "wj"),
+              (11, "wjdsdjbs"), (12, "wjdsdjbs"), (13, "wjdsdjbs"), (14, "wjdsdjbs"), (15, "wjdsdjbs")]
 
 
 def call(path, body=None, method="POST"):

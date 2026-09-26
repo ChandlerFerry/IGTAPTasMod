@@ -26,7 +26,7 @@ namespace IGTAP.EngineSim.Cli
         readonly string _trace;
         readonly int _threads, _window;
         readonly double _minutes, _windowMinutes, _stallMinutes;
-        readonly bool _submit, _fresh;
+        readonly bool _submit, _fresh, _unsolved;
         string _name, _caps, _runFile, _outDir;
         string[] _labels;
         int _goals;
@@ -62,6 +62,7 @@ namespace IGTAP.EngineSim.Cli
             _window = Math.Max(1, Solve.Option(args, "--window", 2));
             _submit = !args.Contains("--no-submit");
             _fresh = args.Contains("--fresh");
+            _unsolved = args.Contains("--unsolved");
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
         }
 
@@ -103,6 +104,8 @@ namespace IGTAP.EngineSim.Cli
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
+            Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
+                from, best = RouteJson(_best) });
             foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
             if (_seeds.Count > 0)
                 Console.WriteLine($"Seeds: {_seeds.Count} saved routes for " + string.Join(", ", _seeds.SelectMany(s => s.Goals).Distinct()
@@ -113,39 +116,70 @@ namespace IGTAP.EngineSim.Cli
                 new Thread(Submitter) { IsBackground = true }.Start();
             }
 
+            // Default: polish the goals the best reaches, windows from goal 1 on (a route with none reached is reached first).
+            // --unsolved: the goals it doesn't reach first: only the frontier is searched (the next goal, from the last reached
+            // goal, then from one, two, three goals back, each round with a longer budget); polishing starts once it's complete.
+            (int, long) reachFrontier = (-1, -1);
+            int reachRound = 0, reachBack = 0;
             while (!TimeUp)
             {
-                bool searched = false;
-                while (!TimeUp && SeedFrontier()) searched = true;
-                bool frontierFirst = _best.Progress < _goals;
-                for (int step = 0; !TimeUp; step++)
+                Route best = _best;
+                int reached = best.Progress;
+                if (reached < _goals && (_unsolved || reached == 0))
                 {
-                    Route best = _best;
-                    int reached = best.Progress;
-                    int i;
-                    if (frontierFirst) { if (step > reached) break; i = step == 0 ? reached : step - 1; }
-                    else { if (step >= _goals) break; i = step; }
-                    if (i > reached) break;
-                    if (i == reached && SeedFrontier())
-                    {
-                        step = -1;
-                        searched = true;
-                        continue;
-                    }
-                    int limit = reached == _goals ? Math.Min(i + _window, _goals) : i == reached ? reached + 1 : Math.Min(i + _window, reached);
+                    if (SeedFrontier()) continue;
+                    Phase("reach");
+                    (int, long) frontier = (reached, reached == 0 ? 0L : best.GoalPhysics[reached - 1]);
+                    if (frontier != reachFrontier) { reachFrontier = frontier; reachRound = 0; reachBack = 0; }
+                    int i = reached - Math.Min(reachBack, reached);
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
-                    long baseline = reached >= limit ? best.GoalPhysics[limit - 1] : long.MaxValue;
                     var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
-                    if (i == reached) seeds.AddRange(DelayedResets(seeds[0]));
-                    List<List<InputTick>> found = SearchWindow("window " + (i + 1) + "/" + _goals, best, prefixLength, limit, seeds, baseline);
-                    searched = true;
-                    if (found.Count > 0) Merge("window " + (i + 1), best, prefixLength, limit, found);
-                    if (frontierFirst && _best.Progress > reached) { step = -1; frontierFirst = _best.Progress < _goals; }
+                    seeds.AddRange(DelayedResets(seeds[0]));
+                    List<List<InputTick>> found = SearchWindow("reach", best, prefixLength, reached + 1, seeds, long.MaxValue, _windowMinutes * (1 + reachRound), reachRound + 1);
+                    if (found.Count > 0) Merge(i == reached ? "reached goal " + (reached + 1) : "reached goal " + (reached + 1) + " by redoing goals " + (i + 1) + "-" + reached,
+                        best, prefixLength, reached + 1, found);
+                    if (_best.Progress > reached) continue;
+                    if (++reachBack > Math.Min(reached, MaxReachBack)) { reachBack = 0; reachRound++; }
+                    continue;
                 }
-                if (!searched) break;
+                Phase("polish");
+                for (int i = 0; i < _best.Progress && !TimeUp; i++)
+                {
+                    best = _best;
+                    int limit = Math.Min(i + _window, best.Progress);
+                    int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
+                    var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
+                    List<List<InputTick>> found = SearchWindow("polish", best, prefixLength, limit, seeds, best.GoalPhysics[limit - 1], _windowMinutes, 0);
+                    if (found.Count > 0) Merge("faster through goals " + (i + 1) + "-" + limit, best, prefixLength, limit, found);
+                }
             }
             Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
+            Emit(new { type = "done", best = RouteJson(_best) });
             return 0;
+        }
+
+        const int MaxReachBack = 3;
+        string _phase;
+        int _windowId;
+
+        void Phase(string phase)
+        {
+            if (_phase == phase) return;
+            _phase = phase;
+            Log(phase == "reach" ? "phase: find a complete route first" : "phase: polish the goals the route reaches, from goal 1");
+            Emit(new { type = "phase", phase });
+        }
+
+        // One machine-readable line per event, for the Web Studio (FullTasPlugin relays them); times in seconds from the run's start.
+        static readonly JsonSerializerOptions EventJson = new JsonSerializerOptions { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
+        static void Emit(object e) { Console.WriteLine("@fulltas " + JsonSerializer.Serialize(e, EventJson)); }
+
+        double Seconds(long ticks) { return Math.Round(ticks * _dt, 4); }
+
+        object RouteJson(Route r)
+        {
+            return new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : Seconds(r.Last),
+                splits = Enumerable.Range(0, r.Progress).Select(k => Seconds(r.GoalPhysics[k])).ToArray() };
         }
 
         bool TimeUp { get { return _clock.Elapsed.TotalMinutes >= _minutes; } }
@@ -189,7 +223,8 @@ namespace IGTAP.EngineSim.Cli
             return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
         }
 
-        List<List<InputTick>> SearchWindow(string title, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline)
+        // kind: "reach" (a goal the best never reached), "polish" (faster through goals it reaches), "repair" (re-finding later goals).
+        List<List<InputTick>> SearchWindow(string kind, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline, double budgetMinutes, int attempt)
         {
             var found = new List<List<InputTick>>();
             List<InputTick> prefix = route.Inputs.GetRange(0, prefixLength);
@@ -198,21 +233,27 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = _eval.Advance(prefix);
             if (at == null)
             {
-                Log(title + ": the route ends before its first " + prefixLength + " inputs do; skipped");
+                Log(kind + ": the route ends before its first " + prefixLength + " inputs do; skipped");
+                Emit(new { type = "note", level = "warn", text = "Skipped a " + kind + " window: the route ends before its first " + prefixLength + " inputs do." });
                 return found;
             }
             _eval.Restore(at);
             int first = _eval.Progress;
             if (first >= limit) return found;
             var key = (_eval.MovementFingerprint(), _labels[first]);
-            string caps = _eval.Player.dashUnlocked ? "wjds" : _caps;
+            string caps = WindowCaps(first, limit);
             if (_memo.TryGetValue(key, out List<List<InputTick>> known))
                 foreach (List<InputTick> r in known)
                     if (!seeds.Any(s => s.SequenceEqual(r))) seeds.Add(r);
+            string title = kind + " goals " + (first + 1) + "-" + limit + "/" + _goals;
             string span = first == limit - 1 ? _labels[first] : _labels[first] + ".." + _labels[limit - 1];
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, first, limit);
             foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
             if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
+            int id = ++_windowId;
+            Emit(new { type = "window", id, kind, first, limit, attempt, budget = Math.Round(budgetMinutes * 60, 1),
+                start = first == 0 ? 0.0 : Seconds(route.GoalPhysics[first - 1]), target = baseline == long.MaxValue ? (double?)null : Seconds(baseline),
+                savedStarts = starts.Count });
 
             Func<Simulation> create = () =>
             {
@@ -225,30 +266,65 @@ namespace IGTAP.EngineSim.Cli
             var solver = new OfflineSolver(create, caps, seeds);
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
+            long windowBest = long.MaxValue;
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 last = _clock.Elapsed;
                 finished = true;
-                if (runTicks < baseline) found.Add(inputs);
+                windowBest = Math.Min(windowBest, runTicks);
+                if (runTicks < baseline)
+                {
+                    found.Add(inputs);
+                    if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(runTicks) });
+                }
             };
-            int Improvements() { lock (solver.Shared) return found.Count; }
-            void Status() { Log($"{title} {span} best {Describe(_best)} ({Improvements()} improvements)"); }
+            object Progress()
+            {
+                lock (solver.Shared)
+                    return new { type = "status", id, elapsed = Math.Round((_clock.Elapsed - begin).TotalSeconds, 1), candidates = found.Count,
+                        best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest), runs = solver.Runs };
+            }
+            void Status()
+            {
+                Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates)");
+                Emit(Progress());
+            }
             Status();
             Thread[] threads = solver.Start(_threads);
-            TimeSpan shown = begin;
-            while (!TimeUp && (_clock.Elapsed - begin).TotalMinutes < _windowMinutes)
+            TimeSpan shown = begin, emitted = begin;
+            while (!TimeUp && (_clock.Elapsed - begin).TotalMinutes < budgetMinutes)
             {
                 Thread.Sleep(250);
                 lock (solver.Shared) if (finished && (_clock.Elapsed - last).TotalMinutes >= _stallMinutes) break;
-                if ((_clock.Elapsed - shown).TotalSeconds >= 15) { shown = _clock.Elapsed; Status(); }
+                if ((_clock.Elapsed - shown).TotalSeconds >= 15) { shown = _clock.Elapsed; Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates)"); }
+                if ((_clock.Elapsed - emitted).TotalSeconds >= 1) { emitted = _clock.Elapsed; Emit(Progress()); }
             }
             solver.Stop();
             foreach (Thread t in threads) t.Join(60000);
-            List<InputTick> windowBest;
-            lock (solver.Shared) windowBest = solver.Shared.Inputs;
-            if (windowBest != null) Remember(key, windowBest);
+            List<InputTick> bestInputs;
+            lock (solver.Shared) bestInputs = solver.Shared.Inputs;
+            if (bestInputs != null) Remember(key, bestInputs);
             Status();
-            lock (solver.Shared) return found.ToList();
+            lock (solver.Shared)
+            {
+                Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });
+                return found.ToList();
+            }
+        }
+
+        // What a window's search presses: the player's dash at the window's start, or the dash a buy goal in it gives
+        // (the free Vman omnidash box: "omni", the omnidirectional techs too).
+        string WindowCaps(int first, int limit)
+        {
+            bool dash = _eval.Player.dashUnlocked, omni = dash && _eval.Player.omniDashUnlocked;
+            for (int g = first; g < limit; g++)
+                foreach (string box in _eval.Goals.Goals[g].boxes ?? Array.Empty<string>())
+                {
+                    upgradeBox.movementUpgrades? move = _eval.Shop.MovementUpgrade(box);
+                    dash |= move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.freeVmanOmnidash;
+                    omni |= move == upgradeBox.movementUpgrades.freeVmanOmnidash;
+                }
+            return omni ? "omni" : dash ? "wjds" : _caps;
         }
 
         void Remember((int, string) key, List<InputTick> route)
@@ -360,6 +436,7 @@ namespace IGTAP.EngineSim.Cli
             if (top == null)
             {
                 Log($"{title}: none of {starts.Count} starts from saved routes reaches it");
+                Emit(new { type = "note", level = "info", text = $"None of {starts.Count} saved-route starts reach goal {reached + 1}; searching for it instead." });
                 return false;
             }
             Log($"{title}: {chosen.how} reaches goal {top.Progress}/{_goals} {_labels[top.Progress - 1]} at "
@@ -368,9 +445,10 @@ namespace IGTAP.EngineSim.Cli
             if (run == null || !Better(run, _best))
             {
                 Log(title + ": the whole run with it does no better; dropped");
+                Emit(new { type = "note", level = "info", text = $"A saved route reaches goal {top.Progress}, but the whole run with it does no better; dropped." });
                 return false;
             }
-            Commit(run, "seeded: " + chosen.how);
+            Commit(run, "from a saved route (" + chosen.how + ")");
             return true;
         }
 
@@ -400,14 +478,25 @@ namespace IGTAP.EngineSim.Cli
         void Merge(string where, Route best, int prefixLength, int limit, List<List<InputTick>> found)
         {
             Route broken = null;
+            int missed = 0, slower = 0;
             foreach (List<InputTick> route in Enumerable.Reverse(found).Take(5))
             {
                 Route candidate = Splice(best, prefixLength, route, limit, best);
-                if (candidate == null) continue;
+                if (candidate == null) { missed++; continue; }
                 if (Better(candidate, _best)) { Commit(candidate, where); return; }
+                slower++;
                 if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit) broken = candidate;
             }
-            if (broken != null) Repair(where, best, broken);
+            if (broken != null)
+            {
+                Emit(new { type = "note", level = "info", text = $"Faster through goal {limit}, but the old route after it no longer works from there; re-finding goals {limit + 1}-{best.Progress}." });
+                Repair(where, best, broken);
+                return;
+            }
+            Emit(new { type = "dropped", missed, slower, text = missed > 0 && slower == 0
+                ? $"The route found through goal {limit} didn't reproduce when replayed from the start; dropped."
+                : best.Progress < limit ? $"The route found to goal {limit} doesn't get there when replayed as part of the whole run; dropped."
+                : $"The route found through goal {limit} is faster there, but the whole run ends up slower; dropped." });
         }
 
         Route Splice(Route head, int prefixLength, List<InputTick> window, int limit, Route tail)
@@ -433,28 +522,35 @@ namespace IGTAP.EngineSim.Cli
             {
                 if (run.Progress >= old.Progress)
                 {
-                    if (Better(run, _best)) Commit(run, where + ", repaired");
-                    else Log($"repaired run {Describe(run)} is no better; dropped");
+                    if (Better(run, _best)) Commit(run, where + ", then re-found the later goals");
+                    else
+                    {
+                        Log($"repaired run {Describe(run)} is no better; dropped");
+                        Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." });
+                    }
                     return;
                 }
                 if (run.Last >= _best.Last)
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
+                    Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." });
                     return;
                 }
                 int reached = run.Progress, limit = Math.Min(reached + _window, old.Progress);
                 int prefixLength = (int)Math.Min(run.GoalInput[reached - 1], run.Inputs.Count);
                 var seeds = new List<List<InputTick>> { run.Inputs.Skip(prefixLength).ToList(), old.Inputs.Skip((int)old.GoalInput[reached - 1]).ToList() };
-                List<List<InputTick>> found = SearchWindow("repair " + (reached + 1) + "/" + _goals, run, prefixLength, limit, seeds, long.MaxValue);
+                List<List<InputTick>> found = SearchWindow("repair", run, prefixLength, limit, seeds, long.MaxValue, _windowMinutes, 0);
                 if (found.Count == 0)
                 {
                     Log($"repair dropped: no route to {_labels[reached]} from the new state");
+                    Emit(new { type = "dropped", text = $"Repair gave up: no way to goal {reached + 1} from the new state." });
                     return;
                 }
                 Route next = Splice(run, prefixLength, found[found.Count - 1], limit, old);
                 if (next == null || next.Progress <= reached)
                 {
                     Log("repair dropped: its route missed its goals when replayed from the start");
+                    Emit(new { type = "dropped", text = "Repair gave up: its route didn't reproduce when replayed from the start." });
                     return;
                 }
                 run = next;
@@ -479,6 +575,7 @@ namespace IGTAP.EngineSim.Cli
         void Commit(Route r, string where)
         {
             r = Padded(r);
+            Route previous = _best;
             _best = r;
             Directory.CreateDirectory(Path.GetDirectoryName(_runFile));
             string temp = _runFile + ".tmp";
@@ -502,6 +599,8 @@ namespace IGTAP.EngineSim.Cli
                 _pending?.Set(r.Inputs);
             }
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
+            Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = Path.GetFileName(file),
+                complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals });
         }
 
         sealed class Latest
@@ -543,18 +642,23 @@ namespace IGTAP.EngineSim.Cli
                             Thread.Sleep(2000);
                             _pending.SetIfEmpty(inputs);
                         }
+                        else Emit(new { type = "note", level = "error", text = "The game kept refusing to check the complete route (" + reply + "); it's kept on disk, not saved." });
                         continue;
                     }
                     deferred = 0;
-                    Log("gate check: " + (finished.GetBoolean() && root.TryGetProperty("time", out JsonElement time) && time.ValueKind == JsonValueKind.Number
-                            ? "finish " + time.GetSingle().ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish")
-                        + (root.TryGetProperty("saved", out JsonElement saved) && saved.ValueKind == JsonValueKind.True ? " - saved as the new route" : " - not saved")
-                        + (root.TryGetProperty("reason", out JsonElement reason) && reason.ValueKind == JsonValueKind.String ? " - " + reason.GetString() : ""));
+                    bool done = finished.GetBoolean();
+                    double? seconds = done && root.TryGetProperty("time", out JsonElement time) && time.ValueKind == JsonValueKind.Number ? Math.Round(time.GetDouble(), 4) : (double?)null;
+                    bool kept = root.TryGetProperty("saved", out JsonElement saved) && saved.ValueKind == JsonValueKind.True;
+                    string why = root.TryGetProperty("reason", out JsonElement reason) && reason.ValueKind == JsonValueKind.String ? reason.GetString() : null;
+                    Log("gate check: " + (seconds != null ? "finish " + seconds.Value.ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish")
+                        + (kept ? " - saved as the new route" : " - not saved") + (why != null ? " - " + why : ""));
+                    Emit(new { type = "gate", finished = done, time = seconds, saved = kept, reason = why });
                 }
                 catch (Exception ex)
                 {
                     deferred = 0;
                     Log($"gate check skipped (game not reachable: {ex.GetBaseException().Message}); best kept on disk");
+                    Emit(new { type = "note", level = "warn", text = $"Couldn't reach the game to check the complete route ({ex.GetBaseException().Message}); it's kept on disk." });
                 }
             }
         }
