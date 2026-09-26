@@ -146,7 +146,6 @@ namespace Box2D
 
         public static bool BlockSolve = true;
         public static bool useLegacyGravityIntegration = true;
-        public static bool UseLegacyEdgePolygon = true;
         public static float toiBaumgarte = 0.75f;
 
         public static float FORCE_SCALE(float x) => x;

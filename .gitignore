@@ -1,8 +1,6 @@
 # .NET / Build outputs
 [Bb]in/
 [Oo]bj/
-simulator/bin/
-simulator/obj/
 TestResults/
 *.trx
 *.coverage
@@ -28,7 +26,6 @@ _ReSharper*/
 web/.next/
 web/node_modules/
 web/out/
-web/tsconfig.tsbuildinfo
 *.tsbuildinfo
 .pnpm-store/
 npm-debug.log*
@@ -57,8 +54,6 @@ offline-*/
 archive/
 *.log
 *.jsonl
-planning/candidates/
-planning/sweep-*.json
 
 # OS artifacts
 .DS_Store

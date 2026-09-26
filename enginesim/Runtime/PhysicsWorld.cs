@@ -98,7 +98,7 @@ namespace IGTAP.EngineSim
             Vector2 gravity = world.Physics2DSettings.TryGetValue("gravity", out JsonElement g) ? World.Vec2(g) : Vector2.zero;
             _b2 = new b2World(new b2Vec2(gravity.x, gravity.y));
             _b2.SetContactFilter(new Filter());
-            _b2.SetContinuousPhysics(Environment.GetEnvironmentVariable("ES_NOTOI") == null);
+            _b2.SetContinuousPhysics(true);
             _b2.SetSubStepping(SettingBool("useSubStepping", false));
             _ground = _b2.CreateBody(new b2BodyDef());
 

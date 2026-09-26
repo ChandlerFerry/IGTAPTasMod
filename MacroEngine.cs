@@ -73,7 +73,7 @@ namespace IGTAPTasMod
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
-        public event Action<bool, string, int, long> AttemptEnded;
+        public event Action<bool, string> AttemptEnded;
         public bool Quiet;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
@@ -217,15 +217,13 @@ namespace IGTAPTasMod
         public void Abort(string reason = "Stopped")
         {
             bool wasRunning = IsRunning;
-            int step = _stepIndex;
-            long ticks = _runTicks;
             _steps = null;
             _stepIndex = -1;
             _elapsedMs = 0f;
             _elapsedTicks = 0;
             Status = reason;
             if (!Quiet) TasPlugin.Log.LogInfo(reason);
-            if (wasRunning && AttemptEnded != null) AttemptEnded(false, reason, step, ticks);
+            if (wasRunning && AttemptEnded != null) AttemptEnded(false, reason);
         }
 
         public void ClearInjectedInput(Movement movement)
@@ -258,13 +256,12 @@ namespace IGTAPTasMod
         public void CompleteFromGame(string reason = "Course finish detected", float authoritativeTime = 0f)
         {
             if (!IsRunning) return;
-            long ticks = _runTicks;
             _authoritativeCompletionTime = authoritativeTime > 0f ? authoritativeTime : 0f;
             _steps = null;
             _stepIndex = -1;
             Status = reason + ": " + _macroName;
             if (!Quiet) TasPlugin.Log.LogInfo(Status);
-            if (AttemptEnded != null) AttemptEnded(true, reason, -1, ticks);
+            if (AttemptEnded != null) AttemptEnded(true, reason);
         }
 
         public void FixedTick(Movement movement)
@@ -410,7 +407,7 @@ namespace IGTAPTasMod
             _stepIndex = -1;
             Status = "Complete: " + name;
             if (!Quiet) TasPlugin.Log.LogInfo(Status);
-            if (AttemptEnded != null) AttemptEnded(true, "Timeline complete", -1, _runTicks);
+            if (AttemptEnded != null) AttemptEnded(true, "Timeline complete");
         }
 
         private static List<MacroStep> Expand(List<MacroStep> source)

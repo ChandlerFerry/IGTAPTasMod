@@ -32,12 +32,10 @@ namespace IGTAPTasMod
         private MacroLibrary _library;
         private string _libraryPath;
         private string _recordingsPath;
-        private string _resultsPath;
         private string _checkpointsPath;
         private string _settingsPath;
         private StudioSettings _settings = new StudioSettings();
         private readonly List<RecordingDefinition> _recordings = new List<RecordingDefinition>();
-        private readonly List<AttemptResult> _results = new List<AttemptResult>();
         private readonly List<SectionCheckpoint> _checkpoints = new List<SectionCheckpoint>();
         private float _pendingCourseTime;
         private bool _pendingCourseWasTracking;
@@ -69,17 +67,15 @@ namespace IGTAPTasMod
             Log = Logger;
             _libraryPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "routes.json");
             _recordingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "recordings");
-            _resultsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "results");
             _checkpointsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "checkpoints");
             _settingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "settings.json");
             LoadSettings();
             LoadLibrary();
             LoadRecordings();
-            LoadResults();
             LoadCheckpoints();
             LoadCourses();
             LoadFullTas();
-            _engine.AttemptEnded += SaveAttemptResult;
+            _engine.AttemptEnded += OnAttemptEnded;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
             try
@@ -1119,7 +1115,7 @@ namespace IGTAPTasMod
             _playbackSavedAbilities.Clear();
         }
 
-        private void SaveAttemptResult(bool success, string reason, int action, long ticks)
+        private void OnAttemptEnded(bool success, string reason)
         {
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
@@ -1134,22 +1130,6 @@ namespace IGTAPTasMod
                 return;
             }
             if (success && reason == MacroEngine.TransitionFinishReason) _brakeTicks = 0;
-            bool hasGameTime = success && _engine.AuthoritativeCompletionTime > 0f;
-            AttemptResult result = new AttemptResult {
-                routeId = _engine.ActiveMacroId,
-                routeName = _engine.ActiveMacroName,
-                success = success,
-                completionTicks = ticks,
-                completionTime = hasGameTime ? _engine.AuthoritativeCompletionTime : ticks * Time.fixedDeltaTime,
-                timingSource = !hasGameTime ? "Macro elapsed time"
-                    : reason == MacroEngine.RewardFinishReason ? "Physics ticks to reward"
-                    : reason == MacroEngine.TransitionFinishReason ? "Physics ticks to the transition's end" : "In-game course timer",
-                failureAction = action,
-                failureReason = success ? null : reason
-            };
-            _results.Insert(0, result);
-            string path = Path.Combine(_resultsPath, result.timestampUtc.Replace(":", "-") + "-" + result.id + ".json");
-            WriteJsonAtomic(path, result, false);
         }
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
@@ -1232,34 +1212,6 @@ namespace IGTAPTasMod
                 _recordings.Sort((a, b) => string.CompareOrdinal(b.createdUtc, a.createdUtc));
             }
             catch (Exception ex) { Logger.LogError("Could not load recordings: " + ex); }
-        }
-
-        private void LoadResults()
-        {
-            try
-            {
-                Directory.CreateDirectory(_resultsPath);
-                foreach (string path in Directory.GetFiles(_resultsPath, "*.json"))
-                {
-                    try
-                    {
-                        if (path.EndsWith(".diagnostics.json", StringComparison.OrdinalIgnoreCase)) continue;
-                        string text = File.ReadAllText(path);
-                        if (text.Contains("oracle-eval-")) continue;
-                        AttemptResult result = JsonConvert.DeserializeObject<AttemptResult>(text);
-                        if (result == null || result.schemaVersion != AttemptResult.CurrentSchemaVersion || string.IsNullOrEmpty(result.id))
-                            throw new InvalidDataException("Unsupported or incomplete result.");
-                        _results.Add(result);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning("Result rejected " + Path.GetFileName(path) + ": " + ex.Message);
-                        Quarantine(path);
-                    }
-                }
-                _results.Sort((a, b) => string.CompareOrdinal(b.timestampUtc, a.timestampUtc));
-            }
-            catch (Exception ex) { Logger.LogError("Could not load results: " + ex); }
         }
 
         private void LoadCheckpoints()
@@ -1666,15 +1618,13 @@ namespace IGTAPTasMod
                     foreach (MacroStep action in route.steps) actions.Add(new {
                         id = action.id, label = action.label, type = TypeName(action.type), direction = action.direction,
                         wallJumpHoldDirection = action.wallJumpHoldDirection,
-                        durationTicks = action.durationTicks, durationMs = action.durationMs,
-                        rawMoveX = action.rawMoveX, rawMoveY = action.rawMoveY,
+                        durationTicks = action.durationTicks, rawMoveX = action.rawMoveX,
                         rawJumpPressed = action.rawJumpPressed, rawJumpHeld = action.rawJumpHeld,
                         rawJumpReleased = action.rawJumpReleased,
                         rawDashPressed = action.rawDashPressed, rawDashHeld = action.rawDashHeld,
-                        dashJumpFrame = action.dashJumpFrame, enabled = action.enabled, endCondition = action.endCondition.ToString()
+                        enabled = action.enabled
                     });
-                routes.Add(new { id = route.id, name = route.name, checkpointId = route.checkpointId,
-                    actionCount = route.steps.Count, actions = actions });
+                routes.Add(new { id = route.id, name = route.name, actionCount = route.steps.Count, actions = actions });
             }
             List<object> checkpoints = new List<object>();
             foreach (SectionCheckpoint checkpoint in _checkpoints)
@@ -1686,26 +1636,13 @@ namespace IGTAPTasMod
                 List<object> actions = new List<object>();
                 foreach (MacroStep action in recording.semanticSteps)
                     actions.Add(new { label = action.label, type = TypeName(action.type), direction = action.direction,
-                        wallJumpHoldDirection = action.wallJumpHoldDirection, durationTicks = action.durationTicks,
-                        durationMs = action.durationMs });
+                        wallJumpHoldDirection = action.wallJumpHoldDirection, durationTicks = action.durationTicks });
                 recordings.Add(new { id = recording.id, name = recording.name, createdUtc = recording.createdUtc,
-                    stopReason = recording.stopReason, sampleCount = recording.samples.Count,
-                    actionCount = recording.semanticSteps.Count, courseTimeSeconds = recording.courseTimeSeconds,
-                    courseStartTick = recording.courseStartTick, actions = actions });
+                    sampleCount = recording.samples.Count, actionCount = recording.semanticSteps.Count,
+                    courseTimeSeconds = recording.courseTimeSeconds, actions = actions });
             }
-            List<object> results = new List<object>();
-            foreach (AttemptResult result in _results)
-                if (selected != null && result.routeId == selected.id)
-                    results.Add(new { id = result.id, success = result.success, completionTime = result.completionTime,
-                        completionTicks = result.completionTicks, timingSource = result.timingSource,
-                        failureReason = result.failureReason, timestampUtc = result.timestampUtc });
-
             Movement player = FindWorldMovement();
             return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
-                unlocks = player == null ? null : new { wallJump = GetMovementBool(player, "wallJumpUnlocked", false),
-                    dash = GetMovementBool(player, "dashUnlocked", false), maxAirDashes = GetMovementField(player, "maxAirDashes"),
-                    airDashesLeft = GetMovementField(player, "airDashesLeft"),
-                    doubleJump = GetMovementBool(player, "doubleJumpUnlocked", false), maxAirJumps = GetMovementField(player, "maxAirJumps") },
                 unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
@@ -1714,7 +1651,7 @@ namespace IGTAPTasMod
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacroId == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                routes = routes, recordings = recordings, checkpoints = checkpoints, results = results,
+                routes = routes, recordings = recordings, checkpoints = checkpoints,
                 courses = BuildCourseWebState(),
                 solver = BuildSolverWebState(), fullTas = BuildFullTasWebState() };
         }

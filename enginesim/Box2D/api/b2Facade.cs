@@ -20,8 +20,8 @@ namespace Box2D
     }
 
     /// <summary>
-    ///  Box2D v2 free-function entry points (C++ b2Collision.h / b2_distance.h /
-    ///  b2_time_of_impact.h), as promised to the integrator: statics on b2Collision.
+    ///  Box2D v2 free-function entry points (C++ b2Collision.h / b2_distance.h),
+    ///  as promised to the integrator: statics on b2Collision.
     /// </summary>
     public static class b2Collision
     {
@@ -29,18 +29,6 @@ namespace Box2D
         public static void b2Distance(out b2DistanceOutput output, ref b2SimplexCache cache, in b2DistanceInput input)
         {
             b2Contact.Distance(out output, ref cache, in input);
-        }
-
-        /// <summary>Compute the upper bound on time before two shapes penetrate (swept separating axis).</summary>
-        public static void b2TimeOfImpact(out b2TOIOutput output, in b2TOIInput input)
-        {
-            TOI.TimeOfImpact(out output, in input);
-        }
-
-        /// <summary>Determine if two AABBs overlap.</summary>
-        public static bool b2TestOverlap(in b2AABB a, in b2AABB b)
-        {
-            return Collision.TestOverlap(in a, in b);
         }
 
         /// <summary>Determine if two generic shapes overlap (uses b2Distance).</summary>

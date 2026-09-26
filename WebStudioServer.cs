@@ -104,8 +104,6 @@ namespace IGTAPTasMod
                     ServeStatic(stream, path);
                     return;
                 }
-                if (method == "GET" && path == "/favicon.ico")
-                { WriteResponse(stream, 204, "text/plain", ""); return; }
                 if (!path.StartsWith("/api/", StringComparison.Ordinal))
                 { WriteResponse(stream, 404, "application/json", "{\"error\":\"Not found\"}"); return; }
 

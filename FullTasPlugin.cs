@@ -865,17 +865,6 @@ namespace IGTAPTasMod
             if (finished && FullTasBestRoute(play.run.name) == play.route && !_fullTasSplits.ContainsKey(play.route.id)
                 && Mathf.Abs(CategoryBest(FullTasCategory(play.run.name)) - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);
-            var result = new AttemptResult {
-                routeId = play.route.id,
-                routeName = play.route.name,
-                success = finished,
-                completionTicks = Mathf.RoundToInt(time / Time.fixedDeltaTime),
-                completionTime = time,
-                timingSource = "Physics ticks from the new game's start to the last goal: " + splitText,
-                failureAction = finished ? -1 : tracker.Next,
-                failureReason = finished ? null : reason };
-            _results.Insert(0, result);
-            WriteJsonAtomic(Path.Combine(_resultsPath, result.timestampUtc.Replace(":", "-") + "-" + result.id + ".json"), result, false);
         }
 
         void DropPendingFullTasPlayback(string reason)
