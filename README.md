@@ -14,9 +14,9 @@
   `Movement.Update`'s step-up lifts the player at most once between two physics ticks (`MacroEngine.AllowStepUp`, at
   most 56 units). With interpolation off, the step-up otherwise lifts again in every rendered frame until the next tick
   (six 56-unit lifts at playback's 280 fps), so 1x playback would leave the route turbo judged. The overlay shows it as
-  `INTERPOLATION OFF (56u STEP CAP)`. This, the Vman credits' crash (below) and a fixed-clock probe's dash freeze
-  (`fixedClock`, [`enginesim/README.md`](enginesim/README.md#probe): `Movement.TimeStop` counts the fixed frame instead
-  of the wall clock's) are the only places a patch changes game logic.
+  `INTERPOLATION OFF (56u STEP CAP)`. This, the Vman credits' crash (below) and a fixed-clock probe's wall-clock reads
+  (`fixedClock`, [`enginesim/README.md`](enginesim/README.md#probe): the dash freeze, the camera's easing and
+  `ObjectBobber` count the fixed frame instead of the wall clock) are the only places a patch changes game logic.
 - Unlocks match the category exactly, on every tick. Categories stack: `NONE`, `WJ` (wall jump), `WJ_DS` (+ dash),
   `WJ_DS_DJ` (+ double jump), `WJ_DS_DJ_BS` (+ block swap on dash, `blockSwapUnlocked`). No category has the
   omnidirectional dash (`omniDashUnlocked`, the OmniDash box's toggle): it is off in every one.
