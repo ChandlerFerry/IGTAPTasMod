@@ -13,6 +13,7 @@ namespace IGTAP.EngineSim
         void ColliderChanged(Collider2D collider);
         void TransformChanged(Transform transform, bool pose);
         void ActiveChanged(GameObject gameObject);
+        void LayerChanged(GameObject gameObject);
         Vector2 GetPosition(Rigidbody2D body);
         void SetPosition(Rigidbody2D body, Vector2 position);
         float GetRotation(Rigidbody2D body);
@@ -39,6 +40,7 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Func<Vector2> Stick;
         [ThreadStatic] public static Action<GameObject> ActiveChanging;
         [ThreadStatic] public static Action<Behaviour> EnabledChanging;
+        [ThreadStatic] public static Action<GameObject> LayerChanging;
         public static string[] LayerNames = new string[32];
         public static int NextInstanceId = -1;
     }

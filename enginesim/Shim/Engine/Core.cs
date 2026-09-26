@@ -107,7 +107,7 @@ namespace UnityEngine
     }
 
     public class YieldInstruction { }
-    public sealed class WaitForSeconds : YieldInstruction { public WaitForSeconds(float seconds) { } }
+    public sealed class WaitForSeconds : YieldInstruction { internal readonly float m_Seconds; public WaitForSeconds(float seconds) { m_Seconds = seconds; } }
     public sealed class WaitForSecondsRealtime : CustomYieldInstruction { public WaitForSecondsRealtime(float time) { } public override bool keepWaiting { get { return false; } } }
     public sealed class WaitForFixedUpdate : YieldInstruction { }
     public sealed class WaitForEndOfFrame : YieldInstruction { }
@@ -125,13 +125,24 @@ namespace UnityEngine
         internal readonly List<Component> m_Components = new List<Component>(4);
         internal bool m_ActiveSelf = true;
         internal bool m_ActiveInHierarchy = true;
+        internal int m_Layer;
 
         public GameObject() { m_Transform = new Transform(); AttachInternal(m_Transform); }
         public GameObject(string name) : this() { this.name = name; }
 
         public Transform transform { get { return m_Transform; } }
         public GameObject gameObject { get { return this; } }
-        public int layer { get; set; }
+        public int layer
+        {
+            get { return m_Layer; }
+            set
+            {
+                if (m_Layer == value) return;
+                IGTAP.EngineSim.Engine.LayerChanging?.Invoke(this);
+                m_Layer = value;
+                if (Engine.Physics != null) Engine.Physics.LayerChanged(this);
+            }
+        }
         public string tag { get; set; } = "Untagged";
         public bool activeSelf { get { return m_ActiveSelf; } }
         public bool activeInHierarchy { get { return m_ActiveInHierarchy; } }

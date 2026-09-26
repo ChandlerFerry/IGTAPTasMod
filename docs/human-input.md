@@ -181,21 +181,26 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   way the dot already moved: the game adds back the momentum from before the dash (`preDashMomentum.x`).
 - **Chained hyper**: two hypers chained. The second dash starts in the air from the first one's jump. It covers 1400 u
   in 40 ticks and 1957 u in 60 (a run covers 561 u); it is an ultra when the second jumps 4 u lower.
-- **Float Ultra**: a chained hyper whose drop comes from `FloatingOrigin`. `lastHyperY` is a scene-frame height, and
-  the rebase moves the world (and the dot) back by the dot's scene position without touching it. Cross the sphere
-  (17500 around scene (0, 0) in the Vman world) in the first hyper's air, with no ground stay before the second hyper,
-  and the second hyper is ~11,700 u under `lastHyperY` on the same floor: the game adds back the pre-dash momentum
-  (1609 + 1131 = 2740 in the demo). In the VMAN world the sphere's edge crosses the platform above and left of Course 4
-  (floor y 11625). The Tech tab's Float Ultra demo loads a fresh VMAN game and fast-forwards the run's best to its quick
-  restart on that platform in turbo (`fastForward` 635 input ticks: the whole world as the run left it, boxes and
-  unlocks included, which a savestate can't hold), then plays at 1x: walk, hyper, hyper (the float ultra, world moved
-  by (−13030, −11704)), then back down the way the run came up to the left end of Course 1's floor, where the dot
-  leaves the new sphere and the world moves again, by (12794, 11947). The route down was found with `fulltas
-  --floating-origin` (goals in reverse through the run's area goals). While it plays the overlay
-  (`TasOverlayOrigin.cs`) draws the sphere's edge, scene (0, 0), the dot's scene and world coordinates,
-  `currentOrigin`, the distance to the edge, the ultra line (`lastHyperY − 4`) and a world minimap with every sphere
-  the playback was in, the jumps between their centres and the dot's path. A tech with `floatingOrigin` gets that
-  overlay and is never cut to a savestate: a savestate holds the player, not the world's origin.
+- **Float Ultra**: a chained hyper whose drop comes from `FloatingOrigin`. The game keeps the player within 17500 of
+  scene (0, 0), the sphere's centre; past the edge it moves the world back by the player's scene position, so the
+  player's scene y drops by its height above the sphere's centre line, while `lastHyperY` (a scene number) stays.
+  The rule: **cross the edge ABOVE the centre line** between two chained hypers (no ground stay in between) and the
+  second hyper lands that far under `lastHyperY`: a float ultra (the game adds back the pre-dash momentum, 1609 +
+  1131 = 2740 in the demo). Crossing BELOW the line raises the player over `lastHyperY`: none. Each move re-centres
+  the sphere on where the player crossed, so the next float ultra is 17,500 u up and to the right of it: from the
+  Vman start that is the platform above and left of Course 4 (floor y 11625), from the platform the top of the map
+  (the floor at y 26057 above Course 4's spike tunnel).
+
+  The Tech tab's Float Ultra demo loads a fresh VMAN game, fast-forwards the run's best to its quick restart on that
+  platform in turbo (`fastForward` 635 input ticks: the world as the run left it, which a savestate can't hold), then
+  at 1x: walk, hyper, hyper (float ultra; the sphere moves to the platform), down to the left end of Course 1's floor
+  (crossed below the line: the sphere moves there, no float ultra), and back up to the platform for a second float
+  ultra. Both routes were found with `fulltas`; turbo and the offline engine rebase as 1x does (`enginesim/README.md`),
+  so the demo's turbo trace replays offline with the float ultra at the same tick (`tools/tech-check.py`). While it
+  plays, the overlay (`TasOverlayOrigin.cs`) draws the sphere's edge and centre line green above / red below, tags the
+  player ABOVE/BELOW the line with its height, shows the distance to the edge, the step it is on (ARMED after an
+  above-line crossing, FLOAT ULTRA when it lands) and a minimap of every sphere the playback was in, where each was
+  crossed and the player's path. A tech with `floatingOrigin` gets that overlay and is never cut to a savestate.
 - **High super**: dash up-diagonal on the ground and press jump in the dash, on any of its first 6 dash ticks. The
   dash lifts off, but `onGround` lasts through the coyote frames, so the jump is a super (805 up, the same 900 sideways
   momentum as a flat super) from up to 129 u above the floor, and it gives the dash back: one dash is enough. The
@@ -248,8 +253,8 @@ its ultras reach (coloured by drop) and from every floor whose ultras reach it (
 Clicking a listed pair picks out its arrow and, for an engine-confirmed pair, draws the engine ultra's moves and its
 inputs. **Pairs** switches between every height drop, only engine-confirmed ones, and origin-shift ultras;
 **Selected floor** shows its ultras out, in, or both. The result is cached in `enginesim\ultras-VMAN.json`;
-**Recompute** reruns it (about a minute and a half on all cores). The engine never moves its origin, so the search
-models `FloatingOrigin`'s rebase itself (the VMAN world's scene sets `Threshold` 17500, `Use2DDistance` off): once the
+**Recompute** reruns it (about a minute and a half on all cores). Its launches are placed anywhere, so it models
+`FloatingOrigin`'s rebase itself instead of the engine's (the VMAN world's scene sets `Threshold` 17500, `Use2DDistance` off): once the
 player is more than 17500 from the origin, the next physics step moves the world by the player's position but leaves
 `lastHyperY` alone, and the next hyper passes the check on any floor. A pair only such an ultra makes is green. The
 search only models a rebase for launches that start inside the threshold, from origin 0. The map also draws that first

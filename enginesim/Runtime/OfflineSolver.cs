@@ -605,7 +605,8 @@ namespace IGTAP.EngineSim
             }
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
-            static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump" };
+            static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump",
+                "superground" };
             static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
 
             int Omni(List<InputTick> t, int at, int lo, string kind)
@@ -633,6 +634,10 @@ namespace IGTAP.EngineSim
                         Airborne(t, at, lo);
                         WaveDash(t, at, side);
                         return DashBounce(t, at + 1 + _rng.Next(1, 15), side);
+                    case "superground":
+                        // Super ground bounce: a ground super (flat dash, jump in it), then the dash straight down into the ground and its jump.
+                        OmniDash(t, at, side, 0f, _rng.Next(1, 7), side);
+                        return DashBounce(t, at + 1 + _rng.Next(4, 20), side);
                     case "wavejump":
                         return OmniDash(t, at, side, 1f, _rng.NextDouble() < .6 ? _rng.Next(1, 11) : 0, side);
                 }
@@ -728,7 +733,7 @@ namespace IGTAP.EngineSim
                         Omni(t, dashes.Count > 0 && _rng.NextDouble() < .7 ? dashes[_rng.Next(dashes.Count)] : p, 0, kind);
                         break;
                     }
-                    case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump":
+                    case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump": case "superground":
                         Cut(t, Omni(t, p, 0, kind) + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
@@ -844,12 +849,14 @@ namespace IGTAP.EngineSim
                     }
                     case "dashturn":
                     {
-                        // A dash with no sideways stick, turned by the stick held in its freeze (MacroEngine.StickFor).
+                        // A dash with no sideways stick, turned by the stick held in its freeze (MacroEngine.StickFor). With the stick
+                        // straight down from a wall cling, turned toward the wall, it is the Inwall wallbounce's climbing dash.
                         List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
                         if (dashes.Count == 0) return;
                         int q = dashes[_rng.Next(dashes.Count)];
                         InputTick k = t[q];
                         k.x = 0f;
+                        if (_rng.NextDouble() < .5) k.y = -1f;
                         k.turnX = _rng.NextDouble() < .2 ? null : _rng.NextDouble() < .5 ? -1f : 1f;
                         t[q] = k;
                         break;

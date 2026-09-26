@@ -99,15 +99,33 @@ Coordinates: every position you give or read (forced-path boxes, `--via`/`--avoi
 `FloatingOrigin.currentOrigin`. The game shifts every root object whenever the player strays `Threshold` (17500 in
 every Overworld export) from the scene origin, so a capture's scene frame depends on where the game was when it was
 taken (Course 1's start gate: scene x -241 in one capture, 2000 in another); the world frame doesn't. A simulation
-keeps its capture's origin (`Simulation.Origin`) and checks boxes against `Simulation.PlayerWorld`. Only the trace files
-themselves (samples, the world export, the header's goal rects) stay in their capture's scene frame.
+keeps its capture's origin (`Simulation.Origin`, the frame of the trace's rects, goals and map cells) and its current one
+(`Simulation.CurrentOrigin`), and checks boxes against `Simulation.PlayerWorld`. Only the trace files themselves
+(samples, the world export, the header's goal rects) stay in their capture's scene frame; each sample carries the
+`origin` it was taken at.
 
-The engine never moves the world, and by default it never rebases, as turbo doesn't. `Simulation.Rebases` (`fulltas
---floating-origin`, a probe's `"floatingOrigin": true`) models the rebase 1x play does: the tick after the player's
-scene position passes `Threshold`, the game moves the world back by that position (`MoveOrigin` waits for the next
-fixed step) but leaves the scene-frame numbers it keeps: `lastHyperY` and `courseResetPoint`. In the engine's
-unmoved frame they move by the same position instead (`Simulation.OriginShift` is the sum). That is what makes a
-Float Ultra (a chained hyper whose second jump is ~11,700 u under `lastHyperY` after a rebase) match 1x offline.
+Turbo, 1x and the engine all rebase. At 1x `FloatingOrigin.LateUpdate` sees the player past `Threshold` after a
+tick's `Update` and starts `MoveOrigin`, which waits for the next physics step (`WaitForFixedUpdate`) and then moves every
+root object of the active scene back by the player's scene position and lowers `currentOrigin` by it. It leaves the
+scene-frame numbers the game keeps (`lastHyperY`, `courseResetPoint`) alone: that is the Float Ultra (a chained hyper
+whose second jump is ~11,700 u under `lastHyperY` after a rebase). Turbo runs the game's own `LateUpdate` after each
+tick's `Update` and resumes the coroutine right after the next `Physics2D.Simulate` (`TurboRunner.OriginFrame`,
+`ResumeRebase`); a turbo snapshot carries `currentOrigin` and a waiting rebase, and a restore moves the world back to
+it (`TurboRunner.PutOrigin`), so every judged run starts where its start was taken. Before this, turbo never rebased
+while 1x did: a route that crossed the sphere (the bonus1 8.28 seed, captured at origin (-20200, -10543), crosses it at
+tick 334) played differently at 1x than turbo judged it.
+
+The engine does the same (`Simulation.FloatingOriginFrame`, `ResumeRebase`, `MoveWorld`): every transform of the active
+scene moves back by the reference (a root's local position with it), `currentOrigin` drops, bodies take their
+transforms and body-less colliders rebuild their shapes at the next sync, as Unity's do. A body-less box or capsule is
+rebuilt from its own geometry and the moved transform in float math (`PhysicsWorld.MovedShapes`); 590 of 591 boxes and
+all 85 capsules match Unity's shapes in a VMAN world exported after a rebase (a child transform moves by the reference
+too, which matches Unity's own position for ~90% of children; the rest are an ulp off). A snapshot keeps the list of
+rebases, and a restore across one rebuilds the world from the capture's poses (`MaterializeRebases`). Past a rebase the
+VMAN run's trace (rebase at tick 1168) and the Float Ultra demo's (three rebases, the ultra at tick 1206 with 2740
+momentum) replay with every position and Movement field identical; only the body velocity differs on a few landing ticks
+(under 3e-5, the ground-seam noise below). `ultras` models the rebase itself on its placed launches (`Rebases` off
+there).
 
 A forced path limits which runs count. `--via x0,y0,x1,y1` boxes must hold the player's center, in order, before a
 finish counts; a run that enters an `--avoid x0,y0,x1,y1` box is cut. Both are checked on every physics tick, dash
@@ -215,6 +233,23 @@ wall too: a copy of a studio savestate (`from`) or of the player now, with the w
 gets `Velocity + momentum`), facing (±1) and any Movement fields (`{"OnWall": true, "wallCoyoteFrames": 7}`) replaced. It
 is saved as `lab/<name>` and returns its `id` for `savestateId`. A lab start is for experiments, never a route's.
 
+## Tech check
+
+`python tools/tech-check.py [id ...] [--exe path]` checks every tech demo (the studio's Tech tab) in turbo against the
+engine. For each, `POST /api/enginesim/trace {tech: <id>}` runs the demo in turbo from the start its playback uses (its
+category's quick restart or its savestate, the category's unlocks plus the demo's omnidash; a `fulltas/<run>_NONE` demo
+from that run's new game, which must be loaded) and writes `tech-<id>.json` and its world; then `replay` reports the first
+tick that differs. A demo starts inside a tick, as its playback does, so the trace's start is the state after its first
+input tick (the start's `tick`). A savestate start is off every course (`course` -1): no course finish ends it offline,
+as none does in turbo.
+
+All 24 demos (2026-09-26): every position and Movement field identical tick for tick, the Float Ultra demo included
+(its three rebases and the ultra at tick 1206). What still differs: Cash by one ulp once clones pay on Course 1 (the
+economy's float order, not movement); body velocity y ±1.15e-6 on a resting contact at Course 1's start and at the
+checkpoint demo's respawn, and the VMAN run's y velocity ulp at tick 206 and `collidingBodies` order at tick 493
+(ground-seam noise); Wall dash's start primes its wall contact, so the game's `collidingBodies` keeps the wall offline
+after the dash leaves it (Unity sent the exit).
+
 ## Clip lab
 
 `clip` runs states no input has reached yet: the player anywhere (inside a wall too), at any speed, with any Movement
@@ -313,6 +348,9 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
 - Turbo restores (`TurboRunner.Restore`) match that priming: one muted physics step at the restored pose rebuilds
   Unity's contacts, so the first tick reports Stay, not a stale Exit plus a fresh Enter. Without it a start touching a
   collider (a start under an upgrade box) ran differently in turbo from run to run.
+- A trace start's pending Invokes (`endRecentJump`, the buffer cancels) are due counted from the start's next tick, in
+  turbo's snapshot and in `Simulation.LoadStart` alike. `LoadStart` used to count one tick less, so a start inside a
+  jump's `recentlyJumped` window (every omnidash tech demo) ended it a tick early offline.
 - Turbo spawns no floating numbers (`FloatingNumberScript.ActuallySpawnText` off for the run). Their pool of 200 is only
   refilled by their own `FixedUpdate`, which turbo doesn't step. A long replay drained it; the next pop threw out of
   `courseScript.stopTracking` (no finish) or `clonesScript.DestroyClone` (the clone stays and pays again), at a point

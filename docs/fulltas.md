@@ -175,8 +175,9 @@ inputs past the last unchanged goal the same way.
 - **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
   solver's `--unsolved`) reaches the goals the best misses first, starting at the first of them. Both recapture the
   trace (seeded with the saved best) when the run's goals or start changed since it was taken: a solve searches the
-  goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just goal N−1
-  to goal N, window after window, keeping the rest of the route as it is; **Threads** 0 is cores − 2.
+  goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just the
+  **Window** goals ending at goal N (window 2: from goal N−2 through N−1 to N), window after window, keeping the rest
+  of the route as it is and scoring the time at goal N. `threads` 0 or missing (the site sends none) is cores − 2.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.

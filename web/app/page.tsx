@@ -588,7 +588,6 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [windowMinutes, setWindowMinutes] = useState(1);
   const [window_, setWindow] = useState(2);
   const [onlyGoal, setOnlyGoal] = useState(0);
-  const [threads, setThreads] = useState(0);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
   const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
@@ -642,12 +641,11 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <div className="offlineControls">
             <Field label="Minutes (total)"><input type="number" min="1" value={minutes} disabled={solve.running} onChange={e => setMinutes(Number(e.target.value))}/></Field>
             <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
-            <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running || onlyGoal > 0} onChange={e => setWindow(Number(e.target.value))}/></Field>
-            <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polish only the stretch from the goal before this one to this one, over and over, with the rest of the route kept as it is" onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
-            <Field label="Threads (0: cores − 2)"><input type="number" min="0" value={threads} disabled={solve.running} onChange={e => setThreads(Math.max(0, Math.floor(Number(e.target.value)) || 0))}/></Field>
+            <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
+            <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polish only the window of goals ending at this one (Window goals: 2 is the goal before it and this one), over and over, with the rest of the route kept as it is" onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
           </div>
-          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goal ${onlyGoal - 1 || "start"} → ${onlyGoal} (${labels[onlyGoal - 1] ?? ""})` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, threads, goal: onlyGoal })}>{onlyGoal > 0 ? `Solve goal ${onlyGoal}` : "Solve"}</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, threads, unsolved: true })}>Solve unsolved</button>
+          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}, from ${onlyGoal - window_ > 0 ? "goal " + (onlyGoal - window_) : "the start"}` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, goal: onlyGoal })}>{onlyGoal > 0 ? (window_ > 1 ? `Solve goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}` : `Solve goal ${onlyGoal}`) : "Solve"}</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
             <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
         </div>
       </div>

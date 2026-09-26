@@ -272,8 +272,8 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        // Where the Full-TAS run's best so far (the trace's `fulltas/<run>.json`) makes FloatingOrigin rebase: the
-        // engine never rebases, so each crossing of the threshold from the current origin is found here, and the next
+        // Where the Full-TAS run's best so far (the trace's `fulltas/<run>.json`) makes FloatingOrigin rebase: these sims
+        // run with Rebases off, so each crossing of the threshold from the current origin is found here, and the next
         // one is measured from the new origin. `center`: the origin the player left (game-world coordinates).
         static List<object> RouteRebases(string trace, JsonElement header, Func<Simulation> create, Vector3 origin)
         {
@@ -671,11 +671,11 @@ namespace IGTAP.EngineSim.Cli
         // ultra check done on the state it used: Sign(preDashMomentum.x) == Sign(dashDirection.x) and the lifted
         // position below the old lastHyperY - 4.
         //
-        // The engine never moves its origin, so FloatingOrigin's rebase is modelled here: when the player gets more
-        // than Threshold from the origin (FloatingOrigin.LateUpdate), the game moves every root object by that
-        // position after the next physics step (MoveOrigin waits for WaitForFixedUpdate) but leaves lastHyperY as it
-        // was. In the engine's unmoved frame that is lastHyperY raised by the offset's y. Only a launch that starts
-        // inside the threshold does it; one outside would have rebased on the way there, somewhere unknown.
+        // These sims run with Rebases off (a launch placed anywhere would rebase at once), so FloatingOrigin's rebase is
+        // modelled here: when the player gets more than Threshold from the origin (FloatingOrigin.LateUpdate), the game
+        // moves every root object by that position after the next physics step (MoveOrigin waits for WaitForFixedUpdate)
+        // but leaves lastHyperY as it was. In the sim's unmoved frame that is lastHyperY raised by the offset's y. Only a
+        // launch that starts inside the threshold does it; one outside would have rebased on the way there, somewhere unknown.
         static List<Hyper> Play(Simulation sim, SimSnapshot placed, List<InputTick> inputs, Vector2 dash, Vector2 dashOffset, int wanted)
         {
             var hypers = new List<Hyper>();

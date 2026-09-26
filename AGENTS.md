@@ -23,7 +23,8 @@ start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-ru
 
 Start the game only to:
 
-- capture a trace or world the offline engine doesn't have yet (`tools/enginesim-capture.py`),
+- capture a trace or world the offline engine doesn't have yet (`tools/enginesim-capture.py`, or
+  `tools/tech-check.py` for the tech demos after an engine or turbo change),
 - submit an offline best that beats the saved route (`solve` does this on its own),
 - run `tools/validate.py`.
 
@@ -39,6 +40,8 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   which is what turbo does, so 1x playback, turbo and offline climb the same. The overlay shows
   `INTERPOLATION OFF (56u STEP CAP)`. Don't raise the cap: turbo can't reproduce a second lift in one tick (README
   `### Rules`).
+- Turbo and the offline engine run `FloatingOrigin`'s rebase as 1x does (the world moves back once the player is
+  17500 from scene (0, 0)), so Float Ultras and any route that crosses the sphere judge, replay and play back alike.
 
 ## Before calling a new best real
 

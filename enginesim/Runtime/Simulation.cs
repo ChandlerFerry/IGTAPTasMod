@@ -71,6 +71,9 @@ namespace IGTAP.EngineSim
         public (MonoBehaviour target, object[] fields)[] Touched;
         public (GameObject target, bool active)[] Active;
         public (Behaviour target, bool enabled)[] Enabled;
+        /// <summary>Layers changed since load (PlatformMover.MakeIntangible), and the coroutines parked on a yield.</summary>
+        public (GameObject target, int layer)[] Layers;
+        public (MonoBehaviour target, System.Collections.IEnumerator body, Coroutine handle, Scheduler.Wait wait, int due)[] Routines;
         internal Shop.State Economy;
         internal FullTasTracker.State Goal;
         public UnityEngine.Random.State Random;
@@ -118,6 +121,7 @@ namespace IGTAP.EngineSim
         }
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
+        readonly Dictionary<GameObject, int> _layerAsLoaded = new Dictionary<GameObject, int>();
         double _vmanTimeLeft;
         bool _vmanBlockEnding;
 
@@ -140,6 +144,12 @@ namespace IGTAP.EngineSim
             IGTAP.EngineSim.Engine.Physics = Physics;
             IGTAP.EngineSim.Engine.ActiveChanging = g => _activeAsLoaded.TryAdd(g, g.activeSelf);
             IGTAP.EngineSim.Engine.EnabledChanging = b => _enabledAsLoaded.TryAdd(b, b.enabled);
+            IGTAP.EngineSim.Engine.LayerChanging = g => _layerAsLoaded.TryAdd(g, g.layer);
+            // PlatformMover's coroutines are gameplay: MakeIntangible's 0.15 s off the Ground layer after a jump off a zip mover,
+            // PlayerExit's contact clear two physics steps after the player leaves it, a zip mover's move once unlocked.
+            Scheduler.Continues = t => t is PlatformMover;
+            Scheduler.Stepping = Touch;
+            Scheduler.Unmodeled = what => { if (Engine.IsRunning) Engine.Abort("Unmodeled: " + what); };
             Shop = new Shop(this, world);
             _fixedUpdate = (Action)Delegate.CreateDelegate(typeof(Action), Player, FixedUpdateMethod);
             _update = (Action)Delegate.CreateDelegate(typeof(Action), Player, UpdateMethod);
@@ -505,6 +515,7 @@ namespace IGTAP.EngineSim
                 box.enabled = c[5].GetBoolean();
             }
             Scheduler.Queue.Clear();
+            Scheduler.Routines.Clear();
             foreach (JsonElement p in start.GetProperty("pending").EnumerateArray())
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = p[0].GetInt32(), Target = Player, Method = p[1].GetString(), Repeat = -1f });
             Physics.ResetPlayer(World.Vec2(start.GetProperty("bodyPosition")), World.Vec2(start.GetProperty("velocity")),
@@ -528,6 +539,8 @@ namespace IGTAP.EngineSim
             _rebasePending = Vector3.zero;
             _rebaseDue = false;
             // A tech demo's trace starts after its first input tick (the demo starts inside a tick, as its playback does).
+            // The start's pending Invokes are due counted from its next tick, which Capture counts from Tick + 1.
+            Scheduler.Tick = -1;
             _start = Capture(start.TryGetProperty("tick", out JsonElement startTick) ? startTick.GetInt32() : 0);
         }
 
@@ -572,6 +585,9 @@ namespace IGTAP.EngineSim
                 Touched = _touched.Select(s => (s, CaptureShared(s))).ToArray(),
                 Active = _activeAsLoaded.Count == 0 ? Array.Empty<(GameObject, bool)>() : _activeAsLoaded.Keys.Select(g => (g, g.activeSelf)).ToArray(),
                 Enabled = _enabledAsLoaded.Count == 0 ? Array.Empty<(Behaviour, bool)>() : _enabledAsLoaded.Keys.Select(b => (b, b.enabled)).ToArray(),
+                Layers = _layerAsLoaded.Count == 0 ? Array.Empty<(GameObject, int)>() : _layerAsLoaded.Keys.Select(g => (g, g.layer)).ToArray(),
+                Routines = Scheduler.Routines.Count == 0 ? Array.Empty<(MonoBehaviour, System.Collections.IEnumerator, Coroutine, Scheduler.Wait, int)>()
+                    : Scheduler.Routines.Select(r => (r.Target, Scheduler.Copy(r.Body), r.Handle, r.Wait, r.Due - Scheduler.Tick - 1)).ToArray(),
                 Economy = Shop.Capture(),
                 Goal = Goals?.Capture(),
                 Random = UnityEngine.Random.state,
@@ -607,7 +623,16 @@ namespace IGTAP.EngineSim
             int toggled = 0;
             foreach (GameObject g in _activeAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
             foreach (Behaviour b in _enabledAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
+            foreach (GameObject g in _layerAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.layer);
             h.Add(toggled);
+            foreach (Scheduler.Routine r in Scheduler.Routines)
+            {
+                h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(r.Target)); h.Add(r.Wait);
+                h.Add(r.Wait == Scheduler.Wait.Seconds ? r.Due - Scheduler.Tick : 0);
+                // The iterator's state and locals; its current yield object is a fresh instance each run.
+                foreach (FieldInfo f in FieldState.For(r.Body.GetType()))
+                    if (f.FieldType.IsValueType) AddValue(ref h, f.GetValue(r.Body));
+            }
             Shop.AddTo(ref h);
             UnityEngine.Random.State rng = UnityEngine.Random.state;
             h.Add(rng.s0); h.Add(rng.s1); h.Add(rng.s2); h.Add(rng.s3);
@@ -655,6 +680,12 @@ namespace IGTAP.EngineSim
                 foreach (var (target, value) in s.Enabled) if (target == b) { enabled = value; break; }
                 if (b.enabled != enabled) b.enabled = enabled;
             }
+            foreach (var (g, loaded) in _layerAsLoaded)
+            {
+                int layer = loaded;
+                foreach (var (target, value) in s.Layers) if (target == g) { layer = value; break; }
+                g.m_Layer = layer;
+            }
             Physics.Suspended = false;
             foreach (MonoBehaviour script in _touched)
             {
@@ -691,6 +722,9 @@ namespace IGTAP.EngineSim
             Scheduler.Tick = 0;
             foreach (var (due, target, method, repeat) in s.Pending)
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
+            Scheduler.Routines.Clear();
+            foreach (var (target, body, handle, wait, due) in s.Routines)
+                Scheduler.Routines.Add(new Scheduler.Routine { Target = target, Body = Scheduler.Copy(body), Handle = handle, Wait = wait, Due = due });
             Physics.Restore(s.Physics);
             Shop.Restore(s.Economy);
             if (Goals != null) Goals.Restore(s.Goal);
@@ -722,6 +756,7 @@ namespace IGTAP.EngineSim
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
                 bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
                 Scheduler.FireDue();
+                Scheduler.Resume(Scheduler.Wait.Seconds);
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
                 int rebasesBefore = _rebases.Length;
                 if (Engine.TakeQuickRestart())
@@ -739,10 +774,13 @@ namespace IGTAP.EngineSim
                 VmanClock();
                 Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.Simulate(World.FixedDeltaTime);
+                Scheduler.Resume(Scheduler.Wait.FixedUpdate);
                 ResumeRebase();
                 _update();
+                Scheduler.Resume(Scheduler.Wait.Frame);
                 Shop.StepClones();
                 Shop.EndOfFrame();
+                Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,

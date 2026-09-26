@@ -72,7 +72,7 @@ namespace IGTAP.EngineSim
             {
                 var go = new GameObject(o.GetProperty("name").GetString());
                 go.SetInstanceID(o.GetProperty("id").GetInt32());
-                go.layer = o.GetProperty("layer").GetInt32();
+                go.m_Layer = o.GetProperty("layer").GetInt32();
                 go.tag = o.GetProperty("tag").GetString();
                 go.m_ActiveSelf = o.GetProperty("activeSelf").GetBoolean();
                 go.m_ActiveInHierarchy = o.GetProperty("activeInHierarchy").GetBoolean();

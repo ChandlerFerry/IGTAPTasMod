@@ -156,12 +156,14 @@ namespace IGTAP.EngineSim.Cli
                     continue;
                 }
                 Phase("polish");
-                int firstWindow = _onlyGoal > 0 ? Math.Min(_onlyGoal, _best.Progress) - 1 : 0;
+                // --goal N: only the window of --window goals ending at goal N (from goal N - window on), over and over.
+                int lastGoal = _onlyGoal > 0 ? Math.Min(_onlyGoal, _best.Progress) : 0;
+                int firstWindow = _onlyGoal > 0 ? Math.Max(0, lastGoal - _window) : 0;
                 int endWindow = _onlyGoal > 0 ? firstWindow + 1 : _best.Progress;
                 for (int i = firstWindow; i < endWindow && !TimeUp; i++)
                 {
                     best = _best;
-                    int limit = _onlyGoal > 0 ? i + 1 : Math.Min(i + _window, best.Progress);
+                    int limit = _onlyGoal > 0 ? lastGoal : Math.Min(i + _window, best.Progress);
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
                     var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                     List<List<InputTick>> found = SearchWindow("polish", best, prefixLength, limit, seeds, best.GoalPhysics[limit - 1], _windowMinutes, 0);
