@@ -55,11 +55,11 @@ namespace IGTAP.EngineSim.Cli
         FullTas(string[] args)
         {
             _trace = args[0];
-            _threads = Option(args, "--threads", Environment.ProcessorCount);
-            _minutes = Option(args, "--minutes", 60.0);
-            _windowMinutes = Option(args, "--window-minutes", 1.0);
-            _stallMinutes = Option(args, "--stall-minutes", double.PositiveInfinity);
-            _window = Math.Max(1, Option(args, "--window", 2));
+            _threads = Solve.Option(args, "--threads", Environment.ProcessorCount);
+            _minutes = Solve.Option(args, "--minutes", 60.0);
+            _windowMinutes = Solve.Option(args, "--window-minutes", 1.0);
+            _stallMinutes = Solve.Option(args, "--stall-minutes", double.PositiveInfinity);
+            _window = Math.Max(1, Solve.Option(args, "--window", 2));
             _submit = !args.Contains("--no-submit");
             _fresh = args.Contains("--fresh");
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
@@ -94,12 +94,12 @@ namespace IGTAP.EngineSim.Cli
             _origin = _eval.Start;
             _dt = _eval.World.FixedDeltaTime;
 
-            _best = Padded(Evaluate(ReadInputs(header)));
+            _best = Padded(Evaluate(Solve.ReadInputs(header)));
             string from = Path.GetFileName(_trace);
             if (!_fresh && File.Exists(_runFile))
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
-                Route run = Padded(Evaluate(ReadInputs(saved.RootElement)));
+                Route run = Padded(Evaluate(Solve.ReadInputs(saved.RootElement)));
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
@@ -393,7 +393,7 @@ namespace IGTAP.EngineSim.Cli
                 Restart = Flag("restart"),
                 Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
                     : caps.GetString() == "wjdsdjbs" ? 4 : caps.GetString() == "wjdsdj" ? 3 : caps.GetString() == "wjds" ? 2 : caps.GetString() == "wj" ? 1 : 0,
-                Inputs = ReadInputs(root),
+                Inputs = Solve.ReadInputs(root),
             };
         }
 
@@ -502,18 +502,6 @@ namespace IGTAP.EngineSim.Cli
                 _pending?.Set(r.Inputs);
             }
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
-        }
-
-        static List<InputTick> ReadInputs(JsonElement root)
-        {
-            JsonElement list = root.TryGetProperty("inputs", out JsonElement inputs) ? inputs : root.GetProperty("ticks");
-            return list.EnumerateArray().Select(InputTick.FromJson).ToList();
-        }
-
-        static T Option<T>(string[] args, string name, T fallback)
-        {
-            int i = Array.IndexOf(args, name);
-            return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
         }
 
         sealed class Latest

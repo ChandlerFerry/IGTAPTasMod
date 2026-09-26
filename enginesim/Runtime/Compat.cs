@@ -16,16 +16,6 @@ namespace HarmonyLib
             }
             return null;
         }
-
-        public static MethodInfo Method(Type type, string name)
-        {
-            for (Type t = type; t != null; t = t.BaseType)
-            {
-                MethodInfo m = t.GetMethod(name, All | BindingFlags.DeclaredOnly);
-                if (m != null) return m;
-            }
-            return null;
-        }
     }
 }
 
@@ -39,7 +29,5 @@ namespace IGTAPTasMod
     internal sealed class HostLog
     {
         public void LogInfo(object message) { }
-        public void LogWarning(object message) { }
-        public void LogError(object message) { }
     }
 }

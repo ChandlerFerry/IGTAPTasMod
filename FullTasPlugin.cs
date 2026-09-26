@@ -703,7 +703,7 @@ namespace IGTAPTasMod
             play.tracker.Reset();
             _fullTas = play.tracker;
             _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = _fullTasBlockSwap = false;
-            _engine.Run(play.route, _library, false, true, 0, null);
+            _engine.Run(play.route, false, true, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
         }

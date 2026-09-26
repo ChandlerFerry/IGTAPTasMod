@@ -90,6 +90,23 @@ def move(a, b):
     return REPEAT if k == 0 else round(5 + 180 * k / 9.2)
 
 
+def wait_for(s, cost, deadline):
+    need = cost - s.cash
+    if need <= 0:
+        return s.t < deadline
+    if s.income(deadline - 1) < need:
+        return False
+    lo, hi = s.t, deadline - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if s.income(mid) >= need:
+            hi = mid
+        else:
+            lo = mid
+    s.advance(hi)
+    return True
+
+
 class State:
     __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "clones", "c1next", "where", "prev", "tokens", "what")
 
@@ -108,9 +125,6 @@ class State:
 
     def pay2(self):
         return clone_pay(self.reward2(), self.m)
-
-    def pay1(self):
-        return C1_PAY
 
     def rate(self):
         return len(self.clones) * self.pay2() / self.P + C1_PAY / OFFSCREEN
@@ -134,22 +148,6 @@ class State:
         self.clones = tuple(sorted(a if a > T else a + ((T - a) // self.P + 1) * self.P for a in self.clones))
         self.t = T
 
-    def wait_for(self, cost, deadline):
-        need = cost - self.cash
-        if need <= 0:
-            return self.t < deadline
-        if self.income(deadline - 1) < need:
-            return False
-        lo, hi = self.t, deadline - 1
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            if self.income(mid) >= need:
-                hi = mid
-            else:
-                lo = mid
-        self.advance(hi)
-        return True
-
     def lap(self):
         s = self.child()
         s.advance(s.t + (LAP if s.where == "gate" else LEAD + LAP))
@@ -168,7 +166,7 @@ class State:
         s.advance(s.t + (move(s.where, b) if walk_row else TO[b]))
         arrived = s.t
         cost = box_cost(b, s.level(b))
-        if not s.wait_for(cost, deadline):
+        if not wait_for(s, cost, deadline):
             return None
         s.cash -= cost
         if b == "R":
@@ -451,22 +449,6 @@ class LateState:
         self.cash += self.income(T)
         self.t = T
 
-    def wait_for(self, cost, deadline):
-        need = cost - self.cash
-        if need <= 0:
-            return self.t < deadline
-        if self.income(deadline - 1) < need:
-            return False
-        lo, hi = self.t, deadline - 1
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            if self.income(mid) >= need:
-                hi = mid
-            else:
-                lo = mid
-        self.advance(hi)
-        return True
-
     def done(self):
         return (self.lapped or not self.ph.need_lap) and all(l >= r for l, r in zip(self.lv, self.ph.req))
 
@@ -496,7 +478,7 @@ class LateState:
         arrived = s.t
         box = c.boxes[k]
         cost = box.cost(s.lv[i])
-        if not s.wait_for(cost, deadline):
+        if not wait_for(s, cost, deadline):
             return None
         s.cash -= cost
         s.lv = s.lv[:i] + (s.lv[i] + 1,) + s.lv[i + 1:]
@@ -744,10 +726,10 @@ def any_prefix(run_name, verbose):
     return keep, late
 
 
-def any_tail(base, choice, quiet, verbose=False, detour=None):
+def any_tail(base, choice, quiet, verbose=False):
     run = copy.deepcopy(base)
     run.quiet, run.verbose, run.tokens, run.steps, run.lap_income = quiet, verbose, [], [], True
-    ticks = dict(DETOUR, **(detour or {}))
+    ticks = DETOUR
     for goal, (course, k) in ANY_OPTIONS.items():
         if k is not None:
             run.cs[course].boxes[k].off = ticks[goal]

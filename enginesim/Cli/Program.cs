@@ -30,7 +30,6 @@ namespace IGTAP.EngineSim.Cli
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
-                    case "branch": return Branch(args[1], args.Length > 2 ? int.Parse(args[2]) : 200);
                     case "path":
                     {
                         var (sim, _, _) = Open(args[1]);
@@ -98,8 +97,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N] [--optional name]...\n"
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"
-                            + "                                         boxes as one JSON for the studio's Optimize map\n"
-                            + "  branch <trace.json> [runs]             resumed (branched) runs must step exactly like from-start runs");
+                            + "                                         boxes as one JSON for the studio's Optimize map\n");
                         return 2;
                 }
             }
@@ -125,14 +123,6 @@ namespace IGTAP.EngineSim.Cli
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
-            string contactsArg = args.FirstOrDefault(a => a == "--contacts" || a.StartsWith("--contacts=", StringComparison.Ordinal));
-            int contactsFrom = 0, contactsTo = contactsArg == null ? -1 : 39;
-            if (contactsArg != null && contactsArg.Contains('='))
-            {
-                string[] range = contactsArg.Substring("--contacts=".Length).Split('-');
-                contactsFrom = int.Parse(range[0], CultureInfo.InvariantCulture);
-                contactsTo = int.Parse(range[range.Length - 1], CultureInfo.InvariantCulture);
-            }
             int failures = 0;
             var assetRef = new System.Text.RegularExpressions.Regex("\\{\"\\$ref\":(-?\\d+)\\}");
             foreach (string path in args.Where(a => !a.StartsWith("--") && !a.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase)))
@@ -147,14 +137,6 @@ namespace IGTAP.EngineSim.Cli
                 var diffs = new List<string>();
                 RunResult run = sim.Run(inputs, onStep: step =>
                 {
-                    if (step >= contactsFrom && step <= contactsTo)
-                    {
-                        Console.WriteLine("  step " + step + " pos " + Json(sim.Player.transform.position) + " turbo contacts " + (step < ticks.Length ? ticks[step].GetProperty("contacts").GetRawText() : ""));
-                        var mine = new UnityEngine.ContactPoint2D[16];
-                        int count = sim.Physics.GetContacts(sim.Player.GetComponent<Rigidbody2D>(), mine);
-                        Console.WriteLine("    offline contacts " + string.Join(" ", mine.Take(count).Select(p => "(" + p.point.x.ToString("R", CultureInfo.InvariantCulture) + "," + p.point.y.ToString("R", CultureInfo.InvariantCulture) + " n=" + p.normal.x.ToString("0.##", CultureInfo.InvariantCulture) + "," + p.normal.y.ToString("0.##", CultureInfo.InvariantCulture) + ")")));
-                        foreach (string c in sim.Physics.DescribeContacts()) Console.WriteLine("    " + c);
-                    }
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
                     var here = new List<string>();
                     JsonElement t = ticks[step];
@@ -164,7 +146,7 @@ namespace IGTAP.EngineSim.Cli
                     foreach (JsonElement entry in t.GetProperty("movement").EnumerateArray())
                     {
                         FieldInfo f = World.FindField(typeof(Movement), entry[0].GetString(), entry[1].GetString());
-                        if (f == null || PresentationOnly.Contains(f.Name)) continue;
+                        if (f == null || Simulation.MovementPresentationFields.Contains(f.Name)) continue;
                         Compare(here, f.Name, Json(f.GetValue(sim.Player)), entry[2]);
                     }
                     foreach (JsonElement course in t.GetProperty("courses").EnumerateArray())
@@ -202,8 +184,6 @@ namespace IGTAP.EngineSim.Cli
             }
             return failures == 0 ? 0 : 3;
         }
-
-        static readonly HashSet<string> PresentationOnly = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
 
         static Func<string, string> _normalize = s => s;
 
@@ -331,99 +311,6 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
-
-        static int Branch(string tracePath, int runs)
-        {
-            var (sim, _, route) = Open(tracePath);
-            var rng = new System.Random(1);
-            FieldInfo[] engineFields = FieldState.For(typeof(MacroEngine));
-            string State()
-            {
-                var sb = new StringBuilder();
-                sb.Append(Json(FieldState.Capture(sim.Player))).Append('|').Append(Json(sim.Player.transform.position));
-                object[] engine = sim.Engine.CaptureState();
-                for (int i = 0; i < engine.Length; i++)
-                    if (!(engineFields[i].Name is "_steps" or "_stepIndex" or "_elapsedTicks" or "_elapsedMs" or "_wallJumpTriggered" or "<Status>k__BackingField"))
-                        sb.Append('|').Append(engineFields[i].Name).Append('=').Append(Json(engine[i]));
-                foreach (courseScript c in sim.Courses) sb.Append('|').Append(Json(FieldState.Capture(c)));
-                foreach (Scheduler.Pending p in sim.Scheduler.Queue) sb.Append("|inv ").Append(p.Method).Append('@').Append(p.Due - sim.Scheduler.Tick);
-                Rigidbody2D body = sim.Player.GetComponent<Rigidbody2D>();
-                sb.Append('|').Append(Json(sim.Physics.GetPosition(body))).Append(Json(sim.Physics.GetVelocity(body)));
-                return sb.ToString();
-            }
-            List<InputTick> Burst(List<InputTick> inputs, int count)
-            {
-                float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f;
-                while (inputs.Count < count)
-                {
-                    if (rng.NextDouble() < .35) x = new[] { -1f, 0f, 1f }[rng.Next(3)];
-                    int length = rng.Next(3, 21), at = inputs.Count;
-                    for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x });
-                    if (rng.NextDouble() < .4)
-                    {
-                        int hold = new[] { 1, 3, 6, 10, 16 }[rng.Next(5)];
-                        for (int i = at; i < Math.Min(inputs.Count, at + hold); i++) { InputTick k = inputs[i]; k.held = true; k.press = i == at; inputs[i] = k; }
-                        if (at + hold < inputs.Count) { InputTick k = inputs[at + hold]; k.release = true; inputs[at + hold] = k; }
-                    }
-                    if (rng.NextDouble() < .25)
-                    {
-                        InputTick d = inputs[at];
-                        d.dash = true;
-                        if (rng.NextDouble() < .5) d.dashJump = rng.Next(1, 11);
-                        inputs[at] = d;
-                        int j = Math.Min(inputs.Count - 1, at + rng.Next(0, 6));
-                        if (d.dashJump == 0 && rng.NextDouble() < .5) { InputTick k = inputs[j]; k.press = k.held = true; inputs[j] = k; }
-                    }
-                }
-                return inputs;
-            }
-            (List<string>, Dictionary<int, (SimSnapshot, int)>) Record(List<InputTick> inputs, SimSnapshot from, int only = -1)
-            {
-                var states = new List<string>();
-                var snaps = new Dictionary<int, (SimSnapshot, int)>();
-                int lastTick = -1;
-                sim.Run(inputs, from, tick =>
-                {
-                    if (tick > 0 && tick < inputs.Count && !sim.Engine.InputsExhausted && tick != lastTick) snaps[tick] = (only < 0 || tick == only ? sim.Capture(tick) : null, states.Count - 1);
-                    lastTick = tick;
-                    return true;
-                }, onStep: s => states.Add(State()));
-                return (states, snaps);
-            }
-            int checks = 0, matches = 0;
-            var archive = new List<(List<InputTick> source, int k, SimSnapshot snap)>();
-            for (int r = 0; r < runs; r++)
-            {
-                List<InputTick> source = r % 2 == 0 ? route : Burst(new List<InputTick>(), 60);
-                foreach (var (k, (snap, _)) in Record(source, null).Item2) archive.Add((source, k, snap));
-                for (int b = 0; b < 20; b++)
-                {
-                    var (from, k, snapshot) = archive[rng.Next(archive.Count)];
-                    var inputs = Burst(from.Take(k).ToList(), k + rng.Next(1, 60));
-                    var (branch, taken) = Record(inputs, snapshot);
-                    foreach (var (tk, (ts, _)) in taken) if (rng.Next(4) == 0) archive.Add((inputs, tk, ts));
-                    var (full, starts) = Record(inputs, null, k);
-                    if (!starts.TryGetValue(k, out var at)) continue;
-                    int step = at.Item2;
-                    checks++;
-                    int bad = 0;
-                    while (bad < branch.Count && step + 1 + bad < full.Count && branch[bad] == full[step + 1 + bad]) bad++;
-                    if (bad == branch.Count && step + 1 + bad == full.Count) { matches++; continue; }
-                    if (checks - matches > 5) continue;
-                    Console.WriteLine($"run {r} resume at input {k} (step {step}): first difference {bad} steps later (resumed {branch.Count}, from start {full.Count - step - 1})");
-                    Console.WriteLine("  inputs " + string.Join(" ", inputs.Skip(Math.Max(0, k - 3)).Take(bad + 6).Select(t => $"{t.x}{(t.held ? "h" : "")}{(t.press ? "P" : "")}{(t.release ? "R" : "")}{(t.dash ? "D" + t.dashJump : "")}")));
-                    if (bad >= branch.Count || step + 1 + bad >= full.Count) continue;
-                    string[] got = branch[bad].Split('|'), expected = full[step + 1 + bad].Split('|');
-                    for (int i = 0; i < Math.Max(got.Length, expected.Length); i++)
-                    {
-                        string g = i < got.Length ? got[i] : "<none>", e = i < expected.Length ? expected[i] : "<none>";
-                        if (g != e) Console.WriteLine($"  [{i}] resumed {Short(g)}\n       start   {Short(e)}");
-                    }
-                }
-            }
-            Console.WriteLine($"branch replays matching {matches}/{checks}");
-            return matches == checks ? 0 : 3;
-        }
 
         static int Bench(string[] args)
         {

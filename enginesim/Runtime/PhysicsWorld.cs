@@ -823,20 +823,6 @@ namespace IGTAP.EngineSim
             return n;
         }
 
-        public IEnumerable<string> DescribeContacts()
-        {
-            for (b2Contact c = _b2.GetContactList(); c != null; c = c.GetNext())
-            {
-                var a = (ColliderState)c.GetFixtureA().UserData;
-                var b = (ColliderState)c.GetFixtureB().UserData;
-                c.GetWorldManifold(out b2WorldManifold wm);
-                b2Manifold m = c.GetManifold();
-                yield return $"{a.Collider.name}#{a.Collider.GetInstanceID()} / {b.Collider.name}#{b.Collider.GetInstanceID()} touching={c.IsTouching()} "
-                    + $"points={m.pointCount} normal=({wm.normal.x:R},{wm.normal.y:R}) sep=({wm.separations[0]:R},{wm.separations[1]:R}) "
-                    + $"p0=({wm.points[0].x:R},{wm.points[0].y:R}) imp=({(m.pointCount > 0 ? m.points[0].normalImpulse : 0):R}) touchOrder={c.m_touchOrder} toi={c.m_toiCount}";
-            }
-        }
-
         public void ResetPlayer(Vector2 position, Vector2 velocity, float rotation, float angularVelocity)
         {
             SyncTransforms();
