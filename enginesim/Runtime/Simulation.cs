@@ -50,7 +50,6 @@ namespace IGTAP.EngineSim
         public int FinishTick;
         public long PhysicsTicks;
         public int Stepped;
-        public Vector2 End;
         public string EndReason;
         public int Progress;
         public long[] GoalInputTicks, GoalPhysicsTicks;
@@ -336,7 +335,6 @@ namespace IGTAP.EngineSim
         public void LoadStart(JsonElement start)
         {
             ApplyFields(Player, start.GetProperty("movement"));
-            var engineFields = FieldState.For(typeof(MacroEngine));
             foreach (JsonElement entry in start.GetProperty("engine").EnumerateArray())
             {
                 FieldInfo f = World.FindField(typeof(MacroEngine), entry[0].GetString(), entry[1].GetString());
@@ -589,7 +587,6 @@ namespace IGTAP.EngineSim
                 FinishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick)),
                 Stepped = stepped,
                 PhysicsTicks = Engine.PhysicsTicks,
-                End = Player.transform.m_Position,
                 EndReason = _endReason,
                 Progress = Progress,
                 GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
@@ -663,7 +660,7 @@ namespace IGTAP.EngineSim
             return h.ToHashCode();
         }
 
-        static readonly HashSet<string> MovementPresentationFields = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
+        internal static readonly HashSet<string> MovementPresentationFields = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
 
         static void AddPortableValue(ref HashCode h, object value)
         {

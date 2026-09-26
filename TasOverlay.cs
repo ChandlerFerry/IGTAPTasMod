@@ -31,7 +31,7 @@ namespace IGTAPTasMod
         int _overlayJumpPresses, _overlayDashPresses, _overlayJumpRelease;
         bool _padJump1, _padJump2, _padJump2Newer, _padDash1Last;
         static readonly FieldInfo JumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
-        GUIStyle _overlayTitle, _overlayTitleRight, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
+        GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
         int _overlayStyleHeight;
 
         int _ticksSinceFrame;
@@ -228,7 +228,6 @@ namespace IGTAPTasMod
             float panelScale = PanelScale(scale);
             _overlayTitle = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(20 * panelScale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip, wordWrap = false };
             _overlayTitle.normal.textColor = Color.white;
-            _overlayTitleRight = new GUIStyle(_overlayTitle) { alignment = TextAnchor.MiddleRight };
             _overlayText = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(18 * panelScale), fontStyle = FontStyle.Normal };
             _overlayTicksStyle = new GUIStyle(_overlayText) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Overflow };
             _overlaySmall = new GUIStyle(_overlayTitle) { fontSize = Mathf.RoundToInt(14 * panelScale) };

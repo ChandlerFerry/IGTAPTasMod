@@ -279,7 +279,6 @@ namespace IGTAP.EngineSim
             double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
             pay *= mult;
             pay *= boost;
-            pay *= 1.0;
             pay /= (double)c.V.OffscreenDivisor;
             Earned += Math.Ceiling(pay);
             if (!ColourCheck(c)) return false;
