@@ -26,21 +26,12 @@ namespace IGTAP.EngineSim.Cli
             bool fresh = args.Contains("--fresh");
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
-            var forced = new OfflineSolver.ForcedPath();
-            for (int i = 0; i < args.Length - 1; i++)
-                if (args[i] == "--via" || args[i] == "--avoid")
-                {
-                    float[] c = args[i + 1].Split(',').Select(v => float.Parse(v, CultureInfo.InvariantCulture)).ToArray();
-                    if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
-                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
-                }
-            string pathName = Option(args, "--path-name", "forced");
-            bool customPath = !forced.IsEmpty;
-
             JsonElement header = ReadHeader(startTrace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
-            AddStandingPaths(forced, course, caps, Path.ChangeExtension(startTrace, null) + ".world.json");
+            OfflineSolver.ForcedPath forced = ForcedPaths(args, course, caps, startTrace);
+            string pathName = Option(args, "--path-name", "forced");
+            bool customPath = args.Contains("--via") || args.Contains("--avoid");
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
@@ -63,6 +54,7 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
+            var humanize = new Humanize.Background(create, forced, course, caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;
@@ -70,6 +62,7 @@ namespace IGTAP.EngineSim.Cli
                 File.WriteAllText(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
+                humanize.Set(file, inputs);
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
             solver.Start(threads);
@@ -94,6 +87,7 @@ namespace IGTAP.EngineSim.Cli
             }
             SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
+            humanize.Finish();
             Console.WriteLine("Done. Best " + solver.Shared.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s");
             return 0;
         }
@@ -104,6 +98,21 @@ namespace IGTAP.EngineSim.Cli
             {
                 return JsonSerializer.Serialize(new { course = Course, capabilities = caps, ticks = inputs.Select(t => t.ToJson()) });
             }
+        }
+
+        // --via/--avoid boxes plus forced-paths.json's standing rules for the course and category.
+        internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps, string trace)
+        {
+            var forced = new OfflineSolver.ForcedPath();
+            for (int i = 0; i < args.Length - 1; i++)
+                if (args[i] == "--via" || args[i] == "--avoid")
+                {
+                    float[] c = args[i + 1].Split(',').Select(v => float.Parse(v, CultureInfo.InvariantCulture)).ToArray();
+                    if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
+                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                }
+            AddStandingPaths(forced, course, caps, Path.ChangeExtension(trace, null) + ".world.json");
+            return forced;
         }
 
         internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, string worldPath)
@@ -163,7 +172,7 @@ namespace IGTAP.EngineSim.Cli
             return list.EnumerateArray().Select(InputTick.FromJson).ToList();
         }
 
-        static T Option<T>(string[] args, string name, T fallback)
+        internal static T Option<T>(string[] args, string name, T fallback)
         {
             int i = Array.IndexOf(args, name);
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
