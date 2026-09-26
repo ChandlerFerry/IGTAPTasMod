@@ -115,6 +115,13 @@ move a press or a dash a few ticks while keeping where the hold ends.
   (`Movement.getPlayerControlledInput`), back into the wall, and the buffered jump is a grounded dash jump from inside
   it. The wall side is the stick before the turn; the turn is 0-4 ticks of stick away, and the dash tick holds the
   stick away, or neutral after a turn long enough to flip facing (~3 ticks from a push) so the dash follows facing.
+- **Flip jump** (Course 1 NONE): rising against a wall, flick the stick lightly away and back. The facing flip moves the
+  ground rays to the other side (Movement.cs:911-931), they hit the wall, the player counts as grounded mid-air, and a
+  jump pressed on the flick back is a full ground jump. It needs no unlock.
+
+While a route plays, the in-game input list marks the ticks of each trick with a colored bar (`TasOverlayTechs.cs`):
+these three, the flip jump, coyote and wall-coyote jumps, super, hyper and ultra jumps, dash bounce, wall bounce, spring
+dash and spike grace, each read from the game's state as it happens.
 
 ## The gate
 

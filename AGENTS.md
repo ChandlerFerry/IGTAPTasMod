@@ -8,7 +8,8 @@ Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DS_DJ`). How to sea
 
 ## Route names
 
-- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ> <time>`.
+- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ|WJ_DS_DJ_BS> <time>`. `BS` is block
+  swap on dash; Courses 1–5 stop at `WJ_DS_DJ`, Courses 6–10 start at `WJ_DS_DJ_BS`.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
   start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).
