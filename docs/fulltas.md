@@ -140,6 +140,21 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
+A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
+unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
+snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map.
+
+## Run seeds
+
+`"seeds": ["<run>", ...]` on a run hands those runs' offline bests (`enginesim/fulltas/<run>.json`) to its solve as
+seed routes, once from each goal they reach: the inputs after their goal k, for their goals k+1 on that this run has
+too. When the solve's best reaches one of those goals, the seed's inputs are tried from there (as the course seeds
+are) and spliced in if the whole run gets better. Unlocks aren't checked up front: the simulation decides.
+
+`TrueEnding-ANY%` is the first: a plain new game (no `"start"`, not a Vman speedrun), `ANY%`'s goals through
+`buy:buyds`, `VMAN`'s goals 9–19 (the way to the tunnel), then `Test-No-Omni-Skip`'s four, seeded with
+`Test-No-Omni-Skip`'s path.
+
 ## Seed
 
 Unity's RNG is deterministic for the runs: every Full-TAS new game starts it from one fixed seed (the plugin's
@@ -168,8 +183,10 @@ inputs past the last unchanged goal the same way.
 ## Studio: Full-TAS tab
 
 - **Goals** (`POST /api/fulltas/goals {name, goals}`), **Capture start** (`/api/fulltas/capture`: start trace + world,
-  seeded with the saved best), **Play** (real time from a new game), **Solve** / **Solve unsolved** / **Stop**
-  (`/api/fulltas/solve {name, minutes, windowMinutes, window, threads, goal, unsolved}` runs `IGTAP.EngineSim fulltas`). `/api/state` has
+  seeded with the saved best), **Play** (real time from a new game), **Test best** (`/api/fulltas/play {name, closest:
+  true}`: the search's attempt furthest toward the goals, see below; allowed while a solve runs), **Solve** / **Solve
+  unsolved** / **Stop** (`/api/fulltas/solve {name, minutes, windowMinutes, window, threads, goal, unsolved}` runs
+  `IGTAP.EngineSim fulltas`). `/api/state` has
   `fullTas`; its `solve` has the solver's events (`events`, the latest `status` as `progress`), `error` (didn't start,
   crashed) and the raw `log`; `lastResult` is the last Play or gate check (`kind`, `error`, `reached`, `expected`, ...).
 - **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
@@ -212,6 +229,11 @@ inputs past the last unchanged goal the same way.
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
   resumes it; `--fresh` ignores it.
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
+- Reach windows also write `<traces>\fulltas\<run>.closest.json`: this session's attempt furthest toward the goals (most
+  goals reached, then nearest the next `at:` rect, then fewest inputs; `OfflineSolver.Closest`), from the run's start,
+  rewritten whenever it gets closer. The studio's **Test best** plays it when its goals are the run's; `/api/state`
+  `fullTas.runs[].closest` has `reached`, `next`, `distance` and `ticks`. A playback of a partial route (this, or
+  **Play** of an incomplete offline best) ends with its inputs; only a complete route waits for its last goal.
 - Besides its log lines the solver prints one `@fulltas {json}` line per event (`FullTas.Emit`): `session`, `phase`
   (`reach`/`polish`), `window` (`kind`, goals `first`..`limit`, `target`, `budget`), `status` (each second), `found`,
   `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`. Times are seconds from the run's start.

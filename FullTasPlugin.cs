@@ -23,6 +23,8 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string start;
             /// <summary>A savestate id: the run starts from it, restored in the new game (or Vman world) with the unlocks it carries.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string savestate;
+            /// <summary>Other runs whose offline bests seed this run's solve: from each of their goals on, their inputs are tried where this run reaches that goal.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> seeds;
             public List<string> goals = new List<string>();
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
         }
@@ -325,7 +327,7 @@ namespace IGTAPTasMod
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, seeds = old?.seeds, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
@@ -409,6 +411,42 @@ namespace IGTAPTasMod
             return offline == null || offline.inputs.Count == 0 ? null
                 : new MacroDefinition { name = "fulltas/" + run.name + " offline best (" + offline.reached + " of " + run.goals.Count + " goals)",
                     steps = ToSteps(offline.inputs) };
+        }
+
+        sealed class FullTasClosest
+        {
+            public DateTime written;
+            public List<string> goals;
+            public int reached;
+            public string next;
+            public float? distance;
+            public List<SolverTick> inputs;
+        }
+        readonly Dictionary<string, FullTasClosest> _fullTasClosest = new Dictionary<string, FullTasClosest>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The solver's reach attempt furthest toward the goals (`fulltas/&lt;run&gt;.closest.json`), if it was searched for these goals.</summary>
+        FullTasClosest FullTasClosestAttempt(string run, IList<string> labels)
+        {
+            string path = Path.Combine(EngineSimDir, "fulltas", run + ".closest.json");
+            if (!File.Exists(path)) { _fullTasClosest.Remove(run); return null; }
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            if (!_fullTasClosest.TryGetValue(run, out FullTasClosest closest) || closest.written != written)
+            {
+                try
+                {
+                    JObject o = JObject.Parse(File.ReadAllText(path));
+                    closest = new FullTasClosest { written = written, goals = o["goals"].ToObject<List<string>>(), reached = (int)o["reached"],
+                        next = (string)o["next"], distance = (float?)o["distance"], inputs = o["inputs"].ToObject<List<SolverTick>>() };
+                    _fullTasClosest[run] = closest;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning("Full-TAS closest attempt " + path + " unreadable: " + ex.Message);
+                    _fullTasClosest.Remove(run);
+                    return null;
+                }
+            }
+            return closest.inputs.Count > 0 && closest.goals.SequenceEqual(labels) ? closest : null;
         }
 
         static List<FullTasSplit> FullTasSplits(FullTasTracker tracker)
@@ -802,7 +840,8 @@ namespace IGTAPTasMod
             float time;
             int finishTick;
             FullTasTracker tracker;
-            using (var writer = new StreamWriter(path))
+            string temporary = path + ".tmp";
+            using (var writer = new StreamWriter(temporary))
             {
                 var json = new EngineSimJson(writer);
                 JsonTextWriter w = json.W;
@@ -865,6 +904,8 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
             RememberBestSplits(run, inputs, finished, time, tracker);
             FullTasLog("Trace " + path + ": " + (finished ? "finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s"
                 : "reached " + tracker.Next + " of " + goals.Length + " goals"));
@@ -906,7 +947,7 @@ namespace IGTAPTasMod
             return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, world));
         }
 
-        void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route)
+        void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route, int? expectedGoals = null)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
@@ -916,7 +957,7 @@ namespace IGTAPTasMod
             StartNewGame(null, run.Vman, run.savestate);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
-            int expected = IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0;
+            int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0);
             TechDef tech = _techs.Find(t => t.routeId == route.id);
             _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = tech?.fastForward ?? 0 };
         }
@@ -930,7 +971,10 @@ namespace IGTAPTasMod
             play.tracker.Reset();
             _fullTas = play.tracker;
             _fullTasUnlocks = _newGameUnlocks;
-            _engine.Run(play.route, false, !IsTechDemo(play.route) && play.route.id != ProbeRouteId, 0, null);
+            // Only a complete route waits for its last goal after its inputs; a partial one (the offline best so far, Test best's
+            // attempt) ends with its inputs, instead of idling on until the player falls, dies and respawns at the world start.
+            bool complete = play.expected == play.tracker.Goals.Length;
+            _engine.Run(play.route, false, complete && !IsTechDemo(play.route) && play.route.id != ProbeRouteId, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
         }
@@ -1074,6 +1118,7 @@ namespace IGTAPTasMod
                 string json = JsonConvert.SerializeObject(new { name = route.name, token, course, goals, capabilities = caps, standing, restart, ticks });
                 found.Add((stale, time, token + "|" + caps + "|" + standing + "|" + restart + "|" + JsonConvert.SerializeObject(ticks), json));
             }
+            WriteFullTasRunSeeds(run, labels, found);
             var written = new HashSet<string>();
             int count = 0;
             foreach (var seed in found.OrderBy(s => s.stale).ThenBy(s => s.time))
@@ -1084,6 +1129,33 @@ namespace IGTAPTasMod
                 args.Append(" --seed ").Append(Quote(file));
             }
             return count;
+        }
+
+        /// <summary>The offline best of every run in <c>run.seeds</c> (<c>enginesim/fulltas/&lt;seed&gt;.json</c>), once from each goal it reaches:
+        /// its inputs after goal k with its goals from k+1 on, so a window of this run reaching one of them can reuse the rest.</summary>
+        void WriteFullTasRunSeeds(FullTasRunDef run, HashSet<string> labels, List<(bool stale, float time, string key, string json)> found)
+        {
+            foreach (string source in run.seeds ?? new List<string>())
+            {
+                string file = Path.Combine(EngineSimDir, "fulltas", source + ".json");
+                if (!File.Exists(file)) { FullTasLog("Seed run " + source + " has no offline best (" + file + ")"); continue; }
+                JObject saved = JObject.Parse(File.ReadAllText(file));
+                var goals = saved["goals"].Select(g => (string)g).ToList();
+                var goalInput = saved["goalInputTicks"].Select(t => (long)t).ToList();
+                var inputs = (JArray)saved["inputs"];
+                int reached = goalInput.TakeWhile(t => t >= 0).Count();
+                for (int k = 0; k < reached; k++)
+                {
+                    List<string> rest = goals.GetRange(k, reached - k).Where(labels.Contains).ToList();
+                    if (rest.Count == 0) continue;
+                    int from = k == 0 ? 0 : (int)goalInput[k - 1];
+                    var ticks = new JArray(inputs.Skip(from).Take((int)goalInput[reached - 1] - from));
+                    string name = source + (k == 0 ? " from its start" : " after goal " + k);
+                    string json = new JObject { ["name"] = name, ["goals"] = new JArray(rest), ["capabilities"] = "none",
+                        ["standing"] = false, ["restart"] = false, ["ticks"] = ticks }.ToString(Formatting.None);
+                    found.Add((false, 0f, "run|" + name, json));
+                }
+            }
         }
 
         object StartFullTasSolve(WebStudioRequest request, JObject body)
@@ -1247,7 +1319,16 @@ namespace IGTAPTasMod
                 case "/api/fulltas/play":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
-                    StartFullTasPlayback(run, FullTasPlayableRoute(run));
+                    if (!Truthy(body, "closest"))
+                    {
+                        StartFullTasPlayback(run, FullTasPlayableRoute(run));
+                        return new { ok = true };
+                    }
+                    FullTasClosest closest = FullTasClosestAttempt(run.name, ResolveFullTasGoals(run).Select(g => g.label).ToList())
+                        ?? throw new InvalidOperationException("Full-TAS run " + run.name + " has no search attempt for its current goals yet: run Solve unsolved.");
+                    StartFullTasPlayback(run, new MacroDefinition { name = "fulltas/" + run.name + " closest attempt (" + closest.reached + " of " + run.goals.Count + " goals"
+                        + (closest.next == null ? "" : ", next " + closest.next) + (closest.distance == null ? "" : " " + closest.distance.Value.ToString("0.#", CultureInfo.InvariantCulture) + " away") + ")",
+                        steps = ToSteps(closest.inputs) }, closest.reached);
                     return new { ok = true };
                 }
                 case "/api/fulltas/solve":
@@ -1311,10 +1392,12 @@ namespace IGTAPTasMod
                 if (best == null || !_fullTasSplits.TryGetValue(best.id, out splits)) splits = new List<FullTasSplit>();
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
                 FullTasOffline offline = FullTasOfflineBest(r.name, labels);
+                FullTasClosest closest = FullTasClosestAttempt(r.name, labels);
                 return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
+                    closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
