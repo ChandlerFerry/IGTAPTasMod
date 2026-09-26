@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
+                    case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
@@ -82,7 +83,11 @@ namespace IGTAP.EngineSim.Cli
                             + "        [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]... [--path-name name]\n"
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs;\n"
-                            + "                                         --via/--avoid force a path (boxes passed in order / boxes that cut a run)\n"
+                            + "                                         --via/--avoid force a path (boxes passed in order / boxes that cut a run);\n"
+                            + "                                         each new best also gets a human version (humanize)\n"
+                            + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
+                            + "                                         same-time version of a best with fewer perfect inputs and each\n"
+                            + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--seed <file>]... [--no-submit] [--fresh]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
