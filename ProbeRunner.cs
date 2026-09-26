@@ -34,6 +34,8 @@ namespace IGTAPTasMod
             public bool omniDash;
             public bool started;
             public List<SolverTick> ticks;
+            /// <summary>Extra Movement fields logged on every row (as enginesim's <c>probe</c> <c>fields</c>).</summary>
+            public FieldInfo[] fields;
             public readonly List<object> rows = new List<object>();
         }
 
@@ -62,7 +64,9 @@ namespace IGTAPTasMod
                     string savestateId = Text(body, "savestateId");
                     if (savestateId.Length > 0 && _savestates.Find(s => s.id == savestateId) == null) throw new InvalidOperationException("Savestate not found.");
                     List<SolverTick> ticks = body["ticks"] is JArray list ? list.ToObject<List<SolverTick>>() : null;
-                    _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks,
+                    FieldInfo[] fields = body["fields"] is JArray names ? names.Select(n => AccessTools.Field(typeof(Movement), (string)n)
+                        ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
+                    _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields,
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
                         gameInterpolation = Text(body, "interpolation") == "game",
                         fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"] };
@@ -106,6 +110,20 @@ namespace IGTAPTasMod
             Vector2 v = (Vector2)ProbeVelocity.GetValue(movement), m = (Vector2)ProbeMomentum.GetValue(movement), d = (Vector2)ProbeDashDirection.GetValue(movement);
             Vector2 body = _playerBody != null ? _playerBody.linearVelocity : Vector2.zero;
             Vector2 bodyAt = _playerBody != null ? _playerBody.position - origin : Vector2.zero;
+            var fields = new Dictionary<string, object>();
+            foreach (FieldInfo f in _probe.fields)
+            {
+                object value = f.GetValue(movement);
+                fields[f.Name] = value is UnityEngine.Object o ? (o == null ? null : o.name) : value is Vector2 v2 ? new[] { v2.x, v2.y } : value;
+            }
+            // Zip movers within 300 u and their layer: MakeIntangible takes one off Ground (7) for 0.15 s after a jump off it.
+            var movers = new List<object>();
+            foreach (PlatformMover mover in FindObjectsByType<PlatformMover>(FindObjectsSortMode.None))
+            {
+                Vector3 q = mover.transform.position;
+                if (Mathf.Abs(q.x - p.x) < 300f && Mathf.Abs(q.y - p.y) < 300f)
+                    movers.Add(new { x = q.x - origin.x, y = q.y - origin.y, layer = mover.gameObject.layer });
+            }
             _probe.rows.Add(new
             {
                 kind, frame = Time.frameCount, unscaled = Time.unscaledTime, timeScale = Time.timeScale,
@@ -116,6 +134,7 @@ namespace IGTAPTasMod
                 dash = ProbeDashActive.GetValue(movement), f = ProbeSinceDash.GetValue(movement), facingRight = ProbeFacing.GetValue(movement),
                 dashDir = new[] { d.x, d.y }, originX = origin.x, originY = origin.y,
                 lastHyperY = TechLastHyperYField == null ? (float?)null : (float)TechLastHyperYField.GetValue(movement),
+                fields, movers,
             });
         }
 

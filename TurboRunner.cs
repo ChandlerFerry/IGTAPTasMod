@@ -18,6 +18,10 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
         static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
+        static readonly List<Routine> Routines = new List<Routine>();
+        static readonly AccessTools.FieldRef<WaitForSeconds, float> WaitSeconds = AccessTools.FieldRefAccess<WaitForSeconds, float>("m_Seconds");
+        static readonly Func<object, object> CloneObject = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
+            typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic));
         // FloatingOrigin.MoveOrigin, started by its LateUpdate and waiting for the next physics step (WaitForFixedUpdate).
         static IEnumerator _rebase;
         static int _tick;
@@ -58,10 +62,84 @@ namespace IGTAPTasMod
                 if (routine.MoveNext()) _rebase = routine;
                 return false;
             }
+            if (__instance is PlatformMover)
+            {
+                // A zip mover's coroutines are gameplay (MakeIntangible's 0.15 s off the Ground layer, PlayerExit's contact
+                // clear, the move itself once unlocked): they step on the run's ticks, as enginesim's Scheduler does.
+                __result = null;
+                if (routine.MoveNext()) Park(new Routine { target = __instance, body = routine }, routine.Current);
+                return false;
+            }
             if (!(__instance is upgradeBox box) || !routine.GetType().Name.Contains("IE_BuyMax")) return true;
             __result = null;
             if (routine.MoveNext()) BuyMax.Add((box, routine));
             return false;
+        }
+
+        /// <summary>Where a parked coroutine resumes in a tick (Unity's player loop at playback's frame rate).</summary>
+        internal enum Wait { Seconds, FixedUpdate, Frame, EndOfFrame }
+
+        internal sealed class Routine
+        {
+            public MonoBehaviour target;
+            public IEnumerator body;
+            public object yielded;
+            public Wait wait;
+            public int due;
+        }
+
+        static void Park(Routine r, object yielded)
+        {
+            r.yielded = yielded;
+            switch (yielded)
+            {
+                case WaitForSeconds seconds:
+                    // Due at the start of that tick, as an Invoke of the same delay (a rendered frame between two ticks resumes it).
+                    r.wait = Wait.Seconds;
+                    r.due = _tick + Mathf.FloorToInt(WaitSeconds(seconds) / Time.fixedDeltaTime) + 1;
+                    break;
+                case WaitForFixedUpdate _: r.wait = Wait.FixedUpdate; break;
+                case WaitForEndOfFrame _: r.wait = Wait.EndOfFrame; break;
+                case null: r.wait = Wait.Frame; break;
+                default:
+                    TasPlugin.Log?.LogWarning("Turbo: " + r.target.GetType().Name + " coroutine yields " + yielded.GetType().Name + "; Unity resumes it.");
+                    r.target.StartCoroutine(Continue(r.body, yielded));
+                    return;
+            }
+            Routines.Add(r);
+        }
+
+        static void Resume(Wait wait)
+        {
+            if (Routines.Count == 0) return;
+            Routine[] parked = Routines.ToArray();
+            foreach (Routine r in parked)
+            {
+                if (r.wait != wait || wait == Wait.Seconds && r.due > _tick) continue;
+                Routines.Remove(r);
+                if (r.target == null) continue;
+                if (r.body.MoveNext()) Park(r, r.body.Current);
+            }
+        }
+
+        /// <summary>A coroutine a run left parked, handed to Unity: it waits out what's left of its yield, then runs on.</summary>
+        static IEnumerator Continue(IEnumerator body, object yielded)
+        {
+            yield return yielded;
+            while (body.MoveNext()) yield return body.Current;
+        }
+
+        static (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] CaptureRoutines(int next)
+        {
+            return Routines.ConvertAll(r => (r.target, (IEnumerator)CloneObject(r.body), r.yielded, r.wait, r.due - next)).ToArray();
+        }
+
+        static void RestoreRoutines((MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] saved)
+        {
+            Routines.Clear();
+            if (saved == null) return;
+            foreach (var (target, body, yielded, wait, due) in saved)
+                Routines.Add(new Routine { target = target, body = (IEnumerator)CloneObject(body), yielded = yielded, wait = wait, due = due });
         }
 
         /// <summary>
@@ -128,6 +206,9 @@ namespace IGTAPTasMod
             public (courseScript course, object[] fields)[] courses;
             public Vector3 position;
             public Vector2 bodyPosition, velocity;
+            /// <summary>Every zip mover's fields and layer (MakeIntangible moves it off Ground), and the coroutines parked on a yield.</summary>
+            public (PlatformMover mover, object[] fields, int layer)[] movers;
+            public (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] routines;
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
             public (int due, MonoBehaviour target, string method)[] pending;
@@ -363,13 +444,17 @@ namespace IGTAPTasMod
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
                 pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture(),
-                origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null };
+                origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
+                movers = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                    m => (m, FieldState.Capture(m), m.gameObject.layer)),
+                routines = CaptureRoutines(next) };
         }
 
         public static void Restore(Snapshot s, Movement movement)
         {
             movement.CancelInvoke();
             PutOrigin(s.origin);
+            RestoreMovers(s);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             var own = new List<Collider2D>();
             body.GetAttachedColliders(own);
@@ -400,6 +485,23 @@ namespace IGTAPTasMod
             body.linearVelocity = s.velocity;
             body.angularVelocity = s.angularVelocity;
             Physics2D.SyncTransforms();
+        }
+
+        /// <summary>
+        /// The zip movers as the snapshot had them: fields, layer, and the coroutines a turbo run had parked. Unity-run ones
+        /// (a run's leftovers handed back, real-time play) stop: the snapshot's state replaces what they would still change.
+        /// </summary>
+        static void RestoreMovers(Snapshot s)
+        {
+            if (s.movers == null) return;
+            foreach (var (mover, fields, layer) in s.movers)
+            {
+                if (mover == null) continue;
+                mover.StopAllCoroutines();
+                FieldState.Restore(mover, fields);
+                if (mover.gameObject.layer != layer) mover.gameObject.layer = layer;
+            }
+            RestoreRoutines(s.routines);
         }
 
         /// <summary>
@@ -479,6 +581,7 @@ namespace IGTAPTasMod
             Pending.Clear();
             BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
+            if (resume != null) RestoreRoutines(resume.routines);
             Active = true;
             if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
@@ -494,6 +597,7 @@ namespace IGTAPTasMod
                         Pending.RemoveAt(i--);
                         if (target != null) AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
                     }
+                    Resume(Wait.Seconds);
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
                         if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
@@ -506,12 +610,15 @@ namespace IGTAPTasMod
                         if (cooldown >= 0f) cooldown -= dt;
                     }
                     Physics2D.Simulate(dt);
+                    Resume(Wait.FixedUpdate);
                     ResumeRebase();
                     UpdateMethod.Invoke(movement, null);
+                    Resume(Wait.Frame);
                     foreach (clonesScript c in clones)
                         if (c != null && c.isActiveAndEnabled) StepClones(c, dt);
                     OriginFrame();
                     EndOfFrame();
+                    Resume(Wait.EndOfFrame);
                     afterTick?.Invoke();
                 }
                 return _tick;
@@ -529,6 +636,13 @@ namespace IGTAPTasMod
                 }
                 Pending.Clear();
                 BuyMax.Clear();
+                foreach (Routine r in Routines)
+                {
+                    if (r.target == null) continue;
+                    object wait = r.wait == Wait.Seconds ? new WaitForSeconds(Mathf.Max(0, r.due - _tick) * Time.fixedDeltaTime) : r.yielded;
+                    r.target.StartCoroutine(Continue(r.body, wait));
+                }
+                Routines.Clear();
                 if (_rebase != null)
                 {
                     FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
