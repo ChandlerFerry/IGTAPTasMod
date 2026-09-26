@@ -30,6 +30,8 @@ namespace IGTAPTasMod
             public bool gameInterpolation;
             /// <summary>The playback's frame rate (<see cref="PacePlayback"/>; unset: its usual 280 fps).</summary>
             public int fps;
+            /// <summary>Advance game time by a fixed frame grid (<see cref="FixedClockStep"/>), not by wall time.</summary>
+            public bool fixedClock;
             /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
             public bool started;
@@ -69,7 +71,8 @@ namespace IGTAPTasMod
                     _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields,
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
                         gameInterpolation = Text(body, "interpolation") == "game",
-                        fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"] };
+                        fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"],
+                        fixedClock = body["fixedClock"] != null && (bool)body["fixedClock"] };
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
@@ -237,7 +240,7 @@ namespace IGTAPTasMod
             {
                 _probe.name, _probe.route, _probe.savestateId, capturedSavestateId = _probe.capturedSavestateId,
                 result = _engine.Status, targetFrameRate = _probe.fps > 0 ? _probe.fps : PlaybackFrameRate, vSync = 0,
-                gameInterpolation = _gameInterpolation?.ToString(), keptGameInterpolation = _probe.gameInterpolation,
+                gameInterpolation = _gameInterpolation?.ToString(), keptGameInterpolation = _probe.gameInterpolation, fixedClock = _probe.fixedClock,
                 ticks = _probe.ticks, rows = _probe.rows,
             }, false);
             Logger.LogInfo("Probe " + _probe.name + ": " + _probe.rows.Count + " rows -> " + file);

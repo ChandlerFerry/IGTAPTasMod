@@ -219,7 +219,7 @@ A tick where extra frames ran logs `updates` and the position they moved (`updat
 up, so extra frames never climb past turbo; the in-game probe with `interpolation: "game"` runs ungated.
 
 The in-game counterpart is the plugin's 1x probe (`ProbeRunner.cs`): `POST /api/probe/run {name, route: "1_WJ_DS",
-savestateId?, ticks, captureAt?, interpolation?, fps?, omniDash?}` plays the ticks at normal speed from the category's quick restart
+savestateId?, ticks, captureAt?, interpolation?, fps?, fixedClock?, omniDash?}` plays the ticks at normal speed from the category's quick restart
 (a Full-TAS run's `route: "fulltas/VMAN_NONE"`: from a new game of that run; or the savestate) and writes
 `BepInEx/config/IGTAPTasMod/probes/<name>.json`: one row per physics tick (`kind: "tick"`) and one per rendered frame
 (`kind: "frame"`, with `timeScale`, so a TimeStop's frames show as `timeScale` 0). Positions are in the world frame; each
@@ -230,6 +230,14 @@ it at 50 or more: playback runs at most one physics tick per frame (`Time.maximu
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
 position and `layer`, 7 Ground, 0 while `MakeIntangible` holds it).
+
+With `interpolation: "game"`, every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`,
+the dash's `−20`) starts from the transform, which holds the last rendered frame's blend of the body's last two
+positions, so each one pulls the body back by that frame's lag. On the wall clock the lag changes from run to run, and
+so does the route. `fixedClock: true` (`probe.py --fixed-clock`) pins it: every frame's game time is a step on a grid
+half a frame off the physics tick (`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`), and `Movement.TimeStop`'s
+freeze counts that frame (1/fps) instead of `Time.unscaledDeltaTime`, which follows the wall clock even with
+`captureDeltaTime` set, so a freeze always runs the same number of `Update` frames.
 
 `POST /api/savestates/place {name?, from?, x?, y?, vx?, vy?, facing?, fields?}` makes a probe start anywhere, inside a
 wall too: a copy of a studio savestate (`from`) or of the player now, with the world-frame position, `Velocity` (the body

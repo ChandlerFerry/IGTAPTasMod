@@ -1,6 +1,6 @@
 """Run a 1x probe in the game and summarise its log (ProbeRunner.cs; enginesim/README.md#probe).
 
-  probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--interpolation game] [--fps N] [--omni]
+  probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--interpolation game] [--fps N] [--fixed-clock] [--omni]
   probe.py --show <name>          summarise a probe log already written
 
 route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
@@ -59,10 +59,12 @@ def main():
                         help="game: keep the player body's interpolation as the game sets it (the TAS forces it off)")
     parser.add_argument("--omni", action="store_true", help="play with the omnidirectional dash too (restored after)")
     parser.add_argument("--fps", type=int, default=0, help="playback frame rate (default 280), e.g. 60, 144, 240")
+    parser.add_argument("--fixed-clock", action="store_true",
+                        help="advance game time on a fixed frame grid (Time.captureDeltaTime), not wall time")
     args = parser.parse_args()
     body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "ticks": json.load(open(args.ticks)),
             "interpolation": args.interpolation, "fps": args.fps,
-            "omniDash": args.omni}
+            "omniDash": args.omni, "fixedClock": args.fixed_clock}
     if args.capture_at is not None:
         body["captureAt"] = args.capture_at
     started = call("/api/probe/run", body)

@@ -116,6 +116,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchTechHooks();
             PatchVmanCreditsCrash();
+            PatchTimeStopClock();
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
@@ -165,6 +166,40 @@ namespace IGTAPTasMod
                 else yield return instruction;
             }
             if (dropped != 2) Log.LogWarning("Vman credits: expected ForceCrash and PlayerPrefs.SetInt, dropped " + dropped + " calls.");
+        }
+
+        // Movement.TimeStop's freeze (IE_TimeStop) counts Time.unscaledDeltaTime, which follows the wall clock even with
+        // Time.captureDeltaTime set, so a fixed-clock probe still froze for a varying number of frames (3, 8 and 7 at 240
+        // fps), each one a Movement.Update that can step up. Under the fixed clock it counts the fixed frame step instead.
+        private void PatchTimeStopClock()
+        {
+            // The local iterator IE_TimeStop compiles to "<TimeStop>g__IE_TimeStop|…" on Movement or on its closure class.
+            const BindingFlags any = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            MethodInfo coroutine = Array.Find(typeof(Movement).GetMethods(any), m => m.Name.Contains("IE_TimeStop"));
+            foreach (Type nested in typeof(Movement).GetNestedTypes(BindingFlags.NonPublic))
+                if (coroutine == null) coroutine = Array.Find(nested.GetMethods(any), m => m.Name.Contains("IE_TimeStop"));
+            MethodInfo moveNext = coroutine == null ? null : AccessTools.EnumeratorMoveNext(coroutine);
+            if (moveNext == null) { Logger.LogWarning("Optional hook unavailable: Movement.TimeStop.IE_TimeStop"); return; }
+            _harmony.Patch(moveNext, transpiler: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(FreezeOnFixedClock))));
+        }
+
+        private static IEnumerable<CodeInstruction> FreezeOnFixedClock(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo unscaled = AccessTools.PropertyGetter(typeof(Time), nameof(Time.unscaledDeltaTime));
+            MethodInfo step = AccessTools.Method(typeof(TasPlugin), nameof(FreezeFrameStep));
+            int replaced = 0;
+            foreach (CodeInstruction instruction in instructions)
+            {
+                if (instruction.Calls(unscaled)) { replaced++; yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Call, step).MoveLabelsFrom(instruction); }
+                else yield return instruction;
+            }
+            if (replaced != 1) Log.LogWarning("TimeStop: expected one Time.unscaledDeltaTime, replaced " + replaced + ".");
+        }
+
+        /// <summary>A freeze frame's length: the fixed clock's frame (1/fps) while it runs, else the wall clock's.</summary>
+        static float FreezeFrameStep()
+        {
+            return Instance != null && Instance.FixedClock ? 1f / Application.targetFrameRate : Time.unscaledDeltaTime;
         }
 
         internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
@@ -969,23 +1004,46 @@ namespace IGTAPTasMod
 
         void PacePlayback(bool on)
         {
-            if (on == _playbackPaced) return;
-            _playbackPaced = on;
-            if (on)
+            if (on != _playbackPaced)
             {
-                _savedMaximumDeltaTime = Time.maximumDeltaTime;
-                _savedVSyncCount = QualitySettings.vSyncCount;
-                _savedTargetFrameRate = Application.targetFrameRate;
-                Time.maximumDeltaTime = Time.fixedDeltaTime;
-                QualitySettings.vSyncCount = 0;
-                Application.targetFrameRate = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
+                _playbackPaced = on;
+                if (on)
+                {
+                    _savedMaximumDeltaTime = Time.maximumDeltaTime;
+                    _savedVSyncCount = QualitySettings.vSyncCount;
+                    _savedTargetFrameRate = Application.targetFrameRate;
+                    Time.maximumDeltaTime = Time.fixedDeltaTime;
+                    QualitySettings.vSyncCount = 0;
+                    Application.targetFrameRate = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
+                }
+                else
+                {
+                    Time.maximumDeltaTime = _savedMaximumDeltaTime;
+                    QualitySettings.vSyncCount = _savedVSyncCount;
+                    Application.targetFrameRate = _savedTargetFrameRate;
+                    Time.captureDeltaTime = 0f;
+                }
             }
-            else
-            {
-                Time.maximumDeltaTime = _savedMaximumDeltaTime;
-                QualitySettings.vSyncCount = _savedVSyncCount;
-                Application.targetFrameRate = _savedTargetFrameRate;
-            }
+            if (FixedClock) Time.captureDeltaTime = FixedClockStep(Application.targetFrameRate);
+        }
+
+        /// <summary>A 1x playback on the fixed clock (a probe's <c>fixedClock</c>): game time and freezes ignore the wall clock.</summary>
+        bool FixedClock { get { return _playbackPaced && _probe != null && _probe.fixedClock; } }
+
+        /// <summary>
+        /// The next frame's game-time step (<c>Time.captureDeltaTime</c>) for a fixed clock: frames fall on a grid anchored to
+        /// the last physics tick, half a frame off it (offset + k/fps), so every tick sees the same frame times whatever the
+        /// wall clock does and no frame lands on a tick boundary. With interpolation on, the render position a FixedUpdate
+        /// write starts from (the last frame's blend) is then the same every run. Re-anchored every frame, so the float
+        /// step's rounding never accumulates.
+        /// </summary>
+        static float FixedClockStep(int fps)
+        {
+            double frame = 1.0 / fps, offset = frame / 2, tick = Time.fixedDeltaTime;
+            double since = Time.timeAsDouble - Time.fixedTimeAsDouble;
+            double next = offset + (Math.Floor((since - offset) / frame) + 1) * frame;
+            if (next >= tick) next = tick + offset;
+            return (float)(next - since);
         }
 
         void PaceWalk()
