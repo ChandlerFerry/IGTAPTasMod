@@ -109,14 +109,7 @@ namespace IGTAPTasMod
             if (caps == null || !CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
             string category = def.Token + "_" + CapabilityLabels[caps];
             bool human = Truthy(body, "human");
-            Regex pattern = human ? HumanBestFile : OfflineBestFile;
-            string root = Path.Combine(EngineSimDir, "offline-best");
-            var newest = new[] { root, Path.Combine(root, "judged") }.Where(Directory.Exists)
-                .SelectMany(d => Directory.GetFiles(d, course + "_" + caps + "-*.json"))
-                .Select(p => (path: p, match: pattern.Match(Path.GetFileName(p))))
-                .Where(f => f.match.Success)
-                .OrderByDescending(f => File.GetLastWriteTimeUtc(f.path))
-                .FirstOrDefault();
+            var newest = OfflineBestFiles(course, caps, human ? HumanBestFile : OfflineBestFile).FirstOrDefault();
             if (newest.path == null) throw new InvalidOperationException("No offline best" + (human ? " with a human version" : "") + " for " + category + ".");
             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(newest.path))["ticks"].ToObject<List<SolverTick>>();
             var route = new MacroDefinition { id = human ? HumanPlaybackId : "offline-best", name = category + (human ? " human " : " offline ") + newest.match.Groups[3].Value, steps = ToSteps(inputs) };
@@ -127,23 +120,58 @@ namespace IGTAPTasMod
             return new { ok = true, name = route.name, file = Path.GetFileName(newest.path) };
         }
 
+        // offline-best and offline-best/judged files of one course and category matching `pattern`, newest first.
+        IEnumerable<(string path, Match match)> OfflineBestFiles(int course, string caps, Regex pattern)
+        {
+            string root = Path.Combine(EngineSimDir, "offline-best");
+            return new[] { root, Path.Combine(root, "judged") }.Where(Directory.Exists)
+                .SelectMany(d => Directory.GetFiles(d, course + "_" + caps + "-*.json"))
+                .Select(p => (path: p, match: pattern.Match(Path.GetFileName(p))))
+                .Where(f => f.match.Success)
+                .OrderByDescending(f => File.GetLastWriteTimeUtc(f.path));
+        }
+
+        // The newest human version as fast as a saved route: the same game time for a category route, the same physics
+        // ticks for a farm route. Null when there is none.
+        MacroDefinition HumanVersionOf(MacroDefinition route)
+        {
+            Match g = CategoryRoute.Match(route.name ?? "");
+            bool farm = !g.Success && (g = FarmRoute.Match(route.name ?? "")).Success;
+            if (!g.Success) return null;
+            string[] category = g.Groups[1].Value.Split(new[] { '_' }, 2);
+            CourseDef def = _courses.Find(c => string.Equals(c.Token, category[0], StringComparison.OrdinalIgnoreCase));
+            if (def == null) return null;
+            float routeTime = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
+            string caps = CapsFor(category[1]);
+            foreach (var file in OfflineBestFiles(def.id, caps, HumanBestFile))
+            {
+                JObject json;
+                try { json = JObject.Parse(File.ReadAllText(file.path)); }
+                catch (Exception) { continue; }
+                bool same = farm ? (long?)json["runTicks"] == FarmTicks(routeTime)
+                    : json["time"] != null && ((float)json["time"]).ToString("0.00", CultureInfo.InvariantCulture) == routeTime.ToString("0.00", CultureInfo.InvariantCulture);
+                if (!same) continue;
+                var human = new MacroDefinition { id = HumanPlaybackId, name = route.name + " human", steps = ToSteps(json["ticks"].ToObject<List<SolverTick>>()) };
+                human.timeline = TimelineDocument.FromSequentialSteps(human.steps, Time.fixedDeltaTime * 1000f);
+                return human;
+            }
+            return null;
+        }
+
         JudgeResult Judge(List<SolverTick> inputs)
         {
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
             long runTicks = _engine.PhysicsTicks;
             string category = SolverCategory;
             float best = CategoryBest(category);
-            bool tie = finished && Mathf.Abs(time - best) <= .0001f;
-            long bestRunTicks = tie ? SavedRouteRunTicks(category, best) : long.MaxValue;
             long farmBest = FarmTracked ? FarmBestTicks(category) : long.MaxValue;
             ParkAtStart();
             var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick, runTicks = runTicks,
                 previousBest = float.IsInfinity(best) ? (float?)null : best,
-                previousRunTicks = bestRunTicks == long.MaxValue ? (long?)null : bestRunTicks,
                 previousFarmTicks = farmBest == long.MaxValue ? (long?)null : farmBest };
             if (!finished) return result;
             List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
-            if (time < best - .0001f || tie && runTicks < bestRunTicks)
+            if (time < best - .0001f)
             {
                 result.saved = SaveSolverRoute(route, time);
                 if (!result.saved) result.rejected = _solverLog[_solverLog.Count - 1];
@@ -168,7 +196,7 @@ namespace IGTAPTasMod
             public int finishTick;
             public long runTicks;
             public float? previousBest;
-            public long? previousRunTicks, previousFarmTicks;
+            public long? previousFarmTicks;
             public string rejected;
         }
 
@@ -268,7 +296,6 @@ namespace IGTAPTasMod
                             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
                             JudgeResult r = Judge(inputs);
                             line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
-                                    + (r.previousRunTicks is long was ? ", saved route's " + was : "")
                                     + (r.previousFarmTicks is long farm ? ", farm route's " + farm : "") + ")" : "no finish in turbo")
                                 + (r.saved ? ", saved" : "") + (r.farmSaved ? ", saved as farm" : "") + (r.rejected != null ? ", " + r.rejected : "");
                         }
@@ -311,20 +338,6 @@ namespace IGTAPTasMod
                     best = Math.Min(best, FarmTicks(float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture)));
             }
             return best;
-        }
-
-        long SavedRouteRunTicks(string category, float time)
-        {
-            long fewest = long.MaxValue;
-            foreach (MacroDefinition m in _library.macros.ToList())
-            {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (!g.Success || !string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase)
-                    || Mathf.Abs(float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture) - time) > .0001f) continue;
-                if (Evaluate(ToTicks(m.steps), out float replayed, out _, out _) && Mathf.Abs(replayed - time) <= .0001f)
-                    fewest = Math.Min(fewest, _engine.PhysicsTicks);
-            }
-            return fewest;
         }
 
         object EngineSimTrace(WebStudioRequest request, JObject body)

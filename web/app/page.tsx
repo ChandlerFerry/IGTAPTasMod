@@ -23,7 +23,7 @@ type FullTasRun = { name: string; goals: string[]; tokens?: string[]; breaker?: 
 type FullTasReply = { goals?: unknown; finished?: boolean; time?: number | null; saved?: boolean; reason?: string | null; splits?: FullTasSplit[]; trace?: string };
 type FullTasState = { runs: FullTasRun[]; solve: { running: boolean; name?: string | null; status: string; log: string[] }; lastResult?: FullTasReply | string | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean;
   unlockLevel?: number | null;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; checkpoints: Checkpoint[]; results: Result[]; solver: SolverState;
   fullTas?: FullTasState;
@@ -74,16 +74,20 @@ export default function Studio() {
           <input type="checkbox" checked={state.capabilitiesLocked} disabled={!state.connected} onChange={e => command("/settings/lock-capabilities", { locked: e.target.checked })} />
           <strong>Don&apos;t touch my unlocks</strong>
         </label>
-        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: the player's hurtbox, spikes with their 2-step grace, the player's velocity, and the inputs playback gave on the last 30 ticks.">
+        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: the player's hurtbox, spikes with their 2-step grace, the player's velocity, the inputs playback gave on the last ticks (as many as fit on screen), and the air dashes, air jumps and wall jumps left.">
           <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
           <strong>Overlay</strong>
+        </label>
+        <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker tripped, plus every breaker light. Visual only: the breaker's saved lights and the unlocks they come from don't change.">
+          <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
+          <strong>Breaker lights</strong>
         </label>
       </div>
       <header className={`topbar ${state.humanPlayback ? "humanized" : ""}`}>
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Playing the human version of an offline best (enginesim humanize): same time, fewer perfect inputs. It is not the best route and is never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
-          <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title="Replay the route with game time slowed 10×; the frame rate is unchanged">⏵ Walk route</button>
+          <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replay the route with game time slowed 10×, as its human version when one is as fast; the frame rate is unchanged"}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
           <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
           <button className="record" disabled={!route || state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button>
@@ -119,11 +123,11 @@ export default function Studio() {
   </main>;
 }
 
-const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"]];
+const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"], ["WJ_DS_DJ_BS", "Wall jump + dash + double jump + block swap"]];
 // A record route is timed by the game's timer (start gate to end gate); a farm route (`farm` in the name) by the physics
 // ticks from the quick restart to the finish, what a farming lap costs. Bonuses and transitions are timed from the run
 // start already, so their record is their farm time.
-const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
+const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
 
 const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
@@ -193,7 +197,7 @@ function categoryBests(routes: Route[], courses: Course[]) {
   return {best, farm, other};
 }
 
-const SHORT_CATEGORY: Record<string, string> = { NONE: "None", WJ: "WJ", WJ_DS: "WJ + DS", WJ_DS_DJ: "WJ + DS + DJ" };
+const SHORT_CATEGORY: Record<string, string> = { NONE: "None", WJ: "WJ", WJ_DS: "WJ + DS", WJ_DS_DJ: "WJ + DS + DJ", WJ_DS_DJ_BS: "WJ + DS + DJ + BS" };
 
 function soloBest(best: Bests, c: Course, level: number) {
   let solo: {route: Route; time: number} | undefined;
@@ -266,7 +270,7 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   const chosen=course===""?(solver.courses[0]??1):course;
   const chosenCourse=courses.find(c=>c.id===chosen);
   const minLevel=chosenCourse?.minLevel??0;
-  const capsOptions=[["none","Nothing"],["wj","Wall jump"],["wjds","Wall jump + dash"],["wjdsdj","Wall jump + dash + double jump"]].slice(minLevel,chosenCourse?topLevel(chosenCourse)+1:undefined);
+  const capsOptions=CAPS.map((v,level)=>[v,CATEGORIES[level][1]]).slice(minLevel,chosenCourse?topLevel(chosenCourse)+1:undefined);
   const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps));
@@ -281,7 +285,7 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
       <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
-    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",target)}>3. Solve</button>}<button className="secondary" onClick={()=>onMap(target)} title="Draw what the search has explored for this course and category: saved routes, the offline best, the explored area and the forced-path boxes">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title="Play this category's newest offline best (the latest solve's) in the game in real time, even one the turbo check rejected; nothing is saved">▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title="Play the human version of this category's newest offline best (enginesim humanize: same time, fewer perfect inputs; its -human.md next to the best lists how much slack each input has) in real time for practice; nothing is saved">▶ Play human version</button></div>
+    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",target)}>3. Solve</button>}<button className="secondary" onClick={()=>onMap(target)} title="Draw what the search has explored for this course and category: saved routes, the offline best, the explored area and the forced-path boxes">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Play this category's newest offline best (the latest solve's) in the game in real time, even one the turbo check rejected; nothing is saved"}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Play the human version of this category's newest offline best (enginesim humanize: same time, fewer perfect inputs; its -human.md next to the best lists how much slack each input has) in real time for practice; nothing is saved"}>▶ Play human version</button></div>
     <div className="offlineSummary"><div><span>Best</span><strong>{solver.best!=null?`${solver.best.toFixed(2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}`:"Not started"}</small></div><div><span>Runs</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.finishes.toLocaleString()} timed finishes</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
@@ -421,7 +425,7 @@ function SolveMap({target,courses,onClose}:{target:MapTarget;courses:Course[];on
   </div>;
 }
 
-const CAPS = ["none", "wj", "wjds", "wjdsdj"];
+const CAPS = ["none", "wj", "wjds", "wjdsdj", "wjdsdjbs"];
 type SolveTarget = { key: string; body: { course: number; capabilities: string }; time?: number; farm?: number };
 
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
@@ -468,7 +472,8 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]];
   const cells = (c: Course): (SolveTarget | null)[] => CATEGORIES.map(([cat], level) => level < (c.minLevel ?? 0) || level > topLevel(c) ? null
     : { key: `c:${c.id}:${CAPS[level]}`, body: { course: c.id, capabilities: CAPS[level] }, time: best.get(`${c.id}:${cat}`)?.time, farm: farm.get(`${c.id}:${cat}`)?.time });
-  const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter((t): t is SolveTarget => !!t)));
+  const open = (t: SolveTarget | null): t is SolveTarget => !!t;
+  const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter(open)));
   const queue = all.filter(t => selected.has(t.key));
   const checkbox = (t: SolveTarget) => <label className={`matrixCell ${selected.has(t.key) ? "on" : ""}`} title={t.time != null ? `Current record ${t.time.toFixed(2)}s${t.farm != null ? ` · farm ${t.farm.toFixed(2)}s` : ""}` : "No route yet"}>
     <input type="checkbox" checked={selected.has(t.key)} onChange={() => toggle([t.key])} /><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span></label>;
@@ -482,12 +487,12 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     </div>
     <PassFields passes={passes} update={updatePasses} disabled={solver.running} />
     <div className="matrixScroll"><table className="matrix">
-      <thead><tr><th />{CATEGORIES.map(([cat, title], level) => <th key={cat}><button title={`Tick every ${title.toLowerCase()} target`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter((t): t is SolveTarget => !!t).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
+      <thead><tr><th />{CATEGORIES.map(([cat, title], level) => <th key={cat}><button title={`Tick every ${title.toLowerCase()} target`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
       <tbody>
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={5}>{label}</th></tr>
           {list.map(c => <tr key={c.id}>
-            <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).filter((t): t is SolveTarget => !!t).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
+            <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).filter(open).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
             {cells(c).map((t, level) => <td key={level} className={t ? "" : "na"}>{t && checkbox(t)}</td>)}
           </tr>)}
         </Fragment>)}

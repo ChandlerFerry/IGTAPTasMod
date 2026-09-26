@@ -4,7 +4,7 @@ from gamepaths import CONFIG
 
 ROUTES = CONFIG / "routes.json"
 COURSES = CONFIG / "courses.json"
-LABELS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj"}
+LABELS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj", "WJ_DS_DJ_BS": "wjdsdjbs"}
 
 
 def submit(body):
@@ -36,6 +36,6 @@ if __name__ == "__main__":
         if m["name"].startswith("fulltas/"):
             print(f"{m['name']:34} {'Full-TAS':16} skipped")
             continue
-        match = re.fullmatch(r"([^_\s]+)_(NONE|WJ_DS_DJ|WJ_DS|WJ) (?:farm )?[\d.]+", m["name"])
+        match = re.fullmatch(r"([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (?:farm )?[\d.]+", m["name"])
         if match and match[1] in ids:
             check(m, {"course": ids[match[1]], "capabilities": LABELS[match[2]]}, f"C{ids[match[1]]} {LABELS[match[2]]}")

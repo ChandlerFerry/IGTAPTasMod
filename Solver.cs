@@ -33,7 +33,9 @@ namespace IGTAPTasMod
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
-            [JsonIgnore] public int MaxLevel { get { return !IsBonus ? 3 : string.IsNullOrEmpty(maxCapabilities) ? MinLevel : CapsLevel(maxCapabilities); } }
+            // A bonus runs only in its first category unless courses.json gives maxCapabilities; a course or transition
+            // runs up to its maxCapabilities, or to the top category when it has none.
+            [JsonIgnore] public int MaxLevel { get { return !string.IsNullOrEmpty(maxCapabilities) ? CapsLevel(maxCapabilities) : IsBonus ? MinLevel : TopLevel; } }
             public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && level <= MaxLevel; }
         }
 
@@ -90,16 +92,16 @@ namespace IGTAPTasMod
         static CourseDef[] GameCourses()
         {
             return new[] {
-                new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none" },
-                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none" },
-                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjds" },
-                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdsdj" },
-                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdsdj" } };
+                new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjds", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdsdj", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdsdj", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdsdjbs" },
+                new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdsdjbs" },
+                new CourseDef { id = 8, x = 26495.6016f, y = -2372.42773f, minCapabilities = "wjdsdjbs" },
+                new CourseDef { id = 9, x = 17138.6016f, y = 6648.11475f, minCapabilities = "wjdsdjbs" },
+                new CourseDef { id = 10, x = 30186.6016f, y = 5792.57227f, minCapabilities = "wjdsdjbs" } };
         }
 
         void LoadCourses()
@@ -149,7 +151,7 @@ namespace IGTAPTasMod
 
         static Vector2 Absolute(RawTickSample t) { return new Vector2(t.positionX - t.originX, t.positionY - t.originY); }
 
-        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NONE|WJ_DS_DJ|WJ_DS|WJ))?\b", RegexOptions.IgnoreCase);
+        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ))?\b", RegexOptions.IgnoreCase);
         const float BonusArrivalSize = 32f;
 
         object AddTransitionFromRecording(RecordingDefinition recording)
@@ -227,7 +229,7 @@ namespace IGTAPTasMod
         }
 
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
-            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" } };
+            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" }, { "wjdsdjbs", "WJ_DS_DJ_BS" } };
 
         void CheckCategory(int course, string capabilities)
         {
@@ -235,9 +237,48 @@ namespace IGTAPTasMod
             if (def == null || def.HasCategory(capabilities)) return;
             string Label(int level) => CapabilityLabels.First(p => CapsLevel(p.Key) == level).Value;
             throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
-                + " category; it " + (!def.IsBonus ? "starts at " + Label(def.MinLevel)
-                    : def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
+                + " category; it " + (def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
                     : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel)) + ".");
+        }
+
+        static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
+        List<(startGate gate, int zone)> _gateZones = new List<(startGate, int)>();
+
+        // A start gate is on only while its zone is loaded: it sits under a DisableBits object in that zone's
+        // ZoneDisableLoadList (Courses 1-5 zone 1, Courses 6-10 zone 2), and Movement.respawn never changes zone. Load
+        // the zone of the start gate nearest a route's start the way the game's zone activators do (ZoneLoader), minus
+        // their two-frame wait and loading text. Starts with no gate within 1000 units keep the loaded zone.
+        void EnsureZone(CourseDef def)
+        {
+            ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
+            if (def == null || loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return;
+            if (_gateZones.Count == 0 || _gateZones.Exists(g => g.gate == null)) _gateZones = GateZones(zones);
+            Vector2 start = new Vector2(def.x, def.y) + CurrentOrigin();
+            int zone = 0;
+            float nearest = 1000f * 1000f;
+            foreach (var (gate, gateZone) in _gateZones)
+            {
+                float d = ((Vector2)gate.transform.position - start).sqrMagnitude;
+                if (d < nearest) { nearest = d; zone = gateZone; }
+            }
+            if (zone == 0 || zone == loader.activeZone && ZonesSettled()) return;
+            LoadZoneNow.Invoke(loader, new object[] { zone });
+            Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
+        }
+
+        static List<(startGate, int)> GateZones(GameObject[] zones)
+        {
+            var result = new List<(startGate, int)>();
+            foreach (startGate gate in FindObjectsByType<startGate>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                for (Transform t = gate.transform; t != null; t = t.parent)
+                {
+                    int i = Array.FindIndex(zones, z => z != null && (z == t.gameObject
+                        || z.GetComponent<ZoneDisableLoadList>()?.toLoad?.Contains(t.gameObject) == true));
+                    if (i < 0) continue;
+                    result.Add((gate, i + 1));
+                    break;
+                }
+            return result;
         }
 
         static string EngineSimExe
@@ -651,7 +692,8 @@ namespace IGTAPTasMod
                 || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
                 || !Equals(GetMovementField(player, "maxAirDashes"), level >= 2 ? 1 : 0)
                 || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
-                || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0))
+                || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0)
+                || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[caps]);
         }
 
@@ -759,8 +801,8 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
-        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
 
         // A record route ranks by its name's game time, a farm route by its name's farm time; each kind keeps its own best.
         static bool RankedRoute(string name, out string key, out float time)

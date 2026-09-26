@@ -8,11 +8,17 @@
 - Keep the game's buffer timers: jump, dash, jump cut.
 - Never write `jumpBuffer`, `dashBuffer`, `jumpCutBuffer` or similar directly.
 - Inputs change only on the 50 Hz physics tick.
-- Unlocks match the category exactly, on every tick.
+- Unlocks match the category exactly, on every tick. Categories stack: `NONE`, `WJ` (wall jump), `WJ_DS` (+ dash),
+  `WJ_DS_DJ` (+ double jump), `WJ_DS_DJ_BS` (+ block swap on dash, `blockSwapUnlocked`).
 - Turbo, offline and playback use identical unlocks.
 - Full-TAS runs gain unlocks only through the game's purchases.
 - "Don't touch my unlocks" on: never write an unlock.
-- Bonuses run only in their first category, or up to their `maxCapabilities` in `courses.json`.
+- Bonuses run only in their first category, or up to their `maxCapabilities` in `courses.json`. Courses and
+  transitions run from `minCapabilities` up to `maxCapabilities`, or up to the top category when it's unset: Courses
+  1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
+- Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10 zone 2).
+  Every quick restart onto a course loads the zone of the start gate nearest it the game's way (`ZoneLoader`, as the
+  zone activators do); the breaker plays no part. Their lowest category is `WJ_DS_DJ_BS`.
 - Time runs from the course's start gate to end gate.
 - Finishing a different course never counts.
 - Flying starts allowed: time counts from the last start-gate crossing.

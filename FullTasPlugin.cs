@@ -62,7 +62,7 @@ namespace IGTAPTasMod
         Dictionary<string, List<FullTasSplit>> _fullTasSplits = new Dictionary<string, List<FullTasSplit>>();
 
         FullTasTracker _fullTas;
-        bool _fullTasWallJump, _fullTasDash, _fullTasDoubleJump;
+        bool _fullTasWallJump, _fullTasDash, _fullTasDoubleJump, _fullTasBlockSwap;
         bool _fullTasStartWasTracking;
         int _fullTasFinishCourse = -1;
         FullTasRunDef _solverFullTas;
@@ -127,7 +127,7 @@ namespace IGTAPTasMod
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
-        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? (_fullTasDoubleJump ? "wjdsdj" : "wjds") : "wj") : "none"; } }
+        string FullTasCaps { get { return _fullTasWallJump ? (_fullTasDash ? (_fullTasDoubleJump ? (_fullTasBlockSwap ? "wjdsdjbs" : "wjdsdj") : "wjds") : "wj") : "none"; } }
 
 
         void LoadFullTas()
@@ -335,6 +335,7 @@ namespace IGTAPTasMod
             if (path == FullTasBoxes.First(b => b.token == "buywj").path) _fullTasWallJump = true;
             if (path == FullTasBoxes.First(b => b.token == "buyds").path) _fullTasDash = true;
             if (path == FullTasBoxes.First(b => b.token == "buydj").path) _fullTasDoubleJump = true;
+            if (path == FullTasBoxes.First(b => b.token == "buyblockswap5").path) _fullTasBlockSwap = true;
             FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 
@@ -406,7 +407,7 @@ namespace IGTAPTasMod
             TurboRunner.Snapshot from = NewGameStart();
             tracker = new FullTasTracker(ResolveFullTasGoals(run));
             _fullTas = tracker;
-            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = false;
+            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = _fullTasBlockSwap = false;
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -701,7 +702,7 @@ namespace IGTAPTasMod
             _brakeTicks = -1;
             play.tracker.Reset();
             _fullTas = play.tracker;
-            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = false;
+            _fullTasWallJump = _fullTasDash = _fullTasDoubleJump = _fullTasBlockSwap = false;
             _engine.Run(play.route, _library, false, true, 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);

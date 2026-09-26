@@ -144,5 +144,6 @@ namespace IGTAPTasMod
         public bool autoOpenWebStudio = true;
         public bool lockCapabilities;
         public bool showOverlay = true;
+        public bool forceBreakerLights;
     }
 }

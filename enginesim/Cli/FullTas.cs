@@ -265,7 +265,7 @@ namespace IGTAP.EngineSim.Cli
             var labels = new HashSet<string>(_labels.Skip(first).Take(limit - first));
             _eval.Restore(at);
             Movement player = _eval.Player;
-            int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : 3;
+            int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : !player.blockSwapUnlocked ? 3 : 4;
             List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
             if (matching.Count == 0) return starts;
             bool restart = prefix.Count == 0 || !prefix[prefix.Count - 1].reset;
@@ -392,7 +392,7 @@ namespace IGTAP.EngineSim.Cli
                 Standing = Flag("standing"),
                 Restart = Flag("restart"),
                 Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
-                    : caps.GetString() == "wjdsdj" ? 3 : caps.GetString() == "wjds" ? 2 : caps.GetString() == "wj" ? 1 : 0,
+                    : caps.GetString() == "wjdsdjbs" ? 4 : caps.GetString() == "wjdsdj" ? 3 : caps.GetString() == "wjds" ? 2 : caps.GetString() == "wj" ? 1 : 0,
                 Inputs = ReadInputs(root),
             };
         }

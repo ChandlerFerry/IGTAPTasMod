@@ -164,8 +164,9 @@ best and in the human version, and lists what changed. Ticks are input ticks (da
 
 The human version is never a record and never replaces the best: it goes to its own file, a change that made it slower
 in time or physics ticks is never kept, and the plugin never judges a `-human.json` file. The studio plays the newest one
-for the category with "Play human version" (`/api/enginesim/play {human: true}`); while it plays, the studio's top bar
-turns violet with a HUMANIZED badge (`/api/state` `humanPlayback`).
+for the category with "Play human version" (`/api/enginesim/play {human: true}`), and "Walk route" plays the newest
+one as fast as the selected route (same game time for a category route, same physics ticks for a farm route) in its
+place; while it plays, the studio's top bar turns violet with a HUMANIZED badge (`/api/state` `humanPlayback`).
 
 ## Rules
 

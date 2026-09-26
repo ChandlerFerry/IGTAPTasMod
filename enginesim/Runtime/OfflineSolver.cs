@@ -204,7 +204,7 @@ namespace IGTAP.EngineSim
                 _seeds.Enqueue(new List<InputTick>());
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
-                _dash = owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj";
+                _dash = owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
             }
 

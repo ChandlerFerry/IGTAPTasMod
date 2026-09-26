@@ -114,6 +114,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(upgradeBox), "DoBuyUpgrade", null, nameof(AfterBuyUpgrade));
             PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
+            PatchTechHooks();
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
@@ -176,8 +177,11 @@ namespace IGTAPTasMod
                 int startDelayTicks = Instance._pendingReplayStartDelayTicks;
                 Instance._pendingReplay = null;
                 Instance._pendingReplayStartDelayTicks = 0;
-                bool checkpointRestored = Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
+                // Before the restart too: Movement.respawn resets the block colours only with block swap unlocked.
+                Instance.ApplyCategoryAbilities(macro, movement);
+                bool checkpointRestored = Instance.RestoreRouteStart(macro);
+                movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
                 Instance._engine.Run(macro, Instance._library, !checkpointRestored, true, startDelayTicks, synchronizationPosition);
@@ -818,6 +822,7 @@ namespace IGTAPTasMod
             PacePlayback(PlaybackActive && !TurboRunner.Active);
             PaceWalk();
             OverlayFrame();
+            BreakerLightsFrame();
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
             PumpSolver();
             PumpBootstrap();
@@ -878,15 +883,9 @@ namespace IGTAPTasMod
         {
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
-            Match courseName = Regex.Match(route.name ?? "", @"^([^_\s]+)[_ ]");
-            CourseDef named = null;
-            if (courseName.Success)
-            {
-                string token = courseName.Groups[1].Value;
-                named = int.TryParse(token, out int courseId) ? _courses.Find(c => c.id == courseId)
-                    : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
-            }
+            CourseDef named = CourseOfRoute(route.name);
             _runCourse = named;
+            EnsureZone(named);
             SectionCheckpoint checkpoint = string.IsNullOrEmpty(route.checkpointId) ? null : _checkpoints.Find(c => c.id == route.checkpointId);
             if (movement != null && checkpoint != null)
             {
@@ -941,6 +940,15 @@ namespace IGTAPTasMod
             }
             else Logger.LogWarning("No checkpoint or quick restart was available.");
             return false;
+        }
+
+        private CourseDef CourseOfRoute(string routeName)
+        {
+            Match courseName = Regex.Match(routeName ?? "", @"^([^_\s]+)[_ ]");
+            if (!courseName.Success) return null;
+            string token = courseName.Groups[1].Value;
+            return int.TryParse(token, out int courseId) ? _courses.Find(c => c.id == courseId)
+                : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
         }
 
         private void LockInterpolation(Movement movement)
@@ -1004,15 +1012,20 @@ namespace IGTAPTasMod
                 return;
             }
             EnsureGameUnpaused();
-            _pendingReplay = macro;
+            // A walk is for learning the route, so it plays the human version when one is as fast.
+            _pendingReplay = walkSlowdown > 0f ? HumanVersionOf(macro) ?? macro : macro;
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
         }
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
+        // Categories in unlock order; a category's level is its index. A new unlock goes on the end (and in CategoryAbilities).
+        internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
+        internal static int TopLevel { get { return CapsLadder.Length - 1; } }
+
         internal static int CapsLevel(string caps)
         {
-            return caps == "wjdsdj" ? 3 : caps == "wjds" ? 2 : caps == "wj" ? 1 : 0;
+            return Math.Max(0, Array.IndexOf(CapsLadder, caps));
         }
 
         internal static string CapsFor(string label)
@@ -1020,6 +1033,7 @@ namespace IGTAPTasMod
             return label.Replace("_", "").ToLowerInvariant();
         }
 
+        // Block swap on dash (Movement.blockSwapUnlocked) is the fourth unlock: on in WJ_DS_DJ_BS, off below it.
         internal static (string field, object value)[] CategoryAbilities(string caps)
         {
             int level = CapsLevel(caps);
@@ -1027,7 +1041,8 @@ namespace IGTAPTasMod
             int jumps = level >= 3 ? 1 : 0;
             return new (string, object)[] { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
                 ("maxAirDashes", dashes), ("airDashesLeft", dashes),
-                ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps) };
+                ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps),
+                ("blockSwapUnlocked", level >= 4) };
         }
 
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
@@ -1043,7 +1058,7 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
+            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
             if (!category.Success || movement == null) return;
             string caps = CapsFor(category.Groups[2].Value);
             foreach (var (field, value) in ApplyAbilities(movement, caps))
@@ -1058,7 +1073,8 @@ namespace IGTAPTasMod
             if (!on("wallJumpUnlocked")) return 0;
             if (!on("dashUnlocked") || !some("maxAirDashes")) return 1;
             if (!on("doubleJumpUnlocked") || !some("maxAirJumps")) return 2;
-            return 3;
+            if (!on("blockSwapUnlocked")) return 3;
+            return 4;
         }
 
         private void RestorePlaybackAbilities()
@@ -1394,6 +1410,12 @@ namespace IGTAPTasMod
                 SaveSettings();
                 return new { ok = true, shown = _settings.showOverlay };
             }
+            if (request.Path == "/api/settings/breaker-lights")
+            {
+                _settings.forceBreakerLights = Truthy(body, "on");
+                SaveSettings();
+                return new { ok = true, on = _settings.forceBreakerLights };
+            }
             if (request.Path == "/api/session/setup")
             {
                 if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);
@@ -1639,7 +1661,7 @@ namespace IGTAPTasMod
 
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
@@ -1698,6 +1720,7 @@ namespace IGTAPTasMod
                 paused = IsGamePaused(),
                 capabilitiesLocked = _settings.lockCapabilities,
                 overlayShown = _settings.showOverlay,
+                breakerLightsForced = _settings.forceBreakerLights,
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacroId == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,

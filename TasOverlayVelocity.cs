@@ -132,7 +132,7 @@ namespace IGTAPTasMod
             y += 1 + 8 * scale;
             bool locked = _playerBody != null && _playerBody.interpolation == RigidbodyInterpolation2D.None;
             Label(new Rect(x, y, labelWidth, rowHeight), "INTERPOLATION", _overlaySmall, MutedColor);
-            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), locked ? "OFF (locked)" : "ON", _overlayText, locked ? GraceColor : MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), locked ? "OFF" : "ON", _overlayText, locked ? GraceColor : MutedColor);
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
         }
