@@ -1039,9 +1039,8 @@ namespace IGTAPTasMod
                     _savedVSyncCount = QualitySettings.vSyncCount;
                     _savedTargetFrameRate = Application.targetFrameRate;
                     Time.maximumDeltaTime = Time.fixedDeltaTime;
-                    QualitySettings.vSyncCount = 0;
-                    Application.targetFrameRate = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
-                    _clockNext = 1f / Application.targetFrameRate;
+                    _pacedFps = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
+                    _clockNext = 1f / _pacedFps;
                     _clockTotal = 0.0;
                 }
                 else
@@ -1052,13 +1051,19 @@ namespace IGTAPTasMod
                     Time.captureDeltaTime = 0f;
                 }
             }
+            if (!_playbackPaced) return;
+            // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
+            if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
+            if (Application.targetFrameRate != _pacedFps) Application.targetFrameRate = _pacedFps;
             if (!FixedClock) return;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
             _clockTotal += _clockFrame;
-            _clockNext = FixedClockStep(Application.targetFrameRate);
+            _clockNext = FixedClockStep(_pacedFps);
             Time.captureDeltaTime = _clockNext;
         }
+
+        int _pacedFps;
 
         float _clockFrame, _clockNext;
         double _clockTotal;

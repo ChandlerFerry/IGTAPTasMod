@@ -40,7 +40,7 @@ namespace IGTAP.EngineSim.Cli
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
                     seeds.Add(ReadInputs(doc.RootElement));
 
-            Func<Simulation> create = Creator(startTrace, header);
+            Func<Simulation> create = Creator(startTrace, header, Option(args, "--interpolation-fps", 0));
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "offline-best");
             Directory.CreateDirectory(outDir);
             string label = course + "_" + caps;
@@ -226,7 +226,8 @@ namespace IGTAP.EngineSim.Cli
             return doc.RootElement.Clone();
         }
 
-        internal static Func<Simulation> Creator(string trace, JsonElement header)
+        /// <param name="interpolationFps">1x with interpolation on at this fixed-clock rate (Simulation.InterpolationFps); 0: turbo.</param>
+        internal static Func<Simulation> Creator(string trace, JsonElement header, int interpolationFps = 0)
         {
             string worldPath = Path.ChangeExtension(trace, null) + ".world.json";
             JsonElement start = header.GetProperty("start");
@@ -235,6 +236,7 @@ namespace IGTAP.EngineSim.Cli
                 var sim = new Simulation(World.Load(worldPath));
                 sim.SetTarget(header);
                 sim.LoadStart(start);
+                sim.InterpolationFps = interpolationFps;
                 return sim;
             };
         }

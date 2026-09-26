@@ -83,6 +83,8 @@ namespace IGTAP.EngineSim
         public Vector3[] Rebases;
         public Vector3 RebasePending;
         public bool RebaseDue;
+        /// <summary>With <see cref="Simulation.InterpolationFps"/>: the body's position at the start and end of the last physics step.</summary>
+        public Vector3 StepFrom, StepTo;
     }
 
     public sealed class Simulation
@@ -177,7 +179,9 @@ namespace IGTAP.EngineSim
             Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns;
             Hooks.UpgradeBoxStay = Shop.Stay;
             Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
-            Hooks.SteppedUp = (_, stepUpAmount) => Engine.AllowStepUp(Player.transform, stepUpAmount);
+            // With interpolation on the game's step-up is ungated: every Update frame may lift (a lift drops the interpolation).
+            Hooks.SteppedUp = (_, stepUpAmount) => { if (_grid == null) Engine.AllowStepUp(Player.transform, stepUpAmount); };
+            Hooks.TimeStop = (_, duration) => { if (_freezeFor < 0f || duration < _freezeFor) _freezeFor = duration; };
             Hooks.PlaySfx = (_, code) =>
             {
                 switch (code)
@@ -562,6 +566,92 @@ namespace IGTAP.EngineSim
         /// <summary>One more Movement.Update between physics ticks, as a rendered frame at 1x runs it (probe).</summary>
         public void ExtraUpdate() { _update(); }
 
+        /// <summary>
+        /// 1x playback with the player body's interpolation on (as the game ships), on the plugin's fixed clock at this frame
+        /// rate (TasPlugin.FixedClockStep, a probe's <c>fixedClock</c>); 0 (default): turbo's one Update per tick on the body's
+        /// own position. Unity then shows the body blended between its position at the start of the last physics step and
+        /// its end (alpha = frame time since the step / 0.02), and Movement reads that: FixedUpdate from the last frame's blend,
+        /// so its position writes (jump +2/+5, wall jump +1, dash −20) pull the body back by the lag; Update (the step-up) from
+        /// every frame's. A write drops the interpolation: the body moves there and the frames after show it.
+        /// </summary>
+        public int InterpolationFps
+        {
+            get { return _grid == null ? 0 : _grid.Fps; }
+            set { _grid = value > 0 ? new FrameGrid(value) : null; }
+        }
+
+        FrameGrid _grid;
+        Vector3 _stepFrom, _stepTo;
+        float _freezeFor = -1f;
+        bool _inRun;
+
+        Vector3 BodyPosition()
+        {
+            var body = Physics.PlayerBody();
+            return new Vector3(body.px, body.py, Player.transform.m_Position.z);
+        }
+
+        /// <summary>Before FixedUpdate: the transform holds the last rendered frame's blend (not a write, so the body stays).</summary>
+        void LagForFixedUpdate()
+        {
+            Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, _grid.Alphas[_grid.Alphas.Length - 1]));
+        }
+
+        /// <summary>
+        /// The tick's rendered frames: one Movement.Update per frame at its blend, the first frame repeated for a dash freeze's
+        /// frames (time stands still, TimeStop). A step-up write moves the body at once and later frames show it. The
+        /// transform goes back to the body for the rest of the tick (goals, rebases, snapshots).
+        /// </summary>
+        void InterpolatedFrames()
+        {
+            int frozen = _freezeFor >= 0f ? _grid.FrozenFrames(_freezeFor) : 0;
+            for (int k = 0; k < _grid.Alphas.Length; k++)
+                for (int repeat = k == 0 ? frozen : 0; repeat >= 0; repeat--)
+                {
+                    Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, _grid.Alphas[k]));
+                    _update();
+                    if (Physics.PlayerTransformDirty)
+                    {
+                        Physics.SyncTransforms();
+                        _stepFrom = _stepTo = Player.transform.m_Position;
+                    }
+                }
+            Player.transform.StoreWorldPosition(BodyPosition());
+        }
+
+        /// <summary>
+        /// The plugin's fixed-clock frame grid (TasPlugin.FixedClockStep): frames half a frame off each physics tick, then one
+        /// every 1/fps while it stays inside the tick. FrozenFrames counts a TimeStop's frames as its loop does with the fixed
+        /// clock's steps (TasPlugin.PatchWallClock): the frame before the tick's, then the crossing, then a frame each.
+        /// </summary>
+        sealed class FrameGrid
+        {
+            public readonly int Fps;
+            public readonly float[] Alphas;
+            readonly float _prevStep, _crossStep, _frozenStep;
+
+            public FrameGrid(int fps)
+            {
+                Fps = fps;
+                double frame = 1.0 / fps, offset = frame / 2, tick = 0.02f;
+                var alphas = new List<float>();
+                for (double since = offset; since < tick; since += frame) alphas.Add((float)(since / tick));
+                Alphas = alphas.ToArray();
+                double last = offset + (Alphas.Length - 1) * frame;
+                _crossStep = (float)(tick + offset - last);
+                _prevStep = Alphas.Length >= 2 ? (float)frame : _crossStep;
+                _frozenStep = Alphas.Length >= 2 ? (float)frame : (float)tick;
+            }
+
+            public int FrozenFrames(float duration)
+            {
+                float i = _prevStep;
+                int frames = 0;
+                while (i <= duration) { frames++; i += frames == 1 ? _crossStep : _frozenStep; }
+                return frames;
+            }
+        }
+
         public SimSnapshot Capture(int tick)
         {
             var pending = new (int, MonoBehaviour, string, float)[Scheduler.Queue.Count];
@@ -595,6 +685,9 @@ namespace IGTAP.EngineSim
                 Rebases = _rebases,
                 RebasePending = _rebasePending,
                 RebaseDue = _rebaseDue,
+                // Outside a run (the trace's start, a probe's moved start) the player is at rest where it stands.
+                StepFrom = _inRun ? _stepFrom : Player.transform.m_Position,
+                StepTo = _inRun ? _stepTo : Player.transform.m_Position,
             };
         }
 
@@ -607,6 +700,7 @@ namespace IGTAP.EngineSim
             h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
             foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
             h.Add(Physics.PlayerBody());
+            if (_grid != null) { h.Add(_stepFrom); h.Add(_stepTo); }
             foreach (Scheduler.Pending p in Scheduler.Queue)
             {
                 h.Add(p.Due - Scheduler.Tick); h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(p.Target)); h.Add(p.Method); h.Add(p.Repeat);
@@ -732,6 +826,8 @@ namespace IGTAP.EngineSim
             _vmanTimeLeft = s.VmanTimeLeft;
             _rebasePending = s.RebasePending;
             _rebaseDue = s.RebaseDue;
+            _stepFrom = s.StepFrom;
+            _stepTo = s.StepTo;
         }
 
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
@@ -740,6 +836,7 @@ namespace IGTAP.EngineSim
             from ??= _start;
             if (from.Tick >= inputs.Count) from = _start;
             Restore(from);
+            _inRun = true;
             int step = from.Tick;
             while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
             Engine.Resume(from.Engine, ToSteps(inputs, step), from.Tick - step);
@@ -759,6 +856,8 @@ namespace IGTAP.EngineSim
                 Scheduler.Resume(Scheduler.Wait.Seconds);
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
                 int rebasesBefore = _rebases.Length;
+                if (_grid != null) LagForFixedUpdate();
+                _freezeFor = -1f;
                 if (Engine.TakeQuickRestart())
                 {
                     RespawnMethod.Invoke(Player, new object[] { true });
@@ -773,10 +872,25 @@ namespace IGTAP.EngineSim
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 VmanClock();
                 Shop.TickCooldowns(World.FixedDeltaTime);
-                Physics.Simulate(World.FixedDeltaTime);
+                if (_grid != null)
+                {
+                    Physics.SyncTransforms();
+                    _stepFrom = BodyPosition();
+                    Physics.Simulate(World.FixedDeltaTime);
+                    _stepTo = BodyPosition();
+                }
+                else Physics.Simulate(World.FixedDeltaTime);
                 Scheduler.Resume(Scheduler.Wait.FixedUpdate);
+                int rebasesBeforeResume = _rebases.Length;
                 ResumeRebase();
-                _update();
+                if (_grid != null && _rebases.Length != rebasesBeforeResume)
+                {
+                    Vector3 by = _rebases[_rebases.Length - 1];
+                    _stepFrom -= by;
+                    _stepTo -= by;
+                }
+                if (_grid != null) InterpolatedFrames();
+                else _update();
                 Scheduler.Resume(Scheduler.Wait.Frame);
                 Shop.StepClones();
                 Shop.EndOfFrame();
@@ -811,6 +925,7 @@ namespace IGTAP.EngineSim
                 lastTick = tick;
                 if (afterTick != null && !afterTick(tick)) stop = true;
             }
+            _inRun = false;
             if (Engine.IsRunning) Engine.Abort("Solver run ended");
             return new RunResult
             {
@@ -898,6 +1013,7 @@ namespace IGTAP.EngineSim
             h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
             foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
             h.Add(Physics.PlayerBody());
+            if (_grid != null) { h.Add(_stepFrom); h.Add(_stepTo); }
             return h.ToHashCode();
         }
 

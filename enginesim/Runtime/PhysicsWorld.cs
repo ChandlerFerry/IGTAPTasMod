@@ -1027,6 +1027,9 @@ namespace IGTAP.EngineSim
             return (p.x, p.y, _player.Body.GetAngle(), v.x, v.y, _player.Body.GetAngularVelocity());
         }
 
+        /// <summary>Game code wrote the player's transform since the last sync (a write moves the body at the next sync).</summary>
+        public bool PlayerTransformDirty { get { return _player.TransformDirty; } }
+
         sealed class PhysicsSnapshot
         {
             public object World;

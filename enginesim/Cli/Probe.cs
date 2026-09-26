@@ -35,6 +35,9 @@ namespace IGTAP.EngineSim.Cli
             int updatesPerTick = probe.TryGetProperty("updatesPerTick", out JsonElement u) ? Math.Max(1, u.GetInt32()) : 1;
             float fps = probe.TryGetProperty("fps", out JsonElement f) ? f.GetSingle() : 0f;
             int extraTicks = probe.TryGetProperty("extraTicks", out JsonElement e) ? e.GetInt32() : 30;
+            // 1x with interpolation on at this fixed-clock rate (Simulation.InterpolationFps): its frames replace updatesPerTick/fps.
+            sim.InterpolationFps = probe.TryGetProperty("interpolationFps", out JsonElement ifps) ? ifps.GetInt32() : 0;
+            bool legacyFrames = sim.InterpolationFps == 0;
             string[] extraFields = probe.TryGetProperty("fields", out JsonElement fe) ? fe.EnumerateArray().Select(x => x.GetString()).ToArray() : Array.Empty<string>();
             FieldInfo[] extraInfos = extraFields.Select(n => typeof(Movement).GetField(n, Fields)
                 ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray();
@@ -49,14 +52,15 @@ namespace IGTAP.EngineSim.Cli
                 List<InputTick> inputs = prefix.Concat(ticks).ToList();
                 var log = new List<Dictionary<string, object>>();
                 float freeze = 0f;
-                Hooks.TimeStop = (_, duration) => freeze += duration;
+                var gameTimeStop = Hooks.TimeStop;
+                if (legacyFrames) Hooks.TimeStop = (_, duration) => freeze += duration;
                 RunResult r;
                 try
                 {
                     r = sim.Run(inputs, null, extraTicks: extraTicks, onStep: step =>
                     {
                         Vector3 before = sim.PlayerWorld;
-                        int frames = updatesPerTick - 1 + (fps > 0f ? (int)Math.Round(freeze * fps) : 0);
+                        int frames = !legacyFrames ? 0 : updatesPerTick - 1 + (fps > 0f ? (int)Math.Round(freeze * fps) : 0);
                         bool froze = freeze > 0f;
                         freeze = 0f;
                         for (int i = 0; i < frames; i++) sim.ExtraUpdate();
@@ -67,7 +71,7 @@ namespace IGTAP.EngineSim.Cli
                         log.Add(row);
                     });
                 }
-                finally { Hooks.TimeStop = null; }
+                finally { Hooks.TimeStop = gameTimeStop; }
                 output.Add(new { name, finished = r.Finished, time = r.Time, end = r.EndReason, ticks = log });
             }
             string json = JsonSerializer.Serialize(new { branches = output }, new JsonSerializerOptions { WriteIndented = false });
