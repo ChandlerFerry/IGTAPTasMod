@@ -35,8 +35,6 @@ namespace IGTAPTasMod
             for (int i = 0; i < fields.Length; i++) fields[i].SetValue(target, Copy(values[i]));
         }
 
-        // Whether the target's fields still hold what `values` captured: arrays, lists, queues and stacks element by element;
-        // a HashSet never matches (a copy may iterate in another order); anything else by Equals.
         public static bool Matches(object target, object[] values)
         {
             FieldInfo[] fields = For(target.GetType());

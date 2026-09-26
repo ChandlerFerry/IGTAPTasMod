@@ -1,4 +1,3 @@
-/* Tech tab (techs.tsx): the three categories as columns of tech cards; ours stand out. */
 .techToolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
 .techSearch, .techAdd input, .techAdd select, .techEditor input, .techEditor select, .techEditor textarea, .techDemo select { border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 8px 10px; outline: none; }
 .techSearch { flex: 1; min-width: 200px; }
@@ -10,18 +9,27 @@
 .seenChip { padding: 3px 9px; border: 1px solid #294563; border-radius: 999px; background: #10263d; color: var(--text); font-size: 12px; cursor: pointer; }
 .seenChip:disabled { color: var(--muted); cursor: default; }
 .muted { color: var(--muted); font-size: 13px; }
-.techColumns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; margin-top: 18px; }
-@media (max-width: 1300px) { .techColumns { grid-template-columns: 1fr; } }
-.techColumn { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-top: 3px solid var(--green); border-radius: 10px; background: #0a1729; }
-.techColumn.nmg { border-top-color: var(--amber); }
-.techColumn.major { border-top-color: var(--red); }
-.techColumn header { display: flex; justify-content: space-between; align-items: baseline; }
-.techColumn h3 { margin: 0; font-size: 16px; }
-.techColumn header span { color: var(--muted); font-size: 13px; }
+.techGroup { margin-top: 22px; }
+.techGroupHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.techGroupHead h3 { margin: 0; font-size: 18px; }
+.techGroupHead > span { color: var(--muted); font-size: 13px; }
+.techGroupHead .techBlurb { flex-basis: 100%; margin: 0; }
+.techGroup.unconfirmed .techCard { opacity: .85; border-style: dashed; }
+.techTier { margin-top: 14px; }
+.techTier header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.techTier h4 { margin: 0; font-size: 14px; letter-spacing: .04em; color: var(--cyan); }
+.techTier header span { color: var(--muted); font-size: 12px; }
+.techGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .techBlurb { margin: -4px 0 4px; color: var(--muted); font-size: 12px; }
+.techLegend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legendItem { display: inline-flex; align-items: center; gap: 6px; }
+.legendItem::before { content: ""; width: 12px; height: 12px; border-radius: 3px; background: var(--green); }
+.legendItem.nmg::before { background: var(--amber); }
+.legendItem.major::before { background: var(--red); }
 .techCard { display: flex; flex-direction: column; gap: 8px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: #101f35; transition: box-shadow .3s; }
-.techCard.ours { border-color: #6b4e1d; background: #1d1a17; box-shadow: inset 3px 0 0 var(--amber); }
-.techCard.game { box-shadow: inset 3px 0 0 var(--cyan); }
+.techCard.glitchless { border-left: 4px solid var(--green); }
+.techCard.nmg { border-left: 4px solid var(--amber); }
+.techCard.major { border-left: 4px solid var(--red); }
 .techCard.focused { box-shadow: 0 0 0 2px var(--cyan); }
 .techHead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .techHead strong { font-size: 15px; }

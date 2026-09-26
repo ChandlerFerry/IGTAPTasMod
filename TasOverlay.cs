@@ -19,7 +19,6 @@ namespace IGTAPTasMod
             public bool jump1, jump2, jump1Press, jump2Press, dash1, dash2, dash1Press, dash2Press;
         }
 
-        // Input list layout in panel units. The band always reserves the tech summary line so the list never resizes.
         const float InputRowHeight = 30f, InputBandHeight = 14f + 26f + 22f + 22f + 12f, InputColumnLine = 28f;
         readonly List<InputRow> _inputRows = new List<InputRow>();
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
@@ -58,9 +57,6 @@ namespace IGTAPTasMod
             _droppedFramesShownUntil = Time.unscaledTime + DroppedFramesLingerSeconds;
         }
 
-        // Outside playback the pad shows the player's own buttons as the game's input actions see them, so a keyboard or
-        // controller can be checked against the rules: a press or a release lights for LiveFlashSeconds, JUMP CUT follows
-        // Movement.jumpCutBuffer.
         const float LiveFlashSeconds = 0.15f;
         InputAction _liveJump1, _liveJump2, _liveDash1, _liveDash2;
         float _liveJump1At = float.NegativeInfinity, _liveJump2At = float.NegativeInfinity, _liveDash1At = float.NegativeInfinity,
@@ -142,27 +138,35 @@ namespace IGTAPTasMod
                 _overlayTicks++;
                 _ticksSinceFrame++;
                 _overlayClock = null;
-                InputRow row;
-                int slots = InputRowSlots;
-                while (_inputRows.Count > slots) _inputRows.RemoveAt(0);
-                if (_inputRows.Count < slots) row = new InputRow();
-                else
+                bool jumpPress = _engine.JumpPresses != _overlayJumpPresses, jumpRelease = _engine.LastJumpRelease != _overlayJumpRelease,
+                    dash = _engine.DashPresses != _overlayDashPresses;
+                // A tech demo lists only the ticks that hold an input: its idle tail (and the stick at rest between presses) is noise.
+                bool idle = !jumpPress && !jumpRelease && !dash && !_engine.JumpHeld && _overlayAxis == Vector2.zero;
+                if (!(idle && IsTechDemo(_engine.ActiveMacro)))
                 {
-                    row = _inputRows[0];
-                    _inputRows.RemoveAt(0);
+                    InputRow row;
+                    int slots = InputRowSlots;
+                    while (_inputRows.Count > slots) _inputRows.RemoveAt(0);
+                    if (_inputRows.Count < slots) row = new InputRow();
+                    else
+                    {
+                        row = _inputRows[0];
+                        _inputRows.RemoveAt(0);
+                    }
+                    row.tickText = _overlayTicks.ToString();
+                    row.x = _overlayAxis.x;
+                    row.y = _overlayAxis.y;
+                    row.stickText = StickText(row.x, row.y);
+                    row.jumpPress = jumpPress;
+                    row.jumpRelease = jumpRelease;
+                    row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+                    row.dash = dash;
+                    AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
+                    _inputRows.Add(row);
+                    row.tick = _overlayTicks;
                 }
-                row.tickText = _overlayTicks.ToString();
-                row.x = _overlayAxis.x;
-                row.y = _overlayAxis.y;
-                row.stickText = StickText(row.x, row.y);
-                row.jumpPress = _engine.JumpPresses != _overlayJumpPresses;
-                row.jumpRelease = _engine.LastJumpRelease != _overlayJumpRelease;
-                row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
-                row.dash = _engine.DashPresses != _overlayDashPresses;
-                AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
-                _inputRows.Add(row);
-                row.tick = _overlayTicks;
-                TechAfterTick(player, _overlayTicks, row.jumpPress, row.dash);
+                else _padJump1 = _padJump2 = false;
+                TechAfterTick(player, _overlayTicks, jumpPress, dash);
             }
             _overlayJumpPresses = _engine.JumpPresses;
             _overlayDashPresses = _engine.DashPresses;
@@ -170,10 +174,6 @@ namespace IGTAPTasMod
             SampleVelocity(player);
         }
 
-        // The game reads two jump actions (Jump, Jump2) and two dash actions (Dash, Dash2); only presses and jump releases
-        // reach it. A jump press while one is down is the other one going down; a press while both are down is the older one
-        // released and pressed again inside the tick (the press clears that release's jump cut); a release lifts both. A dash
-        // is a tap, on the other button when the previous tick pressed dash on the first.
         void AssignPadButtons(InputRow row, bool jumpDown)
         {
             if (!jumpDown) _padJump1 = _padJump2 = false;
@@ -205,11 +205,13 @@ namespace IGTAPTasMod
 
         private void OnGUI()
         {
-            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun);
-            if (!(_settings.showOverlay || goals) || Event.current.type != EventType.Repaint) return;
+            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown;
+            if (!origin) ResetOriginOverlay();
+            if (!(_settings.showOverlay || goals || origin) || Event.current.type != EventType.Repaint) return;
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
             if (goals) DrawFullTasGoals(scale);
+            if (origin) DrawOriginOverlay(scale);
             if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             DrawSpikes(scale);
@@ -249,7 +251,6 @@ namespace IGTAPTasMod
         const float PanelWidth = 440f;
         static float PanelScale(float scale) { return Mathf.Min(scale, 1f); }
 
-        // The input list takes every row that fits above the input pad, which sits in the bottom-left corner.
         static int InputRowSlots
         {
             get
@@ -293,14 +294,11 @@ namespace IGTAPTasMod
         static readonly GUIContent BadgeContent = new GUIContent(BadgeText);
         GUIStyle _badgeStyle;
 
-        // "TAS" watermarked into the middle of the box, rotated to read bottom-to-top: the fill's hue a bit deeper and mostly
-        // transparent, so it reads as a shade of the box rather than text on top of it.
         void DrawHitboxBadge(Rect box, Color fill)
         {
             if (box.width < 6f || box.height < 6f) return;
             if (_badgeStyle == null)
                 _badgeStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false, padding = new RectOffset(), margin = new RectOffset() };
-            // Rotated, the text's width runs along the box's height and its height along the box's width.
             int size = Mathf.Max(6, Mathf.FloorToInt(box.width * 0.8f));
             if (_badgeStyle.fontSize != size) _badgeStyle.fontSize = size;
             Vector2 text = _badgeStyle.CalcSize(BadgeContent);
@@ -616,9 +614,6 @@ namespace IGTAPTasMod
         FullTasRunDef _goalOverlayRun;
         FullTasGoal[] _goalOverlayGoals;
 
-        // The chosen run's area goal (at:) and bonus end (reward:) rects where TouchesBox tests them: courses.json's frame
-        // plus CurrentOrigin. While that run plays, reached goals are green and the next one yellow. Its avoid boxes
-        // (forced-paths.json) are red.
         void DrawFullTasGoals(float scale)
         {
             Camera cam = Camera.main;
@@ -766,7 +761,6 @@ namespace IGTAPTasMod
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
-            // The tech bars take the gutter left of the tick column (TechLanes lanes, 16 units each).
             float gutter = panel.x + 6 * scale, cx = gutter + TechLanes * 16 * scale + 4 * scale;
             float tickWidth = 56 * scale, stickX = cx + 84 * scale, jumpX = cx + 200 * scale, dashX = cx + 290 * scale;
             Label(new Rect(cx, y, tickWidth, columnLine), "TICK", _overlaySmallRight, MutedColor);
@@ -807,11 +801,6 @@ namespace IGTAPTasMod
         readonly int[] _padCountLeft = { int.MinValue, int.MinValue, int.MinValue }, _padCountMax = new int[3];
         readonly string[] _padCountText = new string[3];
 
-        // Bottom-left corner, under the input list: the newest tick as buttons a player would use (outside playback: the player's own buttons, see
-        // SampleLiveInput). The stick's dot sits where MoveAxis points; a button is bright when it goes down and dim while held
-        // (the game never reads holding). JUMP CUT lights while a release's 0.26 s jump cut is armed (bright on the release);
-        // a jump press clears it. Under the buttons: air dashes, air jumps and wall jumps left of their maximum (the game's own
-        // counter HUD), and the player's GROUND / WALL / DASHING state plus MOSS while the last surface touched refills nothing.
         void DrawInputPad(Rect pad, InputRow row, float scale)
         {
             Fill(pad, PanelBack);

@@ -241,8 +241,6 @@ namespace UnityEngine
     {
         internal Transform m_Parent;
         internal readonly List<Transform> m_Children = new List<Transform>();
-        // World and local poses are both kept; static objects keep Unity's exported world pose. The parent is translation
-        // only (the player's PlayerObject), but not always at the origin (Course 4 moves it to -20200, -10539).
         internal Vector3 m_Position, m_LocalPosition, m_LocalScale = Vector3.one, m_LossyScale = Vector3.one;
         internal Quaternion m_Rotation = Quaternion.identity, m_LocalRotation = Quaternion.identity;
 
@@ -272,9 +270,6 @@ namespace UnityEngine
             set { StoreWorldPosition(value); Changed(true); }
         }
 
-        // Unity keeps only the local position: a world position set under a parent reads back as
-        // parent + (value - parent), which rounds away low bits once either side is large (Course 4: x = 20202.4453 reads
-        // back 20202.4434).
         internal void StoreWorldPosition(Vector3 value)
         {
             if (m_Parent == null) { m_Position = value; m_LocalPosition = value; return; }
@@ -333,7 +328,6 @@ namespace UnityEngine
             Engine.Physics?.TransformChanged(this, pose);
         }
 
-        // Host-side setup: Unity's exported world and local poses, no physics notification.
         public void InitPose(Vector3 position, Quaternion rotation, Vector3 lossyScale, Vector3 localPosition, Quaternion localRotation, Vector3 localScale)
         {
             m_Position = position; m_Rotation = rotation; m_LossyScale = lossyScale;

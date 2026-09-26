@@ -6,71 +6,69 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        // "Breaker lights" (studio toggle): Area 1 lit as before the breaker tripped (tripBreakerScript's globalLight) plus
-        // every breaker area light. Visual only: it sets the lights' GameObjects, never activeLights/fixedAreas (the save
-        // and the economy read those), and turning it off puts back what the game's own state shows.
-        static readonly AccessTools.FieldRef<tripBreakerScript, bool[]> TrippedLights = AccessTools.FieldRefAccess<tripBreakerScript, bool[]>("activeLights");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> ForcedAllLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("allLights");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> ForcedGlobalLight = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("globalLight");
-        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject[]> ForcedAreaLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject[]>("areaLights");
+        internal static readonly AccessTools.FieldRef<tripBreakerScript, bool[]> BreakerActiveLights = AccessTools.FieldRefAccess<tripBreakerScript, bool[]>("activeLights");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerAllLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("allLights");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject> BreakerGlobalLight = AccessTools.FieldRefAccess<tripBreakerScript, GameObject>("globalLight");
+        static readonly AccessTools.FieldRef<tripBreakerScript, GameObject[]> BreakerAreaLights = AccessTools.FieldRefAccess<tripBreakerScript, GameObject[]>("areaLights");
 
         readonly List<tripBreakerScript> _lightBreakers = new List<tripBreakerScript>();
-        // Before the lights were forced, per breaker: allLights' and globalLight's states, and whether it had tripped.
-        readonly Dictionary<tripBreakerScript, (bool all, bool global, bool tripped)> _lightsBefore = new Dictionary<tripBreakerScript, (bool, bool, bool)>();
         float _nextBreakerSearch;
 
         void BreakerLightsFrame()
         {
             if (_settings.forceBreakerLights) ForceBreakerLights();
-            else if (_lightsBefore.Count > 0) ReleaseBreakerLights();
+            else if (_lightBreakers.Count > 0) ReleaseBreakerLights();
         }
 
         void ForceBreakerLights()
         {
-            // A zone or scene load replaces the breaker: look again (at most once a second while none is loaded).
             if ((_lightBreakers.Count == 0 || _lightBreakers.Exists(b => b == null)) && Time.unscaledTime >= _nextBreakerSearch)
             {
                 _nextBreakerSearch = Time.unscaledTime + 1f;
                 _lightBreakers.Clear();
                 _lightBreakers.AddRange(FindObjectsByType<tripBreakerScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
-                _lightsBefore.Clear();
             }
             foreach (tripBreakerScript breaker in _lightBreakers)
             {
                 if (breaker == null) continue;
-                GameObject all = ForcedAllLights(breaker), global = ForcedGlobalLight(breaker);
-                if (!_lightsBefore.ContainsKey(breaker))
-                    _lightsBefore[breaker] = (all != null && all.activeSelf, global != null && global.activeSelf, Tripped(breaker));
+                GameObject all = BreakerAllLights(breaker), global = BreakerGlobalLight(breaker);
                 if (global != null && !global.activeSelf) global.SetActive(true);
                 if (all != null && !all.activeSelf) all.SetActive(true);
-                foreach (GameObject area in ForcedAreaLights(breaker) ?? new GameObject[0])
+                foreach (GameObject area in BreakerAreaLights(breaker) ?? new GameObject[0])
                     if (area != null && !area.activeSelf) area.SetActive(true);
             }
         }
 
-        static bool Tripped(tripBreakerScript breaker)
-        {
-            bool[] lit = TrippedLights(breaker);
-            return lit != null && lit.Length > 0 && lit[0];
-        }
-
         void ReleaseBreakerLights()
         {
-            foreach (var entry in _lightsBefore)
+            foreach (tripBreakerScript breaker in _lightBreakers)
             {
-                tripBreakerScript breaker = entry.Key;
                 if (breaker == null) continue;
-                bool[] lit = TrippedLights(breaker) ?? new bool[0];
-                GameObject[] areas = ForcedAreaLights(breaker) ?? new GameObject[0];
-                for (int i = 0; i < areas.Length; i++)
-                    if (areas[i] != null) areas[i].SetActive(i < lit.Length && lit[i]);
-                GameObject all = ForcedAllLights(breaker), global = ForcedGlobalLight(breaker);
-                if (all != null) all.SetActive(entry.Value.all || System.Array.IndexOf(lit, true) >= 0);
-                // TripBreaker turns the global light off: a trip while forced leaves it off.
-                if (global != null) global.SetActive(entry.Value.global && (entry.Value.tripped || !Tripped(breaker)));
+                foreach (var (light, on) in GameBreakerLights(breaker))
+                    if (light.activeSelf != on) light.SetActive(on);
             }
-            _lightsBefore.Clear();
             _lightBreakers.Clear();
+        }
+
+        // The breaker's lights as the game's own code leaves them, whatever the forcing shows. OvergrowthLoadScript.OnLoad
+        // turns GlobalLight and BreakerLights on unless Area 1 is overgrown and keeps GlobalLight off after a tripped save's
+        // load (mainMenuState); TripBreaker turns GlobalLight off; an area light is on once activeLights says so (load,
+        // activateBreakerLights, fixedArea). A fresh world (a new game, a Vman speedrun) is lit, with no area light on.
+        internal static List<(GameObject light, bool on)> GameBreakerLights(tripBreakerScript breaker)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            bool overgrown = stats != null && stats.currentA1State == globalStats.area1states.Overgrown;
+            bool tripped = stats != null && (stats.currentA1State == globalStats.area1states.tripBreaker
+                || stats.mainMenuState == globalStats.area1states.tripBreaker);
+            var lights = new List<(GameObject, bool)>();
+            GameObject global = BreakerGlobalLight(breaker), all = BreakerAllLights(breaker);
+            if (global != null) lights.Add((global, !overgrown && !tripped));
+            if (all != null) lights.Add((all, !overgrown));
+            bool[] lit = BreakerActiveLights(breaker) ?? new bool[0];
+            GameObject[] areas = BreakerAreaLights(breaker) ?? new GameObject[0];
+            for (int i = 0; i < areas.Length; i++)
+                if (areas[i] != null) lights.Add((areas[i], i < lit.Length && lit[i]));
+            return lights;
         }
     }
 }

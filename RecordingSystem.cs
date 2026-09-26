@@ -19,6 +19,8 @@ namespace IGTAPTasMod
         private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
         private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
         private static readonly FieldInfo FramesSinceLastDash = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
+        private static readonly FieldInfo DashDirection = AccessTools.Field(typeof(Movement), "dashDirection");
+        private static readonly FieldInfo FacingRight = AccessTools.Field(typeof(Movement), "facingRight");
 
         private bool _lastJump;
         private bool _lastCut;
@@ -112,6 +114,13 @@ namespace IGTAPTasMod
             RawTickSample dash = Current.samples[Current.samples.Count - 1];
             if (jump && !_lastJump && dash.dashPressed && dash.dashJumpFrame == 0)
                 dash.dashJumpFrame = Math.Max(1, (int)Read<float>(FramesSinceLastDash, movement));
+            // The dash's first frame after its start: facing is still the way it started, dashDirection is the way the stick
+            // held in its freeze turned it (a dash started without a sideways stick waits for one).
+            if (dash.dashPressed && !dash.dashTurnX.HasValue && Read<float>(FramesSinceLastDash, movement) == 1f)
+            {
+                float turned = Read<Vector2>(DashDirection, movement).x;
+                if (turned != 0f && Mathf.Sign(turned) != (Read<bool>(FacingRight, movement) ? 1f : -1f)) dash.dashTurnX = Mathf.Sign(turned);
+            }
             _lastJump = jump;
         }
 
@@ -245,7 +254,8 @@ namespace IGTAPTasMod
                     rawJumpPressed = first.jumpPressed, rawJumpHeld = first.jumpHeld,
                     rawJumpReleased = first.jumpReleased,
                     rawDashPressed = first.dashPressed, rawDashHeld = first.dashHeld,
-                    dashJumpFrame = first.dashPressed ? first.dashJumpFrame : 0
+                    dashJumpFrame = first.dashPressed ? first.dashJumpFrame : 0,
+                    dashTurnX = first.dashPressed ? first.dashTurnX : null
                 });
                 start = end;
             }
@@ -261,7 +271,8 @@ namespace IGTAPTasMod
                 && left.jumpReleased == right.jumpReleased
                 && left.dashPressed == right.dashPressed
                 && left.dashHeld == right.dashHeld
-                && left.dashJumpFrame == right.dashJumpFrame;
+                && left.dashJumpFrame == right.dashJumpFrame
+                && left.dashTurnX == right.dashTurnX;
         }
 
         private static string Label(RawTickSample sample)

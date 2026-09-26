@@ -84,7 +84,7 @@ namespace IGTAP.EngineSim.Cli
                     + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
-                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
+                    + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
                 if (++beats % 6 == 0) SaveMemory(archiveFile, solver.Export(5000));
             }
@@ -103,7 +103,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // --via/--avoid boxes, in the game world's frame (the map's readout).
         static OfflineSolver.ForcedPath CliBoxes(string[] args)
         {
             var forced = new OfflineSolver.ForcedPath();
@@ -117,7 +116,6 @@ namespace IGTAP.EngineSim.Cli
             return forced;
         }
 
-        // --via/--avoid boxes plus forced-paths.json's standing rules (and --optional blocks) for the course and category.
         internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps)
         {
             OfflineSolver.ForcedPath forced = CliBoxes(args);
@@ -125,8 +123,6 @@ namespace IGTAP.EngineSim.Cli
             return forced;
         }
 
-        // offline-best files are read by the plugin and the map while a search rewrites them (same time, fewer ticks):
-        // write beside the file, then swap it in, waiting out a reader's open handle instead of dying on it.
         internal static void WriteShared(string path, string contents)
         {
             string temp = path + ".tmp";
@@ -153,7 +149,6 @@ namespace IGTAP.EngineSim.Cli
             return names;
         }
 
-        // Each set of optional blocks searches its own archive: explored cells inside a block would be cut on every resume.
         internal static string ArchiveName(string label, List<string> optional)
         {
             return label + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional));
@@ -173,7 +168,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        // Adds the standing boxes to `standing` and returns the optional blocks (off unless asked for) of the matching rules.
         internal static List<OptionalBlock> OptionalBlocks(int course, string caps, OfflineSolver.ForcedPath standing)
         {
             var blocks = new List<OptionalBlock>();
@@ -198,8 +192,6 @@ namespace IGTAP.EngineSim.Cli
             return blocks;
         }
 
-        // A Full-TAS run's avoid boxes: forced-paths.json's rules whose "fulltas" lists the run. Every search window of the run
-        // cuts a run that enters one (its "via" boxes aren't used: the run's at: goals are its waypoints).
         internal static OfflineSolver.ForcedPath FullTasPaths(string run)
         {
             var forced = new OfflineSolver.ForcedPath();
@@ -271,8 +263,9 @@ namespace IGTAP.EngineSim.Cli
                     | (t.y < 0f ? 32 : 0) | (t.y > 0f ? 64 : 0);
                 if (text.Length > 0) text.Append(';');
                 text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(j - i);
-                if (t.ArmsLock)
+                if (t.ArmsLock || t.turnX.HasValue)
                     text.Append(',').Append(t.springDash).Append(',').Append(Number(t.lockX)).Append(',').Append(Number(t.lockY));
+                if (t.turnX.HasValue) text.Append(',').Append(Number(t.turnX));
                 i = j;
             }
             return text.ToString();
@@ -297,13 +290,14 @@ namespace IGTAP.EngineSim.Cli
                     springDash = f.Length > 4 ? int.Parse(f[4], CultureInfo.InvariantCulture) : 0,
                     lockX = f.Length > 5 && f[5].Length > 0 ? float.Parse(f[5], CultureInfo.InvariantCulture) : null,
                     lockY = f.Length > 6 && f[6].Length > 0 ? float.Parse(f[6], CultureInfo.InvariantCulture) : null,
+                    turnX = f.Length > 7 && f[7].Length > 0 ? float.Parse(f[7], CultureInfo.InvariantCulture) : null,
                 };
                 for (int n = int.Parse(f[3], CultureInfo.InvariantCulture); n > 0; n--) ticks.Add(t);
             }
             return ticks;
         }
 
-        static void SaveMemory(string path, OfflineSolver.Memory memory)
+        internal static void SaveMemory(string path, OfflineSolver.Memory memory)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temp = path + ".tmp";

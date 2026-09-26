@@ -60,7 +60,6 @@ namespace IGTAPTasMod
 
         private static readonly FieldInfo MovIsOnMainMenuField = AccessTools.Field(typeof(Movement), "isOnMainMenu");
 
-
         private void Awake()
         {
             Instance = this;
@@ -96,6 +95,7 @@ namespace IGTAPTasMod
             }
             _harmony.Patch(target, prefix: new HarmonyMethod(prefix));
             PatchOptional(typeof(Movement), "FixedUpdate", nameof(BeforeMovementFixedUpdate), nameof(AfterMovementFixedUpdate));
+            PatchOptional(typeof(Movement), "Update", null, nameof(AfterMovementUpdate));
             TurboRunner.Patch(_harmony);
             PatchOptional(typeof(courseScript), "startTracking", nameof(BeforeCourseStart), nameof(AfterCourseStart));
             PatchOptional(typeof(courseScript), "stopTracking", nameof(BeforeCourseFinish), nameof(AfterCourseFinish));
@@ -111,13 +111,12 @@ namespace IGTAPTasMod
             PatchOptional(typeof(upgradeBox), "DoBuyUpgrade", null, nameof(AfterBuyUpgrade));
             PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
+            PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchTechHooks();
+            PatchVmanCreditsCrash();
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
-        // Saves also wait while a route has Area 1 in a state other than the save's (Courses 11-15 overgrown, Courses
-        // 1-5 not): the first save the game would write (off a course: Saveloader writes only with no course reset
-        // point) with nothing of the studio's running puts the save's state back first.
         private static bool BlockSharedSave()
         {
             if (Instance == null) return true;
@@ -130,10 +129,44 @@ namespace IGTAPTasMod
             return true;
         }
 
+        // FakeCreditsControlScript.IE_DoVmanCredits ends a Vman run by crashing the game on purpose (Utils.ForceCrash), after
+        // writing PlayerPrefs "VmanCoursesCompleteTemp" (+10 Vman score, added by the next VmanScript.Start). Every judge of
+        // the VMAN run's last goal (the credits trigger) killed the game. Both calls come after the goal, so the route never
+        // sees them; the crash goes, and so does the PlayerPrefs write, which without the crash would reach the next new
+        // game's VmanScript in the same process and change its score.
+        private void PatchVmanCreditsCrash()
+        {
+            MethodInfo coroutine = AccessTools.Method(typeof(FakeCreditsControlScript), "IE_DoVmanCredits");
+            MethodInfo moveNext = coroutine == null ? null : AccessTools.EnumeratorMoveNext(coroutine);
+            if (moveNext == null) { Logger.LogWarning("Optional hook unavailable: FakeCreditsControlScript.IE_DoVmanCredits"); return; }
+            _harmony.Patch(moveNext, transpiler: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(DropVmanCreditsCrash))));
+        }
+
+        private static IEnumerable<CodeInstruction> DropVmanCreditsCrash(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo forceCrash = AccessTools.Method(typeof(UnityEngine.Diagnostics.Utils), "ForceCrash");
+            MethodInfo setInt = AccessTools.Method(typeof(PlayerPrefs), "SetInt", new[] { typeof(string), typeof(int) });
+            int dropped = 0;
+            foreach (CodeInstruction instruction in instructions)
+            {
+                if (instruction.Calls(forceCrash))
+                {
+                    dropped++;
+                    yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Pop).MoveLabelsFrom(instruction);
+                }
+                else if (instruction.Calls(setInt))
+                {
+                    dropped++;
+                    yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Pop).MoveLabelsFrom(instruction);
+                    yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Pop);
+                }
+                else yield return instruction;
+            }
+            if (dropped != 2) Log.LogWarning("Vman credits: expected ForceCrash and PlayerPrefs.SetInt, dropped " + dropped + " calls.");
+        }
+
         internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
 
-        // The game's checkpoint toggle always matches the studio's setting: before each respawn, every tick (so a trace's
-        // start snapshot carries it), and after the pause menu's toggle.
         private static void BeforeRespawn(Movement __instance)
         {
             if (Instance != null) __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
@@ -152,6 +185,7 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance))
             {
                 Instance.LockInterpolation(__instance);
+                Instance._engine.BeginStepUpWindow();
                 __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
                 Instance.OverlayBeforeTick(__instance);
             }
@@ -171,13 +205,16 @@ namespace IGTAPTasMod
             {
                 MacroDefinition macro = Instance._pendingSilentMacro;
                 Instance._pendingSilentMacro = null;
-                Instance.RestoreRouteStart(macro);
+                bool savestateRestored = Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
-                Instance._engine.Run(macro, true, true, 0,
+                // A tech demo's start (EngineSimTechTrace) runs as its playback does: from its savestate at once, no course finish needed.
+                bool tech = Instance._techStart != null;
+                Instance._engine.Run(macro, !(tech && savestateRestored), !tech, 0,
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
-            if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active) Instance.CaptureNewGameStart(__instance);
+            if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active && Instance.NewGamePlayerAtRest(__instance))
+                Instance.CaptureNewGameStart(__instance);
             if (Instance._fullTasPlay != null && !Instance._fullTasPlay.started && !Instance._fullTasPlay.waitingForNewGame && !Instance._engine.IsRunning
                 && !IsMenuPlayer(__instance))
             {
@@ -191,11 +228,11 @@ namespace IGTAPTasMod
                 Instance._pendingReplay = null;
                 Instance._pendingReplayStartDelayTicks = 0;
                 Movement movement = FindWorldMovement();
-                // Before the restart too: Movement.respawn resets the block colours only with block swap unlocked.
                 Instance.ApplyCategoryAbilities(macro, movement);
                 bool savestateRestored = Instance.RestoreRouteStart(macro);
                 movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
+                Instance.ApplyTechAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
                 Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }
@@ -206,7 +243,9 @@ namespace IGTAPTasMod
         {
             if (Instance == null || IsMenuPlayer(__instance)) return;
             Instance._engine.CountPhysicsTick();
+            if (!Instance._recorder.IsRecording) Instance._engine.AfterFixedTick(__instance);
             Instance.OverlayTick(__instance);
+            Instance.ProbeAfterTick(__instance);
         }
 
         private static bool IsMenuPlayer(Movement movement)
@@ -228,7 +267,21 @@ namespace IGTAPTasMod
         private static void BeforeNormaliseInput(Movement __instance, ref Vector2 __0)
         {
             if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording || !Instance._engine.IsRunning) return;
-            __0 = Instance._engine.TickStick;
+            __0 = Instance._engine.StickFor(__instance);
+        }
+
+        /// <summary>
+        /// The step-up gate (MacroEngine.AllowStepUp), while the TAS holds the player body's interpolation off: a second lift
+        /// between two physics ticks is undone and its animation skipped.
+        /// </summary>
+        private static bool BeforeSteppedUp(StepUpAnimationScript __instance, Vector3 __0)
+        {
+            if (Instance == null) return true;
+            Movement player = __instance.GetComponentInParent<Movement>();
+            if (player == null || IsMenuPlayer(player)) return true;
+            if (!Instance.ProbeKeepsGameInterpolation(player) && !Instance._engine.AllowStepUp(player.transform, __0)) return false;
+            Instance.TechSteppedUp(player);
+            return true;
         }
 
         private static void BeforeWallTouch(Movement __instance, bool touchedGround)
@@ -374,6 +427,7 @@ namespace IGTAPTasMod
 
         const string CapabilitiesLockedError = "\"Don't touch my unlocks\" is on; turn it off to use this.";
         bool CapabilitiesLocked { get { return _settings.lockCapabilities; } }
+        internal static bool UnlocksLocked { get { return Instance != null && Instance.CapabilitiesLocked; } }
 
         private static void SetMovementField(Movement movement, string name, object value)
         {
@@ -394,10 +448,16 @@ namespace IGTAPTasMod
 
         static FloatingOrigin _floatingOrigin;
 
-        internal static Vector2 CurrentOrigin()
+        internal static FloatingOrigin CurrentFloatingOrigin()
         {
             if (_floatingOrigin == null) _floatingOrigin = FindAnyObjectByType<FloatingOrigin>();
-            return _floatingOrigin == null ? Vector2.zero : (Vector2)_floatingOrigin.currentOrigin;
+            return _floatingOrigin;
+        }
+
+        internal static Vector2 CurrentOrigin()
+        {
+            FloatingOrigin origin = CurrentFloatingOrigin();
+            return origin == null ? Vector2.zero : (Vector2)origin.currentOrigin;
         }
 
         private static void ApplyRestartGeometry(Movement movement)
@@ -661,12 +721,26 @@ namespace IGTAPTasMod
         readonly List<string> _newGameNotes = new List<string>();
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
-        // The fresh game is a Vman speedrun's world (LoadNewGame's Vman start) rather than a plain new game.
         bool _newGameVman;
+        // A Full-TAS savestate start: the savestate (id) restored once the new game (or Vman world) is at rest; the start is
+        // captured when the player is at rest again from there, with the unlocks the savestate carries.
+        string _newGameSavestate;
+        bool _newGameSavestateApplied;
+        FullTasUnlocks _newGameUnlocks;
         Movement _vmanSetupPlayer;
         bool _vmanSetupQuiet;
+        int _newGameRestTicks;
+        // Physics ticks the player must stand still on the ground before the start is captured. A Vman world's player spawns
+        // in the air and lands on a frame-rate-dependent tick; capturing mid-fall gave every load a different start. Past
+        // this many grounded ticks every tick-driven threshold (dash boost window 6 × 1.4, platform momentum history 7) is
+        // passed, so each load's start plays the same.
+        const int NewGameRestTicks = 10;
+        // The FloatingOrigin the start was captured at. Real-time play far from it rebases the world (FloatingOrigin.LateUpdate),
+        // and a restore puts back only the player's scene position, which then lies somewhere else in the world: such a game
+        // is no longer fresh, and the next Full-TAS run loads a new one.
+        Vector2 _newGameOrigin;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
-        bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement(); } }
+        bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement() && CurrentOrigin() == _newGameOrigin; } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
         static readonly FieldInfo SaveloaderIsLoading = AccessTools.Field(typeof(Saveloader), "isLoading");
@@ -678,26 +752,21 @@ namespace IGTAPTasMod
             SaveloaderIsLoading.SetValue(__instance, false);
         }
 
-        void StartNewGame(WebStudioRequest request, bool vman)
+        void StartNewGame(WebStudioRequest request, bool vman, string savestate)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
-            LoadNewGame(request, vman);
+            LoadNewGame(request, vman, savestate);
         }
 
-        // vman: the Vman start. The fresh new game gets Area 1 overgrown (as the courses 11-15 routes set it), every Vman
-        // duration box's full effect in vmanTime and VmanStartsWithOmniDash, and the player on the floor under the 1x
-        // "Start a VMAN speedrun" box; the player jumps into it, the game itself buys it (SetupVmanSpeedrun) and loads the
-        // Vman world, which is the run's start.
-        void LoadNewGame(WebStudioRequest request, bool vman)
+        void LoadNewGame(WebStudioRequest request, bool vman, string savestate)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
+            if (savestate != null && _savestates.Find(s => s.id == savestate) == null) throw new InvalidOperationException("No savestate " + savestate + ".");
             _newGameSession = true;
             globalStats.difficultyLevel = 0;
             Time.timeScale = 1f;
-            // A new game starts with the Vman statics a fresh process has: none of an earlier Vman world survives the load
-            // (VmanScript.Awake would re-enter it, or pay out its score with AfterExitedVmanSpeedrun).
             VmanScript.isCurrentlyVman = false;
             VmanScript.metaVman = false;
             VmanScript.vmanScore = 0.0;
@@ -707,6 +776,9 @@ namespace IGTAPTasMod
             _newGameStart = null;
             _newGamePlayer = null;
             _newGameVman = vman;
+            _newGameSavestate = savestate;
+            _newGameSavestateApplied = false;
+            _newGameUnlocks = default;
             _vmanSetupPlayer = null;
             _startState = null;
             _engineSimStartKey = null;
@@ -719,7 +791,7 @@ namespace IGTAPTasMod
 
         void PumpNewGame()
         {
-            if (_newGamePhase != 1 && _newGamePhase != 2 && _newGamePhase != 4 && _newGamePhase != 5) return;
+            if (_newGamePhase != 1 && _newGamePhase != 2 && _newGamePhase != 3 && _newGamePhase != 4 && _newGamePhase != 5) return;
             int frames = Time.frameCount - _newGameFrame;
             if (_newGamePhase == 4)
             {
@@ -746,7 +818,12 @@ namespace IGTAPTasMod
                 else if (frames > 900) FailNewGame("The Vman world did not load within 900 frames of the start box's purchase.");
                 return;
             }
-            if (frames > 600) { FailNewGame("The new game's player did not settle within 600 frames."); return; }
+            if (frames > 600)
+            {
+                FailNewGame(_newGamePhase == 3 ? "The new game's player did not come to rest on the ground within 600 frames." : "The new game's player did not settle within 600 frames.");
+                return;
+            }
+            if (_newGamePhase == 3) return;
             if (_newGamePhase == 1)
             {
                 if (frames < 2 || SceneManager.GetActiveScene().name != "Overworld") return;
@@ -767,12 +844,22 @@ namespace IGTAPTasMod
             }
             if (frames < 10 || !ZonesSettled()) return;
             EnsureGameUnpaused();
+            _newGameRestTicks = 0;
+            _newGameFrame = Time.frameCount;
             _newGamePhase = 3;
+        }
+
+        bool NewGamePlayerAtRest(Movement player)
+        {
+            bool still = player.onGround && player.Velocity.x == 0f && player.cutsceneMode == Movement.cutsceneModes.none;
+            _newGameRestTicks = still ? _newGameRestTicks + 1 : 0;
+            return _newGameRestTicks > NewGameRestTicks;
         }
 
         void CaptureNewGameStart(Movement player)
         {
             if (_newGameVman && !VmanScript.isCurrentlyVman) { BuyVmanStart(player); return; }
+            if (_newGameSavestate != null && !_newGameSavestateApplied) { ApplyNewGameSavestate(player); return; }
             _newGamePhase = 0;
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             bool quiet = _engine.Quiet;
@@ -784,6 +871,8 @@ namespace IGTAPTasMod
             _engine.Discard();
             _engine.Quiet = quiet;
             _newGamePlayer = player;
+            _newGameUnlocks = _newGameSavestate == null ? default : FullTasUnlocks.Of(player);
+            _newGameOrigin = CurrentOrigin();
             if (_fullTasPlay != null) _fullTasPlay.waitingForNewGame = false;
             Vector2 position = (Vector2)player.transform.position - CurrentOrigin();
             Vector2 respawn = GetMovementField(player, "respawnPoint") is Vector2 r ? r : Vector2.zero;
@@ -816,11 +905,14 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        TurboRunner.Snapshot NewGameStart(bool vman)
+        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate; }
+
+        TurboRunner.Snapshot NewGameStart(FullTasRunDef run)
         {
-            if (!FreshGameInWorld || _newGameVman != vman)
-                throw new InvalidOperationException("A run from " + (vman ? "a Vman speedrun" : "a new game") + " needs a fresh one: POST /api/session/newgame"
-                    + (vman ? " {\"vman\": true}" : "") + " first.");
+            if (!FreshGameInWorld || !NewGameIs(run))
+                throw new InvalidOperationException("A run from " + (run.Vman ? "a Vman speedrun" : "a new game") + (run.savestate == null ? "" : " and savestate " + run.savestate)
+                    + " needs a fresh one: POST /api/session/newgame {" + (run.Vman ? "\"vman\": true" : "") + (run.Vman && run.savestate != null ? ", " : "")
+                    + (run.savestate == null ? "" : "\"savestate\": \"" + run.savestate + "\"") + "} first.");
             return _newGameStart;
         }
 
@@ -844,7 +936,7 @@ namespace IGTAPTasMod
                 _savedTargetFrameRate = Application.targetFrameRate;
                 Time.maximumDeltaTime = Time.fixedDeltaTime;
                 QualitySettings.vSyncCount = 0;
-                Application.targetFrameRate = PlaybackFrameRate;
+                Application.targetFrameRate = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
             }
             else
             {
@@ -854,8 +946,6 @@ namespace IGTAPTasMod
             }
         }
 
-        // A walk slows game time, not frames: fixed ticks arrive at 1/slowdown of their usual rate whatever the frame rate.
-        // The game sets timeScale itself (0 for hitstop and the pause menu, then back), so this reasserts it every frame.
         void PaceWalk()
         {
             if (!PlaybackActive && _pendingReplay == null) _walkSlowdown = 0f;
@@ -886,6 +976,8 @@ namespace IGTAPTasMod
             PumpNewGame();
             PumpOfflineBests();
             PumpFullTas();
+            PumpFastForward();
+            PumpProbe();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -926,7 +1018,11 @@ namespace IGTAPTasMod
             if (movement != null && savestate != null)
             {
                 SavestateResult restored = SavestateService.Restore(movement, savestate, MacroLibrary.CurrentSchemaVersion);
-                if (restored.Success) return true;
+                if (restored.Success)
+                {
+                    LeaveCourses(movement);
+                    return true;
+                }
                 Logger.LogWarning(restored.Message + "; using quick restart.");
             }
             MethodInfo respawn = AccessTools.Method(typeof(Movement), "respawn");
@@ -978,6 +1074,17 @@ namespace IGTAPTasMod
             return false;
         }
 
+        /// <summary>
+        /// A savestate holds only the player, so a course the last run left tracking would keep writing its reset point into
+        /// courseResetPoint every tick, and a quick restart would land there instead of at the checkpoint. The game's own
+        /// off-course state (stopTracking without its rewards): no course tracking, courseResetPoint zero.
+        /// </summary>
+        static void LeaveCourses(Movement movement)
+        {
+            foreach (courseScript course in FindObjectsByType<courseScript>(FindObjectsSortMode.None)) CourseTrackingField.SetValue(course, false);
+            movement.courseResetPoint = Vector2.zero;
+        }
+
         private CourseDef CourseOfRoute(string routeName)
         {
             Match courseName = Regex.Match(routeName ?? "", @"^([^_\s]+)[_ ]");
@@ -987,11 +1094,16 @@ namespace IGTAPTasMod
                 : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>The player body's interpolation as the game set it, before the lock first changed it.</summary>
+        RigidbodyInterpolation2D? _gameInterpolation;
+
         private void LockInterpolation(Movement movement)
         {
             if (_playerBody == null || _playerBody.gameObject != movement.gameObject) _playerBody = movement.GetComponent<Rigidbody2D>();
-            if (_playerBody != null && _playerBody.interpolation != RigidbodyInterpolation2D.None)
-                _playerBody.interpolation = RigidbodyInterpolation2D.None;
+            if (_playerBody == null) return;
+            if (_gameInterpolation == null) _gameInterpolation = _playerBody.interpolation;
+            RigidbodyInterpolation2D wanted = ProbeKeepsGameInterpolation(movement) ? _gameInterpolation.Value : RigidbodyInterpolation2D.None;
+            if (_playerBody.interpolation != wanted) _playerBody.interpolation = wanted;
         }
 
         private void DuplicateMacro()
@@ -1048,14 +1160,12 @@ namespace IGTAPTasMod
                 return;
             }
             EnsureGameUnpaused();
-            // A walk is for learning the route, so it plays the human version when one is as fast.
             _pendingReplay = walkSlowdown > 0f ? HumanVersionOf(macro) ?? macro : macro;
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
         }
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        // Categories in unlock order; a category's level is its index. A new unlock goes on the end (and in CategoryAbilities).
         internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
         internal static int TopLevel { get { return CapsLadder.Length - 1; } }
 
@@ -1069,8 +1179,6 @@ namespace IGTAPTasMod
             return label.Replace("_", "").ToLowerInvariant();
         }
 
-        // Block swap on dash (Movement.blockSwapUnlocked) is the fourth unlock: on in WJ_DS_DJ_BS, off below it. No category
-        // has the omnidirectional dash (the OmniDash box's toggle): it is off in every one.
         internal static (string field, object value)[] CategoryAbilities(string caps)
         {
             int level = CapsLevel(caps);
@@ -1353,6 +1461,7 @@ namespace IGTAPTasMod
             if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
             if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
             if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);
+            if (request.Path.StartsWith("/api/probe/", StringComparison.Ordinal)) return HandleProbe(request.Path, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -1399,7 +1508,6 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/settings/checkpoint-respawns")
             {
-                // Traces, offline bests and the gate all assume one setting: never switch it under a run or a search.
                 if (PlaybackActive || _solverRunning || _fullTasProcess != null || _recorder.IsRecording)
                     throw new InvalidOperationException("Stop playback, recording and solving before switching checkpoint respawns.");
                 _settings.checkpointRespawns = Truthy(body, "on");
@@ -1460,7 +1568,7 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/newgame")
             {
-                StartNewGame(request, Truthy(body, "vman"));
+                StartNewGame(request, Truthy(body, "vman"), string.IsNullOrEmpty(Text(body, "savestate")) ? null : Text(body, "savestate"));
                 return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();
@@ -1616,6 +1724,11 @@ namespace IGTAPTasMod
                 if (savestate == null) throw new InvalidOperationException("Savestate not found.");
                 RestoreSavestate(savestate);
                 return new { ok = true };
+            }
+            if (request.Path == "/api/savestates/place")
+            {
+                Savestate placed = PlaceSavestate(body);
+                return new { ok = true, id = placed.id, name = placed.name };
             }
             if (request.Path == "/api/savestates/assign")
             {

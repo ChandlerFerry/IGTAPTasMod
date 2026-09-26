@@ -8,13 +8,12 @@
     <ManagedDir>$(GameRoot)\IGTAPfullGame_Data\Managed</ManagedDir>
     <BepInExDir>$(GameRoot)\BepInEx\core</BepInExDir>
     <PluginDir>$(GameRoot)\BepInEx\plugins</PluginDir>
-    <!-- References come only from their HintPaths: a stray Assembly-CSharp.dll in a scratch folder must not win.
-         Set the search paths outright (no {CandidateAssemblyFiles}); the common targets only fill them in when empty. -->
+
     <AssemblySearchPaths>{HintPathFromItem};{TargetFrameworkDirectory};{RawFileName}</AssemblySearchPaths>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The offline engine host builds its own assemblies (including a rewritten Assembly-CSharp). -->
+
     <None Remove="enginesim\**" />
     <Compile Remove="enginesim\**\*.cs" />
     <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
@@ -30,12 +29,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Optimize tab launches the offline solver from this repo (build it: enginesim\Cli, Release). -->
+
     <AssemblyMetadata Include="EngineSimExe" Value="$(MSBuildProjectDirectory)\enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Tech tab's first catalog: written to the config folder's techs.json when it has none. -->
+
     <EmbeddedResource Include="techs.json" LogicalName="IGTAPTasMod.techs.json" />
   </ItemGroup>
 

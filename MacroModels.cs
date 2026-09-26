@@ -30,6 +30,8 @@ namespace IGTAPTasMod
         public int dashJumpFrame;
         public int springDashFrame;
         public float? lockMoveX, lockMoveY;
+        /// <summary>On a dash step: the stick x held in the dash's freeze, before the next tick (MacroEngine.StickFor).</summary>
+        public float? dashTurnX;
         public bool rawQuickRestart;
 
         public MacroStep Copy()
@@ -70,6 +72,8 @@ namespace IGTAPTasMod
         public bool dashPressed;
         public bool dashHeld;
         public int dashJumpFrame;
+        /// <summary>A dash pressed with no sideways stick that the stick turned in its freeze: the way it turned.</summary>
+        public float? dashTurnX;
         public float positionX;
         public float positionY;
         public float originX;
@@ -105,10 +109,7 @@ namespace IGTAPTasMod
         public bool lockCapabilities;
         public bool showOverlay = true;
         public bool forceBreakerLights;
-        // The game's checkpoint respawns (the pause menu's toggle, Movement.isRespawningAtCheckpoints) for every route and
-        // search: on, a death respawns at the last checkpoint; off, at the course's reset point.
         public bool checkpointRespawns;
-        // The Full-TAS run whose goal rects the overlay draws in game; empty: none.
         public string fullTasGoalsRun = "";
     }
 }

@@ -1,4 +1,3 @@
-/* Full-TAS tab: the runs as cards, the selected run's goals, editor and solve. */
 .fullTasRuns { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 10px; margin-top: 18px; }
 .fullTasRun { display: flex; flex-direction: column; gap: 5px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #101f35; color: var(--text); text-align: left; cursor: pointer; }
 .fullTasRun.selected { border-color: #247eb4; background: #10263d; }
@@ -12,7 +11,7 @@
 @media (max-width: 1200px) { .fullTasGrid { grid-template-columns: 1fr; } }
 .fullTasGoals .tableHead, .fullTasGoals .tableRow { grid-template-columns: 40px minmax(0,1fr) 130px 130px; }
 .fullTasGoals .tableRow.pending { color: var(--muted); }
-/* Goals from the trip breaker on: the lights are out (Area 1 dark, Courses 1-5 reset). */
+
 .fullTasGoals .tableRow.breakerTrip { background: #3a1420; color: var(--red); font-weight: 700; box-shadow: inset 3px 0 0 var(--red); }
 .fullTasGoals .tableRow.breakerOut { background: #1a0d18; box-shadow: inset 3px 0 0 #7a2438; }
 .fullTasEditor textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 10px 11px; outline: none; font: 12px/1.6 ui-monospace,Consolas,monospace; }
@@ -22,7 +21,6 @@
 .fullTasInline .field { flex: 1; margin-top: 12px; }
 .fullTasSearch { margin-top: 18px; }
 
-/* The solve dashboard (fulltas-solve.tsx). */
 .ftSolve { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .ftProblem { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--red); border-radius: 10px; background: #3a1420; }
 .ftProblem > div:first-child { display: flex; flex-direction: column; gap: 4px; }

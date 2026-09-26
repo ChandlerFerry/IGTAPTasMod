@@ -34,6 +34,11 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
+- The TAS keeps the player body's interpolation off, and with it off `Movement.Update`'s step-up repeats in every
+  rendered frame. The step-up gate (`MacroEngine.AllowStepUp`) allows one step-up per physics tick (at most 56 units),
+  which is what turbo does, so 1x playback, turbo and offline climb the same. The overlay shows
+  `INTERPOLATION OFF (56u STEP CAP)`. Don't raise the cap: turbo can't reproduce a second lift in one tick (README
+  `### Rules`).
 
 ## Before calling a new best real
 

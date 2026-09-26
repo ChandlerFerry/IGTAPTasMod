@@ -5,7 +5,6 @@ from pathlib import Path
 from gamepaths import TRACES
 JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15
 
-
 def press_near(inputs, tick, window, jump):
     for i in range(max(0, tick - window - 16), min(len(inputs), tick + 3)):
         k = inputs[i]
@@ -16,7 +15,6 @@ def press_near(inputs, tick, window, jump):
         if press >= 0 and press - 2 <= tick <= press + window:
             return True
     return False
-
 
 def release_near(inputs, tick, window):
     held = False
@@ -30,7 +28,6 @@ def release_near(inputs, tick, window):
             return True
     return False
 
-
 def violations(trace):
     found = []
     for i, t in enumerate(trace["ticks"]):
@@ -43,7 +40,6 @@ def violations(trace):
             found.append(f"tick {i}: stale jump cut")
     return found
 
-
 def main():
     paths = [Path(p) for p in sys.argv[1:]] or sorted(p for p in TRACES.glob("*.json") if not p.name.endswith(".world.json"))
     bad = 0
@@ -55,7 +51,6 @@ def main():
         bad += bool(found)
         print(f"{path.name:36} {'VIOLATES ' + '; '.join(found[:3]) if found else 'ok'}")
     sys.exit(1 if bad else 0)
-
 
 if __name__ == "__main__":
     main()

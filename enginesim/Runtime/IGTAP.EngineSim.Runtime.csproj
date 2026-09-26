@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Runs the game's own code (retargeted Assembly-CSharp) against the Unity shim and a Box2D port. -->
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>IGTAP.EngineSim.Runtime</AssemblyName>
@@ -15,7 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Shared with the plugin so offline runs drive the game exactly like turbo runs do. -->
+
     <Compile Include="..\..\MacroEngine.cs" Link="Shared\MacroEngine.cs" />
     <Compile Include="..\..\MacroModels.cs" Link="Shared\MacroModels.cs" />
     <Compile Include="..\..\FieldState.cs" Link="Shared\FieldState.cs" />
@@ -29,7 +29,6 @@
     <Reference Include="Assembly-CSharp" HintPath="$(RetargetedGame)" Private="true" />
   </ItemGroup>
 
-  <!-- Rewrites the installed game's Assembly-CSharp against the shim (cuts and hooks listed in enginesim/). -->
   <Target Name="RetargetGame" AfterTargets="ResolveProjectReferences" BeforeTargets="ResolveAssemblyReferences"
           Inputs="$(GameManaged)\Assembly-CSharp.dll;..\cuts.txt;..\hooks.txt;..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll"
           Outputs="$(RetargetedGame)">

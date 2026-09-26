@@ -13,8 +13,8 @@
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Safety net: OutOfMemory at 40% of RAM instead of paging the machine to death. -->
-    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimitPercent" Value="40" />
+
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="75161927680" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Runtime\IGTAP.EngineSim.Runtime.csproj" />

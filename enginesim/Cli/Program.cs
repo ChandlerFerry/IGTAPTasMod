@@ -28,8 +28,11 @@ namespace IGTAP.EngineSim.Cli
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
+                    case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
+                    case "probe": return Probe.Run(args.Skip(1).ToArray());
+                    case "clip": return ClipLab.Run(args.Skip(1).ToArray());
                     case "path":
                     {
                         var (sim, _, _) = Open(args[1]);
@@ -46,12 +49,12 @@ namespace IGTAP.EngineSim.Cli
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
                         spikeScript[] spikes = sim.World.All<spikeScript>();
                         FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        RunResult r = sim.Run(inputs, onStep: st =>
+                        RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
                             Vector3 pos = sim.PlayerWorld;
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
-                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x - sim.Origin.x:0},{s.transform.position.y - sim.Origin.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
+                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x - sim.CurrentOrigin.x:0},{s.transform.position.y - sim.CurrentOrigin.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
                                         + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
                                         + $" player {pos.x:0.0},{pos.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
@@ -60,7 +63,7 @@ namespace IGTAP.EngineSim.Cli
                                 int run = (int)sim.Engine.RunTicks - 1;
                                 InputTick k = run >= 0 && run < inputs.Count ? inputs[run] : default;
                                 string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.y != 0f ? " y=" + k.y : "")}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
-                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") : "")
+                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue ? " turn=" + k.turnX : "") : "")
                                     + (k.springDash > 0 ? " springdash@" + k.springDash : "")
                                     + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "");
                                 lastRun = run + 1;
@@ -90,16 +93,27 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--seed <file>]... [--no-submit] [--fresh] [--unsolved]\n"
+                            + "          [--seed <file>]... [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); run state in <traces>/fulltas/<run>.json,\n"
                             + "                                         bests to the gate (/api/fulltas/submit) when the game runs; --seed:\n"
-                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
+                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts;\n"
+                            + "                                         --goal N: polish only goal N-1 to goal N, over and over\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
+                            + "  probe <trace.json> <probe.json> [--out file]\n"
+                            + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
+                            + "                                         inputs from it, every tick logged; updatesPerTick/fps model 1x frames\n"
+                            + "  clip map <trace.json> x0 y0 x1 y1 [step] | clip run <trace.json> <lab.json> [--threads N] [--out csv] [--top N]\n"
+                            + "     | clip log <trace.json> <lab.json> <start> <branch>\n"
+                            + "                                         lab for any start state (inside walls too): a grid of starts x branches\n"
+                            + "                                         on all cores, ranked by the height reached; one run logged per tick\n"
                             + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N] [--optional name]...\n"
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"
-                            + "                                         boxes as one JSON for the studio's Optimize map\n");
+                            + "                                         boxes as one JSON for the studio's Optimize map\n"
+                            + "  ultras <fulltas-VMAN.json> --out <file> [--courses <courses.json>] [--spacing U] [--threads N]\n"
+                            + "                                         floors a hyper lands on and the game's ultras two chained wavedashes\n"
+                            + "                                         get from launch points along them, for the studio's Ultra map\n");
                         return 2;
                 }
             }
@@ -137,7 +151,7 @@ namespace IGTAP.EngineSim.Cli
                 int firstDiff = -1;
                 int firstRandomDiff = -1, firstCashDiff = -1;
                 var diffs = new List<string>();
-                RunResult run = sim.Run(inputs, onStep: step =>
+                RunResult run = sim.Run(inputs, extraTicks: 1000000, onStep: step =>
                 {
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
                     var here = new List<string>();

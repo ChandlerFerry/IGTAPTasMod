@@ -25,11 +25,13 @@ namespace IGTAPTasMod
             if (request.Path == "/api/enginesim/raycast")
                 return new { ok = true, hits = EngineSimExport.Raycasts((JArray)body["rays"]) };
             if (request.Path == "/api/enginesim/trace")
-                return body["fulltas"] != null ? FullTasTraceRequest(request, body) : EngineSimTrace(request, body);
+                return body["tech"] != null ? EngineSimTechTrace(request, body) : body["fulltas"] != null ? FullTasTraceRequest(request, body) : EngineSimTrace(request, body);
             if (request.Path == "/api/enginesim/submit")
                 return EngineSimSubmit(request, body);
             if (request.Path == "/api/enginesim/map")
                 return EngineSimMap(request, body);
+            if (request.Path == "/api/enginesim/ultras")
+                return EngineSimUltras(request, body);
             if (request.Path == "/api/enginesim/play")
                 return EngineSimPlay(body);
             request.StatusCode = 404;
@@ -119,7 +121,6 @@ namespace IGTAPTasMod
             return new { ok = true, name = route.name, file = Path.GetFileName(newest.path) };
         }
 
-        // offline-best and offline-best/judged files of one course and category matching `pattern`, newest first.
         IEnumerable<(string path, Match match)> OfflineBestFiles(int course, string caps, Regex pattern)
         {
             string root = Path.Combine(EngineSimDir, "offline-best");
@@ -130,8 +131,6 @@ namespace IGTAPTasMod
                 .OrderByDescending(f => File.GetLastWriteTimeUtc(f.path));
         }
 
-        // The newest human version as fast as a saved route: the same game time for a category route, the same physics
-        // ticks for a farm route. Null when there is none.
         MacroDefinition HumanVersionOf(MacroDefinition route)
         {
             Match g = CategoryRoute.Match(route.name ?? "");
@@ -183,6 +182,7 @@ namespace IGTAPTasMod
 
         void ParkAtStart()
         {
+            if (_startState != null) TurboRunner.PutOrigin(_startState.origin);
             RestoreRouteStart(new MacroDefinition { name = _solverTarget.Token + "_" });
         }
 
@@ -198,9 +198,7 @@ namespace IGTAPTasMod
         }
 
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
-        // enginesim humanize's same-time versions of a best: played for practice, never judged.
         static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.json$");
-        // The playback id of a human version: the studio colors the run so it is never mistaken for the best.
         const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
@@ -214,7 +212,6 @@ namespace IGTAPTasMod
             public List<(string label, JObject body, string category)> judgings;
         }
 
-        // `solving`: the group a running solve keeps rewriting; its files aren't opened, so the solve's writes never meet a read.
         OfflineBest ReadOfflineBest(string path, string solving)
         {
             string file = Path.GetFileName(path);
@@ -359,25 +356,7 @@ namespace IGTAPTasMod
                 var json = new EngineSimJson(writer);
                 JsonTextWriter w = json.W;
                 w.WriteStartObject();
-                w.WritePropertyName("course"); w.WriteValue(course);
-                if (finishCourse.GameCourse != course) { w.WritePropertyName("gameCourse"); w.WriteValue(finishCourse.GameCourse); }
-                if (finishCourse != null && finishCourse.HasFinish)
-                {
-                    Vector2 origin = CurrentOrigin();
-                    w.WritePropertyName("finish"); w.WriteStartArray();
-                    json.Float(finishCourse.endX + origin.x); json.Float(finishCourse.endY + origin.y);
-                    json.Float(finishCourse.endW); json.Float(finishCourse.endH);
-                    w.WriteEndArray();
-                }
-                if (finishCourse != null && finishCourse.IsTransition)
-                {
-                    w.WritePropertyName("transition"); w.WriteValue(true);
-                    if (finishCourse.toCourse > 0) { w.WritePropertyName("finishStart"); w.WriteValue(finishCourse.toCourse); }
-                }
-                w.WritePropertyName("capabilities"); w.WriteValue(caps);
-                w.WritePropertyName("checkpointRespawns"); w.WriteValue(CheckpointRespawns);
-                w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
-                w.WritePropertyName("inputs"); w.WriteRawValue(JsonConvert.SerializeObject(inputs));
+                WriteTraceTarget(json, finishCourse, course, caps, inputs);
                 w.WritePropertyName("start"); EngineSimExport.WriteSnapshot(json, _startState, player, false);
                 w.WritePropertyName("ticks");
                 w.WriteStartArray();
@@ -401,6 +380,133 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
             }
             return new { ok = true, path = path, finished = finished, time = time, finishTick = finishTick };
+        }
+
+        /// <summary>What a trace's run is scored on: the course (-1: none), its reward box or next course, unlocks, inputs.</summary>
+        void WriteTraceTarget(EngineSimJson json, CourseDef finishCourse, int course, string caps, List<SolverTick> inputs)
+        {
+            JsonTextWriter w = json.W;
+            w.WritePropertyName("course"); w.WriteValue(course);
+            if (finishCourse != null && finishCourse.GameCourse != course) { w.WritePropertyName("gameCourse"); w.WriteValue(finishCourse.GameCourse); }
+            if (finishCourse != null && finishCourse.HasFinish)
+            {
+                Vector2 origin = CurrentOrigin();
+                w.WritePropertyName("finish"); w.WriteStartArray();
+                json.Float(finishCourse.endX + origin.x); json.Float(finishCourse.endY + origin.y);
+                json.Float(finishCourse.endW); json.Float(finishCourse.endH);
+                w.WriteEndArray();
+            }
+            if (finishCourse != null && finishCourse.IsTransition)
+            {
+                w.WritePropertyName("transition"); w.WriteValue(true);
+                if (finishCourse.toCourse > 0) { w.WritePropertyName("finishStart"); w.WriteValue(finishCourse.toCourse); }
+            }
+            w.WritePropertyName("capabilities"); w.WriteValue(caps);
+            w.WritePropertyName("checkpointRespawns"); w.WriteValue(CheckpointRespawns);
+            w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
+            w.WritePropertyName("inputs"); w.WriteRawValue(JsonConvert.SerializeObject(inputs));
+        }
+
+        /// <summary>
+        /// A tech demo in turbo from the start its playback uses (`tech-<id>.json` and its world, for `replay`): its category's
+        /// quick restart or its savestate, the category's unlocks plus the demo's omnidirectional dash; a Full-TAS demo from
+        /// its run's new game. The demo starts inside a tick, as its playback does, so the trace's start is the state after
+        /// that first tick (its `tick` says which input comes next). A savestate start is off every course: no course
+        /// finish ends it (course -1), as its turbo run has none.
+        /// </summary>
+        object EngineSimTechTrace(WebStudioRequest request, JObject body)
+        {
+            TechDef tech = FindTech(Text(body, "tech"));
+            MacroDefinition route = TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
+            List<SolverTick> inputs = ToTicks(route.steps.Where(s => s.enabled).ToList());
+            string name = "tech-" + tech.id;
+            string start = tech.start ?? throw new InvalidOperationException(tech.name + "'s demo has no start (a category or a Full-TAS run).");
+            Match fullTas = Regex.Match(start, @"^fulltas/(.+)_NONE$", RegexOptions.IgnoreCase);
+            if (fullTas.Success)
+            {
+                FullTasRunDef run = FindFullTasRun(fullTas.Groups[1].Value);
+                ResolveFullTasGoals(run);
+                return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, true));
+            }
+            string[] parts = start.Split(new[] { '_' }, 2);
+            CourseDef def = _courses.Find(c => string.Equals(c.Token, parts[0], StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("No course " + parts[0] + " for " + tech.name + "'s demo.");
+            if (PlaybackActive || _recorder.IsRecording || _newGamePhase != 0)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "Stop playback and recording, and let a new game finish loading, first." };
+            }
+            SelectSolverTarget(new JObject { ["course"] = def.id, ["capabilities"] = CapsFor(parts[1]) });
+            if (CapabilitiesLocked)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = CapabilitiesLockedError };
+            }
+            if (!CourseLoaded())
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "Course " + def.Token + " is loading; retry in a moment." };
+            }
+            bool savestate = !string.IsNullOrEmpty(route.savestateId);
+            string path = Path.Combine(EngineSimDir, name + ".json"), worldPath = Path.Combine(EngineSimDir, name + ".world.json");
+            Movement player = FindWorldMovement();
+            TurboRunner.Snapshot first = null;
+            var startJson = new StringWriter();
+            bool finished;
+            float time;
+            int finishTick, samples = 0;
+            using (var writer = new StreamWriter(path))
+            {
+                // Snapshots read the player's live transform and contacts, so each is written on its tick; the header after the run.
+                var json = new EngineSimJson(writer);
+                JsonTextWriter w = json.W;
+                w.WriteStartObject();
+                w.WritePropertyName("ticks");
+                w.WriteStartArray();
+                _techStart = tech;
+                _startState = null;
+                _engineSimStartKey = null;
+                _engineSimTickHook = p =>
+                {
+                    if (first != null)
+                    {
+                        EngineSimExport.WriteSnapshot(json, TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks, false, false), p, true);
+                        samples++;
+                        return;
+                    }
+                    // The start carries the economy (clone income, boxes), as a category trace's start does.
+                    TurboRunner.Snapshot snapshot = first = TurboRunner.Capture(p, _solverCourses, _engine.CaptureState(), (int)_engine.RunTicks);
+                    var head = new EngineSimJson(startJson);
+                    EngineSimExport.WriteSnapshot(head, snapshot, p, false);
+                    head.W.Flush();
+                    EngineSimExport.WriteWorld(worldPath);
+                };
+                try { finished = Evaluate(inputs, out time, out finishTick, out _); }
+                finally
+                {
+                    _engineSimTickHook = null;
+                    _techStart = null;
+                    _startState = null;
+                }
+                if (first == null) throw new InvalidOperationException(tech.name + "'s demo ran no tick in turbo.");
+                Vector2 end = player.transform.position;
+                TurboRunner.PutOrigin(first.origin);
+                ParkAtStart();
+                w.WriteEndArray();
+                WriteTraceTarget(json, savestate ? null : def, savestate ? -1 : def.id, _solverCaps, inputs);
+                w.WritePropertyName("tech"); w.WriteValue(tech.id);
+                w.WritePropertyName("start"); w.WriteRawValue(startJson.ToString());
+                w.WritePropertyName("result");
+                w.WriteStartObject();
+                w.WritePropertyName("finished"); w.WriteValue(finished);
+                w.WritePropertyName("time"); json.Float(time);
+                w.WritePropertyName("finishTick"); w.WriteValue(finishTick);
+                w.WritePropertyName("endX"); json.Float(end.x);
+                w.WritePropertyName("endY"); json.Float(end.y);
+                w.WriteEndObject();
+                w.WriteEndObject();
+            }
+            return new { ok = true, path, finished, time, finishTick, ticks = samples };
         }
 
         string _engineSimStartKey;
@@ -446,6 +552,8 @@ namespace IGTAPTasMod
             w.WritePropertyName("velocity"); json.Value(s.velocity, 0);
             w.WritePropertyName("rotation"); json.Float(s.rotation);
             w.WritePropertyName("angularVelocity"); json.Float(s.angularVelocity);
+            w.WritePropertyName("origin"); json.Value(s.origin, 0);
+            w.WritePropertyName("rebasing"); w.WriteValue(s.rebasing);
             w.WritePropertyName("colliders");
             w.WriteStartArray();
             foreach (var c in s.colliders)
@@ -606,6 +714,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("schema"); w.WriteValue(1);
                 w.WritePropertyName("unityVersion"); w.WriteValue(Application.unityVersion);
                 w.WritePropertyName("createdUtc"); w.WriteValue(DateTime.UtcNow.ToString("o"));
+                w.WritePropertyName("activeScene"); w.WriteValue(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
                 w.WritePropertyName("time");
                 w.WriteStartObject();
                 w.WritePropertyName("fixedDeltaTime"); json.Float(Time.fixedDeltaTime);
@@ -779,9 +888,91 @@ namespace IGTAPTasMod
         {
             var group = new PhysicsShapeGroup2D();
             int count;
-            try { count = collider.GetShapes(group); }
+            try { count = collider.isActiveAndEnabled ? collider.GetShapes(group) : OffShapes(collider, group); }
             catch (Exception) { json.W.WriteNull(); return; }
             WriteShapeGroup(json, group, count);
+        }
+
+        // Unity has no shapes for a collider that is off (its GameObject inactive, as in a zone the ZoneLoader hasn't
+        // loaded, or the component disabled), yet the game can turn it on mid-run and the engine then needs its geometry.
+        // A copy on a live probe at the same pose gives Unity's own shapes, relative to a body at the attached body's pose
+        // as GetShapes gives them. Composites, tilemaps and composite sources aren't copied (coloured blocks export
+        // sourceShapes); they keep no shapes.
+        static int OffShapes(Collider2D collider, PhysicsShapeGroup2D group)
+        {
+            if (!(collider is BoxCollider2D || collider is CapsuleCollider2D || collider is CircleCollider2D || collider is PolygonCollider2D
+                || collider is EdgeCollider2D) || collider.compositeOperation != Collider2D.CompositeOperation.None) return 0;
+            Rigidbody2D body = collider.attachedRigidbody;
+            Transform t = collider.transform;
+            var root = new GameObject("EngineSimShapeProbe");
+            try
+            {
+                GameObject probe = root;
+                if (body != null)
+                {
+                    root.transform.SetPositionAndRotation(body.transform.position, body.transform.rotation);
+                    root.AddComponent<Rigidbody2D>().bodyType = RigidbodyType2D.Kinematic;
+                    probe = new GameObject("EngineSimShapeProbeCollider");
+                    probe.transform.SetParent(root.transform, false);
+                }
+                probe.transform.SetPositionAndRotation(t.position, t.rotation);
+                probe.transform.localScale = t.lossyScale;
+                switch (collider)
+                {
+                    case BoxCollider2D box:
+                    {
+                        BoxCollider2D copy = probe.AddComponent<BoxCollider2D>();
+                        copy.size = box.size;
+                        copy.edgeRadius = box.edgeRadius;
+                        copy.offset = box.offset;
+                        return copy.GetShapes(group);
+                    }
+                    case CapsuleCollider2D capsule:
+                    {
+                        CapsuleCollider2D copy = probe.AddComponent<CapsuleCollider2D>();
+                        copy.size = capsule.size;
+                        copy.direction = capsule.direction;
+                        copy.offset = capsule.offset;
+                        return copy.GetShapes(group);
+                    }
+                    case CircleCollider2D circle:
+                    {
+                        CircleCollider2D copy = probe.AddComponent<CircleCollider2D>();
+                        copy.radius = circle.radius;
+                        copy.offset = circle.offset;
+                        return copy.GetShapes(group);
+                    }
+                    case PolygonCollider2D polygon:
+                    {
+                        PolygonCollider2D copy = probe.AddComponent<PolygonCollider2D>();
+                        var points = new List<Vector2>();
+                        copy.pathCount = polygon.pathCount;
+                        for (int p = 0; p < polygon.pathCount; p++)
+                        {
+                            points.Clear();
+                            polygon.GetPath(p, points);
+                            copy.SetPath(p, points);
+                        }
+                        copy.useDelaunayMesh = polygon.useDelaunayMesh;
+                        copy.offset = polygon.offset;
+                        return copy.GetShapes(group);
+                    }
+                    case EdgeCollider2D edge:
+                    {
+                        EdgeCollider2D copy = probe.AddComponent<EdgeCollider2D>();
+                        copy.points = edge.points;
+                        copy.edgeRadius = edge.edgeRadius;
+                        copy.useAdjacentStartPoint = edge.useAdjacentStartPoint;
+                        copy.useAdjacentEndPoint = edge.useAdjacentEndPoint;
+                        copy.adjacentStartPoint = edge.adjacentStartPoint;
+                        copy.adjacentEndPoint = edge.adjacentEndPoint;
+                        copy.offset = edge.offset;
+                        return copy.GetShapes(group);
+                    }
+                    default: return 0;
+                }
+            }
+            finally { UnityEngine.Object.DestroyImmediate(root); }
         }
 
         static void WriteShapeGroup(EngineSimJson json, PhysicsShapeGroup2D group, int count)

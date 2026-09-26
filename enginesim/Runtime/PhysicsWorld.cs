@@ -25,7 +25,6 @@ namespace IGTAP.EngineSim
             public bool[] SourcesLiveAtLoad;
             public b2Fixture[] Pristine;
             public bool Rescaled;
-            // Slots of this collider's shapes in the static grid, and whether it waits for a regrid (PhysicsWorld.EnsureGrid).
             public readonly List<int> GridSlots = new List<int>();
             public bool Regrid;
         }
@@ -66,10 +65,11 @@ namespace IGTAP.EngineSim
         HashSet<Pair> _touching = new HashSet<Pair>(), _touchingNext = new HashSet<Pair>();
         readonly BodyState _player;
         readonly List<ColliderState> _changed = new List<ColliderState>();
-        // Static bodies that were ever moved: a restore can put them back, so their shapes are regridded after one.
         readonly List<BodyState> _movedStatic = new List<BodyState>();
         bool _loaded;
         internal bool Suspended;
+        // A FloatingOrigin rebase moved every transform; bodies and body-less colliders follow at the next sync, as Unity's do.
+        bool _worldMoved;
 
         public PhysicsWorld(World world, Simulation sim)
         {
@@ -267,6 +267,7 @@ namespace IGTAP.EngineSim
 
         ShapeData[] Shapes(ColliderState s)
         {
+            if (s.Body == null && _sim.Rebased) return MovedShapes(s);
             if (s.Sources == null) return s.Data.Shapes;
             int live = 0;
             bool atLoad = true;
@@ -283,6 +284,62 @@ namespace IGTAP.EngineSim
                 _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s composite geometry with its sources toggled is not in this world export");
             return Array.Empty<ShapeData>();
         }
+
+        /// <summary>
+        /// A body-less collider's shapes after a rebase moved its transform: Unity builds them again from the collider's own
+        /// geometry and the transform (world-space vertices, float math); the export's shapes are the capture pose's.
+        /// Boxes and capsules from their geometry; other shapes (the polygon camera zones) move with the origin.
+        /// </summary>
+        ShapeData[] MovedShapes(ColliderState s)
+        {
+            ShapeData[] captured = s.Data.Shapes;
+            if (captured.Length == 0) return captured;
+            Transform t = s.Collider.transform;
+            Quaternion q = t.m_Rotation;
+            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
+            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
+            float m00 = 1f - (yy + zz), m01 = xy - wz, m10 = xy + wz, m11 = 1f - (xx + zz);
+            Vector3 p = t.m_Position, scale = t.m_LossyScale;
+            Vector2 Point(float lx, float ly)
+            {
+                float sx = lx * scale.x, sy = ly * scale.y;
+                float rx = m00 * sx, ry = m01 * sy, ux = m10 * sx, uy = m11 * sy;
+                float x = rx + ry, y = ux + uy;
+                return new Vector2(x + p.x, y + p.y);
+            }
+            Vector2 o = s.Collider.m_Offset;
+            switch (s.Collider)
+            {
+                case BoxCollider2D box when captured.Length == 1 && captured[0].Type == "Polygon":
+                {
+                    float hx = box.m_Size.x * 0.5f, hy = box.m_Size.y * 0.5f;
+                    float x0 = o.x - hx, x1 = o.x + hx, y0 = o.y - hy, y1 = o.y + hy;
+                    return new[] { Moved(captured[0], Point(x1, y0), Point(x1, y1), Point(x0, y1), Point(x0, y0)) };
+                }
+                case CapsuleCollider2D capsule when captured.Length == 1 && captured[0].Type == "Capsule":
+                {
+                    Vector2 size = capsule.m_Size;
+                    if (capsule.m_Direction == CapsuleDirection2D.Vertical)
+                    {
+                        float half = size.y * 0.5f - size.x * 0.5f;
+                        return new[] { Moved(captured[0], Point(o.x, o.y - half), Point(o.x, o.y + half)) };
+                    }
+                    float along = size.x * 0.5f - size.y * 0.5f;
+                    return new[] { Moved(captured[0], Point(o.x - along, o.y), Point(o.x + along, o.y)) };
+                }
+            }
+            Vector3 by = _sim.CurrentOrigin - _sim.Origin;
+            return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
+        }
+
+        static ShapeData Moved(ShapeData shape, params Vector2[] vertices)
+        {
+            return new ShapeData { Type = shape.Type, Radius = shape.Radius, Vertices = vertices, UseAdjacentStart = shape.UseAdjacentStart,
+                UseAdjacentEnd = shape.UseAdjacentEnd, AdjacentStart = shape.AdjacentStart, AdjacentEnd = shape.AdjacentEnd };
+        }
+
+        /// <summary>A FloatingOrigin rebase moved the world's transforms (Simulation.MoveWorld).</summary>
+        public void WorldMoved() { _worldMoved = true; }
 
         void AddFixture(ColliderState s, b2Body body, b2Shape shape, float friction, float restitution)
         {
@@ -325,6 +382,12 @@ namespace IGTAP.EngineSim
 
         public void SyncTransforms()
         {
+            if (_worldMoved)
+            {
+                _worldMoved = false;
+                foreach (BodyState b in _bodies.Values) b.TransformDirty = true;
+                foreach (ColliderState s in _colliders.Values) if (s.Body == null) Rebuild(s);
+            }
             foreach (BodyState b in _bodies.Values)
             {
                 if (!b.TransformDirty && !b.ScaleDirty) continue;
@@ -538,10 +601,6 @@ namespace IGTAP.EngineSim
         readonly InsideQuery _inside;
         readonly ClosestRay _ray;
 
-        // Static shapes by grid cell, for the scene queries. Built once over every static fixture; a collider whose static
-        // fixtures change (a block swap toggles the blue/orange composites on each dash) or whose static body moves is
-        // only regridded, so that doesn't rebuild the whole world's grid. Queries only accept one hit and fall back to
-        // Box2D otherwise, so the order of shapes in a cell doesn't matter.
         const float CellSize = 64f;
         struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; public b2AABB Box; }
         StaticShape[] _static = Array.Empty<StaticShape>();
@@ -630,7 +689,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // False when a new shape reaches outside the grid: the caller rebuilds it with new bounds.
         bool Regrid(ColliderState s)
         {
             foreach (int i in s.GridSlots)
@@ -821,7 +879,35 @@ namespace IGTAP.EngineSim
             input.useRadii = true;
             var cache = new b2SimplexCache();
             b2Distance(out b2DistanceOutput output, ref cache, input);
-            return output.distance;
+            if (output.distance > 0f) return output.distance;
+            // Unity's Collider2D.Distance is negative for overlapping shapes: the depth to separate them. GJK stops at 0, which
+            // hid Movement's squish check (distance < squishDistance -20) offline: turbo died squished, offline ran on.
+            float separation = MathF.Max(MaxSeparation(input.proxyA, input.transformA, input.proxyB, input.transformB),
+                MaxSeparation(input.proxyB, input.transformB, input.proxyA, input.transformA));
+            return float.IsNegativeInfinity(separation) ? output.distance : MathF.Min(0f, separation - input.proxyA._radius - input.proxyB._radius);
+        }
+
+        // Separating-axis separation of b from a along a's face normals (an edge has both of its normals); a lone vertex
+        // (circle) has no faces.
+        static float MaxSeparation(in b2DistanceProxy a, in b2Transform xfA, in b2DistanceProxy b, in b2Transform xfB)
+        {
+            int count = a._count;
+            if (count < 2) return float.NegativeInfinity;
+            float best = float.NegativeInfinity;
+            for (int i = 0; i < (count == 2 ? 1 : count); i++)
+            {
+                b2Vec2 v1 = Box2D.Math.Mul(xfA, a._vertices[i]), v2 = Box2D.Math.Mul(xfA, a._vertices[(i + 1) % count]);
+                b2Vec2 normal = b2Vec2.Normalize(Vectex.Cross(v2 - v1, 1f));
+                float front = float.PositiveInfinity, back = float.PositiveInfinity;
+                for (int j = 0; j < b._count; j++)
+                {
+                    float d = b2Vec2.Dot(normal, Box2D.Math.Mul(xfB, b._vertices[j]) - v1);
+                    front = MathF.Min(front, d);
+                    back = MathF.Min(back, -d);
+                }
+                best = MathF.Max(best, count == 2 ? MathF.Max(front, back) : front);
+            }
+            return best;
         }
 
         const float NearbyRange = 32f;
@@ -862,7 +948,6 @@ namespace IGTAP.EngineSim
         public float GetRotation(Rigidbody2D body) { return State(body).Body.GetAngle() * (180f / MathF.PI); }
         public void SetRotation(Rigidbody2D body, float degrees) { BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
 
-        // Before the body's transform changes; the grid reads its shapes' new place at the next query.
         void Moving(BodyState body)
         {
             if (body.Body.Type() != b2BodyType.Static) return;
@@ -934,7 +1019,7 @@ namespace IGTAP.EngineSim
         sealed class PhysicsSnapshot
         {
             public object World;
-            public bool TransformDirty, ScaleDirty;
+            public bool TransformDirty, ScaleDirty, WorldMoved;
             public Vector3[] BuiltScales;
             public Pair[] Touching;
             public (ColliderState state, b2Fixture[] fixtures)[] Changed;
@@ -944,7 +1029,8 @@ namespace IGTAP.EngineSim
         {
             var changed = _changed.Count == 0 ? Array.Empty<(ColliderState, b2Fixture[])>() : new (ColliderState, b2Fixture[])[_changed.Count];
             for (int i = 0; i < changed.Length; i++) changed[i] = (_changed[i], _changed[i].Fixtures.ToArray());
-            return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, Touching = _pairsBefore.ToArray(),
+            return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, WorldMoved = _worldMoved,
+                Touching = _pairsBefore.ToArray(),
                 BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray(), Changed = changed };
         }
 
@@ -968,6 +1054,7 @@ namespace IGTAP.EngineSim
             foreach (BodyState b in _movedStatic)
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
             _player.TransformDirty = s.TransformDirty;
+            _worldMoved = s.WorldMoved;
             _player.ScaleDirty = s.ScaleDirty;
             for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];
             _touching.Clear();

@@ -1,7 +1,7 @@
 .courseList { flex: 1; min-height: 0; overflow: auto; }
 .courseGroup { margin: 0 0 12px; }
 .courseName { display: block; padding: 4px 10px 6px; font-size: 13px; color: var(--text); }
-/* Category times: label | record | farm. */
+
 .cmpHead, .cmpRow { display: grid; grid-template-columns: minmax(0, 1fr) 46px 46px; align-items: center; gap: 2px; padding: 0 6px 0 10px; }
 .cmpHead { margin: 22px 0 6px; }
 .cmpHead .sectionLabel { margin: 0; }

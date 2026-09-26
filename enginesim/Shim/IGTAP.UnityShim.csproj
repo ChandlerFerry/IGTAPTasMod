@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Stand-in for the Unity engine assemblies the game's code references. Assembly-CSharp is retargeted to this
-       assembly (see Prep), so the game's own IL runs unmodified outside Unity. -->
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>IGTAP.UnityShim</AssemblyName>
@@ -11,7 +10,7 @@
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Optimize>true</Optimize>
-    <!-- Unity-sourced code keeps Unity's naming and obsolete members. -->
+
     <NoWarn>$(NoWarn);CS0108;CS0114;CS0169;CS0414;CS0618;CS0649;CS0660;CS0661;CS1591;CS8981;CS0628</NoWarn>
   </PropertyGroup>
 
@@ -19,8 +18,6 @@
     <ProjectReference Include="..\Prep\IGTAP.EngineSim.Prep.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <!-- Unity's managed math types run on the game's Mono JIT, which does float arithmetic in double precision:
-       give our copies the same semantics (see Prep/MonoFloat.cs). Runs on the compiled assembly before it is copied. -->
   <Target Name="MonoFloatSemantics" AfterTargets="CoreCompile" BeforeTargets="CopyFilesToOutputDirectory">
     <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; monofloat &quot;@(IntermediateAssembly->'%(FullPath)')&quot; UnityEngine.Vector2 UnityEngine.Vector3 UnityEngine.Vector4 UnityEngine.Vector2Int UnityEngine.Vector3Int UnityEngine.Rect UnityEngine.Color UnityEngine.Color32 UnityEngine.Mathf UnityEngine.Quaternion" />
   </Target>

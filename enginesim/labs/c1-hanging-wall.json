@@ -1,0 +1,237 @@
+{
+ "base": {
+  "onGround": false,
+  "OnWall": false,
+  "wallCoyoteFrames": -1,
+  "collider": "dash",
+  "airDashesLeft": 1,
+  "wallJumpsLeft": 4,
+  "dashCooldown": -1,
+  "cutsceneMode": "none",
+  "dashActive": false,
+  "jumpBuffer": false,
+  "framesSinceLastDash": 100,
+  "coyoteFrames": -1,
+  "wallJumpDirection": 0,
+  "wallJumpMovementLockRemaining": -1,
+  "vx": 0,
+  "mx": 0,
+  "my": 0
+ },
+ "axes": {
+  "x": [
+   2520,
+   2524,
+   2528,
+   2532,
+   2536,
+   2540,
+   2543.5,
+   2548,
+   2553.5,
+   2558
+  ],
+  "y": [
+   -110,
+   -100,
+   -90,
+   -80,
+   -70,
+   -60,
+   -50,
+   -40,
+   -30,
+   -20,
+   -10,
+   0,
+   10,
+   20,
+   30,
+   40
+  ],
+  "facing": [
+   1,
+   -1
+  ],
+  "vy": [
+   -300,
+   -900
+  ]
+ },
+ "branches": [
+  {
+   "name": "dash down, no jump",
+   "ticks": [
+    "0,-1,D",
+    "0,-1*8"
+   ]
+  },
+  {
+   "name": "dash down, jump +1",
+   "ticks": [
+    "0,-1,D",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, jump +2",
+   "ticks": [
+    "0,-1,D",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, jump +3",
+   "ticks": [
+    "0,-1,D",
+    "0,-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn left, no jump",
+   "ticks": [
+    "0,-1,DT-1",
+    "0,-1*8"
+   ]
+  },
+  {
+   "name": "dash down, turn left, jump +1",
+   "ticks": [
+    "0,-1,DT-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn left, jump +2",
+   "ticks": [
+    "0,-1,DT-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn left, jump +3",
+   "ticks": [
+    "0,-1,DT-1",
+    "0,-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn right, no jump",
+   "ticks": [
+    "0,-1,DT1",
+    "0,-1*8"
+   ]
+  },
+  {
+   "name": "dash down, turn right, jump +1",
+   "ticks": [
+    "0,-1,DT1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn right, jump +2",
+   "ticks": [
+    "0,-1,DT1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash down, turn right, jump +3",
+   "ticks": [
+    "0,-1,DT1",
+    "0,-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash left, no jump",
+   "ticks": [
+    "-1,0,D",
+    "0,-1*8"
+   ]
+  },
+  {
+   "name": "dash left, jump +1",
+   "ticks": [
+    "-1,0,D",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash left, jump +2",
+   "ticks": [
+    "-1,0,D",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash left, jump +3",
+   "ticks": [
+    "-1,0,D",
+    "0,-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash right, no jump",
+   "ticks": [
+    "1,0,D",
+    "0,-1*8"
+   ]
+  },
+  {
+   "name": "dash right, jump +1",
+   "ticks": [
+    "1,0,D",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash right, jump +2",
+   "ticks": [
+    "1,0,D",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  },
+  {
+   "name": "dash right, jump +3",
+   "ticks": [
+    "1,0,D",
+    "0,-1",
+    "0,-1",
+    "0,-1,P",
+    "0,-1,H*10"
+   ]
+  }
+ ],
+ "horizon": 40,
+ "top": 20,
+ "updatesPerTick": 1,
+ "fps": 0
+}

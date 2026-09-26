@@ -25,13 +25,11 @@
 .recordingCard .buttonRow { justify-content: flex-end; }
 .solverLog { margin: 12px 0 0; padding-left: 18px; color: #aac0d7; font-size: 12px; line-height: 1.7; }
 
-/* Optimize many's time budget. */
 .passFields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 4px 0 14px; }
 .passFields .field { width: 170px; }
 .passLoop { display: inline-flex; align-items: center; gap: 6px; padding-bottom: 8px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .passLoop input { accent-color: var(--cyan); margin: 0; }
 
-/* Optimize tab: the single solver left, the batch matrix right. */
 .optimizeGrid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap: 18px; align-items: start; }
 @media (max-width: 1200px) { .optimizeGrid { grid-template-columns: 1fr; } }
 .matrixTools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 4px 0 14px; }
@@ -52,7 +50,6 @@
 .matrixQueue li.active strong, .matrixQueue li.active span { color: var(--cyan); }
 .matrixQueue li.done strong { color: var(--text); }
 
-/* Optimize tab: the search map under both panels. */
 .solveMap .panelTitle .buttonRow { margin: 0; }
 .mapLayers { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 4px 0 10px; }
 .mapCanvas { display: block; width: 100%; height: 70vh; min-height: 420px; border: 1px solid var(--line); border-radius: 10px; background: #07111f; cursor: grab; }

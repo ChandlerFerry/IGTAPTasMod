@@ -3,11 +3,6 @@ using System.Runtime.CompilerServices;
 
 namespace Box2D
 {
-    /// <summary>
-    ///  A 2D column vector (bit-compatible with Box2D's b2Vec2 and with
-    ///  System.Numerics.Vector2 semantics). Fields use C++ casing (x, y);
-    ///  X/Y property shims keep System.Numerics-style call sites working.
-    /// </summary>
     public struct b2Vec2 : IEquatable<b2Vec2>
     {
         public float x;
@@ -61,10 +56,6 @@ namespace Box2D
             return dx * dx + dy * dy;
         }
 
-        /// <summary>
-        ///  C++ b2Vec2::Normalize literal: multiplies by the reciprocal (not division),
-        ///  leaves the vector unchanged and returns zero-effect when length &lt; b2_epsilon.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Normalize(b2Vec2 value)
         {
@@ -99,28 +90,14 @@ namespace Box2D
             return new b2Vec2(vector.x - 2f * dot * normal.x, vector.y - 2f * dot * normal.y);
         }
 
-        /// <summary>
-        ///  Rotate a vector by a rotation (C++ b2Mul(b2Rot, b2Vec2): x' = c*x - s*y,
-        ///  y' = s*x + c*y). The upstream C# port used System.Numerics quaternion
-        ///  rotation here, which rounds differently; this matches Box2D/Unity.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Transform(b2Vec2 v, b2Rot q) =>
             new b2Vec2(q.c * v.x - q.s * v.y, q.s * v.x + q.c * v.y);
 
-        /// <summary>
-        ///  C++ b2Mul(b2Mat22, b2Vec2) literal with the vendored Matrix3x2 column
-        ///  layout (ex = (M11, M12), ey = (M21, M22)): (ex.x * v.x + ey.x * v.y,
-        ///  ex.y * v.x + ey.y * v.y). Also valid for b2Rot matrices (M11 = c,
-        ///  M12 = s, M21 = -s, M22 = c), matching b2Mul(b2Rot, b2Vec2).
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Transform(b2Vec2 v, System.Numerics.Matrix3x2 m) =>
             new b2Vec2(m.M11 * v.x + m.M21 * v.y, m.M12 * v.x + m.M22 * v.y);
 
-        /// <summary>
-        ///  C++ b2MulT(b2Mat22, b2Vec2) literal: (dot(v, ex), dot(v, ey)).
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 MulT(b2Vec2 v, System.Numerics.Matrix3x2 m) =>
             new b2Vec2(v.x * m.M11 + v.y * m.M12, v.x * m.M21 + v.y * m.M22);

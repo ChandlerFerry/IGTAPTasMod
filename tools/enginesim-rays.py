@@ -8,7 +8,6 @@ from pathlib import Path
 
 EXE = Path(__file__).resolve().parent.parent / "enginesim" / "Cli" / "bin" / "Release" / "net10.0" / "IGTAP.EngineSim.exe"
 
-
 def probe_rays(x, y, ground, blocking):
     rays = []
     for facing in (1, -1):
@@ -28,7 +27,6 @@ def probe_rays(x, y, ground, blocking):
         rays.append([x + 15 * f, y - 18, f, 0, 14, ground])
         rays.append([x + 15 * f, y + 19, f, 0, 14, ground])
     return rays
-
 
 def main():
     trace = json.loads(Path(sys.argv[1]).read_text())
@@ -52,7 +50,6 @@ def main():
     for r, u, o in bad[:15]:
         print("  ray", r, "\n    unity  ", u, "\n    offline", o)
     sys.exit(1 if bad else 0)
-
 
 if __name__ == "__main__":
     main()

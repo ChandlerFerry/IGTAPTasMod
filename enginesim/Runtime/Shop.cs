@@ -27,7 +27,6 @@ namespace IGTAP.EngineSim
         readonly Dictionary<upgradeBox, string> _ids = new Dictionary<upgradeBox, string>();
         readonly double[] _start = new double[CurrencyCount];
         double[] _spent = new double[CurrencyCount];
-        // Vman course completions' rewards (courseScript.OnVmanCourseCompletion adds them to currencyLookup).
         double[] _awarded = new double[CurrencyCount];
         internal Economy Economy { get; private set; }
         readonly List<BuyMaxRoutine> _buyMax = new List<BuyMaxRoutine>();
@@ -119,9 +118,6 @@ namespace IGTAP.EngineSim
             else Economy?.CourseFinished(course, time);
         }
 
-        // courseScript.stopTracking in a Vman speedrun: OnVmanCourseCompletion pays a course's completion reward on its
-        // first clear, and nothing else (no reward, clone path or comp boost). Boxes cost nothing in Vman, but a box
-        // still needs its price in hand.
         void VmanCourseCompleted(courseScript course)
         {
             if ((bool)ClearedThisVmanField.GetValue(course)) return;
@@ -293,7 +289,6 @@ namespace IGTAP.EngineSim
 
         internal bool HasBox(string box) { return _ids.ContainsValue(box) || _paths.ContainsValue(box); }
 
-        // The movement upgrade a box (a Full-TAS goal's id or path) gives, or null for any other box.
         internal upgradeBox.movementUpgrades? MovementUpgrade(string box)
         {
             foreach (upgradeBox b in _boxes)

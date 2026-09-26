@@ -7,6 +7,8 @@ import "./route-sidebar.css";
 import "./fulltas.css";
 import { FullTasSolvePanel, place, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { TechPanel, type TechState } from "./techs";
+import { UltraMap, type UltraData } from "./ultras";
+import { GROWN_COLOR, MARKERS, SPRING_COLOR, TONE_COLORS, type TreeStep } from "./ultra-level";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -18,7 +20,7 @@ type Savestate = { id: string; name: string; createdUtc: string; assigned: boole
 type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
-type FullTasRun = { name: string; start?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
@@ -37,6 +39,9 @@ async function request(path: string, body?: unknown) {
   if (!response.ok || data.error) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 }
+
+// Module-level so the Ultra map's load effect doesn't rerun on every render.
+const loadUltras = (refresh: boolean): Promise<UltraData> => request("/enginesim/ultras", { refresh });
 
 export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
@@ -74,7 +79,7 @@ export default function Studio() {
           <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
           <strong>Overlay</strong>
         </label>
-        <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker tripped, plus every breaker light. Visual only: the breaker's saved lights and the unlocks they come from don't change.">
+        <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker tripped, plus every breaker light. Visual only: the breaker's saved lights and the unlocks they come from don't change, start snapshots (a new game's, a Vman speedrun's) keep the game's own lights, and turning it off shows those again.">
           <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
           <strong>Breaker lights</strong>
         </label>
@@ -95,7 +100,7 @@ export default function Studio() {
         </div>
       </header>
 
-      <nav className="tabs">{[["fulltas","Full-TAS"],["tech","Tech"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="tabs">{[["fulltas","Full-TAS"],["tech","Tech"],["ultras","Ultra map"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {error && <div className="errorBanner">{error}<button onClick={() => setError("")}>×</button></div>}
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
@@ -108,6 +113,8 @@ export default function Studio() {
 
         {tab === "tech" && <TechPanel techs={state.techs} running={state.running || state.recording} selectedRoute={route} onCommand={command} onEditInputs={async routeId => { if (await command("/routes/select", { routeId })) setTab("timeline"); }}/>}
 
+        {tab === "ultras" && <UltraMap load={loadUltras}/>}
+
         {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Assign a savestate to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="savestateList">{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
@@ -117,9 +124,6 @@ export default function Studio() {
 }
 
 const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"], ["WJ_DS_DJ_BS", "Wall jump + dash + double jump + block swap"]];
-// A record route is timed by the game's timer (start gate to end gate); a farm route (`farm` in the name) by the physics
-// ticks from the quick restart to the finish, what a farming lap costs. Bonuses and transitions are timed from the run
-// start already, so their record is their farm time.
 const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
 
 const BONUS_WHERE: Record<string, string> = {
@@ -284,21 +288,23 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 }
 
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
-type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number };
+type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
 // Every map coordinate is in the game world's frame (courses.json's, forced-paths.json's, --via/--avoid's, at:x,y goals'):
 // the same for every capture of a place, whatever FloatingOrigin the game had then.
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
+  // The trees' ground where it grows once its tree upgrades are bought (not in the world the run starts in).
+  grown?: MapSolid[]; treeSteps?: TreeStep[];
   markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
-type MapLayers = { explored: boolean; level: boolean; boxes: boolean; markers: boolean };
+type MapLayers = { explored: boolean; boxes: boolean; markers: boolean };
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
 function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course[];runs?:string[];onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<MapLayers>({ explored: true, level: true, boxes: true, markers: true });
+  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true });
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number } | null>(null);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
@@ -346,14 +352,40 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
         g.fillRect(cx * size, cy * size, size, size);
       }
     }
-    if (layers.level) for (const s of data.solids) {
-      const color = s.spike ? "#e5484d" : "#8193ab";
+    for (const s of data.solids) {
+      const color = s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
       g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(px * 1.5, s.k === "capsule" ? s.r * 2 : 0); g.lineCap = "round";
       g.beginPath();
       if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); g.fill(); continue; }
       g.moveTo(s.p[0], s.p[1]);
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
-      if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
+      if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
+      if (s.spring) {
+        // Launch direction: from the box's middle out past its far side.
+        const [ux, uy] = s.spring, n = s.p.length / 2;
+        let cx = 0, cy = 0, reach = 0;
+        for (let i = 0; i < n; i++) { cx += s.p[2 * i] / n; cy += s.p[2 * i + 1] / n; }
+        for (let i = 0; i < n; i++) reach = Math.max(reach, (s.p[2 * i] - cx) * ux + (s.p[2 * i + 1] - cy) * uy);
+        // Only once zoomed in (6 world units per pixel or closer, as the Ultra map); zoomed out a spring is its box.
+        if (px > 6) continue;
+        const len = reach + 40, head = 16, tx = cx + ux * len, ty = cy + uy * len;
+        g.lineWidth = 2 * px; g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty);
+        g.moveTo(tx - head * (ux + uy), ty - head * (uy - ux)); g.lineTo(tx, ty); g.lineTo(tx - head * (ux - uy), ty - head * (uy + ux)); g.stroke();
+      }
+    }
+    // Tree ground, once grown: dashed outlines, lighter than the level the engine has.
+    for (const s of data.grown ?? []) {
+      g.beginPath(); g.moveTo(s.p[0], s.p[1]);
+      for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
+      g.closePath(); g.fillStyle = "#c5a26b"; g.globalAlpha = .25; g.fill(); g.globalAlpha = 1;
+      g.strokeStyle = "#c5a26b"; g.lineWidth = 1.5 * px; g.setLineDash([6 * px, 4 * px]); g.stroke(); g.setLineDash([]);
+    }
+    for (const t of data.treeSteps ?? []) {
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0);
+      const dpr = window.devicePixelRatio || 1, sx = (t.x - ox) * scale * dpr, sy = (oy - t.y) * scale * dpr;
+      g.font = `700 ${13 * dpr}px sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+      g.lineWidth = 3 * dpr; g.strokeStyle = "#07111f"; g.strokeText(String(t.step || "?"), sx, sy); g.fillStyle = GROWN_COLOR; g.fillText(String(t.step || "?"), sx, sy);
+      g.restore();
     }
     if (layers.boxes) for (const [boxes, color] of [[data.avoid, "#ff3030"], [data.via, "#3ddc97"]] as [number[][], string][])
       for (const [x0, y0, x1, y1] of boxes) {
@@ -382,9 +414,11 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
       if (r.timerStart >= 0) { g.beginPath(); g.arc(r.points[r.timerStart * 2], r.points[r.timerStart * 2 + 1], 5 * px, 0, Math.PI * 2); g.lineWidth = 1.5 * px; g.strokeStyle = "#fff"; g.stroke(); }
     });
     if (layers.markers) for (const m of data.markers) {
-      g.fillStyle = m.kind === "start" ? "#3ddc97" : m.kind === "end" ? "#ff6b6b" : m.kind === "spring" ? "#ffd54f" : m.kind === "goal" ? "#b9f6ca" : "#4fc3f7";
+      g.fillStyle = m.kind === "goal" ? "#b9f6ca" : MARKERS[m.kind]?.color ?? "#4fc3f7";
       const s = (m.kind === "checkpoint" ? 4 : 6) * px;
-      g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
+      if (MARKERS[m.kind]?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
+      else if (m.kind === "teleporter") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
+      else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
   }, [data, layers, hidden, colors, latest, sketch]);
   useEffect(() => { draw(); }, [draw]);
@@ -443,7 +477,7 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
       : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["explored", "Explored"], ["level", "Level"], ["boxes", "Forced-path boxes"], ["markers", "Gates, in-game checkpoints, springs"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"]] as [keyof MapLayers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
@@ -553,6 +587,8 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [minutes, setMinutes] = useState(60);
   const [windowMinutes, setWindowMinutes] = useState(1);
   const [window_, setWindow] = useState(2);
+  const [onlyGoal, setOnlyGoal] = useState(0);
+  const [threads, setThreads] = useState(0);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
   const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
@@ -563,14 +599,14 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const solve: FullTasSolveState = fullTas.solve ?? { running: false, status: "", log: [] };
   const busy = solve.running || running;
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
-  const validName = /^[A-Za-z0-9%]+$/.test(newName);
+  const validName = /^[A-Za-z0-9%-]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
     <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or an area goal <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after an area goal takes that goal back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
-        <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
+        <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.savestate ? "Savestate · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
         {r.best?<b>{r.best.time.toFixed(2)}s</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {r.offline.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
         <span className={`badge ${r.traceReady?"":"missing"}`}>{r.traceReady?"Trace ready":"No trace"}</span>
       </button>)}
@@ -578,7 +614,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     </div>
     {!name && <p className="offlineConfirmation">No Full-TAS run yet: name a new one.</p>}
     <div className="fullTasInline">
-      <Field label="New run (letters, digits, %)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
+      <Field label="New run (letters, digits, %, -)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
       <button className="secondary" disabled={!validName || runs.some(r => r.name === newName)} onClick={() => { setSelected(newName); setNewName(""); }}>+ New run</button>
     </div>
     {name && <div className="fullTasGrid">
@@ -606,10 +642,12 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <div className="offlineControls">
             <Field label="Minutes (total)"><input type="number" min="1" value={minutes} disabled={solve.running} onChange={e => setMinutes(Number(e.target.value))}/></Field>
             <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
-            <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
+            <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running || onlyGoal > 0} onChange={e => setWindow(Number(e.target.value))}/></Field>
+            <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polish only the stretch from the goal before this one to this one, over and over, with the rest of the route kept as it is" onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
+            <Field label="Threads (0: cores − 2)"><input type="number" min="0" value={threads} disabled={solve.running} onChange={e => setThreads(Math.max(0, Math.floor(Number(e.target.value)) || 0))}/></Field>
           </div>
-          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title="Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_ })}>Solve</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
+          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goal ${onlyGoal - 1 || "start"} → ${onlyGoal} (${labels[onlyGoal - 1] ?? ""})` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, threads, goal: onlyGoal })}>{onlyGoal > 0 ? `Solve goal ${onlyGoal}` : "Solve"}</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, threads, unsolved: true })}>Solve unsolved</button>
             <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
         </div>
       </div>
