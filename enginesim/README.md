@@ -115,6 +115,11 @@ it's off. Course 1 has `start-marker` (436 to 522 right of the gate, 213 to 32 b
 & $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
 ```
 
+`map` replays each archive prefix to shade the cells it explored, and caches what it got per prefix (by a hash of its
+inputs) in `archive\<archive name>.mapcells.bin`, so a redraw replays only prefixes that are new since the last map. It
+also skips the whole redraw when nothing it reads has changed since the last map (the `--out` file's `.key` records
+them). Either cache resets when the start trace, its world or the engine build changes.
+
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close
 the game and solve offline.
 

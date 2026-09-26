@@ -1,9 +1,10 @@
 using System;
-using System.Collections.Concurrent;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,7 +32,7 @@ namespace IGTAP.EngineSim.Cli
         {
             string trace = args[0];
             string output = Solve.Option(args, "--out", (string)null) ?? throw new ArgumentException("map needs --out <file>");
-            int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount / 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount - 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
@@ -39,41 +40,70 @@ namespace IGTAP.EngineSim.Cli
             List<string> optional = Solve.Optional(args);
             string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
+            string archivePath = System.IO.Path.Combine(dir, "archive", Solve.ArchiveName(label, optional) + ".json");
+            string best = FastestOfflineBest(dir, label);
+            List<string> seedFiles = Enumerable.Range(1, Math.Max(0, args.Length - 2)).Where(i => args[i] == "--seed").Select(i => args[i + 1]).ToList();
+
+            // Replays are deterministic in the start trace, its world and the engine build, so the map only changes when one
+            // of those or a drawn input changes: an unchanged request returns the last map as is.
+            string engine = EngineStamp();
+            string simKey = engine + "|" + Stamp(trace) + "|" + Stamp(worldPath);
+            string outputKey = string.Join("\n", new[] { simKey, Stamp(archivePath), best ?? "-", Stamp(best),
+                Stamp(System.IO.Path.Combine(AppContext.BaseDirectory, "forced-paths.json")), string.Join("+", optional) }
+                .Concat(seedFiles.Select(f => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f))))));
+            string keyPath = output + ".key";
+            if (File.Exists(output) && File.Exists(keyPath) && File.ReadAllText(keyPath) == outputKey)
+            {
+                Console.WriteLine($"map {label}: inputs unchanged -> {output}");
+                return 0;
+            }
             Func<Simulation> create = Solve.Creator(trace, header);
 
             var routes = new List<(string name, string kind, List<InputTick> inputs)>();
             List<InputTick> own = Solve.ReadInputs(header);
             if (own.Count > 0) routes.Add((System.IO.Path.GetFileNameWithoutExtension(trace), "seed", own));
-            for (int i = 1; i < args.Length - 1; i++)
-                if (args[i] == "--seed")
-                    using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(args[i + 1]), new JsonDocumentOptions { MaxDepth = 256 }))
-                        routes.Add((doc.RootElement.TryGetProperty("name", out JsonElement n) ? n.GetString() : System.IO.Path.GetFileNameWithoutExtension(args[i + 1]),
-                            "seed", Solve.ReadInputs(doc.RootElement)));
-            string best = FastestOfflineBest(dir, label);
+            foreach (string seedFile in seedFiles)
+                using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(seedFile), new JsonDocumentOptions { MaxDepth = 256 }))
+                    routes.Add((doc.RootElement.TryGetProperty("name", out JsonElement n) ? n.GetString() : System.IO.Path.GetFileNameWithoutExtension(seedFile),
+                        "seed", Solve.ReadInputs(doc.RootElement)));
             if (best != null)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(best), new JsonDocumentOptions { MaxDepth = 256 }))
                     routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", Solve.ReadInputs(doc.RootElement)));
-            OfflineSolver.Memory memory = Solve.LoadMemory(System.IO.Path.Combine(dir, "archive", Solve.ArchiveName(label, optional) + ".json"));
+            OfflineSolver.Memory memory = Solve.LoadMemory(archivePath);
             if (memory != null)
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
                     routes.Add(("plateau " + (i + 1), "plateau", p));
 
-            var reached = new ConcurrentDictionary<long, float>();
+            // Each explore prefix's cells are cached by its inputs' hash, so only prefixes new since the last map replay.
             List<List<InputTick>> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<List<InputTick>>();
-            int next = -1;
-            var workers = Enumerable.Range(0, Math.Max(1, Math.Min(threads, sources.Count))).Select(_ => Task.Run(() =>
+            string cellsPath = System.IO.Path.ChangeExtension(archivePath, ".mapcells.bin");
+            Dictionary<Hash, SourceCells> cached = ReadCells(cellsPath, simKey);
+            var hashes = new Hash[sources.Count];
+            var cells = new SourceCells[sources.Count];
+            Parallel.For(0, sources.Count, k =>
             {
+                hashes[k] = HashInputs(sources[k]);
+                if (cached.TryGetValue(hashes[k], out SourceCells hit)) cells[k] = hit;
+            });
+            int[] missing = Enumerable.Range(0, sources.Count).Where(k => cells[k] == null).ToArray();
+            int next = -1;
+            var workers = Enumerable.Range(0, Math.Max(1, Math.Min(threads, missing.Length))).Select(_ => Task.Run(() =>
+            {
+                if (missing.Length == 0) return;
                 Simulation sim = create();
                 var local = new Dictionary<long, float>();
-                for (int k; (k = Interlocked.Increment(ref next)) < sources.Count;)
-                    sim.Run(sources[k], extraTicks: 0, onStep: _ =>
+                for (int m; (m = Interlocked.Increment(ref next)) < missing.Length;)
+                {
+                    local.Clear();
+                    sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                     {
                         Vector3 p = sim.Player.transform.position;
                         long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
                         float t = sim.Elapsed(sim.TimingCourse());
-                        local[key] = local.TryGetValue(key, out float best) ? Earlier(best, t) : t;
+                        local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
                     });
-                foreach (var pair in local) reached.AddOrUpdate(pair.Key, pair.Value, (_, t) => Earlier(t, pair.Value));
+                    cells[missing[m]] = new SourceCells(local.Keys.ToArray(), local.Values.ToArray());
+                }
             })).ToArray();
             var paths = new List<Path>();
             {
@@ -94,6 +124,11 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             Task.WaitAll(workers);
+            var reached = new Dictionary<long, float>();
+            foreach (SourceCells s in cells)
+                for (int i = 0; i < s.Keys.Length; i++)
+                    reached[s.Keys[i]] = reached.TryGetValue(s.Keys[i], out float t) ? Earlier(t, s.Times[i]) : s.Times[i];
+            if (missing.Length > 0 || cached.Count != sources.Count) WriteCells(cellsPath, simKey, hashes, cells);
 
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
             void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
@@ -134,8 +169,94 @@ namespace IGTAP.EngineSim.Cli
             string temp = output + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(result));
             File.Move(temp, output, true);
-            Console.WriteLine($"map {label}: {paths.Count} routes, {sources.Count} explore prefixes, {reached.Count} cells ({reached.Count(v => v.Value >= 0f)} timed) -> {output}");
+            File.WriteAllText(keyPath, outputKey);
+            Console.WriteLine($"map {label}: {paths.Count} routes, {sources.Count} explore prefixes ({missing.Length} replayed), {reached.Count} cells ({reached.Count(v => v.Value >= 0f)} timed) -> {output}");
             return 0;
+        }
+
+        readonly record struct Hash(ulong A, ulong B);
+
+        sealed record SourceCells(long[] Keys, float[] Times);
+
+        const int CellsVersion = 1;
+
+        static string Stamp(string path)
+        {
+            if (path == null || !File.Exists(path)) return "-";
+            var info = new FileInfo(path);
+            return info.Length + "@" + info.LastWriteTimeUtc.Ticks;
+        }
+
+        // The simulator's code (this build and the game assembly it runs) decides every replay.
+        static string EngineStamp()
+        {
+            return string.Join(";", Directory.GetFiles(AppContext.BaseDirectory, "*.dll").OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                .Select(f => System.IO.Path.GetFileName(f) + "=" + Stamp(f)));
+        }
+
+        static Hash HashInputs(List<InputTick> inputs)
+        {
+            byte[] bytes = new byte[inputs.Count * 29];
+            Span<byte> b = bytes;
+            foreach (InputTick t in inputs)
+            {
+                BinaryPrimitives.WriteSingleLittleEndian(b, t.x);
+                BinaryPrimitives.WriteSingleLittleEndian(b[4..], t.y);
+                b[8] = (byte)((t.held ? 1 : 0) | (t.press ? 2 : 0) | (t.release ? 4 : 0) | (t.dash ? 8 : 0) | (t.reset ? 16 : 0)
+                    | (t.lockX.HasValue ? 32 : 0) | (t.lockY.HasValue ? 64 : 0));
+                BinaryPrimitives.WriteInt32LittleEndian(b[9..], t.dashJump);
+                BinaryPrimitives.WriteInt32LittleEndian(b[13..], t.springDash);
+                BinaryPrimitives.WriteSingleLittleEndian(b[17..], t.lockX ?? 0f);
+                BinaryPrimitives.WriteSingleLittleEndian(b[21..], t.lockY ?? 0f);
+                BinaryPrimitives.WriteInt32LittleEndian(b[25..], 0);
+                b = b[29..];
+            }
+            Span<byte> digest = stackalloc byte[32];
+            SHA256.HashData(bytes, digest);
+            return new Hash(BinaryPrimitives.ReadUInt64LittleEndian(digest), BinaryPrimitives.ReadUInt64LittleEndian(digest[8..]));
+        }
+
+        static Dictionary<Hash, SourceCells> ReadCells(string path, string simKey)
+        {
+            var cells = new Dictionary<Hash, SourceCells>();
+            if (!File.Exists(path)) return cells;
+            try
+            {
+                using var reader = new BinaryReader(new BufferedStream(File.OpenRead(path), 1 << 20));
+                if (reader.ReadInt32() != CellsVersion || reader.ReadString() != simKey) return cells;
+                for (int n = reader.ReadInt32(); n > 0; n--)
+                {
+                    var hash = new Hash(reader.ReadUInt64(), reader.ReadUInt64());
+                    int count = reader.ReadInt32();
+                    var keys = new long[count];
+                    var times = new float[count];
+                    for (int i = 0; i < count; i++) { keys[i] = reader.ReadInt64(); times[i] = reader.ReadSingle(); }
+                    cells[hash] = new SourceCells(keys, times);
+                }
+            }
+            catch (EndOfStreamException) { cells.Clear(); }
+            return cells;
+        }
+
+        static void WriteCells(string path, string simKey, Hash[] hashes, SourceCells[] cells)
+        {
+            string temp = path + ".tmp";
+            var written = new HashSet<Hash>();
+            using (var writer = new BinaryWriter(new BufferedStream(File.Create(temp), 1 << 20)))
+            {
+                writer.Write(CellsVersion);
+                writer.Write(simKey);
+                writer.Write(hashes.Distinct().Count());
+                for (int k = 0; k < hashes.Length; k++)
+                {
+                    if (!written.Add(hashes[k])) continue;
+                    writer.Write(hashes[k].A);
+                    writer.Write(hashes[k].B);
+                    writer.Write(cells[k].Keys.Length);
+                    for (int i = 0; i < cells[k].Keys.Length; i++) { writer.Write(cells[k].Keys[i]); writer.Write(cells[k].Times[i]); }
+                }
+            }
+            File.Move(temp, path, true);
         }
 
         static float Round(float v) { return (float)Math.Round(v, 1); }
