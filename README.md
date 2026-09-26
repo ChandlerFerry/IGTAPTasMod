@@ -69,6 +69,8 @@
 - Agents never start the studio's Optimize tab.
 - `enginesim` can't do something? Fix `enginesim`, don't work around.
 - Offline replay must match the game tick for tick.
+- `FloatingOrigin` rebases in turbo and offline as at 1x: turbo runs the game's own `LateUpdate` and `MoveOrigin`, and a
+  turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`).
 - Only save strictly faster times: record by the game timer, farm by physics ticks.
 - Trace every new best and name its trick.
 
@@ -90,7 +92,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and a demo route that performs it. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan-fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log). |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan-fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `tech-check.py` (every tech demo, turbo against the offline engine). |
 
 ## Build
 

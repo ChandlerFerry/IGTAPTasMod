@@ -207,6 +207,7 @@ namespace IGTAP.EngineSim
             b2Body body = s.Body?.Body ?? _ground;
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
             s.Fixtures.Clear();
+            s.Layer = s.Collider.gameObject.m_Layer;
             s.ContactMask = ContactMask(_layerMasks, s.Collider);
             if (!Live(s)) return;
             float friction = s.Data.Friction, restitution = s.Data.Bounciness;
@@ -361,6 +362,16 @@ namespace IGTAP.EngineSim
         }
 
         public void ActiveChanged(GameObject gameObject)
+        {
+            if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
+                foreach (ColliderState s in list) Changed(s);
+        }
+
+        /// <summary>
+        /// A GameObject changed layer (PlatformMover.MakeIntangible): Unity filters its contacts and queries by the new layer at
+        /// once, so its colliders are rebuilt like any other collider change.
+        /// </summary>
+        public void LayerChanged(GameObject gameObject)
         {
             if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
                 foreach (ColliderState s in list) Changed(s);
@@ -1046,6 +1057,12 @@ namespace IGTAP.EngineSim
                 b2Fixture[] fixtures = c.Pristine;
                 foreach (var (state, saved) in s.Changed)
                     if (state == c) { fixtures = saved; break; }
+                if (c.Layer != c.Collider.gameObject.m_Layer)
+                {
+                    c.Layer = c.Collider.gameObject.m_Layer;
+                    c.ContactMask = ContactMask(_layerMasks, c.Collider);
+                    if (c.Body != null) _movers = null;
+                }
                 if (c.Fixtures.SequenceEqual(fixtures)) continue;
                 c.Fixtures.Clear();
                 c.Fixtures.AddRange(fixtures);
