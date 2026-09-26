@@ -226,7 +226,9 @@ row also has the FloatingOrigin (`originX/Y`) and `lastHyperY` (scene frame: wor
 saves a studio savestate (`probe/<name> @<tick>`, with its FloatingOrigin) after that input tick, the start for later
 probes there. Playback renders at 280 fps with vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead. Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
-down. `GET /api/probe/status` says whether one is running and the last file written.
+down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
+adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
+position and `layer`, 7 Ground, 0 while `MakeIntangible` holds it).
 
 `POST /api/savestates/place {name?, from?, x?, y?, vx?, vy?, facing?, fields?}` makes a probe start anywhere, inside a
 wall too: a copy of a studio savestate (`from`) or of the player now, with the world-frame position, `Velocity` (the body
@@ -243,12 +245,15 @@ tick that differs. A demo starts inside a tick, as its playback does, so the tra
 input tick (the start's `tick`). A savestate start is off every course (`course` -1): no course finish ends it offline,
 as none does in turbo.
 
-All 24 demos (2026-09-26): every position and Movement field identical tick for tick, the Float Ultra demo included
+All 25 demos (2026-09-26): every position and Movement field identical tick for tick, the Float Ultra demo included
 (its three rebases and the ultra at tick 1206). What still differs: Cash by one ulp once clones pay on Course 1 (the
 economy's float order, not movement); body velocity y ±1.15e-6 on a resting contact at Course 1's start and at the
 checkpoint demo's respawn, and the VMAN run's y velocity ulp at tick 206 and `collidingBodies` order at tick 493
 (ground-seam noise); Wall dash's start primes its wall contact, so the game's `collidingBodies` keeps the wall offline
-after the dash leaves it (Unity sent the exit).
+after the dash leaves it (Unity sent the exit). Hyper ground bounce, Super ground bounce and Wall dash now die on their
+last action in turbo (Hyper ground bounce at 1x too: its down dash lands on Course 1's floor spikes), and Spike
+wallbounce now walks into Course 2's dash box (the engine ends it there: `Category unlocks changed`); their traces from
+earlier that day ran through. Turbo and the engine agree on all four; the demos need recording again.
 
 ## Clip lab
 
@@ -387,6 +392,21 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   arms it after the FixedUpdate the dash started in and `StickFor` returns it for those reads only (`BeforeTick` of the
   next tick disarms it). Unset, the window reads the dash tick's own stick (x at rest). It is legal (README `### Rules`);
   the Inwall wallbounce tech demo uses it.
+- Zip movers (`PlatformMover`, locked or not): a jump or wall jump while touching one calls `MakeIntangible` (through
+  `Movement.MovingPlatformMomentumInherit`), which moves it to the Default layer and back to Ground after
+  `WaitForSeconds(0.15)`; the ground and wall rays (Ground only) miss it meanwhile and the normal hitbox (it excludes
+  Default) passes into it, while the 40×54 hurtbox still collides. Its other coroutines (`PlayerExit`'s contact clear two
+  physics steps after the player leaves, the move once `zipMoversUnlocked`) are gameplay too. Turbo and the engine step
+  them on the run's ticks (`TurboRunner` and `Scheduler`: `WaitForSeconds` at the start of the tick an Invoke of that
+  delay fires, `WaitForFixedUpdate` right after the next physics step, `null` after `Update`, `WaitForEndOfFrame` at the
+  tick's end); snapshots keep the parked iterators, the movers' fields and layers. A layer write rebuilds that object's
+  colliders (`PhysicsWorld.LayerChanged`); before, the engine read layers once at load and turbo never resumed the
+  coroutine within a run. Other scripts' coroutines still run to their first yield only. At 1x the Ground layer comes back
+  on the first rendered frame 0.15 s after the jump's frame, 0.01 s before the 8th tick after it: in 1x probes on Course
+  9's pillar it was back for that tick 8 times in 12 and a tick later the other 4 (frame pacing, a dash freeze right
+  after the jump). Turbo and the engine take the 8th tick; a route that needs the block back on exactly that tick can
+  desync at playback. The `zip-mover-intangibility` demo shows it. A zone load while a mover is intangible (Unity stops
+  its coroutines when the zone deactivates) leaves it on Default until the next `MakeIntangible` ends.
 - Spring cancel: a sideways spring locks the player (`cutsceneModes.spring`) for its `movementLock`, and those ticks skip
   the input hook, so they take no input tick. A player can still press dash on any of them, and the spring branch cancels
   the lock on a buffered dash (Movement.cs:1214-1221). An input tick's `springDash` N (`MacroStep.springDashFrame`)
@@ -437,7 +457,9 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
     (courseScript.cs:268), `upgradeBox.OnEnable` (upgradeBox.cs:288,292), LightFlicker.cs:26,
     playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20, JiggleDropScript.cs:41, ObjectBobber.cs:33
     (the pooled clone prefab is Transform + SpriteRenderer + ParticleSystem only: activating one draws nothing).
-  - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off), PlatformMover.cs:154,165.
+  - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off). PlatformMover.cs:154,165
+    only run once zip movers are unlocked (`zipMoversUnlocked`, a global box the engine doesn't model: buying it ends
+    the run), and then in turbo and here alike.
   - Not reproduced: the draws of a block swap's re-activated boxes' `OnEnable` (upgradeBox.cs:288,292) and of the tree
     part it grows. A block swap ends the run (`Unmodeled purchase: block swap`), so the stream is never read past it;
     the tree's own growth sound draws are kept (Shop.GrowTree) but its collider changes are not modeled.

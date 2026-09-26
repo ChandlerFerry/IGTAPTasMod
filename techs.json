@@ -181,5 +181,9 @@
   { "id": "corner-boost", "name": "Pixel perfect corner boost", "category": "major", "requires": "OMNI", "origin": "community",
     "description": "A chained diagonal dash boost that double counts momentum and sends you flying; only on corners (a maybe-pixel-perfect hyper off a corner).",
     "note": "Unconfirmed. In 100,000+ offline runs in the VMAN world, 6,787 hypers (1,673 at corners) all matched the game's formula, and none counted the pre-dash momentum twice. What players see is most likely the game's Ultra bonus, chained down ledges.",
-    "related": ["ultra-bonus", "ultra", "wavedash"] }
+    "related": ["ultra-bonus", "ultra", "wavedash"] },
+  { "id": "zip-mover-intangibility", "name": "Zip mover intangibility", "category": "glitchless", "requires": "NONE", "origin": "game",
+    "description": "Jump or wall-jump while touching a zip mover (PlatformMover, locked or not): Movement.MovingPlatformMomentumInherit calls PlatformMover.MakeIntangible, which moves the block from the Ground layer to Default for WaitForSeconds(0.15). For those 8 physics ticks the ground and wall rays (Ground only) miss it and the normal hitbox (it excludes Default) passes into it; only the smaller 40x54 hurtbox still collides. A dash along its face in that window doesn't stop on it as a wall: it runs on until the block is Ground again (from the 8th tick after the jump), then clings.",
+    "note": "Demo (9_WJ_DS_DJ_BS, lab savestate on the ledge under Course 9's zip-mover pillar at 17826, 6231, one air dash): walk right into the pillar, jump, dash right 3 ticks later. In turbo and offline the dash runs 5 ticks along the face and clings on the 8th tick after the jump; without the intangibility it would cling on its first tick. At 1x the block is Ground again from the first rendered frame 0.15 s after the jump's frame, 0.01 s before the 8th tick: of 12 1x probes (dash 1 to 9 ticks after the jump, the demo's own inputs among them) 8 had it back for the 8th tick and 4 a tick later, so a route that needs that exact tick can desync at playback. Turbo and the offline engine take the 8th tick.",
+    "related": [] }
 ]
