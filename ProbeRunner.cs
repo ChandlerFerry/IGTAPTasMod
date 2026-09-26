@@ -127,9 +127,13 @@ namespace IGTAPTasMod
                 if (Mathf.Abs(q.x - p.x) < 300f && Mathf.Abs(q.y - p.y) < 300f)
                     movers.Add(new { x = q.x - origin.x, y = q.y - origin.y, layer = mover.gameObject.layer });
             }
+            Camera cam = Camera.main;
+            Vector3 camAt = cam != null ? cam.transform.position : Vector3.zero;
             _probe.rows.Add(new
             {
-                kind, frame = Time.frameCount, unscaled = Time.unscaledTime, timeScale = Time.timeScale,
+                kind, frame = Time.frameCount, unscaled = Time.unscaledTime, timeScale = Time.timeScale, time = Time.timeAsDouble,
+                camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
+                cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
                 physics = _engine.PhysicsTicks, input = _engine.RunTicks,
                 x = p.x - origin.x, y = p.y - origin.y, vx = v.x, vy = v.y, mx = m.x, my = m.y, bvx = body.x, bvy = body.y,
                 bodyX = bodyAt.x, bodyY = bodyAt.y, interpolation = _playerBody != null ? _playerBody.interpolation.ToString() : null,

@@ -116,7 +116,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchTechHooks();
             PatchVmanCreditsCrash();
-            PatchTimeStopClock();
+            PatchWallClock();
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
@@ -168,38 +168,63 @@ namespace IGTAPTasMod
             if (dropped != 2) Log.LogWarning("Vman credits: expected ForceCrash and PlayerPrefs.SetInt, dropped " + dropped + " calls.");
         }
 
-        // Movement.TimeStop's freeze (IE_TimeStop) counts Time.unscaledDeltaTime, which follows the wall clock even with
-        // Time.captureDeltaTime set, so a fixed-clock probe still froze for a varying number of frames (3, 8 and 7 at 240
-        // fps), each one a Movement.Update that can step up. Under the fixed clock it counts the fixed frame step instead.
-        private void PatchTimeStopClock()
+        // Three game scripts read the wall clock (Time.unscaledDeltaTime / unscaledTime), which Time.captureDeltaTime leaves
+        // alone, so a fixed-clock probe still varied with real frame times:
+        // - Movement.TimeStop's freeze (IE_TimeStop) counts unscaledDeltaTime: it froze for 3, 8 and 7 frames at 240 fps,
+        //   each one a Movement.Update that can step up;
+        // - cameraMover.LateUpdate eases the camera by unscaledDeltaTime, and the camera decides which clones are on screen
+        //   (clonesLoD) and so how they pay;
+        // - ObjectBobber.FixedUpdate bobs its object by unscaledTime.
+        // Under the fixed clock they read the fixed clock's frame step and its running total instead (FixedFrameStep,
+        // FixedUnscaledTime); otherwise the wall clock, as before. timer.Update (the play-time display) is left alone.
+        private void PatchWallClock()
         {
             // The local iterator IE_TimeStop compiles to "<TimeStop>g__IE_TimeStop|…" on Movement or on its closure class.
             const BindingFlags any = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
             MethodInfo coroutine = Array.Find(typeof(Movement).GetMethods(any), m => m.Name.Contains("IE_TimeStop"));
             foreach (Type nested in typeof(Movement).GetNestedTypes(BindingFlags.NonPublic))
                 if (coroutine == null) coroutine = Array.Find(nested.GetMethods(any), m => m.Name.Contains("IE_TimeStop"));
-            MethodInfo moveNext = coroutine == null ? null : AccessTools.EnumeratorMoveNext(coroutine);
-            if (moveNext == null) { Logger.LogWarning("Optional hook unavailable: Movement.TimeStop.IE_TimeStop"); return; }
-            _harmony.Patch(moveNext, transpiler: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(FreezeOnFixedClock))));
+            PatchWallClock("Movement.TimeStop.IE_TimeStop", coroutine == null ? null : AccessTools.EnumeratorMoveNext(coroutine));
+            PatchWallClock("cameraMover.LateUpdate", AccessTools.Method(typeof(cameraMover), "LateUpdate"));
+            PatchWallClock("ObjectBobber.FixedUpdate", AccessTools.Method(typeof(ObjectBobber), "FixedUpdate"));
         }
 
-        private static IEnumerable<CodeInstruction> FreezeOnFixedClock(IEnumerable<CodeInstruction> instructions)
+        private void PatchWallClock(string name, MethodInfo target)
         {
-            MethodInfo unscaled = AccessTools.PropertyGetter(typeof(Time), nameof(Time.unscaledDeltaTime));
-            MethodInfo step = AccessTools.Method(typeof(TasPlugin), nameof(FreezeFrameStep));
+            if (target == null) { Logger.LogWarning("Optional hook unavailable: " + name); return; }
+            _wallClockTarget = name;
+            _harmony.Patch(target, transpiler: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(ReadFixedClock))));
+        }
+
+        static string _wallClockTarget;
+
+        private static IEnumerable<CodeInstruction> ReadFixedClock(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo unscaledDelta = AccessTools.PropertyGetter(typeof(Time), nameof(Time.unscaledDeltaTime));
+            MethodInfo unscaledTime = AccessTools.PropertyGetter(typeof(Time), nameof(Time.unscaledTime));
+            MethodInfo step = AccessTools.Method(typeof(TasPlugin), nameof(FixedFrameStep));
+            MethodInfo total = AccessTools.Method(typeof(TasPlugin), nameof(FixedUnscaledTime));
             int replaced = 0;
             foreach (CodeInstruction instruction in instructions)
             {
-                if (instruction.Calls(unscaled)) { replaced++; yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Call, step).MoveLabelsFrom(instruction); }
-                else yield return instruction;
+                MethodInfo with = instruction.Calls(unscaledDelta) ? step : instruction.Calls(unscaledTime) ? total : null;
+                if (with == null) { yield return instruction; continue; }
+                replaced++;
+                yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Call, with).MoveLabelsFrom(instruction);
             }
-            if (replaced != 1) Log.LogWarning("TimeStop: expected one Time.unscaledDeltaTime, replaced " + replaced + ".");
+            if (replaced != 1) Log.LogWarning(_wallClockTarget + ": expected one wall-clock read, replaced " + replaced + ".");
         }
 
-        /// <summary>A freeze frame's length: the fixed clock's frame (1/fps) while it runs, else the wall clock's.</summary>
-        static float FreezeFrameStep()
+        /// <summary>This frame's unscaled length: the fixed clock's step while it runs, else the wall clock's.</summary>
+        static float FixedFrameStep()
         {
-            return Instance != null && Instance.FixedClock ? 1f / Application.targetFrameRate : Time.unscaledDeltaTime;
+            return Instance != null && Instance.FixedClock ? Instance._clockFrame : Time.unscaledDeltaTime;
+        }
+
+        /// <summary>Unscaled time: the fixed clock's frames summed from its start while it runs, else the wall clock's.</summary>
+        static float FixedUnscaledTime()
+        {
+            return Instance != null && Instance.FixedClock ? (float)Instance._clockTotal : Time.unscaledTime;
         }
 
         internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
@@ -271,6 +296,9 @@ namespace IGTAPTasMod
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Instance.ApplyTechAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
+                // The camera eases on the wall clock until the fixed clock starts, so a fixed-clock probe starts it settled on
+                // the player: the clones it frames (clonesLoD) then pay the same from the first tick.
+                if (Instance._probe != null && Instance._probe.fixedClock && movement != null) SavestateService.SnapCamera(movement.transform.position);
                 Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }
             return true;
@@ -1015,6 +1043,8 @@ namespace IGTAPTasMod
                     Time.maximumDeltaTime = Time.fixedDeltaTime;
                     QualitySettings.vSyncCount = 0;
                     Application.targetFrameRate = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
+                    _clockNext = 1f / Application.targetFrameRate;
+                    _clockTotal = 0.0;
                 }
                 else
                 {
@@ -1024,8 +1054,16 @@ namespace IGTAPTasMod
                     Time.captureDeltaTime = 0f;
                 }
             }
-            if (FixedClock) Time.captureDeltaTime = FixedClockStep(Application.targetFrameRate);
+            if (!FixedClock) return;
+            // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
+            _clockFrame = _clockNext;
+            _clockTotal += _clockFrame;
+            _clockNext = FixedClockStep(Application.targetFrameRate);
+            Time.captureDeltaTime = _clockNext;
         }
+
+        float _clockFrame, _clockNext;
+        double _clockTotal;
 
         /// <summary>A 1x playback on the fixed clock (a probe's <c>fixedClock</c>): game time and freezes ignore the wall clock.</summary>
         bool FixedClock { get { return _playbackPaced && _probe != null && _probe.fixedClock; } }

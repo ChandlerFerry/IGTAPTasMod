@@ -159,7 +159,7 @@ namespace IGTAPTasMod
         /// Puts the camera where cameraMover's follow settles on the player (no lookahead, the player's set offset, the target
         /// zoom), so a restore doesn't pan across the map from where the camera was.
         /// </summary>
-        static void SnapCamera(Vector3 player)
+        internal static void SnapCamera(Vector3 player)
         {
             Camera cam = Camera.main;
             cameraMover mover = cam != null ? cam.GetComponent<cameraMover>() : null;
