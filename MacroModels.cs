@@ -105,5 +105,7 @@ namespace IGTAPTasMod
         public bool lockCapabilities;
         public bool showOverlay = true;
         public bool forceBreakerLights;
+        // The Full-TAS run whose goal rects the overlay draws in game; empty: none.
+        public string fullTasGoalsRun = "";
     }
 }

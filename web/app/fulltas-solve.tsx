@@ -28,7 +28,7 @@ function upgradeName(token: string) {
   return `${what[m[1]]} (Course ${m[2] || "1"}${m[3] ? " " + m[3] : ""})`;
 }
 
-// A goal token in words: start:1 → "Start Course 1", at:7645,6050,230,1500 → "Checkpoint at (7645, 6050)".
+// A goal token in words: start:1 → "Start Course 1", at:7645,6050,230,1500,from=left → "Checkpoint at (7645, 6050) from the left".
 export function goalName(label: string | undefined | null): string {
   if (!label) return "?";
   const m = /^(start|finish|buy|reward|at):(.+)$/.exec(label);
@@ -38,7 +38,7 @@ export function goalName(label: string | undefined | null): string {
     case "finish": return `Finish ${place(m[2])}`;
     case "buy": return "Buy " + m[2].split("+").map(upgradeName).join(" + ");
     case "reward": return `${place(m[2])} reward`;
-    default: { const [x, y] = m[2].split(","); return `Checkpoint at (${x}, ${y})`; }
+    default: { const [x, y] = m[2].split(","); const from = /,from=(.+)$/.exec(m[2]); return `Checkpoint at (${x}, ${y})${from ? ` from the ${from[1].split("+").join(" or ")}` : ""}`; }
   }
 }
 

@@ -19,7 +19,7 @@ type OptionalBlock = { name: string; note: string; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; playable?: boolean; traceReady: boolean };
-type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null };
+type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean;
   unlockLevel?: number | null;
@@ -512,7 +512,7 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
-    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or a checkpoint <code>at:x,y,width,height</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
+    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or a checkpoint <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after a checkpoint takes that checkpoint back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
@@ -543,6 +543,10 @@ function FullTas({fullTas,running,onCommand}:{fullTas?:FullTasState;running:bool
             <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
             <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
+            <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: this run's checkpoint (at:) and bonus end (reward:) rects, numbered, where the goal check tests them. While the run plays, reached goals turn green and the next one yellow.">
+              <input type="checkbox" checked={!!run && fullTas.goalsOverlay === name} disabled={!run} onChange={e => onCommand("/settings/fulltas-goals", { name: e.target.checked ? name : "" })} />
+              <strong>Goals in game</strong>
+            </label>
           </div>
           <div className="offlineControls">
             <Field label="Minutes (total)"><input type="number" min="1" value={minutes} disabled={solve.running} onChange={e => setMinutes(Number(e.target.value))}/></Field>

@@ -1388,6 +1388,14 @@ namespace IGTAPTasMod
                 SaveSettings();
                 return new { ok = true, on = _settings.forceBreakerLights };
             }
+            if (request.Path == "/api/settings/fulltas-goals")
+            {
+                string run = Text(body, "name") ?? "";
+                if (run.Length > 0) FindFullTasRun(run);
+                _settings.fullTasGoalsRun = run;
+                SaveSettings();
+                return new { ok = true, name = _settings.fullTasGoalsRun };
+            }
             if (request.Path == "/api/session/setup")
             {
                 if (body["abilities"] != null && CapabilitiesLocked) throw new InvalidOperationException(CapabilitiesLockedError);

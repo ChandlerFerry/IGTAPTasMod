@@ -22,6 +22,12 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 | `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
 | `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
 | `at:x,y,w,h` | A checkpoint: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. |
+| `at:x,y,w,h,from=left+bottom` | The same checkpoint, entered from one of these sides (`left`, `right`, `bottom`, `top`): on the tick the colliders first touch the rect, after the tick before they were wholly outside it on that side. Touching it any other way doesn't count; the player must leave and come in again. |
+
+A quick restart right after a checkpoint (the last goal reached is an `at:`) takes that checkpoint back: the run has to
+pass it again before the next goal counts. A checkpoint marks the way the run goes on, so a window can't touch it and
+restart to hand the next window a standing start. Quick restarts after any other goal (a purchase, a finish) are
+untouched.
 
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
 the game's purchases; the plugin writes none.
@@ -87,6 +93,12 @@ route in turbo from the run's start with the usual buffer audit, checks the unlo
 far, and refuses a quick restart on two ticks in a row (a real button is released in between). Splits per goal are kept
 in `fulltas-splits.json`.
 
+A goals edit (the studio's **Save goals** or `fulltas.json` edited on disk) or a changed `start` renames every saved
+route of that run solved for other goals to `<name> stale`: it's out of the record and never played or captured. The
+offline best counts only its unchanged leading goals it reaches, and **Play** and **Capture start** use its inputs only
+up to the last of them (past it they head for the old goals, or miss the next one). The solver drops a saved best's
+inputs past the last unchanged goal the same way.
+
 ## Studio: Full-TAS tab
 
 - **Goals** (`POST /api/fulltas/goals {name, goals}`), **Capture start** (`/api/fulltas/capture`: start trace + world,
@@ -101,6 +113,10 @@ in `fulltas-splits.json`.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.
+- **Goals in game** (`POST /api/settings/fulltas-goals {name}`, `""` turns it off; settings `fullTasGoalsRun`, `/api/state`
+  `fullTas.goalsOverlay`) draws the run's `at:` and `reward:` rects in game, numbered, where the goal check tests them
+  (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
+  goals are green and the next one yellow.
 
 ## Offline search
 

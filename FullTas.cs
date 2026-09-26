@@ -12,11 +12,24 @@ namespace IGTAPTasMod
         // reward: the bonus's end rect (it finds the reward box); at: the checkpoint the player's collider must touch.
         // Centre and size in courses.json's frame; the trace header carries them in its world frame.
         public float x, y, w, h;
+        // at: the sides it must be entered from (FromLeft...; 0: any). Entered: the player's colliders overlap the rect
+        // after a tick and, after the tick before, were wholly outside it on one of these sides.
+        public int from;
+        public const int FromLeft = 1, FromRight = 2, FromBottom = 4, FromTop = 8;
+        public static readonly string[] SideNames = { "left", "right", "bottom", "top" };
         public const float RewardBoxRange = 400f;
 
         public static string BoxId(string path, int sibling)
         {
             return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // The player's collider bounds after the tick before (px0..px1, py0..py1, same frame as the rect) allow the entry.
+        public bool EnteredFrom(float rx0, float rx1, float ry0, float ry1, float px0, float px1, float py0, float py1)
+        {
+            return from == 0
+                || (from & FromLeft) != 0 && px1 <= rx0 || (from & FromRight) != 0 && px0 >= rx1
+                || (from & FromBottom) != 0 && py1 <= ry0 || (from & FromTop) != 0 && py0 >= ry1;
         }
     }
 
@@ -64,6 +77,16 @@ namespace IGTAPTasMod
         {
             FullTasGoal g = Current;
             return g != null && g.kind == FullTasGoal.At && Reach(input, physics);
+        }
+
+        // A quick restart right after a checkpoint (the last goal reached is an at:) takes that checkpoint back: the run
+        // must pass it again on the way to the next goal, so it can't restart to hand the next window a fresh start.
+        public void QuickRestarted()
+        {
+            if (Next == 0 || Next > Limit || Goals[Next - 1].kind != FullTasGoal.At) return;
+            Next--;
+            InputTicks[Next] = PhysicsTicks[Next] = -1;
+            _bought = 0;
         }
 
         public bool Bought(string path, string id, long input, long physics)
