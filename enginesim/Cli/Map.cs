@@ -34,6 +34,7 @@ namespace IGTAP.EngineSim.Cli
             string output = Solve.Option(args, "--out", (string)null) ?? throw new ArgumentException("map needs --out <file>");
             int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount - 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
+            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) return FullTasMap(trace, header, fulltas, output);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
@@ -169,6 +170,98 @@ namespace IGTAP.EngineSim.Cli
             File.Move(temp, output, true);
             File.WriteAllText(keyPath, outputKey);
             Console.WriteLine($"map {label}: {paths.Count} routes, {sources.Count} explore prefixes ({missing.Length} replayed), {reached.Count} cells ({reached.Count(v => v.Value >= 0f)} timed) -> {output}");
+            return 0;
+        }
+
+        // A Full-TAS run's map: where its search windows went (FullTas's visits file, colored by the run time of the first
+        // arrival), the run's best so far, its at: goals (green boxes, numbered markers) and its avoid boxes (pink).
+        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string output)
+        {
+            string name = fulltas.GetProperty("name").GetString();
+            string[] labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
+            string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
+            string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
+            string runFile = System.IO.Path.Combine(dir, "fulltas", name + ".json");
+            Func<Simulation> create = Solve.Creator(trace, header);
+
+            var routes = new List<(string name, string kind, List<InputTick> inputs)>();
+            if (File.Exists(runFile))
+                using (JsonDocument saved = JsonDocument.Parse(File.ReadAllText(runFile), new JsonDocumentOptions { MaxDepth = 256 }))
+                {
+                    JsonElement root = saved.RootElement;
+                    List<InputTick> inputs = Solve.ReadInputs(root);
+                    string[] solved = root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+                    long[] goalInput = root.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                    int keep = FullTas.CurrentInputs(solved, goalInput, labels, inputs.Count);
+                    routes.Add(("best so far", "best", inputs.GetRange(0, keep)));
+                }
+            else
+            {
+                List<InputTick> own = Solve.ReadInputs(header);
+                if (own.Count > 0) routes.Add((System.IO.Path.GetFileNameWithoutExtension(trace), "seed", own));
+            }
+
+            var paths = new List<Path>();
+            Simulation sim = create();
+            Vector3 origin = sim.Origin;
+            float dt = sim.World.FixedDeltaTime;
+            foreach (var (routeName, kind, inputs) in routes)
+            {
+                var path = new Path { Name = routeName, Kind = kind };
+                sim.Goals.Limit = labels.Length;
+                RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ =>
+                {
+                    Vector3 p = sim.PlayerWorld;
+                    path.Points.Add(Round(p.x));
+                    path.Points.Add(Round(p.y));
+                });
+                path.Finished = r.Progress == labels.Length;
+                path.Time = r.Progress == 0 ? 0f : r.GoalPhysicsTicks[r.Progress - 1] * dt;
+                path.Name += $" ({r.Progress}/{labels.Length} goals)";
+                paths.Add(path);
+            }
+
+            var goals = new List<(int index, string label, float[] box)>();
+            for (int i = 0; i < labels.Length; i++)
+            {
+                if (!labels[i].StartsWith("at:", StringComparison.Ordinal)) continue;
+                float[] v = labels[i].Substring(3).Split(',').Take(4).Select(s => float.Parse(s, CultureInfo.InvariantCulture)).ToArray();
+                goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
+            }
+            OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name);
+            Dictionary<long, float> visits = FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels) ?? new Dictionary<long, float>();
+            const float cell = FullTas.VisitCell;
+
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
+            foreach (Path p in paths) for (int i = 0; i < p.Points.Count; i += 2) Grow(p.Points[i], p.Points[i + 1]);
+            foreach (long key in visits.Keys) { Grow((key >> 32) * cell, (int)key * cell); Grow(((key >> 32) + 1) * cell, ((int)key + 1) * cell); }
+            foreach (var g in goals) { Grow(g.box[0], g.box[1]); Grow(g.box[2], g.box[3]); }
+            if (x0 > x1) throw new InvalidOperationException("Nothing to draw: no best, no explored cells and no at: goals for Full-TAS " + name);
+            const float pad = 300f;
+            x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+            using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
+
+            var result = new
+            {
+                course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name, fulltas = name,
+                bounds = new[] { x0, y0, x1, y1 },
+                solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
+                    .Concat(goals.Select(g => new Marker("goal", "goal " + g.index + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
+                avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
+                via = goals.Select(g => g.box),
+                routes = paths.Select(p => new { name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = -1, points = p.Points }),
+                explored = new
+                {
+                    cell, runs = 0, prefixes = 0,
+                    cells = visits.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, (float)Math.Round(v.Value, 2) }),
+                },
+            };
+            string temp = output + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(result));
+            File.Move(temp, output, true);
+            Console.WriteLine($"map fulltas/{name}: {paths.Count} routes, {visits.Count} explored cells, {goals.Count} at: goals, {avoid.Avoid.Count} avoid boxes -> {output}");
             return 0;
         }
 

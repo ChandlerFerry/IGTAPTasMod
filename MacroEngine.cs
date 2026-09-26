@@ -69,7 +69,7 @@ namespace IGTAPTasMod
         public int StepIndex { get { return _stepIndex; } }
         public long RunTicks { get { return _runTicks; } }
         public long PhysicsTicks { get { return _physicsTicks; } }
-        public string ActiveMacroId { get; private set; }
+        public MacroDefinition ActiveMacro { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
@@ -89,7 +89,7 @@ namespace IGTAPTasMod
             _steps = Expand(macro.steps);
             NormalizeFrameTiming(_steps);
             _macroName = macro.name;
-            ActiveMacroId = macro.id;
+            ActiveMacro = macro;
             _stepIndex = 0;
             _elapsedMs = 0f;
             _elapsedTicks = 0;

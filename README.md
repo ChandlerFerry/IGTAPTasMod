@@ -34,7 +34,9 @@
 - Nothing after the finish is part of the route.
 - No teleports, position offsets or moving the player.
 - Only reset: the game's quick restart, `Movement.respawn(true)`.
-- Deaths respawn at the course reset point, never a checkpoint.
+- Deaths respawn where the game's checkpoint setting sends them: the studio's **Checkpoint respawns** (one setting for
+  every route, trace and search; the overlay shows it) off, at the course reset point; on, at the last in-game
+  checkpoint touched. Off a course both go to that checkpoint. Area goals (`at:`) are not checkpoints.
 - Purchases count only when the game itself buys the box.
 - Spike grace is allowed: up to two overlapping ticks.
 - Never replace game logic; patches only read, input, skip saves.
@@ -71,6 +73,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. |
+| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and a demo route that performs it. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `web/` | Next.js studio, served by the plugin. |
 | `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan-fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses). |
 

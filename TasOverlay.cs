@@ -284,50 +284,40 @@ namespace IGTAPTasMod
             BoxCollider2D box = Hurtbox(player, _hitboxes);
             if (box == null) return;
             Rect r = ScreenRect(cam, box.bounds);
-            Color color = _grazeTicks > 0 && !_grazeKilled ? GraceColor : HitboxColor;
-            float line = Mathf.Max(1f, Mathf.Round(2 * scale));
-            Fill(r, new Color(color.r, color.g, color.b, 0.22f));
-            Fill(new Rect(r.xMin, r.yMin, r.width, line), color);
-            Fill(new Rect(r.xMin, r.yMax - line, r.width, line), color);
-            Fill(new Rect(r.xMin, r.yMin, line, r.height), color);
-            Fill(new Rect(r.xMax - line, r.yMin, line, r.height), color);
-            DrawHitboxBadge(r, line);
+            Color color = _grazeTicks > 0 && !_grazeKilled ? GraceColor : HurtboxColor;
+            Fill(r, new Color(color.r, color.g, color.b, 0.6f));
+            DrawHitboxBadge(r, color);
         }
 
         const string BadgeText = "TAS";
-        const float BadgeSpeed = 0.9f; // box heights per second
         static readonly GUIContent BadgeContent = new GUIContent(BadgeText);
         GUIStyle _badgeStyle;
-        Vector2 _badgeT = new Vector2(0.3f, 0.7f), _badgeDir = new Vector2(1f, 1f);
 
-        // DVD-logo bounce: position is a 0..1 fraction of the free space on each axis, so it survives the box moving and zooming.
-        void DrawHitboxBadge(Rect box, float line)
+        // "TAS" watermarked into the middle of the box, rotated to read bottom-to-top: the fill's hue a bit deeper and mostly
+        // transparent, so it reads as a shade of the box rather than text on top of it.
+        void DrawHitboxBadge(Rect box, Color fill)
         {
-            Rect inner = new Rect(box.x + line, box.y + line, box.width - 2 * line, box.height - 2 * line);
-            if (inner.width < 6f || inner.height < 6f) return;
+            if (box.width < 6f || box.height < 6f) return;
             if (_badgeStyle == null)
                 _badgeStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false, padding = new RectOffset(), margin = new RectOffset() };
-            int size = Mathf.Max(6, Mathf.FloorToInt(inner.height * 0.45f));
+            // Rotated, the text's width runs along the box's height and its height along the box's width.
+            int size = Mathf.Max(6, Mathf.FloorToInt(box.width * 0.8f));
             if (_badgeStyle.fontSize != size) _badgeStyle.fontSize = size;
             Vector2 text = _badgeStyle.CalcSize(BadgeContent);
-            if (text.x > inner.width)
+            if (text.x > box.height * 0.9f)
             {
-                _badgeStyle.fontSize = size = Mathf.Max(6, Mathf.FloorToInt(size * inner.width / text.x));
+                _badgeStyle.fontSize = Mathf.Max(6, Mathf.FloorToInt(size * box.height * 0.9f / text.x));
                 text = _badgeStyle.CalcSize(BadgeContent);
             }
-            Vector2 free = new Vector2(inner.width - text.x, inner.height - text.y);
-            float step = BadgeSpeed * inner.height * Mathf.Min(Time.unscaledDeltaTime, 0.1f);
-            for (int axis = 0; axis < 2; axis++)
-            {
-                if (free[axis] <= 0f) { _badgeT[axis] = 0.5f; continue; }
-                float t = _badgeT[axis] + _badgeDir[axis] * step / free[axis];
-                if (t > 1f) { t = 2f - t; _badgeDir[axis] = -1f; }
-                if (t < 0f) { t = -t; _badgeDir[axis] = 1f; }
-                _badgeT[axis] = Mathf.Clamp01(t);
-            }
-            Rect at = new Rect(inner.x + Mathf.Max(0f, free.x) * _badgeT.x, inner.y + Mathf.Max(0f, free.y) * _badgeT.y, text.x, text.y);
-            Label(new Rect(at.x + 1, at.y + 1, at.width, at.height), BadgeText, _badgeStyle, new Color(0f, 0f, 0f, 0.6f));
-            Label(at, BadgeText, _badgeStyle, TasColor);
+            Vector2 pivot = box.center;
+            Rect at = new Rect(pivot.x - text.x / 2f, pivot.y - text.y / 2f, text.x, text.y);
+            Color.RGBToHSV(fill, out float hue, out float saturation, out _);
+            Color dark = Color.HSVToRGB(hue, Mathf.Min(1f, saturation + 0.2f), 0.5f);
+            dark.a = 0.35f;
+            Matrix4x4 saved = GUI.matrix;
+            GUIUtility.RotateAroundPivot(-90f, pivot);
+            Label(at, BadgeText, _badgeStyle, dark);
+            GUI.matrix = saved;
         }
 
         static Rect ScreenRect(Camera cam, Bounds bounds)
@@ -535,7 +525,7 @@ namespace IGTAPTasMod
             Vector3 v0 = cam.ViewportToWorldPoint(Vector3.zero), v1 = cam.ViewportToWorldPoint(Vector3.one);
             Rect view = Rect.MinMaxRect(Mathf.Min(v0.x, v1.x), Mathf.Min(v0.y, v1.y), Mathf.Max(v0.x, v1.x), Mathf.Max(v0.y, v1.y));
             Rect hurt = Rect.MinMaxRect(_grazeHurtbox.min.x - 1, _grazeHurtbox.min.y - 1, _grazeHurtbox.max.x + 1, _grazeHurtbox.max.y + 1);
-            Color touched = _grazeKilled ? HitboxColor : GraceColor;
+            Color touched = _grazeKilled ? KilledColor : GraceColor;
             float half = Mathf.Max(0.75f, scale);
 
             Rect pixels = cam.pixelRect;
@@ -605,12 +595,12 @@ namespace IGTAPTasMod
                 text = _grazeKilled ? "SPIKE ✗ " + _grazeTicks + "/" + _grazeLimit : "SPIKE " + _grazeTicks + "/" + _grazeLimit;
                 if (_grazeDashing) text += " · DASH";
                 if (_grazeGrounded) text += " · GROUNDED";
-                color = _grazeKilled ? HitboxColor : GraceColor;
+                color = _grazeKilled ? KilledColor : GraceColor;
             }
             else if (Time.unscaledTime - _lastGrazeTime < GrazeLingerSeconds)
             {
                 text = _lastGrazeKilled ? "SPIKE ✗" : "SPIKE GRACE " + _lastGrazeTicks + "/" + _lastGrazeLimit;
-                color = _lastGrazeKilled ? HitboxColor : GraceColor;
+                color = _lastGrazeKilled ? KilledColor : GraceColor;
                 color.a = 1f - (Time.unscaledTime - _lastGrazeTime) / GrazeLingerSeconds;
             }
             else return;
@@ -626,8 +616,9 @@ namespace IGTAPTasMod
         FullTasRunDef _goalOverlayRun;
         FullTasGoal[] _goalOverlayGoals;
 
-        // The chosen run's checkpoint (at:) and bonus end (reward:) rects where TouchesBox tests them: courses.json's frame
-        // plus CurrentOrigin. While that run plays, reached goals are green and the next one yellow.
+        // The chosen run's area goal (at:) and bonus end (reward:) rects where TouchesBox tests them: courses.json's frame
+        // plus CurrentOrigin. While that run plays, reached goals are green and the next one yellow. Its avoid boxes
+        // (forced-paths.json) are red.
         void DrawFullTasGoals(float scale)
         {
             Camera cam = Camera.main;
@@ -642,6 +633,18 @@ namespace IGTAPTasMod
             FullTasTracker tracker = _fullTasPlay != null && _fullTasPlay.run.name == run.name ? _fullTasPlay.tracker : null;
             Vector2 origin = CurrentOrigin();
             float line = Mathf.Max(1f, Mathf.Round(2 * scale)), labelHeight = 22 * scale;
+            foreach (float[] b in FullTasAvoids(run.name))
+            {
+                var world = new Bounds(new Vector3((b[0] + b[2]) / 2f + origin.x, (b[1] + b[3]) / 2f + origin.y, 0f), new Vector3(Mathf.Abs(b[2] - b[0]), Mathf.Abs(b[3] - b[1]), 0f));
+                Rect r = ScreenRect(cam, world);
+                if (r.xMax < 0 || r.yMax < 0 || r.xMin > Screen.width || r.yMin > Screen.height) continue;
+                Fill(r, new Color(AvoidColor.r, AvoidColor.g, AvoidColor.b, 0.18f));
+                Fill(new Rect(r.xMin, r.yMin, r.width, line), AvoidColor);
+                Fill(new Rect(r.xMin, r.yMax - line, r.width, line), AvoidColor);
+                Fill(new Rect(r.xMin, r.yMin, line, r.height), AvoidColor);
+                Fill(new Rect(r.xMax - line, r.yMin, line, r.height), AvoidColor);
+                Label(new Rect(r.xMin + 4 * scale, r.yMax - labelHeight, Mathf.Max(r.width, 120 * scale), labelHeight), "avoid", _overlaySmall, AvoidColor);
+            }
             for (int i = 0; i < _goalOverlayGoals.Length; i++)
             {
                 FullTasGoal g = _goalOverlayGoals[i];
@@ -667,8 +670,10 @@ namespace IGTAPTasMod
         static readonly Color GoalColor = new Color(0.3f, 0.85f, 1f, 0.95f);
         static readonly Color GoalNextColor = new Color(1f, 0.85f, 0.2f, 0.95f);
         static readonly Color GoalReachedColor = new Color(0.35f, 1f, 0.45f, 0.95f);
+        static readonly Color AvoidColor = new Color(1f, 0.15f, 0.15f, 0.95f);
 
-        static readonly Color HitboxColor = new Color(1f, 0.2f, 0.25f, 0.95f);
+        static readonly Color HurtboxColor = Hex(0xa98bff, 0.95f);
+        static readonly Color KilledColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);
         static readonly Color GraceColor = new Color(0.35f, 1f, 0.45f, 0.95f);
         static readonly Color TasColor = Hex(0xffa3b4, 1f);

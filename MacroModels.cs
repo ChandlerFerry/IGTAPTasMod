@@ -45,7 +45,7 @@ namespace IGTAPTasMod
     {
         public string id = Guid.NewGuid().ToString("N");
         public string name = "New macro";
-        public string checkpointId = "";
+        public string savestateId = "";
         public List<MacroStep> steps = new List<MacroStep>();
     }
 
@@ -105,6 +105,9 @@ namespace IGTAPTasMod
         public bool lockCapabilities;
         public bool showOverlay = true;
         public bool forceBreakerLights;
+        // The game's checkpoint respawns (the pause menu's toggle, Movement.isRespawningAtCheckpoints) for every route and
+        // search: on, a death respawns at the last checkpoint; off, at the course's reset point.
+        public bool checkpointRespawns;
         // The Full-TAS run whose goal rects the overlay draws in game; empty: none.
         public string fullTasGoalsRun = "";
     }

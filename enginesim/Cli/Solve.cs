@@ -181,7 +181,8 @@ namespace IGTAP.EngineSim.Cli
             if (!File.Exists(file)) return blocks;
             using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
             var matching = rules.RootElement.GetProperty("paths").EnumerateArray()
-                .Where(r => r.GetProperty("course").GetInt32() == course && r.GetProperty("capabilities").EnumerateArray().Any(c => c.GetString() == caps)).ToList();
+                .Where(r => r.TryGetProperty("course", out JsonElement c) && c.GetInt32() == course
+                    && r.GetProperty("capabilities").EnumerateArray().Any(k => k.GetString() == caps)).ToList();
             foreach (JsonElement rule in matching)
             {
                 AddBoxes(standing, rule);
@@ -195,6 +196,25 @@ namespace IGTAP.EngineSim.Cli
                     }
             }
             return blocks;
+        }
+
+        // A Full-TAS run's avoid boxes: forced-paths.json's rules whose "fulltas" lists the run. Every search window of the run
+        // cuts a run that enters one (its "via" boxes aren't used: the run's at: goals are its waypoints).
+        internal static OfflineSolver.ForcedPath FullTasPaths(string run)
+        {
+            var forced = new OfflineSolver.ForcedPath();
+            string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
+            if (!File.Exists(file)) return forced;
+            using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
+            foreach (JsonElement rule in rules.RootElement.GetProperty("paths").EnumerateArray())
+                if (rule.TryGetProperty("fulltas", out JsonElement runs) && runs.EnumerateArray().Any(r => r.GetString() == run)
+                    && rule.TryGetProperty("avoid", out JsonElement list))
+                    foreach (JsonElement b in list.EnumerateArray())
+                    {
+                        float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
+                        forced.Avoid.Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                    }
+            return forced;
         }
 
         static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule)

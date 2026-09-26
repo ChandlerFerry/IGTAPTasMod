@@ -287,7 +287,7 @@ namespace IGTAPTasMod
                 if (from != null) parts.RemoveAt(4);
                 float[] rect = parts.Select(p => float.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : float.NaN).ToArray();
                 if (rect.Length != 4 || rect.Any(float.IsNaN) || !(rect[2] > 0f) || !(rect[3] > 0f))
-                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]], the checkpoint rect's centre and size in courses.json's frame; sides "
+                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]], the area goal rect's centre and size in courses.json's frame; sides "
                         + string.Join(", ", FullTasGoal.SideNames) + ".");
                 goal.x = rect[0]; goal.y = rect[1]; goal.w = rect[2]; goal.h = rect[3];
                 goal.label = "at:" + string.Join(",", rect.Select(v => v.ToString("0.##", CultureInfo.InvariantCulture)));
@@ -458,7 +458,7 @@ namespace IGTAPTasMod
 
         // Checked where the category finish boxes are (before the next tick's inputs): the offline engine checks the same
         // collider overlap right after the tick. A from= side needs the player's bounds at the check before.
-        void FullTasCheckpoint(Movement player)
+        void FullTasAreaGoal(Movement player)
         {
             Rect previous = _fullTasPlayerBounds;
             _fullTasPlayerBounds = PlayerBounds(player);
@@ -796,6 +796,7 @@ namespace IGTAPTasMod
                 w.WriteStartObject();
                 w.WritePropertyName("course"); w.WriteValue(0);
                 w.WritePropertyName("capabilities"); w.WriteValue("none");
+                w.WritePropertyName("checkpointRespawns"); w.WriteValue(CheckpointRespawns);
                 w.WritePropertyName("fulltas"); w.WriteStartObject();
                 w.WritePropertyName("name"); w.WriteValue(run.name);
                 w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
@@ -902,7 +903,8 @@ namespace IGTAPTasMod
             StartNewGame(null, run.Vman);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
-            int expected = FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0;
+            // A tech demo is a prefix of a run: it reaches no goal it has to.
+            int expected = IsTechDemo(route) ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0;
             _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected };
         }
 
@@ -915,7 +917,7 @@ namespace IGTAPTasMod
             play.tracker.Reset();
             _fullTas = play.tracker;
             _fullTasUnlocks = default;
-            _engine.Run(play.route, false, true, 0, null);
+            _engine.Run(play.route, false, !IsTechDemo(play.route), 0, null);
             if (!_engine.IsRunning) { FinishFullTasPlayback(false, _engine.Status); return; }
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
         }
@@ -1096,28 +1098,35 @@ namespace IGTAPTasMod
             }
         }
 
-        // A trace searches the goals in its header, so one captured before the run's goals or start changed is recaptured.
+        // A trace searches the goals in its header, so one captured before the run's goals, start or checkpoint respawns
+        // changed is recaptured.
         bool FullTasTraceCurrent(FullTasRunDef run, string trace)
         {
             if (!File.Exists(trace)) return false;
             try
             {
                 JObject header;
+                bool checkpoints = false;
                 using (var reader = new JsonTextReader(new StreamReader(trace)))
                 {
-                    // The header (fulltas) precedes the per-tick states; read only up to it.
+                    // The header (checkpointRespawns, then fulltas) precedes the per-tick states; read only up to it.
                     header = null;
                     while (reader.Read())
-                        if (reader.TokenType == JsonToken.PropertyName && (string)reader.Value == "fulltas" && reader.Depth == 1)
+                    {
+                        if (reader.TokenType != JsonToken.PropertyName || reader.Depth != 1) continue;
+                        if ((string)reader.Value == "checkpointRespawns") checkpoints = reader.ReadAsBoolean() == true;
+                        else if ((string)reader.Value == "fulltas")
                         {
                             reader.Read();
                             header = JObject.Load(reader);
                             break;
                         }
+                    }
                 }
                 if (header == null) return false;
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
-                return (string)header["start"] == run.start && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
+                return checkpoints == CheckpointRespawns && (string)header["start"] == run.start
+                    && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)
             {
@@ -1234,6 +1243,27 @@ namespace IGTAPTasMod
                     List<SolverTick> inputs = body["ticks"].ToObject<List<SolverTick>>();
                     return FullTasWhenReady(request, run, "Judging a " + run.name + " route", () => FullTasJudge(run, inputs));
                 }
+                case "/api/fulltas/avoid":
+                {
+                    if (!(body["box"] is JArray box) || box.Count != 4) throw new InvalidOperationException("box: [x0, y0, x1, y1] in game-world coordinates.");
+                    float[] b = box.Select(v => (float)v).ToArray();
+                    string[] runs = (body["runs"] is JArray list ? list.Select(r => (string)r) : new[] { Text(body, "name") })
+                        .Select(r => FindFullTasRun(r).name).Distinct().OrderBy(r => r, StringComparer.Ordinal).ToArray();
+                    if (runs.Length == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
+                    return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove")) };
+                }
+                case "/api/fulltas/map":
+                {
+                    FullTasRunDef run = FindFullTasRun(Text(body, "name"));
+                    string trace = FullTasTracePath(run.name);
+                    if (!File.Exists(trace))
+                    {
+                        request.StatusCode = 404;
+                        return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or solve it once first." };
+                    }
+                    string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".json");
+                    return RunEngineSimMap(request, "map " + Quote(trace) + " --out " + Quote(output), output);
+                }
             }
             request.StatusCode = 404;
             return new { ok = false, error = "Unknown Full-TAS endpoint." };
@@ -1279,5 +1309,93 @@ namespace IGTAPTasMod
                     return i;
             return null;
         }
+
+        // forced-paths.json's Full-TAS avoid boxes, edited from the map: the source copy (enginesim\Cli, what the build copies)
+        // and the solver's own copy beside its exe (what a solve reads, each window). A drawn box goes into the rule drawn for
+        // exactly these runs; removing takes the box out of every rule of these runs. Returns the boxes added or removed.
+        int EditFullTasAvoids(string[] runs, float[] b, bool remove)
+        {
+            string exe = EngineSimExe;
+            if (string.IsNullOrEmpty(exe)) throw new InvalidOperationException("The offline solver's path isn't known to this build.");
+            string built = Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
+            string source = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(exe), "..", "..", "..", "forced-paths.json"));
+            string[] files = new[] { source, built }.Where(File.Exists).ToArray();
+            if (files.Length == 0) throw new InvalidOperationException("No forced-paths.json at " + source + " or " + built + ".");
+            JObject root = JObject.Parse(File.ReadAllText(files[0]));
+            var paths = (JArray)root["paths"];
+            float x0 = Math.Min(b[0], b[2]), x1 = Math.Max(b[0], b[2]), y0 = Math.Min(b[1], b[3]), y1 = Math.Max(b[1], b[3]);
+            float[] wanted = new[] { x0, y0, x1, y1 }.Select(v => (float)Math.Round(v, 1)).ToArray();
+            Func<JToken, bool> same = t => t is JArray a && a.Count == 4 && Enumerable.Range(0, 4).All(i => Math.Abs((float)a[i] - wanted[i]) < .5f);
+            List<JObject> rules = paths.OfType<JObject>().Where(r => r["fulltas"] is JArray).ToList();
+            int changed = 0;
+            if (remove)
+            {
+                foreach (JObject rule in rules.Where(r => r["fulltas"].Any(n => runs.Contains((string)n))))
+                {
+                    if (!(rule["avoid"] is JArray avoid)) continue;
+                    foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
+                    if (avoid.Count == 0 && !(rule["via"] is JArray via && via.Count > 0)) rule.Remove();
+                }
+            }
+            else
+            {
+                JObject rule = rules.FirstOrDefault(r => (bool?)r["drawn"] == true
+                    && r["fulltas"].Select(n => (string)n).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(runs));
+                if (rule == null)
+                {
+                    rule = new JObject { ["fulltas"] = new JArray(runs), ["note"] = "Drawn on the Full-TAS map.", ["drawn"] = true, ["avoid"] = new JArray() };
+                    paths.Add(rule);
+                }
+                var avoid = (JArray)rule["avoid"];
+                if (!avoid.Any(same)) { avoid.Add(new JArray(wanted)); changed++; }
+            }
+            string text = CompactScalarArrays.Replace(root.ToString(Formatting.Indented).Replace("\r\n", "\n"), m =>
+                "[" + string.Join(", ", m.Groups[1].Value.Split(',').Select(s => s.Trim())) + "]");
+            text = CompactBoxLists.Replace(text, m => "[" + string.Join(", ", InnerArrays.Matches(m.Groups[1].Value).Cast<Match>().Select(i => i.Value)) + "]") + "\n";
+            foreach (string file in new[] { source, built }.Where(f => Directory.Exists(Path.GetDirectoryName(f)))) File.WriteAllText(file, text);
+            return changed;
+        }
+
+        // A run's avoid boxes (x0, y0, x1, y1, game world) from the solver's forced-paths.json, reread when the file changes
+        // (checked at most once a second: the goals overlay asks every repaint).
+        List<float[]> FullTasAvoids(string run)
+        {
+            if (Time.unscaledTime >= _fullTasAvoidsChecked + 1f)
+            {
+                _fullTasAvoidsChecked = Time.unscaledTime;
+                string exe = EngineSimExe;
+                string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
+                DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
+                if (stamp != _fullTasAvoidsRead)
+                {
+                    _fullTasAvoidsRead = stamp;
+                    _fullTasAvoids.Clear();
+                    if (stamp != default(DateTime))
+                        try
+                        {
+                            foreach (JObject rule in ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>())
+                                if (rule["fulltas"] is JArray runs && rule["avoid"] is JArray avoid)
+                                    foreach (string name in runs.Select(r => (string)r))
+                                    {
+                                        if (!_fullTasAvoids.TryGetValue(name, out List<float[]> list)) _fullTasAvoids[name] = list = new List<float[]>();
+                                        list.AddRange(avoid.OfType<JArray>().Where(b => b.Count == 4).Select(b => b.Select(v => (float)v).ToArray()));
+                                    }
+                        }
+                        catch (Exception ex) { Logger.LogWarning("forced-paths.json unreadable for the goals overlay: " + ex.Message); }
+                }
+            }
+            return _fullTasAvoids.TryGetValue(run, out List<float[]> boxes) ? boxes : NoAvoids;
+        }
+
+        readonly Dictionary<string, List<float[]>> _fullTasAvoids = new Dictionary<string, List<float[]>>(StringComparer.OrdinalIgnoreCase);
+        DateTime _fullTasAvoidsRead;
+        float _fullTasAvoidsChecked = float.NegativeInfinity;
+        static readonly List<float[]> NoAvoids = new List<float[]>();
+
+        // An array of numbers or strings on one line, as forced-paths.json writes its boxes and capabilities.
+        static readonly Regex CompactScalarArrays = new Regex(@"\[((?:\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*,)*\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*)\]");
+        // Then a list of those (the avoid and via boxes) on one line too.
+        static readonly Regex CompactBoxLists = new Regex(@"\[((?:\s*\[[^\[\]{}]*\]\s*,)*\s*\[[^\[\]{}]*\]\s*)\]");
+        static readonly Regex InnerArrays = new Regex(@"\[[^\[\]]*\]");
     }
 }

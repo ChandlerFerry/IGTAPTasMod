@@ -81,7 +81,7 @@ namespace IGTAPTasMod
             bool platform = _velocityPlatform != Vector2.zero;
             int parts = platform ? 3 : 2;
             float bandHeight = 14 * scale + titleLine + 12 * scale;
-            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 3 * rowHeight + 12 * scale;
+            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 4 * rowHeight + 12 * scale;
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
             Fill(panel, PanelBack);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
@@ -92,7 +92,7 @@ namespace IGTAPTasMod
             float x = panel.x + pad, inner = width - 2 * pad, y = panel.y + 14 * scale;
             float xColumn = x + 160 * scale, yColumn = x + 280 * scale, columnWidth = 120 * scale, labelWidth = xColumn - x - 8 * scale;
             Label(new Rect(x, y, inner, titleLine), "VELOCITY", _overlayTitle, PanelText);
-            Label(new Rect(x, y, inner, titleLine), _fpsText, _overlaySmallRight, _fpsShownWorst > SlowFrameSeconds ? HitboxColor : GraceColor);
+            Label(new Rect(x, y, inner, titleLine), _fpsText, _overlaySmallRight, _fpsShownWorst > SlowFrameSeconds ? KilledColor : GraceColor);
 
             y = panel.y + bandHeight + 10 * scale;
             Label(new Rect(xColumn, y, columnWidth, totalLine), _velocityText[6], _overlayTitle, PanelText);
@@ -133,6 +133,9 @@ namespace IGTAPTasMod
             bool locked = _playerBody != null && _playerBody.interpolation == RigidbodyInterpolation2D.None;
             Label(new Rect(x, y, labelWidth, rowHeight), "INTERPOLATION", _overlaySmall, MutedColor);
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), locked ? "OFF" : "ON", _overlayText, locked ? GraceColor : MutedColor);
+            y += rowHeight;
+            Label(new Rect(x, y, labelWidth, rowHeight), "CHECKPOINTS", _overlaySmall, MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), CheckpointRespawns ? "ON" : "OFF", _overlayTitle, CheckpointRespawns ? JumpColor : GraceColor);
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
         }

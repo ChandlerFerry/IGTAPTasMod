@@ -105,6 +105,18 @@
       "note": "5to4. Course 5's start room: its ceiling hole (RealEnd, between the two ceiling blocks) and everything left of the Course 5 start gate (the pocket under the spiked pillar) are cut. Courses 1 and 2 stay closed: right of the pillar hanging over each start gate, floor to the pillar's top, is cut, so runs pass their end gates without entering. Course 3's approach: once out the top of the shaft onto the floor above, everything left of the shaft's left wall is cut.",
       "avoid": [[-3360, 240, -3232, 330], [-9000, -3000, -3530, 6000], [2530, -400, 3000, 300], [5095, 1700, 5700, 2550], [4000, 6920, 7500, 12000]],
       "via": []
+    },
+    {
+      "fulltas": ["VMAN", "VMANDJ"],
+      "note": "Drawn on the Full-TAS map.",
+      "drawn": true,
+      "avoid": [[7151.8, 6924.7, 7371.4, 8426.0], [11655.0, 10224.3, 12109.7, 10954.4]]
+    },
+    {
+      "fulltas": ["VMAN"],
+      "note": "Drawn on the Full-TAS map.",
+      "drawn": true,
+      "avoid": [[7092.5, 8425.7, 7373.4, 9443.9], [6609.7, 5170.0, 7150.0, 6205.8], [6820.7, 5357.7, 7435.1, 6822.0], [-30.2, 341.1, 165.2, 2199.9], [9261.8, 6857.1, 10024.7, 7810.7]]
     }
   ]
 }

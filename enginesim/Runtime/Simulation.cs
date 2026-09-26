@@ -157,7 +157,7 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Player death at action " + (Engine.StepIndex + 1));
             };
             Hooks.CourseStop = CourseStop;
-            Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = false;
+            Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns;
             Hooks.UpgradeBoxStay = Shop.Stay;
             Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
             Hooks.PlaySfx = (_, code) =>
@@ -296,6 +296,10 @@ namespace IGTAP.EngineSim
 
         public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
 
+        // The studio's "Checkpoint respawns" setting at capture (TasPlugin.CheckpointRespawns): a death respawns at the last
+        // checkpoint when on, at the course's reset point when off. Traces without it were captured with it off.
+        public bool CheckpointRespawns;
+
         // The game's FloatingOrigin at capture. The simulation never shifts it, so every position in a run is in the capture's
         // scene frame; the game world (courses.json's frame, the map's, forced-path boxes') is scene - Origin, the same for
         // every capture.
@@ -323,6 +327,7 @@ namespace IGTAP.EngineSim
                     ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
             }
             if (header.TryGetProperty("fulltas", out JsonElement fulltas)) SetGoals(fulltas.GetProperty("goals"));
+            CheckpointRespawns = header.TryGetProperty("checkpointRespawns", out JsonElement checkpoints) && checkpoints.GetBoolean();
         }
 
         void SetGoals(JsonElement goals)
@@ -357,7 +362,7 @@ namespace IGTAP.EngineSim
                 }
                 else if (goal.kind == FullTasGoal.At)
                 {
-                    if (!(goal.w > 0f) || !(goal.h > 0f)) throw new InvalidOperationException("Goal " + goal.label + " has no checkpoint rect.");
+                    if (!(goal.w > 0f) || !(goal.h > 0f)) throw new InvalidOperationException("Goal " + goal.label + " has no area rect.");
                 }
                 else throw new InvalidOperationException("Goal " + goal.label + ": unknown kind " + goal.kind + ".");
                 list.Add(goal);

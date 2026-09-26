@@ -4,7 +4,7 @@ The route rules are the `### Rules` section of [`README.md`](README.md). Read th
 a route that breaks any of them doesn't count, however fast it is.
 
 Current targets: `bonus1` (`WJ`), Course 4 and Course 5 (`WJ_DS_DJ`), and the `VMAN` Full-TAS run (a Vman speedrun's
-start, checkpointed: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)). How to search:
+start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
 
 ## Route names

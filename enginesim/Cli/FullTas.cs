@@ -38,6 +38,13 @@ namespace IGTAP.EngineSim.Cli
         Stopwatch _clock;
         Latest _pending;
         readonly Dictionary<(int, string), List<List<InputTick>>> _memo = new Dictionary<(int, string), List<List<InputTick>>>();
+        OfflineSolver.ForcedPath _path;
+
+        // Where the run's search windows went (OfflineSolver.VisitCell cells, earliest run time there), kept across solves of
+        // the same goals in archive\fulltas-<run>.visits.json for the map.
+        public const float VisitCell = 16f;
+        Dictionary<long, float> _visits;
+        string _visitsFile;
 
         sealed class Seed
         {
@@ -94,6 +101,9 @@ namespace IGTAP.EngineSim.Cli
             _eval = _create();
             _origin = _eval.Start;
             _dt = _eval.World.FixedDeltaTime;
+            ReloadAvoids();
+            _visitsFile = VisitsFile(dir, _name);
+            _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
 
             _best = Padded(Evaluate(Solve.ReadInputs(header)));
             string from = Path.GetFileName(_trace);
@@ -208,6 +218,18 @@ namespace IGTAP.EngineSim.Cli
 
         void Log(string message) { Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] {message}"); }
 
+        // forced-paths.json's avoid boxes for this run, reread before every window: boxes drawn on the map mid-solve apply
+        // from the next window on.
+        void ReloadAvoids()
+        {
+            OfflineSolver.ForcedPath path = Solve.FullTasPaths(_name);
+            string now = string.Join(", ", path.Avoid), before = _path == null ? "" : string.Join(", ", _path.Avoid);
+            _path = path;
+            if (now == before) return;
+            Log("avoid (forced-paths.json): " + (now.Length == 0 ? "none" : now));
+            Emit(new { type = "note", level = "info", text = $"Avoid boxes now {path.Avoid.Count} (forced-paths.json)." });
+        }
+
         string Describe(Route r)
         {
             if (r.Progress == _goals) return (r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture) + "s";
@@ -231,7 +253,7 @@ namespace IGTAP.EngineSim.Cli
         // How many of a saved best's inputs still serve the trace's goals. Goals before the first changed one are unchanged;
         // once the best reached all of them, what follows chased the changed goal, so it ends at the last one. A best that
         // stops short of the change still heads for an unchanged goal and keeps all of its inputs.
-        static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
+        internal static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
         {
             int changed = 0;
             while (changed < solved.Length && changed < labels.Length && solved[changed] == labels[changed]) changed++;
@@ -282,7 +304,8 @@ namespace IGTAP.EngineSim.Cli
                 sim.Goals.Limit = limit;
                 return sim;
             };
-            var solver = new OfflineSolver(create, caps, seeds);
+            ReloadAvoids();
+            var solver = new OfflineSolver(create, caps, seeds, null, _path, VisitCell);
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
             long windowBest = long.MaxValue;
@@ -323,6 +346,7 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> bestInputs;
             lock (solver.Shared) bestInputs = solver.Shared.Inputs;
             if (bestInputs != null) Remember(key, bestInputs);
+            SaveVisits(solver.Visits());
             Status();
             lock (solver.Shared)
             {
@@ -354,6 +378,35 @@ namespace IGTAP.EngineSim.Cli
             if (list.Count > 4) list.RemoveAt(0);
         }
 
+        internal static string VisitsFile(string traceDir, string run) { return Path.Combine(traceDir, "archive", "fulltas-" + run + ".visits.json"); }
+
+        // The saved visits, or null when there are none or they were taken for other goals.
+        internal static Dictionary<long, float> ReadVisits(string file, string[] labels)
+        {
+            if (!File.Exists(file)) return null;
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
+            JsonElement root = doc.RootElement;
+            if (root.GetProperty("cell").GetSingle() != VisitCell
+                || (labels != null && !root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(labels))) return null;
+            var visits = new Dictionary<long, float>();
+            foreach (JsonElement c in root.GetProperty("cells").EnumerateArray())
+                visits[((long)c[0].GetInt32() << 32) | (uint)c[1].GetInt32()] = c[2].GetSingle();
+            return visits;
+        }
+
+        void SaveVisits(Dictionary<long, float> window)
+        {
+            foreach (var v in window)
+                if (!_visits.TryGetValue(v.Key, out float t) || v.Value < t) _visits[v.Key] = v.Value;
+            Directory.CreateDirectory(Path.GetDirectoryName(_visitsFile));
+            Solve.WriteShared(_visitsFile, JsonSerializer.Serialize(new
+            {
+                goals = _labels,
+                cell = VisitCell,
+                cells = _visits.Select(v => new[] { (float)(int)(v.Key >> 32), (float)(int)v.Key, (float)Math.Round(v.Value, 2) }),
+            }));
+        }
+
         List<(string how, List<InputTick> inputs)> SeedStarts(SimSnapshot at, List<InputTick> prefix, int first, int limit)
         {
             var starts = new List<(string how, List<InputTick> inputs)>();
@@ -363,7 +416,7 @@ namespace IGTAP.EngineSim.Cli
             int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : !player.blockSwapUnlocked ? 3 : 4;
             List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
             if (matching.Count == 0) return starts;
-            // A quick restart right after a checkpoint takes it back (FullTasTracker.QuickRestarted): those seeds only as they are.
+            // A quick restart right after an area goal takes it back (FullTasTracker.QuickRestarted): those seeds only as they are.
             bool restart = (prefix.Count == 0 || !prefix[prefix.Count - 1].reset) && (first == 0 || !_labels[first - 1].StartsWith("at:", StringComparison.Ordinal));
             _eval.SetStart(at, prefix.Count);
             _eval.Goals.Limit = _goals;

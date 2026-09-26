@@ -143,8 +143,11 @@ ground dash 623 u, and a full jump peaks 258 u high.
 
 While a route plays, the in-game input list marks the ticks of each trick with a colored bar (`TasOverlayTechs.cs`):
 the superbounce, reversed super and backwards dash-jump, the flip jump, coyote and wall-coyote jumps, super jumps,
-wavedashes, ultras, dash and wave bounces, wall bounces, WaveJumps, spring dashes and spike grace, each read from the
-game's state as it happens.
+wavedashes, ultras, dash and wave bounces, wall bounces, WaveJumps, spring dashes, spike grace (overlay on) and the
+game's own ultra bonus (a hyper that gives back the pre-dash momentum, "Did an ultra!"), each read from the game's state
+as it happens. Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`).
+The first time a playback does a tech that has no demo route yet, the tab saves one: that playback's inputs up to 25
+ticks after the tech, from the same start (`tech/<name>` in the route library).
 
 ## The gate
 

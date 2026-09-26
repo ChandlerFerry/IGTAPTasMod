@@ -1,0 +1,49 @@
+/* Tech tab (techs.tsx): the three categories as columns of tech cards; ours stand out. */
+.techToolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
+.techSearch, .techAdd input, .techAdd select, .techEditor input, .techEditor select, .techEditor textarea, .techDemo select { border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 8px 10px; outline: none; }
+.techSearch { flex: 1; min-width: 200px; }
+.techAdd { display: flex; gap: 8px; align-items: center; }
+.techAdd button { white-space: nowrap; }
+.techSeen { display: flex; gap: 18px; align-items: center; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2036; }
+.techSeen strong { font-size: 13px; }
+.techSeenList { display: flex; flex-wrap: wrap; gap: 6px; }
+.seenChip { padding: 3px 9px; border: 1px solid #294563; border-radius: 999px; background: #10263d; color: var(--text); font-size: 12px; cursor: pointer; }
+.seenChip:disabled { color: var(--muted); cursor: default; }
+.muted { color: var(--muted); font-size: 13px; }
+.techColumns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; margin-top: 18px; }
+@media (max-width: 1300px) { .techColumns { grid-template-columns: 1fr; } }
+.techColumn { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-top: 3px solid var(--green); border-radius: 10px; background: #0a1729; }
+.techColumn.nmg { border-top-color: var(--amber); }
+.techColumn.major { border-top-color: var(--red); }
+.techColumn header { display: flex; justify-content: space-between; align-items: baseline; }
+.techColumn h3 { margin: 0; font-size: 16px; }
+.techColumn header span { color: var(--muted); font-size: 13px; }
+.techBlurb { margin: -4px 0 4px; color: var(--muted); font-size: 12px; }
+.techCard { display: flex; flex-direction: column; gap: 8px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: #101f35; transition: box-shadow .3s; }
+.techCard.ours { border-color: #6b4e1d; background: #1d1a17; box-shadow: inset 3px 0 0 var(--amber); }
+.techCard.game { box-shadow: inset 3px 0 0 var(--cyan); }
+.techCard.focused { box-shadow: 0 0 0 2px var(--cyan); }
+.techHead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.techHead strong { font-size: 15px; }
+.originBadge { padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; background: #1c304b; color: var(--muted); }
+.originBadge.ours { background: var(--amber); color: #2a1a02; }
+.originBadge.game { background: #12344f; color: var(--cyan); }
+.detectorChip { padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; background: #12352a; color: var(--green); }
+.techDescription { margin: 0; color: #c9d8ea; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
+.techNote { margin: 0; padding: 7px 10px; border-radius: 6px; background: #0b192b; color: #aac0d7; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.techRelated { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.techRelated.merge > span:first-child { color: var(--amber); font-weight: 700; }
+.relatedChip { display: inline-flex; gap: 4px; align-items: center; padding: 2px 8px; border: 1px solid #294563; border-radius: 999px; background: #0d2036; color: var(--text); font-size: 12px; cursor: pointer; }
+.relatedChip.ours { border-color: var(--amber); }
+.relatedChip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; }
+.techDemo { display: flex; flex-direction: column; gap: 6px; }
+.techDemo .buttonRow, .techEditor .buttonRow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.demoInfo { color: var(--green); font-size: 12px; }
+.demoInfo.missing { color: var(--muted); }
+.verdict { font-size: 12px; font-weight: 600; }
+.verdict.good { color: var(--green); }
+.verdict.bad { color: var(--red); }
+.techEditor { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.techEditorGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.techEditor textarea { width: 100%; min-height: 70px; resize: vertical; font: inherit; font-size: 13px; }
+.techEditorHead { margin: 6px 0 0; }

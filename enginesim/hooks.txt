@@ -7,7 +7,7 @@ prefix Movement::getPlayerControlledInput OnPlayerInput
 prefix Movement::touchedSolidGround OnWallTouch
 prefix Movement::touchedMossyGround OnWallTouch
 prefix Movement::onDeath OnDeath
-# TasPlugin.BeforeRespawn: course checkpoints are always off (a death respawns at the course's reset point).
+# TasPlugin.BeforeRespawn: a death respawns at a checkpoint only with the studio's "Checkpoint respawns" on.
 prefix Movement::respawn OnRespawn
 # The plugin reads the course time before stopTracking and ends the run after it; everything else stopTracking
 # does is rewards and UI. The host hook applies its two state changes (tracking off, courseResetPoint cleared).
