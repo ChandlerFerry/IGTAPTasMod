@@ -226,7 +226,8 @@ namespace IGTAP.EngineSim.Cli
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
             OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name);
-            Dictionary<long, float> visits = FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels) ?? new Dictionary<long, float>();
+            Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
+                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
 
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;

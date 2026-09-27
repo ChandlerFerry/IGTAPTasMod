@@ -166,7 +166,10 @@ search window of those runs cuts a run entering one (its `via` isn't used; the r
 `map` on a Full-TAS trace (`fulltas-<run>.json`, the Full-TAS tab's **Show map**) draws where the run's windows went
 (`archive\fulltas-<run>.visits.json`: every 16-unit cell a window run stepped through, with the earliest run time
 there, kept across solves of the same goals and reset by `--fresh` or a goals change), the best so far, the run's
-`at:` goals (green) and its avoid boxes.
+`at:` goals (green) and its avoid boxes. The run's archive and visits map hold only runs from the start state they were
+built from: `archive\fulltas-<run>\start.key` keys it (the player's fields, position, origin and velocity in the trace's
+`start`, instance ids left out), and a solve from a trace whose start differs drops both first (`map` ignores the stale
+visits).
 
 ```powershell
 & $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole

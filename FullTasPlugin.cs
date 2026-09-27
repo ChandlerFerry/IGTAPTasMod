@@ -33,6 +33,11 @@ namespace IGTAPTasMod
 
         const int FullTasSeed = 20260925;
 
+        // What a new game's start state holds (the settle, a savestate start's respawnPoint, ...). Bump it whenever that changes:
+        // a trace from another setup is recaptured before a solve (FullTasTraceCurrent), so the search never runs from a start
+        // the game no longer makes (2: a savestate start keeps the new game's respawnPoint instead of one written at the savestate).
+        const int FullTasStartSetup = 2;
+
         public sealed class FullTasSplit
         {
             public string label;
@@ -647,13 +652,10 @@ namespace IGTAPTasMod
             }
             SavestateResult restored = SavestateService.Restore(player, state, MacroLibrary.CurrentSchemaVersion);
             if (!restored.Success) { FailNewGame(restored.Message); return; }
-            // The savestate holds no checkpoint: the new game's respawnPoint (world frame) is the Vman spawn, so a death or quick
-            // restart would send the player back across the map. Respawn where the savestate stands (respawn puts the dot 12 u
-            // under its point).
-            Vector2 restoredAt = (Vector2)player.transform.position - CurrentOrigin();
-            SetMovementField(player, "respawnPoint", restoredAt + new Vector2(0f, 12f));
+            // The savestate holds no checkpoint, and the plugin writes none: respawnPoint stays the new game's. A quick restart
+            // before a real checkpoint moves it ends the run (FullTasTracker.RestartRefused).
             _newGameSavestateApplied = true;
-            _newGameNotes.Add("restored savestate " + state.name + ", respawnPoint " + restoredAt.ToString("0.#"));
+            _newGameNotes.Add("restored savestate " + state.name);
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;
         }
@@ -662,6 +664,12 @@ namespace IGTAPTasMod
         {
             Movement player = FindWorldMovement();
             if (FreshGame && player == _newGamePlayer) TurboRunner.Restore(_newGameStart, player);
+        }
+
+        /// <summary>A savestate start's respawnPoint is no checkpoint: a quick restart to it ends the run.</summary>
+        static void GuardSavestateRestarts(FullTasRunDef run, FullTasTracker tracker, Movement player)
+        {
+            if (run.savestate != null) tracker.NoCheckpointAt(player.respawnPoint.x, player.respawnPoint.y);
         }
 
         bool EvaluateFullTas(FullTasRunDef run, List<SolverTick> inputs, out float time, out int finishTick, out FullTasTracker tracker)
@@ -679,6 +687,7 @@ namespace IGTAPTasMod
             try
             {
                 TurboRunner.Restore(from, player);
+                GuardSavestateRestarts(run, tracker, player);
                 _engine.Resume(from.engine, ToSteps(inputs), 0);
                 TurboRunner.Run(player, () => _engine.IsRunning && idleTicks < 20, inputs.Count + 300 * (tracker.Goals.Length + 1), () =>
                 {
@@ -857,6 +866,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("fulltas"); w.WriteStartObject();
                 w.WritePropertyName("name"); w.WriteValue(run.name);
                 w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
+                w.WritePropertyName("startSetup"); w.WriteValue(FullTasStartSetup);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
                 w.WritePropertyName("goals"); w.WriteStartArray();
@@ -974,6 +984,7 @@ namespace IGTAPTasMod
             UnityEngine.Random.InitState(FullTasSeed);
             _brakeTicks = -1;
             play.tracker.Reset();
+            GuardSavestateRestarts(play.run, play.tracker, movement);
             _fullTas = play.tracker;
             _fullTasUnlocks = _newGameUnlocks;
             // Only a complete route waits for its last goal after its inputs; a partial one (the offline best so far, Test best's
@@ -1232,7 +1243,8 @@ namespace IGTAPTasMod
                 }
                 if (header == null) return false;
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
-                return checkpoints == CheckpointRespawns && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
+                return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup
+                    && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)

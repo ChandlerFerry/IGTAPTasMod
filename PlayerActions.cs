@@ -11,6 +11,13 @@ namespace IGTAPTasMod
 
         void QuickRestart(Movement movement)
         {
+            string refused = _fullTas != null && _engine.IsRunning
+                ? _fullTas.RestartRefused(movement.respawnPoint.x, movement.respawnPoint.y, movement.courseResetPoint != Vector2.zero) : null;
+            if (refused != null)
+            {
+                _engine.Abort(refused + " at action " + (_engine.StepIndex + 1));
+                return;
+            }
             RespawnMethod.Invoke(movement, new object[] { true });
             if (_fullTas != null && _engine.IsRunning) _fullTas.QuickRestarted();
         }

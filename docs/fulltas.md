@@ -140,10 +140,12 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
-A savestate holds no checkpoint, and the new game's `respawnPoint` is the Vman spawn (world (-61, -301)): a death or
-quick restart sent the player back across the map. A savestate start sets `respawnPoint` (world frame) to the restored
-position + 12 u, so a respawn (12 u under it) puts the player where the savestate stands; a checkpoint touched later
-moves it as the game does.
+A savestate holds no checkpoint, and the plugin writes none: `respawnPoint` stays the new game's (the Vman spawn, world
+(-61, -301)), a place the run never reached. Until a real checkpoint (`checkpointScript`) moves it, or a start gate sets
+a course reset point, a quick restart would teleport there, so it ends the run (`Quick restart with no checkpoint
+touched since the savestate start`, `FullTasTracker.RestartRefused`) in the offline search, the gate and playback
+alike. A death ends every run anyway. Traces and routes from before this (`startSetup` 1) respawned at the savestate's
+own spot, a checkpoint the game never set: `Test-No-Omni-Skip`'s best quick-restarted there on ticks 3, 85 and 96.
 
 A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
 unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
@@ -214,8 +216,9 @@ inputs past the last unchanged goal the same way.
   crashed) and the raw `log`; `lastResult` is the last Play or gate check (`kind`, `error`, `reached`, `expected`, ...).
 - **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
   solver's `--unsolved`) reaches the goals the best misses first, starting at the first of them. Both recapture the
-  trace (seeded with the saved best) when the run's goals or start changed since it was taken: a solve searches the
-  goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just the
+  trace (seeded with the saved best) when the run's goals or start changed since it was taken, or when its header's
+  `startSetup` isn't the plugin's `FullTasStartSetup` (bumped whenever what a new game's start state holds changes): a
+  solve searches the goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just the
   **Window** goals ending at goal N (window 2: from goal N−2 through N−1 to N), window after window, keeping the rest
   of the route as it is and scoring the time at goal N. `threads` 0 or missing (the site sends none) is cores − 2.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed

@@ -53,6 +53,27 @@ namespace IGTAPTasMod
         }
 
         public bool Done { get { return Next >= Limit; } }
+
+        // A savestate start holds no checkpoint: its respawnPoint is the new game's, a place the run never reached. Until a real
+        // checkpoint (checkpointScript) moves it or a start gate sets a course reset point, a quick restart there would teleport,
+        // so it ends the run. Set for savestate starts only (NoCheckpointAt); a new game's respawnPoint is the game's own.
+        bool _noCheckpoint;
+        float _startRespawnX, _startRespawnY;
+
+        public void NoCheckpointAt(float respawnX, float respawnY)
+        {
+            _noCheckpoint = true;
+            _startRespawnX = respawnX;
+            _startRespawnY = respawnY;
+        }
+
+        /// <summary>Why a quick restart now would leave the game's checkpoints (null when it respawns at a real one).</summary>
+        public string RestartRefused(float respawnX, float respawnY, bool courseReset)
+        {
+            if (!_noCheckpoint || courseReset || respawnX != _startRespawnX || respawnY != _startRespawnY) return null;
+            return "Quick restart with no checkpoint touched since the savestate start";
+        }
+
         public FullTasGoal Current { get { return Next < Goals.Length && Next < Limit ? Goals[Next] : null; } }
 
         public bool CourseStarted(int course, long input, long physics)

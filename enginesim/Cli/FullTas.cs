@@ -97,6 +97,15 @@ namespace IGTAP.EngineSim.Cli
             ReloadAvoids();
             _visitsFile = VisitsFile(dir, _name);
             _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _name);
+            string startKey = StartKey(header).ToString("x16");
+            if (StartChanged(dir, _name, startKey))
+            {
+                Log($"Start state changed since the last solve of {_name}: dropping its archive and visits map");
+                Directory.Delete(_archiveDir, true);
+                File.Delete(_visitsFile);
+            }
+            Directory.CreateDirectory(_archiveDir);
+            File.WriteAllText(StartFile(dir, _name), startKey);
             _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
 
             _best = Padded(Evaluate(Solve.ReadInputs(header)));
@@ -420,6 +429,40 @@ namespace IGTAP.EngineSim.Cli
         }
 
         internal static string VisitsFile(string traceDir, string run) { return Path.Combine(traceDir, "archive", "fulltas-" + run + ".visits.json"); }
+
+        internal static string StartFile(string traceDir, string run) { return Path.Combine(traceDir, "archive", "fulltas-" + run, "start.key"); }
+
+        /// <summary>The archive and visits map of the run were built from another start state (a recapture that changed it).</summary>
+        internal static bool StartChanged(string traceDir, string run, string startKey)
+        {
+            string file = StartFile(traceDir, run);
+            return File.Exists(file) && File.ReadAllText(file).Trim() != startKey;
+        }
+
+        /// <summary>
+        /// The trace's start state as the search sees it: the player's fields, position, origin and velocity. Instance ids are left
+        /// out (they change from capture to capture of the same state).
+        /// </summary>
+        internal static ulong StartKey(JsonElement header)
+        {
+            JsonElement start = header.GetProperty("start");
+            ulong hash = 14695981039346656037UL;
+            void Add(string text)
+            {
+                foreach (byte b in Encoding.UTF8.GetBytes(text)) hash = Feed(hash, b, 1);
+                hash = Feed(hash, 0xff, 1);
+            }
+            foreach (JsonElement field in start.GetProperty("movement").EnumerateArray())
+            {
+                string value = field[2].GetRawText();
+                if (value.Contains("\"$ref\"", StringComparison.Ordinal)) continue;
+                Add(field[1].GetString());
+                Add(value);
+            }
+            foreach (string part in new[] { "position", "origin", "velocity" })
+                if (start.TryGetProperty(part, out JsonElement v)) Add(v.GetRawText());
+            return hash;
+        }
 
         ulong ArchiveHash(List<InputTick> prefix, int first, int limit)
         {

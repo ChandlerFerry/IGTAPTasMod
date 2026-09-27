@@ -433,9 +433,15 @@ namespace IGTAP.EngineSim
                 _targetStartCourse = Courses.FirstOrDefault(c => c.courseNumber == TargetStart)
                     ?? throw new InvalidOperationException("Course " + TargetStart + " is not active in this world export.");
             }
-            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) SetGoals(fulltas.GetProperty("goals"));
+            if (header.TryGetProperty("fulltas", out JsonElement fulltas))
+            {
+                SetGoals(fulltas.GetProperty("goals"));
+                _savestateStart = fulltas.TryGetProperty("savestate", out JsonElement savestate) && savestate.ValueKind == JsonValueKind.String;
+            }
             CheckpointRespawns = header.TryGetProperty("checkpointRespawns", out JsonElement checkpoints) && checkpoints.GetBoolean();
         }
+
+        bool _savestateStart;
 
         void SetGoals(JsonElement goals)
         {
@@ -489,6 +495,7 @@ namespace IGTAP.EngineSim
         public void LoadStart(JsonElement start)
         {
             ApplyFields(Player, start.GetProperty("movement"));
+            if (_savestateStart) Goals.NoCheckpointAt(Player.respawnPoint.x, Player.respawnPoint.y);
             foreach (JsonElement entry in start.GetProperty("engine").EnumerateArray())
             {
                 FieldInfo f = World.FindField(typeof(MacroEngine), entry[0].GetString(), entry[1].GetString());
@@ -817,6 +824,12 @@ namespace IGTAP.EngineSim
                 _freezeFor = -1f;
                 if (Engine.TakeQuickRestart())
                 {
+                    string refused = Goals?.RestartRefused(Player.respawnPoint.x, Player.respawnPoint.y, Player.courseResetPoint != Vector2.zero);
+                    if (refused != null)
+                    {
+                        Engine.Abort(refused + " at action " + (Engine.StepIndex + 1));
+                        continue;
+                    }
                     RespawnMethod.Invoke(Player, new object[] { true });
                     Goals?.QuickRestarted();
                 }
