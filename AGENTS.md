@@ -43,6 +43,9 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   step cap) have to be solved again.
 - Turbo and the offline engine run `FloatingOrigin`'s rebase as 1x does (the world moves back once the player is
   17500 from scene (0, 0)), so Float Ultras and any route that crosses the sphere judge, replay and play back alike.
+- Turbo and the offline engine keep a physics callback's position write as 1x does (a sideways spring's 10u push,
+  `Movement.hitSpring`). Routes judged before this that take a sideways spring may die at 1x (`5_WJ_DS_DJ 13.46` does);
+  judge them again.
 
 ## Before calling a new best real
 

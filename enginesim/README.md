@@ -142,21 +142,24 @@ usual. `Cli\forced-paths.json` holds standing rules that apply to every solve of
 studio's too). Right now it cuts, in every category, everything left of Course 1's wall hanging right of the buy
 machines and two boxes on its right, left of Course 2's pillar hanging right of its buy machines, right of its two
 rooms' right walls (the corridor joining them), the two rooms themselves and the drop under its start floor, and left
-of Course 4's rightmost buy machine; Course 3's right hole in WJ_DS and WJ_DS_DJ, which leaves the top-hole shortcut,
-plus a wall at the left side of the rightmost buy machine (CashPerLoop) so runs don't wander left through the machine
-room and the pocket over Checkpoint (1) right of the climb; everything above Course 5's building roof (the route goes
-inside); and in Course 5 WJ_DS_DJ (no orange blocks yet) the far left, the low left corner, everything below the start
-floor, and the climb up through the start room's ceiling hole: that hole is the finish, entered from above, and a run
-climbing up it never started the timer. For 5to4 it cuts Course 5's ceiling hole and everything left of its start
-gate, Courses 1 and 2 right of the pillar over each start gate (runs pass their end gates without entering), and,
-above Course 3's approach shaft, everything left of the shaft's left wall.
+of Course 4's rightmost buy machine; Course 3's right hole in WJ_DS, WJ_DS_DJ and WJ_DS_DJ_BS_OM, which leaves the
+top-hole shortcut, plus a wall at the left side of the rightmost buy machine (CashPerLoop) so runs don't wander left
+through the machine room and the pocket over Checkpoint (1) right of the climb; everything above Course 5's building roof
+(the route goes inside); in Course 5 WJ_DS_DJ and WJ_DS_DJ_BS_OM, runs back right past the course entry and the climb up
+through the start room's ceiling hole: that hole is the finish, entered from above, and a run climbing up it never
+started the timer; and in Course 5 WJ_DS_DJ only (no orange blocks yet), the far left, the low left corner and
+everything below the start floor. Courses 1–5's rules cover WJ_DS_DJ_BS_OM too, and Courses 6–12's cover WJ_DS_DJ_BS
+and WJ_DS_DJ_BS_OM. For 5to4 it cuts Course 5's ceiling hole and everything left of its start gate, Courses 1 and 2
+right of the pillar over each start gate (runs pass their end gates without entering), and, above Course 3's approach
+shaft, everything left of the shaft's left wall.
 
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
 it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category; Course 2 has
 `avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
-to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS` and `WJ_DS_DJ`.
+to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS`, `WJ_DS_DJ`
+and `WJ_DS_DJ_BS_OM`.
 
 A rule with `"fulltas": ["VMAN", ...]` instead of `course`/`capabilities` holds a Full-TAS run's avoid boxes: every
 search window of those runs cuts a run entering one (its `via` isn't used; the run's `at:` goals are its waypoints).
@@ -249,6 +252,13 @@ instead: `Movement.TimeStop`'s freeze (so a freeze always runs the same number o
 `cameraMover.LateUpdate` (the camera decides which clones are on screen, `clonesLoD`, and so how they pay) and
 `ObjectBobber`. A playback starts with the camera settled on the player (`SavestateService.SnapCamera`). `timer`'s
 play-time display still counts the wall clock.
+
+A write from a physics callback inside the step moves the body at once and drops the interpolation: a sideways spring
+(`SpringScript.OnTriggerStay2D` → `Movement.hitSpring`, `transform.position += up * 10f`). Turbo syncs it right after
+`Physics2D.Simulate` when the transform has moved off the body (`TurboRunner`), and the engine does the same when the
+player's transform is dirty after `Physics.Simulate` (`Simulation.Run`). Before this both dropped the push: the tick's
+frames and the next tick blended from the step's end, so a sideways spring came out 10 u short of 1x (Course 5's
+`Spring (1)`: `5_WJ_DS_DJ 13.46` finished in turbo and offline, and died on `Spikes` at 1x).
 
 `POST /api/savestates/place {name?, from?, x?, y?, vx?, vy?, facing?, fields?}` makes a probe start anywhere, inside a
 wall too: a copy of a studio savestate (`from`) or of the player now, with the world-frame position, `Velocity` (the body

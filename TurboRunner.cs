@@ -650,7 +650,7 @@ namespace IGTAPTasMod
                     // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and
                     // drops the interpolation, as at 1x: the tick's frames show the written position, and the next tick blends from it.
                     // Unity's own pose write reads back through the parent a few 1e-5 off the body, so only a real move counts.
-                    if (false && ((Vector2)player.position - body.position).sqrMagnitude > 1e-4f)
+                    if (((Vector2)player.position - body.position).sqrMagnitude > 1e-4f)
                     {
                         Physics2D.SyncTransforms();
                         _stepFrom = body.position;

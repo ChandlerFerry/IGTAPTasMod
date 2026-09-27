@@ -18,20 +18,21 @@ FULLTAS = os.path.join(CONFIG, "fulltas.json")
 C1_BUYS = 20
 C1_CLONES = 9
 C1_PATH = 82
-FIRST_LAP = 327
+CLONE_PATH = 110
 CASH = 713 + (490 + 406) // 51 * 11
 ARRIVE = 418
 BONUS1_TICK = 8182
 GLOBAL0 = 1
 C1_GLOBAL = 0
 
-LAP = 110
-LEAD = 39
+LAP = 122
+LEAD = 28
 RESET_X = 4783
 BOX_X = {"R": 4199, "C": 4019, "M": 3839, "G": 3659, "D": 3479}
 TO = {b: round((RESET_X - x - 50) / 9.2) for b, x in BOX_X.items()}
 ROW = {"D": 0, "G": 1, "M": 2, "C": 3, "R": 4}
-REPEAT = 23
+REPEAT = 22
+ROW_STEP = 7
 CAP = {"R": 45, "C": 35, "M": 10, "G": 2, "D": 1}
 TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglobalreward2", "D": "buyds"}
 OFFSCREEN = 51
@@ -78,8 +79,39 @@ def box_cost(b, k):
 C1_PAY = offscreen_pay(reward(1, 0, C1_BUYS, C1_GLOBAL), 0, C1_CLONES, C1_PATH)
 
 def move(a, b):
-    k = abs(ROW[a] - ROW[b])
-    return REPEAT if k == 0 else round(5 + 180 * k / 9.2)
+    return REPEAT + ROW_STEP * max(abs(ROW[a] - ROW[b]) - 1, 0)
+
+def since_table(n):
+    acc, out = 0.0, [0.0]
+    for _ in range(n):
+        acc = f32(acc + f32(0.02))
+        out.append(acc)
+    return out
+
+SINCE = since_table(4096)
+
+def gate(clones):
+    return bisect.bisect_left(SINCE, f32(SINCE[CLONE_PATH] / clones))
+
+def run_clones(active, pool, last, n, t0, T):
+    active, pool = list(active), list(pool)
+    wait = gate(n) if n else FOREVER
+    life = CLONE_PATH + 1
+    pays, u = 0, t0
+    while True:
+        pay = active[0] + life if active else FOREVER
+        spawn = max(u, pool[0], last + wait) if pool else FOREVER
+        if spawn <= pay and spawn < T:
+            pool.pop(0)
+            active.append(spawn)
+            last = u = spawn
+        elif pay < T:
+            active.pop(0)
+            bisect.insort(pool, pay + 1)
+            pays += 1
+            u = pay
+        else:
+            return pays, tuple(active), tuple(pool), last
 
 def wait_for(s, cost, deadline):
     need = cost - s.cash
@@ -98,12 +130,12 @@ def wait_for(s, cost, deadline):
     return True
 
 class State:
-    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "clones", "c1next", "where", "prev", "tokens", "what")
+    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "active", "pool", "last", "c1next", "where", "prev", "tokens", "what")
 
     def child(self):
         s = State.__new__(State)
         s.t, s.cash, s.n, s.N, s.m, s.g, s.P = self.t, self.cash, self.n, self.N, self.m, self.g, self.P
-        s.clones, s.c1next, s.where = self.clones, self.c1next, self.where
+        s.active, s.pool, s.last, s.c1next, s.where = self.active, self.pool, self.last, self.c1next, self.where
         s.prev, s.tokens, s.what = self, (), ""
         return s
 
@@ -117,32 +149,25 @@ class State:
         return clone_pay(self.reward2(), self.m)
 
     def rate(self):
-        return len(self.clones) * self.pay2() / self.P + C1_PAY / OFFSCREEN
+        return self.N * self.pay2() / self.P + C1_PAY / OFFSCREEN
+
+    def c1(self, T):
+        return (T - 1 - self.c1next) // OFFSCREEN + 1 if self.c1next < T else 0
 
     def income(self, T):
-        w = ((T - self.c1next) // OFFSCREEN + 1) * C1_PAY if self.c1next <= T else 0
-        c, P = self.clones, self.P
-        if not c or c[0] > T:
-            return w
-        if c[-1] - c[0] < P:
-            q, rem = divmod(T - c[0], P)
-            k = len(c) * q + bisect.bisect_right(c, c[0] + rem)
-        else:
-            k = sum((T - a) // P + 1 for a in c if a <= T)
-        return w + k * self.pay2()
+        return self.c1(T) * C1_PAY + run_clones(self.active, self.pool, self.last, self.N, self.t, T)[0] * self.pay2()
 
     def advance(self, T):
-        self.cash += self.income(T)
-        if self.c1next <= T:
-            self.c1next += ((T - self.c1next) // OFFSCREEN + 1) * OFFSCREEN
-        self.clones = tuple(sorted(a if a > T else a + ((T - a) // self.P + 1) * self.P for a in self.clones))
+        pays, self.active, self.pool, self.last = run_clones(self.active, self.pool, self.last, self.N, self.t, T)
+        k = self.c1(T)
+        self.cash += k * C1_PAY + pays * self.pay2()
+        self.c1next += k * OFFSCREEN
         self.t = T
 
     def lap(self):
         s = self.child()
         s.advance(s.t + (LAP if s.where == "gate" else LEAD + LAP))
         s.cash += s.reward2()
-        s.P = min(s.P, LAP)
         s.tokens = ("finish:2",) if s.where == "gate" else ("start:2", "finish:2")
         s.what = "lap"
         s.where = "done"
@@ -163,7 +188,7 @@ class State:
             s.n += 1
         elif b == "C":
             s.N += 1
-            s.clones = s.clones + (s.t + s.P,)
+            s.pool = tuple(sorted(s.pool + (s.t,)))
         elif b == "M":
             s.m += 1
         elif b == "G":
@@ -175,8 +200,8 @@ class State:
 
 def start_state(cash):
     s = State.__new__(State)
-    s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, FIRST_LAP
-    s.clones, s.c1next, s.where = (), OFFSCREEN // 2, "gate"
+    s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, CLONE_PATH + 2
+    s.active, s.pool, s.last, s.c1next, s.where = (), (), -FOREVER, OFFSCREEN // 2, "gate"
     s.prev, s.tokens, s.what = None, (), ""
     s.advance(ARRIVE)
     s.tokens, s.what = ("start:2",), "restart, bonus1to2 to Course 2's start gate"
@@ -184,15 +209,13 @@ def start_state(cash):
 
 def dominated(best, s):
     levels = (s.n, s.N, s.m, s.g)
-    paths = (s.P,) if s.P == LAP else (s.P, LAP)
     places = (s.where,) + (tuple(ROW) if s.where == "done" else ())
     for i in range(-1, 4):
         up = levels if i < 0 else levels[:i] + (levels[i] + 1,) + levels[i + 1:]
-        for p in paths:
-            for w in places:
-                e = best.get(up + (p, w))
-                if e is not None and e[0] + e[1] * s.t >= s.cash:
-                    return True
+        for w in places:
+            e = best.get(up + (w,))
+            if e is not None and e[0] + e[1] * s.t >= s.cash:
+                return True
     return False
 
 def search(s0):
@@ -207,7 +230,7 @@ def search(s0):
         if dominated(best, s):
             continue
         rate = s.rate()
-        best[(s.n, s.N, s.m, s.g, s.P, s.where)] = (s.cash - rate * s.t, rate)
+        best[(s.n, s.N, s.m, s.g, s.where)] = (s.cash - rate * s.t, rate)
         expanded += 1
         for x in stage1_options(s):
             heapq.heappush(heap, (x.t, next(order), x))
@@ -795,16 +818,83 @@ def any_plan(run_name, out, verbose):
             json.dump(goals, f, indent=2)
         print(f"wrote {len(goals)} goals to {out}")
 
+def same_inputs(a, b):
+    def norm(x):
+        return {k: round(v, 4) if isinstance(v, float) else v for k, v in x.items()}
+    return len(a) == len(b) and all(norm(x) == norm(y) for x, y in zip(a, b))
+
+def measure(run_name):
+    best_path = os.path.join(str(gamepaths.TRACES), "fulltas", run_name + ".json")
+    trace_path = os.path.join(str(gamepaths.TRACES), f"fulltas-{run_name}.json")
+    best = json.load(open(best_path, encoding="utf-8"))
+    goals, ticks = best["goals"], best["goalPhysicsTicks"]
+    runs = json.load(open(FULLTAS, encoding="utf-8"))
+    run = next((r for r in runs if r.get("name") == run_name), None)
+    if run is None or run["goals"] != goals:
+        raise SystemExit(f"{best_path} is not solved for {run_name}'s current goals: solve it first")
+    if "reward:bonus1" not in goals or "buy:buyds" not in goals:
+        raise SystemExit(f"{run_name} has no reward:bonus1 and buy:buyds to plan between")
+    b, d = goals.index("reward:bonus1"), goals.index("buy:buyds")
+    if ticks[d] < 0:
+        raise SystemExit(f"{run_name}'s best doesn't reach buy:buyds yet: its timings aren't measured")
+    print(f"reading {trace_path} ...")
+    trace = json.load(open(trace_path, encoding="utf-8"))
+    if not same_inputs(trace["inputs"], best["inputs"]):
+        raise SystemExit(f"{trace_path} isn't a trace of the best: Capture start in the Full-TAS tab, then rerun")
+    B = ticks[b]
+    at = trace["ticks"][B - 1]
+    c2 = next({f[1]: f[2] for f in c["fields"]} for c in at["courses"]
+              if any(f[1] == "courseNumber" and f[2] == 2 for f in c["fields"]))
+    if c2["bestPathTime"] >= 1e7:
+        raise SystemExit("Course 2 has no best run at reward:bonus1: the clones have no path")
+    row = {"buy:" + t: k for k, t in TOKEN.items()}
+    steps = [(goals[i], goals[i + 1], ticks[i + 1] - ticks[i]) for i in range(b + 1, d)]
+    def typical(pairs, what):
+        found = sorted(dt for x, y, dt in steps if pairs(x, y))
+        if not found:
+            raise SystemExit(f"{run_name}'s best between reward:bonus1 and buy:buyds has no {what} to time")
+        return max(found, key=found.count)
+    m = {"cash": int(at["cash"]), "arrive": ticks[goals.index("start:2", b)] - B,
+         "lap": typical(lambda x, y: x == "start:2" and y == "finish:2", "Course 2 lap"),
+         "lead": typical(lambda x, y: x != "start:2" and y == "start:2", "restart to Course 2's start gate"),
+         "repeat": typical(lambda x, y: x in row and x == y, "repeat buy"),
+         "clone_path": round(c2["bestPathTime"] / 0.02), "bonus1_tick": B}
+    two = [dt for x, y, dt in steps if x in row and y in row and abs(ROW[row[x]] - ROW[row[y]]) == 2]
+    m["row_step"] = max(min(two) - m["repeat"], 0) if two else ROW_STEP
+    print(f"measured on {run_name}'s best: " + ", ".join(f"{k} {v}" for k, v in m.items()))
+    return m
+
+def write_run(run_name, goals):
+    runs = json.load(open(FULLTAS, encoding="utf-8"))
+    run = next((r for r in runs if r.get("name") == run_name), None)
+    if run is None or "reward:bonus1" not in run["goals"]:
+        raise SystemExit(f"fulltas.json has no run {run_name} with reward:bonus1")
+    old = run["goals"]
+    keep = old[:old.index("reward:bonus1") + 1]
+    after = old.index("buy:buyds") + 1 if "buy:buyds" in old else len(old)
+    rest = [] if old[after:after + len(TAIL)] == TAIL else old[after:]
+    if rest:
+        goals = goals[:goals.index("buy:buyds") + 1]
+    run["goals"] = keep + goals + rest
+    with open(FULLTAS, "w", encoding="utf-8") as f:
+        json.dump(runs, f, indent=2)
+    changed = next((i for i, (x, y) in enumerate(zip(old, run["goals"])) if x != y), min(len(old), len(run["goals"])))
+    print(f"wrote {len(run['goals'])} goals ({len(keep)} kept before, {len(rest)} after buy:buyds) to {FULLTAS} run {run_name};"
+          + (" unchanged" if old == run["goals"] else f" first change at goal {changed + 1}"))
+
 def main():
-    global LAP, LEAD, ARRIVE, FIRST_LAP
+    global LAP, LEAD, ARRIVE, CLONE_PATH, REPEAT, ROW_STEP, BONUS1_TICK
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default="main", help="the fulltas.json run --write replaces, or --any-pct follows")
+    ap.add_argument("--run", default="main", help="the fulltas.json run --measure reads, --write replaces, or --any-pct follows")
+    ap.add_argument("--measure", action="store_true",
+                    help="take cash, arrive, lap, lead, repeat, row step and clone path from --run's offline best and its trace")
     ap.add_argument("--cash", type=int, default=CASH, help="W at reward:bonus1")
     ap.add_argument("--arrive", type=int, default=ARRIVE, help="ticks from reward:bonus1 to Course 2's start gate")
     ap.add_argument("--lap", type=int, default=LAP, help="Course 2 start gate -> finish, ticks")
     ap.add_argument("--lead", type=int, default=LEAD, help="restart -> Course 2's start gate, ticks")
-    ap.add_argument("--first-lap", type=int, default=FIRST_LAP, help="Course 2's best run in ticks when the plan starts")
-    ap.add_argument("--write", action="store_true", help="replace the run's goals after reward:bonus1 in fulltas.json")
+    ap.add_argument("--clone-path", type=int, default=CLONE_PATH, help="Course 2's best run (game timer) in ticks: the clones' path")
+    ap.add_argument("--write", action="store_true",
+                    help="replace --run's goals after reward:bonus1 in fulltas.json (through buy:buyds when goals of its own follow)")
     ap.add_argument("--verbose", action="store_true", help="print every step after dash, not only each phase's end")
     ap.add_argument("--any-pct", action="store_true", help="plan ANY%%: --run's goals through buy:buydj, then its own")
     ap.add_argument("--out", help="--any-pct: write the whole goal list (JSON) here")
@@ -813,7 +903,11 @@ def main():
     ap.add_argument("--transit", action="append", default=[], metavar="A-B=TICKS",
                     help="ticks from course A to course B's start gate (TRANSIT), e.g. 5-4=2400")
     a = ap.parse_args()
-    LAP, LEAD, ARRIVE, FIRST_LAP = a.lap, a.lead, a.arrive, a.first_lap
+    LAP, LEAD, ARRIVE, CLONE_PATH = a.lap, a.lead, a.arrive, a.clone_path
+    if a.measure:
+        m = measure(a.run)
+        a.cash, ARRIVE, LAP, LEAD, CLONE_PATH = m["cash"], m["arrive"], m["lap"], m["lead"], m["clone_path"]
+        REPEAT, ROW_STEP, BONUS1_TICK = m["repeat"], m["row_step"], m["bonus1_tick"]
     for d in a.detour:
         goal, _, ticks = d.rpartition("=")
         if goal not in DETOUR:
@@ -837,7 +931,7 @@ def main():
           " its 9 clones off screen per 51 ticks:", [offscreen_pay(reward(1, 0, C1_BUYS, g), 0, C1_CLONES, C1_PATH) for g in range(4)])
     print("  Course 2 clone pay at reward 560 x mult buys:", [clone_pay(560, m) for m in range(5)])
     print(f"Start: reward:bonus1 with {a.cash} W, G {GLOBAL0}; Course 2 at its start gate {ARRIVE} ticks later"
-          f" (lap {LAP}, lead {LEAD}, first clone path {FIRST_LAP})")
+          f" (lap {LAP}, lead {LEAD}, repeat buy {REPEAT} + {ROW_STEP} per extra row, clone path {CLONE_PATH})")
 
     s0 = start_state(a.cash)
     dash, expanded = search(s0)
@@ -853,7 +947,7 @@ def main():
         if r.what == "lap":
             laps += 1
         print(f"  tick {r.t:5d}  {r.what:44s} -> {r.cash:9.0f} W  reward {r.reward2():6d}  clones {r.N:2d}"
-              f"  mult {mult(r.m):.1f}  global {GLOBAL0 + r.g}  path {r.P}")
+              f"  mult {mult(r.m):.1f}  global {GLOBAL0 + r.g}")
     buys = {b: sum(1 for t in tokens if t == "buy:" + TOKEN[b]) for b in "RCMG"}
     print(f"dash bought at tick {dash.t} after reward:bonus1 ({dash.t * 0.02:.2f} s, estimates; {expanded} states searched):"
           f" {laps} laps, buys {buys}; the run's tick ~{BONUS1_TICK + dash.t} ({(BONUS1_TICK + dash.t) * 0.02:.2f} s)")
@@ -873,15 +967,7 @@ def main():
     goals = tokens + TAIL + late
     print(json.dumps(goals))
     if a.write:
-        runs = json.load(open(FULLTAS, encoding="utf-8"))
-        run = next((r for r in runs if r.get("name") == a.run), None)
-        if run is None or "reward:bonus1" not in run["goals"]:
-            raise SystemExit(f"fulltas.json has no run {a.run} with reward:bonus1")
-        keep = run["goals"][:run["goals"].index("reward:bonus1") + 1]
-        run["goals"] = keep + goals
-        with open(FULLTAS, "w", encoding="utf-8") as f:
-            json.dump(runs, f, indent=2)
-        print(f"wrote {len(run['goals'])} goals ({len(keep)} kept) to {FULLTAS} run {a.run}")
+        write_run(a.run, goals)
 
 if __name__ == "__main__":
     main()

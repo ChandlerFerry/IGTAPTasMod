@@ -160,9 +160,23 @@ are) and spliced in if the whole run gets better. Unlocks aren't checked up fron
 `buy:buyds`, `VMAN`'s goals 9–19 (the way to the tunnel), then `Test-No-Omni-Skip`'s four, seeded with
 `Test-No-Omni-Skip`'s path. Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
 laps: an ordering planned for slower laps asks for a clone before the clones have paid for it, and the run stalls at
-that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) come from
-`python tools/plan-fulltas.py --cash 923 --arrive 444 --first-lap 277`: the Cash at `reward:bonus1`, the ticks from
-there to Course 2's start gate and its first Course 2 run, measured on its best.
+that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are planned from its own best:
+
+```
+python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --write
+```
+
+`--measure` reads the run's offline best (`enginesim/fulltas/<run>.json`) and its trace (`fulltas-<run>.json`, which
+must be of that best: **Capture start** first if it isn't) and takes from them the Cash at `reward:bonus1`, the ticks
+from there to Course 2's start gate, Course 2's lap (start gate to finish) and restart-to-gate lead, a repeat buy's
+ticks and the extra per box row crossed, and Course 2's best run (game timer), which is the clones' path. `--write`
+replaces the goals from `reward:bonus1` through `buy:buyds` and keeps the run's goals after it. Rerun it after the
+run's Course 2 laps or box walks get faster; a goals edit makes the saved routes stale, so solve again afterwards.
+
+The plan's Course 2 clones follow the game: a clone spawns from the pool only once `BaseCloneInterval` (best path ÷
+clone count) has passed since the last spawn, runs the path (best run + 1 tick), pays, and is back in the pool a tick
+later. Replaying `TrueEnding-ANY%`'s buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539
+planned against 3533 after `reward:bonus1`).
 
 ## Seed
 
