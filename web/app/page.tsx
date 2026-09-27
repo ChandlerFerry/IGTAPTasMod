@@ -18,7 +18,7 @@ type RecordedAction = { label: string; type: string; direction: number; wallJump
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
 type Course = { id: number; token: string; bonus: boolean; levels: number[]; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
-type OptionalBlock = { name: string; note: string; capabilities: string[] };
+type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
@@ -265,9 +265,10 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   const chosenCourse=courses.find(c=>c.id===chosen);
   const capsOptions=(chosenCourse?chosenCourse.levels:CAPS.map((_,level)=>level)).map(level=>[CAPS[level],CATEGORIES[level][1]]);
   const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
+  // Names whose checkbox was flipped from its forced-paths.json default ("default": true starts it checked).
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps));
-  const chosenOptional=optional.filter(n=>optionalBlocks.some(b=>b.name===n)).sort();
+  const chosenOptional=optionalBlocks.filter(b=>!!b.on!==optional.includes(b.name)).map(b=>b.name).sort();
   const target={course:chosen,capabilities:chosenCaps,optional:chosenOptional};
   const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,CAPS.indexOf(chosenCaps)):undefined;
   const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };

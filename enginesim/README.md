@@ -99,6 +99,7 @@ it, one input made for that contact goes there, then 40 ticks of stick (`Offline
 | leaves a wall | 0..+4 | wall coyote jump, dash-jump | aimed dash, wavejump |
 | dies (mostly spikes past their grace) | −7..−1 | all the plain ones: spike grace jump, a dash buffered onto a corner's ground gap, a super off a spike wall | any |
 | a hyper's flat dash slides off a floor's edge (omnidash only) | −3..+3 around that dash's press | — | corner hyper, corner ultra |
+| a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | 0..+24 | wall clip | wall clip |
 
 The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
 (`OfflineSolver.RecordSlide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
@@ -110,7 +111,14 @@ Why corners: a dash lands as soon as a ground ray touches the floor. The rays st
 further, so past an outer corner (the body beyond the edge, a rear ray still over the floor) nothing stops the body. The
 landing can sit up to ~12 u below standing height; a floor stops it at ~7. The hyper that follows can then be under
 `lastHyperY − 4`: the game's ultra, which adds `preDashMomentum.x`. Only an offline lab shows this so far (issue #12);
-the progress line counts these grafts (`grafts (N corner hypers)`).
+the progress line counts these grafts (`grafts (N corner hypers, M wall clips)`).
+
+The wall-behind contact is the GC wall clip (the studio's Tech tab): turn toward a wall at your back and the turned
+hitbox's front ground ray (x ∓ 25) starts inside it, which grounds you in mid air while `Velocity.y` is under 200. Its
+graft flicks the stick toward the wall (0.3–0.55) with the jump released on that tick (a held jump between 150 and 580 up
+is cut to 50), presses the jump with a light flick back (0.3–1) the next tick, then holds the jump with the stick at rest
+for 0–26 ticks, so a second clip off the same wall can follow (`OfflineSolver.WallClip`; `wall clips` in the progress
+line). A clip is a ground touch: on a Ground-tagged wall it refills air dashes, double jumps and wall jumps.
 
 On `Test-No-Omni-Skip` from nothing (`--fresh --unsolved`), death grafts alone reached goal 3 in 1:30 on 16 threads,
 where the build before them hadn't in 10 minutes; with every contact, 2:34 on 8 threads (one run each).
@@ -185,9 +193,12 @@ right of the pillar over each start gate (runs pass their end gates without ente
 shaft, everything left of the shaft's left wall.
 
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
-`--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
+`--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. A block with
+`"default": true` is picked unless turned off (`--no-optional <name>`, or unticking its checkbox, which starts ticked);
+the Optimize matrix's queue takes each course's defaults. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `avoid-forwards` (x 2436 to 2522, y -361 to -180), in every category; Course 2 has
+it's off. Course 1 has `avoid-forwards` (x 2436 to 2522, y -361 to -180), `avoid-backwards` (x 2168.3 to 2347.6, y
+213.4 to 235.5) and `avoid-right` (x 2671.1 to 3503.8, y -478.2 to 557.8, on by default), in every category; Course 2 has
 `avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
 to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS`, `WJ_DS_DJ`
 and `WJ_DS_DJ_BS_OM`.

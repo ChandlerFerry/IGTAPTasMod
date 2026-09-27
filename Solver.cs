@@ -401,14 +401,20 @@ namespace IGTAPTasMod
                 label = def.Token + "_" + CapabilityLabels[capabilities] + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional)) };
         }
 
-        static string[] OptionalNames(JObject body)
+        // The body's picked optional blocks, or the course's default-on blocks when it names none.
+        string[] OptionalNames(JObject body, int course, string capabilities)
         {
-            return body["optional"] is JArray names ? names.Select(n => (string)n).Where(n => !string.IsNullOrEmpty(n)).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToArray() : new string[0];
+            IEnumerable<string> names = body["optional"] is JArray picked ? picked.Select(n => (string)n).Where(n => !string.IsNullOrEmpty(n))
+                : OptionalBlocks(course).Where(b => b.on && b.caps.Contains(capabilities)).Select(b => b.name);
+            return names.Distinct().OrderBy(n => n, StringComparer.Ordinal).ToArray();
         }
 
-        static StringBuilder AppendOptional(StringBuilder args, string[] optional)
+        // The engine turns default-on blocks on by itself, so the ones left unpicked go as `--no-optional`.
+        StringBuilder AppendOptional(StringBuilder args, int course, string capabilities, string[] optional)
         {
             foreach (string name in optional) args.Append(" --optional ").Append(Quote(name));
+            foreach (OptionalBlock block in OptionalBlocks(course).Where(b => b.on && b.caps.Contains(capabilities) && !optional.Contains(b.name)))
+                args.Append(" --no-optional ").Append(Quote(block.name));
             return args;
         }
 
@@ -416,6 +422,7 @@ namespace IGTAPTasMod
         {
             public int course;
             public string name, note;
+            public bool on;
             public string[] caps;
         }
 
@@ -433,7 +440,7 @@ namespace IGTAPTasMod
                 _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
                     : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>()
                         .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
-                            course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "",
+                            course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
                             caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
             }
             return _optionalBlocks.Where(b => b.course == course);
@@ -447,7 +454,7 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
             List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
-            List<SolveJob> jobs = items.Select(i => CourseJob(Number(i, "course", 0), Text(i, "capabilities"), OptionalNames(i))).ToList();
+            List<SolveJob> jobs = items.Select(i => { int course = Number(i, "course", 0); string caps = Text(i, "capabilities"); return CourseJob(course, caps, OptionalNames(i, course, caps)); }).ToList();
             if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
             float minutes = FloatNumber(body, "minutes", 60f);
             if (!(minutes >= 0.25f)) throw new InvalidOperationException("Minutes per target must be at least 0.25.");
@@ -589,7 +596,7 @@ namespace IGTAPTasMod
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus,
                 levels = CapsLadder.Where(c.HasCategory).Select(CapsLevel).ToArray(), @from = c.from, to = c.to,
                 hint = c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
-                optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, capabilities = b.caps }).ToArray() }).ToArray();
+                optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, on = b.on, capabilities = b.caps }).ToArray() }).ToArray();
         }
 
         static readonly FieldInfo BoxCurrency = AccessTools.Field(typeof(upgradeBox), "upgradeCurrency");
@@ -662,7 +669,7 @@ namespace IGTAPTasMod
                 args.Append(" --seed ").Append(Quote(seed));
             }
             int threads = Math.Max(1, Environment.ProcessorCount - 2);
-            AppendOptional(args, _solveOptional).Append(" --threads ").Append(threads)
+            AppendOptional(args, _solveCourse, _solveCaps, _solveOptional).Append(" --threads ").Append(threads)
                 .Append(" --minutes ").Append(_solveMinutes.ToString(CultureInfo.InvariantCulture))
                 .Append(" --stall-minutes ").Append(Math.Min(5f, _solveMinutes / 2f).ToString(CultureInfo.InvariantCulture));
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, "solve " + args) {
@@ -716,7 +723,7 @@ namespace IGTAPTasMod
                 File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
-            AppendOptional(args, OptionalNames(body));
+            AppendOptional(args, id, caps, OptionalNames(body, id, caps));
             return RunEngineSimMap(request, args.ToString(), output);
         }
 

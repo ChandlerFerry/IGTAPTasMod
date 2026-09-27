@@ -87,6 +87,14 @@ namespace IGTAP.EngineSim
         public Vector3 StepFrom, StepTo;
         /// <summary>The player animator's "Animation": Movement.FixedUpdate plays a sound (an RNG draw) leaving a wall cling (3).</summary>
         public int Animation;
+
+        /// <summary>This state with another goal tracker's progress (a search for goals the run doesn't list: <see cref="Simulation.UseGoals"/>).</summary>
+        internal SimSnapshot WithGoal(FullTasTracker.State goal)
+        {
+            var s = (SimSnapshot)MemberwiseClone();
+            s.Goal = goal;
+            return s;
+        }
     }
 
     public sealed class Simulation
@@ -217,6 +225,12 @@ namespace IGTAP.EngineSim
         internal FullTasTracker Goals { get; private set; }
         public long InputBase;
         public int Progress { get { return Goals == null ? 0 : Goals.Next; } }
+
+        /// <summary>
+        /// Tracks these goals from now on (an extra lap the run doesn't list, searched as its own goals). Snapshots restored after
+        /// this must carry this tracker's state (<see cref="SimSnapshot.WithGoal"/>).
+        /// </summary>
+        internal void UseGoals(FullTasTracker goals) { Goals = goals; }
 
         void GoalEvent(bool reached)
         {

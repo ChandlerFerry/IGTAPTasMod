@@ -55,11 +55,11 @@ const str = (v: unknown) => typeof v === "string" ? v : "";
 
 type Tone = "best" | "progress" | "miss" | "info" | "warn" | "error";
 type Item = { key: string; at: number; tone: Tone; title: string; detail?: string; count?: number; fold?: "reach" | "polish" };
-type Window = { id: number; kind: string; first: number; limit: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; at: number };
+type Window = { id: number; kind: string; first: number; limit: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number };
 
 function asWindow(e: FullTasEvent): Window {
   return { id: num(e.id) ?? 0, kind: str(e.kind), first: num(e.first) ?? 0, limit: num(e.limit) ?? 0, attempt: num(e.attempt) ?? 0, budget: num(e.budget) ?? 60,
-    start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, at: e.at };
+    start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, piece: str(e.piece), at: e.at };
 }
 
 function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit}` : `goals ${w.first + 1}–${w.limit}`; }
@@ -103,24 +103,30 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
       case "phase":
         push(e.phase === "reach"
           ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Reach phase", detail: "Searching only the next unreached goal. Polishing starts once every goal is reached." }
-          : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: "Searching each goal window from goal 1 for time saves, over the goals the route reaches. The route changes only when its last goal comes sooner." });
+          : e.phase === "build"
+            ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Build phase", detail: "Putting the buys and laps together from loop pieces. Only a step no saved piece covers is searched, once; a buy the run can't pay for yet gets an extra lap first." }
+            : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: "Rebuilding the buys and laps from faster pieces, and searching the other goal windows for time saves. The route changes only when its last goal comes sooner." });
         break;
       case "window": windows.set(num(e.id) ?? 0, asWindow(e)); break;
       case "found": {
         const w = windows.get(num(e.id) ?? 0), t = num(e.time);
         if (!w) break;
-        push(w.kind === "polish" && w.target != null
-          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
-          : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
+        push(w.kind === "piece"
+          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
+          : w.kind === "polish" && w.target != null
+            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
+            : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }
       case "windowEnd": {
         const w = windows.get(num(e.id) ?? 0);
         if (!w || (num(e.candidates) ?? 0) > 0) break;
         const secs = Math.round((e.at - w.at) / 1000);
-        push(w.kind === "reach"
-          ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
-          : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
+        push(w.kind === "piece"
+          ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit}: ${w.piece} (${secs}s)` }
+          : w.kind === "reach"
+            ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
+            : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
         break;
       }
       case "record": push(recordItem(e, goals)); break;
@@ -245,7 +251,7 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
         <span>{best && !complete && best.progress > 0 ? `goal ${best.progress} at ${s2(best.time)}` : complete ? "all goals reached" : "no goals reached"}</span></div>
       <div className={`ftStat ${sessionDelta ? "good" : ""}`}><p>This solve</p><strong>{sessionDelta ?? "—"}</strong>
         <span>{lastRecord ? `last record ${ago(now - lastRecord.at)}` : session ? "no record yet" : outdated ? "goals changed" : "not started"}</span></div>
-      <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : "Reach"}</strong>
+      <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : phase === "build" ? "Build" : "Reach"}</strong>
         <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 1-${best.progress} of ${of}` : "whole-run checked") : best ? `next: goal ${best.progress + 1} of ${of}` : ""}</span></div>
       <div className="ftStat"><p>Elapsed</p><strong>{session ? clock((solve.running ? now : events[events.length - 1].at) - session.at) : "—"}</strong>
         <span>{session ? `of ${num(session.minutes)} min` : ""}</span></div>
@@ -261,15 +267,19 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
 
     {windowOpen && window_ && <div className={`ftNow ${window_.kind}`}>
       <p className="eyebrow">CURRENT WINDOW</p>
-      {window_.kind === "reach"
-        ? <h3>Searching for goal {window_.limit}: {goalName(labels[window_.limit - 1])}</h3>
-        : window_.kind === "repair"
-          ? <h3>Re-finding {span(window_)} after an earlier change</h3>
-          : <h3>Searching for time saves through {span(window_)}</h3>}
-      <p className="ftNowDetail">{window_.kind === "reach"
-        ? window_.first === window_.limit - 1 ? `Starting from goal ${window_.first} (${s2(window_.start)}).` : `Redoing ${span({ ...window_, limit: window_.limit - 1 })} to set it up differently.`
-        : labels.slice(window_.first, window_.limit).map(goalName).join(" → ")}
-        {window_.kind === "reach" && window_.attempt > 1 ? ` Round ${window_.attempt}, longer search.` : ""}
+      {window_.kind === "piece"
+        ? <h3>Searching a loop piece for goal {window_.limit}: {window_.piece}</h3>
+        : window_.kind === "reach"
+          ? <h3>Searching for goal {window_.limit}: {goalName(labels[window_.limit - 1])}</h3>
+          : window_.kind === "repair"
+            ? <h3>Re-finding {span(window_)} after an earlier change</h3>
+            : <h3>Searching for time saves through {span(window_)}</h3>}
+      <p className="ftNowDetail">{window_.kind === "piece"
+        ? `From goal ${window_.first} (${s2(window_.start)}). Found once, then reused wherever the player is in the same spot.`
+        : window_.kind === "reach"
+          ? window_.first === window_.limit - 1 ? `Starting from goal ${window_.first} (${s2(window_.start)}).` : `Redoing ${span({ ...window_, limit: window_.limit - 1 })} to set it up differently.`
+          : labels.slice(window_.first, window_.limit).map(goalName).join(" → ")}
+        {(window_.kind === "reach" || window_.kind === "piece") && window_.attempt > 1 ? ` Round ${window_.attempt}, longer search.` : ""}
         {window_.savedStarts > 0 ? ` Also trying ${window_.savedStarts} starts from saved routes.` : ""}</p>
       <div className="ftNowFacts">
         {window_.target != null && <span>To beat: <b>{s2(window_.target)}</b></span>}

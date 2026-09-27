@@ -29,11 +29,11 @@ namespace IGTAP.EngineSim.Cli
             OfflineSolver.ForcedPath forced = CliBoxes(args);
             string pathName = Option(args, "--path-name", "forced");
             bool customPath = !forced.IsEmpty;
-            List<string> optional = Optional(args);
 
             JsonElement header = ReadHeader(startTrace);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
+            List<string> optional = Optional(args, course, caps);
             AddStandingPaths(forced, course, caps, optional);
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
@@ -81,7 +81,7 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.Grafts)} grafts ({Interlocked.Read(ref solver.CornerGrafts)} corner hypers), best {solver.Shared.Time:0.00}s"
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.Grafts)} grafts ({Interlocked.Read(ref solver.CornerGrafts)} corner hypers, {Interlocked.Read(ref solver.ClipGrafts)} wall clips), best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
@@ -119,7 +119,7 @@ namespace IGTAP.EngineSim.Cli
         internal static OfflineSolver.ForcedPath ForcedPaths(string[] args, int course, string caps)
         {
             OfflineSolver.ForcedPath forced = CliBoxes(args);
-            AddStandingPaths(forced, course, caps, Optional(args));
+            AddStandingPaths(forced, course, caps, Optional(args, course, caps));
             return forced;
         }
 
@@ -139,12 +139,24 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        internal sealed record OptionalBlock(string Name, string Note, OfflineSolver.ForcedPath Boxes);
+        internal sealed record OptionalBlock(string Name, string Note, bool Default, OfflineSolver.ForcedPath Boxes);
 
-        internal static List<string> Optional(string[] args)
+        // The picked optional blocks: those marked "default": true, plus each `--optional <name>`, less each
+        // `--no-optional <name>`.
+        internal static List<string> Optional(string[] args, int course, string caps)
         {
-            var names = new List<string>();
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--optional" && !names.Contains(args[i + 1])) names.Add(args[i + 1]);
+            List<OptionalBlock> blocks = OptionalBlocks(course, caps, new OfflineSolver.ForcedPath());
+            var names = blocks.Where(b => b.Default).Select(b => b.Name).ToList();
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i] != "--optional" && args[i] != "--no-optional") continue;
+                string name = args[i + 1];
+                if (!blocks.Any(b => b.Name == name))
+                    throw new ArgumentException("forced-paths.json: no optional block '" + name + "' for course " + course + " " + caps
+                        + (blocks.Count == 0 ? "" : " (has " + string.Join(", ", blocks.Select(b => b.Name)) + ")"));
+                names.Remove(name);
+                if (args[i] == "--optional") names.Add(name);
+            }
             names.Sort(StringComparer.Ordinal);
             return names;
         }
@@ -156,12 +168,7 @@ namespace IGTAP.EngineSim.Cli
 
         internal static void AddStandingPaths(OfflineSolver.ForcedPath forced, int course, string caps, List<string> optional)
         {
-            var blocks = OptionalBlocks(course, caps, forced);
-            string missing = optional.FirstOrDefault(n => !blocks.Any(b => b.Name == n));
-            if (missing != null)
-                throw new ArgumentException("forced-paths.json: no optional block '" + missing + "' for course " + course + " " + caps
-                    + (blocks.Count == 0 ? "" : " (has " + string.Join(", ", blocks.Select(b => b.Name)) + ")"));
-            foreach (OptionalBlock block in blocks.Where(b => optional.Contains(b.Name)))
+            foreach (OptionalBlock block in OptionalBlocks(course, caps, forced).Where(b => optional.Contains(b.Name)))
             {
                 forced.Via.AddRange(block.Boxes.Via);
                 forced.Avoid.AddRange(block.Boxes.Avoid);
@@ -186,7 +193,8 @@ namespace IGTAP.EngineSim.Cli
                         var boxes = new OfflineSolver.ForcedPath();
                         AddBoxes(boxes, block);
                         blocks.Add(new OptionalBlock(block.GetProperty("name").GetString(),
-                            block.TryGetProperty("note", out JsonElement note) ? note.GetString() : "", boxes));
+                            block.TryGetProperty("note", out JsonElement note) ? note.GetString() : "",
+                            block.TryGetProperty("default", out JsonElement on) && on.GetBoolean(), boxes));
                     }
             }
             return blocks;
@@ -251,7 +259,7 @@ namespace IGTAP.EngineSim.Cli
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
         }
 
-        static string EncodeTicks(List<InputTick> ticks)
+        internal static string EncodeTicks(List<InputTick> ticks)
         {
             var text = new StringBuilder();
             for (int i = 0; i < ticks.Count;)
@@ -273,7 +281,7 @@ namespace IGTAP.EngineSim.Cli
 
         static string Number(float? v) { return v.HasValue ? v.Value.ToString("R", CultureInfo.InvariantCulture) : ""; }
 
-        static List<InputTick> DecodeTicks(string text)
+        internal static List<InputTick> DecodeTicks(string text)
         {
             var ticks = new List<InputTick>();
             if (text.Length == 0) return ticks;

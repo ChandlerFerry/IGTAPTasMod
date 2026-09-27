@@ -194,9 +194,12 @@ from its start gate to `buy:buydj` (the greedy phase main's plan uses for its do
 there; `--write` touches only those. The ticks from `buy:buyds` to Course 3's gate come from the run's best (its
 `start:3` there, or GOAL plus a straight-line guess to the gate) or `--dj-arrive`; the Course 3 lap from the best's
 farm laps, else 233. Without a trace of the best, `--measure` refuses: pass `--cash`, `--arrive`, `--lap`, `--lead`,
-`--clone-path`, `--repeat` and `--row-step` instead. The first plan (bonus1 cash fitted to the best's `buy:buyds` tick)
-buys `buydj` 23234 ticks (7.7 min) after Course 3's gate: 52 `buyreward3`, 35 `buyclone3`, 12 `buyclonemult3`, 4
-`buyglobalreward3`, 10 `buyfast3`, 43 laps. The run's avoid box over Course 3's start gate was removed for it.
+`--clone-path`, `--repeat` and `--row-step` instead. A planned buy is one the run can pay for when it gets to the box:
+the plan never has the player stand at a box waiting for clone income (a search window can't find hundreds of idle
+ticks, and a reach window on such a buy never ends); when Cash is short, it runs the course again. Only `--measure`'s
+replay of the run's own goals waits, as the route did. The plan (bonus1 cash fitted to the best's `buy:buyds` tick)
+buys `buydj` 20727 ticks (6.9 min) after Course 3's gate: 52 `buyreward3`, 35 `buyclone3`, 12 `buyclonemult3`, 4
+`buyglobalreward3`, 12 `buyfast3`, 58 laps. The run's avoid box over Course 3's start gate was removed for it.
 
 ## Seed
 
@@ -254,20 +257,26 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
 - By default the search polishes the goals the best reaches (all of them once it's complete); a best that reaches none
   is reached first. `--unsolved`: a complete route first: until every goal is reached, only the first goal not reached
-  yet is searched (`reach` windows): from the last reached goal, then redoing one, two, three goals before it, each
-  round with a longer budget (`--window-minutes` × round). A reach window ends as soon as it finds a route to its goal:
-  that route is spliced in and saved right away, and the next window searches on from it (the rest of the budget isn't
-  spent). Polishing starts once a run reaches every goal.
-- Polishing: windows of W goals (default 2) from goal 1 up to the last goal the best reaches: each worker replays the
-  best up to goal i-1 (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal
-  i+W-1. The first goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap
-  that ends slower but sets up the next one wins.
+  yet is worked on. A loop goal (`buy:`, `start:`, `finish:`) is built from pieces (below). Any other goal is searched
+  (`reach` windows): from the last reached goal, then redoing one, two, three goals before it, each round with a longer
+  budget (`--window-minutes` × round). A reach window ends as soon as it finds a route to its goal: that route is
+  spliced in and saved right away, and the next window searches on from it (the rest of the budget isn't spent). After
+  3 rounds without the goal, or when the builder finds no way to a goal, the solve stops with an error saying which
+  goal (it doesn't search on all night: a different plan, goal list or avoid box is needed). Polishing starts once a
+  run reaches every goal.
+- Polishing: first the loop goals are rebuilt from the piece library, stretch by stretch (kept when the whole run gets
+  faster), and each piece the rebuild played is searched for a faster one (`--window-minutes`, most-played first),
+  which the next rebuild uses everywhere it fits. Then windows of W goals (default 2) from goal 1 up to the last goal
+  the best reaches, skipping windows made only of loop goals: each worker replays the best up to goal i-1
+  (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal i+W-1. The first
+  goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap that ends slower
+  but sets up the next one wins. `--goal N` polishes its window only, loop goals or not.
 - A window's best is spliced into the run with the old tail after it; when the old tail no longer reaches the rest (the
   state differs), the following windows are searched again from the new state (`repair`), seeded with the old tail,
   and the run is kept only if it ends sooner.
@@ -282,8 +291,38 @@ inputs past the last unchanged goal the same way.
   `fullTas.runs[].closest` has `reached`, `next`, `distance` and `ticks`. A playback of a partial route (this, or
   **Play** of an incomplete offline best) ends with its inputs; only a complete route waits for its last goal.
 - Besides its log lines the solver prints one `@fulltas {json}` line per event (`FullTas.Emit`): `session`, `phase`
-  (`reach`/`polish`), `window` (`kind`, goals `first`..`limit`, `target`, `budget`), `status` (each second), `found`,
+  (`reach`/`build`/`polish`), `window` (`kind`: `reach`, `polish`, `repair` or `piece`, goals `first`..`limit`, `target`,
+  `budget`; a piece window's `piece` says what it heads for), `status` (each second), `found`,
   `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`. Times are seconds from the run's start.
+
+### Loop builder
+
+A run's buys and laps repeat: the same quick restart, the same walk to a box, the same lap, dozens of times. Searching
+each of those goals afresh (a window per goal) spent most of a night's solve re-finding them, and a buy the run couldn't
+pay for yet had no route at all, so its reach window never ended. The builder (`enginesim\Cli\FullTasBuild.cs`) puts
+them together from pieces instead:
+
+- A piece is the inputs from one state to one goal (a box, a start gate, a finish), filed under the goal's label, the
+  player's unlocks and where the player stood, in
+  `<traces>\archive\fulltas-pieces.json`. The library is shared by every run, and kept across solves (`--fresh` starts
+  without it); per spot it keeps the 4 shortest.
+- For its next goal the builder tries every piece filed within 48 units of the player, and, when the run may quick
+  restart there, every piece filed at the spot a restart takes it to, after an idle pad and the restart (pads of 0–24
+  ticks, shortest first: a restart keeps `framesSinceLastDash`, so a dash pressed soon after it fires a tick late while
+  the last dash cools down, and a piece's timing needs the same pad-to-dash distance it was found with). It plays each
+  in the run from the current state and keeps the one that reaches the goal soonest. A piece is only
+  ever used after it has been played in the run: a spot that differs (a grown tree, another speed) just fails the check.
+- When no piece reaches it, the goal is searched once (a `piece` window of up to `--piece-minutes`, default 3; three
+  times as long once more if that finds nothing), seeded with the library's pieces for it and the saved course routes.
+  The build takes the first way found once a quarter minute passes without a faster one (polish searches the pieces
+  it plays for longer), and files it for reuse. A way that quick restarts within its first 25 ticks is filed from the
+  restart on, so every later restart to that spot reuses it.
+- A buy the run can't pay for yet (`Shop.Affordable`: the boxes' costs against the run's Cash now) gets an extra lap of
+  its course first (the course of the last `start:`/`finish:` goal before it), up to 64, until it can: the run never
+  waits at a box. An extra lap isn't one of the run's goals (an event that isn't the next goal changes nothing): its
+  gate and its finish are built as two steps, each checked against a goal of its own (`FullTasTracker.For`,
+  `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps.
+- The build is saved as the run's best every minute and when it stops.
 
 ## Offline economy
 

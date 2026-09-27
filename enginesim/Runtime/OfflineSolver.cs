@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim
         readonly Memory _memory;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, ClipGrafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -513,9 +513,16 @@ namespace IGTAP.EngineSim
             // up on coyote frames. Its contact is the tick that dash was pressed, and the graft presses it again a few ticks
             // either way with a later jump, so the hyper lands on the corner and jumps in coyote time past the edge, where a
             // landing past the corner can sit below lastHyperY - 4 (the game's ultra).
-            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper }
+            // A wall behind: in the air, not dashing, Velocity.y under 580 (a jump cut brings it to 50), a wall within reach of
+            // the back edge at the ground rays' height (WallBehindLeft: the wall is at -x). The graft is the wall clip: a light
+            // flick toward the wall (release on it, cutting a held jump), the jump pressed with a light flick back the next
+            // tick, then a hold, so a second clip off the same wall can follow. A wall ahead (in the air, not dashing, a wall
+            // within 12 u of the front edge) sets one up: the stick turns away from the wall for a few ticks and then rests,
+            // which leaves the wall behind a player drifting off it.
+            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper, WallBehindLeft, WallBehindRight, WallAheadLeft, WallAheadRight }
             readonly List<(int tick, Contact kind)> _contacts = new List<(int, Contact)>();
             bool _recordContacts, _contactsPrimed, _wasGround, _wasWall, _wasDash, _wasSlide;
+            float _wasBehind, _wasAhead;
             int _dashStart;
             const double GraftRate = .5;
             const int GraftCoast = 40;
@@ -531,21 +538,59 @@ namespace IGTAP.EngineSim
                 [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
                 [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
                 [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
+                [Contact.WallBehindLeft] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+                [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+                [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+                [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
             };
 
             void RecordContact(int tick)
             {
                 Movement player = _sim.Player;
                 bool ground = player.onGround, wall = player.OnWall;
+                float behind = WallBehind(player), ahead = WallAhead(player);
                 if (_contactsPrimed)
                 {
                     if (ground != _wasGround) _contacts.Add((tick, ground ? Contact.Landed : Contact.LeftGround));
                     if (wall != _wasWall) _contacts.Add((tick, wall ? Contact.TouchedWall : Contact.LeftWall));
+                    if (behind != 0f && behind != _wasBehind) _contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
+                    if (ahead != 0f && ahead != _wasAhead) _contacts.Add((tick, ahead < 0f ? Contact.WallAheadLeft : Contact.WallAheadRight));
                 }
                 _contactsPrimed = true;
                 _wasGround = ground;
                 _wasWall = wall;
+                _wasBehind = behind;
+                _wasAhead = ahead;
             }
+
+            // The side of a wall behind the player (-1: at -x, 1: at +x) that a wall clip can use now, 0 for none. The turn
+            // swings the hitbox's back edge (x ∓ 15.5, offset 5, width 41) 10 u into the wall, and the front ground ray (x ∓ 25
+            // after the turn) grounds the player from inside it while Velocity.y is under 200; a clip needs the back edge
+            // within ~8 u, so the ray looks 12 u out from x ∓ 15 at the ground rays' height (y - 18).
+            static float WallBehind(Movement player)
+            {
+                if (player.onGround || player.dashActive || player.Velocity.y >= 580f) return 0f;
+                float back = player.facingRight ? -1f : 1f;
+                Vector3 p = player.transform.position;
+                return Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y - 18f), new Vector2(back, 0f), 12f, GroundLayer(player)) ? back : 0f;
+            }
+
+            // The side of a wall in front of the player within 12 u of the hitbox's front edge (x ± 25.5), at the wall rays'
+            // heights (y + 19, y - 18) or just over the head (y + 45: a wall whose bottom the player is rising up to), 0 for none.
+            static float WallAhead(Movement player)
+            {
+                if (player.onGround || player.dashActive || player.OnWall) return 0f;
+                float front = player.facingRight ? 1f : -1f;
+                Vector3 p = player.transform.position;
+                var dir = new Vector2(front, 0f);
+                int layer = GroundLayer(player);
+                foreach (float dy in AheadHeights)
+                    if (Physics2D.Raycast(new Vector2(p.x + front * 25f, p.y + dy), dir, 12f, layer)) return front;
+                return 0f;
+            }
+            static readonly float[] AheadHeights = { -18f, 19f, 45f };
+
+            static readonly Func<Movement, LayerMask> GroundLayer = FieldGetter<LayerMask>("groundRaycastLayer");
 
             // Every physics step of an explore run (a dash runs ticks with no input tick, which RecordContact never sees): the
             // input tick a dash was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.
@@ -573,8 +618,11 @@ namespace IGTAP.EngineSim
                 var coast = new InputTick { x = side, y = last.y };
                 for (int i = 0; i < GraftCoast; i++) t.Add(coast);
                 if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
-                // A corner hyper's contact is a dash press: only the corner re-timings fit it.
-                string kind = !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
+                // A corner hyper's contact is a dash press: only the corner re-timings fit it. A wall behind takes only the clip,
+                // a wall ahead only the turn away that sets one up.
+                bool clip = contact == Contact.WallBehindLeft || contact == Contact.WallBehindRight;
+                bool ahead = contact == Contact.WallAheadLeft || contact == Contact.WallAheadRight;
+                string kind = clip ? "wallclip" : ahead ? "turnaway" : !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
                 switch (kind)
                 {
                     case "jump":
@@ -604,13 +652,20 @@ namespace IGTAP.EngineSim
                     case "backdash":
                         BackDash(t, at, lo);
                         break;
+                    case "wallclip":
+                        WallClip(t, at, contact == Contact.WallBehindLeft ? -1f : 1f);
+                        break;
+                    case "turnaway":
+                        TurnAway(t, at, contact == Contact.WallAheadLeft ? -1f : 1f, last.held);
+                        break;
                     default:
                         Omni(t, at, lo, kind);
                         break;
                 }
                 Interlocked.Increment(ref _owner.Grafts);
                 if (contact == Contact.CornerHyper) Interlocked.Increment(ref _owner.CornerGrafts);
-                Try(t, contact == Contact.CornerHyper ? "corner hyper" : "graft", from);
+                if (clip || ahead) Interlocked.Increment(ref _owner.ClipGrafts);
+                Try(t, contact == Contact.CornerHyper ? "corner hyper" : clip ? "wall clip" : ahead ? "wall clip setup" : "graft", from);
             }
 
             void Pool()
@@ -816,6 +871,49 @@ namespace IGTAP.EngineSim
                 t[at] = d;
                 return Hop(t, at, OneOf(DashHolds));
             }
+
+            // The wall clip (techs.json gc-wall-clip): a light flick toward the wall behind on `at` with the jump released (a
+            // held jump is cut to 50 up), the jump pressed with a light flick back on at + 1, where the turned hitbox's front
+            // ground ray starts inside the wall and grounds the player, then a hold with the stick at rest. The flick back
+            // leaves the back edge ~8 u from the wall, close enough for a second clip off it after the hold.
+            int WallClip(List<InputTick> t, int at, float toward)
+            {
+                int hold = OneOf(ClipHolds);
+                Pad(t, at + 3 + hold);
+                InputTick flick = t[at];
+                flick.x = toward * OneOf(ClipFlicks); flick.y = 0f; flick.press = false; flick.dash = false;
+                flick.release = at > 0 && t[at - 1].held; flick.held = false;
+                t[at] = flick;
+                InputTick jump = t[at + 1];
+                jump.x = -toward * OneOf(ClipBacks); jump.y = 0f; jump.press = true; jump.held = true; jump.release = false; jump.dash = false;
+                t[at + 1] = jump;
+                int end = at + 2 + hold;
+                for (int i = at + 2; i < end; i++) { InputTick k = t[i]; k.x = 0f; k.y = 0f; k.press = false; k.held = true; k.release = false; k.dash = false; t[i] = k; }
+                for (int i = end; i < t.Count && t[i].held && !t[i].press; i++) { InputTick k = t[i]; k.held = false; k.release = false; t[i] = k; }
+                InputTick r = t[end]; r.release = true; t[end] = r;
+                return end;
+            }
+            static readonly float[] ClipFlicks = { .3f, .35f, .4f, .45f, .5f, .55f }, ClipBacks = { .3f, .4f, .5f, .65f, 1f };
+            static readonly int[] ClipHolds = { 0, 3, 6, 9, 12, 16, 20, 26 };
+
+            // Sets up a wall clip: with a wall ahead, the stick turns away from it for 1-4 ticks, then rests for 8-30, so the
+            // player drifts to a stop facing away with the wall at its back; the jump stays as it was (held on, not cut).
+            int TurnAway(List<InputTick> t, int at, float wall, bool held)
+            {
+                int turn = _rng.Next(1, 5), rest = _rng.Next(8, 31);
+                Pad(t, at + turn + rest + 1);
+                float away = -wall * OneOf(TurnAways);
+                int end = at + turn + rest;
+                for (int i = at; i < end; i++)
+                {
+                    InputTick k = t[i];
+                    k.x = i < at + turn ? away : 0f; k.y = 0f; k.press = false; k.dash = false; k.held = held; k.release = false;
+                    t[i] = k;
+                }
+                if (held) { InputTick r = t[end]; r.release = true; t[end] = r; }
+                return end;
+            }
+            static readonly float[] TurnAways = { .3f, .5f, .7f, 1f };
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump",

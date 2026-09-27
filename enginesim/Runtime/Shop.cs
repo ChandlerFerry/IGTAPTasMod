@@ -100,6 +100,25 @@ namespace IGTAP.EngineSim
             get { return _start[Cash] - _spent[Cash] + _awarded[Cash] + (Economy?.Earned ?? 0.0); }
         }
 
+        /// <summary>
+        /// Whether the run holds enough now to buy each of these boxes once (their costs added per currency); null when one of
+        /// them can't be bought (not active: capped, or not unlocked yet), which Cash doesn't change.
+        /// </summary>
+        internal bool? Affordable(string[] boxes)
+        {
+            var need = new double[CurrencyCount];
+            foreach (upgradeBox b in _boxes)
+            {
+                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
+                if (!b.isActive || !b.gameObject.activeInHierarchy) return null;
+                int currency = (int)GetCurrency(b);
+                if (currency >= 0 && currency < CurrencyCount) need[currency] += b.upgradeCost;
+            }
+            for (int c = 0; c < CurrencyCount; c++)
+                if (need[c] > 0.0 && Available(c) < need[c]) return false;
+            return true;
+        }
+
         internal void StepClones() { Economy?.Step(_sim.World.FixedDeltaTime); }
 
         internal void EndOfFrame()

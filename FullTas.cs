@@ -67,6 +67,16 @@ namespace IGTAPTasMod
             _startRespawnY = respawnY;
         }
 
+        /// <summary>A tracker for other goals with this one's checkpoint guard (the loop builder's extra laps).</summary>
+        public FullTasTracker For(FullTasGoal[] goals)
+        {
+            var t = new FullTasTracker(goals);
+            t._noCheckpoint = _noCheckpoint;
+            t._startRespawnX = _startRespawnX;
+            t._startRespawnY = _startRespawnY;
+            return t;
+        }
+
         /// <summary>Why a quick restart now would leave the game's checkpoints (null when it respawns at a real one).</summary>
         public string RestartRefused(float respawnX, float respawnY, bool courseReset)
         {

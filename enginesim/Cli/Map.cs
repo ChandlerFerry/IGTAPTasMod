@@ -38,7 +38,7 @@ namespace IGTAP.EngineSim.Cli
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
-            List<string> optional = Solve.Optional(args);
+            List<string> optional = Solve.Optional(args, course, caps);
             string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
             string archivePath = System.IO.Path.Combine(dir, "archive", Solve.ArchiveName(label, optional) + ".json");

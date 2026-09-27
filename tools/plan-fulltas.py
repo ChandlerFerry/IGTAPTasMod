@@ -114,10 +114,12 @@ def run_clones(active, pool, last, n, t0, T):
             return pays, tuple(active), tuple(pool), last
 
 def wait_for(s, cost, deadline):
+    """Advances s to the tick it can pay cost, before deadline. deadline None: only if it can pay on arrival; a plan never
+    idles at a box for income (a lap earns it instead). Replays (force) wait as the route did."""
     need = cost - s.cash
     if need <= 0:
-        return s.t < deadline
-    if s.income(deadline - 1) < need:
+        return deadline is None or s.t < deadline
+    if deadline is None or s.income(deadline - 1) < need:
         return False
     lo, hi = s.t, deadline - 1
     while hi - lo > 1:
@@ -176,7 +178,7 @@ class State:
     def buy(self, b, walk_row, force=False):
         if self.level(b) >= CAP[b]:
             return None
-        deadline = self.t + (FOREVER if force else (LAP if self.where == "gate" else LEAD + LAP) + TO[b])
+        deadline = FOREVER if force else None
         s = self.child()
         s.advance(s.t + (move(s.where, b) if walk_row else TO[b]))
         arrived = s.t
@@ -470,7 +472,7 @@ class LateState:
         if self.lv[i] >= ph.caps[i]:
             return None
         c = ph.c
-        deadline = self.t + (FOREVER if force else (ph.lap if self.where == "gate" else c.lead + ph.lap) + c.to(k))
+        deadline = FOREVER if force else None
         s = self.child()
         s.advance(s.t + (c.move(s.where, k) if walk_row else c.to(k)))
         arrived = s.t
