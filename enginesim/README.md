@@ -98,6 +98,19 @@ it, one input made for that contact goes there, then 40 ticks of stick (`Offline
 | touches a wall | −3..+3 | wall jump, superbounce, wall dash, jump held into a dash | aimed dash, ground bounce |
 | leaves a wall | 0..+4 | wall coyote jump, dash-jump | aimed dash, wavejump |
 | dies (mostly spikes past their grace) | −7..−1 | all the plain ones: spike grace jump, a dash buffered onto a corner's ground gap, a super off a spike wall | any |
+| a hyper's flat dash slides off a floor's edge (omnidash only) | −3..+3 around that dash's press | — | corner hyper, corner ultra |
+
+The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
+(`OfflineSolver.RecordSlide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
+`onGround` held up by coyote frames only. Its graft presses that dash again a few ticks either way with a late jump (dash
+frame 4–12), so the landing moves along the corner and the hyper jumps in coyote time past the edge. The corner ultra
+also puts a wavedash 8–16 ticks before it, so the corner hyper carries a hyper's momentum as `preDashMomentum`.
+
+Why corners: a dash lands as soon as a ground ray touches the floor. The rays start 18 below the player and reach 22
+further, so past an outer corner (the body beyond the edge, a rear ray still over the floor) nothing stops the body. The
+landing can sit up to ~12 u below standing height; a floor stops it at ~7. The hyper that follows can then be under
+`lastHyperY − 4`: the game's ultra, which adds `preDashMomentum.x`. Only an offline lab shows this so far (issue #12);
+the progress line counts these grafts (`grafts (N corner hypers)`).
 
 On `Test-No-Omni-Skip` from nothing (`--fresh --unsolved`), death grafts alone reached goal 3 in 1:30 on 16 threads,
 where the build before them hadn't in 10 minutes; with every contact, 2:34 on 8 threads (one run each).
@@ -174,7 +187,7 @@ shaft, everything left of the shaft's left wall.
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category; Course 2 has
+it's off. Course 1 has `avoid-forwards` (x 2436 to 2522, y -361 to -180), in every category; Course 2 has
 `avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
 to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS`, `WJ_DS_DJ`
 and `WJ_DS_DJ_BS_OM`.
@@ -315,6 +328,7 @@ fields, against many input branches at once, on every core.
 & $exe clip map $trace 2400 -120 2560 320 4              # ground ('#', layer 128) and blocking ground ('B') in the world frame
 & $exe clip run $trace lab.json --out runs.csv --top 20   # every start x every branch, ranked by the height reached
 & $exe clip log $trace lab.json 0 "turn jump"            # one start x branch, tick by tick (the probe's fields + wallJumpFacing)
+& $exe clip log $trace lab.json 0 "turn jump" --fields lastHyperY,canHyper,coyoteFrames   # plus any Movement fields
 ```
 
 ```json
@@ -485,34 +499,52 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   `Range(float, float)` = min * value + max * (1 - value). Verified on Unity's own published draws (macklinb/MoatShrimp's
   parity tables: 50 draws word for word) and on the game's traces, where every tick carries the state (`"random"`).
   The state is per simulation: `SimSnapshot` captures, restores and fingerprints it, and a trace's start loads it.
-- Real-time play draws Random every rendered frame (LightFlicker, anim speed, ...), so real-time playback rolls differ
-  from a turbo run's. Traces and the judge are turbo; real time is never compared.
-- Random consumer audit (every draw a turbo tick can make, and where it is kept offline):
+  Turbo's `TurboRunner.Restore` sets it last, after `RestoreEconomy` and the Vman restore: turning a box back on there
+  runs `upgradeBox.OnEnable` (two draws), which used to shift a restored state before the judged run began.
+- When a draw happens: a turbo run is one synchronous batch in one Unity frame. `SetActive(true)` runs the woken
+  behaviours' `OnEnable` at once (drawn in turbo); `Start` waits for the next frame's Start pass, `InvokeRepeating`
+  and Unity-run coroutines wait for later frames (turbo parks only `Invoke`, zip movers, `IE_BuyMax` and the origin
+  rebase), so none of those draw inside a turbo run. Real-time playback runs them all, which is why its rolls differ
+  from a turbo run's: the Start draws of objects the run turns on (tree parts, a loaded zone's lights and plants), each
+  box's `updateMultibuyText` (InvokeRepeating) turning a buy-max box's `NumToBuyText` on (its `ObjectBobber.OnEnable`
+  draws), and a tree segment's coroutine turning its box back on. LightFlicker and RandomAnimSpeedComponent draw only
+  in `Start`, never per frame. Traces and the judge are turbo; real time is never compared.
+- Random consumer audit (every draw a turbo tick can make, and where it is kept offline; lines are
+  `obj/fulldecomp-steam`'s):
   - `clonesScript.SpawnClone` (clonesScript.cs:172,182): one `Random.Range(0, 101)` per speed and size roll loop, at
     least one draw each per spawn, chance or not — modeled in `Runtime/Economy.cs` (the rolls pick the clone's
     Fastness/Bigness and the next spawn's due time).
   - `clonesScript.checkIfColourClone` (clonesScript.cs:379,389): drawn only when a colour counter passes 100; such a
     run ends (`Unmodeled economy: colour clone`), so the draws are never needed.
-  - `Movement.playSFX` (Movement.cs:1866-1909): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
+  - `Movement.playSFX` (Movement.cs:1869-1919): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
     of the `Audio.PlayAudio` its land/grassLand cases make. `cuts.txt` empties it; `hooks.txt`'s `OnPlaySfx` keeps the
     draws (`Movement::PlayFootstep` and `Movement::PlayWallSlideSfx` run un-cut: their bodies only dispatch here).
   - `Audio.PlayAudio` (Audio.cs:52,58): a clip draw and a pitch draw when the caller passed a pitch variance. Cut;
     `hooks.txt`'s `OnPlayAudio` keeps the draws (callers in a run: springs (SpringScript.cs:37), jiggle drops
-    (JiggleDropScript.cs:105), footsteps/landings (Movement.cs:2475-2485), the moss tired sound (Movement.cs:2392,2401),
-    the wall jump's grass step (Movement.cs:1735), tree growth (TreeController.cs:91), a box touch (upgradeBox.cs:313)).
-  - `upgradeBox.buyUpgrade` and its trigger (upgradeBox.cs:624,313): the buy's particle Emit (non-buy-max), the growth
+    (JiggleDropScript.cs:105), footsteps/landings (Movement.cs:2483-2493), the moss tired sound (Movement.cs:2400,2409),
+    the wall jump's grass step (Movement.cs:1743), tree growth (TreeController.cs:99), a box touch (upgradeBox.cs:344),
+    the trip breaker's TurbineBreak (tripBreakerScript.cs:64, kept by `Economy.TripBreaker`)). `PlayAudioSetPitch` has
+    no caller; `PlayAudioAtPoint` only the zip movers'.
+  - `upgradeBox.buyUpgrade` and its trigger (upgradeBox.cs:662,344): the buy's particle Emit (non-buy-max), the growth
     sound of the tree a bought segment grows (upgradeTree.growSegments, once per 0.3 s audio cooldown) and BoxHit's
     clip and pitch. `hooks.txt` replaces the trigger with `Runtime/Shop.cs`, which keeps the draws.
+  - `OnEnable` of what a modeled purchase turns on (`Economy.Activate`: two per woken `upgradeBox`, upgradeBox.cs:319,323,
+    one per woken `ObjectBobber`, ObjectBobber.cs:33): the trip breaker's `boxToActivate`, and the statue's
+    `StatuePrestigeText` (an ObjectBobber) that `unlockPrestige` (Course 3's `enablePrestige`) turns on
+    (upgradeBox.cs:741).
   - Before the start snapshot, so already in its state, never in a run: `courseScript.Start`'s UpdateReward phase
-    (courseScript.cs:268), `upgradeBox.OnEnable` (upgradeBox.cs:288,292), LightFlicker.cs:26,
-    playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20, JiggleDropScript.cs:41, ObjectBobber.cs:33
-    (the pooled clone prefab is Transform + SpriteRenderer + ParticleSystem only: activating one draws nothing).
+    (courseScript.cs:268), LightFlicker.cs:26, playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20,
+    JiggleDropScript.cs:41, and the OnEnable of what the world loads with on (the pooled clone prefab is Transform +
+    SpriteRenderer + ParticleSystem only: activating one draws nothing).
   - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off). PlatformMover.cs:154,165
     only run once zip movers are unlocked (`zipMoversUnlocked`, a global box the engine doesn't model: buying it ends
-    the run), and then in turbo and here alike.
-  - Not reproduced: the draws of a block swap's re-activated boxes' `OnEnable` (upgradeBox.cs:288,292) and of the tree
-    part it grows. A block swap ends the run (`Unmodeled purchase: block swap`), so the stream is never read past it;
-    the tree's own growth sound draws are kept (Shop.GrowTree) but its collider changes are not modeled.
+    the run), and then in turbo and here alike. Zone loads (`zoneChanger` → `ZoneLoader.LoadZone`) turn a zone on only
+    after two `yield return null`, a Unity-run coroutine, so never inside a turbo run; `cuts.txt` drops them.
+  - Not reproduced, each behind a purchase that ends the run: a block swap's re-activated boxes (upgradeBox.cs:804)
+    and a tree segment's `SetActive` (TreeController.cs:104: its box and ObjectBobber's OnEnable; tree boxes are all
+    global upgrades behind a `PlantTreeBox` (`treeGrowth`), which the engine doesn't model), and the Omni Dash buy's
+    Area 2 → 1 transition (`Zone2to1TransitionController.doStateVisuals`). The tree's own growth sound draws are kept
+    (Shop.GrowTree) but its collider changes are not modeled.
 
 ## Memory
 

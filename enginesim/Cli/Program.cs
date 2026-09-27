@@ -40,7 +40,8 @@ namespace IGTAP.EngineSim.Cli
                         JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
                         var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
                         bool verbose = args.Contains("--verbose");
-                        string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames" };
+                        string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames",
+                            "coyoteFrames", "canHyper", "lastHyperY", "preDashMomentum" };
                         var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
                         bool was = false;
                         int lastRun = 0;
@@ -106,7 +107,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
                             + "                                         inputs from it, every tick logged\n"
                             + "  clip map <trace.json> x0 y0 x1 y1 [step] | clip run <trace.json> <lab.json> [--threads N] [--out csv] [--top N]\n"
-                            + "     | clip log <trace.json> <lab.json> <start> <branch>\n"
+                            + "     | clip log <trace.json> <lab.json> <start> <branch> [--fields a,b,c]\n"
                             + "                                         lab for any start state (inside walls too): a grid of starts x branches\n"
                             + "                                         on all cores, ranked by the height reached; one run logged per tick\n"
                             + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N] [--optional name]...\n"

@@ -494,9 +494,10 @@ namespace IGTAPTasMod
             SettleContacts(body, muted);
             FieldState.Restore(movement, s.movement);
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
-            UnityEngine.Random.state = s.random;
             if (s.economy != null) RestoreEconomy(s.economy);
             s.vman?.Restore();
+            // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
+            UnityEngine.Random.state = s.random;
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
             body.rotation = s.rotation;

@@ -818,6 +818,79 @@ def any_plan(run_name, out, verbose):
             json.dump(goals, f, indent=2)
         print(f"wrote {len(goals)} goals to {out}")
 
+C3_GATE = (9505, 6971)
+
+def dj_block(cs, goals, at):
+    end = at
+    while end < len(goals) and goal_course(cs, goals[end]) == 3:
+        end += 1
+    return end
+
+def dj_measured(run_name, goals, d, a):
+    path = os.path.join(str(gamepaths.TRACES), "fulltas", run_name + ".json")
+    if not os.path.exists(path):
+        return None, None
+    best = json.load(open(path, encoding="utf-8"))
+    bg, ticks = best["goals"], best["goalPhysicsTicks"]
+    same = next((i for i, (x, y) in enumerate(zip(bg, goals)) if x != y), min(len(bg), len(goals)))
+    lap = None
+    laps = [ticks[i + 1] - ticks[i] for i in range(a + 1, same - 1)
+            if goals[i] == "start:3" and goals[i + 1] == "finish:3" and ticks[i + 1] >= 0]
+    if laps:
+        lap = max(laps, key=laps.count)
+    if same > a + 1 and goals[a + 1] == "start:3" and ticks[a + 1] >= 0:
+        return ticks[a + 1] - ticks[d], lap
+    kind, _, rect = goals[a].partition(":")
+    if same > a and ticks[a] >= 0 and kind == "at":
+        x, y = (float(v) for v in rect.split(",")[:2])
+        return ticks[a] - ticks[d] + guess_ticks((x, y), C3_GATE), lap
+    return None, lap
+
+def dj_plan(run_name, after, arrive, cash, write, verbose):
+    runs = json.load(open(FULLTAS, encoding="utf-8"))
+    run = next((r for r in runs if r.get("name") == run_name), None)
+    if run is None or "reward:bonus1" not in run["goals"] or "buy:buyds" not in run["goals"]:
+        raise SystemExit(f"fulltas.json has no run {run_name} with reward:bonus1 and buy:buyds")
+    goals = run["goals"]
+    b, d = goals.index("reward:bonus1"), goals.index("buy:buyds")
+    if goals[b + 1] != "start:2":
+        raise SystemExit(f"run {run_name} doesn't go on from reward:bonus1 to Course 2")
+    if after not in goals[d:]:
+        raise SystemExit(f"run {run_name} has no goal {after} from buy:buyds on")
+    a = goals.index(after, d)
+    dash = replay(start_state(cash), goals[b + 2:d + 1], stage1_options)
+    late = Late(dash, verbose)
+    measured, lap = dj_measured(run_name, goals, d, a)
+    if arrive is None:
+        if measured is None:
+            raise SystemExit(f"{run_name}'s best reaches neither {after} nor Course 3's gate after it: pass --dj-arrive")
+        arrive = measured
+    if lap is not None:
+        LATE_LAP[3] = (lap, LATE_LAP[3][1])
+    end = dj_block(late.cs, goals, a + 1)
+    print(f"{run_name}: buy:buyds (goal {d + 1}) replayed at tick {dash.t} after reward:bonus1, {dash.cash:.4g} W;"
+          f" Course 3's gate {arrive} ticks later, after {after} (goal {a + 1}); Course 3 lap {LATE_LAP[3][0]}")
+    late.cash += late.other_rate(0) * arrive
+    late.t += arrive
+    late.tokens.append("start:3")
+    late.here, late.where, late.lap_income = 3, "gate", True
+    late.phase(3, "RCMGFJ", {"J": 1}, False, "double jump")
+    farm = late.tokens
+    bad = invalid_goals(farm)
+    if bad:
+        raise SystemExit(f"not Full-TAS goals: {bad}")
+    print(f"buy:buydj at tick {late.t} after reward:bonus1, {late.t - dash.t - arrive} ticks"
+          f" ({(late.t - dash.t - arrive) * 0.02:.1f} s) after Course 3's gate; {len(farm)} goals"
+          f" replace the {end - a - 1} after {after}")
+    print(json.dumps(farm))
+    if write:
+        run["goals"] = goals[:a + 1] + farm + goals[end:]
+        with open(FULLTAS, "w", encoding="utf-8") as f:
+            json.dump(runs, f, indent=2)
+        changed = next((i for i, (x, y) in enumerate(zip(goals, run["goals"])) if x != y), min(len(goals), len(run["goals"])))
+        print(f"wrote {len(run['goals'])} goals to {FULLTAS} run {run_name};"
+              + (" unchanged" if goals == run["goals"] else f" first change at goal {changed + 1}"))
+
 def same_inputs(a, b):
     def norm(x):
         return {k: round(v, 4) if isinstance(v, float) else v for k, v in x.items()}
@@ -893,8 +966,11 @@ def main():
     ap.add_argument("--lap", type=int, default=LAP, help="Course 2 start gate -> finish, ticks")
     ap.add_argument("--lead", type=int, default=LEAD, help="restart -> Course 2's start gate, ticks")
     ap.add_argument("--clone-path", type=int, default=CLONE_PATH, help="Course 2's best run (game timer) in ticks: the clones' path")
+    ap.add_argument("--repeat", type=int, default=REPEAT, help="ticks between two buys of one Course 2 box")
+    ap.add_argument("--row-step", type=int, default=ROW_STEP, help="extra ticks per Course 2 box row crossed")
     ap.add_argument("--write", action="store_true",
-                    help="replace --run's goals after reward:bonus1 in fulltas.json (through buy:buyds when goals of its own follow)")
+                    help="replace --run's goals after reward:bonus1 in fulltas.json (through buy:buyds when goals of its own follow);"
+                         " with --dj-farm, only its Course 3 farm")
     ap.add_argument("--verbose", action="store_true", help="print every step after dash, not only each phase's end")
     ap.add_argument("--any-pct", action="store_true", help="plan ANY%%: --run's goals through buy:buydj, then its own")
     ap.add_argument("--out", help="--any-pct: write the whole goal list (JSON) here")
@@ -902,8 +978,13 @@ def main():
                     help="--any-pct: ticks from the course's restart to an optional box (DETOUR), e.g. reward:bonus4=150")
     ap.add_argument("--transit", action="append", default=[], metavar="A-B=TICKS",
                     help="ticks from course A to course B's start gate (TRANSIT), e.g. 5-4=2400")
+    ap.add_argument("--dj-farm", metavar="GOAL",
+                    help="plan Course 3 farmed to buy:buydj right after GOAL (a goal of --run's after buy:buyds), replacing"
+                         " the Course 3 goals already there")
+    ap.add_argument("--dj-arrive", type=int,
+                    help="--dj-farm: ticks from buy:buyds to Course 3's start gate (default: from --run's offline best)")
     a = ap.parse_args()
-    LAP, LEAD, ARRIVE, CLONE_PATH = a.lap, a.lead, a.arrive, a.clone_path
+    LAP, LEAD, ARRIVE, CLONE_PATH, REPEAT, ROW_STEP = a.lap, a.lead, a.arrive, a.clone_path, a.repeat, a.row_step
     if a.measure:
         m = measure(a.run)
         a.cash, ARRIVE, LAP, LEAD, CLONE_PATH = m["cash"], m["arrive"], m["lap"], m["lead"], m["clone_path"]
@@ -919,6 +1000,11 @@ def main():
         if (int(x), int(y)) not in TRANSIT:
             raise SystemExit(f"--transit {d}: transits are {', '.join(f'{p}-{q}' for p, q in TRANSIT)}")
         TRANSIT[(int(x), int(y))] = int(ticks)
+    if a.dj_farm:
+        if a.any_pct:
+            raise SystemExit("--dj-farm and --any-pct plan different things: pick one")
+        dj_plan(a.run, a.dj_farm, a.dj_arrive, a.cash, a.write, a.verbose)
+        return
     if a.any_pct:
         if a.write:
             raise SystemExit("--any-pct writes its goals to --out; the run goes into fulltas.json by hand")

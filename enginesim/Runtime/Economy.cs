@@ -25,6 +25,7 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo BoxTripBreakerScriptField = typeof(upgradeBox).GetField("tripBreakerScript", Fields);
         static readonly FieldInfo BoxTierModField = typeof(upgradeBox).GetField("TierMod", Fields);
         static readonly FieldInfo BoxLocalUpgradeScriptField = typeof(upgradeBox).GetField("localUpgradeScript", Fields);
+        static readonly FieldInfo BoxStatuePrestigeTextField = typeof(upgradeBox).GetField("statuePrestigeText", Fields);
         static readonly FieldInfo ChildBoxesField = typeof(localUpgrades).GetField("ChildBoxes", Fields);
         static readonly FieldInfo MovementBoxField = typeof(localUpgrades).GetField("MovementBox", Fields);
         static readonly FieldInfo BreakerLayerTierModField = typeof(courseScript).GetField("BreakerLayerTierMod", Fields);
@@ -468,6 +469,9 @@ namespace IGTAP.EngineSim
             if (upgrade == globalStats.globalUpgradeSet.unlockPrestige)
             {
                 _global[(int)globalStats.globalUpgradeSet.cloneMult] += 1.0 * effectMult;
+                var text = BoxStatuePrestigeTextField.GetValue(box) as GameObject;
+                if ((object)text == null) return Unmodeled("unlock prestige box without its statue text (the game throws)");
+                Activate(text);
                 return BoostOldCourses(box);
             }
             _global[(int)upgrade] += 1.0 * effectMult;
@@ -625,13 +629,7 @@ namespace IGTAP.EngineSim
             off.isActive = false;
             _sim.Touch(on);
             on.visible = true;
-            bool wasActive = on.gameObject.activeInHierarchy;
-            on.gameObject.SetActive(true);
-            if (!wasActive && on.isActiveAndEnabled)
-            {
-                UnityEngine.Random.Draw();
-                UnityEngine.Random.Draw();
-            }
+            Activate(on.gameObject);
             on.isActive = true;
             on.upgradeCost = on.baseUpgradeCost;
             var onCourse = BoxCourseField.GetValue(on) as courseScript;
@@ -653,6 +651,23 @@ namespace IGTAP.EngineSim
         {
             for (Transform p = t; p != null; p = p.parent) if (p == root) return true;
             return false;
+        }
+
+        /// <summary>
+        /// SetActive(true) as the game runs it: the OnEnable of every behaviour it wakes runs at once, and two of them draw
+        /// UnityEngine.Random: upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay),
+        /// ObjectBobber.OnEnable once. Start (LightFlicker, RandomAnimSpeedComponent, JiggleDropScript) waits for the next
+        /// frame's Start pass, which a turbo run never reaches, so its draws are not made here.
+        /// </summary>
+        static void Activate(GameObject g)
+        {
+            bool was = g.activeInHierarchy;
+            g.SetActive(true);
+            if (was || !g.activeInHierarchy) return;
+            foreach (upgradeBox b in g.GetComponentsInChildren<upgradeBox>(false))
+                if (b.enabled) { UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); }
+            foreach (ObjectBobber b in g.GetComponentsInChildren<ObjectBobber>(false))
+                if (b.enabled) UnityEngine.Random.Draw();
         }
 
         internal State Capture()

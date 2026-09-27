@@ -338,8 +338,9 @@ namespace IGTAP.EngineSim.Cli
             var (sim, _, _) = Program.Open(trace);
             SimSnapshot from = Apply(sim, lab.Starts[s], Path.GetDirectoryName(Path.GetFullPath(labPath)));
             List<InputTick> inputs = lab.Prefix.Concat(lab.Branches[b].ticks).ToList();
-            string[] extra = { "wallJumpFacing", "dashFramesRemaining", "jumpBuffer", "wallCoyoteFrames", "wallJumpDirection", "wallJumpsLeft", "airDashesLeft", "dashCooldown" };
-            FieldInfo[] extraInfos = extra.Select(n => typeof(Movement).GetField(n, Fields)).ToArray();
+            string[] extra = new[] { "wallJumpFacing", "dashFramesRemaining", "jumpBuffer", "wallCoyoteFrames", "wallJumpDirection", "wallJumpsLeft", "airDashesLeft", "dashCooldown" }
+                .Concat(OptS(args, "--fields", "").Split(',', StringSplitOptions.RemoveEmptyEntries)).ToArray();
+            FieldInfo[] extraInfos = extra.Select(n => typeof(Movement).GetField(n, Fields) ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray();
             var rows = new List<Dictionary<string, object>>();
             Dictionary<string, object> first = Probe.Row(sim, -1, extra, extraInfos);
             rows.Add(first);

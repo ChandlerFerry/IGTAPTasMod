@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim
         readonly Memory _memory;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -509,9 +509,14 @@ namespace IGTAP.EngineSim
             // the backwards dash-jump, a hyper, ultra or super ground bounce; a landing the buffered jump, the buffered dash's
             // superjump, a jump held into a dash, ground and wave bounces; a wall the wall jump, superbounce, wall dash; a wall
             // left the wall coyote jump; a death (mostly spikes past their grace) all of the plain ones, 1 to 7 ticks early.
-            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall }
+            // A corner hyper: a down-diagonal dash that landed (canHyper, flat) and slid off the floor's edge with onGround still
+            // up on coyote frames. Its contact is the tick that dash was pressed, and the graft presses it again a few ticks
+            // either way with a later jump, so the hyper lands on the corner and jumps in coyote time past the edge, where a
+            // landing past the corner can sit below lastHyperY - 4 (the game's ultra).
+            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper }
             readonly List<(int tick, Contact kind)> _contacts = new List<(int, Contact)>();
-            bool _recordContacts, _contactsPrimed, _wasGround, _wasWall;
+            bool _recordContacts, _contactsPrimed, _wasGround, _wasWall, _wasDash, _wasSlide;
+            int _dashStart;
             const double GraftRate = .5;
             const int GraftCoast = 40;
 
@@ -525,6 +530,7 @@ namespace IGTAP.EngineSim
                     new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
                 [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
                 [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
+                [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
             };
 
             void RecordContact(int tick)
@@ -541,6 +547,19 @@ namespace IGTAP.EngineSim
                 _wasWall = wall;
             }
 
+            // Every physics step of an explore run (a dash runs ticks with no input tick, which RecordContact never sees): the
+            // input tick a dash was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.
+            void RecordSlide()
+            {
+                Movement player = _sim.Player;
+                bool dash = player.cutsceneMode == Movement.cutsceneModes.dash;
+                if (dash && !_wasDash) _dashStart = (int)_sim.Engine.RunTicks - 1;
+                bool slide = dash && player.onGround && CanHyper(player) && CoyoteFrames(player) < player.maxCoyoteFrames;
+                if (slide && !_wasSlide) _contacts.Add((_dashStart, Contact.CornerHyper));
+                _wasDash = dash;
+                _wasSlide = slide;
+            }
+
             void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
             {
                 var (before, after, plain, omni) = GraftsAt[contact];
@@ -554,7 +573,8 @@ namespace IGTAP.EngineSim
                 var coast = new InputTick { x = side, y = last.y };
                 for (int i = 0; i < GraftCoast; i++) t.Add(coast);
                 if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
-                string kind = !_dash ? "jump" : _omni && _rng.NextDouble() < .4 ? OneOf(omni) : OneOf(plain);
+                // A corner hyper's contact is a dash press: only the corner re-timings fit it.
+                string kind = !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
                 switch (kind)
                 {
                     case "jump":
@@ -589,7 +609,8 @@ namespace IGTAP.EngineSim
                         break;
                 }
                 Interlocked.Increment(ref _owner.Grafts);
-                Try(t, "graft", from);
+                if (contact == Contact.CornerHyper) Interlocked.Increment(ref _owner.CornerGrafts);
+                Try(t, contact == Contact.CornerHyper ? "corner hyper" : "graft", from);
             }
 
             void Pool()
@@ -837,11 +858,24 @@ namespace IGTAP.EngineSim
                         return DashBounce(t, at + 1 + _rng.Next(4, 20), side);
                     case "wavejump":
                         return OmniDash(t, at, side, 1f, _rng.NextDouble() < .6 ? _rng.Next(1, 11) : 0, side);
+                    case "cornerhyper":
+                        return CornerHyper(t, at, side);
+                    case "cornerultra":
+                    {
+                        // The chain's first hyper a few ticks before, so the corner hyper's pre-dash momentum is a hyper's.
+                        int first = at - _rng.Next(8, 17);
+                        if (first >= lo) WaveDash(t, first, side);
+                        return CornerHyper(t, at, side);
+                    }
                 }
                 return at;
             }
 
             int WaveDash(List<InputTick> t, int at, float side) { return OmniDash(t, at, side, -1f, _rng.NextDouble() < .85 ? _rng.Next(4, 11) : 0, side); }
+
+            // A wavedash whose jump comes late (dash frame 4-12): after the landing's 4 dash frames, into the coyote frames
+            // once the flat dash has slid off the corner.
+            int CornerHyper(List<InputTick> t, int at, float side) { return OmniDash(t, at, side, -1f, _rng.Next(4, 13), side); }
 
             int DashBounce(List<InputTick> t, int at, float side) { return OmniDash(t, at, 0f, -1f, _rng.Next(1, 11), side); }
 
@@ -1139,10 +1173,13 @@ namespace IGTAP.EngineSim
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
-                if (_recordContacts) { _contacts.Clear(); _contactsPrimed = false; }
+                if (_recordContacts) { _contacts.Clear(); _contactsPrimed = false; _wasDash = _wasSlide = false; }
                 Dictionary<long, float> visits = Visits;
-                Action<int> onStep = path == null && visits == null ? null : _ =>
+                bool corners = _recordContacts && _omni;
+                Action<int> onStep = path == null && visits == null && !corners ? null : _ =>
                 {
+                    if (corners) RecordSlide();
+                    if (path == null && visits == null) return;
                     Vector3 p = _sim.PlayerWorld;
                     if (visits != null)
                     {
@@ -1226,6 +1263,17 @@ namespace IGTAP.EngineSim
                     ?? throw new MissingFieldException(nameof(Movement), "currentGroundType");
                 ParameterExpression player = Expression.Parameter(typeof(Movement));
                 return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
+            }
+
+            static readonly Func<Movement, bool> CanHyper = FieldGetter<bool>("canHyper");
+            static readonly Func<Movement, float> CoyoteFrames = FieldGetter<float>("coyoteFrames");
+
+            static Func<Movement, T> FieldGetter<T>(string name)
+            {
+                FieldInfo field = typeof(Movement).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?? throw new MissingFieldException(nameof(Movement), name);
+                ParameterExpression player = Expression.Parameter(typeof(Movement));
+                return Expression.Lambda<Func<Movement, T>>(Expression.Field(player, field), player).Compile();
             }
 
             // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,

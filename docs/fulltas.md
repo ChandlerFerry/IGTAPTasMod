@@ -159,8 +159,10 @@ too. When the solve's best reaches one of those goals, the seed's inputs are tri
 are) and spliced in if the whole run gets better. Unlocks aren't checked up front: the simulation decides.
 
 `TrueEnding-ANY%` is the first: a plain new game (no `"start"`, not a Vman speedrun), its own buy order through
-`buy:buyds`, `VMAN`'s goals 9–19 (the way to the tunnel), then `Test-No-Omni-Skip`'s four, seeded with
-`Test-No-Omni-Skip`'s path. Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
+`buy:buyds`, `VMAN`'s goals 9–11 (to the shaft up to Course 3), Course 3 farmed until it buys `buydj` (+1 air jump),
+then `VMAN`'s goals 12–19 (the way to the tunnel) and `Test-No-Omni-Skip`'s four, seeded with
+`Test-No-Omni-Skip`'s path. That stretch needs the double jump (the savestate has it), so the farm comes before it.
+Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
 laps: an ordering planned for slower laps asks for a clone before the clones have paid for it, and the run stalls at
 that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are planned from its own best:
 
@@ -180,6 +182,22 @@ clone count) has passed since the last spawn, runs the path (best run + 1 tick),
 later. Replaying `TrueEnding-ANY%`'s buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539
 planned against 3533 after `reward:bonus1`).
 
+Its Course 3 farm (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
+
+```
+python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --dj-farm at:7645,6050,230,1500 --write
+```
+
+`--dj-farm GOAL` replays the run's goals from `reward:bonus1` through `buy:buyds` in the model, then plans Course 3
+from its start gate to `buy:buydj` (the greedy phase main's plan uses for its double jump: `buyreward3`, `buyclone3`,
+`buyclonemult3`, `buyglobalreward3`, `buyfast3`, laps), and puts it right after GOAL, replacing the Course 3 goals already
+there; `--write` touches only those. The ticks from `buy:buyds` to Course 3's gate come from the run's best (its
+`start:3` there, or GOAL plus a straight-line guess to the gate) or `--dj-arrive`; the Course 3 lap from the best's
+farm laps, else 233. Without a trace of the best, `--measure` refuses: pass `--cash`, `--arrive`, `--lap`, `--lead`,
+`--clone-path`, `--repeat` and `--row-step` instead. The first plan (bonus1 cash fitted to the best's `buy:buyds` tick)
+buys `buydj` 23234 ticks (7.7 min) after Course 3's gate: 52 `buyreward3`, 35 `buyclone3`, 12 `buyclonemult3`, 4
+`buyglobalreward3`, 10 `buyfast3`, 43 laps. The run's avoid box over Course 3's start gate was removed for it.
+
 ## Seed
 
 Unity's RNG is deterministic for the runs: every Full-TAS new game starts it from one fixed seed (the plugin's
@@ -189,8 +207,11 @@ real-time playback's first tick). The snapshot therefore carries the seeded `Uni
 the `seed`), so the turbo judge, the trace and the offline search all start from the same state. The seed is fixed and
 unoptimized (`SEED (unoptimized) <value>` on the overlay); nothing user-settable writes the RNG.
 
-Real-time play draws `UnityEngine.Random` on every rendered frame (LightFlicker, animation speeds), so a real-time
-playback's rolls differ from the turbo replay's even from the same seed; the gate (turbo) is the judge.
+Real-time play makes draws a turbo run never does: the `Start` of objects a run turns on (lights, plants), each box's
+`updateMultibuyText` (InvokeRepeating) turning a buy-max box's count text on, Unity-run coroutines (tree growth, zone
+loads). A turbo run is one synchronous batch, so it runs only `OnEnable` draws and the ticks' own (sounds, clone rolls,
+buys); see `enginesim/README.md`'s consumer audit. So a real-time playback's rolls can differ from the turbo replay's
+even from the same seed; the gate (turbo) is the judge.
 
 ## Routes
 
