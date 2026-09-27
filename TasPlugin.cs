@@ -1106,7 +1106,9 @@ namespace IGTAPTasMod
 
         private void Update()
         {
-            PacePlayback(PlaybackActive && !TurboRunner.Active);
+            // Paced from the moment a playback is asked for, so its first ticks already run on the fixed clock: before, a hitch
+            // at the start (the savestate restore) could run several ticks in one frame, with no frames between them.
+            PacePlayback((PlaybackActive || _pendingReplay != null) && !TurboRunner.Active);
             PaceWalk();
             OverlayFrame();
             BreakerLightsFrame();
