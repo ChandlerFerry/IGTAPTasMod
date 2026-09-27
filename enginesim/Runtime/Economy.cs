@@ -118,7 +118,9 @@ namespace IGTAP.EngineSim
             }
             _localsHash = HashLocals();
 
-            clonesScript[] scripts = world.All<clonesScript>();
+            // Scene-load order (instance id, highest first), as turbo steps them (TurboRunner.Run): the order decides which course
+            // gets which fast/big rolls when two spawn on one tick.
+            clonesScript[] scripts = world.All<clonesScript>().OrderByDescending(s => s.GetInstanceID()).ToArray();
             var clonesJson = new Dictionary<int, JsonElement>();
             foreach (JsonElement c in economy.GetProperty("clones").EnumerateArray()) clonesJson[c.GetProperty("id").GetInt32()] = c;
             _clones = new Clones[scripts.Length];

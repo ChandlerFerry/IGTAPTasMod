@@ -329,7 +329,7 @@ namespace Box2D
             {
                 float inv_d12 = 1.0f / (d12_1 + d12_2);
                 m_v[0].a = d12_1 * inv_d12;
-                m_v[1].a = d12_1 * inv_d12;
+                m_v[1].a = d12_2 * inv_d12;
                 m_count = 2;
                 return;
             }

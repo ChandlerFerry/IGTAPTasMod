@@ -35,8 +35,10 @@ namespace IGTAPTasMod
 
         // What a new game's start state holds (the settle, a savestate start's respawnPoint, ...). Bump it whenever that changes:
         // a trace from another setup is recaptured before a solve (FullTasTraceCurrent), so the search never runs from a start
-        // the game no longer makes (2: a savestate start keeps the new game's respawnPoint instead of one written at the savestate).
-        const int FullTasStartSetup = 2;
+        // the game no longer makes (2: a savestate start keeps the new game's respawnPoint instead of one written at the savestate;
+        // 3: the start restores every ObjectBobber's on/off state, and the world is exported from the start, not the last run;
+        // 4: every scene object's on/off state, the clone path arrays and visitedTeleporters, and no start while a zip mover resets).
+        const int FullTasStartSetup = 4;
 
         // What a Full-TAS trace file holds per tick. Bump it whenever the export changes: an older trace is recaptured before a
         // solve (FullTasTraceCurrent) even when its goals and start still match (2: MacroEngine._steps left out of every snapshot,
@@ -96,6 +98,7 @@ namespace IGTAPTasMod
         readonly Dictionary<string, string> _fullTasRewardBoxes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         Process _fullTasProcess;
+        DateTime? _fullTasKillAt;
         readonly ConcurrentQueue<string> _fullTasOutput = new ConcurrentQueue<string>();
         string _fullTasSolveRun;
         string _fullTasSolveStatus = "Idle";
@@ -648,8 +651,12 @@ namespace IGTAPTasMod
 
         void ApplyNewGameSavestate(Movement player)
         {
-            Savestate state = _savestates.Find(s => s.id == _newGameSavestate);
-            if (state == null) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
+            // Reread the file: a hand edit (the unlocks a savestate start carries) applies without a relaunch.
+            int index = _savestates.FindIndex(s => s.id == _newGameSavestate);
+            if (index < 0) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
+            string path = Path.Combine(_savestatesPath, SafeId(_newGameSavestate) + ".json");
+            if (File.Exists(path)) _savestates[index] = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path)) ?? _savestates[index];
+            Savestate state = _savestates[index];
             if (CapabilitiesLocked && state.movementFields.Keys.Any(SavestateService.IsUnlockField))
             {
                 FailNewGame("Savestate " + state.name + " sets unlocks: " + CapabilitiesLockedError);
@@ -850,9 +857,11 @@ namespace IGTAPTasMod
             FullTasGoal[] goals = ResolveFullTasGoals(run);
             Directory.CreateDirectory(EngineSimDir);
             string path = Path.Combine(EngineSimDir, name + ".json");
-            if (world) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot start = NewGameStart(run);
+            // The world as the run starts it: the scene still holds what the last turbo run left (a purchase's objects turned on).
+            TurboRunner.Restore(start, player);
+            if (world) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             Vector2 origin = CurrentOrigin();
             bool finished;
@@ -1072,13 +1081,14 @@ namespace IGTAPTasMod
             while (_fullTasOutput.TryDequeue(out _)) { }
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
+                RedirectStandardInput = true, WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
             process.OutputDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
             process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             _fullTasProcess = process;
+            _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
             _fullTasProgress = null;
@@ -1174,9 +1184,11 @@ namespace IGTAPTasMod
                     int from = k == 0 ? 0 : (int)goalInput[k - 1];
                     var ticks = new JArray(inputs.Skip(from).Take((int)goalInput[reached - 1] - from));
                     string name = source + (k == 0 ? " from its start" : " after goal " + k);
-                    string json = new JObject { ["name"] = name, ["goals"] = new JArray(rest), ["capabilities"] = "none",
-                        ["standing"] = false, ["restart"] = false, ["ticks"] = ticks }.ToString(Formatting.None);
-                    found.Add((false, 0f, "run|" + name, json));
+                    var json = new JObject { ["name"] = name, ["goals"] = new JArray(rest), ["capabilities"] = "none",
+                        ["standing"] = false, ["restart"] = false, ["ticks"] = ticks };
+                    // From its start, the seed's player stood still where the run's trace starts: the solve walks there first.
+                    if (k == 0 && File.Exists(FullTasTracePath(source))) json["trace"] = FullTasTracePath(source);
+                    found.Add((false, 0f, "run|" + name, json.ToString(Formatting.None)));
                 }
             }
         }
@@ -1260,6 +1272,29 @@ namespace IGTAPTasMod
             }
         }
 
+        /// <summary>
+        /// Asks the solver to stop ("stop" on its stdin): it ends its window as its time limit would, writing the archive and the
+        /// explored map, and exits. Killed if it hasn't within 30 s.
+        /// </summary>
+        void StopFullTasSolve()
+        {
+            if (_fullTasProcess == null || _fullTasKillAt != null) return;
+            try
+            {
+                _fullTasProcess.StandardInput.WriteLine("stop");
+                _fullTasProcess.StandardInput.Flush();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("Could not ask the Full-TAS solve to stop: " + ex.Message);
+                KillFullTasSolve("Stopped");
+                return;
+            }
+            _fullTasKillAt = DateTime.UtcNow.AddSeconds(30);
+            _fullTasSolveStatus = "Stopping: saving the search (archive, explored map)";
+            FullTasLog(_fullTasSolveStatus);
+        }
+
         void KillFullTasSolve(string status, string error = null)
         {
             if (_fullTasProcess == null) return;
@@ -1300,10 +1335,14 @@ namespace IGTAPTasMod
             try
             {
                 while (_fullTasOutput.TryDequeue(out string line)) FullTasSolveLine(line);
-                if (!_fullTasProcess.HasExited) return;
+                if (!_fullTasProcess.HasExited)
+                {
+                    if (_fullTasKillAt != null && DateTime.UtcNow >= _fullTasKillAt) KillFullTasSolve("Stopped (killed: it didn't exit within 30 s of the stop)");
+                    return;
+                }
                 _fullTasProcess.WaitForExit();
                 int code = _fullTasProcess.ExitCode;
-                if (code == 0) KillFullTasSolve("Finished");
+                if (code == 0) KillFullTasSolve(_fullTasKillAt != null ? "Stopped" : "Finished");
                 else KillFullTasSolve("The offline solver exited with code " + code, "The offline solver crashed (exit code " + code + "). The log below has its last words.");
             }
             catch (Exception ex) { Logger.LogError(ex); KillFullTasSolve("Solve error: " + ex.Message, "The plugin lost track of the solve: " + ex.Message); }
@@ -1359,7 +1398,7 @@ namespace IGTAPTasMod
                     return StartFullTasSolve(request, body);
                 case "/api/fulltas/stop":
                 {
-                    KillFullTasSolve("Stopped");
+                    StopFullTasSolve();
                     if (_fullTasPending != null)
                     {
                         if (_fullTasProcess == null && _fullTasSolveStatus.StartsWith("Capturing", StringComparison.Ordinal)) _fullTasSolveStatus = "Stopped";

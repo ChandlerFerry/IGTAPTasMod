@@ -201,21 +201,47 @@ namespace IGTAP.EngineSim.Cli
             return blocks;
         }
 
-        internal static OfflineSolver.ForcedPath FullTasPaths(string run)
+        /// <summary>
+        /// The avoid boxes of the run's Full-TAS rules for a window heading for <paramref name="goals"/>: each rule's "avoid", plus
+        /// its "optional" blocks except those whose "offFor" lists one of the goals (null goals: every block, as the map draws them).
+        /// A block's "after" (a goal label of the run, <paramref name="labels"/>) makes its boxes cut a run only once it has reached
+        /// that goal; without the run's labels, or when the run has no such goal, the block is off.
+        /// </summary>
+        internal static OfflineSolver.ForcedPath FullTasPaths(string run, ICollection<string> goals = null, IReadOnlyList<string> labels = null)
         {
             var forced = new OfflineSolver.ForcedPath();
             string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
             if (!File.Exists(file)) return forced;
             using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
             foreach (JsonElement rule in rules.RootElement.GetProperty("paths").EnumerateArray())
-                if (rule.TryGetProperty("fulltas", out JsonElement runs) && runs.EnumerateArray().Any(r => r.GetString() == run)
-                    && rule.TryGetProperty("avoid", out JsonElement list))
-                    foreach (JsonElement b in list.EnumerateArray())
+            {
+                if (!rule.TryGetProperty("fulltas", out JsonElement runs) || !runs.EnumerateArray().Any(r => r.GetString() == run)) continue;
+                AddAvoids(forced, rule);
+                if (!rule.TryGetProperty("optional", out JsonElement optional)) continue;
+                foreach (JsonElement block in optional.EnumerateArray())
+                {
+                    if (goals != null && block.TryGetProperty("offFor", out JsonElement off) && off.EnumerateArray().Any(g => goals.Contains(g.GetString()))) continue;
+                    int after = 0;
+                    if (block.TryGetProperty("after", out JsonElement goal))
                     {
-                        float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                        forced.Avoid.Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                        int index = labels == null ? -1 : labels.ToList().LastIndexOf(goal.GetString());
+                        if (index < 0) continue;
+                        after = index + 1;
                     }
+                    AddAvoids(forced, block, after);
+                }
+            }
             return forced;
+        }
+
+        static void AddAvoids(OfflineSolver.ForcedPath forced, JsonElement rule, int after = 0)
+        {
+            if (!rule.TryGetProperty("avoid", out JsonElement list)) return;
+            foreach (JsonElement b in list.EnumerateArray())
+            {
+                float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
+                forced.Avoid.Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3], after));
+            }
         }
 
         static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule)
@@ -370,35 +396,57 @@ namespace IGTAP.EngineSim.Cli
             return ticks;
         }
 
+        /// <summary>
+        /// Writes the archive streamed, each source's inputs as the count it shares with the previous source ("shared") and the rest:
+        /// a Full-TAS window's sources all repeat the window's prefix, which written whole passed .NET's 1 G-char string limit.
+        /// </summary>
         internal static void SaveMemory(string path, OfflineSolver.Memory memory)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new
-            {
-                runs = memory.Runs,
-                plateau = memory.Plateau.Select(EncodeTicks),
-                sources = memory.Sources.Select(s => new { ticks = EncodeTicks(s.Inputs), cells = s.Cells.Select(c => new object[] { c.Key, c.Length, c.Picks, c.Rank }) }),
-            }));
+            List<InputTick> previous = null;
+            using (FileStream file = File.Create(temp))
+                JsonSerializer.Serialize(file, new
+                {
+                    runs = memory.Runs,
+                    plateau = memory.Plateau.Select(EncodeTicks),
+                    sources = memory.Sources.Select(s =>
+                    {
+                        int shared = 0;
+                        if (previous != null) while (shared < previous.Count && shared < s.Inputs.Count && s.Inputs[shared].Equals(previous[shared])) shared++;
+                        previous = s.Inputs;
+                        return new { shared, ticks = EncodeTicks(s.Inputs.GetRange(shared, s.Inputs.Count - shared)),
+                            cells = s.Cells.Select(c => new object[] { c.Key, c.Length, c.Picks, c.Rank }) };
+                    }),
+                });
             File.Move(temp, path, true);
         }
 
         internal static OfflineSolver.Memory LoadMemory(string path)
         {
             if (!File.Exists(path)) return null;
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            using FileStream file = File.OpenRead(path);
+            using JsonDocument doc = JsonDocument.Parse(file);
             JsonElement root = doc.RootElement;
+            List<InputTick> previous = null;
             return new OfflineSolver.Memory
             {
                 Runs = root.GetProperty("runs").GetInt64(),
                 Plateau = root.GetProperty("plateau").EnumerateArray().Select(p => DecodeTicks(p.GetString())).ToList(),
-                Sources = root.GetProperty("sources").EnumerateArray().Select(s => new OfflineSolver.Memory.Source
+                Sources = root.GetProperty("sources").EnumerateArray().Select(s =>
                 {
-                    Inputs = DecodeTicks(s.GetProperty("ticks").GetString()),
-                    Cells = s.GetProperty("cells").EnumerateArray().Select(c => new OfflineSolver.Memory.SavedCell
+                    int shared = s.TryGetProperty("shared", out JsonElement n) ? n.GetInt32() : 0;
+                    var inputs = new List<InputTick>(previous == null ? Enumerable.Empty<InputTick>() : previous.Take(shared));
+                    inputs.AddRange(DecodeTicks(s.GetProperty("ticks").GetString()));
+                    previous = inputs;
+                    return new OfflineSolver.Memory.Source
                     {
-                        Key = c[0].GetInt64(), Length = c[1].GetInt32(), Picks = c[2].GetInt32(), Rank = c[3].GetSingle(),
-                    }).ToList(),
+                        Inputs = inputs,
+                        Cells = s.GetProperty("cells").EnumerateArray().Select(c => new OfflineSolver.Memory.SavedCell
+                        {
+                            Key = c[0].GetInt64(), Length = c[1].GetInt32(), Picks = c[2].GetInt32(), Rank = c[3].GetSingle(),
+                        }).ToList(),
+                    };
                 }).ToList(),
             };
         }

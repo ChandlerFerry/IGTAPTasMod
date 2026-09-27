@@ -115,6 +115,16 @@ copy beside its exe, and a solve rereads the boxes before every window, so a box
 window on. A hand edit of the source file needs an engine rebuild
 (`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy.
 
+A Full-TAS rule's `optional` blocks (`name`, `note`, `avoid`, `offFor`) are avoid boxes that are on except in windows
+heading for one of the goals in `offFor` (a reach or polish window whose goals include it, or a loop piece for it).
+A block's `after` (a goal label of the run) makes its boxes cut a run only once the run has reached that goal (the label's
+last place in the run's goals), so a window that starts below the box isn't cut before it gets there.
+`TrueEnding-ANY%` has three: `bonus3-wall` (x 10305.6 to 10373.1, y 7200.9 to 7538.2, between Course 3 and bonus 3's
+end) is off only for `reward:bonus3`, `statue-wall` (x 7198.2 to 7476.9, y 6900.4 to 7786.2, over the statue box) only
+for `buy:buystatue`, and `above-374` cuts everything below y 17997 once goal 374 (the gap under the spiked pillar) is
+reached. The map draws `offFor` blocks as always on and leaves `after` blocks out; the in-game goals overlay doesn't draw
+them, and the studio's **Remove** doesn't reach them: edit `enginesim\Cli\forced-paths.json` and rebuild.
+
 Goals chain, and a window's search follows that: its explore cells keep what the player has left in the air (wall
 jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn't replace one that still has it for the
 next goal, and until the window reaches its last goal, cells that have reached more of the run's goals are picked more
@@ -156,12 +166,29 @@ snaps the camera onto the player (cameraMover's position, lerp and zoom), so it 
 `"seeds": ["<run>", ...]` on a run hands those runs' offline bests (`enginesim/fulltas/<run>.json`) to its solve as
 seed routes, once from each goal they reach: the inputs after their goal k, for their goals k+1 on that this run has
 too. When the solve's best reaches one of those goals, the seed's inputs are tried from there (as the course seeds
-are) and spliced in if the whole run gets better. Unlocks aren't checked up front: the simulation decides.
+are) and spliced in if the whole run gets better, also when that goal is touched in the dash ticks after its input tick.
+Unlocks aren't checked up front: the simulation decides.
+
+A seed from its run's start also carries that run's trace (`"trace"`): its player stood still at the trace's start
+position, facing the start's way, before the first input, and replayed from anywhere else the inputs miss (a start
+13 units off, or facing the other way, dies in the first spike dash). So the solve first walks there from where this
+run is: it holds toward the spot for n ticks (the last one partial), waits until the player stands, taps the start's
+way once when the walk faced the other, stands 10 ticks, then plays the seed. It keeps the three stands closest to the
+spot (within 8 units on the same floor, facing the start's way, at most 1500 units away) as saved-route starts. A reach
+window also walks there from the cells its search explored near the spot (within 1500 units across and 96 up or down,
+the nearest four new cells every 15 s), since its start may be nowhere near that floor: `TrueEnding-ANY%` touches goal
+370 in mid-air 1700 units below `Test-No-Omni-Skip`'s start, and its search reaches the start's floor. `TrueEnding-ANY%`
+lands at world (20471.7, 14990.6) after goal 433; walking 52 ticks right to `Test-No-Omni-Skip`'s start (20933.5,
+14987, against the wall, facing left) and playing its route reaches all 437 goals at 666.76 s, where no search from the
+landing had reached goal 434.
 
 `TrueEnding-ANY%` is the first: a plain new game (no `"start"`, not a Vman speedrun), its own buy order through
-`buy:buyds`, `VMAN`'s goals 9–11 (to the shaft up to Course 3), Course 3 farmed until it buys `buydj` (+1 air jump),
-then `VMAN`'s goals 12–19 (the way to the tunnel) and `Test-No-Omni-Skip`'s four, seeded with
-`Test-No-Omni-Skip`'s path. That stretch needs the double jump (the savestate has it), so the farm comes before it.
+`buy:buyds`, `VMAN`'s goals 9–11 (to the shaft up to Course 3), Course 3's gate and `reward:bonus3` right away, Course 3
+farmed until it buys `buystatue` ("Awaken the statue's power", 11.09 GW) and then `buydj` (+1 air jump), then `VMAN`'s
+goals 12–19 (the way to the tunnel) and `Test-No-Omni-Skip`'s four, seeded with `Test-No-Omni-Skip`'s path and with
+`TrueEnding-ANY%-v1-tail` (the 665.48 s route from its `buy:buyfast3` on: the walk to `buydj` and the way from it to the
+credits, `enginesim/fulltas/TrueEnding-ANY%-v1-tail.json`). That stretch needs the double jump (the savestate has it),
+so the farm comes before it.
 Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
 laps: an ordering planned for slower laps asks for a clone before the clones have paid for it, and the run stalls at
 that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are planned from its own best:
@@ -170,8 +197,8 @@ that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are pla
 python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --write
 ```
 
-`--measure` reads the run's offline best (`enginesim/fulltas/<run>.json`) and its trace (`fulltas-<run>.json`, which
-must be of that best: **Capture start** first if it isn't) and takes from them the Cash at `reward:bonus1`, the ticks
+`--measure` reads the run's offline best (`enginesim/fulltas/<run>.json`) and its trace (`fulltas-<run>.json`, of that
+best or of an earlier best it extends, reaching `reward:bonus1`: **Capture start** first if it isn't) and takes from them the Cash at `reward:bonus1`, the ticks
 from there to Course 2's start gate, Course 2's lap (start gate to finish) and restart-to-gate lead, a repeat buy's
 ticks and the extra per box row crossed, and Course 2's best run (game timer), which is the clones' path. `--write`
 replaces the goals from `reward:bonus1` through `buy:buyds` and keeps the run's goals after it. Rerun it after the
@@ -182,24 +209,35 @@ clone count) has passed since the last spawn, runs the path (best run + 1 tick),
 later. Replaying `TrueEnding-ANY%`'s buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539
 planned against 3533 after `reward:bonus1`).
 
-Its Course 3 farm (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
+Its Course 3 (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
 
 ```
 python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --dj-farm at:7645,6050,230,1500 --write
 ```
 
 `--dj-farm GOAL` replays the run's goals from `reward:bonus1` through `buy:buyds` in the model, then plans Course 3
-from its start gate to `buy:buydj` (the greedy phase main's plan uses for its double jump: `buyreward3`, `buyclone3`,
-`buyclonemult3`, `buyglobalreward3`, `buyfast3`, laps), and puts it right after GOAL, replacing the Course 3 goals already
-there; `--write` touches only those. The ticks from `buy:buyds` to Course 3's gate come from the run's best (its
-`start:3` there, or GOAL plus a straight-line guess to the gate) or `--dj-arrive`; the Course 3 lap from the best's
-farm laps, else 233. Without a trace of the best, `--measure` refuses: pass `--cash`, `--arrive`, `--lap`, `--lead`,
+from its start gate: `reward:bonus3` first (170 ticks, one more global cash box), then the greedy phases main's plan
+uses (`buyreward3`, `buyclone3`, `buyclonemult3`, `buyglobalreward3`, `buyfast3`, laps) to `buy:buystatue`, then to
+`buy:buydj`. The statue adds 1 to the global clone multiplier and boosts Courses 1 and 2 to Course 3's tier, so their
+clones pay off screen from then on. It puts the goals right after GOAL, replacing the Course 3 goals (and
+`reward:bonus3`) already there; `--write` touches only those. The ticks from `buy:buyds` to Course 3's gate come from the run's best (its
+`start:3` there, or GOAL plus a straight-line guess to the gate) or `--dj-arrive`; the Course 3 lap (start gate to
+finish) and restart lead (to the start gate) from the best's farm laps, else 233 and 29. Without a trace of the best, `--measure` refuses: pass `--cash`, `--arrive`, `--lap`, `--lead`,
 `--clone-path`, `--repeat` and `--row-step` instead. A planned buy is one the run can pay for when it gets to the box:
 the plan never has the player stand at a box waiting for clone income (a search window can't find hundreds of idle
 ticks, and a reach window on such a buy never ends); when Cash is short, it runs the course again. Only `--measure`'s
-replay of the run's own goals waits, as the route did. The plan (bonus1 cash fitted to the best's `buy:buyds` tick)
-buys `buydj` 20727 ticks (6.9 min) after Course 3's gate: 52 `buyreward3`, 35 `buyclone3`, 12 `buyclonemult3`, 4
-`buyglobalreward3`, 12 `buyfast3`, 58 laps. The run's avoid box over Course 3's start gate was removed for it.
+replay of the run's own goals waits, as the route did. The greedy prices the walk to a phase's last box from where the
+player stands (`buydj` is 130 ticks from `buyreward3`, not a repeat buy's 22): priced as a repeat buy, it put three
+`buyreward3` (~20 GW that never paid back) between the last lap and `buydj` in the 482.98 s route. The plan buys
+`buystatue` 5288 ticks after Course 3's gate and `buydj` 10555 ticks (211 s) after it, against 17697 without bonus 3
+and the statue. The model pays ~20% more than the
+665.48 s route earned over its late laps (its farm replayed: `buydj` 23191 ticks after `reward:bonus1` against the
+route's 24767, which stood 1868 ticks at the box), so expect the route to need a few more laps than planned. The
+run's avoid box over Course 3's start gate was removed for it.
+
+A Course 2 clone bought before `reward:bonus1` doesn't pay for itself: Cash at `finish:2` is 761 W against the clone's
+800 W, so the run would wait ~100 ticks near the box and walk ~90 more, and the model's break-even detour is 100–190
+ticks (`buy:buyds` −41 ticks with the clone 700 ticks before the bonus and a 100-tick detour, +59 with 200).
 
 ## Seed
 
@@ -328,15 +366,40 @@ them together from pieces instead:
   its course first (the course of the last `start:`/`finish:` goal before it), up to 64, until it can: the run never
   waits at a box. An extra lap isn't one of the run's goals (an event that isn't the next goal changes nothing): its
   gate and its finish are built as two steps, each checked against a goal of its own (`FullTasTracker.For`,
-  `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps.
-- A piece buys only the box of the goal it heads for (`Simulation.StrictBuys`, on for the builder's checks and piece
-  searches): a walk that also bought another box spent Cash and levels the plan counted on, and could cap a box a later
-  goal buys (a build that ran through `FastCloneChance` twelve times had nothing left for its `buy:buyfast3` goals). A
+  `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps. A lap step is cut at the
+  first input by which its goal is reached; a lap with dashes plays more physics ticks than inputs (a dash's ticks
+  read no input of their own), so the check runs on past the cut's inputs rather than stopping at as many ticks.
+- Every purchase is a goal: a route buys only the box of its next goal (`Simulation.StrictBuys`, on for every Full-TAS
+  simulation: the builder, every search window and the saved best's replay). A walk that also bought another box spent
+  Cash and levels the plan counted on, and could cap a box a later goal buys (a build that ran through `FastCloneChance`
+  twelve times had nothing left for its `buy:buyfast3` goals; `TrueEnding-ANY%`'s 482.98 s route bought a `buyreward3`
+  on its way to Course 3's gate and walked through Course 2's row buying neighbours, so its best stops at goal 127). A
   strict run finishes 12 ticks after its goal, not at it, so a neighbouring box the player still stands in once its
   0.2 s cooldown is over also ends it (the search would otherwise hand the next piece a spot where any input buys it). A
   buy goal whose box is inactive (capped, or not unlocked by the goals so far) stops the build at once, with the box's
   state (`Shop.Describe`: bought/cap, cost, what the run holds); before a searched buy the log shows the same state.
 - The build is saved as the run's best every minute and when it stops.
+
+### Engine farm planner
+
+```powershell
+& $exe fulltas-plan $tracesulltas-TrueEnding-ANY%.json --from reward:bonus3 --target buy:buydj --out plan.json --piece-minutes 0.3 --threads 6
+```
+
+`fulltas-plan` plans a run's buys and laps with the game's own economy instead of `plan-fulltas.py`'s model of it (whose
+walk and restart guesses put junk buys before `buydj` and cost extra laps). It replays the saved best (strict buys) to
+`--from` (a goal number or label; the goals up to it stay), then chooses one step at a time until it buys `--target`:
+a lap of the stretch's course, each box the stretch buys (when the run can pay for it on arrival), or the target. Each
+choice is played with the loop builder's pieces (a piece search only when none plays, `--piece-minutes`), and scored by
+when it would buy the target: its end tick, plus the Cash the target still needs over the income laps would earn from
+there, plus the walk to the target. The income is the course's lap reward over a lap (the best's own back-to-back
+laps) plus the clones' income measured standing still after a quick restart for 2000 ticks: one lap's clone payouts
+are too few to average their rolls, and picking the best of several one-lap guesses bought every box to its cap (Course
+3: `buydj` 1718 ticks later than the best). It never waits at a box: laps fill. Before planning it files the best's
+own steps in the span as library pieces (a polished route passes spots the builder never filed). It prints the planned
+goals and a line per step (tick, Cash, estimate, box levels); `--out` writes the run's whole goal list with them in
+place of the old stretch (the goals up to and after it kept), for `fulltas.json` by hand. Planning is greedy and takes
+a few seconds a step.
 
 ## Offline economy
 

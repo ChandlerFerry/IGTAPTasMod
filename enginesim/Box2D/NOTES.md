@@ -68,6 +68,12 @@ on the same machine/runtime.
     (0.05) instead of C++ `10 * b2_epsilon`; a player 0.013 from a start gate
     still got `OnTriggerStay2D` (the `rand-c3-wjds-2` tick 33 `courseResetPoint`
     residue). Now `10 * FLT_EPSILON` like C++.
+14. `b2Simplex.Solve3`'s edge-12 region weighted both vertices `d12_1 / d12` (C++:
+    `m_v2.a = d12_2 / d12`), so GJK's witness points and distance were wrong whenever the
+    triangle reduced to that edge: a player 0.0067 below a box's trigger strip measured
+    20.6 away, `b2TestOverlap` missed the touch, and the box bought a tick late
+    (`fulltas-TrueEnding-ANY%` step 10905, Course 2's `buyclone2`, then every clone roll
+    after it shifted). Every GJK caller (trigger overlap, TOI, shape casts) used it.
 
 ### Dead Box2DX relics removed (never referenced by any code)
 

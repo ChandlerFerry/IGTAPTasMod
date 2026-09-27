@@ -23,10 +23,14 @@ namespace IGTAP.EngineSim
             public ColliderState Composite;
             public ColliderState[] Sources;
             public bool[] SourcesLiveAtLoad;
-            public b2Fixture[] Pristine;
+            public b2Fixture[] Pristine, Restoring;
             public bool Rescaled;
             public readonly List<int> GridSlots = new List<int>();
             public bool Regrid;
+            // What its grid slots were built from: these fixtures (this many children) at this body pose.
+            public b2Fixture[] GridFixtures = Array.Empty<b2Fixture>();
+            public int GridChildren = -1;
+            public b2Transform GridPose;
         }
 
         sealed class BodyState
@@ -201,6 +205,7 @@ namespace IGTAP.EngineSim
                 s.Pristine = s.Fixtures.ToArray();
                 _changed.Add(s);
             }
+            if (s.Pristine != null) _changedCapture = null;
             if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(s);
             else _movers = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
@@ -698,6 +703,9 @@ namespace IGTAP.EngineSim
                     for (int c = 0; c < f.m_proxyCount; c++)
                         AddShape(f, c, (ColliderState)f.UserData, GridBox(f, c));
             }
+            foreach (ColliderState s in _colliders.Values)
+                if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) NoteGrid(s);
+                else s.GridChildren = -1;
         }
 
         bool Regrid(ColliderState s)
@@ -721,7 +729,7 @@ namespace IGTAP.EngineSim
                 _freeSlots.Push(i);
             }
             s.GridSlots.Clear();
-            if (!isStatic) return true;
+            if (!isStatic) { s.GridChildren = -1; return true; }
             float right = _gridX + _cellsX * CellSize, top = _gridY + _cellsY * CellSize;
             foreach (b2Fixture f in s.Fixtures)
                 for (int c = 0; c < f.m_proxyCount; c++)
@@ -730,27 +738,36 @@ namespace IGTAP.EngineSim
                     if (box.lowerBound.x < _gridX || box.lowerBound.y < _gridY || box.upperBound.x >= right || box.upperBound.y >= top) return false;
                     AddShape(f, c, s, box);
                 }
+            NoteGrid(s);
             return true;
         }
 
-        /// <summary>
-        /// Its slots already hold every child of its fixtures where it is now. A restore marks the colliders of every static body
-        /// ever moved (after a FloatingOrigin rebase: all of them) and of every rebuilt collider for a regrid; most are unchanged.
-        /// </summary>
-        bool Gridded(ColliderState s)
+        static int Children(ColliderState s)
         {
             int children = 0;
             foreach (b2Fixture f in s.Fixtures) children += f.m_proxyCount;
-            if (children != s.GridSlots.Count) return false;
-            foreach (int i in s.GridSlots)
-            {
-                ref StaticShape slot = ref _static[i];
-                if (!s.Fixtures.Contains(slot.Fixture)) return false;
-                b2AABB box = GridBox(slot.Fixture, slot.Child);
-                if (box.lowerBound.x != slot.Box.lowerBound.x || box.lowerBound.y != slot.Box.lowerBound.y
-                    || box.upperBound.x != slot.Box.upperBound.x || box.upperBound.y != slot.Box.upperBound.y) return false;
-            }
-            return true;
+            return children;
+        }
+
+        void NoteGrid(ColliderState s)
+        {
+            s.GridFixtures = s.Fixtures.ToArray();
+            s.GridChildren = Children(s);
+            s.GridPose = (s.Body?.Body ?? _ground).GetTransform();
+        }
+
+        /// <summary>
+        /// Its slots already hold every child of its fixtures where it is now: the same fixtures (a fixture's shape never changes)
+        /// at the same body pose. A restore marks the colliders of every static body ever moved (after a FloatingOrigin rebase:
+        /// the big composites among them) and of every rebuilt collider for a regrid; most are unchanged.
+        /// </summary>
+        bool Gridded(ColliderState s)
+        {
+            if (s.Fixtures.Count != s.GridFixtures.Length || Children(s) != s.GridChildren) return false;
+            for (int k = 0; k < s.GridFixtures.Length; k++)
+                if (!ReferenceEquals(s.Fixtures[k], s.GridFixtures[k])) return false;
+            b2Transform now = (s.Body?.Body ?? _ground).GetTransform();
+            return now.p.x == s.GridPose.p.x && now.p.y == s.GridPose.p.y && now.q == s.GridPose.q;
         }
 
         void AddShape(b2Fixture f, int child, ColliderState s, in b2AABB box)
@@ -1068,13 +1085,20 @@ namespace IGTAP.EngineSim
             public (ColliderState state, b2Fixture[] fixtures)[] Changed;
         }
 
+        // The rebuilt colliders' fixtures as a snapshot holds them; null once one is rebuilt again. Shared by every snapshot
+        // taken until then (after a rebase that is every body-less collider, each capture's largest part).
+        (ColliderState state, b2Fixture[] fixtures)[] _changedCapture = Array.Empty<(ColliderState, b2Fixture[])>();
+
         public object Capture()
         {
-            var changed = _changed.Count == 0 ? Array.Empty<(ColliderState, b2Fixture[])>() : new (ColliderState, b2Fixture[])[_changed.Count];
-            for (int i = 0; i < changed.Length; i++) changed[i] = (_changed[i], _changed[i].Fixtures.ToArray());
+            if (_changedCapture == null)
+            {
+                _changedCapture = new (ColliderState, b2Fixture[])[_changed.Count];
+                for (int i = 0; i < _changedCapture.Length; i++) _changedCapture[i] = (_changed[i], _changed[i].Fixtures.ToArray());
+            }
             return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, WorldMoved = _worldMoved,
                 Touching = _pairsBefore.ToArray(),
-                BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray(), Changed = changed };
+                BuiltScales = _player.Colliders.Select(c => c.BuiltScale).ToArray(), Changed = _changedCapture };
         }
 
         public void Restore(object snapshot)
@@ -1084,11 +1108,12 @@ namespace IGTAP.EngineSim
             _movers = null;
             foreach (ColliderState c in _player.Colliders) c.Fixtures.Clear();
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
+            // _changed only grows: every collider the snapshot lists is in it, and the ones it doesn't list were pristine then.
+            foreach (var (state, saved) in s.Changed) state.Restoring = saved;
             foreach (ColliderState c in _changed)
             {
-                b2Fixture[] fixtures = c.Pristine;
-                foreach (var (state, saved) in s.Changed)
-                    if (state == c) { fixtures = saved; break; }
+                b2Fixture[] fixtures = c.Restoring ?? c.Pristine;
+                c.Restoring = null;
                 if (c.Layer != c.Collider.gameObject.m_Layer)
                 {
                     c.Layer = c.Collider.gameObject.m_Layer;
@@ -1100,6 +1125,7 @@ namespace IGTAP.EngineSim
                 c.Fixtures.AddRange(fixtures);
                 if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(c);
             }
+            _changedCapture = s.Changed;
             foreach (BodyState b in _movedStatic)
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
             _player.TransformDirty = s.TransformDirty;

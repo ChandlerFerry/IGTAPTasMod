@@ -55,10 +55,10 @@ const str = (v: unknown) => typeof v === "string" ? v : "";
 
 type Tone = "best" | "progress" | "miss" | "info" | "warn" | "error";
 type Item = { key: string; at: number; tone: Tone; title: string; detail?: string; count?: number; fold?: "reach" | "polish" };
-type Window = { id: number; kind: string; first: number; limit: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number };
+type Window = { id: number; kind: string; first: number; limit: number; logged: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number };
 
 function asWindow(e: FullTasEvent): Window {
-  return { id: num(e.id) ?? 0, kind: str(e.kind), first: num(e.first) ?? 0, limit: num(e.limit) ?? 0, attempt: num(e.attempt) ?? 0, budget: num(e.budget) ?? 60,
+  return { id: num(e.id) ?? 0, kind: str(e.kind), first: num(e.first) ?? 0, limit: num(e.limit) ?? 0, logged: num(e.logged) ?? num(e.first) ?? 0, attempt: num(e.attempt) ?? 0, budget: num(e.budget) ?? 60,
     start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, piece: str(e.piece), at: e.at };
 }
 
@@ -125,7 +125,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         push(w.kind === "piece"
           ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit}: ${w.piece} (${secs}s)` }
           : w.kind === "reach"
-            ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
+            ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : w.logged === w.limit - 1 ? `from just before goal ${w.logged}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
             : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
         break;
       }
@@ -277,7 +277,9 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
       <p className="ftNowDetail">{window_.kind === "piece"
         ? `From goal ${window_.first} (${s2(window_.start)}). Found once, then reused wherever the player is in the same spot.`
         : window_.kind === "reach"
-          ? window_.first === window_.limit - 1 ? `Starting from goal ${window_.first} (${s2(window_.start)}).` : `Redoing ${span({ ...window_, limit: window_.limit - 1 })} to set it up differently.`
+          ? window_.first === window_.limit - 1 ? `Starting from goal ${window_.first} (${s2(window_.start)}).`
+            : window_.logged === window_.limit - 1 ? `Starting just before goal ${window_.logged}: the route touches it in the ticks after its last input (a dash), and those read the next input, so it's found again with goal ${window_.limit}.`
+            : `Redoing ${span({ ...window_, limit: window_.limit - 1 })} to set it up differently.`
           : labels.slice(window_.first, window_.limit).map(goalName).join(" → ")}
         {(window_.kind === "reach" || window_.kind === "piece") && window_.attempt > 1 ? ` Round ${window_.attempt}, longer search.` : ""}
         {window_.savedStarts > 0 ? ` Also trying ${window_.savedStarts} starts from saved routes.` : ""}</p>

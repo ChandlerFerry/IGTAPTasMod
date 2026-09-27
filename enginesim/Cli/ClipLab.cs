@@ -41,7 +41,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>World-frame occupancy of a box: '#' Ground layer (groundRaycastLayer 128), 'B' blocking ground (64), '.' free.</summary>
+        /// <summary>World-frame occupancy of a box: '#' Ground layer (groundRaycastLayer 128), 'S' a Spikes (64) edge in the cell (spike composites are outlines), '.' free.</summary>
         static int MapBox(string[] args)
         {
             var (sim, _, _) = Program.Open(args[0]);
@@ -54,8 +54,8 @@ namespace IGTAP.EngineSim.Cli
                 for (float x = x0; x <= x1; x += step)
                 {
                     Vector2 p = new Vector2(x + sim.Origin.x, y + sim.Origin.y);
-                    bool ground = Physics2D.Raycast(p, Vector2.down, 0.001f, 128), blocking = Physics2D.Raycast(p, Vector2.down, 0.001f, 64);
-                    sb.Append(blocking ? 'B' : ground ? '#' : '.');
+                    bool ground = Physics2D.Raycast(p, Vector2.down, 0.001f, 128), spikes = Physics2D.Raycast(p, Vector2.down, step, 64);
+                    sb.Append(spikes ? 'S' : ground ? '#' : '.');
                 }
                 sb.AppendLine();
             }

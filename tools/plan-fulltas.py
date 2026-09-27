@@ -501,12 +501,19 @@ def late_options(s, force=False):
     return [x for x in options if x is not None]
 
 def late_greedy(s0, lap_income=False):
-    ph = s0.ph
+    ph, c = s0.ph, s0.ph.c
     s, steps = s0, 0
+    def each(k):
+        return REPEAT if c.on_row(k) else c.to(k)
+    def first(where, k):
+        return min(c.to(k), c.move(where, k)) if c.on_row(where) and c.on_row(k) else c.to(k)
     while not s.done():
         def projected(x):
-            need = sum(ph.c.boxes[k].cost(l) for k, lv, r in zip(ph.keys, x.lv, ph.req) for l in range(lv, r))
-            walks = sum(max(0, r - lv) * (REPEAT if ph.c.on_row(k) else ph.c.to(k)) for k, lv, r in zip(ph.keys, x.lv, ph.req))
+            need = sum(c.boxes[k].cost(l) for k, lv, r in zip(ph.keys, x.lv, ph.req) for l in range(lv, r))
+            todo = [(k, r - lv) for k, lv, r in zip(ph.keys, x.lv, ph.req) if r > lv]
+            walks = sum(n * each(k) for k, n in todo)
+            if todo:  # the first walk starts where the player is: buydj is 130 ticks from buyreward3, not a repeat buy's 22
+                walks += min(first(x.where, k) - each(k) for k, _ in todo)
             rest = walks + (0 if x.lapped or not ph.need_lap else ph.c.lead + ph.lap)
             short = max(0.0, need - x.cash)
             rate = x.rate() + (ph.reward(x.lv, x.g) / (ph.c.lead + ph.lap) if lap_income else 0.0)
@@ -821,32 +828,33 @@ def any_plan(run_name, out, verbose):
         print(f"wrote {len(goals)} goals to {out}")
 
 C3_GATE = (9505, 6971)
+BONUS3 = next(ticks for what, ticks, _ in TAIL_STEPS if what == "bonus3")
 
 def dj_block(cs, goals, at):
     end = at
-    while end < len(goals) and goal_course(cs, goals[end]) == 3:
+    while end < len(goals) and (goal_course(cs, goals[end]) == 3 or goals[end] == "reward:bonus3"):
         end += 1
     return end
 
 def dj_measured(run_name, goals, d, a):
     path = os.path.join(str(gamepaths.TRACES), "fulltas", run_name + ".json")
     if not os.path.exists(path):
-        return None, None
+        return None, None, None
     best = json.load(open(path, encoding="utf-8"))
     bg, ticks = best["goals"], best["goalPhysicsTicks"]
     same = next((i for i, (x, y) in enumerate(zip(bg, goals)) if x != y), min(len(bg), len(goals)))
-    lap = None
-    laps = [ticks[i + 1] - ticks[i] for i in range(a + 1, same - 1)
-            if goals[i] == "start:3" and goals[i + 1] == "finish:3" and ticks[i + 1] >= 0]
-    if laps:
-        lap = max(laps, key=laps.count)
+    def typical(pair):
+        found = [ticks[i + 1] - ticks[i] for i in range(a + 1, same - 1) if pair(goals[i], goals[i + 1]) and ticks[i + 1] >= 0]
+        return max(found, key=found.count) if found else None
+    lap = typical(lambda x, y: x == "start:3" and y == "finish:3")
+    lead = typical(lambda x, y: x != "start:3" and y == "start:3")
     if same > a + 1 and goals[a + 1] == "start:3" and ticks[a + 1] >= 0:
-        return ticks[a + 1] - ticks[d], lap
+        return ticks[a + 1] - ticks[d], lap, lead
     kind, _, rect = goals[a].partition(":")
     if same > a and ticks[a] >= 0 and kind == "at":
         x, y = (float(v) for v in rect.split(",")[:2])
-        return ticks[a] - ticks[d] + guess_ticks((x, y), C3_GATE), lap
-    return None, lap
+        return ticks[a] - ticks[d] + guess_ticks((x, y), C3_GATE), lap, lead
+    return None, lap, lead
 
 def dj_plan(run_name, after, arrive, cash, write, verbose):
     runs = json.load(open(FULLTAS, encoding="utf-8"))
@@ -862,20 +870,24 @@ def dj_plan(run_name, after, arrive, cash, write, verbose):
     a = goals.index(after, d)
     dash = replay(start_state(cash), goals[b + 2:d + 1], stage1_options)
     late = Late(dash, verbose)
-    measured, lap = dj_measured(run_name, goals, d, a)
+    measured, lap, lead = dj_measured(run_name, goals, d, a)
     if arrive is None:
         if measured is None:
             raise SystemExit(f"{run_name}'s best reaches neither {after} nor Course 3's gate after it: pass --dj-arrive")
         arrive = measured
     if lap is not None:
         LATE_LAP[3] = (lap, LATE_LAP[3][1])
+    if lead is not None:
+        late.cs[3].lead = lead
     end = dj_block(late.cs, goals, a + 1)
     print(f"{run_name}: buy:buyds (goal {d + 1}) replayed at tick {dash.t} after reward:bonus1, {dash.cash:.4g} W;"
-          f" Course 3's gate {arrive} ticks later, after {after} (goal {a + 1}); Course 3 lap {LATE_LAP[3][0]}")
+          f" Course 3's gate {arrive} ticks later, after {after} (goal {a + 1}); Course 3 lap {LATE_LAP[3][0]}, lead {late.cs[3].lead}")
     late.cash += late.other_rate(0) * arrive
     late.t += arrive
     late.tokens.append("start:3")
     late.here, late.where, late.lap_income = 3, "gate", True
+    late.detour("reward:bonus3", BONUS3)
+    late.phase(3, "RCMGFP", {"P": 1}, False, "Awaken the statue's power")
     late.phase(3, "RCMGFJ", {"J": 1}, False, "double jump")
     farm = late.tokens
     bad = invalid_goals(farm)
@@ -893,10 +905,11 @@ def dj_plan(run_name, after, arrive, cash, write, verbose):
         print(f"wrote {len(run['goals'])} goals to {FULLTAS} run {run_name};"
               + (" unchanged" if goals == run["goals"] else f" first change at goal {changed + 1}"))
 
-def same_inputs(a, b):
+def same_inputs(a, b, n):
+    """True when trace inputs a and best inputs b agree on their first n (the trace is read no further)."""
     def norm(x):
         return {k: round(v, 4) if isinstance(v, float) else v for k, v in x.items()}
-    return len(a) == len(b) and all(norm(x) == norm(y) for x, y in zip(a, b))
+    return len(a) >= n and len(b) >= n and all(norm(x) == norm(y) for x, y in zip(a[:n], b[:n]))
 
 def measure(run_name):
     best_path = os.path.join(str(gamepaths.TRACES), "fulltas", run_name + ".json")
@@ -914,9 +927,11 @@ def measure(run_name):
         raise SystemExit(f"{run_name}'s best doesn't reach buy:buyds yet: its timings aren't measured")
     print(f"reading {trace_path} ...")
     trace = json.load(open(trace_path, encoding="utf-8"))
-    if not same_inputs(trace["inputs"], best["inputs"]):
-        raise SystemExit(f"{trace_path} isn't a trace of the best: Capture start in the Full-TAS tab, then rerun")
+    if not same_inputs(trace["inputs"], best["inputs"], best["goalInputTicks"][b]):
+        raise SystemExit(f"{trace_path} isn't a trace of the best up to reward:bonus1: Capture start in the Full-TAS tab, then rerun")
     B = ticks[b]
+    if len(trace["ticks"]) < B:
+        raise SystemExit(f"{trace_path} doesn't reach reward:bonus1 (tick {B}): Capture start in the Full-TAS tab, then rerun")
     at = trace["ticks"][B - 1]
     c2 = next({f[1]: f[2] for f in c["fields"]} for c in at["courses"]
               if any(f[1] == "courseNumber" and f[2] == 2 for f in c["fields"]))

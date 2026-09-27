@@ -215,6 +215,7 @@ namespace IGTAPTasMod
             if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             DrawSpikes(scale);
+            DrawCheckpointLabels(scale);
             DrawHitbox(scale);
             DrawGraze(scale);
             InputRow live = OverlayListsRun ? null : LiveRow(_overlayPlayer);
@@ -348,6 +349,8 @@ namespace IGTAPTasMod
 
         const float SpikeScanSeconds = 1f;
         readonly List<SpikeCollider> _spikeColliders = new List<SpikeCollider>();
+        // checkpointScript triggers (script null): touching one sets respawnPoint to its position.
+        readonly List<SpikeCollider> _checkpointColliders = new List<SpikeCollider>();
         readonly Dictionary<Collider2D, SpikeCollider> _spikeByCollider = new Dictionary<Collider2D, SpikeCollider>();
         readonly List<Collider2D> _colliderBuffer = new List<Collider2D>();
         readonly List<Collider2D> _overlaps = new List<Collider2D>();
@@ -421,18 +424,24 @@ namespace IGTAPTasMod
             _spikeScanTime = Time.unscaledTime;
             _spikeColliders.Clear();
             foreach (spikeScript spike in FindObjectsByType<spikeScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+                ScanColliders(spike, spike, _spikeColliders);
+            _checkpointColliders.Clear();
+            foreach (checkpointScript checkpoint in FindObjectsByType<checkpointScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+                ScanColliders(checkpoint, null, _checkpointColliders);
+        }
+
+        void ScanColliders(Component owner, spikeScript spike, List<SpikeCollider> into)
+        {
+            owner.GetComponents(_colliderBuffer);
+            foreach (Collider2D c in _colliderBuffer)
             {
-                spike.GetComponents(_colliderBuffer);
-                foreach (Collider2D c in _colliderBuffer)
-                {
-                    if (!c.enabled || c.compositeOperation != Collider2D.CompositeOperation.None) continue;
-                    if (!_spikeByCollider.TryGetValue(c, out SpikeCollider entry))
-                        _spikeByCollider[c] = entry = new SpikeCollider { collider = c, script = spike };
-                    Rigidbody2D body = c.attachedRigidbody;
-                    entry.moving = body != null && body.bodyType != RigidbodyType2D.Static;
-                    if (!entry.moving && (entry.shapeCount != c.shapeCount || entry.bounds != c.bounds)) BuildShapes(entry);
-                    _spikeColliders.Add(entry);
-                }
+                if (!c.enabled || c.compositeOperation != Collider2D.CompositeOperation.None) continue;
+                if (!_spikeByCollider.TryGetValue(c, out SpikeCollider entry))
+                    _spikeByCollider[c] = entry = new SpikeCollider { collider = c, script = spike };
+                Rigidbody2D body = c.attachedRigidbody;
+                entry.moving = body != null && body.bodyType != RigidbodyType2D.Static;
+                if (!entry.moving && (entry.shapeCount != c.shapeCount || entry.bounds != c.bounds)) BuildShapes(entry);
+                into.Add(entry);
             }
         }
 
@@ -516,8 +525,9 @@ namespace IGTAPTasMod
 
         void DrawSpikes(float scale)
         {
+            _checkpointLabels.Clear();
             Camera cam = Camera.main;
-            if (cam == null || _spikeColliders.Count == 0) return;
+            if (cam == null || _spikeColliders.Count + _checkpointColliders.Count == 0) return;
             Material material = OverlayMaterial();
             if (material == null) return;
             Vector3 v0 = cam.ViewportToWorldPoint(Vector3.zero), v1 = cam.ViewportToWorldPoint(Vector3.one);
@@ -541,42 +551,70 @@ namespace IGTAPTasMod
                 foreach (SpikeShape shape in entry.shapes)
                 {
                     if (!view.Overlaps(shape.bounds)) continue;
-                    Color color = grazed && hurt.Overlaps(shape.bounds) ? touched : SpikeColor;
-                    _screenPoints.Clear();
-                    foreach (Vector2 p in shape.points)
-                    {
-                        Vector3 s = cam.WorldToScreenPoint(p);
-                        _screenPoints.Add(new Vector2(s.x, Screen.height - s.y));
-                    }
-                    if (shape.closed && _screenPoints.Count >= 3)
-                    {
-                        GL.Color(new Color(color.r, color.g, color.b, 0.18f));
-                        for (int i = 1; i + 1 < _screenPoints.Count; i++)
-                        {
-                            GL.Vertex(_screenPoints[0]);
-                            GL.Vertex(_screenPoints[i]);
-                            GL.Vertex(_screenPoints[i + 1]);
-                            GL.Vertex(_screenPoints[i + 1]);
-                        }
-                    }
-                    GL.Color(color);
-                    int edges = shape.closed ? _screenPoints.Count : _screenPoints.Count - 1;
-                    for (int i = 0; i < edges; i++)
-                    {
-                        Vector2 a = _screenPoints[i], b = _screenPoints[(i + 1) % _screenPoints.Count];
-                        Vector2 d = b - a;
-                        if (d.sqrMagnitude < 1e-6f) continue;
-                        Vector2 n = new Vector2(-d.y, d.x).normalized * half;
-                        GL.Vertex(a + n);
-                        GL.Vertex(b + n);
-                        GL.Vertex(b - n);
-                        GL.Vertex(a - n);
-                    }
+                    DrawShape(cam, shape, grazed && hurt.Overlaps(shape.bounds) ? touched : SpikeColor, half);
                 }
+            }
+            Movement player = _overlayPlayer;
+            Vector2 origin = CurrentOrigin();
+            foreach (SpikeCollider entry in _checkpointColliders)
+            {
+                if (entry.collider == null || !entry.collider.enabled || !entry.collider.gameObject.activeInHierarchy) continue;
+                if (!view.Overlaps(BoundsRect(entry.collider.bounds))) continue;
+                if (entry.moving) BuildShapes(entry);
+                // The game writes respawnPoint = checkpoint position - origin on touch; a rebase moves both, so compare loosely.
+                bool active = player != null && (player.respawnPoint - ((Vector2)entry.collider.transform.position - origin)).sqrMagnitude < 1f;
+                foreach (SpikeShape shape in entry.shapes)
+                    if (view.Overlaps(shape.bounds)) DrawShape(cam, shape, active ? CheckpointActiveColor : CheckpointColor, half);
+                _checkpointLabels.Add(new KeyValuePair<Rect, bool>(ScreenRect(cam, entry.collider.bounds), active));
             }
             GL.End();
             GL.PopMatrix();
             GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
+        }
+
+        readonly List<KeyValuePair<Rect, bool>> _checkpointLabels = new List<KeyValuePair<Rect, bool>>();
+
+        void DrawCheckpointLabels(float scale)
+        {
+            float height = 22 * scale;
+            foreach (KeyValuePair<Rect, bool> label in _checkpointLabels)
+                Label(new Rect(label.Key.xMin + 4 * scale, label.Key.yMin - height, 300 * scale, height), label.Value ? "CHECKPOINT ✓ (respawnPoint)" : "checkpoint",
+                    _overlaySmall, label.Value ? CheckpointActiveColor : CheckpointColor);
+        }
+
+        /// <summary>One collider shape, faint fill and solid outline, inside DrawSpikes' GL.QUADS block.</summary>
+        void DrawShape(Camera cam, SpikeShape shape, Color color, float half)
+        {
+            _screenPoints.Clear();
+            foreach (Vector2 p in shape.points)
+            {
+                Vector3 s = cam.WorldToScreenPoint(p);
+                _screenPoints.Add(new Vector2(s.x, Screen.height - s.y));
+            }
+            if (shape.closed && _screenPoints.Count >= 3)
+            {
+                GL.Color(new Color(color.r, color.g, color.b, 0.18f));
+                for (int i = 1; i + 1 < _screenPoints.Count; i++)
+                {
+                    GL.Vertex(_screenPoints[0]);
+                    GL.Vertex(_screenPoints[i]);
+                    GL.Vertex(_screenPoints[i + 1]);
+                    GL.Vertex(_screenPoints[i + 1]);
+                }
+            }
+            GL.Color(color);
+            int edges = shape.closed ? _screenPoints.Count : _screenPoints.Count - 1;
+            for (int i = 0; i < edges; i++)
+            {
+                Vector2 a = _screenPoints[i], b = _screenPoints[(i + 1) % _screenPoints.Count];
+                Vector2 d = b - a;
+                if (d.sqrMagnitude < 1e-6f) continue;
+                Vector2 n = new Vector2(-d.y, d.x).normalized * half;
+                GL.Vertex(a + n);
+                GL.Vertex(b + n);
+                GL.Vertex(b - n);
+                GL.Vertex(a - n);
+            }
         }
 
         static Rect BoundsRect(Bounds b) { return Rect.MinMaxRect(b.min.x, b.min.y, b.max.x, b.max.y); }
@@ -670,6 +708,8 @@ namespace IGTAPTasMod
         static readonly Color HurtboxColor = Hex(0xa98bff, 0.95f);
         static readonly Color KilledColor = new Color(1f, 0.2f, 0.25f, 0.95f);
         static readonly Color SpikeColor = new Color(1f, 0.55f, 0.1f, 0.9f);
+        static readonly Color CheckpointColor = new Color(0.3f, 0.85f, 1f, 0.9f);
+        static readonly Color CheckpointActiveColor = new Color(0.35f, 1f, 0.45f, 0.95f);
         static readonly Color GraceColor = new Color(0.35f, 1f, 0.45f, 0.95f);
         static readonly Color TasColor = Hex(0xffa3b4, 1f);
         static readonly Color WallJumpColor = Hex(0x5bf08a, 1f);

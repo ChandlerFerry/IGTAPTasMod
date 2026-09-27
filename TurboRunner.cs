@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace IGTAPTasMod
 {
@@ -265,6 +266,9 @@ namespace IGTAPTasMod
             public (upgradeBox box, object[] fields)[] boxes;
             public (localUpgrades script, Dictionary<localUpgrades.localUpgradeSet, double> upgrades)[] locals;
             public (clonesScript clones, object[] fields, HashSet<Transform> children)[] clones;
+            /// <summary>Each clonesScript's best path arrays (updateClonePath replaces them, never edits them in place).</summary>
+            public (clonesScript clones, Vector2[] path, Sprite[] sprites, Vector2[] scales)[] paths;
+            public List<int> visitedTeleporters;
             public Scene scene;
         }
 
@@ -276,6 +280,12 @@ namespace IGTAPTasMod
                 Behaviour light, bool lightEnabled, float outer, float inner)[] breakers;
             public (Collider2D collider, bool enabled)[] blocks;
             public bool blueActive;
+            /// <summary>
+            /// Whether each object of the active scene is on. A run turns objects on and off (a purchase's StatuePrestigeText, whose
+            /// ObjectBobber.OnEnable draws UnityEngine.Random): one a run left on skipped that draw in the next run, and every clone
+            /// roll after it shifted.
+            /// </summary>
+            public (GameObject obj, bool active)[] objects;
         }
 
         static readonly FieldInfo BreakerPlayerLight = AccessTools.Field(typeof(tripBreakerScript), "playerLight");
@@ -297,7 +307,10 @@ namespace IGTAPTasMod
             if (swapper != null)
                 foreach (GameObject o in (OrangeBlocks(swapper) ?? new GameObject[0]).Concat(BlueBlocks(swapper) ?? new GameObject[0]))
                     if (o != null) foreach (Collider2D c in o.GetComponents<Collider2D>()) blocks.Add((c, c.enabled));
+            UnityEngine.SceneManagement.Scene scene = SceneManager.GetActiveScene();
+            Transform[] all = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             return new Scene {
+                objects = all.Where(t => t.gameObject.scene == scene).Select(t => (t.gameObject, t.gameObject.activeSelf)).ToArray(),
                 boxes = Array.ConvertAll(boxes, b => (b, b.gameObject.activeSelf, b.enabled)),
                 a1State = Singleton<globalStats>.Instance.currentA1State,
                 breakers = breakers.ToArray(), blocks = blocks.ToArray(), blueActive = swapper != null && swapper.isBlueActive };
@@ -310,6 +323,8 @@ namespace IGTAPTasMod
 
         static void RestoreScene(Scene s)
         {
+            if (s.objects != null)
+                foreach (var (obj, active) in s.objects) if (obj != null && obj.activeSelf != active) obj.SetActive(active);
             foreach (var (box, active, enabled) in s.boxes)
             {
                 if (box == null) continue;
@@ -392,6 +407,8 @@ namespace IGTAPTasMod
                 globalUpgrades = globalStats.globalUpgradeDict == null ? null : new Dictionary<globalStats.globalUpgradeSet, double>(globalStats.globalUpgradeDict),
                 boxes = Array.ConvertAll(boxes, b => (b, CaptureFields(b))),
                 scene = CaptureScene(boxes),
+                paths = Array.ConvertAll(clones, c => (c, c.clonePath, c.cloneSprites, c.cloneScales)),
+                visitedTeleporters = Singleton<globalStats>.Instance.visitedTeleporters == null ? null : new List<int>(Singleton<globalStats>.Instance.visitedTeleporters),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
                 {
@@ -408,6 +425,10 @@ namespace IGTAPTasMod
             if (e.scene != null) RestoreScene(e.scene);
             foreach (var (box, fields) in e.boxes) if (box != null) RestoreFields(box, fields);
             foreach (var (script, upgrades) in e.locals) if (script != null) RestoreDictionary(script.localUpgradeDict, upgrades);
+            Singleton<globalStats>.Instance.visitedTeleporters = e.visitedTeleporters == null ? null : new List<int>(e.visitedTeleporters);
+            if (e.paths != null)
+                foreach (var (script, path, sprites, scales) in e.paths)
+                    if (script != null) { script.clonePath = path; script.cloneSprites = sprites; script.cloneScales = scales; }
             foreach (var (clones, fields, children) in e.clones)
             {
                 if (clones == null) continue;
@@ -601,6 +622,9 @@ namespace IGTAPTasMod
             courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            // Steps in scene-load order (instance id, highest first), as the engine does: FindObjectsSortMode.None's order changed
+            // from one game session to the next, and two courses spawning on one tick swap their fast/big rolls with it.
+            Array.Sort(clones, (a, b) => b.GetInstanceID().CompareTo(a.GetInstanceID()));
             float dt = Time.fixedDeltaTime;
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;

@@ -377,7 +377,7 @@ earlier that day ran through. Turbo and the engine agree on all four; the demos 
 fields, against many input branches at once, on every core.
 
 ```powershell
-& $exe clip map $trace 2400 -120 2560 320 4              # ground ('#', layer 128) and blocking ground ('B') in the world frame
+& $exe clip map $trace 2400 -120 2560 320 4              # ground ('#', layer 128) and spike edges ('S', layer 64) in the world frame
 & $exe clip run $trace lab.json --out runs.csv --top 20   # every start x every branch, ranked by the height reached
 & $exe clip log $trace lab.json 0 "turn jump"            # one start x branch, tick by tick (the probe's fields + wallJumpFacing)
 & $exe clip log $trace lab.json 0 "turn jump" --fields lastHyperY,canHyper,coyoteFrames   # plus any Movement fields
@@ -472,6 +472,21 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
 - A trace start's pending Invokes (`endRecentJump`, the buffer cancels) are due counted from the start's next tick, in
   turbo's snapshot and in `Simulation.LoadStart` alike. `LoadStart` used to count one tick less, so a start inside a
   jump's `recentlyJumped` window (every omnidash tech demo) ended it a tick early offline.
+- A turbo snapshot keeps every active-scene object's on/off state (`TurboRunner.Scene.objects`), each clonesScript's
+  best path arrays and `globalStats.visitedTeleporters`, and a new game's start is never taken while a zip mover's
+  `reset` is on. `ObjectBobber.OnEnable` draws UnityEngine.Random, and `buystatue` turns the statue's
+  `StatuePrestigeText` on: a run that bought the statue left it on, so the next run from the same new game skipped that
+  draw and every clone roll after it (`TrueEnding-ANY%`'s 484.96 s route passed the gate once, then stopped at goal 318
+  on every later check). A Full-TAS trace exports its world after restoring the start (`FullTasTrace`).
+- Clones step in scene-load order, instance id highest first, in turbo (`TurboRunner.Run`) and here (`Economy`) alike.
+  Two courses spawning on one tick take their fast/big rolls in that order. Turbo used `FindObjectsSortMode.None`, whose
+  order changed between game sessions (Course 3 before Course 1 in one, after it in the next): the same route's clone
+  rolls swapped at physics tick 16409 and one course's spawns ran 2 ticks late from then on. Instance ids keep their
+  relative order from load to load. 1x playback runs `clonesScript.Update` in Unity's own order, once per rendered frame
+  (Δt 1/280): neither is proven to match yet.
+- `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
+  it lists. Cash here is start − spent + awarded + earned, the game's a running total: they differ in the last bit
+  (tick 13336 above), which only matters for a purchase within a rounding of its cost.
 - Turbo spawns no floating numbers (`FloatingNumberScript.ActuallySpawnText` off for the run). Their pool of 200 is only
   refilled by their own `FixedUpdate`, which turbo doesn't step. A long replay drained it; the next pop threw out of
   `courseScript.stopTracking` (no finish) or `clonesScript.DestroyClone` (the clone stays and pays again), at a point

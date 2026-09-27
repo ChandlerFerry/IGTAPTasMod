@@ -30,9 +30,23 @@ namespace IGTAP.EngineSim.Cli
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
+                    case "fulltas-plan": return FullTas.Plan(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
+                    case "archive-check":
+                    {
+                        // archive-check <archive> <copy>: saves the archive again as <copy> and checks it reads back the same.
+                        OfflineSolver.Memory a = Solve.LoadMemory(args[1]);
+                        Solve.SaveMemory(args[2], a);
+                        OfflineSolver.Memory b = Solve.LoadMemory(args[2]);
+                        bool same = a.Runs == b.Runs && a.Sources.Count == b.Sources.Count && a.Plateau.Count == b.Plateau.Count
+                            && a.Plateau.Zip(b.Plateau).All(p => p.First.SequenceEqual(p.Second))
+                            && a.Sources.Zip(b.Sources).All(p => p.First.Inputs.SequenceEqual(p.Second.Inputs) && p.First.Cells.SequenceEqual(p.Second.Cells));
+                        Console.WriteLine($"{a.Sources.Count} sources, {new FileInfo(args[1]).Length >> 20} MB -> {new FileInfo(args[2]).Length >> 20} MB, {(same ? "same" : "DIFFERENT")}");
+                        return same ? 0 : 1;
+                    }
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
+                    case "climb": return SpikeClimb.Run(args.Skip(1).ToArray());
                     case "path":
                     {
                         var (sim, _, _) = Open(args[1]);
@@ -105,6 +119,10 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts;\n"
                             + "                                         --goal N: polish only the W goals ending at goal N (from goal N-W on),\n"
                             + "                                         over and over\n"
+                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p]\n"
+                            + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
+                            + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
+                            + "                                         economy; a,b: a first); prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
@@ -158,6 +176,7 @@ namespace IGTAP.EngineSim.Cli
                 int firstDiff = -1;
                 int firstRandomDiff = -1, firstCashDiff = -1;
                 var diffs = new List<string>();
+                string cashLine = null, randomLine = null, bigCashLine = null;
                 RunResult run = sim.Run(inputs, extraTicks: 1000000, onStep: step =>
                 {
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
@@ -184,12 +203,16 @@ namespace IGTAP.EngineSim.Cli
                         }
                     }
                     if (t.TryGetProperty("cash", out JsonElement cash) && Compare(here, "cash", Json(sim.Shop.CashNow), cash) && firstCashDiff < 0) firstCashDiff = step;
+                    if (bigCashLine == null && cash.ValueKind == JsonValueKind.Number && Math.Abs(sim.Shop.CashNow - cash.GetDouble()) >= 1.0)
+                        bigCashLine = "tick " + step + ": cash " + Json(sim.Shop.CashNow) + " != " + cash.GetRawText();
                     if (t.TryGetProperty("random", out JsonElement random))
                     {
                         UnityEngine.Random.State rng = UnityEngine.Random.state;
                         if (Compare(here, "random", Json(new[] { rng.s0, rng.s1, rng.s2, rng.s3 }), random) && firstRandomDiff < 0) firstRandomDiff = step;
                     }
                     if (here.Count == 0) return;
+                    if (firstCashDiff == step) cashLine = "tick " + step + ": " + string.Join("; ", here);
+                    if (firstRandomDiff == step) randomLine = "tick " + step + ": " + string.Join("; ", here);
                     if (firstDiff < 0) firstDiff = step;
                     if (diffs.Count < 60) diffs.Add("tick " + step + ": " + string.Join("; ", here));
                 });
@@ -203,6 +226,9 @@ namespace IGTAP.EngineSim.Cli
                     + " vs turbo " + (result.GetProperty("finished").GetBoolean() ? "finish " + result.GetProperty("time").GetRawText() : "no finish")
                     + (sameResult ? " [MATCH]" : " [MISMATCH]"));
                 foreach (string d in diffs.Take(verbose ? 60 : 3)) Console.WriteLine("  " + d);
+                // A late economy split hides behind 60 earlier position diffs: name its first tick either way.
+                foreach (string d in new[] { cashLine, randomLine, bigCashLine }.Where(d => d != null && !diffs.Take(verbose ? 60 : 3).Contains(d)))
+                    Console.WriteLine("  first split " + d);
                 if (firstDiff >= 0 || !sameResult || run.Stepped != ticks.Length) failures++;
             }
             return failures == 0 ? 0 : 3;

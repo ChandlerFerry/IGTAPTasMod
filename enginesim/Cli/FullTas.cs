@@ -57,8 +57,20 @@ namespace IGTAP.EngineSim.Cli
             public bool Standing, Restart;
             public int Level;
             public List<InputTick> Inputs;
+            /// <summary>Another run's start, where its player stands still before these inputs (null: none).</summary>
+            public SeedStart At;
+        }
+        /// <summary>A Full-TAS run's start: the player's world position and facing (it stands still there).</summary>
+        sealed class SeedStart
+        {
+            public float X, Y;
+            public bool FacingRight;
         }
         const int MaxSeedStarts = 64, MaxSettle = 12;
+        // Walking to a run seed's start: how far (world units), how many held ticks at most, how far off the stand may end, how
+        // many walks to keep, and how long to stand there (a run's start is 10 ticks at rest; Still stops after 3).
+        const float MaxWalk = 1500f, MaxWalkMiss = 8f, MaxWalkRise = 4f;
+        const int MaxWalkTicks = 240, MaxWalks = 3, StandTicks = 7;
         readonly List<string> _seedFiles = new List<string>();
         readonly List<Seed> _seeds = new List<Seed>();
         (int, long) _seededFrontier = (-1, -1);
@@ -83,50 +95,7 @@ namespace IGTAP.EngineSim.Cli
 
         int Search()
         {
-            JsonElement header = Solve.ReadHeader(_trace);
-            if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
-            _name = fulltas.GetProperty("name").GetString();
-            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
-            _goals = _labels.Length;
-            _caps = header.GetProperty("capabilities").GetString();
-            string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
-            _runFile = Path.Combine(dir, "fulltas", _name + ".json");
-            _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
-            _outDir = Path.Combine(dir, "offline-best");
-            _create = Solve.Creator(_trace, header);
-            _clock = Stopwatch.StartNew();
-            _eval = _create();
-            _origin = _eval.Start;
-            _dt = _eval.World.FixedDeltaTime;
-            _runGoals = _eval.Goals;
-            ReloadAvoids();
-            _visitsFile = VisitsFile(dir, _name);
-            _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _name);
-            string startKey = StartKey(header).ToString("x16");
-            if (StartChanged(dir, _name, startKey))
-            {
-                Log($"Start state changed since the last solve of {_name}: dropping its archive and visits map");
-                Directory.Delete(_archiveDir, true);
-                File.Delete(_visitsFile);
-            }
-            Directory.CreateDirectory(_archiveDir);
-            File.WriteAllText(StartFile(dir, _name), startKey);
-            _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
-            LoadPieces(dir);
-
-            _best = Padded(Evaluate(Solve.ReadInputs(header)));
-            string from = Path.GetFileName(_trace);
-            if (!_fresh && File.Exists(_runFile))
-            {
-                using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
-                List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
-                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
-                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
-                if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
-                Route run = Padded(Evaluate(inputs));
-                if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
-            }
+            string from = Open();
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
             Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
                 from, best = RouteJson(_best) });
@@ -139,6 +108,7 @@ namespace IGTAP.EngineSim.Cli
                 _pending = new Latest();
                 new Thread(Submitter) { IsBackground = true }.Start();
             }
+            new Thread(WatchStdin) { IsBackground = true }.Start();
 
             (int, long) reachFrontier = (-1, -1);
             int reachRound = 0, reachBack = 0;
@@ -202,6 +172,59 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
+        /// <summary>Reads the trace, sets up the simulations, pieces and archive, and loads the best (the saved run's, if no worse); returns where it came from.</summary>
+        string Open()
+        {
+            JsonElement header = Solve.ReadHeader(_trace);
+            if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
+            _name = fulltas.GetProperty("name").GetString();
+            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
+            _goals = _labels.Length;
+            _caps = header.GetProperty("capabilities").GetString();
+            string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
+            _runFile = Path.Combine(dir, "fulltas", _name + ".json");
+            _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
+            _outDir = Path.Combine(dir, "offline-best");
+            // Every purchase is a goal: a route that buys a box other than its next goal's spends Cash and levels the goals
+            // (and the plans that wrote them) don't count, so no search or check here plays one (docs/fulltas.md).
+            Func<Simulation> make = Solve.Creator(_trace, header);
+            _create = () => { Simulation sim = make(); sim.StrictBuys = true; return sim; };
+            _clock = Stopwatch.StartNew();
+            _eval = _create();
+            _origin = _eval.Start;
+            _dt = _eval.World.FixedDeltaTime;
+            _runGoals = _eval.Goals;
+            ReloadAvoids();
+            _visitsFile = VisitsFile(dir, _name);
+            _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _name);
+            string startKey = StartKey(header).ToString("x16");
+            if (StartChanged(dir, _name, startKey))
+            {
+                Log($"Start state changed since the last solve of {_name}: dropping its archive and visits map");
+                Directory.Delete(_archiveDir, true);
+                File.Delete(_visitsFile);
+            }
+            Directory.CreateDirectory(_archiveDir);
+            File.WriteAllText(StartFile(dir, _name), startKey);
+            _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
+            LoadPieces(dir);
+
+            _best = Padded(Evaluate(Solve.ReadInputs(header)));
+            string from = Path.GetFileName(_trace);
+            if (!_fresh && File.Exists(_runFile))
+            {
+                using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
+                List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
+                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
+                if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
+                Route run = Padded(Evaluate(inputs));
+                if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
+            }
+            return from;
+        }
+
         const int MaxReachBack = 3, MaxReachRounds = 3;
         string _phase;
         int _windowId;
@@ -227,7 +250,24 @@ namespace IGTAP.EngineSim.Cli
                 splits = Enumerable.Range(0, r.Progress).Select(k => Seconds(r.GoalPhysics[k])).ToArray() };
         }
 
-        bool TimeUp { get { return _clock.Elapsed.TotalMinutes >= _minutes; } }
+        bool TimeUp { get { return _stopRequested || _clock.Elapsed.TotalMinutes >= _minutes; } }
+
+        volatile bool _stopRequested;
+
+        /// <summary>
+        /// A "stop" line on stdin (the studio's Stop) ends the solve as its time limit would: the window ends, its archive and
+        /// visits are written, and the process exits.
+        /// </summary>
+        void WatchStdin()
+        {
+            for (string line; (line = Console.In.ReadLine()) != null;)
+                if (line.Trim() == "stop")
+                {
+                    Log("stop requested: ending the window and saving");
+                    _stopRequested = true;
+                    return;
+                }
+        }
 
         static List<List<InputTick>> DelayedResets(List<InputTick> tail)
         {
@@ -248,9 +288,10 @@ namespace IGTAP.EngineSim.Cli
 
         void Log(string message) { Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] {message}"); }
 
-        void ReloadAvoids()
+        /// <summary>Loads the run's avoid boxes for a window heading for goals (null: every optional block on).</summary>
+        void ReloadAvoids(ICollection<string> goals = null)
         {
-            OfflineSolver.ForcedPath path = Solve.FullTasPaths(_name);
+            OfflineSolver.ForcedPath path = Solve.FullTasPaths(_name, goals, _labels);
             string now = string.Join(", ", path.Avoid), before = _path == null ? "" : string.Join(", ", _path.Avoid);
             _path = path;
             if (now == before) return;
@@ -316,7 +357,11 @@ namespace IGTAP.EngineSim.Cli
             foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
             if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
             int id = ++_windowId;
-            Emit(new { type = "window", id, kind, first, limit, attempt, budget = Math.Round(budgetMinutes * 60, 1),
+            // Goals the route logs by the prefix's end: one more than first when the last one is touched in the no-input ticks
+            // after its input tick (a dash), which read the next input, so the window takes it again.
+            int logged = 0;
+            while (logged < route.Progress && route.GoalInput[logged] <= prefixLength) logged++;
+            Emit(new { type = "window", id, kind, first, limit, logged, attempt, budget = Math.Round(budgetMinutes * 60, 1),
                 start = first == 0 ? 0.0 : Seconds(route.GoalPhysics[first - 1]), target = baseline == long.MaxValue ? (double?)null : Seconds(baseline),
                 savedStarts = starts.Count });
 
@@ -328,8 +373,12 @@ namespace IGTAP.EngineSim.Cli
                 return sim;
             };
             string archiveFile = Path.Combine(_archiveDir, (first + 1) + "-" + limit + "-" + ArchiveHash(prefix, _labels.Skip(first).Take(limit - first)).ToString("x16") + ".json");
+            var labels = new HashSet<string>(_labels.Skip(first).Take(limit - first));
+            List<Seed> walkers = kind == "reach" ? _seeds.Where(s => s.At != null && s.Goals.Any(labels.Contains)).ToList() : new List<Seed>();
+            var tried = new HashSet<long>();
             List<List<InputTick>> found = Explore(id, title, span, create, caps, seeds, archiveFile, baseline, budgetMinutes,
-                kind == "reach" ? 0.0 : _stallMinutes, kind == "reach" ? prefix : null, out List<InputTick> bestInputs);
+                kind == "reach" ? 0.0 : _stallMinutes, kind == "reach" ? prefix : null, _labels.Skip(first).Take(limit - first).ToList(), out List<InputTick> bestInputs,
+                walkers.Count == 0 ? null : solver => CellWalks(solver, at, prefix.Count, limit, walkers, tried, title));
             if (bestInputs != null) Remember(key, bestInputs);
             return found;
         }
@@ -360,10 +409,11 @@ namespace IGTAP.EngineSim.Cli
         /// A reach window passes its <paramref name="closestPrefix"/> for the studio's Test best.
         /// </summary>
         List<List<InputTick>> Explore(int id, string title, string span, Func<Simulation> create, string caps, List<List<InputTick>> seeds,
-            string archiveFile, long baseline, double budgetMinutes, double stallMinutes, List<InputTick> closestPrefix, out List<InputTick> bestInputs)
+            string archiveFile, long baseline, double budgetMinutes, double stallMinutes, List<InputTick> closestPrefix, ICollection<string> goals,
+            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null)
         {
             var found = new List<List<InputTick>>();
-            ReloadAvoids();
+            ReloadAvoids(goals);
             OfflineSolver.Memory memory = _fresh ? null : Solve.LoadMemory(archiveFile);
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
@@ -405,6 +455,14 @@ namespace IGTAP.EngineSim.Cli
                 {
                     shown = _clock.Elapsed;
                     Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates), {Interlocked.Read(ref solver.Runs)} runs, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB");
+                    List<List<InputTick>> walked = walks?.Invoke(solver);
+                    if (walked?.Count > 0)
+                        lock (solver.Shared)
+                        {
+                            found.AddRange(walked);
+                            finished = true;
+                            last = _clock.Elapsed;
+                        }
                 }
                 if ((_clock.Elapsed - emitted).TotalSeconds >= 1)
                 {
@@ -412,7 +470,13 @@ namespace IGTAP.EngineSim.Cli
                     Emit(Progress());
                     if (closestPrefix != null) OfferClosest(solver.Closest(), closestPrefix);
                 }
-                if ((_clock.Elapsed - saved).TotalSeconds >= 60) { saved = _clock.Elapsed; Solve.SaveMemory(archiveFile, solver.Export(5000)); }
+                if ((_clock.Elapsed - saved).TotalSeconds >= 60)
+                {
+                    // The studio's explored map reads the visits file: write it as the window goes, not only at its end.
+                    saved = _clock.Elapsed;
+                    Solve.SaveMemory(archiveFile, solver.Export(5000));
+                    SaveVisits(solver.Visits());
+                }
             }
             Solve.SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
@@ -607,6 +671,7 @@ namespace IGTAP.EngineSim.Cli
             if (matching.Count == 0) return starts;
             _eval.SetStart(at, prefix.Count);
             _eval.Goals.Limit = _goals;
+            var walks = matching.Where(s => s.At != null).ToDictionary(s => s, WalkedStarts);
             int settle = -1;
             if (restart)
             {
@@ -623,6 +688,7 @@ namespace IGTAP.EngineSim.Cli
             var perSeed = matching.Select(s =>
             {
                 var list = new List<(string how, List<InputTick> inputs)>();
+                if (walks.TryGetValue(s, out var walked)) list.AddRange(walked);
                 if (restart && s.Standing && settle >= 0) list.Add((s.Name + ", after a quick restart and " + settle + " ticks to stand still", Restarted(s, settle)));
                 if (restart && s.Restart && s.Inputs.Count > 0)
                 {
@@ -662,6 +728,104 @@ namespace IGTAP.EngineSim.Cli
             return starts;
         }
 
+        /// <summary>
+        /// A seed from another run's start (<see cref="Seed.At"/>): that run's player stood still there, facing one way, before its
+        /// inputs, so from here walk to that spot (held for n ticks, the last one maybe partial), stand still, tap the start's way
+        /// once when the walk faced the other, stand still again, then play the seed. The closest stands first; none when the spot
+        /// is too far or no walk ends on its floor facing its way. The start must be _eval's.
+        /// </summary>
+        List<(string how, List<InputTick> inputs)> WalkedStarts(Seed s)
+        {
+            var found = new List<(float miss, string how, List<InputTick> inputs)>();
+            SeedStart to = s.At;
+            _eval.Restore(_eval.Start);
+            float dx = to.X - _eval.PlayerWorld.x;
+            if (Math.Abs(dx) > MaxWalk) return new List<(string, List<InputTick>)>();
+            float dir = dx < 0f ? -1f : 1f, face = to.FacingRight ? 1f : -1f;
+            // Walks, stands, taps `turn` of the start's way (0: none) and stands again: how far past the spot it stands, null when
+            // it never stands on the spot's floor.
+            float? Stand(int n, float last, float turn)
+            {
+                var walk = Enumerable.Range(0, n).Select(i => new InputTick { x = i == n - 1 ? dir * last : dir }).ToList();
+                int still = _eval.Still(walk, 300);
+                if (still < 0) return null;
+                if (turn > 0f)
+                {
+                    walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count));
+                    walk.Add(new InputTick { x = face * turn });
+                    still = _eval.Still(walk, 300);
+                    if (still < 0) return null;
+                }
+                UnityEngine.Vector3 p = _eval.PlayerWorld;
+                if (Math.Abs(p.y - to.Y) > MaxWalkRise) return null;
+                float miss = Math.Abs(p.x - to.X);
+                if (miss <= MaxWalkMiss && _eval.Player.facingRight == to.FacingRight)
+                {
+                    walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count + StandTicks));
+                    walk.AddRange(s.Inputs);
+                    found.Add((miss, $"{s.Name}, after walking {n} ticks to its start ({miss:0.0} off) and standing still", walk));
+                }
+                return (p.x - to.X) * dir;
+            }
+            // Walking faces the walk's way: a start facing the other way takes the tap.
+            float tap = face == dir ? 0f : 1f;
+            int best = -1, blocked = 0;
+            float bestMiss = float.MaxValue;
+            float? before = null;
+            for (int n = 0; n <= MaxWalkTicks && blocked < 5; n++)
+            {
+                float? past = Stand(n, 1f, tap);
+                if (past.HasValue && Math.Abs(past.Value) < bestMiss) { bestMiss = Math.Abs(past.Value); best = n; }
+                if (past > MaxWalkMiss) break;
+                // A wall ends the walk: longer ones stand on the same spot.
+                blocked = past.HasValue && past == before ? blocked + 1 : 0;
+                before = past;
+            }
+            if (best >= 0)
+                foreach (int n in new[] { best - 1, best, best + 1 }.Where(n => n > 0))
+                    for (int last = 1; last <= 10; last++)
+                        for (int turn = (int)tap; turn <= 10 * tap; turn++) Stand(n, last / 10f, turn / 10f);
+            return found.OrderBy(f => f.miss).GroupBy(f => f.miss).Select(g => g.First()).Take(MaxWalks).Select(f => (f.how, f.inputs)).ToList();
+        }
+
+        // A reach window's walks to a run seed's start from its explored cells: per check, the cells nearest the start, within
+        // a walk of it and a couple of squares above or below it.
+        const int CellWalksPerCheck = 4;
+        const float CellWalkRise = 96f;
+
+        /// <summary>
+        /// <see cref="WalkedStarts"/> from the reach window's explored cells near a run seed's start, not only from the window's
+        /// start (the goal before may be far below the seed's floor, and the search gets there): the inputs to each cell, the
+        /// walk and the seed, for those that reach the window's last goal. <paramref name="tried"/> holds the cells tried so far.
+        /// </summary>
+        List<List<InputTick>> CellWalks(OfflineSolver solver, SimSnapshot at, int prefixLength, int limit, List<Seed> walkers, HashSet<long> tried, string title)
+        {
+            var found = new List<List<InputTick>>();
+            foreach (Seed s in walkers)
+            {
+                var spot = new UnityEngine.Vector2(s.At.X + _eval.Origin.x, s.At.Y + _eval.Origin.y);
+                foreach (List<InputTick> cell in solver.Near(spot, p => p < _goals && s.Goals.Contains(_labels[p]), MaxWalk, CellWalkRise, tried, CellWalksPerCheck))
+                {
+                    _eval.SetStart(at, prefixLength);
+                    _eval.Goals.Limit = _goals;
+                    SimSnapshot there = _eval.Advance(cell);
+                    if (there == null) continue;
+                    _eval.SetStart(there, prefixLength + cell.Count);
+                    foreach (var (how, walk) in WalkedStarts(s))
+                    {
+                        List<InputTick> inputs = cell.Concat(walk).ToList();
+                        _eval.SetStart(at, prefixLength);
+                        RunResult r = _eval.Run(inputs);
+                        if (r.Progress < limit) continue;
+                        Log($"{title}: {how}, from an explored cell {cell.Count} inputs in, reaches goal {r.Progress}/{_goals}");
+                        found.Add(inputs);
+                        break;
+                    }
+                }
+            }
+            return found;
+        }
+
         bool SeedFrontier()
         {
             Route best = _best;
@@ -677,7 +841,8 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = _eval.Advance(prefix);
             if (at == null) return false;
             _eval.Restore(at);
-            if (_eval.Progress != reached) return false;
+            // The last goal can be touched in the no-input ticks after its input tick (a dash): the seeds' replay takes it again.
+            if (_eval.Progress != reached && _eval.Progress != reached - 1) return false;
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, new HashSet<string> { _labels[reached] }, CanRestartAfter(prefix, reached));
             string title = $"seeds for goal {reached + 1}/{_goals} {_labels[reached]}";
             RunResult top = null;
@@ -732,6 +897,23 @@ namespace IGTAP.EngineSim.Cli
                 Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
                     : Math.Max(0, Array.IndexOf(Solve.Categories, caps.GetString())),
                 Inputs = Solve.ReadInputs(root),
+                At = root.TryGetProperty("trace", out JsonElement trace) && trace.ValueKind == JsonValueKind.String ? StartOf(trace.GetString()) : null,
+            };
+        }
+
+        /// <summary>A Full-TAS trace's start (its player stands still there), null when the trace is missing.</summary>
+        static SeedStart StartOf(string trace)
+        {
+            if (!File.Exists(trace)) return null;
+            JsonElement start = Solve.ReadHeader(trace).GetProperty("start");
+            JsonElement position = start.GetProperty("position"), origin = start.GetProperty("origin");
+            // The movement state is [type, field, value] rows.
+            JsonElement facing = start.GetProperty("movement").EnumerateArray().First(f => f[1].GetString() == "facingRight")[2];
+            return new SeedStart
+            {
+                X = position.GetProperty("x").GetSingle() - origin.GetProperty("x").GetSingle(),
+                Y = position.GetProperty("y").GetSingle() - origin.GetProperty("y").GetSingle(),
+                FacingRight = facing.GetBoolean(),
             };
         }
 

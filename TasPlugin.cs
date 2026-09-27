@@ -275,7 +275,8 @@ namespace IGTAPTasMod
                     movement == null ? (Vector2?)null : movement.transform.position);
                 return true;
             }
-            if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active && Instance.NewGamePlayerAtRest(__instance))
+            if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active && Instance.NewGamePlayerAtRest(__instance)
+                && !MoverResetting())
                 Instance.CaptureNewGameStart(__instance);
             if (Instance._fullTasPlay != null && !Instance._fullTasPlay.started && !Instance._fullTasPlay.waitingForNewGame && !Instance._engine.IsRunning
                 && !IsMenuPlayer(__instance))
@@ -955,6 +956,15 @@ namespace IGTAPTasMod
             _newGameRestTicks = 0;
             _newGameFrame = Time.frameCount;
             _newGamePhase = 3;
+        }
+
+        static readonly AccessTools.FieldRef<PlatformMover, bool> MoverReset = AccessTools.FieldRefAccess<PlatformMover, bool>("reset");
+
+        /// <summary>A zip mover's reset (cleared by a Unity-run coroutine two FixedUpdates on): a start taken then holds it half done.</summary>
+        static bool MoverResetting()
+        {
+            foreach (PlatformMover m in FindObjectsByType<PlatformMover>(FindObjectsSortMode.None)) if (MoverReset(m)) return true;
+            return false;
         }
 
         bool NewGamePlayerAtRest(Movement player)

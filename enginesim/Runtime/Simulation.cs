@@ -780,24 +780,20 @@ namespace IGTAP.EngineSim
         {
             MaterializeRebases(s.Rebases);
             Physics.Suspended = true;
+            int k = 0;
             foreach (var (g, loaded) in _activeAsLoaded)
             {
-                bool active = loaded;
-                foreach (var (target, value) in s.Active) if (target == g) { active = value; break; }
+                bool active = Saved(s.Active, k++, g, loaded);
                 if (g.activeSelf != active) g.SetActive(active);
             }
+            k = 0;
             foreach (var (b, loaded) in _enabledAsLoaded)
             {
-                bool enabled = loaded;
-                foreach (var (target, value) in s.Enabled) if (target == b) { enabled = value; break; }
+                bool enabled = Saved(s.Enabled, k++, b, loaded);
                 if (b.enabled != enabled) b.enabled = enabled;
             }
-            foreach (var (g, loaded) in _layerAsLoaded)
-            {
-                int layer = loaded;
-                foreach (var (target, value) in s.Layers) if (target == g) { layer = value; break; }
-                g.m_Layer = layer;
-            }
+            k = 0;
+            foreach (var (g, loaded) in _layerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
             Physics.Suspended = false;
             foreach (MonoBehaviour script in _touched)
             {
@@ -847,6 +843,18 @@ namespace IGTAP.EngineSim
             _stepFrom = s.StepFrom;
             _stepTo = s.StepTo;
             Player.animator?.SetInteger("Animation", s.Animation);
+        }
+
+        /// <summary>
+        /// The value a snapshot saved for the <paramref name="index"/>-th object tracked since load, or its loaded value if it
+        /// was tracked later. A snapshot lists them in the tracking dictionary's order then, which only grows (insertion order).
+        /// </summary>
+        static TValue Saved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, TValue loaded) where TKey : class
+        {
+            if (index >= saved.Length) return loaded;
+            if (ReferenceEquals(saved[index].target, key)) return saved[index].value;
+            foreach (var (target, value) in saved) if (ReferenceEquals(target, key)) return value;
+            return loaded;
         }
 
         int Animation { get { return Player.animator?.GetInteger("Animation") ?? 0; } }

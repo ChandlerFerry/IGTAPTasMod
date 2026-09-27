@@ -49,9 +49,11 @@ namespace IGTAP.EngineSim
         public readonly struct Box
         {
             public readonly float X0, Y0, X1, Y1;
-            public Box(float x0, float y0, float x1, float y1) { X0 = Math.Min(x0, x1); Y0 = Math.Min(y0, y1); X1 = Math.Max(x0, x1); Y1 = Math.Max(y0, y1); }
+            /// <summary>Goal mode: the box cuts a run only once it has reached this many goals (0: always).</summary>
+            public readonly int After;
+            public Box(float x0, float y0, float x1, float y1, int after = 0) { X0 = Math.Min(x0, x1); Y0 = Math.Min(y0, y1); X1 = Math.Max(x0, x1); Y1 = Math.Max(y0, y1); After = after; }
             public bool Contains(Vector3 p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
-            public override string ToString() { return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}"; }
+            public override string ToString() { return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : ""); }
         }
 
         public readonly string Capabilities;
@@ -72,7 +74,9 @@ namespace IGTAP.EngineSim
         float _maxTimedRank;
         int _minProgress = int.MaxValue, _maxProgress = -1;
         float[] _near;
-        const int SnapshotBytes = 32 << 10;
+        // Each worker's share of half the memory for its states, divided by what its captures allocate (measured: a state
+        // after a FloatingOrigin rebase or in a big economy is several times a plain course's).
+        long _stateBudget;
         public int StatesPerWorker { get; private set; }
         int _cells;
 
@@ -100,7 +104,8 @@ namespace IGTAP.EngineSim
         {
             var threads = new Thread[workers];
             _workers = new Worker[workers];
-            StatesPerWorker = (int)Math.Max(512, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 2 / SnapshotBytes / workers);
+            _stateBudget = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 2 / workers;
+            StatesPerWorker = (int)Math.Max(512, _stateBudget / Worker.StartStateBytes);
             _partitions = Enumerable.Range(0, workers).Select(i => _memory == null ? new List<Memory.Source>()
                 : _memory.Sources.Where((s, k) => k % workers == i).ToList()).ToArray();
             for (int i = 0; i < workers; i++)
@@ -160,12 +165,16 @@ namespace IGTAP.EngineSim
             return ((long)Mathf.FloorToInt(world.x / cell) << 32) | (uint)Mathf.FloorToInt(world.y / cell);
         }
 
+        /// <summary>
+        /// Every worker's visited cells: while they run, the copies each made of its own at the last <see cref="Export"/>; once
+        /// stopped (and joined), their maps themselves.
+        /// </summary>
         public Dictionary<long, float> Visits()
         {
             var all = new Dictionary<long, float>();
             foreach (Worker w in _workers ?? Array.Empty<Worker>())
-                if (w?.Visits != null)
-                    foreach (var v in w.Visits)
+                if ((_stop ? w?.Visits : w?.LastHandover?.Visits) is Dictionary<long, float> visits)
+                    foreach (var v in visits)
                         if (!all.TryGetValue(v.Key, out float t) || v.Value < t) all[v.Key] = v.Value;
             return all;
         }
@@ -270,9 +279,34 @@ namespace IGTAP.EngineSim
                 Inputs = c.Cell.Source.GetRange(0, Math.Min(c.Cell.Length, c.Cell.Source.Count)) };
         }
 
+        /// <summary>
+        /// Goal mode: the window's inputs to up to <paramref name="max"/> filed cells whose goals reached pass
+        /// <paramref name="progress"/> and whose square is within <paramref name="dx"/>, <paramref name="dy"/> units of the
+        /// capture-frame point's, nearest first. Cells in <paramref name="skip"/> are left out; the ones returned are added to it.
+        /// </summary>
+        public List<List<InputTick>> Near(Vector2 at, Func<int, bool> progress, float dx, float dy, HashSet<long> skip, int max)
+        {
+            int cx = Mathf.FloorToInt(at.x / Worker.CellSize), cy = Mathf.FloorToInt(at.y / Worker.CellSize);
+            int sx = Mathf.CeilToInt(dx / Worker.CellSize), sy = Mathf.CeilToInt(dy / Worker.CellSize);
+            var near = new List<(int d, long key, Cell cell)>();
+            foreach (var pair in _archive)
+            {
+                if (pair.Key >= 0 || skip.Contains(pair.Key) || !progress(Worker.GoalProgress(pair.Key))) continue;
+                long place = -1 - pair.Key;
+                // Place keeps 16 bits of each square index: compare them wrapped.
+                int x = (short)(((place >> 16) - cx) & 0xFFFF), y = (short)((place - cy) & 0xFFFF);
+                if (Math.Abs(x) <= sx && Math.Abs(y) <= sy) near.Add((Math.Abs(x) + Math.Abs(y), pair.Key, pair.Value));
+            }
+            return near.OrderBy(n => n.d).Take(max).Select(n =>
+            {
+                skip.Add(n.key);
+                return n.cell.Source.GetRange(0, Math.Min(n.cell.Length, n.cell.Source.Count));
+            }).ToList();
+        }
+
         sealed class Worker
         {
-            const float CellSize = 48f;
+            internal const float CellSize = 48f;
             const float SegmentSlack = .2f;
             const int StateEvery = 16;
             // Each worker keeps only the states it made (a snapshot holds its own world's objects), and a cell it lacks one
@@ -359,6 +393,7 @@ namespace IGTAP.EngineSim
             {
                 public List<Memory.Source> Pending;
                 public List<InputTick> Plateau;
+                public Dictionary<long, float> Visits;
             }
             public volatile Handover LastHandover;
             public volatile int Exported;
@@ -437,6 +472,7 @@ namespace IGTAP.EngineSim
                 {
                     Pending = _restore.ToList(),
                     Plateau = _bestInputs != null && !Beats(sharedTime, sharedTicks, _best, _bestRunTicks) ? _bestInputs : null,
+                    Visits = Visits == null ? null : new Dictionary<long, float>(Visits),
                 };
                 Exported = generation;
             }
@@ -860,7 +896,7 @@ namespace IGTAP.EngineSim
             {
                 while (_captureNext < _capturePath.Count && _capturePath[_captureNext].Length < tick) _captureNext++;
                 if (_captureNext == _capturePath.Count || _capturePath[_captureNext].Length != tick) return false;
-                SimSnapshot state = _sim.Capture(tick);
+                SimSnapshot state = Capture(tick);
                 state.Waypoints = _waypoints;
                 while (_captureNext < _capturePath.Count && _capturePath[_captureNext].Length == tick) Keep(_capturePath[_captureNext++], state);
                 if (_captureNext < _capturePath.Count) return false;
@@ -868,11 +904,24 @@ namespace IGTAP.EngineSim
                 return true;
             }
 
+            public const int StartStateBytes = 32 << 10;
+            double _stateBytes = StartStateBytes;
+
+            SimSnapshot Capture(int tick)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                SimSnapshot state = _sim.Capture(tick);
+                _stateBytes += (GC.GetAllocatedBytesForCurrentThread() - before - _stateBytes) / 64;
+                return state;
+            }
+
             void Keep(Cell cell, SimSnapshot state)
             {
                 if (_states.TryGetValue(cell, out LinkedListNode<(Cell cell, SimSnapshot state)> node)) _recent.Remove(node);
                 _states[cell] = _recent.AddFirst((cell, state));
-                while (_recent.Count > _owner.StatesPerWorker)
+                int cap = (int)Math.Max(512, _owner._stateBudget / Math.Max(1024.0, _stateBytes));
+                _owner.StatesPerWorker = cap;
+                while (_recent.Count > cap)
                 {
                     _states.Remove(_recent.Last.Value.cell);
                     _recent.RemoveLast();
@@ -1450,7 +1499,7 @@ namespace IGTAP.EngineSim
                     if (path == null) return;
                     if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
                         lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
-                    foreach (Box box in path.Avoid) if (box.Contains(p)) _avoided = true;
+                    foreach (Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
                 };
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
@@ -1551,7 +1600,7 @@ namespace IGTAP.EngineSim
             // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,
             // moss 44, momentum x 45-47 and y 48-50 (a course: a wall clip's wall behind 45-46, and before the timer the Motion
             // bits 47-49), waypoints or goal progress 51-61, blue blocks 62.
-            const int ProgressShift = 51;
+            internal const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
             static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources)
@@ -1601,13 +1650,13 @@ namespace IGTAP.EngineSim
                 return -1 - (((long)progress << ProgressShift) | place);
             }
 
-            static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> ProgressShift) & 0x7FF); }
+            internal static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> ProgressShift) & 0x7FF); }
 
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {
                 bool better = !_archive.TryGetValue(key, out Cell cell) || Earlier(rank, tick, cell);
                 bool resumable = tick > 0 && tick < inputs.Count && !_sim.Engine.InputsExhausted;
-                SimSnapshot state = resumable && (better || states != null && tick % StateEvery == 0) ? _sim.Capture(tick) : null;
+                SimSnapshot state = resumable && (better || states != null && tick % StateEvery == 0) ? Capture(tick) : null;
                 if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
