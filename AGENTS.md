@@ -35,11 +35,11 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
-- The TAS keeps the player body's interpolation off, and with it off `Movement.Update`'s step-up repeats in every
-  rendered frame. The step-up gate (`MacroEngine.AllowStepUp`) allows one step-up per physics tick (at most 56 units),
-  which is what turbo does, so 1x playback, turbo and offline climb the same. The overlay shows
-  `INTERPOLATION OFF (56u STEP CAP)`. Don't raise the cap: turbo can't reproduce a second lift in one tick (README
-  `### Rules`).
+- The player body's interpolation stays on, as the game ships it: `Movement.FixedUpdate` reads the last frame's blend
+  and its position writes pull the body back by the lag, and the step-up runs ungated in every frame. 1x playback runs
+  on a fixed 280 fps clock; turbo and the offline engine model the same frames (`MacroEngine.FrameGrid`), so all three
+  play alike. The overlay shows `INTERPOLATION ON (280 FPS CLOCK)`. Routes found before this (interpolation off, 56u
+  step cap) have to be solved again.
 - Turbo and the offline engine run `FloatingOrigin`'s rebase as 1x does (the world moves back once the player is
   17500 from scene (0, 0)), so Float Ultras and any route that crosses the sphere judge, replay and play back alike.
 

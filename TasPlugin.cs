@@ -168,14 +168,15 @@ namespace IGTAPTasMod
             if (dropped != 2) Log.LogWarning("Vman credits: expected ForceCrash and PlayerPrefs.SetInt, dropped " + dropped + " calls.");
         }
 
-        // Three game scripts read the wall clock (Time.unscaledDeltaTime / unscaledTime), which Time.captureDeltaTime leaves
-        // alone, so a fixed-clock probe still varied with real frame times:
+        // 1x playback runs on a fixed clock (PacePlayback, FixedClockStep). Three game scripts read the wall clock
+        // (Time.unscaledDeltaTime / unscaledTime), which Time.captureDeltaTime leaves alone, so playback would still vary with
+        // real frame times:
         // - Movement.TimeStop's freeze (IE_TimeStop) counts unscaledDeltaTime: it froze for 3, 8 and 7 frames at 240 fps,
         //   each one a Movement.Update that can step up;
         // - cameraMover.LateUpdate eases the camera by unscaledDeltaTime, and the camera decides which clones are on screen
         //   (clonesLoD) and so how they pay;
         // - ObjectBobber.FixedUpdate bobs its object by unscaledTime.
-        // Under the fixed clock they read the fixed clock's frame step and its running total instead (FixedFrameStep,
+        // While playback is paced they read the fixed clock's frame step and its running total instead (FixedFrameStep,
         // FixedUnscaledTime); otherwise the wall clock, as before. timer.Update (the play-time display) is left alone.
         private void PatchWallClock()
         {
@@ -218,13 +219,13 @@ namespace IGTAPTasMod
         /// <summary>This frame's unscaled length: the fixed clock's step while it runs, else the wall clock's.</summary>
         static float FixedFrameStep()
         {
-            return Instance != null && Instance.FixedClock ? Instance._clockFrame : Time.unscaledDeltaTime;
+            return Instance != null && Instance._playbackPaced ? Instance._clockFrame : Time.unscaledDeltaTime;
         }
 
         /// <summary>Unscaled time: the fixed clock's frames summed from its start while it runs, else the wall clock's.</summary>
         static float FixedUnscaledTime()
         {
-            return Instance != null && Instance.FixedClock ? (float)Instance._clockTotal : Time.unscaledTime;
+            return Instance != null && Instance._playbackPaced ? (float)Instance._clockTotal : Time.unscaledTime;
         }
 
         internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
@@ -246,8 +247,7 @@ namespace IGTAPTasMod
             if (Instance == null) return true;
             if (!IsMenuPlayer(__instance))
             {
-                Instance.LockInterpolation(__instance);
-                Instance._engine.BeginStepUpWindow();
+                Instance.KeepInterpolation(__instance);
                 __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
                 Instance.OverlayBeforeTick(__instance);
             }
@@ -296,7 +296,7 @@ namespace IGTAPTasMod
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Instance.ApplyTechAbilities(macro, movement);
                 Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
-                Instance.SnapCameraForFixedClock(movement);
+                Instance.SnapCameraAtPlaybackStart(movement);
                 Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }
             return true;
@@ -373,18 +373,11 @@ namespace IGTAPTasMod
             __0 = Instance._engine.StickFor(__instance);
         }
 
-        /// <summary>
-        /// The step-up gate (MacroEngine.AllowStepUp), while the TAS holds the player body's interpolation off: a second lift
-        /// between two physics ticks is undone and its animation skipped.
-        /// </summary>
-        private static bool BeforeSteppedUp(StepUpAnimationScript __instance, Vector3 __0)
+        private static void BeforeSteppedUp(StepUpAnimationScript __instance)
         {
-            if (Instance == null) return true;
+            if (Instance == null) return;
             Movement player = __instance.GetComponentInParent<Movement>();
-            if (player == null || IsMenuPlayer(player)) return true;
-            if (!Instance.ProbeKeepsGameInterpolation(player) && !Instance._engine.AllowStepUp(player.transform, __0)) return false;
-            Instance.TechSteppedUp(player);
-            return true;
+            if (player != null && !IsMenuPlayer(player)) Instance.TechSteppedUp(player);
         }
 
         private static void BeforeWallTouch(Movement __instance, bool touchedGround)
@@ -1019,7 +1012,6 @@ namespace IGTAPTasMod
             return _newGameStart;
         }
 
-        const int PlaybackFrameRate = 280;
         const float DefaultWalkSlowdown = 10f;
         bool _playbackPaced;
         float _savedMaximumDeltaTime;
@@ -1039,7 +1031,7 @@ namespace IGTAPTasMod
                     _savedVSyncCount = QualitySettings.vSyncCount;
                     _savedTargetFrameRate = Application.targetFrameRate;
                     Time.maximumDeltaTime = Time.fixedDeltaTime;
-                    _pacedFps = _probe != null && _probe.fps > 0 ? _probe.fps : PlaybackFrameRate;
+                    _pacedFps = _probe != null && _probe.fps > 0 ? _probe.fps : MacroEngine.PlaybackFrameRate;
                     _clockNext = 1f / _pacedFps;
                     _clockTotal = 0.0;
                 }
@@ -1055,7 +1047,6 @@ namespace IGTAPTasMod
             // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
             if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
             if (Application.targetFrameRate != _pacedFps) Application.targetFrameRate = _pacedFps;
-            if (!FixedClock) return;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
             _clockTotal += _clockFrame;
@@ -1068,16 +1059,13 @@ namespace IGTAPTasMod
         float _clockFrame, _clockNext;
         double _clockTotal;
 
-        /// <summary>A 1x playback on the fixed clock (a probe's <c>fixedClock</c>): game time and freezes ignore the wall clock.</summary>
-        bool FixedClock { get { return _playbackPaced && _probe != null && _probe.fixedClock; } }
-
         /// <summary>
-        /// At a fixed-clock probe's start: the camera eased on the wall clock until now, so it starts settled on the player,
-        /// and the clones it frames (clonesLoD) pay the same from the first tick.
+        /// At a playback's start: the camera eased on the wall clock until now, so it starts settled on the player, and the
+        /// clones it frames (clonesLoD) pay the same from the first tick.
         /// </summary>
-        void SnapCameraForFixedClock(Movement movement)
+        void SnapCameraAtPlaybackStart(Movement movement)
         {
-            if (_probe != null && _probe.fixedClock && movement != null) SavestateService.SnapCamera(movement.transform.position);
+            if (movement != null) SavestateService.SnapCamera(movement.transform.position);
         }
 
         /// <summary>
@@ -1246,16 +1234,15 @@ namespace IGTAPTasMod
                 : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
         }
 
-        /// <summary>The player body's interpolation as the game set it, before the lock first changed it.</summary>
-        RigidbodyInterpolation2D? _gameInterpolation;
-
-        private void LockInterpolation(Movement movement)
+        /// <summary>
+        /// The player body's interpolation stays on, as the game ships it (README "### Rules"): playback, turbo and the offline
+        /// engine all model it (MacroEngine.FrameGrid).
+        /// </summary>
+        private void KeepInterpolation(Movement movement)
         {
             if (_playerBody == null || _playerBody.gameObject != movement.gameObject) _playerBody = movement.GetComponent<Rigidbody2D>();
-            if (_playerBody == null) return;
-            if (_gameInterpolation == null) _gameInterpolation = _playerBody.interpolation;
-            RigidbodyInterpolation2D wanted = ProbeKeepsGameInterpolation(movement) ? _gameInterpolation.Value : RigidbodyInterpolation2D.None;
-            if (_playerBody.interpolation != wanted) _playerBody.interpolation = wanted;
+            if (_playerBody != null && _playerBody.interpolation != RigidbodyInterpolation2D.Interpolate)
+                _playerBody.interpolation = RigidbodyInterpolation2D.Interpolate;
         }
 
         private void DuplicateMacro()

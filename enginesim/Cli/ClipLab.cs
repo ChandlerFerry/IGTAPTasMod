@@ -70,20 +70,6 @@ namespace IGTAP.EngineSim.Cli
             public List<InputTick> Prefix = new List<InputTick>();
             public int Horizon = 40;
             public int Top = 40;
-            public int UpdatesPerTick = 1;
-            public float Fps;
-        }
-
-        /// <summary>
-        /// 1x frames after a physics tick, as the probe models them: updatesPerTick − 1 more Movement.Update calls, plus
-        /// duration × fps for each TimeStop (the dash freeze) the tick called. Returns how many ran.
-        /// </summary>
-        static int ExtraFrames(Simulation sim, Lab lab, ref float freeze)
-        {
-            int frames = lab.UpdatesPerTick - 1 + (lab.Fps > 0f ? (int)Math.Round(freeze * lab.Fps) : 0);
-            freeze = 0f;
-            for (int i = 0; i < frames; i++) sim.ExtraUpdate();
-            return frames;
         }
 
         /// <summary>
@@ -125,8 +111,6 @@ namespace IGTAP.EngineSim.Cli
             if (lab.Branches.Count == 0) lab.Branches.Add(("prefix", new List<InputTick>()));
             if (root.TryGetProperty("horizon", out JsonElement h)) lab.Horizon = h.GetInt32();
             if (root.TryGetProperty("top", out JsonElement top)) lab.Top = top.GetInt32();
-            if (root.TryGetProperty("updatesPerTick", out JsonElement u)) lab.UpdatesPerTick = Math.Max(1, u.GetInt32());
-            if (root.TryGetProperty("fps", out JsonElement fps)) lab.Fps = fps.GetSingle();
             return lab;
         }
 
@@ -257,26 +241,18 @@ namespace IGTAP.EngineSim.Cli
             float maxY = float.NegativeInfinity, maxX = float.NegativeInfinity, minX = float.PositiveInfinity, launch = float.NegativeInfinity, bodyVy = float.NegativeInfinity, bodyVx = 0f, launchVx = 0f;
             int maxStep = 0;
             float endY = 0f;
-            float freeze = 0f;
-            Hooks.TimeStop = (_, duration) => freeze += duration;
-            RunResult r;
-            try
+            RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
             {
-                r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
-                {
-                    ExtraFrames(sim, lab, ref freeze);
-                    Vector3 p = sim.PlayerWorld;
-                    if (p.y > maxY) { maxY = p.y; maxStep = step; }
-                    maxX = Math.Max(maxX, p.x); minX = Math.Min(minX, p.x);
-                    Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
-                    var body = sim.Physics.PlayerBody();
-                    if (v.y + m.y > launch) { launch = v.y + m.y; launchVx = v.x + m.x; }
-                    bodyVy = Math.Max(bodyVy, body.vy);
-                    if (Math.Abs(body.vx) > Math.Abs(bodyVx)) bodyVx = body.vx;
-                    endY = p.y;
-                });
-            }
-            finally { Hooks.TimeStop = null; }
+                Vector3 p = sim.PlayerWorld;
+                if (p.y > maxY) { maxY = p.y; maxStep = step; }
+                maxX = Math.Max(maxX, p.x); minX = Math.Min(minX, p.x);
+                Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+                var body = sim.Physics.PlayerBody();
+                if (v.y + m.y > launch) { launch = v.y + m.y; launchVx = v.x + m.x; }
+                bodyVy = Math.Max(bodyVy, body.vy);
+                if (Math.Abs(body.vx) > Math.Abs(bodyVx)) bodyVx = body.vx;
+                endY = p.y;
+            });
             return new Outcome { Start = startIndex, Branch = branchIndex, MaxY = maxY, MaxYStep = maxStep, EndY = endY, MaxX = maxX, MinX = minX,
                 LaunchVy = launch, BodyVy = bodyVy, BodyVx = bodyVx, LaunchVx = launchVx, End = r.EndReason };
         }
@@ -365,21 +341,9 @@ namespace IGTAP.EngineSim.Cli
             string[] extra = { "wallJumpFacing", "dashFramesRemaining", "jumpBuffer", "wallCoyoteFrames", "wallJumpDirection", "wallJumpsLeft", "airDashesLeft", "dashCooldown" };
             FieldInfo[] extraInfos = extra.Select(n => typeof(Movement).GetField(n, Fields)).ToArray();
             var rows = new List<Dictionary<string, object>>();
-            Dictionary<string, object> first = Probe.Row(sim, -1, 0, extra, extraInfos);
+            Dictionary<string, object> first = Probe.Row(sim, -1, extra, extraInfos);
             rows.Add(first);
-            float freeze = 0f;
-            Hooks.TimeStop = (_, duration) => freeze += duration;
-            RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
-            {
-                float before = sim.PlayerWorld.y;
-                bool froze = freeze > 0f;
-                int frames = ExtraFrames(sim, lab, ref freeze);
-                Dictionary<string, object> row = Probe.Row(sim, step, frames, extra, extraInfos);
-                if (frames > 0) row["updateDy"] = (float)Math.Round(sim.PlayerWorld.y - before, 2);
-                if (froze) row["freeze"] = true;
-                rows.Add(row);
-            });
-            Hooks.TimeStop = null;
+            RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step => rows.Add(Probe.Row(sim, step, extra, extraInfos)));
             var sb = new StringBuilder();
             sb.AppendLine("end: " + r.EndReason);
             foreach (var row in rows)
@@ -388,8 +352,7 @@ namespace IGTAP.EngineSim.Cli
                 string tick = input >= 0 && input < inputs.Count ? TickText(inputs[input]) : "";
                 sb.AppendLine($"{row["step"],3} in{input,3} {tick,-12} pos {row["x"],9},{row["y"],9} V {row["vx"],7},{row["vy"],7} m {row["mx"],7},{row["my"],7} "
                     + $"body {row["bvx"],7},{row["bvy"],7} g{B(row["ground"])} w{B(row["wall"])} {row["mode"],-5} d{B(row["dash"])} f{row["f"]} R{B(row["facingRight"])} "
-                    + string.Join(" ", extra.Select(e => e + "=" + (row[e] is float[] a ? string.Join(",", a) : row[e])))
-                    + (row.TryGetValue("updates", out object n) ? $" | +{n} updates dy {row["updateDy"]}" : "") + (row.ContainsKey("freeze") ? " freeze" : ""));
+                    + string.Join(" ", extra.Select(e => e + "=" + (row[e] is float[] a ? string.Join(",", a) : row[e]))));
             }
             string outPath = OptS(args, "--out", null);
             if (outPath != null) File.WriteAllText(outPath, sb.ToString()); else Console.Write(sb);

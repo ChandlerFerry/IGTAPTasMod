@@ -25,6 +25,10 @@ namespace IGTAPTasMod
         // FloatingOrigin.MoveOrigin, started by its LateUpdate and waiting for the next physics step (WaitForFixedUpdate).
         static IEnumerator _rebase;
         static int _tick;
+        // Interpolation (MacroEngine.FrameGrid, as enginesim's Simulation): the body's position at the start and end of the
+        // last physics step, and the shortest TimeStop the tick asked for (its freeze's Update frames).
+        static Vector2 _stepFrom, _stepTo;
+        static float _freezeFor = -1f;
 
         public static bool Active { get; private set; }
 
@@ -36,6 +40,17 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeCancelInvoke))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "StartCoroutine", new[] { typeof(IEnumerator) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
+            harmony.Patch(AccessTools.Method(typeof(Movement), "TimeStop"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
+        }
+
+        /// <summary>
+        /// Two freezes the same tick run side by side and the shorter ends it (its end puts timeScale back), so the tick's
+        /// freeze is the shortest. The coroutine still runs (it stops time, as before).
+        /// </summary>
+        static void BeforeTimeStop(float duration)
+        {
+            if (Active && (_freezeFor < 0f || duration < _freezeFor)) _freezeFor = duration;
         }
 
         static bool BeforeInvoke(MonoBehaviour __instance, string methodName, float time)
@@ -217,6 +232,8 @@ namespace IGTAPTasMod
             /// <summary>FloatingOrigin.currentOrigin, and whether a MoveOrigin was waiting for the next physics step.</summary>
             public Vector3 origin;
             public bool rebasing;
+            /// <summary>The body's position at the start and end of the last physics step (its interpolation's ends).</summary>
+            public Vector2 stepFrom, stepTo;
         }
 
         internal sealed class Vman
@@ -445,6 +462,7 @@ namespace IGTAPTasMod
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
                 pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture(),
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
+                stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
                 movers = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     m => (m, FieldState.Capture(m), m.gameObject.layer)),
                 routines = CaptureRoutines(next) };
@@ -568,6 +586,13 @@ namespace IGTAPTasMod
             }
         }
 
+        /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
+        static Vector3 Place(Transform t, Vector2 at)
+        {
+            t.position = new Vector3(at.x, at.y, t.position.z);
+            return t.position;
+        }
+
         public static int Run(Movement movement, Func<bool> keepRunning, int maxTicks, Action afterTick = null, Snapshot resume = null)
         {
             if (movement == null) throw new InvalidOperationException("Player not found.");
@@ -582,6 +607,11 @@ namespace IGTAPTasMod
             BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
             if (resume != null) RestoreRoutines(resume.routines);
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            Transform player = movement.transform;
+            MacroEngine.FrameGrid frames = MacroEngine.FrameGrid.Playback;
+            _stepFrom = resume != null ? resume.stepFrom : body.position;
+            _stepTo = resume != null ? resume.stepTo : body.position;
             Active = true;
             if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
@@ -598,6 +628,9 @@ namespace IGTAPTasMod
                         if (target != null) AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
                     }
                     Resume(Wait.Seconds);
+                    // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
+                    Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.LastAlpha));
+                    _freezeFor = -1f;
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
                         if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
@@ -609,10 +642,35 @@ namespace IGTAPTasMod
                         ref float cooldown = ref BoxCooldown(box);
                         if (cooldown >= 0f) cooldown -= dt;
                     }
+                    // No write: the blend was never the body's, so the sync before the step leaves the body where it is.
+                    if (player.position == lag) Place(player, _stepTo);
+                    Physics2D.SyncTransforms();
+                    _stepFrom = body.position;
                     Physics2D.Simulate(dt);
+                    _stepTo = body.position;
                     Resume(Wait.FixedUpdate);
+                    FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
+                    Vector3 originBefore = origin != null ? origin.currentOrigin : Vector3.zero;
                     ResumeRebase();
-                    UpdateMethod.Invoke(movement, null);
+                    if (origin != null && origin.currentOrigin != originBefore)
+                    {
+                        Vector2 by = origin.currentOrigin - originBefore;
+                        _stepFrom += by;
+                        _stepTo += by;
+                    }
+                    // The tick's rendered frames, the dash freeze's first: Update at each blend. A step-up write moves the body
+                    // there and drops the interpolation, so the frames after show it.
+                    int frozen = _freezeFor >= 0f ? frames.FrozenFrames(_freezeFor) : 0;
+                    for (int k = 0; k < frames.Alphas.Length; k++)
+                        for (int repeat = k == 0 ? frozen : 0; repeat >= 0; repeat--)
+                        {
+                            Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));
+                            UpdateMethod.Invoke(movement, null);
+                            if (player.position == at) continue;
+                            Physics2D.SyncTransforms();
+                            _stepFrom = _stepTo = player.position;
+                        }
+                    Place(player, _stepTo);
                     Resume(Wait.Frame);
                     foreach (clonesScript c in clones)
                         if (c != null && c.isActiveAndEnabled) StepClones(c, dt);

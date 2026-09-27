@@ -16,7 +16,7 @@ namespace IGTAPTasMod
     /// <summary>
     /// 1x probes: play exact inputs at normal speed from a category's quick restart or a studio savestate, and log the player
     /// on every physics tick and every rendered frame (Movement.Update runs per frame, also while a dash's TimeStop holds
-    /// physics). Turbo and enginesim step Update once per tick, so this is the ground truth for anything frame-rate bound.
+    /// physics). Turbo and enginesim model those frames (MacroEngine.FrameGrid); this is the ground truth they are checked on.
     /// </summary>
     public sealed partial class TasPlugin
     {
@@ -27,11 +27,8 @@ namespace IGTAPTasMod
             public string name, route, savestateId, file;
             public long captureAt = -1;
             public string capturedSavestateId;
-            public bool gameInterpolation;
-            /// <summary>The playback's frame rate (<see cref="PacePlayback"/>; unset: its usual 280 fps).</summary>
+            /// <summary>The playback's frame rate (<see cref="PacePlayback"/>; unset: MacroEngine.PlaybackFrameRate, the rate turbo and enginesim model).</summary>
             public int fps;
-            /// <summary>Advance game time by a fixed frame grid (<see cref="FixedClockStep"/>), not by wall time.</summary>
-            public bool fixedClock;
             /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
             public bool started;
@@ -70,9 +67,7 @@ namespace IGTAPTasMod
                         ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
                     _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields,
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
-                        gameInterpolation = Text(body, "interpolation") == "game",
-                        fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"],
-                        fixedClock = body["fixedClock"] != null && (bool)body["fixedClock"] };
+                        fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"] };
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
@@ -87,16 +82,9 @@ namespace IGTAPTasMod
                     return new { ok = true };
                 }
                 case "/api/probe/status":
-                    return new { ok = true, running = _probe != null, name = _probe?.name, lastFile = _lastProbeFile,
-                        gameInterpolation = _gameInterpolation?.ToString() };
+                    return new { ok = true, running = _probe != null, name = _probe?.name, lastFile = _lastProbeFile };
             }
             throw new InvalidOperationException("Unknown probe command: " + path);
-        }
-
-        /// <summary>A probe with interpolation "game" plays with the body's interpolation as the game set it (the TAS keeps it off).</summary>
-        bool ProbeKeepsGameInterpolation(Movement movement)
-        {
-            return _probe != null && _probe.gameInterpolation && _gameInterpolation != null && !TurboRunner.Active && ProbeActive(movement);
         }
 
         bool ProbeActive(Movement movement)
@@ -243,8 +231,7 @@ namespace IGTAPTasMod
             WriteJsonAtomic(file, new
             {
                 _probe.name, _probe.route, _probe.savestateId, capturedSavestateId = _probe.capturedSavestateId,
-                result = _engine.Status, targetFrameRate = _probe.fps > 0 ? _probe.fps : PlaybackFrameRate, vSync = 0,
-                gameInterpolation = _gameInterpolation?.ToString(), keptGameInterpolation = _probe.gameInterpolation, fixedClock = _probe.fixedClock,
+                result = _engine.Status, targetFrameRate = _probe.fps > 0 ? _probe.fps : MacroEngine.PlaybackFrameRate, vSync = 0,
                 ticks = _probe.ticks, rows = _probe.rows,
             }, false);
             Logger.LogInfo("Probe " + _probe.name + ": " + _probe.rows.Count + " rows -> " + file);

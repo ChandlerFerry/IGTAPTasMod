@@ -208,7 +208,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A step-up the gate let through (BeforeSteppedUp, in Movement.Update after this tick). An inwall climb is one whose
+        /// A step-up (BeforeSteppedUp, in a Movement.Update frame after this tick). An inwall climb is one whose
         /// forward rays looked the other way from the dot (wallJumpFacing, set at the top of the tick, against facingRight):
         /// a dash turned into the wall. The wallbounce that follows is the Inwall wallbounce.
         /// </summary>

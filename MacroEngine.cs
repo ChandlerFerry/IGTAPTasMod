@@ -109,31 +109,46 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The step-up gate: <c>Movement.Update</c>'s step-up (806-816) lifts the player at most once between two physics
-        /// ticks, as turbo (the judge, and the offline engine) runs it: one Update per tick. The TAS keeps the player body's
-        /// interpolation off, and with it off the step-up lifts again in every rendered frame until the next tick (Inwall
-        /// wallbounce: six 56-unit lifts at 280 fps), so playback would leave the route turbo judged
-        /// (docs/human-input.md, Inwall wallbounce). A lift is at most 56 units (the dash's down ray starts 20 up).
+        /// 1x playback's frame rate. The player body's interpolation stays on, as the game ships it, and playback runs on a
+        /// fixed clock at this rate (TasPlugin.FixedClockStep); turbo and the offline engine model the same frames
+        /// (<see cref="FrameGrid"/>): each tick's Movement.Update frames at their interpolation blends, a dash freeze's frames,
+        /// and FixedUpdate reading the last frame's blend.
         /// </summary>
-        public const int MaxStepUpLift = 56;
-        private bool _steppedUp;
-
-        /// <summary>Before Movement.FixedUpdate: a new step-up window starts.</summary>
-        public void BeginStepUpWindow() { _steppedUp = false; }
+        public const int PlaybackFrameRate = 280;
 
         /// <summary>
-        /// At a step-up (<c>StepUpAnimationScript.onSteppedUp</c>, its argument the position before minus after): false, and
-        /// the player put back where the step-up found it, when this window already stepped up.
+        /// The fixed clock's frames between two physics ticks (TasPlugin.FixedClockStep): half a frame after the tick, then one
+        /// every 1/fps while inside it. Alphas are the interpolation blends (frame time since the tick / 0.02).
+        /// FrozenFrames counts a TimeStop's frames as its loop counts the fixed clock's steps (TasPlugin.PatchWallClock): the
+        /// frame before the tick's, then the crossing, then a frame each.
         /// </summary>
-        public bool AllowStepUp(Transform player, Vector3 offset)
+        public sealed class FrameGrid
         {
-            if (_steppedUp)
+            public static readonly FrameGrid Playback = new FrameGrid(PlaybackFrameRate);
+
+            public readonly float[] Alphas;
+            public float LastAlpha { get { return Alphas[Alphas.Length - 1]; } }
+            readonly float _prevStep, _crossStep, _frozenStep;
+
+            public FrameGrid(int fps)
             {
-                player.position += offset;
-                return false;
+                double frame = 1.0 / fps, offset = frame / 2, tick = 0.02f;
+                var alphas = new List<float>();
+                for (double since = offset; since < tick; since += frame) alphas.Add((float)(since / tick));
+                Alphas = alphas.ToArray();
+                double last = offset + (Alphas.Length - 1) * frame;
+                _crossStep = (float)(tick + offset - last);
+                _prevStep = Alphas.Length >= 2 ? (float)frame : _crossStep;
+                _frozenStep = Alphas.Length >= 2 ? (float)frame : (float)tick;
             }
-            _steppedUp = true;
-            return true;
+
+            public int FrozenFrames(float duration)
+            {
+                float i = _prevStep;
+                int frames = 0;
+                while (i <= duration) { frames++; i += frames == 1 ? _crossStep : _frozenStep; }
+                return frames;
+            }
         }
 
         public void Run(MacroDefinition macro, bool synchronizeStart = false, bool requireCourseFinish = false,

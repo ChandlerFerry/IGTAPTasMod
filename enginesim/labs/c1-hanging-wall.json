@@ -231,7 +231,5 @@
   }
  ],
  "horizon": 40,
- "top": 20,
- "updatesPerTick": 1,
- "fps": 0
+ "top": 20
 }

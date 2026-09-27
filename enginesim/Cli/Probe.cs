@@ -32,12 +32,7 @@ namespace IGTAP.EngineSim.Cli
             if (probe.TryGetProperty("start", out JsonElement start)) ApplyStart(sim, start, Path.GetDirectoryName(Path.GetFullPath(args[1])));
 
             List<InputTick> prefix = Ticks(probe, "prefix");
-            int updatesPerTick = probe.TryGetProperty("updatesPerTick", out JsonElement u) ? Math.Max(1, u.GetInt32()) : 1;
-            float fps = probe.TryGetProperty("fps", out JsonElement f) ? f.GetSingle() : 0f;
             int extraTicks = probe.TryGetProperty("extraTicks", out JsonElement e) ? e.GetInt32() : 30;
-            // 1x with interpolation on at this fixed-clock rate (Simulation.InterpolationFps): its frames replace updatesPerTick/fps.
-            sim.InterpolationFps = probe.TryGetProperty("interpolationFps", out JsonElement ifps) ? ifps.GetInt32() : 0;
-            bool legacyFrames = sim.InterpolationFps == 0;
             string[] extraFields = probe.TryGetProperty("fields", out JsonElement fe) ? fe.EnumerateArray().Select(x => x.GetString()).ToArray() : Array.Empty<string>();
             FieldInfo[] extraInfos = extraFields.Select(n => typeof(Movement).GetField(n, Fields)
                 ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray();
@@ -51,27 +46,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 List<InputTick> inputs = prefix.Concat(ticks).ToList();
                 var log = new List<Dictionary<string, object>>();
-                float freeze = 0f;
-                var gameTimeStop = Hooks.TimeStop;
-                if (legacyFrames) Hooks.TimeStop = (_, duration) => freeze += duration;
-                RunResult r;
-                try
-                {
-                    r = sim.Run(inputs, null, extraTicks: extraTicks, onStep: step =>
-                    {
-                        Vector3 before = sim.PlayerWorld;
-                        int frames = !legacyFrames ? 0 : updatesPerTick - 1 + (fps > 0f ? (int)Math.Round(freeze * fps) : 0);
-                        bool froze = freeze > 0f;
-                        freeze = 0f;
-                        for (int i = 0; i < frames; i++) sim.ExtraUpdate();
-                        Vector3 p = sim.PlayerWorld;
-                        Dictionary<string, object> row = Row(sim, step, frames, extraFields, extraInfos);
-                        if (frames > 0) { row["updateDy"] = Round(p.y - before.y); row["updateDx"] = Round(p.x - before.x); }
-                        if (froze) row["freeze"] = true;
-                        log.Add(row);
-                    });
-                }
-                finally { Hooks.TimeStop = gameTimeStop; }
+                RunResult r = sim.Run(inputs, null, extraTicks: extraTicks, onStep: step => log.Add(Row(sim, step, extraFields, extraInfos)));
                 output.Add(new { name, finished = r.Finished, time = r.Time, end = r.EndReason, ticks = log });
             }
             string json = JsonSerializer.Serialize(new { branches = output }, new JsonSerializerOptions { WriteIndented = false });
@@ -87,7 +62,7 @@ namespace IGTAP.EngineSim.Cli
             Dash = F("dashActive"), Since = F("framesSinceLastDash"), Facing = F("facingRight"), Dir = F("dashDirection");
 
         /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, extra fields.</summary>
-        internal static Dictionary<string, object> Row(Simulation sim, int step, int frames, string[] extraFields, FieldInfo[] extraInfos)
+        internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
             Vector3 p = sim.PlayerWorld;
             Vector2 v = (Vector2)Vel.GetValue(sim.Player), m = (Vector2)Mom.GetValue(sim.Player), d = (Vector2)Dir.GetValue(sim.Player);
@@ -101,7 +76,6 @@ namespace IGTAP.EngineSim.Cli
                 ["dash"] = Dash.GetValue(sim.Player), ["f"] = Since.GetValue(sim.Player), ["facingRight"] = Facing.GetValue(sim.Player),
                 ["dashDir"] = new[] { Round(d.x), Round(d.y) },
             };
-            if (frames > 0) row["updates"] = frames;
             for (int i = 0; i < extraFields.Length; i++) row[extraFields[i]] = Plain(extraInfos[i].GetValue(sim.Player));
             return row;
         }

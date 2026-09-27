@@ -24,7 +24,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         readonly string _trace;
-        readonly int _threads, _window, _onlyGoal, _interpolationFps;
+        readonly int _threads, _window, _onlyGoal;
         readonly double _minutes, _windowMinutes, _stallMinutes;
         readonly bool _submit, _fresh, _unsolved;
         string _name, _caps, _runFile, _closestFile, _outDir;
@@ -70,7 +70,6 @@ namespace IGTAP.EngineSim.Cli
             _fresh = args.Contains("--fresh");
             _unsolved = args.Contains("--unsolved");
             _onlyGoal = Solve.Option(args, "--goal", 0);
-            _interpolationFps = Solve.Option(args, "--interpolation-fps", 0);
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
         }
 
@@ -90,9 +89,7 @@ namespace IGTAP.EngineSim.Cli
             _runFile = Path.Combine(dir, "fulltas", _name + ".json");
             _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
             _outDir = Path.Combine(dir, "offline-best");
-            string worldPath = Path.ChangeExtension(_trace, null) + ".world.json";
-            JsonElement start = header.GetProperty("start");
-            _create = Solve.Creator(_trace, header, _interpolationFps);
+            _create = Solve.Creator(_trace, header);
             _clock = Stopwatch.StartNew();
             _eval = _create();
             _origin = _eval.Start;

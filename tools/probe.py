@@ -1,10 +1,11 @@
 """Run a 1x probe in the game and summarise its log (ProbeRunner.cs; enginesim/README.md#probe).
 
-  probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--interpolation game] [--fps N] [--fixed-clock] [--omni]
+  probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--fps N] [--omni]
   probe.py --show <name>          summarise a probe log already written
 
 route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
-lockX, lockY, turnX}). --fps sets the playback's frame rate (default 280; 50 or more, see enginesim/README.md#probe).
+lockX, lockY, turnX}). --fps sets the playback's fixed clock (default 280, the rate turbo and enginesim model; 50 or
+more, see enginesim/README.md#probe).
 Plays at normal speed from the category's quick restart (or the savestate), waits for the log, and prints each
 physics tick plus every rendered frame where the player moved with no physics tick since the frame before (the moves
 only Update makes: a TimeStop's frames, or several frames between two ticks).
@@ -55,16 +56,11 @@ def main():
     parser.add_argument("ticks")
     parser.add_argument("--savestate", default="")
     parser.add_argument("--capture-at", type=int)
-    parser.add_argument("--interpolation", choices=["off", "game"], default="off",
-                        help="game: keep the player body's interpolation as the game sets it (the TAS forces it off)")
     parser.add_argument("--omni", action="store_true", help="play with the omnidirectional dash too (restored after)")
-    parser.add_argument("--fps", type=int, default=0, help="playback frame rate (default 280), e.g. 60, 144, 240")
-    parser.add_argument("--fixed-clock", action="store_true",
-                        help="advance game time on a fixed frame grid (Time.captureDeltaTime), not wall time")
+    parser.add_argument("--fps", type=int, default=0, help="playback fixed-clock frame rate (default 280), e.g. 60, 144, 240")
     args = parser.parse_args()
     body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "ticks": json.load(open(args.ticks)),
-            "interpolation": args.interpolation, "fps": args.fps,
-            "omniDash": args.omni, "fixedClock": args.fixed_clock}
+            "fps": args.fps, "omniDash": args.omni}
     if args.capture_at is not None:
         body["captureAt"] = args.capture_at
     started = call("/api/probe/run", body)

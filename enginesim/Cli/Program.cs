@@ -104,7 +104,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
-                            + "                                         inputs from it, every tick logged; updatesPerTick/fps model 1x frames\n"
+                            + "                                         inputs from it, every tick logged\n"
                             + "  clip map <trace.json> x0 y0 x1 y1 [step] | clip run <trace.json> <lab.json> [--threads N] [--out csv] [--top N]\n"
                             + "     | clip log <trace.json> <lab.json> <start> <branch>\n"
                             + "                                         lab for any start state (inside walls too): a grid of starts x branches\n"

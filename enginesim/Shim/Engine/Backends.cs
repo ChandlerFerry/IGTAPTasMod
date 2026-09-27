@@ -57,7 +57,6 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, int, float, float> PlayAudio;
         [ThreadStatic] public static Action<object> SwapBlocks;
         [ThreadStatic] public static Action<object, float> TimeStop;
-        [ThreadStatic] public static Action<object, Vector3> SteppedUp;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
         public static void OnWallTouch(object movement, bool touchedGround) { WallTouch?.Invoke(movement, touchedGround); }
@@ -71,6 +70,5 @@ namespace IGTAP.EngineSim
         public static void OnPlayAudio(object audio, int id, float volume, float pitchVariance) { PlayAudio?.Invoke(audio, id, volume, pitchVariance); }
         public static void OnSwapBlocks(object swapper, bool blueActive) { SwapBlocks?.Invoke(swapper); }
         public static void OnTimeStop(object movement, float duration) { TimeStop?.Invoke(movement, duration); }
-        public static void OnSteppedUp(object animation, Vector3 stepUpAmount) { SteppedUp?.Invoke(animation, stepUpAmount); }
     }
 }

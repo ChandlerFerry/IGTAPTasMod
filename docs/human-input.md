@@ -149,13 +149,13 @@ move a press or a dash a few ticks while keeping where the hold ends.
   flips away and turns back for another climb (dash, turned tick, two cling ticks), so a chain of them climbs the wall;
   the speed the dot fell at doesn't change it (the dash replaces `Velocity` and zeroes `momentum`).
 
-  How many lifts one tick gets depends on the frame rate and the body's interpolation. Ungated, in the game at 1x
+  How many lifts one tick gets depends on the frame rate and the body's interpolation. In the game at 1x
   (`probe.py --fps`, from a `lab/` savestate clinging at y −88): 1, 2, 3, 4 and 6 lifts at 50, 100, 150, 200 and 280
   fps with interpolation off; with it on, as the game ships it, 0, 0, 1, 1 and 2. The Course 1 demo chain at 280 fps
-  with interpolation on climbs 112, 56, 56, 56 and its wallbounce reaches the roof (494), so a player can do it. Turbo
-  runs one `Update` per tick: one lift. The step-up gate (`MacroEngine.AllowStepUp`, README "### Rules") holds playback
-  and the offline engine's extra frames to that same one lift per tick, so the chain climbs 56 per dash everywhere and a
-  turbo-judged route plays back the same at 1x. The overlay labels the chain and its wallbounce INWALL WALLBOUNCE
+  with interpolation on climbs 112, 56, 56, 56 and its wallbounce reaches the roof (494), so a player can do it. The
+  TAS keeps interpolation on and plays back on a fixed 280 fps clock; turbo and the offline engine run the same frames
+  (`MacroEngine.FrameGrid`, README "### Rules"), step-ups ungated, so a turbo-judged route plays back the same at 1x.
+  The overlay labels the chain and its wallbounce INWALL WALLBOUNCE
   (`Tech.InwallWallBounce`: a step-up whose forward rays, `wallJumpFacing`, looked away from the dot's facing, then a
   wall kick within 6 ticks).
 

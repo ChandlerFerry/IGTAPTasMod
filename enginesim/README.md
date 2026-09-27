@@ -181,8 +181,8 @@ python tools\enginesim-capture.py route 4_almost_completed 4 wjdsdj # partial ro
 The best file in `offline-best\` reaches the studio by itself (see above); before calling it real, do the checks in
 `AGENTS.md` (trace it with `path`, say what the trick is).
 
-A studio recording is a usable seed: the plugin keeps the player body's interpolation permanently off, so its
-inputs replay in turbo tick for tick, and every sample carries the FloatingOrigin (`originX/Y`) so its position maps to
+A studio recording is a usable seed: its inputs replay in turbo tick for tick (a recording played on the wall clock can
+differ from them where the interpolation lag matters), and every sample carries the FloatingOrigin (`originX/Y`) so its position maps to
 `courses.json`'s frame. A seed may carry quick restarts (`"reset": true` on a tick, the game's `respawn(true)`); they
 survive `solve`'s seeds, best files and archive. Crossing a course's start gate makes the next quick restart land on
 that course's reset point, so a long transition can be seeded as "reach the gate, restart, replay the course's own
@@ -201,7 +201,7 @@ direction, facing, plus any Movement fields listed in `fields`.
              "fields": { "facingRight": true, "airDashesLeft": 1 } },
   "prefix": [ { "x": 1, "held": false, "press": false, "release": false, "dash": false, "dashJump": 0 } ],
   "branches": [ { "name": "dash+jump", "ticks": [ ... ] } ],
-  "updatesPerTick": 1, "fps": 0, "extraTicks": 30, "fields": [ "wallJumpsLeft" ]
+  "extraTicks": 30, "fields": [ "wallJumpsLeft" ]
 }
 ```
 
@@ -210,38 +210,38 @@ is its scene position minus the FloatingOrigin it recorded, so savestates captur
 refused), then a world-frame `position`/`velocity`, `scaleX` and Movement fields by name. Every branch runs `prefix`
 then its own ticks; with no branches the prefix runs alone.
 
-1x frame modelling (off by default, so a probe matches turbo): `updatesPerTick` runs that many `Movement.Update` calls per
-physics tick (a rendered frame rate above 50 fps runs several), and `fps` > 0 runs `duration × fps` more for each
-`TimeStop` (the dash's freeze: at 1x physics waits for real time while `Update` keeps running every frame). Turbo and
-every other command never run them; `hooks.txt` only reports the `TimeStop` call (`OnTimeStop`), whose body stays cut.
-A tick where extra frames ran logs `updates` and the position they moved (`updateDx`, `updateDy`). The step-up gate
-(`MacroEngine.AllowStepUp`, `hooks.txt`'s `OnSteppedUp`, as the plugin's) lets only one of a tick's `Update` calls step
-up, so extra frames never climb past turbo; the in-game probe with `interpolation: "game"` runs ungated.
+Every run models 1x with the player body's interpolation on, on playback's fixed clock (`MacroEngine.FrameGrid` at
+`MacroEngine.PlaybackFrameRate`, as turbo does): before each `FixedUpdate` the transform holds the last frame's blend
+of the body's last two positions (`Simulation.LagForFixedUpdate`), and after the step every frame between two ticks
+runs `Movement.Update` at its blend, a dash freeze's frames first (`InterpolatedFrames`; `hooks.txt` reports the
+`TimeStop` call, whose body stays cut). A step-up in any frame moves the body there. Checked against the plugin's 1x
+probe: Test-No-Omni-Skip's 7.92 inputs at 280 fps (90 ticks, within 0.001, both dying at action 14) and a Course 1
+route at 240 fps (a dash freeze of 12 frames and a step-up, tick for tick).
 
 The in-game counterpart is the plugin's 1x probe (`ProbeRunner.cs`): `POST /api/probe/run {name, route: "1_WJ_DS",
-savestateId?, ticks, captureAt?, interpolation?, fps?, fixedClock?, omniDash?}` plays the ticks at normal speed from the category's quick restart
+savestateId?, ticks, captureAt?, fps?, omniDash?}` plays the ticks at normal speed from the category's quick restart
 (a Full-TAS run's `route: "fulltas/VMAN_NONE"`: from a new game of that run; or the savestate) and writes
 `BepInEx/config/IGTAPTasMod/probes/<name>.json`: one row per physics tick (`kind: "tick"`) and one per rendered frame
 (`kind: "frame"`, with `timeScale`, so a TimeStop's frames show as `timeScale` 0). Positions are in the world frame; each
 row also has the FloatingOrigin (`originX/Y`), `lastHyperY` (scene frame: world y + `originY`), the game time (`time`),
 the camera (`camX/Y` in the world frame, `camSize`) and Cash (`cash`). `captureAt`
 saves a studio savestate (`probe/<name> @<tick>`, with its FloatingOrigin) after that input tick, the start for later
-probes there. Playback renders at 280 fps with vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead. Keep
+probes there. Playback runs on a fixed clock at 280 fps with vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
 position and `layer`, 7 Ground, 0 while `MakeIntangible` holds it).
 
-With `interpolation: "game"`, every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`,
-the dash's `−20`) starts from the transform, which holds the last rendered frame's blend of the body's last two
-positions, so each one pulls the body back by that frame's lag. On the wall clock the lag changes from run to run, and
-so does the route. `fixedClock: true` (`probe.py --fixed-clock`) pins it: every frame's game time is a step on a grid
-half a frame off the physics tick (`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`). Three scripts read the wall
-clock, which `captureDeltaTime` leaves alone (`TasPlugin.PatchWallClock`); under the fixed clock they read its frame
-and its running total instead: `Movement.TimeStop`'s freeze (so a freeze always runs the same number of `Update`
-frames), `cameraMover.LateUpdate` (the camera decides which clones are on screen, `clonesLoD`, and so how they pay) and
-`ObjectBobber`. The camera starts settled on the player (`SavestateService.SnapCamera`). `timer`'s play-time display
-still counts the wall clock.
+Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
+the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
+body back by that frame's lag. On the wall clock the lag changes from run to run, and so does the route; playback's
+fixed clock pins it: every frame's game time is a step on a grid half a frame off the physics tick
+(`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`). Three scripts read the wall clock, which `captureDeltaTime`
+leaves alone (`TasPlugin.PatchWallClock`); during playback they read the fixed clock's frame and its running total
+instead: `Movement.TimeStop`'s freeze (so a freeze always runs the same number of `Update` frames),
+`cameraMover.LateUpdate` (the camera decides which clones are on screen, `clonesLoD`, and so how they pay) and
+`ObjectBobber`. A playback starts with the camera settled on the player (`SavestateService.SnapCamera`). `timer`'s
+play-time display still counts the wall clock.
 
 `POST /api/savestates/place {name?, from?, x?, y?, vx?, vy?, facing?, fields?}` makes a probe start anywhere, inside a
 wall too: a copy of a studio savestate (`from`) or of the player now, with the world-frame position, `Velocity` (the body
@@ -285,7 +285,7 @@ fields, against many input branches at once, on every core.
   "axes": { "y": [-90, -60, -30], "vy": [-300, -900] },
   "prefix": [ ],
   "branches": [ { "name": "turn jump", "ticks": ["0,-1,DT-1", "0,-1,P", "0,-1,H*8"] } ],
-  "horizon": 40, "updatesPerTick": 1, "fps": 0
+  "horizon": 40
 }
 ```
 
@@ -297,13 +297,12 @@ trace's own start, untouched, and the inputs begin on the first tick (no wait fo
 once per start (`Simulation.Advance`) and every branch restores the state at its end, so a legal approach can go in
 `prefix` and the lab still runs thousands of branches from its end. A tick is the probe's object or a string
 `"x,y,flags[*n]"`: `H` held, `P` press (held), `R` release, `D` dash, `Jn` dashJump n, `Lx:y` the stick through the
-dash lock, `Tx` the dash turn (below); `*n` repeats it. `updatesPerTick`/`fps` model 1x frames as `probe` does. `run`
+dash lock, `Tx` the dash turn (below); `*n` repeats it. `run`
 prints the best runs by height and writes one CSV row per run (start keys, branch, `maxY` and its tick, `endY`, x range,
 the highest `Velocity.y + momentum.y` and `Velocity.x + momentum.x` on that tick, the highest body velocity up, the fastest body velocity sideways, end reason).
 
 `labs/c1-hanging-wall.json` is issue #10's lab: starts along and inside Course 1's hanging wall (right face x 2528, bottom
-y −87) against dashes with and without a turn, with and without a jump. `updatesPerTick` doesn't grow the turned dash's
-climb: the step-up gate keeps one 56-unit lift per tick (`docs/human-input.md`, Inwall wallbounce).
+y −87) against dashes with and without a turn, with and without a jump.
 
 ## Humanize
 

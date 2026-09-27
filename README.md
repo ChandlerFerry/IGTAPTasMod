@@ -10,13 +10,16 @@
 - Inputs change only on the 50 Hz physics tick. The one exception is the dash freeze's stick (`turnX`,
   `MacroStep.dashTurnX`): a dash pressed with no sideways stick takes the first sideways stick the game reads before
   the next tick, as a player tilting the stick during the freeze turns it. It is legal.
-- The player body's interpolation stays off (the TAS forces it), and the step-up gate keeps what that changes to turbo's:
-  `Movement.Update`'s step-up lifts the player at most once between two physics ticks (`MacroEngine.AllowStepUp`, at
-  most 56 units). With interpolation off, the step-up otherwise lifts again in every rendered frame until the next tick
-  (six 56-unit lifts at playback's 280 fps), so 1x playback would leave the route turbo judged. The overlay shows it as
-  `INTERPOLATION OFF (56u STEP CAP)`. This, the Vman credits' crash (below) and a fixed-clock probe's wall-clock reads
-  (`fixedClock`, [`enginesim/README.md`](enginesim/README.md#probe): the dash freeze, the camera's easing and
-  `ObjectBobber` count the fixed frame instead of the wall clock) are the only places a patch changes game logic.
+- The player body's interpolation stays on, as the game ships it (the TAS keeps it on), and a route is judged on what
+  a player sees with it: `Movement.FixedUpdate` reads the last rendered frame's blend of the body's last two positions,
+  so its position writes (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) pull the body back by that frame's
+  lag, and `Movement.Update`'s step-up runs in every frame, ungated. 1x playback runs on a fixed clock at 280 fps
+  (`MacroEngine.PlaybackFrameRate`, `TasPlugin.FixedClockStep`: game time steps on a grid half a frame off each
+  physics tick), and turbo and the offline engine model the same frames (`MacroEngine.FrameGrid`), dash freezes
+  included, so all three play a route alike. The overlay shows `INTERPOLATION ON (280 FPS CLOCK)`. This, the Vman
+  credits' crash (below) and playback's wall-clock reads (the dash freeze, the camera's easing and `ObjectBobber`
+  count the fixed clock's frame instead of the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) are the
+  only places a patch changes game logic.
 - Unlocks match the category exactly, on every tick. Categories stack: `NONE`, `WJ` (wall jump), `WJ_DS` (+ dash),
   `WJ_DS_DJ` (+ double jump), `WJ_DS_DJ_BS` (+ block swap on dash, `blockSwapUnlocked`). No category has the
   omnidirectional dash (`omniDashUnlocked`, the OmniDash box's toggle): it is off in every one.
@@ -48,7 +51,7 @@
   checkpoint touched. Off a course both go to that checkpoint. Area goals (`at:`) are not checkpoints.
 - Purchases count only when the game itself buys the box.
 - Spike grace is allowed: up to two overlapping ticks.
-- Never replace game logic; patches only read, input, skip saves (and the step-up gate above). The one other patch: a
+- Never replace game logic; patches only read, input, skip saves (and playback's wall-clock reads above). The one other patch: a
   Vman speedrun's credits (`FakeCreditsControlScript.IE_DoVmanCredits`, the `VMAN` run's last goal) crash the game on
   purpose (`Utils.ForceCrash`) after writing PlayerPrefs `VmanCoursesCompleteTemp`; the plugin drops both calls. Both
   come after the goal, so no route sees them.

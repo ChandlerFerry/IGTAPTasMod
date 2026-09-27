@@ -130,9 +130,8 @@ namespace IGTAPTasMod
             y += 8 * scale;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
             y += 1 + 8 * scale;
-            bool locked = _playerBody != null && _playerBody.interpolation == RigidbodyInterpolation2D.None;
             Label(new Rect(x, y, labelWidth, rowHeight), "INTERPOLATION", _overlaySmall, MutedColor);
-            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), locked ? InterpolationOffText : "ON", _overlayText, locked ? GraceColor : MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), InterpolationText, _overlayText, MutedColor);
             y += rowHeight;
             Label(new Rect(x, y, labelWidth, rowHeight), "CHECKPOINTS", _overlaySmall, MutedColor);
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), CheckpointRespawns ? "ON" : "OFF", CheckpointRespawns ? _overlayTitle : _overlayText, CheckpointRespawns ? JumpColor : GraceColor);
@@ -140,7 +139,7 @@ namespace IGTAPTasMod
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
         }
 
-        /// <summary>The TAS holds interpolation off; the step-up gate keeps turbo's one lift per tick (MacroEngine.AllowStepUp).</summary>
-        static readonly string InterpolationOffText = "OFF (" + MacroEngine.MaxStepUpLift.ToString(CultureInfo.InvariantCulture) + "u STEP CAP)";
+        /// <summary>Interpolation stays on; playback runs on the fixed clock that turbo and enginesim model (MacroEngine.FrameGrid).</summary>
+        static readonly string InterpolationText = "ON (" + MacroEngine.PlaybackFrameRate.ToString(CultureInfo.InvariantCulture) + " FPS CLOCK)";
     }
 }
