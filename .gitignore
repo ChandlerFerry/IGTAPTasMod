@@ -58,6 +58,7 @@ archive/
 # Scratch output (unexpanded %TEMP% paths, temp routes)
 /%TEMP%*/
 /local_tmp_route.json
+/_scratch/
 
 # OS artifacts
 .DS_Store
