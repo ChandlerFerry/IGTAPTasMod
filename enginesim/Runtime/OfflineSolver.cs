@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim
         readonly Memory _memory;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, ClipGrafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, ClipGrafts, ClipsLanded, SetupGrafts, SetupsLanded, GateTaps, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -518,11 +518,16 @@ namespace IGTAP.EngineSim
             // flick toward the wall (release on it, cutting a held jump), the jump pressed with a light flick back the next
             // tick, then a hold, so a second clip off the same wall can follow. A wall ahead (in the air, not dashing, a wall
             // within 12 u of the front edge) sets one up: the stick turns away from the wall for a few ticks and then rests,
-            // which leaves the wall behind a player drifting off it.
-            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper, WallBehindLeft, WallBehindRight, WallAheadLeft, WallAheadRight }
+            // which leaves the wall behind a player drifting off it. A start gate in reach while the timer is off is the late
+            // gate touch: a tap toward the gate and back, as late as the route can leave it, so the timer starts only then.
+            enum Contact : byte
+            {
+                Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper, WallBehindLeft, WallBehindRight, WallAheadLeft, WallAheadRight,
+                NearGateLeft, NearGateRight, WallAboveLeft, WallAboveRight
+            }
             readonly List<(int tick, Contact kind)> _contacts = new List<(int, Contact)>();
             bool _recordContacts, _contactsPrimed, _wasGround, _wasWall, _wasDash, _wasSlide;
-            float _wasBehind, _wasAhead;
+            float _wasBehind, _wasAbove, _wasAhead, _wasNearGate;
             int _dashStart;
             const double GraftRate = .5;
             const int GraftCoast = 40;
@@ -542,26 +547,96 @@ namespace IGTAP.EngineSim
                 [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
                 [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
                 [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+                [Contact.NearGateLeft] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+                [Contact.NearGateRight] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+                [Contact.WallAboveLeft] = (0, 0, new[] { "rest" }, new[] { "rest" }),
+                [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
             };
 
             void RecordContact(int tick)
             {
                 Movement player = _sim.Player;
                 bool ground = player.onGround, wall = player.OnWall;
-                float behind = WallBehind(player), ahead = WallAhead(player);
+                float behind = WallBehind(player), above = behind == 0f ? WallBehindAbove(player) : 0f, ahead = WallAhead(player), gate = NearGate();
                 if (_contactsPrimed)
                 {
                     if (ground != _wasGround) _contacts.Add((tick, ground ? Contact.Landed : Contact.LeftGround));
                     if (wall != _wasWall) _contacts.Add((tick, wall ? Contact.TouchedWall : Contact.LeftWall));
                     if (behind != 0f && behind != _wasBehind) _contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
+                    if (above != 0f && above != _wasAbove) _contacts.Add((tick, above < 0f ? Contact.WallAboveLeft : Contact.WallAboveRight));
                     if (ahead != 0f && ahead != _wasAhead) _contacts.Add((tick, ahead < 0f ? Contact.WallAheadLeft : Contact.WallAheadRight));
+                    if (gate != 0f && gate != _wasNearGate) _contacts.Add((tick, gate < 0f ? Contact.NearGateLeft : Contact.NearGateRight));
+                }
+                else
+                {
+                    // An explore from a clip-ready cell (or one by the gate, or under a wall at its back) starts in it: that
+                    // is the contact too.
+                    if (behind != 0f) _contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
+                    if (above != 0f) _contacts.Add((tick, above < 0f ? Contact.WallAboveLeft : Contact.WallAboveRight));
+                    if (gate != 0f) _contacts.Add((tick, gate < 0f ? Contact.NearGateLeft : Contact.NearGateRight));
                 }
                 _contactsPrimed = true;
                 _wasGround = ground;
                 _wasWall = wall;
                 _wasBehind = behind;
+                _wasAbove = above;
                 _wasAhead = ahead;
+                _wasNearGate = gate;
             }
+
+            // The side of a wall at the player's back that isn't clip-ready yet because its bottom is still above the ground
+            // rays (the back ray at y + 19 or y + 45 hits it within 12 u, the one at y - 18 doesn't), 0 for none: rising up
+            // the wall's side with the stick at rest makes it clip-ready.
+            static float WallBehindAbove(Movement player)
+            {
+                if (player.onGround || player.dashActive) return 0f;
+                float back = player.facingRight ? -1f : 1f;
+                Vector3 p = player.transform.position;
+                var dir = new Vector2(back, 0f);
+                int layer = GroundLayer(player);
+                return Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y + 19f), dir, 12f, layer)
+                    || Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y + 45f), dir, 12f, layer) ? back : 0f;
+            }
+
+            // The side of the target course's start gate (-1: at -x) when the timer is off and the gate is within 16 u of the
+            // hitbox (x + 5 × facing ± 20.5, y ± 36) at its height, 0 otherwise.
+            float NearGate()
+            {
+                if (_sim.TimingCourse() != null) return 0f;
+                Movement player = _sim.Player;
+                Vector3 p = player.transform.position;
+                float cx = p.x + (player.facingRight ? 5f : -5f);
+                foreach (Rect box in Gates())
+                {
+                    if (p.y + 36f < box.yMin || p.y - 36f > box.yMax) continue;
+                    if (cx + 20.5f < box.xMin && box.xMin - (cx + 20.5f) <= 16f) return 1f;
+                    if (cx - 20.5f > box.xMax && (cx - 20.5f) - box.xMax <= 16f) return -1f;
+                }
+                return 0f;
+            }
+
+            // The target course's start gate boxes in the scene frame, cached until FloatingOrigin moves the world.
+            List<Rect> Gates()
+            {
+                Vector3 origin = _sim.CurrentOrigin;
+                if (_gates != null && origin == _gatesOrigin) return _gates;
+                _gates = new List<Rect>();
+                _gatesOrigin = origin;
+                foreach (startGate gate in _sim.World.All<startGate>())
+                {
+                    if (!gate.gameObject.activeInHierarchy) continue;
+                    courseScript course = gate.transform.parent != null ? gate.transform.parent.GetComponentInParent<courseScript>() : null;
+                    if (course == null || _sim.TargetCourse != 0 && course.courseNumber != _sim.TargetCourse) continue;
+                    BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
+                    if (box == null) continue;
+                    Vector3 s = gate.transform.lossyScale, at = gate.transform.position;
+                    float w = Math.Abs(box.size.x * s.x), h = Math.Abs(box.size.y * s.y);
+                    _gates.Add(new Rect(at.x + box.offset.x * s.x - w / 2f, at.y + box.offset.y * s.y - h / 2f, w, h));
+                }
+                return _gates;
+            }
+            List<Rect> _gates;
+            Vector3 _gatesOrigin;
 
             // The side of a wall behind the player (-1: at -x, 1: at +x) that a wall clip can use now, 0 for none. The turn
             // swings the hitbox's back edge (x ∓ 15.5, offset 5, width 41) 10 u into the wall, and the front ground ray (x ∓ 25
@@ -619,10 +694,14 @@ namespace IGTAP.EngineSim
                 for (int i = 0; i < GraftCoast; i++) t.Add(coast);
                 if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
                 // A corner hyper's contact is a dash press: only the corner re-timings fit it. A wall behind takes only the clip,
-                // a wall ahead only the turn away that sets one up.
+                // a wall ahead only the turn away that sets one up, a wall above the back only the rest that rises to it, a start
+                // gate in reach only the tap that touches it.
                 bool clip = contact == Contact.WallBehindLeft || contact == Contact.WallBehindRight;
-                bool ahead = contact == Contact.WallAheadLeft || contact == Contact.WallAheadRight;
-                string kind = clip ? "wallclip" : ahead ? "turnaway" : !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
+                bool ahead = contact == Contact.WallAheadLeft || contact == Contact.WallAheadRight
+                    || contact == Contact.WallAboveLeft || contact == Contact.WallAboveRight;
+                bool gate = contact == Contact.NearGateLeft || contact == Contact.NearGateRight;
+                string kind = clip ? "wallclip" : ahead ? OneOf(plain) : gate ? "gatetap"
+                    : !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
                 switch (kind)
                 {
                     case "jump":
@@ -656,7 +735,22 @@ namespace IGTAP.EngineSim
                         WallClip(t, at, contact == Contact.WallBehindLeft ? -1f : 1f);
                         break;
                     case "turnaway":
-                        TurnAway(t, at, contact == Contact.WallAheadLeft ? -1f : 1f, last.held);
+                        TurnAway(t, at, contact == Contact.WallAheadLeft ? -1f : 1f, last.held, _rng.Next(1, 5));
+                        break;
+                    case "rest":
+                        TurnAway(t, at, contact == Contact.WallAboveLeft ? -1f : 1f, last.held, 0);
+                        break;
+                    case "gatetap":
+                        // The run rests from the contact to the tap (explore's burst would carry it off the spot), and one
+                        // contact tries several taps: only a 1-2 tick brush at the right height starts the timer.
+                        for (int variant = 1; variant < GateVariants; variant++)
+                        {
+                            List<InputTick> other = t.ToList();
+                            GateTap(other, at, contact == Contact.NearGateLeft ? -1f : 1f, last.held);
+                            Interlocked.Increment(ref _owner.GateTaps);
+                            ClipChain(other, -1, at, from, 0);
+                        }
+                        GateTap(t, at, contact == Contact.NearGateLeft ? -1f : 1f, last.held);
                         break;
                     default:
                         Omni(t, at, lo, kind);
@@ -664,9 +758,53 @@ namespace IGTAP.EngineSim
                 }
                 Interlocked.Increment(ref _owner.Grafts);
                 if (contact == Contact.CornerHyper) Interlocked.Increment(ref _owner.CornerGrafts);
-                if (clip || ahead) Interlocked.Increment(ref _owner.ClipGrafts);
-                Try(t, contact == Contact.CornerHyper ? "corner hyper" : clip ? "wall clip" : ahead ? "wall clip setup" : "graft", from);
+                if (gate) Interlocked.Increment(ref _owner.GateTaps);
+                if (!clip && !ahead && !gate) { Try(t, contact == Contact.CornerHyper ? "corner hyper" : "graft", from); return; }
+                if (ahead) Interlocked.Increment(ref _owner.SetupGrafts);
+                ClipChain(t, clip ? at : -1, clip ? -1 : at, from, 0);
             }
+
+            // A wall clip or its set-up, then more clips in the same run: its run records its contacts, and a clip goes on the
+            // first wall behind after the last input made (the next one needs Velocity.y back under 580, or a set-up that drifted
+            // to a stop with the wall at its back). An explore cell keeps only the earliest arrival in its square, so the slow
+            // set-up next to a wall and the states between clips seldom survive to be explored from later; chaining finds a
+            // climb of several clips (Course 1 NONE's pillar and shelf: four) in one explore step.
+            void ClipChain(List<InputTick> t, int clipAt, int setupAt, SimSnapshot from, int depth)
+            {
+                if (clipAt >= 0) Interlocked.Increment(ref _owner.ClipGrafts);
+                _clipWatch = clipAt;
+                _setupWatch = setupAt;
+                _clipLanded = _setupLanded = false;
+                bool record = _recordContacts;
+                _recordContacts = depth < MaxClipChain;
+                Try(t, clipAt >= 0 ? "wall clip" : "wall clip setup", from);
+                _recordContacts = record;
+                bool landed = _clipLanded;
+                if (landed) Interlocked.Increment(ref _owner.ClipsLanded);
+                if (_setupLanded) Interlocked.Increment(ref _owner.SetupsLanded);
+                _clipWatch = _setupWatch = -1;
+                if (depth >= MaxClipChain || clipAt >= 0 && !landed) return;
+                int after = Math.Max(clipAt, setupAt) + 2;
+                foreach (var (tick, kind) in _contacts)
+                {
+                    if (tick < after || kind != Contact.WallBehindLeft && kind != Contact.WallBehindRight) continue;
+                    int at = Math.Min(tick, t.Count) + _rng.Next(0, 9);
+                    if (at >= t.Count || _rng.NextDouble() < .15) return;
+                    List<InputTick> next = t.GetRange(0, at);
+                    InputTick last = next[at - 1];
+                    // After the clip's hold the run drifts: on along the wall, off it, or back the way it came (Course 1 NONE
+                    // leaves the pillar's left face for the shelf's edge, 90 u away, in the second clip's rise).
+                    var coast = new InputTick { x = OneOf(Sticks), y = last.y };
+                    for (int i = 0; i < GraftCoast; i++) next.Add(coast);
+                    WallClip(next, at, kind == Contact.WallBehindLeft ? -1f : 1f);
+                    ClipChain(next, at, -1, from, depth + 1);
+                    return;
+                }
+            }
+            const int MaxClipChain = 4;
+            int _clipWatch = -1, _setupWatch = -1;
+            bool _clipLanded, _setupLanded, _watchAir;
+            static readonly bool ClipLog = Environment.GetEnvironmentVariable("IGTAP_CLIPLOG") == "1";
 
             void Pool()
             {
@@ -896,11 +1034,12 @@ namespace IGTAP.EngineSim
             static readonly float[] ClipFlicks = { .3f, .35f, .4f, .45f, .5f, .55f }, ClipBacks = { .3f, .4f, .5f, .65f, 1f };
             static readonly int[] ClipHolds = { 0, 3, 6, 9, 12, 16, 20, 26 };
 
-            // Sets up a wall clip: with a wall ahead, the stick turns away from it for 1-4 ticks, then rests for 8-30, so the
+            // Sets up a wall clip: with a wall ahead, the stick turns away from it for 1-4 ticks, then rests for 3-30, so the
             // player drifts to a stop facing away with the wall at its back; the jump stays as it was (held on, not cut).
-            int TurnAway(List<InputTick> t, int at, float wall, bool held)
+            // ClipChain then clips off the wall behind that the run records.
+            int TurnAway(List<InputTick> t, int at, float wall, bool held, int turn)
             {
-                int turn = _rng.Next(1, 5), rest = _rng.Next(8, 31);
+                int rest = _rng.Next(3, 31);
                 Pad(t, at + turn + rest + 1);
                 float away = -wall * OneOf(TurnAways);
                 int end = at + turn + rest;
@@ -914,6 +1053,29 @@ namespace IGTAP.EngineSim
                 return end;
             }
             static readonly float[] TurnAways = { .3f, .5f, .7f, 1f };
+
+            // The late gate touch (techs.json late-gate-touch): with the start gate in reach and the timer off, the stick rests
+            // (a jump pressed at the contact half the time: standing by the gate, the brush comes in the jump's rise), then a
+            // tap toward the gate (1-2 ticks, 0.3-1) and back (1-2 ticks), then rest again, the jump held as it was, so the
+            // hitbox brushes the gate for a tick; ClipChain then clips off the wall behind it.
+            int GateTap(List<InputTick> t, int at, float gate, bool held)
+            {
+                int delay = _rng.Next(0, 21), tap = _rng.Next(1, 3), back = _rng.Next(1, 3), rest = _rng.Next(5, 31);
+                int from = at + delay, end = from + tap + back + rest;
+                Pad(t, end + 1);
+                bool jump = !held && _rng.NextDouble() < .5;
+                float toward = gate * OneOf(TurnAways), away = -gate * OneOf(TurnAways);
+                for (int i = at; i < end; i++)
+                {
+                    InputTick k = t[i];
+                    k.x = i < from ? 0f : i < from + tap ? toward : i < from + tap + back ? away : 0f;
+                    k.y = 0f; k.press = jump && i == at; k.dash = false; k.held = held || jump; k.release = false;
+                    t[i] = k;
+                }
+                if (held || jump) { InputTick r = t[end]; r.release = true; t[end] = r; }
+                return end;
+            }
+            const int GateVariants = 8;
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump",
@@ -1294,6 +1456,17 @@ namespace IGTAP.EngineSim
                 {
                     _endTick = tick;
                     if (_recordContacts) RecordContact(tick);
+                    if (_clipWatch >= 0 && tick > _clipWatch && tick <= _clipWatch + 3 && !_clipLanded && _watchAir && _sim.Player.Velocity.y >= 780f)
+                    {
+                        _clipLanded = true;
+                        if (ClipLog) Console.WriteLine($"CLIPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
+                    }
+                    _watchAir = !_sim.Player.onGround;
+                    if (_setupWatch >= 0 && tick > _setupWatch && !_setupLanded && WallBehind(_sim.Player) != 0f)
+                    {
+                        _setupLanded = true;
+                        if (ClipLog) Console.WriteLine($"SETUPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
+                    }
                     if (_avoided) return false;
                     bool recorded = replay != null && tick < replay.Body.Length;
                     if (recorded)
@@ -1310,7 +1483,8 @@ namespace IGTAP.EngineSim
                     }
                     courseScript active = _sim.TimingCourse();
                     bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true), _sim.Progress) : CellKey(Place(_sim, _swapper, false), timing, _waypoints);
+                    long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true), _sim.Progress)
+                        : CellKey(Place(_sim, _swapper, false) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     int filed = Math.Min(tick, inputs.Count);
@@ -1375,7 +1549,8 @@ namespace IGTAP.EngineSim
             }
 
             // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,
-            // moss 44, momentum x 45-47 and y 48-50, waypoints or goal progress 51-61, blue blocks 62.
+            // moss 44, momentum x 45-47 and y 48-50 (a course: a wall clip's wall behind 45-46, and before the timer the Motion
+            // bits 47-49), waypoints or goal progress 51-61, blue blocks 62.
             const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
@@ -1386,6 +1561,9 @@ namespace IGTAP.EngineSim
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFF;
                 long key = (x << 16) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
+                // A clip-ready state (a wall at the back, in reach of a wall clip) is its own cell: the earliest arrival in a
+                // square is seldom the slow one that stopped next to the wall, and only that one clips.
+                if (!resources) key |= WallBehind(player) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
                 bool moss = GroundType(player) != 0;
                 if (!moss && !resources) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
@@ -1399,6 +1577,17 @@ namespace IGTAP.EngineSim
             static long MomentumBucket(float m)
             {
                 return 3 + Math.Sign(m) * Math.Min(3, (int)(Math.Abs(m) / MomentumStep));
+            }
+
+            // Before the timer (a course's untimed set-up), where the player is going is part of the cell: vertical speed in
+            // four bands (falling, near the top, rising, just jumped) and the facing, bits 47-49. A set-up is slow on purpose
+            // (Course 1 NONE's climb to the late gate touch), so its states would lose every square to an earlier arrival
+            // going the other way.
+            static long Motion(Movement player)
+            {
+                float vy = player.Velocity.y;
+                long band = vy < -200f ? 0 : vy < 200f ? 1 : vy < 580f ? 2 : 3;
+                return (band << 47) | (player.facingRight ? 1L << 49 : 0L);
             }
 
             static long CellKey(long place, bool timing, int waypoints)
@@ -1425,6 +1614,7 @@ namespace IGTAP.EngineSim
                 float distance = _goalMode ? GoalDistance(_sim) : float.NaN;
                 var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell };
                 if (!_owner.File(key, filed)) return;
+                if (ClipLog && cell == null) Console.WriteLine($"NEWCELL {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(key < 0 ? 1 : 0)} {(_clipWatch >= 0 || _setupWatch >= 0 ? 1 : 0)}");
                 Keep(filed, state);
                 _owner.Extend(key, filed, _goalMode ? GoalProgress(key) : -1);
             }

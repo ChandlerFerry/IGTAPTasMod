@@ -99,7 +99,9 @@ it, one input made for that contact goes there, then 40 ticks of stick (`Offline
 | leaves a wall | 0..+4 | wall coyote jump, dash-jump | aimed dash, wavejump |
 | dies (mostly spikes past their grace) | −7..−1 | all the plain ones: spike grace jump, a dash buffered onto a corner's ground gap, a super off a spike wall | any |
 | a hyper's flat dash slides off a floor's edge (omnidash only) | −3..+3 around that dash's press | — | corner hyper, corner ultra |
-| a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | 0..+24 | wall clip | wall clip |
+| a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | 0..+24 | wall clip, then more clips | wall clip |
+| a wall ahead (in the air, not dashing, a wall within 12 u of the front edge at y − 18, y + 19 or y + 45) | −2..+10 | turn away, then clips | turn away |
+| the target course's start gate within 16 u of the hitbox while the timer is off | 0 | 8 gate taps, then clips | gate taps |
 
 The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
 (`OfflineSolver.RecordSlide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
@@ -117,8 +119,38 @@ The wall-behind contact is the GC wall clip (the studio's Tech tab): turn toward
 hitbox's front ground ray (x ∓ 25) starts inside it, which grounds you in mid air while `Velocity.y` is under 200. Its
 graft flicks the stick toward the wall (0.3–0.55) with the jump released on that tick (a held jump between 150 and 580 up
 is cut to 50), presses the jump with a light flick back (0.3–1) the next tick, then holds the jump with the stick at rest
-for 0–26 ticks, so a second clip off the same wall can follow (`OfflineSolver.WallClip`; `wall clips` in the progress
-line). A clip is a ground touch: on a Ground-tagged wall it refills air dashes, double jumps and wall jumps.
+for 0–26 ticks (`OfflineSolver.WallClip`). A clip is a ground touch: on a Ground-tagged wall it refills air dashes,
+double jumps and wall jumps.
+
+Clips come in chains, and the states between them don't survive as cells: a square keeps its earliest arrival, which is
+seldom the slow one that stopped with a wall at its back. So a clip graft's run records its own contacts, and the next
+wall behind after it gets the next clip, up to four deep, with the stick drifting left, right or at rest after each hold
+(`OfflineSolver.ClipChain`). A clip-ready state (a wall behind, as above) is also its own cell (key bits 45–46 in a
+course), and an explore that starts in one counts the wall behind as a contact on its first tick.
+
+The wall-ahead contact sets a clip up: the stick turns away from the wall for 1–4 ticks (0.3–1) and rests for 3–30, so
+the player drifts to a stop with the wall at its back (under an overhang's corner, as Course 1 NONE does at the pillar's
+left face); the chain then clips off it. A wall above the back (the back ray at y + 19 or y + 45 hits it, the one at
+y − 18 not yet) gets the same rest with no turn, so the player rises up to it clip-ready.
+
+The start-gate contact is the late gate touch (Tech tab): the timer starts on the first tick the player overlaps the
+start gate, so a route can reach the far side of it untimed and brush it at the last moment. Its graft rests from the
+contact for 0–20 ticks (a jump pressed at the contact half the time, for a player standing by the gate), taps toward the
+gate for 1–2 ticks (0.3–1) and back for 1–2, then rests with the jump as it was; one contact tries 8 of these, each
+followed by the clip chain (`OfflineSolver.GateTap`). The progress line counts `clips landed/wall clips`, `set-ups that
+reached a wall behind/clip setups` and `gate taps`.
+
+Before the timer, a course cell also keeps where the player is going (`OfflineSolver.Motion`, key bits 47–49: vertical
+speed below −200, under 200, under 580 or above, and the facing). An untimed set-up is slow on purpose, and without
+these bits every state of it lost its square to an earlier arrival going the other way.
+
+How far this gets on Course 1 NONE (seeded with the old 1.62 and a prefix of the 1.40's inputs, 6 threads each): from
+the first left-face clip (tick 32) on, the late-gate route comes back in under a minute (1.44); from the second
+left-face clip's jump (tick 48), the shelf clip (tick 66) or the drop down the right face (tick 100), at 1.44–1.48
+within 6 minutes. From the approach alone (tick 23: jump, turn under the pillar's corner) and from the 1.62 alone, not
+in 7 minutes: the first left-face clip is the step the search doesn't find by itself yet. `IGTAP_CLIPLOG=1` prints
+where clips land (`CLIPLOG x y timed`), where set-ups
+reach a wall behind (`SETUPLOG`) and every new cell (`NEWCELL x y timed grafted`).
 
 On `Test-No-Omni-Skip` from nothing (`--fresh --unsolved`), death grafts alone reached goal 3 in 1:30 on 16 threads,
 where the build before them hadn't in 10 minutes; with every contact, 2:34 on 8 threads (one run each).
