@@ -119,6 +119,21 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        /// <summary>For logs: each box's state (bought/cap, on or off, cost against what the run holds).</summary>
+        internal string Describe(string[] boxes)
+        {
+            var parts = new List<string>();
+            foreach (upgradeBox b in _boxes)
+            {
+                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
+                int currency = (int)GetCurrency(b);
+                double held = currency >= 0 && currency < CurrencyCount ? Available(currency) : double.NaN;
+                parts.Add(_paths[b] + ": " + b.TimesUsed + "/" + b.Cap + (b.isActive ? "" : ", inactive") + (b.gameObject.activeInHierarchy ? "" : ", hidden")
+                    + ", costs " + b.upgradeCost.ToString("G4") + " " + (globalStats.Currencies)currency + ", holds " + held.ToString("G4"));
+            }
+            return string.Join("; ", parts);
+        }
+
         internal void StepClones() { Economy?.Step(_sim.World.FixedDeltaTime); }
 
         internal void EndOfFrame()

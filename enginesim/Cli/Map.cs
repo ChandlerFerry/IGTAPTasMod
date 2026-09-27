@@ -34,7 +34,7 @@ namespace IGTAP.EngineSim.Cli
             string output = Solve.Option(args, "--out", (string)null) ?? throw new ArgumentException("map needs --out <file>");
             int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount - 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
-            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) return FullTasMap(trace, header, fulltas, output);
+            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) return FullTasMap(trace, header, fulltas, Solve.Option(args, "--goals", (string)null), output);
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
@@ -172,10 +172,13 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string output)
+        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output)
         {
             string name = fulltas.GetProperty("name").GetString();
-            string[] labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
+            // The trace's goals are the ones it was captured with; --goals (the run's goals now, a JSON array of labels) wins,
+            // so a goal moved since the capture is drawn where it is now. The replay itself checks the trace's goals.
+            string[] traced = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
+            string[] labels = goalsFile == null ? traced : JsonSerializer.Deserialize<string[]>(File.ReadAllText(goalsFile));
             string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
             string runFile = System.IO.Path.Combine(dir, "fulltas", name + ".json");
@@ -205,16 +208,16 @@ namespace IGTAP.EngineSim.Cli
             foreach (var (routeName, kind, inputs) in routes)
             {
                 var path = new Path { Name = routeName, Kind = kind };
-                sim.Goals.Limit = labels.Length;
+                sim.Goals.Limit = traced.Length;
                 RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ =>
                 {
                     Vector3 p = sim.PlayerWorld;
                     path.Points.Add(Round(p.x));
                     path.Points.Add(Round(p.y));
                 });
-                path.Finished = r.Progress == labels.Length;
+                path.Finished = r.Progress == traced.Length;
                 path.Time = r.Progress == 0 ? 0f : r.GoalPhysicsTicks[r.Progress - 1] * dt;
-                path.Name += $" ({r.Progress}/{labels.Length} goals)";
+                path.Name += $" ({r.Progress}/{traced.Length} goals)";
                 paths.Add(path);
             }
 
@@ -251,6 +254,7 @@ namespace IGTAP.EngineSim.Cli
                     .Concat(goals.Select(g => new Marker("goal", "goal " + g.index + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
                 avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = goals.Select(g => g.box),
+                goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
                 routes = paths.Select(p => new { name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = -1, points = p.Points }),
                 explored = new
                 {

@@ -126,11 +126,19 @@ namespace IGTAP.EngineSim.Cli
             return (_eval.PlayerWorld, Unlocks(_eval.Player));
         }
 
+        /// <summary>Runs f with <see cref="Simulation.StrictBuys"/> on: a piece may buy only the box of the goal it heads for.</summary>
+        T Strict<T>(Func<T> f)
+        {
+            _eval.StrictBuys = true;
+            try { return f(); }
+            finally { _eval.StrictBuys = false; }
+        }
+
         SimSnapshot AdvanceFrom(SimSnapshot at, int length, List<InputTick> inputs)
         {
             _eval.SetStart(at, length);
             _eval.Goals.Limit = _goals;
-            return inputs.Count == 0 ? at : _eval.Advance(inputs);
+            return inputs.Count == 0 ? at : Strict(() => _eval.Advance(inputs));
         }
 
         /// <summary>
@@ -149,9 +157,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 _eval.SetStart(at, length);
                 _eval.Goals.Limit = target.Goal + 1;
-                r = _eval.Run(inputs);
+                r = Strict(() => _eval.Run(inputs));
                 _eval.Goals.Limit = _goals;
-                if (r.Progress <= target.Goal) return null;
+                if (r.Progress <= target.Goal || !r.Finished) return null;
                 return Cut(at, length, inputs, (int)(r.GoalInputTicks[target.Goal] - length), r.GoalPhysicsTicks[target.Goal], reached + 1, null);
             }
             FullTasTracker lap = _runGoals.For(target.Extra);
@@ -159,11 +167,11 @@ namespace IGTAP.EngineSim.Cli
             try
             {
                 _eval.SetStart(at.WithGoal(lap.Capture()), length);
-                r = _eval.Run(inputs);
+                r = Strict(() => _eval.Run(inputs));
             }
             finally { _eval.UseGoals(_runGoals); }
             int last = target.Extra.Length - 1;
-            if (r.Progress <= last) return null;
+            if (r.Progress <= last || !r.Finished) return null;
             return Cut(at, length, inputs, (int)(r.GoalInputTicks[last] - length), r.GoalPhysicsTicks[last], reached, target);
         }
 
@@ -178,7 +186,14 @@ namespace IGTAP.EngineSim.Cli
             {
                 List<InputTick> part = inputs.GetRange(0, n);
                 SimSnapshot next = AdvanceFrom(at, length, part);
-                if (next == null || next.Goal.Next > want) return null;
+                if (next == null || next.Goal.Next > want)
+                {
+                    _eval.SetStart(at, length);
+                    _eval.Goals.Limit = _goals;
+                    RunResult r = Strict(() => _eval.Run(part));
+                    Log($"build: a way to goal {want} reached it at input {used}, but cut at {n} it " + (next == null ? "ends the run" : "reaches goal " + next.Goal.Next) + $": {r.EndReason}");
+                    return null;
+                }
                 if (next.Goal.Next < want) continue;
                 if (extra != null)
                 {
@@ -188,7 +203,7 @@ namespace IGTAP.EngineSim.Cli
                     try
                     {
                         _eval.SetStart(at.WithGoal(lap.Capture()), length);
-                        if (_eval.Run(part, extraTicks: 0).Progress != extra.Extra.Length) continue;
+                        if (Strict(() => _eval.Run(part, extraTicks: 0)).Progress != extra.Extra.Length) continue;
                     }
                     finally { _eval.UseGoals(_runGoals); }
                 }
@@ -279,8 +294,7 @@ namespace IGTAP.EngineSim.Cli
             string title = "piece for goal " + (target.Goal + 1) + "/" + _goals;
             Func<Simulation> create = () =>
             {
-                Simulation sim = _create();
-                SimSnapshot state = sim.Advance(prefix) ?? throw new InvalidOperationException(title + ": the prefix replayed differently on a worker");
+                (Simulation sim, SimSnapshot state) = Prefixed(prefix, title);
                 if (target.Extra != null)
                 {
                     FullTasTracker lap = sim.Goals.For(target.Extra);
@@ -292,6 +306,7 @@ namespace IGTAP.EngineSim.Cli
                     sim.SetStart(state, prefix.Count);
                     sim.Goals.Limit = target.Goal + 1;
                 }
+                sim.StrictBuys = true;
                 return sim;
             };
             string archiveFile = Path.Combine(_archiveDir, "piece-" + (target.Goal + 1) + "-" + ArchiveHash(prefix, goals.Select(g => g.label)).ToString("x16") + ".json");
@@ -301,13 +316,33 @@ namespace IGTAP.EngineSim.Cli
                 int id = ++_windowId;
                 Emit(new { type = "window", id, kind = "piece", first = reached, limit = target.Goal + 1, attempt, budget = Math.Round(budget * 60, 1),
                     start = reached == 0 ? 0.0 : Seconds(at.Goal.PhysicsTicks[reached - 1]), target = (double?)null, savedStarts = seeds.Count, piece = span });
-                Explore(id, title, span, create, caps, seeds, archiveFile, long.MaxValue, budget, stallMinutes, null, out List<InputTick> found);
-                if (found == null) continue;
-                Step step = Reaches(at, prefix.Count, found, target);
+                // Every route the search improved on, fastest first: one that doesn't reproduce in the run (a replay from a
+                // cached state can differ from one from the start) leaves the others.
+                List<List<InputTick>> routes = Explore(id, title, span, create, caps, seeds, archiveFile, long.MaxValue, budget, stallMinutes, null, out List<InputTick> best);
+                if (best != null) routes.Add(best);
+                Step step = null;
+                foreach (List<InputTick> found in Enumerable.Reverse(routes).Distinct(SequenceComparer.Instance).Take(40))
+                {
+                    Step s = Reaches(at, prefix.Count, found, target);
+                    if (s != null && (step == null || s.Physics < step.Physics)) step = s;
+                }
                 if (step != null) return step;
-                Log(title + ": its route didn't reproduce when replayed in the run");
+                if (routes.Count > 0) Log($"{title}: none of its {routes.Count} routes reproduced when replayed in the run");
             }
             return null;
+        }
+
+        sealed class SequenceComparer : IEqualityComparer<List<InputTick>>
+        {
+            public static readonly SequenceComparer Instance = new SequenceComparer();
+            public bool Equals(List<InputTick> a, List<InputTick> b) { return a.SequenceEqual(b); }
+            public int GetHashCode(List<InputTick> a)
+            {
+                var h = new HashCode();
+                h.Add(a.Count);
+                foreach (InputTick t in a.Take(16)) h.Add(t);
+                return h.ToHashCode();
+            }
         }
 
         /// <summary>
@@ -393,6 +428,14 @@ namespace IGTAP.EngineSim.Cli
                     if (stuck != null) return stuck;
                 }
                 Log($"build: extra lap of Course {course} before goal {goal + 1} ({g.label}): short of Cash");
+            }
+            if (g.boxes != null)
+            {
+                _eval.Restore(at);
+                string state = _eval.Shop.Describe(g.boxes);
+                // Inactive: capped, or not unlocked by the goals so far. Pieces buy nothing else, so no search changes that.
+                if (g.kind == FullTasGoal.Buy && _eval.Shop.Affordable(g.boxes) == null) return $"goal {goal + 1} ({g.label}) can't be bought: {state}";
+                Log($"build: searching goal {goal + 1} ({g.label}): {state}");
             }
             string why = BuildStep(built, ref at, target, oldSeeds, true);
             return why ?? Advanced(built);

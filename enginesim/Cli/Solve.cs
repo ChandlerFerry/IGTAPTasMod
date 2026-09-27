@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -228,9 +229,73 @@ namespace IGTAP.EngineSim.Cli
                     }
         }
 
+        /// <summary>
+        /// The trace without its "ticks" (the game's state after every tick, which only `replay` reads): a Full-TAS trace runs to a
+        /// gigabyte of them, past what one string holds. Streamed, so the file is never in memory whole. A trace that plays its
+        /// "ticks" as its inputs (a tech trace: no "inputs" before them) keeps them.
+        /// </summary>
         internal static JsonElement ReadHeader(string trace)
         {
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(trace), new JsonDocumentOptions { MaxDepth = 256 });
+            var output = new ArrayBufferWriter<byte>();
+            using (FileStream stream = File.OpenRead(trace))
+            using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = 256 }))
+            {
+                byte[] buffer = new byte[1 << 20];
+                int filled = 0;
+                bool final = false, sawInputs = false, skipValue = false;
+                int skipDepth = -1;
+                var state = new JsonReaderState(new JsonReaderOptions { MaxDepth = 256 });
+                while (true)
+                {
+                    while (!final && filled < buffer.Length)
+                    {
+                        int read = stream.Read(buffer, filled, buffer.Length - filled);
+                        if (read == 0) final = true;
+                        filled += read;
+                    }
+                    var reader = new Utf8JsonReader(buffer.AsSpan(0, filled), final, state);
+                    while (reader.Read())
+                    {
+                        JsonTokenType token = reader.TokenType;
+                        if (skipDepth >= 0)
+                        {
+                            if ((token == JsonTokenType.EndArray || token == JsonTokenType.EndObject) && reader.CurrentDepth == skipDepth) skipDepth = -1;
+                            continue;
+                        }
+                        if (skipValue)
+                        {
+                            skipValue = false;
+                            if (token == JsonTokenType.StartArray || token == JsonTokenType.StartObject) skipDepth = reader.CurrentDepth;
+                            continue;
+                        }
+                        switch (token)
+                        {
+                            case JsonTokenType.StartObject: writer.WriteStartObject(); break;
+                            case JsonTokenType.EndObject: writer.WriteEndObject(); break;
+                            case JsonTokenType.StartArray: writer.WriteStartArray(); break;
+                            case JsonTokenType.EndArray: writer.WriteEndArray(); break;
+                            case JsonTokenType.PropertyName:
+                                string name = reader.GetString();
+                                if (reader.CurrentDepth == 1 && name == "inputs") sawInputs = true;
+                                if (reader.CurrentDepth == 1 && name == "ticks" && sawInputs) skipValue = true;
+                                else writer.WritePropertyName(name);
+                                break;
+                            case JsonTokenType.String: writer.WriteStringValue(reader.GetString()); break;
+                            case JsonTokenType.Number: writer.WriteRawValue(reader.ValueSpan, skipInputValidation: true); break;
+                            case JsonTokenType.True: writer.WriteBooleanValue(true); break;
+                            case JsonTokenType.False: writer.WriteBooleanValue(false); break;
+                            case JsonTokenType.Null: writer.WriteNullValue(); break;
+                        }
+                    }
+                    if (final) break;
+                    state = reader.CurrentState;
+                    int used = (int)reader.BytesConsumed;
+                    if (used == 0 && filled == buffer.Length) Array.Resize(ref buffer, buffer.Length * 2);
+                    Buffer.BlockCopy(buffer, used, buffer, 0, filled - used);
+                    filled -= used;
+                }
+            }
+            using JsonDocument doc = JsonDocument.Parse(output.WrittenMemory, new JsonDocumentOptions { MaxDepth = 256 });
             return doc.RootElement.Clone();
         }
 

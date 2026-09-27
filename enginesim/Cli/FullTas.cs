@@ -80,9 +80,7 @@ namespace IGTAP.EngineSim.Cli
 
         int Search()
         {
-            JsonElement header;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_trace), new JsonDocumentOptions { MaxDepth = 256 }))
-                header = doc.RootElement.Clone();
+            JsonElement header = Solve.ReadHeader(_trace);
             if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
             _name = fulltas.GetProperty("name").GetString();
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
@@ -321,8 +319,7 @@ namespace IGTAP.EngineSim.Cli
 
             Func<Simulation> create = () =>
             {
-                Simulation sim = _create();
-                SimSnapshot state = sim.Advance(prefix) ?? throw new InvalidOperationException(title + ": the prefix replayed differently on a worker");
+                (Simulation sim, SimSnapshot state) = Prefixed(prefix, title);
                 sim.SetStart(state, prefix.Count);
                 sim.Goals.Limit = limit;
                 return sim;
@@ -332,6 +329,25 @@ namespace IGTAP.EngineSim.Cli
                 kind == "reach" ? 0.0 : _stallMinutes, kind == "reach" ? prefix : null, out List<InputTick> bestInputs);
             if (bestInputs != null) Remember(key, bestInputs);
             return found;
+        }
+
+        const int PrefixTries = 3;
+
+        /// <summary>
+        /// A fresh simulation that has replayed prefix, and the state after it. A worker's replay has now and then ended early
+        /// where the evaluator's didn't (seen once at the end of a 30,000-input Full-TAS prefix); a fresh simulation replays it
+        /// again before the worker gives up, so one bad replay doesn't take the whole solve down.
+        /// </summary>
+        (Simulation sim, SimSnapshot state) Prefixed(List<InputTick> prefix, string title)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                Simulation sim = _create();
+                SimSnapshot state = sim.Advance(prefix);
+                if (state != null) return (sim, state);
+                Log($"{title}: a worker's replay of the {prefix.Count}-input prefix ended early ({sim.Engine.Status}), try {attempt} of {PrefixTries}");
+                if (attempt == PrefixTries) throw new InvalidOperationException(title + ": the prefix replayed differently on a worker");
+            }
         }
 
         /// <summary>

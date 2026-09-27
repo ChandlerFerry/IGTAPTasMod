@@ -16,6 +16,8 @@
 
     <None Remove="enginesim\**" />
     <Compile Remove="enginesim\**\*.cs" />
+    <None Remove="_scratch\**" />
+    <Compile Remove="_scratch\**" />
     <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
     <Reference Include="0Harmony" HintPath="$(BepInExDir)\0Harmony.dll" Private="false" />
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />

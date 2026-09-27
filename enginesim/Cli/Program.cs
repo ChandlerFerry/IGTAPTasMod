@@ -115,7 +115,8 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         on all cores, ranked by the height reached; one run logged per tick\n"
                             + "  map <start-trace.json> --out <file> [--seed <file>]... [--threads N] [--optional name]... [--no-optional name]...\n"
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"
-                            + "                                         boxes as one JSON for the studio's Optimize map\n"
+                            + "                                         boxes as one JSON for the studio's Optimize map; a Full-TAS trace\n"
+                            + "                                         takes --goals <labels.json> (the run's goals now, drawn over the trace's)\n"
                             + "  ultras <fulltas-VMAN.json> --out <file> [--courses <courses.json>] [--spacing U] [--threads N]\n"
                             + "                                         floors a hyper lands on and the game's ultras two chained wavedashes\n"
                             + "                                         get from launch points along them, for the studio's Ultra map\n");
@@ -134,7 +135,8 @@ namespace IGTAP.EngineSim.Cli
             string worldPath = Path.ChangeExtension(tracePath, null) + ".world.json";
             World world = World.Load(worldPath);
             var sim = new Simulation(world);
-            JsonDocument trace = JsonDocument.Parse(File.ReadAllText(tracePath), new JsonDocumentOptions { MaxDepth = 256 });
+            JsonDocument trace;
+            using (FileStream file = File.OpenRead(tracePath)) trace = JsonDocument.Parse(file, new JsonDocumentOptions { MaxDepth = 256 });
             sim.SetTarget(trace.RootElement);
             sim.LoadStart(trace.RootElement.GetProperty("start"));
             var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();

@@ -241,7 +241,9 @@ inputs past the last unchanged goal the same way.
 - **Solve** polishes the goals the best reaches, windows from goal 1 on; **Solve unsolved** (`unsolved: true`, the
   solver's `--unsolved`) reaches the goals the best misses first, starting at the first of them. Both recapture the
   trace (seeded with the saved best) when the run's goals or start changed since it was taken, or when its header's
-  `startSetup` isn't the plugin's `FullTasStartSetup` (bumped whenever what a new game's start state holds changes): a
+  `startSetup` isn't the plugin's `FullTasStartSetup` (bumped whenever what a new game's start state holds changes) or
+  its `format` isn't `FullTasTraceFormat` (bumped whenever the per-tick export changes; format 2 drops
+  `MacroEngine._steps`, which made a 437-goal trace 3.8 GB and crashed the solver reading it): a
   solve searches the goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just the
   **Window** goals ending at goal N (window 2: from goal N−2 through N−1 to N), window after window, keeping the rest
   of the route as it is and scoring the time at goal N. `threads` 0 or missing (the site sends none) is cores − 2.
@@ -253,6 +255,11 @@ inputs past the last unchanged goal the same way.
   (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
   goals are green and the next one yellow. The run's avoid boxes (forced-paths.json, the solver's copy) are drawn in
   red, and a box added or removed on the map shows up within a second.
+- **Show map** draws the run's `at:` goals as they are in `fulltas.json` now (the plugin passes them to `map` as
+  `--goals`; the trace's own goals are the ones it was captured with). **Move goals** there: drag a green goal box, or
+  type its new centre, then **Save goal** (`POST /api/fulltas/move-goal {name, index, label, x, y}`: `index` 0-based,
+  `label` the goal as the map drew it, refused if the goal list changed since). The goal keeps its size and any
+  `from=`; the edit is a goals edit like **Save goals** (disabled while a solve or playback runs).
 
 ## Offline search
 
@@ -322,6 +329,13 @@ them together from pieces instead:
   waits at a box. An extra lap isn't one of the run's goals (an event that isn't the next goal changes nothing): its
   gate and its finish are built as two steps, each checked against a goal of its own (`FullTasTracker.For`,
   `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps.
+- A piece buys only the box of the goal it heads for (`Simulation.StrictBuys`, on for the builder's checks and piece
+  searches): a walk that also bought another box spent Cash and levels the plan counted on, and could cap a box a later
+  goal buys (a build that ran through `FastCloneChance` twelve times had nothing left for its `buy:buyfast3` goals). A
+  strict run finishes 12 ticks after its goal, not at it, so a neighbouring box the player still stands in once its
+  0.2 s cooldown is over also ends it (the search would otherwise hand the next piece a spot where any input buys it). A
+  buy goal whose box is inactive (capped, or not unlocked by the goals so far) stops the build at once, with the box's
+  state (`Shop.Describe`: bought/cap, cost, what the run holds); before a searched buy the log shows the same state.
 - The build is saved as the run's best every minute and when it stops.
 
 ## Offline economy

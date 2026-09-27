@@ -38,6 +38,11 @@ namespace IGTAPTasMod
         // the game no longer makes (2: a savestate start keeps the new game's respawnPoint instead of one written at the savestate).
         const int FullTasStartSetup = 2;
 
+        // What a Full-TAS trace file holds per tick. Bump it whenever the export changes: an older trace is recaptured before a
+        // solve (FullTasTraceCurrent) even when its goals and start still match (2: MacroEngine._steps left out of every snapshot,
+        // which made a 437-goal trace 3.8 GB, past what the offline engine can read).
+        const int FullTasTraceFormat = 2;
+
         public sealed class FullTasSplit
         {
             public string label;
@@ -867,6 +872,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("name"); w.WriteValue(run.name);
                 w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
                 w.WritePropertyName("startSetup"); w.WriteValue(FullTasStartSetup);
+                w.WritePropertyName("format"); w.WriteValue(FullTasTraceFormat);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
                 w.WritePropertyName("goals"); w.WriteStartArray();
@@ -1243,7 +1249,7 @@ namespace IGTAPTasMod
                 }
                 if (header == null) return false;
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
-                return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup
+                return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
@@ -1379,6 +1385,24 @@ namespace IGTAPTasMod
                     if (runs.Length == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
                     return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove")) };
                 }
+                case "/api/fulltas/move-goal":
+                {
+                    FullTasRunDef run = FindFullTasRun(Text(body, "name"));
+                    int index = Number(body, "index", -1);
+                    string label = Text(body, "label");
+                    if (index < 0 || index >= run.goals.Count) throw new InvalidOperationException("index: goal " + (index + 1) + " is not one of " + run.name + "'s " + run.goals.Count + " goals.");
+                    if (run.goals[index] != label)
+                        throw new InvalidOperationException("Goal " + (index + 1) + " of " + run.name + " is " + run.goals[index] + " now, not " + label + ": redraw the map.");
+                    string[] parts = label.Substring(3).Split(',');
+                    if (!label.StartsWith("at:", StringComparison.Ordinal) || parts.Length < 4) throw new InvalidOperationException("Goal " + (index + 1) + " (" + label + ") is not an area goal.");
+                    parts[0] = Math.Round(FloatNumber(body, "x", 0f), 1).ToString(CultureInfo.InvariantCulture);
+                    parts[1] = Math.Round(FloatNumber(body, "y", 0f), 1).ToString(CultureInfo.InvariantCulture);
+                    var goals = run.goals.ToList();
+                    goals[index] = "at:" + string.Join(",", parts);
+                    FullTasRunDef moved = SetFullTasGoals(run.name, goals, null);
+                    FullTasLog("Moved " + run.name + " goal " + (index + 1) + " from " + label + " to " + moved.goals[index]);
+                    return new { ok = true, index, from = label, to = moved.goals[index] };
+                }
                 case "/api/fulltas/map":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
@@ -1389,7 +1413,10 @@ namespace IGTAPTasMod
                         return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or solve it once first." };
                     }
                     string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".json");
-                    return RunEngineSimMap(request, "map " + Quote(trace) + " --out " + Quote(output), output);
+                    // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
+                    string goalsFile = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".goals.json");
+                    File.WriteAllText(goalsFile, JsonConvert.SerializeObject(ResolveFullTasGoals(run).Select(g => g.label)));
+                    return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output), output);
                 }
             }
             request.StatusCode = 404;

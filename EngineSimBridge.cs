@@ -520,6 +520,10 @@ namespace IGTAPTasMod
 
         static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
 
+        // MacroEngine's step list is the whole route being played (17k entries on a Full-TAS run): nothing reads it back from
+        // a trace, and written with every tick it made a Full-TAS trace 3.8 GB, past what the offline engine can read.
+        static readonly FieldInfo EngineSteps = typeof(MacroEngine).GetField("_steps", InstanceFields);
+
         static void WriteRandom(EngineSimJson json, UnityEngine.Random.State state)
         {
             object boxed = state;
@@ -536,7 +540,7 @@ namespace IGTAPTasMod
             w.WritePropertyName("tick"); w.WriteValue(s.tick);
             w.WritePropertyName("random"); WriteRandom(json, s.random);
             w.WritePropertyName("movement"); WriteFieldValues(json, typeof(Movement), s.movement);
-            w.WritePropertyName("engine"); WriteFieldValues(json, typeof(MacroEngine), s.engine);
+            w.WritePropertyName("engine"); WriteFieldValues(json, FieldState.For(typeof(MacroEngine)), s.engine, EngineSteps);
             w.WritePropertyName("courses");
             w.WriteStartArray();
             foreach (var (course, fields) in s.courses)
@@ -667,12 +671,13 @@ namespace IGTAPTasMod
             WriteFieldValues(json, FieldState.For(type), values);
         }
 
-        static void WriteFieldValues(EngineSimJson json, FieldInfo[] fields, object[] values)
+        static void WriteFieldValues(EngineSimJson json, FieldInfo[] fields, object[] values, FieldInfo skip = null)
         {
             JsonTextWriter w = json.W;
             w.WriteStartArray();
             for (int i = 0; i < fields.Length && i < values.Length; i++)
             {
+                if (fields[i] == skip) continue;
                 w.WriteStartArray();
                 w.WriteValue(fields[i].DeclaringType.FullName);
                 w.WriteValue(fields[i].Name);

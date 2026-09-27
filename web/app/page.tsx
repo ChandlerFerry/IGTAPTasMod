@@ -109,7 +109,7 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} onClose={() => setMapTarget(null)}/>}</>}
+        {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "tech" && <TechPanel techs={state.techs} running={state.running || state.recording} selectedRoute={route} onCommand={command} onEditInputs={async routeId => { if (await command("/routes/select", { routeId })) setTab("timeline"); }}/>}
 
@@ -295,12 +295,14 @@ type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boo
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
   // The trees' ground where it grows once its tree upgrades are bought (not in the world the run starts in).
   grown?: MapSolid[]; treeSteps?: TreeStep[];
-  markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
+  markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
+// A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
+type MapGoal = { index: number; label: string; box: number[] };
 type MapLayers = { explored: boolean; boxes: boolean; markers: boolean };
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
-function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course[];runs?:string[];onClose:()=>void}) {
+function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
@@ -316,6 +318,10 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
   const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
   const [saving, setSaving] = useState(false);
   const sketchStart = useRef<{ x: number; y: number } | null>(null);
+  // Full-TAS: an at: goal dragged to a new place (same size), shown there until it's saved or discarded.
+  const [moving, setMoving] = useState(false);
+  const [moved, setMoved] = useState<{ goal: MapGoal; box: number[] } | null>(null);
+  const grab = useRef<{ goal: MapGoal; box: number[]; x: number; y: number } | null>(null);
   const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
   const view = useRef({ ox: 0, oy: 0, scale: 1 });
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -403,6 +409,12 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
       g.fillStyle = "#ff3030"; g.globalAlpha = .28; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
       g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
     }
+    if (moved) {
+      const [x0, y0, x1, y1] = moved.box, [o0, p0, o1, p1] = moved.goal.box;
+      g.strokeStyle = "#3ddc97"; g.lineWidth = 1.5 * px; g.setLineDash([4 * px, 4 * px]); g.strokeRect(o0, p0, o1 - o0, p1 - p0);
+      g.fillStyle = "#3ddc97"; g.globalAlpha = .35; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
+    }
     data.routes.forEach((r, i) => {
       if (hidden.has(i) || r.points.length < 4) return;
       g.strokeStyle = colors[i]; g.lineWidth = (r.kind === "best" ? 3 : r.kind === "plateau" ? 1 : 2) * px; g.lineJoin = "round";
@@ -420,7 +432,7 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
       else if (m.kind === "teleporter") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, hidden, colors, latest, sketch]);
+  }, [data, layers, hidden, colors, latest, sketch, moved]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -441,6 +453,14 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
     return { x: v.ox + (e.clientX - rect.left) / v.scale, y: v.oy - (e.clientY - rect.top) / v.scale };
   };
   const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (moving) {
+      // The goal under the pointer: the smallest rect holding it (a goal being moved is where it was dragged to).
+      const p = world(e), hit = (data?.goals ?? [])
+        .map(goal => ({ goal, box: moved?.goal.index === goal.index ? moved.box : goal.box }))
+        .filter(({ box }) => p.x >= box[0] && p.x <= box[2] && p.y >= box[1] && p.y <= box[3])
+        .sort((a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]))[0];
+      if (hit) { grab.current = { goal: hit.goal, box: hit.box, x: p.x, y: p.y }; setMoved({ goal: hit.goal, box: hit.box }); return; }
+    }
     if (!drawing) { drag.current = { x: e.clientX, y: e.clientY }; return; }
     const p = world(e);
     sketchStart.current = p;
@@ -448,6 +468,7 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
   };
   const onUp = () => {
     drag.current = null;
+    grab.current = null;
     if (!sketchStart.current) return;
     sketchStart.current = null;
     setDrawing(false);
@@ -458,6 +479,8 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
     if (drag.current) { v.ox -= (e.clientX - drag.current.x) / v.scale; v.oy += (e.clientY - drag.current.y) / v.scale; drag.current = { x: e.clientX, y: e.clientY }; draw(); }
     const { x, y } = world(e), reach = 10 / v.scale;
     if (sketchStart.current) setSketch([sketchStart.current.x, sketchStart.current.y, x, y]);
+    const held = grab.current;
+    if (held) { const dx = x - held.x, dy = y - held.y; setMoved({ goal: held.goal, box: [held.box[0] + dx, held.box[1] + dy, held.box[2] + dx, held.box[3] + dy] }); }
     const near = layers.markers ? data?.markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
     setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(`${Math.floor(x / size)},${Math.floor(y / size)}`) });
@@ -468,12 +491,25 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
+  const center = (b: number[]) => ({ x: Math.round((b[0] + b[2]) / 2 * 10) / 10, y: Math.round((b[1] + b[3]) / 2 * 10) / 10 });
+  const placeMoved = (x: number, y: number) => setMoved(m => {
+    if (!m) return m;
+    const w = m.box[2] - m.box[0], h = m.box[3] - m.box[1];
+    return { goal: m.goal, box: [x - w / 2, y - h / 2, x + w / 2, y + h / 2] };
+  });
+  const saveMoved = async () => {
+    if (!moved || !data?.fulltas) return;
+    setSaving(true); setFailure("");
+    try { const to = center(moved.box); await request("/fulltas/move-goal", { name: data.fulltas, index: moved.goal.index - 1, label: moved.goal.label, x: to.x, y: to.y }); setMoved(null); await load(); }
+    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
   const boxText = (b: number[]) => `${Math.min(b[0], b[2]).toFixed(1)}, ${Math.min(b[1], b[3]).toFixed(1)} to ${Math.max(b[0], b[2]).toFixed(1)}, ${Math.max(b[1], b[3]).toFixed(1)}`;
   const toggle = (key: keyof MapLayers) => setLayers(l => ({ ...l, [key]: !l[key] }));
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{target.fulltas ? `Full-TAS · ${target.fulltas}` : <>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</>}</h2></div>
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
-      ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
+      ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals as they are in <code>fulltas.json</code> now (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. <strong>Move goals</strong>, then drag a green goal box (same size) or type its new centre, and save it: the run's goals change as with <b>Save goals</b>. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
       : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
@@ -481,15 +517,22 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
-      {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
+      {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
+      {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag an at: goal's green box to a new place; it keeps its size" onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
     </div>
-    <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
+    <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {sketch && !sketchStart.current && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
       {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
       <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
       <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
+    {moved && <div className="buttonRow">
+      <span className="hint">Goal {moved.goal.index} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
+      <Field label="x"><input type="number" step="0.1" value={center(moved.box).x} onChange={e => placeMoved(Number(e.target.value), center(moved.box).y)}/></Field>
+      <Field label="y"><input type="number" step="0.1" value={center(moved.box).y} onChange={e => placeMoved(center(moved.box).x, Number(e.target.value))}/></Field>
+      <button className="primary" disabled={saving || busy} title={busy ? "Stop the solve or playback first (as Save goals)" : "Saves the goal here in fulltas.json"} onClick={saveMoved}>Save goal</button>
+      <button className="secondary" disabled={saving} onClick={() => setMoved(null)}>Discard</button></div>}
     {data?.fulltas && data.avoid.length > 0 && <ul className="mapRoutes">{data.avoid.map((b, i) => <li key={i}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
       <button className="secondary" disabled={saving} title={`Takes this box out of every forced-paths.json rule of ${data.fulltas} (a box shared with other runs goes for them too)`} onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
     {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>

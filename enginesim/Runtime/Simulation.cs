@@ -232,15 +232,42 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal void UseGoals(FullTasTracker goals) { Goals = goals; }
 
+        /// <summary>
+        /// A strict run's last goal was reached: it finishes this many ticks later (at a tick's end), so a box bought meanwhile (a
+        /// trigger after the goal's, the frame's end, or a box the player still stands in once its 0.2 s cooldown is over) still
+        /// ends it. Stopping at the goal would hide that purchase from the search, and the next piece would make it.
+        /// </summary>
+        const int StrictFinishTicks = 12;
+        int _finishIn = -1;
+        float _finishTimeAtGoal;
+
         void GoalEvent(bool reached)
         {
-            if (reached && Goals.Done && Engine.IsRunning)
-                Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+            if (!reached || !Goals.Done || !Engine.IsRunning) return;
+            if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+            else if (_finishIn < 0)
+            {
+                _finishIn = StrictFinishTicks;
+                _finishTimeAtGoal = Engine.PhysicsTicks * World.FixedDeltaTime;
+            }
         }
+
+        /// <summary>
+        /// A purchase that isn't the next goal's box ends the run (the Full-TAS loop builder's pieces: a walk that also buys another
+        /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys).
+        /// </summary>
+        internal bool StrictBuys;
 
         internal void Bought(string path, string id)
         {
-            if (Goals != null && Engine.IsRunning) GoalEvent(Goals.Bought(path, id, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+            if (Goals == null || !Engine.IsRunning) return;
+            FullTasGoal next = Goals.Current;
+            if (StrictBuys && (next?.boxes == null || Array.IndexOf(next.boxes, id) < 0 && Array.IndexOf(next.boxes, path) < 0))
+            {
+                Engine.Abort("Bought " + path + ", which isn't the next goal's box");
+                return;
+            }
+            GoalEvent(Goals.Bought(path, id, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
         }
 
         public SimSnapshot Advance(IReadOnlyList<InputTick> prefix)
@@ -837,6 +864,7 @@ namespace IGTAP.EngineSim
             _finished = false;
             _finishTime = 0f;
             _endReason = null;
+            _finishIn = -1;
             int maxTicks = inputs.Count - from.Tick + extraTicks;
             int idleTicks = 0, lastTick = from.Tick > 0 ? from.Tick : -1, stepped = 0;
             bool stop = false;
@@ -916,6 +944,11 @@ namespace IGTAP.EngineSim
                     if (now != null && now.kind == FullTasGoal.At && Touches(goalAt.x, goalAt.y, now.w, now.h)
                         && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                }
+                if (_finishIn >= 0 && _finishIn-- == 0 && Engine.IsRunning)
+                {
+                    _finishIn = -1;
+                    Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, _finishTimeAtGoal);
                 }
                 stepped++;
                 onStep?.Invoke(stepped - 1);
