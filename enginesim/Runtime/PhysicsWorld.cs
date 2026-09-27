@@ -702,17 +702,26 @@ namespace IGTAP.EngineSim
 
         bool Regrid(ColliderState s)
         {
+            bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
+            if (isStatic && Gridded(s)) return true;
             foreach (int i in s.GridSlots)
             {
                 CellRange(_static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
                     for (int x = x0; x <= x1; x++)
-                        _cells[y * _cellsX + x].Remove(i);
+                    {
+                        // A cell's order doesn't matter to its queries: swap-remove, no shift.
+                        List<int> cell = _cells[y * _cellsX + x];
+                        int at = cell.IndexOf(i);
+                        if (at < 0) continue;
+                        cell[at] = cell[cell.Count - 1];
+                        cell.RemoveAt(cell.Count - 1);
+                    }
                 _static[i] = default;
                 _freeSlots.Push(i);
             }
             s.GridSlots.Clear();
-            if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return true;
+            if (!isStatic) return true;
             float right = _gridX + _cellsX * CellSize, top = _gridY + _cellsY * CellSize;
             foreach (b2Fixture f in s.Fixtures)
                 for (int c = 0; c < f.m_proxyCount; c++)
@@ -721,6 +730,26 @@ namespace IGTAP.EngineSim
                     if (box.lowerBound.x < _gridX || box.lowerBound.y < _gridY || box.upperBound.x >= right || box.upperBound.y >= top) return false;
                     AddShape(f, c, s, box);
                 }
+            return true;
+        }
+
+        /// <summary>
+        /// Its slots already hold every child of its fixtures where it is now. A restore marks the colliders of every static body
+        /// ever moved (after a FloatingOrigin rebase: all of them) and of every rebuilt collider for a regrid; most are unchanged.
+        /// </summary>
+        bool Gridded(ColliderState s)
+        {
+            int children = 0;
+            foreach (b2Fixture f in s.Fixtures) children += f.m_proxyCount;
+            if (children != s.GridSlots.Count) return false;
+            foreach (int i in s.GridSlots)
+            {
+                ref StaticShape slot = ref _static[i];
+                if (!s.Fixtures.Contains(slot.Fixture)) return false;
+                b2AABB box = GridBox(slot.Fixture, slot.Child);
+                if (box.lowerBound.x != slot.Box.lowerBound.x || box.lowerBound.y != slot.Box.lowerBound.y
+                    || box.upperBound.x != slot.Box.upperBound.x || box.upperBound.y != slot.Box.upperBound.y) return false;
+            }
             return true;
         }
 

@@ -43,6 +43,9 @@ namespace IGTAP.EngineSim.Cli
         OfflineSolver.ForcedPath _path;
 
         public const float VisitCell = 16f;
+        // Bumped when older visits can't be trusted. 2: solver threads used to share the game's statics (the last world
+        // loaded won), so a worker's respawn after a rebase took another world's FloatingOrigin and drew far-off cells.
+        const int VisitsVersion = 2;
         Dictionary<long, float> _visits;
         string _visitsFile;
         string _archiveDir;
@@ -566,6 +569,7 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
             JsonElement root = doc.RootElement;
             if (root.GetProperty("cell").GetSingle() != VisitCell
+                || !root.TryGetProperty("version", out JsonElement version) || version.GetInt32() != VisitsVersion
                 || (labels != null && !root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(labels))) return null;
             var visits = new Dictionary<long, float>();
             foreach (JsonElement c in root.GetProperty("cells").EnumerateArray())
@@ -580,6 +584,7 @@ namespace IGTAP.EngineSim.Cli
             Directory.CreateDirectory(Path.GetDirectoryName(_visitsFile));
             Solve.WriteShared(_visitsFile, JsonSerializer.Serialize(new
             {
+                version = VisitsVersion,
                 goals = _labels,
                 cell = VisitCell,
                 cells = _visits.Select(v => new[] { (float)(int)(v.Key >> 32), (float)(int)v.Key, (float)Math.Round(v.Value, 2) }),

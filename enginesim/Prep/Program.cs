@@ -82,6 +82,7 @@ static class Prep
                 throw new InvalidOperationException("hooks.txt: " + hook[2] + " must take (self, " + method.Parameters.Count + " args)");
             InjectHook(method, module.ImportReference(handler), hook[0] == "replace");
         }
+        int threadStatic = ThreadStaticFields(module);
         int widened = 0;
         foreach (TypeDefinition type in module.GetTypes())
             foreach (MethodDefinition m in type.Methods) widened += MonoFloat.Apply(m);
@@ -91,8 +92,29 @@ static class Prep
         if (unused.Count > 0) throw new InvalidOperationException("cuts.txt names methods that do not exist: " + string.Join(", ", unused));
         Directory.CreateDirectory(outDir);
         game.Write(Path.Combine(outDir, "Assembly-CSharp.dll"));
-        Console.WriteLine("Retargeted Assembly-CSharp -> " + outDir + " (" + used.Count + " methods cut, " + widened + " float loads widened)");
+        Console.WriteLine("Retargeted Assembly-CSharp -> " + outDir + " (" + used.Count + " methods cut, " + widened + " float loads widened, "
+            + threadStatic + " static fields per thread)");
         return 0;
+    }
+
+    // The game's mutable statics (Singleton<T>.instance, VmanScript's flags, globalStats' dictionaries) hold one world's
+    // state, and every solver thread runs its own world: shared, the last world loaded wins, and a thread's game code
+    // reads another world's objects (a respawn adds another world's FloatingOrigin.currentOrigin). Per thread, each
+    // thread's World.Load sets its own. Constants, readonly fields and RVA data stay shared.
+    static int ThreadStaticFields(ModuleDefinition module)
+    {
+        var attribute = new MethodReference(".ctor", module.TypeSystem.Void,
+            new TypeReference("System", "ThreadStaticAttribute", module, module.TypeSystem.CoreLibrary)) { HasThis = true };
+        int count = 0;
+        foreach (TypeDefinition type in module.GetTypes())
+            foreach (FieldDefinition f in type.Fields)
+            {
+                if (!f.IsStatic || f.IsLiteral || f.IsInitOnly || f.HasFieldRVA) continue;
+                if (f.CustomAttributes.Any(a => a.AttributeType.FullName == "System.ThreadStaticAttribute")) continue;
+                f.CustomAttributes.Add(new CustomAttribute(attribute));
+                count++;
+            }
+        return count;
     }
 
     static int MonoFloatTypes(string dll, string[] typeNames)

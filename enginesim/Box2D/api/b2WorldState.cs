@@ -569,6 +569,14 @@ namespace Box2D
             var node = new List<Node>();
             for (int i = 0; i < _capacity; i++)
                 if (!Same(_nodes[i], baseNodes[i])) { index.Add(i); node.Add(_nodes[i]); }
+            // A tree rebuilt since the base (a FloatingOrigin rebase rebuilds every body-less collider) differs from it almost
+            // everywhere: this state becomes the base, so later snapshots near it hold only what moved. Older ones keep theirs.
+            if (index.Count * 4 > _capacity)
+            {
+                _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
+                index.Clear();
+                node.Clear();
+            }
             return new TreeSnapshot
             {
                 baseNodes = baseNodes, changedIndex = index.ToArray(), changedNode = node.ToArray(),
