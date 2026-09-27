@@ -17,7 +17,7 @@ FULLTAS = os.path.join(CONFIG, "fulltas.json")
 
 C1_BUYS = 20
 C1_CLONES = 9
-C1_PATH = 93
+C1_PATH = 82
 FIRST_LAP = 327
 CASH = 713 + (490 + 406) // 51 * 11
 ARRIVE = 418
@@ -25,8 +25,8 @@ BONUS1_TICK = 8182
 GLOBAL0 = 1
 C1_GLOBAL = 0
 
-LAP = 128
-LEAD = 31
+LAP = 110
+LEAD = 39
 RESET_X = 4783
 BOX_X = {"R": 4199, "C": 4019, "M": 3839, "G": 3659, "D": 3479}
 TO = {b: round((RESET_X - x - 50) / 9.2) for b, x in BOX_X.items()}
@@ -864,7 +864,7 @@ def main():
     mid = rows[len(rows) // 2]
     c2_lap_rate = mid.reward2() / (LEAD + LAP)
     c2_rate = c2_lap_rate + mid.N * mid.pay2() / mid.P
-    c1_lap_rate = reward(1, 0, C1_BUYS, GLOBAL0 + mid.g) / 127
+    c1_lap_rate = reward(1, 0, C1_BUYS, GLOBAL0 + mid.g) / (C1_PATH + 26)
     c1_max = offscreen_pay(reward(1, 0, 40, GLOBAL0 + 2), 0, 35, C1_PATH) / OFFSCREEN
     print(f"Course 1 check at tick {mid.t}: a Course 1 lap earns {c1_lap_rate:.2f} W/tick against Course 2's {c2_lap_rate:.1f}"
           f" (plus {c2_rate - c2_lap_rate:.0f} from its clones); Course 1 maxed (40 reward buys, 35 clones, G 3) would pay"

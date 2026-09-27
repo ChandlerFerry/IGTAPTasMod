@@ -17,7 +17,7 @@ type Route = { id: string; name: string; actionCount: number; actions: Action[] 
 type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
-type Course = { id: number; token: string; bonus: boolean; minLevel: number; maxLevel?: number; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
+type Course = { id: number; token: string; bonus: boolean; levels: number[]; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
@@ -123,8 +123,8 @@ export default function Studio() {
   </main>;
 }
 
-const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"], ["WJ_DS_DJ_BS", "Wall jump + dash + double jump + block swap"]];
-const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
+const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"], ["WJ_DS_DJ_BS", "Wall jump + dash + double jump + block swap"], ["WJ_DS_DJ_BS_OM", "Wall jump + dash + double jump + block swap + omnidash"]];
+const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
 
 const BONUS_WHERE: Record<string, string> = {
   bonus1: "Below Course 2, a little right of its restart. The run starts right of Course 2, up a bit (where Course 2 → Bonus 1 ends).",
@@ -172,8 +172,6 @@ function courseLabel(c: Course | undefined, id: number) {
   return c.to ? `${place(c.from ?? "")} → ${place(c.to)}` : place(c.token);
 }
 
-function topLevel(c: Course) { return c.maxLevel ?? (c.bonus ? c.minLevel ?? 0 : CATEGORIES.length - 1); }
-
 type Bests = Map<string, {route: Route; time: number}>;
 
 function categoryBests(routes: Route[], courses: Course[]) {
@@ -183,7 +181,7 @@ function categoryBests(routes: Route[], courses: Course[]) {
     const m = CATEGORY_ROUTE.exec(r.name);
     const course = m && courses.find(c => c.token.toLowerCase() === m[1].toLowerCase());
     const level = m ? CATEGORIES.findIndex(([cat]) => cat === m[2].toUpperCase()) : -1;
-    if (!m || !course || level < (course.minLevel ?? 0) || level > topLevel(course)) { other.push(r); continue; }
+    if (!m || !course || !course.levels.includes(level)) { other.push(r); continue; }
     const kind = m[3] ? farm : best, key = `${course.id}:${m[2].toUpperCase()}`, time = Number(m[4]);
     const current = kind.get(key);
     if (!current || time < current.time) kind.set(key, {route: r, time});
@@ -192,11 +190,12 @@ function categoryBests(routes: Route[], courses: Course[]) {
   return {best, farm, other};
 }
 
-const SHORT_CATEGORY: Record<string, string> = { NONE: "None", WJ: "WJ", WJ_DS: "WJ + DS", WJ_DS_DJ: "WJ + DS + DJ", WJ_DS_DJ_BS: "WJ + DS + DJ + BS" };
+const SHORT_CATEGORY: Record<string, string> = { NONE: "None", WJ: "WJ", WJ_DS: "WJ + DS", WJ_DS_DJ: "WJ + DS + DJ", WJ_DS_DJ_BS: "WJ + DS + DJ + BS", WJ_DS_DJ_BS_OM: "WJ + DS + DJ + BS + OM" };
 
+// The best route of this category or of a narrower one the course has (their unlocks are a subset).
 function soloBest(best: Bests, c: Course, level: number) {
   let solo: {route: Route; time: number} | undefined;
-  for (const [narrower] of CATEGORIES.slice(c.minLevel ?? 0, (c.minLevel ?? 0) + level + 1)) {
+  for (const narrower of c.levels.filter(l => l <= level).map(l => CATEGORIES[l][0])) {
     const b = best.get(`${c.id}:${narrower}`);
     if (b && (!solo || b.time < solo.time)) solo = b;
   }
@@ -208,11 +207,12 @@ function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Ro
   const cell = (routeId: string | undefined, text: string, title: string) => routeId
     ? <button className={`cmpCell ${routeId === activeId ? "active" : ""}`} title={title} onClick={() => onCommand("/routes/select", { routeId })}>{text}</button>
     : <span className="cmpCell empty" title={title}>{text}</span>;
-  const rows = (c: Course) => CATEGORIES.slice(c.minLevel ?? 0, topLevel(c) + 1).flatMap(([cat], i) => {
+  const rows = (c: Course) => c.levels.flatMap(level => {
+    const cat = CATEGORIES[level][0];
     const farms = c.bonus || c.to ? best : farm;
     if (!best.has(`${c.id}:${cat}`) && !farms.has(`${c.id}:${cat}`)) return [];
-    const record = soloBest(best, c, i), lap = soloBest(farms, c, i);
-    const beyond = unlockLevel != null && (c.minLevel ?? 0) + i > unlockLevel;
+    const record = soloBest(best, c, level), lap = soloBest(farms, c, level);
+    const beyond = unlockLevel != null && level > unlockLevel;
     return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat} title={beyond ? `Your save's unlocks only reach ${CATEGORIES[unlockLevel][1]}` : undefined}>
       <span>{SHORT_CATEGORY[cat]}</span>
       {cell(record?.route.id, record ? record.time.toFixed(2) : "—", record?.route.name ?? "No record route")}
@@ -263,14 +263,13 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   const [caps,setCaps]=useState("wj");
   const chosen=course===""?(solver.courses[0]??1):course;
   const chosenCourse=courses.find(c=>c.id===chosen);
-  const minLevel=chosenCourse?.minLevel??0;
-  const capsOptions=CAPS.map((v,level)=>[v,CATEGORIES[level][1]]).slice(minLevel,chosenCourse?topLevel(chosenCourse)+1:undefined);
+  const capsOptions=(chosenCourse?chosenCourse.levels:CAPS.map((_,level)=>level)).map(level=>[CAPS[level],CATEGORIES[level][1]]);
   const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps));
   const chosenOptional=optional.filter(n=>optionalBlocks.some(b=>b.name===n)).sort();
   const target={course:chosen,capabilities:chosenCaps,optional:chosenOptional};
-  const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,capsOptions.findIndex(([v])=>v===chosenCaps)):undefined;
+  const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,CAPS.indexOf(chosenCaps)):undefined;
   const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
     <p className="lede">Captures the course start in the game, then searches offline on every core: it explores new paths from the start and sharpens the best finish; only the start and stop timer gates matter. Every offline best is replayed in the game (turbo) and, if it holds up there, saved as the record route (the game's timer) and, on a course, as the farm route when it takes fewer physics ticks from the quick restart to the finish.</p>
@@ -497,7 +496,7 @@ function SolveMap({target,courses,runs,onClose}:{target:MapTarget;courses:Course
   </div>;
 }
 
-const CAPS = ["none", "wj", "wjds", "wjdsdj", "wjdsdjbs"];
+const CAPS = ["none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom"];
 type SolveTarget = { key: string; body: { course: number; capabilities: string }; time?: number; farm?: number };
 
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
@@ -542,7 +541,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     ["COURSES", courses.filter(c => !c.bonus && !c.to).sort((a, b) => a.id - b.id)],
     ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
     ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]];
-  const cells = (c: Course): (SolveTarget | null)[] => CATEGORIES.map(([cat], level) => level < (c.minLevel ?? 0) || level > topLevel(c) ? null
+  const cells = (c: Course): (SolveTarget | null)[] => CATEGORIES.map(([cat], level) => !c.levels.includes(level) ? null
     : { key: `c:${c.id}:${CAPS[level]}`, body: { course: c.id, capabilities: CAPS[level] }, time: best.get(`${c.id}:${cat}`)?.time, farm: farm.get(`${c.id}:${cat}`)?.time });
   const open = (t: SolveTarget | null): t is SolveTarget => !!t;
   const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter(open)));
@@ -562,7 +561,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
       <thead><tr><th />{CATEGORIES.map(([cat, title], level) => <th key={cat}><button title={`Tick every ${title.toLowerCase()} target`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
       <tbody>
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
-          <tr className="matrixSection"><th colSpan={5}>{label}</th></tr>
+          <tr className="matrixSection"><th colSpan={CATEGORIES.length + 1}>{label}</th></tr>
           {list.map(c => <tr key={c.id}>
             <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).filter(open).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
             {cells(c).map((t, level) => <td key={level} className={t ? "" : "na"}>{t && checkbox(t)}</td>)}

@@ -9,9 +9,10 @@ start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-ru
 
 ## Route names
 
-- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ|WJ_DS_DJ_BS> <time>`. `BS` is block
-  swap on dash; Courses 1–5 stop at `WJ_DS_DJ`, Courses 6–10 start at `WJ_DS_DJ_BS`. Courses 11–15 are Courses 1–5
-  overgrown (the game's Course 1–5 gates, Area 1 overgrown) and run only in `WJ_DS_DJ_BS`.
+- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ|WJ_DS_DJ_BS|WJ_DS_DJ_BS_OM> <time>`.
+  `BS` is block swap on dash, `OM` the omnidirectional dash on top of it; Courses 1–5 stop at `WJ_DS_DJ`, Courses 6–10
+  start at `WJ_DS_DJ_BS`. Courses 11–15 are Courses 1–5 overgrown (the game's Course 1–5 gates, Area 1 overgrown) and
+  run only in `WJ_DS_DJ_BS`. Every course (1–15) also runs in `WJ_DS_DJ_BS_OM`.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
   start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).

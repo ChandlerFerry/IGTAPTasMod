@@ -127,6 +127,12 @@ momentum) replay with every position and Movement field identical; only the body
 (under 3e-5, the ground-seam noise below). `ultras` models the rebase itself on its placed launches (`Rebases` off
 there).
 
+After a rebase the tick's rendered frames end with the player at the step's end moved with the world (`_stepTo`, as
+turbo's `Place(player, _stepTo)`), not at the Box2D body, which only follows at the next sync. Reading the body there
+put the player back at its pre-rebase scene position, so a far teleport (a quick restart or death across the map)
+rebased again every tick or two and the player's world position jumped by the origin each time (Test-No-Omni-Skip's
+windows reached world (-21055, -15606) and ±k × (20933, 14987)).
+
 A forced path limits which runs count. `--via x0,y0,x1,y1` boxes must hold the player's center, in order, before a
 finish counts; a run that enters an `--avoid x0,y0,x1,y1` box is cut. Both are checked on every physics tick, dash
 ticks included. The boxes passed so far are part of every explore cell, and before the first finish, cells past more
@@ -148,8 +154,9 @@ above Course 3's approach shaft, everything left of the shaft's left wall.
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category; Course 3 has
-`box-9447-7370` (x 9446.9 to 9694.1, y 7369.6 to 7484.0), in `WJ_DS` and `WJ_DS_DJ`.
+it's off. Course 1 has `start-marker` (x 2436 to 2522, y -361 to -180), in every category; Course 2 has
+`avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
+to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS` and `WJ_DS_DJ`.
 
 A rule with `"fulltas": ["VMAN", ...]` instead of `course`/`capabilities` holds a Full-TAS run's avoid boxes: every
 search window of those runs cuts a run entering one (its `via` isn't used; the run's `at:` goals are its waypoints).

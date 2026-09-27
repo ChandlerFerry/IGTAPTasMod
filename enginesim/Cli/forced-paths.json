@@ -12,6 +12,12 @@
           "note": "Around the Start marker (2493, -218): x 2436 to 2522, y -361 (into the floor) to -180. Off unless picked.",
           "avoid": [[2436, -361, 2522, -180]],
           "via": []
+        },
+        {
+          "name": "avoid-backwards",
+          "note": "x 2168.3 to 2347.6, y 213.4 to 235.5. Off unless picked.",
+          "avoid": [[2168.3, 213.4, 2347.6, 235.5]],
+          "via": []
         }
       ]
     },
@@ -20,7 +26,15 @@
       "capabilities": ["none", "wj", "wjds", "wjdsdj"],
       "note": "Left side: everything left of the pillar hanging down right of the buy machines (its left edge, x 4512), top to bottom, is cut. Right side: everything right of the two rooms' right walls (the upper room's wall's left edge, x 7008), top to bottom, is cut, which closes the corridor joining the rooms past Checkpoints (2) and (3). Both rooms right of the start (x 5403 to 7041, y 997 to 3066) and the drop under the start floor (x 5028 to 5433, y 1105 to 1698) are cut. Every route climbs over the pillar right of the start to RealEnd above it; the search otherwise spends most of its runs out there.",
       "avoid": [[-3488, -3964, 4512, 8036], [7008, -3964, 15008, 8036], [5403, 997, 7041, 3066], [5028, 1105, 5433, 1698]],
-      "via": []
+      "via": [],
+      "optional": [
+        {
+          "name": "avoid-backwards",
+          "note": "x 4726.5 to 4919.2, y 2398.2 to 2439.1. Off unless picked.",
+          "avoid": [[4726.5, 2398.2, 4919.2, 2439.1]],
+          "via": []
+        }
+      ]
     },
     {
       "course": 3,
@@ -30,9 +44,15 @@
       "via": [],
       "optional": [
         {
-          "name": "box-9447-7370",
+          "name": "avoid-backwards",
           "note": "x 9446.9 to 9694.1, y 7369.6 to 7484.0. Off unless picked.",
           "avoid": [[9446.9, 7369.6, 9694.1, 7484.0]],
+          "via": []
+        },
+        {
+          "name": "avoid-forwards",
+          "note": "x 9620.2 to 9694.5, y 6908.6 to 7170.5. Off unless picked.",
+          "avoid": [[9620.2, 6908.6, 9694.5, 7170.5]],
           "via": []
         }
       ]
@@ -130,7 +150,7 @@
       "fulltas": ["TrueEnding-ANY%"],
       "note": "Drawn on the Full-TAS map.",
       "drawn": true,
-      "avoid": [[126.0, 299.1, 1450.1, 2736.4], [3599.4, 11806.7, 10426.5, 16991.2], [16449.2, 9985.6, 16899.1, 10323.1], [7198.2, 6900.4, 7476.9, 7786.2], [9273.8, 6874.6, 9930.1, 7793.5]]
+      "avoid": [[126.0, 299.1, 1450.1, 2736.4], [3599.4, 11806.7, 10426.5, 16991.2], [16449.2, 9985.6, 16899.1, 10323.1], [7198.2, 6900.4, 7476.9, 7786.2], [9273.8, 6874.6, 9930.1, 7793.5], [5634.6, 5262.3, 7292.5, 6837.6], [3224.3, 3770.2, 5744.1, 5597.5], [2790.5, -484.3, 3558.1, 575.4]]
     }
   ]
 }

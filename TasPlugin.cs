@@ -511,10 +511,17 @@ namespace IGTAPTasMod
             return fallback ?? all[0];
         }
 
+        // The coloured blocks' state (colouredBlockSwapper.isBlueActive) as a pseudo field of the player, so a category start
+        // saves and puts it back with the unlocks: without block swap nothing resets it (Movement.respawn swaps only when
+        // blockSwapUnlocked), so a save's swapped blocks (Course 4's SwapBlocksOnce box, dashes with block swap) would carry in.
+        internal const string BlueActiveField = "blockSwapper.isBlueActive";
+        static readonly FieldInfo BlockSwapperField = AccessTools.Field(typeof(Movement), "blockSwapper");
+
         private static object GetMovementField(Movement movement, string name)
         {
             try
             {
+                if (name == BlueActiveField) return BlockSwapperField?.GetValue(movement) is colouredBlockSwapper swapper && swapper != null ? swapper.isBlueActive : (object)null;
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
                 return f == null ? null : f.GetValue(movement);
             }
@@ -530,6 +537,11 @@ namespace IGTAPTasMod
             if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft" || name == "maxAirJumps" || name == "airJumpsLeft")) return;
             try
             {
+                if (name == BlueActiveField)
+                {
+                    if (value is bool blue && BlockSwapperField?.GetValue(movement) is colouredBlockSwapper swapper && swapper != null) swapper.swapBlocks(blue);
+                    return;
+                }
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
                 if (f != null) f.SetValue(movement, value);
             }
@@ -1307,8 +1319,10 @@ namespace IGTAPTasMod
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
-        internal static int TopLevel { get { return CapsLadder.Length - 1; } }
+        // WJ_DS_DJ_BS_OM (the last) is WJ_DS_DJ_BS plus the omnidirectional dash: every course has it, whatever its range.
+        internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom" };
+        internal static int OmniLevel { get { return CapsLadder.Length - 1; } }
+        internal static int TopLevel { get { return OmniLevel - 1; } }
 
         internal static int CapsLevel(string caps)
         {
@@ -1320,15 +1334,19 @@ namespace IGTAPTasMod
             return label.Replace("_", "").ToLowerInvariant();
         }
 
-        internal static (string field, object value)[] CategoryAbilities(string caps)
+        internal static IEnumerable<(string field, object value)> CategoryAbilities(string caps)
         {
             int level = CapsLevel(caps);
             int dashes = level >= 2 ? 1 : 0;
             int jumps = level >= 3 ? 1 : 0;
-            return new (string, object)[] { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
+            var abilities = new List<(string, object)> { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
                 ("maxAirDashes", dashes), ("airDashesLeft", dashes),
                 ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps),
-                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", false) };
+                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", level >= 5) };
+            // Below block swap the blocks start unswapped, as a new game has them (Movement.Start: blue active); with it the
+            // game's own respawn sets them (isBlueActiveOnRespawn).
+            if (level < 4) abilities.Add((BlueActiveField, true));
+            return abilities;
         }
 
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
@@ -1344,7 +1362,7 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
+            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
             if (!category.Success || movement == null) return;
             string caps = CapsFor(category.Groups[2].Value);
             foreach (var (field, value) in ApplyAbilities(movement, caps))
@@ -1360,7 +1378,8 @@ namespace IGTAPTasMod
             if (!on("dashUnlocked") || !some("maxAirDashes")) return 1;
             if (!on("doubleJumpUnlocked") || !some("maxAirJumps")) return 2;
             if (!on("blockSwapUnlocked")) return 3;
-            return 4;
+            if (!on("omniDashUnlocked")) return 4;
+            return 5;
         }
 
         private void RestorePlaybackAbilities()
@@ -1885,7 +1904,7 @@ namespace IGTAPTasMod
 
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 

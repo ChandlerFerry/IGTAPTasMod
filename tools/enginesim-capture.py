@@ -9,7 +9,7 @@ that run saw it).
   enginesim-capture.py start C CAPS       just the start state (empty inputs) for course C, category CAPS
   enginesim-capture.py route NAME C CAPS  any studio route by name (e.g. a partial one), as a `solve --seed` trace
 
-C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjds|wjdsdj|wjdsdjbs.
+C is a course id or name from courses.json ("4", "bonus1"); CAPS is none|wj|wjds|wjdsdj|wjdsdjbs|wjdsdjbsom.
 """
 import json
 import random
@@ -21,7 +21,7 @@ import urllib.request
 from gamepaths import CONFIG
 
 API = "http://127.0.0.1:17426"
-CAPS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj", "WJ_DS_DJ_BS": "wjdsdjbs"}
+CAPS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj", "WJ_DS_DJ_BS": "wjdsdjbs", "WJ_DS_DJ_BS_OM": "wjdsdjbsom"}
 COURSES = CONFIG / "courses.json"
 COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
 COURSE_IDS.update({str(c): c for c in COURSE_IDS.values()})
@@ -73,7 +73,7 @@ def main():
     if mode == "routes":
         state = call("/api/state", method="GET")
         for route in state["routes"]:
-            m = re.match(r"^([^_\s]+)_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$", route["name"])
+            m = re.match(r"^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$", route["name"])
             if not m or m.group(1) not in COURSE_IDS:
                 continue
             course = COURSE_IDS[m.group(1)]
@@ -86,7 +86,7 @@ def main():
             for k in range(count):
                 rng = random.Random(course * 1000 + k * 7 + len(caps))
                 name = f"rand-c{course}-{caps}-{k}"
-                r = trace({"course": course, "capabilities": caps, "ticks": random_inputs(rng, 300, caps in ("wjds", "wjdsdj", "wjdsdjbs")), "name": name})
+                r = trace({"course": course, "capabilities": caps, "ticks": random_inputs(rng, 300, caps in ("wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom")), "name": name})
                 print(name, {k2: v for k2, v in r.items() if k2 != "path"})
     elif mode == "start":
         course, caps = COURSE_IDS[sys.argv[2]], sys.argv[3]

@@ -321,7 +321,7 @@ namespace IGTAP.EngineSim
                 _seeds.Enqueue(new List<InputTick>());
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
-                _omni = owner.Capabilities == "omni";
+                _omni = owner.Capabilities == "omni" || owner.Capabilities == "wjdsdjbsom";
                 _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
                 if (_goalMode) Interlocked.CompareExchange(ref owner._near, Enumerable.Repeat(float.PositiveInfinity, sim.Goals.Goals.Length + 1).ToArray(), null);
@@ -439,9 +439,11 @@ namespace IGTAP.EngineSim
                 _splicing = _bestInputs != null;
                 _spliceAt = -1;
                 _fromCell = chosen;
+                List<InputTick> spliceInto = _bestInputs;
                 Try(inputs, "explore", from);
                 _splicing = false;
-                if (_spliceAt > chosen.Length) Splice(inputs, _spliceAt, _spliceBestTick, from);
+                // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
+                if (_spliceAt > chosen.Length && ReferenceEquals(spliceInto, _bestInputs)) Splice(inputs, _spliceAt, _spliceBestTick, from);
                 _fromCell = null;
             }
 
@@ -986,7 +988,8 @@ namespace IGTAP.EngineSim
                 _bestBody = _replayBody;
                 _bestFingerprint = _replayFingerprint;
                 _bestWaypoints = _replayWaypoints;
-                if (improved) { _owner.Offer(replayed, replayedTicks, _bestInputs, mode); _spliceScan = true; }
+                _spliceScan = true;
+                if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 

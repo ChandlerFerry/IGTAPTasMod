@@ -140,6 +140,11 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
+A savestate holds no checkpoint, and the new game's `respawnPoint` is the Vman spawn (world (-61, -301)): a death or
+quick restart sent the player back across the map. A savestate start sets `respawnPoint` (world frame) to the restored
+position + 12 u, so a respawn (12 u under it) puts the player where the savestate stands; a checkpoint touched later
+moves it as the game does.
+
 A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
 unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
 snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map.
@@ -151,9 +156,13 @@ seed routes, once from each goal they reach: the inputs after their goal k, for 
 too. When the solve's best reaches one of those goals, the seed's inputs are tried from there (as the course seeds
 are) and spliced in if the whole run gets better. Unlocks aren't checked up front: the simulation decides.
 
-`TrueEnding-ANY%` is the first: a plain new game (no `"start"`, not a Vman speedrun), `ANY%`'s goals through
+`TrueEnding-ANY%` is the first: a plain new game (no `"start"`, not a Vman speedrun), its own buy order through
 `buy:buyds`, `VMAN`'s goals 9–19 (the way to the tunnel), then `Test-No-Omni-Skip`'s four, seeded with
-`Test-No-Omni-Skip`'s path.
+`Test-No-Omni-Skip`'s path. Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
+laps: an ordering planned for slower laps asks for a clone before the clones have paid for it, and the run stalls at
+that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) come from
+`python tools/plan-fulltas.py --cash 923 --arrive 444 --first-lap 277`: the Cash at `reward:bonus1`, the ticks from
+there to Course 2's start gate and its first Course 2 run, measured on its best.
 
 ## Seed
 

@@ -36,7 +36,8 @@ namespace IGTAPTasMod
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
             [JsonIgnore] public int MaxLevel { get { return !string.IsNullOrEmpty(maxCapabilities) ? CapsLevel(maxCapabilities) : IsBonus ? MinLevel : TopLevel; } }
-            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level >= MinLevel && level <= MaxLevel; }
+            /// <summary>WJ_DS_DJ_BS_OM is every course's (not a bonus's or transition's), outside its min–max range.</summary>
+            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level == OmniLevel ? !IsBonus && !IsTransition : level >= MinLevel && level <= MaxLevel; }
         }
 
         sealed class SolverTick
@@ -186,7 +187,7 @@ namespace IGTAPTasMod
                 int id = 201;
                 while (_courses.Any(c => c.id == id)) id++;
                 Movement player = FindWorldMovement();
-                int level = m.Groups[5].Success ? CapsLevel(CapsFor(m.Groups[5].Value.ToUpperInvariant())) : player == null ? 0 : SaveUnlockLevel(player);
+                int level = m.Groups[5].Success ? CapsLevel(CapsFor(m.Groups[5].Value.ToUpperInvariant())) : player == null ? 0 : Math.Min(TopLevel, SaveUnlockLevel(player));
                 transition = new CourseDef { id = id, name = origin + "to" + target, x = start.x, y = start.y, from = origin, to = target,
                     minCapabilities = CapabilityLabels.Keys.First(k => CapsLevel(k) == level) };
                 if (!toBonus)
@@ -236,7 +237,7 @@ namespace IGTAPTasMod
         }
 
         static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
-            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" }, { "wjdsdjbs", "WJ_DS_DJ_BS" } };
+            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" }, { "wjdsdjbs", "WJ_DS_DJ_BS" }, { "wjdsdjbsom", "WJ_DS_DJ_BS_OM" } };
 
         void CheckCategory(int course, string capabilities)
         {
@@ -245,7 +246,8 @@ namespace IGTAPTasMod
             string Label(int level) => CapabilityLabels.First(p => CapsLevel(p.Key) == level).Value;
             throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
                 + " category; it " + (def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
-                    : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel)) + ".");
+                    : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel))
+                + (def.IsBonus || def.IsTransition ? "" : " and " + Label(OmniLevel)) + ".");
         }
 
         static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
@@ -584,8 +586,8 @@ namespace IGTAPTasMod
 
         object[] BuildCourseWebState()
         {
-            return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus, minLevel = c.MinLevel,
-                maxLevel = c.MaxLevel, @from = c.from, to = c.to,
+            return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus,
+                levels = CapsLadder.Where(c.HasCategory).Select(CapsLevel).ToArray(), @from = c.from, to = c.to,
                 hint = c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
                 optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, capabilities = b.caps }).ToArray() }).ToArray();
         }
@@ -841,7 +843,7 @@ namespace IGTAPTasMod
                 || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
                 || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0)
                 || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4)
-                || GetMovementBool(player, "omniDashUnlocked", false))
+                || GetMovementBool(player, "omniDashUnlocked", false) != (level >= 5))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
@@ -952,8 +954,8 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
-        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
 
         static bool RankedRoute(string name, out string key, out float time)
         {

@@ -589,7 +589,8 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// The tick's rendered frames: one Movement.Update per frame at its blend, the first frame repeated for a dash freeze's
         /// frames (time stands still, TimeStop). A step-up write moves the body at once and later frames show it. The
-        /// transform goes back to the body for the rest of the tick (goals, rebases, snapshots).
+        /// transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end, which a rebase
+        /// this tick has moved with the world (the body itself follows at the next sync), as turbo's Place(player, _stepTo).
         /// </summary>
         void InterpolatedFrames()
         {
@@ -605,7 +606,7 @@ namespace IGTAP.EngineSim
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
                 }
-            Player.transform.StoreWorldPosition(BodyPosition());
+            Player.transform.StoreWorldPosition(_stepTo);
         }
 
         public SimSnapshot Capture(int tick)
@@ -830,6 +831,13 @@ namespace IGTAP.EngineSim
                 Physics.SyncTransforms();
                 _stepFrom = BodyPosition();
                 Physics.Simulate(World.FixedDeltaTime);
+                // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and drops
+                // the interpolation, as at 1x (turbo's post-step sync): the tick's frames show it, the next tick blends from it.
+                if (Physics.PlayerTransformDirty)
+                {
+                    Physics.SyncTransforms();
+                    _stepFrom = BodyPosition();
+                }
                 _stepTo = BodyPosition();
                 Scheduler.Resume(Scheduler.Wait.FixedUpdate);
                 int rebasesBeforeResume = _rebases.Length;

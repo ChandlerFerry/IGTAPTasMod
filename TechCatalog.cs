@@ -44,7 +44,7 @@ namespace IGTAPTasMod
         static readonly string[] TechOrigins = { "community", "game", "ours" };
         static readonly string[] TechRequires = { "NONE", "WJ", "WJ_DS", "WJ_DS_DJ", "WJ_DS_DJ_BS", "OMNI" };
         const int TechDemoTailTicks = 25;
-        static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|[^_\s/]+_(?:NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ))(?= |$)", RegexOptions.IgnoreCase);
+        static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|[^_\s/]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ))(?= |$)", RegexOptions.IgnoreCase);
 
         List<TechDef> _techs = new List<TechDef>();
         readonly string[] _techLabels = (string[])TechNames.Clone();

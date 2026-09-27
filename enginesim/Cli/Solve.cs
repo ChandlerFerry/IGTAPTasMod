@@ -347,7 +347,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        static readonly string[] Categories = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
+        internal static readonly string[] Categories = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom" };
 
         static void SubmitOther(HttpClient http, Target target, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {

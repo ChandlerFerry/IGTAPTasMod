@@ -647,8 +647,13 @@ namespace IGTAPTasMod
             }
             SavestateResult restored = SavestateService.Restore(player, state, MacroLibrary.CurrentSchemaVersion);
             if (!restored.Success) { FailNewGame(restored.Message); return; }
+            // The savestate holds no checkpoint: the new game's respawnPoint (world frame) is the Vman spawn, so a death or quick
+            // restart would send the player back across the map. Respawn where the savestate stands (respawn puts the dot 12 u
+            // under its point).
+            Vector2 restoredAt = (Vector2)player.transform.position - CurrentOrigin();
+            SetMovementField(player, "respawnPoint", restoredAt + new Vector2(0f, 12f));
             _newGameSavestateApplied = true;
-            _newGameNotes.Add("restored savestate " + state.name);
+            _newGameNotes.Add("restored savestate " + state.name + ", respawnPoint " + restoredAt.ToString("0.#"));
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;
         }
@@ -1411,7 +1416,8 @@ namespace IGTAPTasMod
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
-                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames } };
+                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks,
+                    cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };
         }
 
         static int? FullTasBreakerGoal(string[] labels)
