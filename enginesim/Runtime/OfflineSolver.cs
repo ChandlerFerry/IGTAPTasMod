@@ -74,7 +74,6 @@ namespace IGTAP.EngineSim
         float[] _near;
         const int SnapshotBytes = 32 << 10;
         public int StatesPerWorker { get; private set; }
-        public int ArchiveCells => _cells;
         int _cells;
 
         public string ArchiveStatus()
@@ -240,12 +239,7 @@ namespace IGTAP.EngineSim
             return MathF.Sqrt(dx * dx + dy * dy);
         }
 
-        sealed class ClosestCell
-        {
-            public readonly Cell Cell;
-            public readonly int Progress;
-            public ClosestCell(Cell cell, int progress) { Cell = cell; Progress = progress; }
-        }
+        sealed record ClosestCell(Cell Cell, int Progress);
         volatile ClosestCell _closest;
 
         // Goal mode: the cell with the most goals reached, then nearest the next at: goal (no distance counts as farthest),
@@ -281,6 +275,11 @@ namespace IGTAP.EngineSim
             const float CellSize = 48f;
             const float SegmentSlack = .2f;
             const int StateEvery = 16;
+            // Each worker keeps only the states it made (a snapshot holds its own world's objects), and a cell it lacks one
+            // for is replayed. An explore draws up to this many cells and takes the first it has a state for.
+            // ponytail: favours each worker's own cells; draw 1 if the search narrows.
+            const int CachedDraws = 3;
+            const int BranchCheckEvery = 10000;
             readonly OfflineSolver _owner;
             readonly Simulation _sim;
             readonly colouredBlockSwapper _swapper;
@@ -296,10 +295,62 @@ namespace IGTAP.EngineSim
             float _best = float.PositiveInfinity;
             long _bestRunTicks = long.MaxValue;
             List<InputTick> _bestInputs;
-            SimSnapshot[] _bestStates;
-            Dictionary<long, float> _bestArrival = new Dictionary<long, float>();
-            Dictionary<long, (float time, int tick)> _bestFirst = new Dictionary<long, (float, int)>();
+            Replay _bestRun;
             int _sharedVersion;
+
+            // A run replayed with its record: per tick the states kept, the body, fingerprint and waypoints (convergence), the
+            // cell key and time; per cell the last arrival (segment cuts) and the first (splices).
+            sealed class Replay
+            {
+                public readonly SimSnapshot[] States;
+                public readonly (float, float, float, float, float, float)[] Body;
+                public readonly int?[] Fingerprint;
+                public readonly int[] Waypoints;
+                public readonly long[] Keys;
+                public readonly float[] Elapsed;
+                public readonly Dictionary<long, float> Arrival = new Dictionary<long, float>();
+                public readonly Dictionary<long, (float time, int tick)> First = new Dictionary<long, (float, int)>();
+
+                public Replay(int inputs)
+                {
+                    States = new SimSnapshot[inputs];
+                    Body = new (float, float, float, float, float, float)[inputs + 1];
+                    Fingerprint = new int?[inputs + 1];
+                    Waypoints = new int[inputs + 1];
+                    Keys = new long[inputs + 1];
+                    Elapsed = new float[inputs + 1];
+                    Array.Fill(Elapsed, float.NaN);
+                }
+
+                /// <summary>Ticks 0..through as <paramref name="best"/> had them: a run resumed from its state there matches it up to it.</summary>
+                public void CopyPrefix(Replay best, int through)
+                {
+                    int n = through + 1;
+                    Array.Copy(best.States, States, n);
+                    Array.Copy(best.Body, Body, n);
+                    Array.Copy(best.Fingerprint, Fingerprint, n);
+                    Array.Copy(best.Waypoints, Waypoints, n);
+                    Array.Copy(best.Keys, Keys, n);
+                    Array.Copy(best.Elapsed, Elapsed, n);
+                    for (int t = 0; t < n; t++) Record(t, Keys[t], Elapsed[t]);
+                }
+
+                public void Record(int tick, long key, float elapsed)
+                {
+                    if (!(elapsed >= 0f)) return;
+                    Arrival[key] = elapsed;
+                    if (tick < States.Length) First.TryAdd(key, (elapsed, tick));
+                }
+            }
+
+            void Adopt(List<InputTick> inputs, float time, int finishTick, long runTicks, Replay replay)
+            {
+                _best = time;
+                _bestRunTicks = runTicks;
+                _bestInputs = inputs.Take(finishTick + 1).ToList();
+                _bestRun = replay;
+                _spliceScan = true;
+            }
             readonly bool _goalMode;
             readonly Queue<Memory.Source> _restore;
             List<InputTick> _plateau;
@@ -327,11 +378,18 @@ namespace IGTAP.EngineSim
                 if (_goalMode) Interlocked.CompareExchange(ref owner._near, Enumerable.Repeat(float.PositiveInfinity, sim.Goals.Goals.Length + 1).ToArray(), null);
                 _archive = owner._archive;
                 _swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
-                if (owner.VisitCell > 0f) _visits = new Dictionary<long, float>();
+                if (owner.VisitCell > 0f) Visits = new Dictionary<long, float>();
+                _kinds = _dash
+                    ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
+                        "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
+                        "springdash", "lockstick", "lockstick", "dashturn" }
+                    : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
+                if (_goalMode) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
+                if (_omni) _kinds = _kinds.Concat(OmniKinds).ToArray();
             }
 
-            readonly Dictionary<long, float> _visits;
-            public Dictionary<long, float> Visits { get { return _visits; } }
+            public readonly Dictionary<long, float> Visits;
+            readonly string[] _kinds;
 
             public void Loop()
             {
@@ -362,7 +420,7 @@ namespace IGTAP.EngineSim
             {
                 _spliceQueue.Clear();
                 var found = new List<(Cell cell, int bestTick, float gain)>();
-                foreach (KeyValuePair<long, (float time, int tick)> first in _bestFirst)
+                foreach (KeyValuePair<long, (float time, int tick)> first in _bestRun.First)
                     if (_archive.TryGetValue(first.Key, out Cell cell) && cell.Length > 0 && cell.Rank < first.Value.time - SpliceGain)
                         found.Add((cell, first.Value.tick, first.Value.time - cell.Rank));
                 foreach (var f in found.OrderByDescending(f => f.gain).Take(64)) _spliceQueue.Enqueue((f.cell, f.bestTick));
@@ -387,7 +445,7 @@ namespace IGTAP.EngineSim
             {
                 _restoreKeys = new long[source.Inputs.Count + 1];
                 Array.Fill(_restoreKeys, long.MinValue);
-                Evaluate(source.Inputs, null, null, null, false, out _, out _, out _);
+                Evaluate(source.Inputs, null, null, false, out _, out _, out _);
                 long[] keys = _restoreKeys;
                 _restoreKeys = null;
                 foreach (Memory.SavedCell saved in source.Cells)
@@ -410,27 +468,17 @@ namespace IGTAP.EngineSim
                     runTicks = _owner.Shared.RunTicks;
                 }
                 if (inputs == null || !Beats(time, runTicks, _best, _bestRunTicks)) return;
-                var states = new SimSnapshot[inputs.Count];
-                var arrivals = new Dictionary<long, float>();
-                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick, out long replayedTicks)) return;
-                _best = replayed;
-                _bestRunTicks = replayedTicks;
-                _bestInputs = inputs.Take(finishTick + 1).ToList();
-                _bestStates = states;
-                _bestArrival = arrivals;
-                _bestFirst = _replayFirst;
-                _spliceScan = true;
-                _bestBody = _replayBody;
-                _bestFingerprint = _replayFingerprint;
-                _bestWaypoints = _replayWaypoints;
+                var replay = new Replay(inputs.Count);
+                if (Evaluate(inputs, null, replay, false, out float replayed, out int finishTick, out long replayedTicks))
+                    Adopt(inputs, replayed, finishTick, replayedTicks, replay);
             }
 
             void Explore()
             {
                 if (_poolPicks <= 0 || _owner._cells > _pool.Length + _pool.Length / 8 + 16) Pool();
                 if (_pool.Length == 0) { Try(RandomBurst(new List<InputTick>()), "explore"); return; }
-                int i = Array.BinarySearch(_poolWeights, _rng.NextDouble() * _poolWeights[_pool.Length - 1]);
-                Cell chosen = _pool[Math.Min(i < 0 ? ~i : i, _pool.Length - 1)];
+                Cell chosen = Draw();
+                for (int draw = 1; draw < CachedDraws && !_states.ContainsKey(chosen); draw++) chosen = Draw();
                 _poolPicks--;
                 Interlocked.Increment(ref chosen.Picks);
                 SimSnapshot from = StateOf(chosen);
@@ -506,11 +554,11 @@ namespace IGTAP.EngineSim
                 var coast = new InputTick { x = side, y = last.y };
                 for (int i = 0; i < GraftCoast; i++) t.Add(coast);
                 if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
-                string kind = !_dash ? "jump" : _omni && _rng.NextDouble() < .4 ? omni[_rng.Next(omni.Length)] : plain[_rng.Next(plain.Length)];
+                string kind = !_dash ? "jump" : _omni && _rng.NextDouble() < .4 ? OneOf(omni) : OneOf(plain);
                 switch (kind)
                 {
                     case "jump":
-                        Hop(t, at, Holds[_rng.Next(Holds.Length)]);
+                        Hop(t, at, OneOf(Holds));
                         break;
                     case "dash":
                     case "dashjump":
@@ -526,7 +574,7 @@ namespace IGTAP.EngineSim
                         // Jump pressed first and held: the jump buffer is still up when the dash fires, so a dash that
                         // touches ground (a corner's gap, a spike wall's ground rays) jumps out of it at once.
                         int dash = at + _rng.Next(1, 7);
-                        Hop(t, at, dash - at + DashHolds[_rng.Next(DashHolds.Length)]);
+                        Hop(t, at, dash - at + OneOf(DashHolds));
                         InputTick d = t[dash]; d.dash = true; t[dash] = d;
                         break;
                     }
@@ -558,9 +606,15 @@ namespace IGTAP.EngineSim
                 }
                 _pool = cells.ToArray();
                 _poolWeights = weights.ToArray();
-                _poolPicks = PoolPicks;
+                _poolPicks = Math.Max(PoolPicks, _pool.Length / 256);
             }
             const int PoolPicks = 16;
+
+            Cell Draw()
+            {
+                int i = Array.BinarySearch(_poolWeights, _rng.NextDouble() * _poolWeights[_pool.Length - 1]);
+                return _pool[Math.Min(i < 0 ? ~i : i, _pool.Length - 1)];
+            }
 
             SimSnapshot StateOf(Cell cell)
             {
@@ -578,7 +632,7 @@ namespace IGTAP.EngineSim
                 _capturePath = path;
                 _captureNext = 0;
                 _captured = null;
-                Evaluate(cell.Source, found?.Value.state, null, null, false, out _, out _, out _, judgeAfter: cell.Length);
+                Evaluate(cell.Source, found?.Value.state, null, false, out _, out _, out _, judgeAfter: cell.Length);
                 _capturePath = null;
                 Interlocked.Increment(ref _owner.StateReplays);
                 return _captured;
@@ -657,25 +711,16 @@ namespace IGTAP.EngineSim
                 return float.IsFinite(near) && !float.IsNaN(distance) ? (near + CellSize) / (double)(distance + CellSize) : 0;
             }
 
-            float GoalDistance()
-            {
-                FullTasGoal goal = _sim.Goals.Current;
-                if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
-                Vector3 p = _sim.PlayerAtCapture;
-                float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
-                return MathF.Sqrt(dx * dx + dy * dy);
-            }
-
             static readonly int[] Holds = { 1, 3, 6, 10, 16, 24, 30, 40 };
             static readonly int[] ResumeHolds = { 0, 3, 8, 16, 30, 60 };
 
             List<InputTick> RandomBurst(List<InputTick> inputs)
             {
                 float x = inputs.Count > 0 ? inputs[inputs.Count - 1].x : 1f, y = inputs.Count > 0 ? inputs[inputs.Count - 1].y : 0f;
-                int holdEnd = inputs.Count > 0 && inputs[inputs.Count - 1].held ? inputs.Count + ResumeHolds[_rng.Next(ResumeHolds.Length)] : 0;
+                int holdEnd = inputs.Count > 0 && inputs[inputs.Count - 1].held ? inputs.Count + OneOf(ResumeHolds) : 0;
                 for (int chunk = _rng.Next(1, 4); chunk > 0; chunk--)
                 {
-                    if (_rng.NextDouble() < .35) x = new[] { -1f, 0f, 1f }[_rng.Next(3)];
+                    if (_rng.NextDouble() < .35) x = OneOf(Sticks);
                     if (_rng.NextDouble() < .3) y = Vertical();
                     int length = _rng.Next(3, 21);
                     int start = inputs.Count;
@@ -684,11 +729,11 @@ namespace IGTAP.EngineSim
                     {
                         InputTick r = inputs[start]; r.reset = true; inputs[start] = r;
                     }
-                    if (_rng.NextDouble() < .4) holdEnd = Hop(inputs, start, Holds[_rng.Next(Holds.Length)]);
+                    if (_rng.NextDouble() < .4) holdEnd = Hop(inputs, start, OneOf(Holds));
                     if (_dash && _rng.NextDouble() < .25)
                     {
                         int at = start + _rng.Next(Math.Min(length, 4));
-                        if (_omni && _rng.NextDouble() < .5) holdEnd = Omni(inputs, at, start, OmniKinds[_rng.Next(OmniKinds.Length)]);
+                        if (_omni && _rng.NextDouble() < .5) holdEnd = Omni(inputs, at, start, OneOf(OmniKinds));
                         else
                         {
                             InputTick d = inputs[at];
@@ -713,7 +758,7 @@ namespace IGTAP.EngineSim
             }
 
             static readonly float[] Verticals = { -1f, -1f, 0f, 0f, 1f };
-            float Vertical() { return Verticals[_rng.Next(Verticals.Length)]; }
+            float Vertical() { return OneOf(Verticals); }
 
             static int Hop(List<InputTick> t, int at, int hold)
             {
@@ -732,7 +777,7 @@ namespace IGTAP.EngineSim
                 if (at < 0 || at >= t.Count) return 0;
                 for (int i = at; i < Math.Min(t.Count, at + 8); i++) { InputTick k = t[i]; k.x = toward; t[i] = k; }
                 InputTick d = t[at]; d.dash = true; d.dashJump = 0; t[at] = d;
-                int release = Hop(t, Math.Min(t.Count - 1, at + _rng.Next(0, 6)), new[] { 3, 6, 10, 16 }[_rng.Next(4)]);
+                int release = Hop(t, Math.Min(t.Count - 1, at + _rng.Next(0, 6)), OneOf(BounceHolds));
                 if (_rng.NextDouble() < .5)
                     for (int i = at + 8; i < Math.Min(t.Count, at + 8 + _rng.Next(1, 20)); i++) { InputTick k = t[i]; k.x = -toward; t[i] = k; }
                 return release;
@@ -748,13 +793,18 @@ namespace IGTAP.EngineSim
                 d.dash = true; d.dashJump = 0;
                 if (at - first >= 3 && _rng.NextDouble() < .5) d.x = 0f;
                 t[at] = d;
-                return Hop(t, at, new[] { 3, 6, 10, 16, 24 }[_rng.Next(5)]);
+                return Hop(t, at, OneOf(DashHolds));
             }
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump",
                 "superground" };
             static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
+            static readonly int[] BounceHolds = { 3, 6, 10, 16 }, DashJumpHolds = { 2, 5, 10, 16 }, LateHolds = { 0, 2, 5, 10 };
+            static readonly int[] Steps = { 1, 1, 2, 3, 5, 8 }, Nudges = { 1, 2, 3, 5, 8 }, Inserts = { 1, 2, 4, 8, 15 }, VerticalSpans = { 1, 3, 6, 12, 25, 50 };
+            static readonly float[] Sticks = { -1f, 0f, 1f };
+
+            T OneOf<T>(T[] from) { return from[_rng.Next(from.Length)]; }
 
             int Omni(List<InputTick> t, int at, int lo, string kind)
             {
@@ -764,7 +814,7 @@ namespace IGTAP.EngineSim
                 {
                     case "aim":
                     {
-                        var (x, y) = Aims[_rng.Next(Aims.Length)];
+                        var (x, y) = OneOf(Aims);
                         return OmniDash(t, at, x, y, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, x != 0f ? x : side);
                     }
                     case "wavedash":
@@ -803,7 +853,7 @@ namespace IGTAP.EngineSim
 
             int OmniDash(List<InputTick> t, int at, float x, float y, int jump, float side)
             {
-                int hold = jump > 0 ? DashHolds[_rng.Next(DashHolds.Length)] : 0;
+                int hold = jump > 0 ? OneOf(DashHolds) : 0;
                 Pad(t, at + 1 + Math.Max(8, hold + 1));
                 InputTick d = t[at];
                 d.dash = true; d.x = x; d.y = y; d.dashJump = jump;
@@ -859,34 +909,37 @@ namespace IGTAP.EngineSim
             }
 
             static readonly float?[] LockValues = { null, -1f, 0f, 1f };
+            static readonly Func<InputTick, bool> IsDash = k => k.dash, IsPress = k => k.press, IsPressOrDash = k => k.press || k.dash, IsReset = k => k.reset;
+
+            /// <summary>A random tick of <paramref name="t"/> that matches; -1 for none.</summary>
+            int Pick(List<InputTick> t, Func<InputTick, bool> match)
+            {
+                int count = 0;
+                foreach (InputTick k in t) if (match(k)) count++;
+                if (count == 0) return -1;
+                for (int i = 0, skip = _rng.Next(count); ; i++) if (match(t[i]) && skip-- == 0) return i;
+            }
 
             void Optimize()
             {
                 List<InputTick> t = _bestInputs.ToList();
                 int n = t.Count, p = _rng.Next(n);
-                string[] kinds = _dash
-                    ? new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "dash", "dash", "dash", "dashjump", "dashjump", "latejump", "latejump",
-                        "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
-                        "springdash", "lockstick", "lockstick", "dashturn" }
-                    : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
-                if (_goalMode) kinds = kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
-                if (_omni) kinds = kinds.Concat(OmniKinds).ToArray();
-                string kind = kinds[_rng.Next(kinds.Length)];
+                string kind = OneOf(_kinds);
                 switch (kind)
                 {
                     case "aim":
                     {
-                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
-                        Omni(t, dashes.Count > 0 && _rng.NextDouble() < .7 ? dashes[_rng.Next(dashes.Count)] : p, 0, kind);
+                        int dash = Pick(t, IsDash);
+                        Omni(t, dash >= 0 && _rng.NextDouble() < .7 ? dash : p, 0, kind);
                         break;
                     }
                     case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump": case "superground":
                         Cut(t, Omni(t, p, 0, kind) + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
-                    case "cut": Cut(t, p, new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)]); break;
+                    case "cut": Cut(t, p, OneOf(Steps)); break;
                     case "insert":
-                        float x = new[] { -1f, 0f, 1f }[_rng.Next(3)];
-                        int count = new[] { 1, 2, 4, 8, 15 }[_rng.Next(5)];
+                        float x = OneOf(Sticks);
+                        int count = OneOf(Inserts);
                         for (int i = 0; i < count; i++) t.Insert(p, new InputTick { x = x, y = t[p].y, held = t[p].held });
                         break;
                     case "dash":
@@ -899,7 +952,7 @@ namespace IGTAP.EngineSim
                     {
                         InputTick k = t[p]; k.dash = true; t[p] = k;
                         int j = Math.Min(n - 1, p + _rng.Next(0, 7));
-                        Hop(t, j, new[] { 2, 5, 10, 16 }[_rng.Next(4)]);
+                        Hop(t, j, OneOf(DashJumpHolds));
                         Cut(t, j + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     }
@@ -914,38 +967,35 @@ namespace IGTAP.EngineSim
                     case "latejump":
                     {
                         InputTick k = t[p]; k.dash = true; k.press = false; k.dashJump = _rng.Next(1, 11); t[p] = k;
-                        for (int i = p + 1; i < Math.Min(n, p + 1 + new[] { 0, 2, 5, 10 }[_rng.Next(4)]); i++) { InputTick h = t[i]; h.held = true; t[i] = h; }
+                        for (int i = p + 1; i < Math.Min(n, p + 1 + OneOf(LateHolds)); i++) { InputTick h = t[i]; h.held = true; t[i] = h; }
                         Cut(t, p + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     }
                     case "hop":
-                        Hop(t, p, Holds[_rng.Next(Holds.Length)]);
+                        Hop(t, p, OneOf(Holds));
                         Cut(t, p + _rng.Next(1, 30), _rng.Next(0, 10));
                         break;
                     case "nojump":
                     {
-                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
-                        if (presses.Count == 0) return;
-                        int q = presses[_rng.Next(presses.Count)];
+                        int q = Pick(t, IsPressOrDash);
+                        if (q < 0) return;
                         InputTick k = t[q]; k.press = k.dash = false; k.dashJump = 0; t[q] = k;
                         break;
                     }
                     case "hold":
                     {
-                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press).ToList();
-                        if (presses.Count == 0) return;
-                        int q = presses[_rng.Next(presses.Count)];
-                        int end = _rng.NextDouble() < .5 ? q + Holds[_rng.Next(Holds.Length)]
-                            : HoldEnd(t, q) + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 2, 3, 5, 8 }[_rng.Next(5)];
+                        int q = Pick(t, IsPress);
+                        if (q < 0) return;
+                        int end = _rng.NextDouble() < .5 ? q + OneOf(Holds)
+                            : HoldEnd(t, q) + (_rng.NextDouble() < .5 ? -1 : 1) * OneOf(Nudges);
                         SetHold(t, q, end);
                         break;
                     }
                     case "retime":
                     {
-                        List<int> presses = Enumerable.Range(0, n).Where(i => t[i].press || t[i].dash).ToList();
-                        if (presses.Count == 0) return;
-                        int q = presses[_rng.Next(presses.Count)];
-                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)];
+                        int q = Pick(t, IsPressOrDash);
+                        if (q < 0) return;
+                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * OneOf(Steps);
                         if (to < 0 || to >= n || t[to].press || t[to].dash) return;
                         InputTick from = t[q], dest = t[to];
                         if (from.dash)
@@ -968,14 +1018,15 @@ namespace IGTAP.EngineSim
                     {
                         float was = Mathf.Abs(t[p].x), sign = t[p].x != 0f ? Mathf.Sign(t[p].x) : _rng.NextDouble() < .5 ? -1f : 1f;
                         float partial = sign * (was >= 1f ? .8f : was == 0f ? .3f : Mathf.Clamp(was + (_rng.NextDouble() < .5 ? -.1f : .1f), .3f, .8f));
-                        float aim = new[] { -1f, 0f, 1f, partial }[_rng.Next(4)];
+                        int pick = _rng.Next(Sticks.Length + 1);
+                        float aim = pick < Sticks.Length ? Sticks[pick] : partial;
                         for (int i = p; i < Math.Min(n, p + _rng.Next(1, 15)); i++) { InputTick k = t[i]; k.x = aim; t[i] = k; }
                         break;
                     }
                     case "vertical":
                     {
                         float aim = Vertical();
-                        for (int i = p; i < Math.Min(n, p + new[] { 1, 3, 6, 12, 25, 50 }[_rng.Next(6)]); i++) { InputTick k = t[i]; k.y = aim; t[i] = k; }
+                        for (int i = p; i < Math.Min(n, p + OneOf(VerticalSpans)); i++) { InputTick k = t[i]; k.y = aim; t[i] = k; }
                         break;
                     }
                     case "springdash":
@@ -985,11 +1036,11 @@ namespace IGTAP.EngineSim
                     }
                     case "lockstick":
                     {
-                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
-                        int q = dashes.Count > 0 && _rng.NextDouble() < .7 ? dashes[_rng.Next(dashes.Count)] : p;
+                        int dash = Pick(t, IsDash);
+                        int q = dash >= 0 && _rng.NextDouble() < .7 ? dash : p;
                         InputTick k = t[q];
-                        k.lockX = LockValues[_rng.Next(LockValues.Length)];
-                        k.lockY = LockValues[_rng.Next(LockValues.Length)];
+                        k.lockX = OneOf(LockValues);
+                        k.lockY = OneOf(LockValues);
                         if (k.dash && k.dashJump == 0 && _rng.NextDouble() < .5) k.dashJump = _rng.Next(1, 11);
                         t[q] = k;
                         break;
@@ -998,9 +1049,8 @@ namespace IGTAP.EngineSim
                     {
                         // A dash with no sideways stick, turned by the stick held in its freeze (MacroEngine.StickFor). With the stick
                         // straight down from a wall cling, turned toward the wall, it is the Inwall wallbounce's climbing dash.
-                        List<int> dashes = Enumerable.Range(0, n).Where(i => t[i].dash).ToList();
-                        if (dashes.Count == 0) return;
-                        int q = dashes[_rng.Next(dashes.Count)];
+                        int q = Pick(t, IsDash);
+                        if (q < 0) return;
                         InputTick k = t[q];
                         k.x = 0f;
                         if (_rng.NextDouble() < .5) k.y = -1f;
@@ -1016,19 +1066,17 @@ namespace IGTAP.EngineSim
                     }
                     case "noreset":
                     {
-                        List<int> resets = Enumerable.Range(0, n).Where(i => t[i].reset).ToList();
-                        if (resets.Count == 0) return;
-                        int q = resets[_rng.Next(resets.Count)];
+                        int q = Pick(t, IsReset);
+                        if (q < 0) return;
                         InputTick k = t[q]; k.reset = false; t[q] = k;
                         break;
                     }
                     case "movereset":
                     {
-                        List<int> resets = Enumerable.Range(0, n).Where(i => t[i].reset).ToList();
-                        if (resets.Count == 0) return;
-                        int q = resets[_rng.Next(resets.Count)];
+                        int q = Pick(t, IsReset);
+                        if (q < 0) return;
                         InputTick k = t[q]; k.reset = false; t[q] = k;
-                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * new[] { 1, 1, 2, 3, 5, 8 }[_rng.Next(6)];
+                        int to = q + (_rng.NextDouble() < .5 ? -1 : 1) * OneOf(Steps);
                         if (to < 0 || to >= n || !CanReset(t, to)) return;
                         k = t[to]; k.reset = true; t[to] = k;
                         break;
@@ -1048,22 +1096,23 @@ namespace IGTAP.EngineSim
                     while (j >= 0 && t[j].Equals(_bestInputs[j])) j--;
                     converge = j + 1 + 12;
                 }
-                s = Math.Min(Math.Min(s, t.Count - 1), _bestStates.Length - 1);
-                while (s > 0 && _bestStates[s] == null) s--;
-                Try(t, "optimize", s > 0 ? _bestStates[s] : null, converge);
+                SimSnapshot[] states = _bestRun.States;
+                s = Math.Min(Math.Min(s, t.Count - 1), states.Length - 1);
+                while (s > 0 && states[s] == null) s--;
+                Try(t, "optimize", s > 0 ? states[s] : null, converge);
             }
 
             void Try(List<InputTick> inputs, string mode, SimSnapshot from = null, int converge = int.MaxValue)
             {
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (from != null && from.Tick >= inputs.Count) from = null;
-                bool finished = Evaluate(inputs, from, null, null, mode == "optimize", out float time, out _, out long runTicks, converge: converge);
+                bool finished = Evaluate(inputs, from, null, mode == "optimize", out float time, out _, out long runTicks, converge: converge);
                 bool converged = _converged;
-                if (from != null && _rng.Next(100) == 0)
+                if (from != null && _rng.Next(BranchCheckEvery) == 0)
                 {
-                    bool branch = Evaluate(inputs, from, null, null, false, out float branchTime, out _, out _);
+                    bool branch = Evaluate(inputs, from, null, false, out float branchTime, out _, out _);
                     Vector3 end = _sim.Player.transform.m_Position;
-                    bool again = Evaluate(inputs, null, null, null, false, out float replay, out _, out _, from.Tick);
+                    bool again = Evaluate(inputs, null, null, false, out float replay, out _, out _, from.Tick);
                     Interlocked.Increment(ref _owner.BranchChecks);
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
@@ -1071,41 +1120,27 @@ namespace IGTAP.EngineSim
                 if (finished) Interlocked.Increment(ref _owner.Finishes);
                 bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !Beats(_best, _bestRunTicks, time, runTicks));
                 if (!drift && (!finished || !Beats(time, runTicks, _best, _bestRunTicks))) return;
-                var states = new SimSnapshot[inputs.Count];
-                var arrivals = new Dictionary<long, float>();
-                if (!Evaluate(inputs, null, states, arrivals, false, out float replayed, out int finishTick, out long replayedTicks)
+                // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too.
+                SimSnapshot resume = mode == "optimize" ? from : null;
+                var record = new Replay(inputs.Count);
+                if (resume != null) record.CopyPrefix(_bestRun, resume.Tick);
+                if (!Evaluate(inputs, resume, record, false, out float replayed, out int finishTick, out long replayedTicks)
                     || Beats(_best, _bestRunTicks, replayed, replayedTicks)) return;
                 bool improved = Beats(replayed, replayedTicks, _best, _bestRunTicks);
-                _best = replayed;
-                _bestRunTicks = replayedTicks;
-                _bestInputs = inputs.Take(finishTick + 1).ToList();
-                _bestStates = states;
-                _bestArrival = arrivals;
-                _bestFirst = _replayFirst;
-                _bestBody = _replayBody;
-                _bestFingerprint = _replayFingerprint;
-                _bestWaypoints = _replayWaypoints;
-                _spliceScan = true;
+                Adopt(inputs, replayed, finishTick, replayedTicks, record);
                 if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 
-            bool Evaluate(List<InputTick> inputs, SimSnapshot from, SimSnapshot[] states, Dictionary<long, float> arrivals, bool cut,
+            bool Evaluate(List<InputTick> inputs, SimSnapshot from, Replay replay, bool cut,
                 out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue)
             {
                 _converged = false;
-                if (states != null)
-                {
-                    _replayBody = new (float, float, float, float, float, float)[inputs.Count + 1];
-                    _replayFingerprint = new int?[inputs.Count + 1];
-                    _replayWaypoints = new int[inputs.Count + 1];
-                    _replayFirst = new Dictionary<long, (float, int)>();
-                }
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
                 if (_recordContacts) { _contacts.Clear(); _contactsPrimed = false; }
-                Dictionary<long, float> visits = _visits;
+                Dictionary<long, float> visits = Visits;
                 Action<int> onStep = path == null && visits == null ? null : _ =>
                 {
                     Vector3 p = _sim.PlayerWorld;
@@ -1125,14 +1160,15 @@ namespace IGTAP.EngineSim
                     _endTick = tick;
                     if (_recordContacts) RecordContact(tick);
                     if (_avoided) return false;
-                    if (states != null && tick < _replayBody.Length)
+                    bool recorded = replay != null && tick < replay.Body.Length;
+                    if (recorded)
                     {
-                        _replayBody[tick] = _sim.Physics.PlayerBody();
-                        if (tick % StateEvery == 0) _replayFingerprint[tick] = _sim.Fingerprint();
-                        _replayWaypoints[tick] = _waypoints;
+                        replay.Body[tick] = _sim.Physics.PlayerBody();
+                        if (tick % StateEvery == 0) replay.Fingerprint[tick] = _sim.Fingerprint();
+                        replay.Waypoints[tick] = _waypoints;
                     }
-                    else if (tick >= converge && _bestFingerprint != null && tick < _bestFingerprint.Length && _bestFingerprint[tick] is int best
-                        && _sim.Physics.PlayerBody() == _bestBody[tick] && _sim.Fingerprint() == best && _waypoints == _bestWaypoints[tick])
+                    else if (tick >= converge && _bestRun != null && tick < _bestRun.Fingerprint.Length && _bestRun.Fingerprint[tick] is int best
+                        && _sim.Physics.PlayerBody() == _bestRun.Body[tick] && _sim.Fingerprint() == best && _waypoints == _bestRun.Waypoints[tick])
                     {
                         _converged = true;
                         return false;
@@ -1143,14 +1179,14 @@ namespace IGTAP.EngineSim
                     bool losing = false;
                     float elapsed = _sim.Elapsed(active);
                     int filed = Math.Min(tick, inputs.Count);
+                    if (recorded) { replay.Keys[tick] = key; replay.Elapsed[tick] = elapsed; }
+                    replay?.Record(filed, key, elapsed);
                     if (elapsed >= 0f)
                     {
                         if (tick > judgeAfter && elapsed > _best) losing = true;
-                        if (cut && tick > judgeAfter && _bestArrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
-                        if (arrivals != null) arrivals[key] = elapsed;
-                        if (states != null && filed < inputs.Count) _replayFirst.TryAdd(key, (elapsed, filed));
+                        if (cut && tick > judgeAfter && _bestRun.Arrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
                         if (_splicing && _spliceAt < 0 && from != null && tick > from.Tick && tick < inputs.Count && !_sim.Engine.InputsExhausted
-                            && _bestFirst.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
+                            && _bestRun.First.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
                         {
                             _spliceAt = tick;
                             _spliceBestTick = first.tick;
@@ -1158,7 +1194,7 @@ namespace IGTAP.EngineSim
                     }
                     if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
                     if (_capturePath != null && CaptureOnPath(tick)) return false;
-                    FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, states);
+                    FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, replay?.States);
                     return !losing;
                 }, _goalMode ? 400 + inputs.Count : 400, onStep);
                 if (_capturePath != null) Interlocked.Add(ref _owner.ReplayTicks, result.Stepped);
@@ -1173,13 +1209,9 @@ namespace IGTAP.EngineSim
                 runTicks = result.PhysicsTicks;
                 return result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
             }
-            (float, float, float, float, float, float)[] _replayBody, _bestBody;
-            Dictionary<long, (float time, int tick)> _replayFirst;
             bool _splicing;
             int _spliceAt, _spliceBestTick;
             const float SpliceGain = .02f;
-            int?[] _replayFingerprint, _bestFingerprint;
-            int[] _replayWaypoints, _bestWaypoints;
             int _waypoints;
             bool _avoided;
             bool _converged;
@@ -1244,7 +1276,7 @@ namespace IGTAP.EngineSim
                 if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
-                float distance = _goalMode ? GoalDistance() : float.NaN;
+                float distance = _goalMode ? GoalDistance(_sim) : float.NaN;
                 var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell };
                 if (!_owner.File(key, filed)) return;
                 Keep(filed, state);

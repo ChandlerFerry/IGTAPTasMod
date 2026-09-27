@@ -91,6 +91,15 @@ namespace IGTAP.EngineSim
     {
         static readonly FieldInfo TrackingField = typeof(courseScript).GetField("tracking", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly FieldInfo PathTimeField = typeof(courseScript).GetField("currentPathTime", BindingFlags.Instance | BindingFlags.NonPublic);
+        // Read every tick: compiled, as FieldInfo.GetValue boxes each read.
+        static readonly Func<courseScript, bool> Tracking = CourseGetter<bool>(TrackingField);
+        static readonly Func<courseScript, float> PathTime = CourseGetter<float>(PathTimeField);
+
+        static Func<courseScript, T> CourseGetter<T>(FieldInfo field)
+        {
+            System.Linq.Expressions.ParameterExpression course = System.Linq.Expressions.Expression.Parameter(typeof(courseScript));
+            return System.Linq.Expressions.Expression.Lambda<Func<courseScript, T>>(System.Linq.Expressions.Expression.Field(course, field), course).Compile();
+        }
         static readonly MethodInfo FixedUpdateMethod = typeof(Movement).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo RespawnMethod = typeof(Movement).GetMethod("respawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         static readonly MethodInfo UpdateMethod = typeof(Movement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -242,8 +251,8 @@ namespace IGTAP.EngineSim
         void CourseStop(object courseObject, GameObject player, bool savePositionData)
         {
             var course = (courseScript)courseObject;
-            if (!(bool)TrackingField.GetValue(course)) return;
-            float time = (float)PathTimeField.GetValue(course);
+            if (!Tracking(course)) return;
+            float time = PathTime(course);
             TrackingField.SetValue(course, false);
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
             if (savePositionData) Shop.CourseFinished(course, time);
@@ -486,11 +495,11 @@ namespace IGTAP.EngineSim
 
         public courseScript TimingCourse()
         {
-            foreach (courseScript c in Courses) if ((TargetCourse == 0 || c.courseNumber == TargetCourse) && (bool)TrackingField.GetValue(c)) return c;
+            foreach (courseScript c in Courses) if ((TargetCourse == 0 || c.courseNumber == TargetCourse) && Tracking(c)) return c;
             return null;
         }
 
-        public static float CourseTime(courseScript course) { return (float)PathTimeField.GetValue(course); }
+        public static float CourseTime(courseScript course) { return PathTime(course); }
 
         public void LoadStart(JsonElement start)
         {
@@ -812,10 +821,10 @@ namespace IGTAP.EngineSim
             bool stop = false;
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
             {
-                bool nextWasTracking = _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse);
+                bool nextWasTracking = _targetStartCourse != null && Tracking(_targetStartCourse);
                 FullTasGoal goal = Goals?.Current;
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
-                bool startWasTracking = startGoal != null && (bool)TrackingField.GetValue(startGoal);
+                bool startWasTracking = startGoal != null && Tracking(startGoal);
                 Scheduler.FireDue();
                 Scheduler.Resume(Scheduler.Wait.Seconds);
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
@@ -870,11 +879,11 @@ namespace IGTAP.EngineSim
                 if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                         Engine.PhysicsTicks * World.FixedDeltaTime);
-                if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && (bool)TrackingField.GetValue(_targetStartCourse))
+                if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && Tracking(_targetStartCourse))
                     Engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
                 if (Goals != null && Engine.IsRunning)
                 {
-                    if (startGoal != null && !startWasTracking && Goals.Current == goal && (bool)TrackingField.GetValue(startGoal))
+                    if (startGoal != null && !startWasTracking && Goals.Current == goal && Tracking(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                     FullTasGoal now = Goals.Current;
                     Vector2 goalAt = now != null ? Now(now.x, now.y) : default;

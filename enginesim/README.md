@@ -527,14 +527,17 @@ runs with `System.GC.HeapHardLimit` at 70 GiB, so a leak throws OutOfMemory inst
 A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
 tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick. Snapshotting
 every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJ_DS_DJ,
-30 threads: ~1,000 runs/s before, ~7,000-8,000 after).
+30 threads: ~1,000 runs/s before, ~7,000-8,000 after). A mutation's replay starts from the snapshot it resumed from and
+copies the best's record before it (`OfflineSolver.Worker.Replay.CopyPrefix`): same inputs up to there, same states.
 
 The explore archive is one map shared by every worker (`OfflineSolver._archive`): a cell is its input prefix (the run's
 inputs and the tick), the arrival time, the picks and the cell it was explored from (`Parent`), never a snapshot. A
 snapshot belongs to one worker's `Simulation` (it holds that world's objects and fixtures), so each worker keeps its
 own least-recently-used snapshots (`StatesPerWorker`: half the GC heap limit over 32 KB per snapshot, split across the
 workers). A worker that picks a cell it has no snapshot for replays the cell's inputs from its nearest ancestor it
-has one for (from the start when none), and keeps a snapshot of every cell on that path. Before, each worker kept
+has one for (from the start when none), and keeps a snapshot of every cell on that path. So an explore draws up to
+three cells and takes the first it has a snapshot for (`CachedDraws`): on C4 WJ_DS_DJ with 32 threads the replays
+were ~23% of all ticks simulated. Before, each worker kept
 its own archive with a snapshot per cell: the same place was stored once per worker, and a worker never explored from
 a cell another worker found. `solve` and `fulltas` print the archive's size, the share of picks whose snapshot was
 cached and the ticks spent replaying (`ArchiveStatus`).
