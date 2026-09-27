@@ -85,6 +85,8 @@ namespace IGTAP.EngineSim
         public bool RebaseDue;
         /// <summary>The player body's position at the start and end of the last physics step (its interpolation's ends).</summary>
         public Vector3 StepFrom, StepTo;
+        /// <summary>The player animator's "Animation": Movement.FixedUpdate plays a sound (an RNG draw) leaving a wall cling (3).</summary>
+        public int Animation;
     }
 
     public sealed class Simulation
@@ -661,6 +663,7 @@ namespace IGTAP.EngineSim
                 // Outside a run (the trace's start, a probe's moved start) the player is at rest where it stands.
                 StepFrom = _inRun ? _stepFrom : Player.transform.m_Position,
                 StepTo = _inRun ? _stepTo : Player.transform.m_Position,
+                Animation = Animation,
             };
         }
 
@@ -674,6 +677,7 @@ namespace IGTAP.EngineSim
             foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
             h.Add(Physics.PlayerBody());
             h.Add(_stepFrom); h.Add(_stepTo);
+            h.Add(Animation);
             foreach (Scheduler.Pending p in Scheduler.Queue)
             {
                 h.Add(p.Due - Scheduler.Tick); h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(p.Target)); h.Add(p.Method); h.Add(p.Repeat);
@@ -801,7 +805,10 @@ namespace IGTAP.EngineSim
             _rebaseDue = s.RebaseDue;
             _stepFrom = s.StepFrom;
             _stepTo = s.StepTo;
+            Player.animator?.SetInteger("Animation", s.Animation);
         }
+
+        int Animation { get { return Player.animator?.GetInteger("Animation") ?? 0; } }
 
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
             Action<int> onStep = null)
