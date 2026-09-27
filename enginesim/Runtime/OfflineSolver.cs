@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim
         readonly Memory _memory;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, Drifts, Splices, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -440,11 +440,108 @@ namespace IGTAP.EngineSim
                 _spliceAt = -1;
                 _fromCell = chosen;
                 List<InputTick> spliceInto = _bestInputs;
+                _recordContacts = true;
                 Try(inputs, "explore", from);
+                _recordContacts = false;
+                if (_died) _contacts.Add((_endTick, Contact.Died));
+                int lo = Math.Max(chosen.Length, from.Tick + 1);
+                _contacts.RemoveAll(c => c.tick < lo);
+                (int tick, Contact kind)? graft = _contacts.Count > 0 && _rng.NextDouble() < GraftRate ? _contacts[_rng.Next(_contacts.Count)] : null;
                 _splicing = false;
                 // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
                 if (_spliceAt > chosen.Length && ReferenceEquals(spliceInto, _bestInputs)) Splice(inputs, _spliceAt, _spliceBestTick, from);
+                if (graft is var (tick, kind)) Graft(inputs, tick, kind, lo, from);
                 _fromCell = null;
+            }
+
+            // Tech lives on the ticks where the player's contact changes, and a random burst puts its jump and dash anywhere in
+            // its chunks, so it seldom lands them there. An explore run's contacts are recorded (it leaves the ground at a
+            // ledge, lands, touches or leaves a wall, dies), and a graft replaces the run from one of them with an input made
+            // for it, a few ticks around it, then GraftCoast ticks of stick: a ledge gets the coyote jump, a super off its edge,
+            // the backwards dash-jump, a hyper, ultra or super ground bounce; a landing the buffered jump, the buffered dash's
+            // superjump, a jump held into a dash, ground and wave bounces; a wall the wall jump, superbounce, wall dash; a wall
+            // left the wall coyote jump; a death (mostly spikes past their grace) all of the plain ones, 1 to 7 ticks early.
+            enum Contact : byte { Died, LeftGround, Landed, TouchedWall, LeftWall }
+            readonly List<(int tick, Contact kind)> _contacts = new List<(int, Contact)>();
+            bool _recordContacts, _contactsPrimed, _wasGround, _wasWall;
+            const double GraftRate = .5;
+            const int GraftCoast = 40;
+
+            // Per contact: the graft's first tick relative to it (lo..hi), the plain inputs and the omnidash ones (null: all).
+            static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> GraftsAt = new Dictionary<Contact, (int, int, string[], string[])>
+            {
+                [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
+                [Contact.LeftGround] = (-4, 3, new[] { "jump", "jump", "dashjump", "dashjump", "backdash", "primed" },
+                    new[] { "wavedash", "ultra", "superground", "wavejump", "aim" }),
+                [Contact.Landed] = (-4, 1, new[] { "jump", "dashjump", "dashjump", "primed", "primed", "dash" },
+                    new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
+                [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
+                [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
+            };
+
+            void RecordContact(int tick)
+            {
+                Movement player = _sim.Player;
+                bool ground = player.onGround, wall = player.OnWall;
+                if (_contactsPrimed)
+                {
+                    if (ground != _wasGround) _contacts.Add((tick, ground ? Contact.Landed : Contact.LeftGround));
+                    if (wall != _wasWall) _contacts.Add((tick, wall ? Contact.TouchedWall : Contact.LeftWall));
+                }
+                _contactsPrimed = true;
+                _wasGround = ground;
+                _wasWall = wall;
+            }
+
+            void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
+            {
+                var (before, after, plain, omni) = GraftsAt[contact];
+                omni ??= OmniKinds;
+                int at = Math.Min(tick, run.Count) + _rng.Next(before, after + 1);
+                if (at < lo || at > run.Count) return;
+                List<InputTick> t = run.GetRange(0, at);
+                InputTick last = t[at - 1];
+                float side = last.x != 0f ? Math.Sign(last.x) : _rng.NextDouble() < .5 ? -1f : 1f;
+                if (_rng.NextDouble() < .3) side = -side;
+                var coast = new InputTick { x = side, y = last.y };
+                for (int i = 0; i < GraftCoast; i++) t.Add(coast);
+                if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
+                string kind = !_dash ? "jump" : _omni && _rng.NextDouble() < .4 ? omni[_rng.Next(omni.Length)] : plain[_rng.Next(plain.Length)];
+                switch (kind)
+                {
+                    case "jump":
+                        Hop(t, at, Holds[_rng.Next(Holds.Length)]);
+                        break;
+                    case "dash":
+                    case "dashjump":
+                    {
+                        InputTick d = t[at];
+                        d.dash = true;
+                        if (kind == "dashjump") d.dashJump = _rng.Next(1, 5);
+                        t[at] = d;
+                        break;
+                    }
+                    case "primed":
+                    {
+                        // Jump pressed first and held: the jump buffer is still up when the dash fires, so a dash that
+                        // touches ground (a corner's gap, a spike wall's ground rays) jumps out of it at once.
+                        int dash = at + _rng.Next(1, 7);
+                        Hop(t, at, dash - at + DashHolds[_rng.Next(DashHolds.Length)]);
+                        InputTick d = t[dash]; d.dash = true; t[dash] = d;
+                        break;
+                    }
+                    case "superbounce":
+                        SuperBounce(t, at, side);
+                        break;
+                    case "backdash":
+                        BackDash(t, at, lo);
+                        break;
+                    default:
+                        Omni(t, at, lo, kind);
+                        break;
+                }
+                Interlocked.Increment(ref _owner.Grafts);
+                Try(t, "graft", from);
             }
 
             void Pool()
@@ -1007,6 +1104,7 @@ namespace IGTAP.EngineSim
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
+                if (_recordContacts) { _contacts.Clear(); _contactsPrimed = false; }
                 Dictionary<long, float> visits = _visits;
                 Action<int> onStep = path == null && visits == null ? null : _ =>
                 {
@@ -1024,6 +1122,8 @@ namespace IGTAP.EngineSim
                 };
                 RunResult result = _sim.Run(inputs, from, tick =>
                 {
+                    _endTick = tick;
+                    if (_recordContacts) RecordContact(tick);
                     if (_avoided) return false;
                     if (states != null && tick < _replayBody.Length)
                     {
@@ -1067,6 +1167,7 @@ namespace IGTAP.EngineSim
                     Interlocked.Increment(ref _owner.Runs);
                     Interlocked.Add(ref _owner.Ticks, result.Stepped);
                 }
+                _died = result.EndReason != null && result.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 time = result.Time;
                 finishTick = result.FinishTick;
                 runTicks = result.PhysicsTicks;
@@ -1082,6 +1183,8 @@ namespace IGTAP.EngineSim
             int _waypoints;
             bool _avoided;
             bool _converged;
+            bool _died;
+            int _endTick;
 
             static readonly Func<Movement, int> GroundType = GroundTypeGetter();
 
@@ -1093,31 +1196,45 @@ namespace IGTAP.EngineSim
                 return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
             }
 
+            // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,
+            // moss 44, momentum x 45-47 and y 48-50, waypoints or goal progress 51-61, blue blocks 62.
+            const int ProgressShift = 51;
+            const float MomentumStep = 250f;
+
             static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources)
             {
                 Movement player = sim.Player;
                 Vector3 position = sim.PlayerAtCapture;
-                long x = Mathf.FloorToInt(position.x / CellSize) & 0x3FFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0x3FFFF;
-                long key = (x << 18) | y;
+                long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFF;
+                long key = (x << 16) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
                 bool moss = GroundType(player) != 0;
                 if (!moss && !resources) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
-                return key | (moss ? 1L << 48 : 0L) | (wall << 44) | (air << 40) | (dash << 36);
+                key |= (moss ? 1L << 44 : 0L) | (wall << 40) | (air << 36) | (dash << 32);
+                if (!resources) return key;
+                // A superjump or spike super carries its momentum across the next hundred ticks; an arrival that has it and
+                // one that doesn't are different states, so neither replaces the other.
+                return key | (MomentumBucket(player.momentum.x) << 45) | (MomentumBucket(player.momentum.y) << 48);
+            }
+
+            static long MomentumBucket(float m)
+            {
+                return 3 + Math.Sign(m) * Math.Min(3, (int)(Math.Abs(m) / MomentumStep));
             }
 
             static long CellKey(long place, bool timing, int waypoints)
             {
-                long key = ((long)waypoints << 49) | place;
+                long key = ((long)waypoints << ProgressShift) | place;
                 return timing ? -1 - key : key;
             }
 
             static long GoalCellKey(long place, int progress)
             {
-                return -1 - (((long)progress << 49) | place);
+                return -1 - (((long)progress << ProgressShift) | place);
             }
 
-            static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> 49) & 0x1FFF); }
+            static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> ProgressShift) & 0x7FF); }
 
             void FileCell(List<InputTick> inputs, int tick, long key, float rank, SimSnapshot[] states)
             {

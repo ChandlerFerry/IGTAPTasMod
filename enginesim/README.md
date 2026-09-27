@@ -82,7 +82,25 @@ A map cell is a 48×48 square (plus the forced-path boxes passed, or a Full-TAS 
 surfaces refill wall jumps, double jumps and air dashes on every touch; `Moss`-tagged ones refill nothing
 (`Movement.touchedMossyGround`; the Overworld's `moss` tilemap and the upgrade trees' `Tree*Ground`). While the last
 surface touched is moss, the counts left are part of the cell, so an earlier arrival with fewer left doesn't replace,
-cut or splice over a later one that has them (`OfflineSolver.CellKey`).
+cut or splice over a later one that has them (`OfflineSolver.CellKey`). A Full-TAS run's cells always keep the counts
+left, and its momentum too, in steps of 250 each way on x and y (`MomentumBucket`): a superjump or spike super carries
+its momentum for a hundred ticks, so an arrival that has it and one that doesn't don't replace each other.
+
+Tech lives on the ticks where the player's contact changes, and a random burst puts its jump and dash anywhere in its
+chunks. So each explore run records its contacts (it leaves the ground at a ledge, lands, touches or leaves a wall,
+dies), and half the time one of them gets a graft (`grafts` in the progress line): the run is cut a few ticks around
+it, one input made for that contact goes there, then 40 ticks of stick (`OfflineSolver.GraftsAt`):
+
+| Contact | Ticks | Inputs | With the omnidash |
+|---|---|---|---|
+| leaves the ground (a ledge) | −4..+3 | coyote jump, super off the edge (dash, jump on frame 1–4), backwards dash-jump, jump held into a dash | hyper, ultra, super ground bounce, wavejump, aimed dash |
+| lands | −4..+1 | buffered jump, the buffered dash's superjump, jump held into a dash, dash | ground bounce, wave bounce, super ground bounce, hyper |
+| touches a wall | −3..+3 | wall jump, superbounce, wall dash, jump held into a dash | aimed dash, ground bounce |
+| leaves a wall | 0..+4 | wall coyote jump, dash-jump | aimed dash, wavejump |
+| dies (mostly spikes past their grace) | −7..−1 | all the plain ones: spike grace jump, a dash buffered onto a corner's ground gap, a super off a spike wall | any |
+
+On `Test-No-Omni-Skip` from nothing (`--fresh --unsolved`), death grafts alone reached goal 3 in 1:30 on 16 threads,
+where the build before them hadn't in 10 minutes; with every contact, 2:34 on 8 threads (one run each).
 
 A solve picks up where the last solve of the same target stopped. Its search state goes to `<traces>\archive\<label>.json`
 (`<course>_<caps>`) every minute and when it ends, so a solve the studio stops (it kills the process) loses at most the
