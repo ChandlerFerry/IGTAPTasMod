@@ -1,6 +1,6 @@
 {
   "categories": ["NONE", "WJ", "WJ_DS", "WJ_DS_DJ", "WJ_DS_DJ_BS"],
-  "lapCourses": [6, 7, 8, 9, 10],
+  "lapCourses": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
   "laps": {
     "7": { "game": 8.5, "farm": 8.9 },
     "8": { "game": 19.0, "farm": 19.4 },
@@ -9,5 +9,7 @@
   },
   "travel": { "x": 9.2, "up": 6, "down": 20, "overheadTicks": 10 },
   "legs": {},
+  "cloneFrameSeconds": 0.02,
+  "wayBackToZone1": false,
   "waitLimitSeconds": 14400
 }

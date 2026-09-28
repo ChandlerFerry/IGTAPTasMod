@@ -39,13 +39,15 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// A way from a state to a target, checked in the run: its inputs cut where it has reached the target, the physics tick it's
-        /// reached on, and the state after the cut (Next).
+        /// reached on, and the state after the cut (Next). A piece searched through the goal after it (<see cref="SolvePiece"/>'s
+        /// then) carries the way on to that goal in Then.
         /// </summary>
         sealed class Step
         {
             public List<InputTick> Inputs;
             public long Physics;
             public SimSnapshot Next;
+            public Step Then;
         }
 
         /// <summary>A piece the built route plays: from its first Length inputs (state At), toward Target.</summary>
@@ -288,8 +290,12 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// Searches a piece from at (after route) to target, seeded with the library's pieces for it, the saved course routes and
         /// <paramref name="extraSeeds"/>; once more with three times the budget if the first search finds nothing. Null: no way there.
+        /// With <paramref name="then"/> (the goal right after target), the search runs through that goal too and is scored there, so a
+        /// way that reaches target later but the next goal sooner wins; the step returned carries the rest in Then. <paramref name="beat"/>
+        /// is the physics tick the old way reaches the scored goal on (the studio's "To beat").
         /// </summary>
-        Step SolvePiece(SimSnapshot at, List<InputTick> route, int reached, Target target, double budgetMinutes, double stallMinutes, List<List<InputTick>> extraSeeds)
+        Step SolvePiece(SimSnapshot at, List<InputTick> route, int reached, Target target, double budgetMinutes, double stallMinutes, List<List<InputTick>> extraSeeds,
+            Target then = null, long? beat = null)
         {
             _beforeSearch?.Invoke();
             List<InputTick> prefix = route.ToList();
@@ -306,13 +312,14 @@ namespace IGTAP.EngineSim.Cli
                 Seed(p.Inputs);
                 if (rank < 3) foreach (var (pre, _) in restarts) Seed(pre.Concat(p.Inputs).ToList());
             }
-            FullTasGoal[] goals = target.Extra ?? new[] { _runGoals.Goals[target.Goal] };
+            FullTasGoal[] goals = target.Extra ?? (then == null ? new[] { _runGoals.Goals[target.Goal] } : new[] { _runGoals.Goals[target.Goal], _runGoals.Goals[then.Goal] });
             foreach (var s in SeedStarts(at, prefix, new HashSet<string>(goals.Select(g => g.label)), restarts.Count > 0)) Seed(s.inputs);
             foreach (List<InputTick> s in extraSeeds) Seed(s);
             _eval.Restore(at);
             string caps = WindowCaps(goals);
-            string span = target.Extra != null ? target.Key + " (an extra lap for Cash before " + _labels[target.Goal] + ")" : _labels[target.Goal];
-            string title = "piece for goal " + (target.Goal + 1) + "/" + _goals;
+            string span = target.Extra != null ? target.Key + " (an extra lap for Cash before " + _labels[target.Goal] + ")"
+                : then != null ? _labels[target.Goal] + " + " + _labels[then.Goal] : _labels[target.Goal];
+            string title = "piece for goal " + (target.Goal + 1) + (then != null ? "-" + (then.Goal + 1) : "") + "/" + _goals;
             Func<Simulation> create = () =>
             {
                 (Simulation sim, SimSnapshot state) = Prefixed(prefix, title);
@@ -325,7 +332,7 @@ namespace IGTAP.EngineSim.Cli
                 else
                 {
                     sim.SetStart(state, prefix.Count);
-                    sim.Goals.Limit = target.Goal + 1;
+                    sim.Goals.Limit = (then ?? target).Goal + 1;
                 }
                 return sim;
             };
@@ -334,8 +341,8 @@ namespace IGTAP.EngineSim.Cli
             {
                 double budget = attempt == 1 ? budgetMinutes : budgetMinutes * 3;
                 int id = ++_windowId;
-                Emit(new { type = "window", id, kind = "piece", first = reached, limit = target.Goal + 1, attempt, budget = Math.Round(budget * 60, 1),
-                    start = reached == 0 ? 0.0 : Seconds(at.Goal.PhysicsTicks[reached - 1]), target = (double?)null, savedStarts = seeds.Count, piece = span });
+                Emit(new { type = "window", id, kind = "piece", first = reached, limit = (then ?? target).Goal + 1, attempt, budget = Math.Round(budget * 60, 1),
+                    start = reached == 0 ? 0.0 : Seconds(at.Goal.PhysicsTicks[reached - 1]), target = beat.HasValue ? Seconds(beat.Value) : (double?)null, savedStarts = seeds.Count, piece = span });
                 // Every route the search improved on, fastest first: one that doesn't reproduce in the run (a replay from a
                 // cached state can differ from one from the start) leaves the others.
                 List<List<InputTick>> routes = Explore(id, title, span, create, caps, seeds, archiveFile, long.MaxValue, budget, stallMinutes, null,
@@ -345,12 +352,82 @@ namespace IGTAP.EngineSim.Cli
                 foreach (List<InputTick> found in Enumerable.Reverse(routes).Distinct(SequenceComparer.Instance).Take(40))
                 {
                     Step s = Reaches(at, prefix.Count, found, target);
-                    if (s != null && (step == null || s.Physics < step.Physics)) step = s;
+                    if (s != null && then != null) s = Continued(s, prefix.Count, found, then);
+                    if (s != null && (step == null || Scored(s) < Scored(step))) step = s;
                 }
                 if (step != null) return step;
                 if (routes.Count > 0) Log($"{title}: none of its {routes.Count} routes reproduced when replayed in the run; the fastest " + Replayed(at, prefix.Count, routes[routes.Count - 1], target));
             }
             return null;
+        }
+
+        /// <summary>The step with the rest of found (after its cut) checked on to then as its Then; null when the rest doesn't reach it.</summary>
+        Step Continued(Step s, int length, List<InputTick> found, Target then)
+        {
+            List<InputTick> rest = found.Skip(s.Inputs.Count).ToList();
+            if (rest.Count == 0 || s.Inputs[s.Inputs.Count - 1].reset && rest[0].reset) return null;
+            Step t = Reaches(s.Next, length + s.Inputs.Count, rest, then);
+            if (t == null) return null;
+            s.Then = t;
+            return s;
+        }
+
+        /// <summary>The physics tick a step is judged by: its own goal's, or the next goal's when it was searched through that.</summary>
+        static long Scored(Step s) { return s.Then?.Physics ?? s.Physics; }
+
+        /// <summary>
+        /// The old route's own way from at to goal (its inputs from where the build stands, when the build so far is the old route's
+        /// start, else from its previous goal), checked in the run; null when it doesn't reach the goal from here.
+        /// </summary>
+        Step OldStep(SimSnapshot at, List<InputTick> route, Route old, int goal, Target target)
+        {
+            if (old == null || old.Progress <= goal) return null;
+            int from = goal == 0 ? 0 : (int)Math.Min(old.GoalInput[goal - 1], old.Inputs.Count);
+            if (route.Count <= old.Inputs.Count && route.Count >= from && Same(route, old.Inputs)) from = route.Count;
+            int to = (int)Math.Min(old.GoalInput[goal] + 2, old.Inputs.Count);
+            if (to <= from) return null;
+            List<InputTick> inputs = old.Inputs.GetRange(from, to - from);
+            if (route.Count > 0 && route[route.Count - 1].reset && inputs[0].reset) return null;
+            return Reaches(at, route.Count, inputs, target);
+        }
+
+        /// <summary>Whether route is the start of inputs.</summary>
+        static bool Same(List<InputTick> route, List<InputTick> inputs)
+        {
+            for (int i = route.Count - 1; i >= 0; i--)
+                if (!route[i].Equals(inputs[i])) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// The physics tick the goal after goal is reached on once step has reached goal: by the fastest library piece or the old route's
+        /// own way from there. long.MaxValue when neither does, or the step's own tick when goal is the run's last.
+        /// </summary>
+        long Ahead(Step step, List<InputTick> route, Route old, int goal)
+        {
+            int next = goal + 1;
+            if (next >= _goals) return step.Physics;
+            List<InputTick> after = route.Concat(step.Inputs).ToList();
+            var target = new Target { Goal = next, Key = _runGoals.Goals[next].label };
+            long best = long.MaxValue;
+            Step known = IsLoop(next) ? BestKnown(step.Next, after, next, target) : null;
+            if (known != null) best = known.Physics;
+            Step mine = OldStep(step.Next, after, old, next, target);
+            if (mine != null && mine.Physics < best) best = mine.Physics;
+            return best;
+        }
+
+        /// <summary>
+        /// Of the library's step and the old route's own to goal, the one after which the next goal comes sooner (a piece that gets
+        /// to its goal first can leave the player where the next goal takes far longer); on a tie the one that reaches goal sooner,
+        /// the old one when both do on the same tick.
+        /// </summary>
+        Step Pick(Step known, Step mine, List<InputTick> route, Route old, int goal)
+        {
+            if (known.Inputs.SequenceEqual(mine.Inputs)) return mine;
+            long a = Ahead(known, route, old, goal), b = Ahead(mine, route, old, goal);
+            if (a != b) return a < b ? known : mine;
+            return known.Physics < mine.Physics ? known : mine;
         }
 
         sealed class SequenceComparer : IEqualityComparer<List<InputTick>>
@@ -423,18 +500,26 @@ namespace IGTAP.EngineSim.Cli
             return Append(built, ref at, step, target) ? null : $"the way to goal {target.Goal + 1} ({_labels[target.Goal]}) would quick restart twice in a row";
         }
 
-        /// <summary>The run's next goal onto the build, after extra laps while it's a buy the run can't pay for. Null, or why not.</summary>
-        string BuildGoal(Built built, ref SimSnapshot at, Route old)
+        /// <summary>
+        /// The run's next goal onto the build, after extra laps while it's a buy the run can't pay for. Null, or why not. With an old
+        /// route, its own way here is a candidate next to the library's (<see cref="Pick"/>); <paramref name="followOld"/> takes only that.
+        /// </summary>
+        string BuildGoal(Built built, ref SimSnapshot at, Route old, bool followOld)
         {
             int goal = built.Reached;
             FullTasGoal g = _runGoals.Goals[goal];
             var target = new Target { Goal = goal, Key = g.label };
+            Step mine = OldStep(at, built.Inputs, old, goal, target);
+            if (followOld)
+                return mine == null ? $"the route's own way to goal {goal + 1} ({g.label}) doesn't replay here"
+                    : Append(built, ref at, mine, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
             List<List<InputTick>> oldSeeds = old != null && old.Progress > goal && goal > 0
                 ? new List<List<InputTick>> { old.Inputs.Skip((int)old.GoalInput[goal - 1]).Take((int)(old.GoalInput[goal] - old.GoalInput[goal - 1]) + 2).ToList() }
                 : new List<List<InputTick>>();
             for (int laps = 0; ; laps++)
             {
                 Step known = BestKnown(at, built.Inputs, goal, target);
+                if (laps == 0 && mine != null) known = known == null ? mine : Pick(known, mine, built.Inputs, old, goal);
                 if (known != null) return Append(built, ref at, known, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
                 _eval.Restore(at);
                 if (g.kind != FullTasGoal.Buy || _eval.Shop.Affordable(g.boxes) != false) break;
@@ -464,8 +549,11 @@ namespace IGTAP.EngineSim.Cli
 
         static string Advanced(Built built) { built.Reached++; return null; }
 
-        /// <summary>Builds the run's goals from..until-1 onto the route's first <paramref name="from"/> goals, as far as it gets.</summary>
-        Built BuildLoops(Route route, int from, int until, Route old, Action<Built> checkpoint)
+        /// <summary>
+        /// Builds the run's goals from..until-1 onto the route's first <paramref name="from"/> goals, as far as it gets;
+        /// <paramref name="followOld"/>: with old's own ways only (the uses of a route as it is).
+        /// </summary>
+        Built BuildLoops(Route route, int from, int until, Route old, Action<Built> checkpoint, bool followOld = false)
         {
             // A goal's input tick can fall a tick or two before the replay of the cut counts it (as Append allows for).
             int length = from == 0 ? 0 : (int)route.GoalInput[from - 1];
@@ -492,7 +580,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 while (built.Reached < until && !TimeUp)
                 {
-                    string stuck = BuildGoal(built, ref at, old);
+                    string stuck = BuildGoal(built, ref at, old, followOld);
                     if (stuck != null) { built.Stuck = stuck; break; }
                     if (checkpoint != null && (_clock.Elapsed - saved).TotalSeconds >= 60) { saved = _clock.Elapsed; checkpoint(built); }
                 }
@@ -520,8 +608,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// Polish for loop goals: rebuilds each stretch of them from the library (kept when the whole run gets faster), then searches
-        /// each piece the rebuild played for a faster one, which the next rebuild uses everywhere it fits.
+        /// Polish for loop goals: rebuilds each stretch of them from the library and the best's own ways (kept when the whole run gets
+        /// faster), then searches the pieces the best now plays there for faster ones; when any is found, the stretch is rebuilt
+        /// right away with it.
         /// </summary>
         void PolishLoops()
         {
@@ -542,30 +631,51 @@ namespace IGTAP.EngineSim.Cli
                     else Log($"rebuilt goals {a + 1}-{b}: the whole run is no faster");
                 }
                 else if (built.Stuck != null) Log($"rebuild of goals {a + 1}-{b} stopped: {built.Stuck}");
-                ImprovePieces(built);
-                a = b;
+                if (TimeUp) return;
+                // The pieces are searched where the best plays them: a rejected rebuild's states are a route nobody keeps.
+                Built played = _best.Progress >= b ? BuildLoops(_best, a, b, _best, null, true) : built;
+                if (played.Stuck != null && played != built) Log($"replaying goals {a + 1}-{b} of the best stopped: {played.Stuck}");
+                if (!ImprovePieces(played)) a = b;
             }
         }
 
-        /// <summary>Searches each distinct piece a build played (most played first) for a faster one, and files what it finds.</summary>
-        void ImprovePieces(Built built)
+        /// <summary>Pieces ImprovePieces has searched this solve (target, spot and the ways searched from), not searched again.</summary>
+        readonly HashSet<string> _searchedPieces = new HashSet<string>();
+
+        /// <summary>
+        /// Searches each distinct piece a build played (most played first) for a faster one, and files what it finds; true when it
+        /// found any. A piece whose next use is the run's next goal is searched through that goal and scored there, so a way that
+        /// gets to its own goal later but leaves the next one sooner is found, and one that gets there sooner but costs the next
+        /// goal more isn't taken.
+        /// </summary>
+        bool ImprovePieces(Built built)
         {
-            var groups = built.Uses.GroupBy(u =>
+            bool improved = false;
+            var groups = built.Uses.Select((u, i) => (u, i)).GroupBy(p =>
             {
-                (Vector3 at, int unlocks) = Where(u.At);
-                return (u.Target.Key, unlocks, (int)MathF.Round(at.x / 8f), (int)MathF.Round(at.y / 8f));
+                (Vector3 at, int unlocks) = Where(p.u.At);
+                return (p.u.Target.Key, unlocks, (int)MathF.Round(at.x / 8f), (int)MathF.Round(at.y / 8f));
             }).OrderByDescending(g => g.Count()).ToList();
             foreach (var group in groups)
             {
-                if (TimeUp) return;
-                Use u = group.First();
+                if (TimeUp) break;
+                (Use u, int index) = group.First();
+                Use next = index + 1 < built.Uses.Count ? built.Uses[index + 1] : null;
+                bool pair = u.Target.Extra == null && next != null && next.Target.Extra == null && next.Target.Goal == u.Target.Goal + 1;
+                string key = $"{group.Key}|{Solve.EncodeTicks(u.Step.Inputs)}|{(pair ? Solve.EncodeTicks(next.Step.Inputs) : "")}";
+                if (!_searchedPieces.Add(key)) continue;
                 List<InputTick> prefix = built.Inputs.GetRange(0, u.Length);
+                long beat = pair ? next.Step.Physics : u.Step.Physics;
+                List<InputTick> seed = pair ? u.Step.Inputs.Concat(next.Step.Inputs).ToList() : u.Step.Inputs;
                 Step faster = SolvePiece(u.At, prefix, u.At.Goal.Next, u.Target, _windowMinutes, _windowMinutes / 3,
-                    new List<List<InputTick>> { u.Step.Inputs });
-                if (faster == null || faster.Physics >= u.Step.Physics) continue;
-                Log($"faster piece for {u.Target.Key} ({group.Count()} uses): {u.Step.Physics - faster.Physics} ticks each");
+                    new List<List<InputTick>> { seed }, pair ? next.Target : null, beat);
+                if (faster == null || Scored(faster) >= beat) continue;
+                Log($"faster piece for {u.Target.Key}" + (pair ? " + " + next.Target.Key : "") + $" ({group.Count()} uses): {beat - Scored(faster)} ticks each");
                 Keep(faster, u.At, prefix, u.Target);
+                if (pair) Keep(faster.Then, faster.Next, prefix.Concat(faster.Inputs).ToList(), next.Target);
+                improved = true;
             }
+            return improved;
         }
     }
 }

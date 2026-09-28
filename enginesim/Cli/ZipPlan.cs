@@ -92,6 +92,11 @@ namespace IGTAP.EngineSim.Cli
             public double WaitLimit = 4 * 3600;
             // Zone 2 is a drop from zone 1; the way back up (Zone2toZone1PathOpen) opens with the OmniDash box, past the zip movers.
             public bool WayBack;
+            // The clones' frame (the engine and the Full-TAS gate step clonesScript.Update once per physics tick; 1x plays
+            // 1/280 s frames) and the frames an off-screen spawn takes (timeSinceLastClone to 1 s).
+            public double Frame = 0.02;
+            public int OffscreenFrames = 50;
+            public List<Vector2[]>[] LoD;
         }
 
         // ---------------------------------------------------------------- the state
@@ -189,21 +194,44 @@ namespace IGTAP.EngineSim.Cli
             return p;
         }
 
-        // Expected payout per second of one course's clones in one currency. Off screen (clonesScript.SpawnClone's else branch) a
-        // clone spawns every second and pays ceil(value (2j+1) / previous interval); on screen one spawns per interval and pays
-        // ceil(value (2j+1)) at its path's end.
-        static double ClonePay(double value, double baseInterval, double[] fast, double[] big, bool onscreen)
+        // Frames until clonesScript.Update's timeSinceLastClone (+= deltaTime a frame, from 0 at a spawn) reaches `due`, in the
+        // game's float arithmetic.
+        static int FramesTo(float due, float frame)
+        {
+            float t = 0f;
+            int n = 0;
+            while (!(t >= due) && n < 10000000) { t += frame; n++; }
+            return n;
+        }
+
+        // Expected payout per second of one course's clones in one currency, frame by frame as clonesScript.Update steps them
+        // (the engine and the Full-TAS gate: one frame per physics tick). Off screen (SpawnClone's else branch) a clone spawns
+        // once timeSinceLastClone reaches 1 s and pays ceil(value (2j+1) / the previous spawn's interval); on screen one spawns
+        // once it reaches the rolled interval, if the pool has one free (the oldest clone leaves on the frame after its spawn
+        // check), and pays ceil(value (2j+1)) at its path's end.
+        static double ClonePay(Data d, double value, double path, int count, double[] fast, double[] big, bool onscreen)
         {
             if (value <= 0) return 0;
-            double sum = 0;
+            float frame = (float)d.Frame;
+            float baseInterval = (float)path / count;
             if (onscreen)
             {
-                double pay = 0, rate = 0;
+                double pay = 0, frames = 0;
                 for (int j = 0; j < big.Length; j++) pay += big[j] * Math.Ceiling(value * (2 * j + 1));
                 for (int i = 0; i < fast.Length; i++)
-                    for (int j = 0; j < big.Length; j++) rate += fast[i] * big[j] * (1 + 0.35 * i) * Math.Pow(0.75, j);
-                return pay * rate / baseInterval;
+                    for (int j = 0; j < big.Length; j++)
+                    {
+                        if (fast[i] * big[j] == 0) continue;
+                        float due = (float)(baseInterval / (1.0 + i * (double)0.35f));
+                        due = (float)(due / Math.Pow(0.75, j));
+                        frames += fast[i] * big[j] * Math.Max(1.0, Math.Ceiling(due / frame - 1e-6));
+                    }
+                // A full pool: `count` spawns take no longer than the path, so each spawn waits a frame for the oldest to leave.
+                double pathFrames = Math.Round(path / 0.02) * 0.02 / frame;
+                if (count * frames <= pathFrames + 1e-9) frames += 1;
+                return pay / (frames * frame);
             }
+            double sum = 0;
             for (int j = 0; j < big.Length; j++)
             {
                 if (big[j] == 0) continue;
@@ -211,14 +239,33 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (fast[i2] == 0) continue;
                     for (int j2 = 0; j2 < big.Length; j2++)
-                        if (big[j2] != 0)
-                            sum += big[j] * fast[i2] * big[j2] * Math.Ceiling(value * (2 * j + 1) * (1 + 0.35 * i2) * Math.Pow(0.75, j2) / baseInterval);
+                    {
+                        if (big[j2] == 0) continue;
+                        float due = (float)(baseInterval / (1.0 + i2 * (double)0.35f));
+                        due = (float)(due / Math.Pow(0.75, j2));
+                        sum += big[j] * fast[i2] * big[j2] * Math.Ceiling(value * (2 * j + 1) / due);
+                    }
                 }
             }
-            return sum;
+            return sum / (d.OffscreenFrames * frame);
         }
 
         struct Rates { public double W, GP, CD; }
+
+        // clonesLoD: a course's clones run on screen while the player is inside its activeCloneArea (and while it laps it).
+        static bool OnScreen(Data d, State s, int c)
+        {
+            if (s.Onscreen == c) return true;
+            foreach (Vector2[] poly in d.LoD[c])
+            {
+                bool inside = false;
+                for (int i = 0, j = poly.Length - 1; i < poly.Length; j = i++)
+                    if ((poly[i].y > s.Y) != (poly[j].y > s.Y)
+                        && s.X < (poly[j].x - poly[i].x) * (s.Y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x) inside = !inside;
+                if (inside) return true;
+            }
+            return false;
+        }
 
         static Rates Income(Data d, State s)
         {
@@ -227,14 +274,13 @@ namespace IGTAP.EngineSim.Cli
             for (int c = 0; c < d.Courses.Length; c++)
             {
                 if (s.Clones[c] <= 0 || !(s.Path[c] > 0.1)) continue;
-                double interval = s.Path[c] / s.Clones[c];
                 double[] fast = Roll(Lo(s, c, L.fastCloneChance) * 5.0 + Gl(s, G.fastCloneChance) * 8.0, Gl(s, G.maxCloneFastness));
                 double[] big = Roll(Lo(s, c, L.bigCloneChance) * 5.0 + Gl(s, G.bigCloneChance) * 8.0, Gl(s, G.maxCloneBigness));
                 double boost = s.Boost[c] > 0 ? BoostBonus(s) : 1.0;
-                bool on = s.Onscreen == c;
-                r.W += ClonePay(Reward(d, s, c) * CloneMult(s, c) * boost, interval, fast, big, on);
-                if (green > 0) r.GP += green * ClonePay(GpReward(d, s, c) * cdMult * boost, interval, fast, big, on);
-                if (Lo(s, c, L.enableCloneDustGeneration) >= 1.0) r.CD += ClonePay(CdReward(d, s, c) * boost * cdMult, interval, fast, big, on);
+                bool on = OnScreen(d, s, c);
+                r.W += ClonePay(d, Reward(d, s, c) * CloneMult(s, c) * boost, s.Path[c], s.Clones[c], fast, big, on);
+                if (green > 0) r.GP += green * ClonePay(d, GpReward(d, s, c) * cdMult * boost, s.Path[c], s.Clones[c], fast, big, on);
+                if (Lo(s, c, L.enableCloneDustGeneration) >= 1.0) r.CD += ClonePay(d, CdReward(d, s, c) * boost * cdMult, s.Path[c], s.Clones[c], fast, big, on);
             }
             return r;
         }
@@ -775,15 +821,15 @@ namespace IGTAP.EngineSim.Cli
                     // Atoms for the next box's price under the NP cap: the GP investment that pays for them soonest, or them.
                     int k = AtomsForCap(_d, _s, target);
                     if (k < 0) { Failed = "no atom count reaches the NP cap " + nb.Token + " needs"; return false; }
-                    (int box, int course)? invest = k == 0 ? null : BestInvestment(k);
+                    (int box, int course, int levels)? invest = k == 0 ? null : BestInvestment(k, target);
                     if (invest == null)
                     {
                         if (!Atoms(Math.Max(1, k))) return false;
                         continue;
                     }
-                    var (ib, ic) = invest.Value;
-                    if (ib >= 0 && !Buy(ib, false)) return false;
-                    if (ic >= 0 && _s.Path[ic] <= 0.1 && !Lap(ic)) return false;
+                    var (ib, ic, levels) = invest.Value;
+                    for (int i = 0; i < levels && ib >= 0; i++) if (!Buy(ib, false)) return false;
+                    if (ic >= 0 && !Lap(ic)) return false;
                 }
                 return true;
             }
@@ -816,7 +862,7 @@ namespace IGTAP.EngineSim.Cli
             /// When the atoms the zip box needs cost more GP than the run holds: the purchase (or a course's first clone and first lap)
             /// after which they're paid for soonest, counting the wait for its own price; null when saving is sooner.
             /// </summary>
-            (int box, int course)? BestInvestment(int k)
+            (int box, int course, int levels)? BestInvestment(int k, double target)
             {
                 Box atom = _d.Boxes[_d.AtomBox];
                 Rates now = Income(_d, _s);
@@ -829,50 +875,80 @@ namespace IGTAP.EngineSim.Cli
                 double baseline = _s.C[GP] >= costGp ? 0 : now.GP > 0 ? (costGp - _s.C[GP]) / now.GP : Never;
                 if (baseline == 0) return null;
                 double bestTime = baseline * 0.999;
-                (int, int)? best = null;
-                void Try(int box, int course)
+                (int, int, int)? best = null;
+                // Several levels at once: off-screen payouts are ceil'd per spawn, so one more clone or reward level often pays
+                // nothing until a few more come with it. False when even the wait for these levels is too long.
+                bool Try(int box, int course, int levels)
                 {
                     double wait = 0, x = _s.X, y = _s.Y;
-                    State s = _s.Clone();
                     if (box >= 0)
                     {
                         Box b = _d.Boxes[box];
-                        double need = s.Cost[box] - s.C[b.Currency];
+                        if (_s.Times[box] + levels > b.Cap) return false;
+                        double total = 0, cost = _s.Cost[box];
+                        for (int i = 0; i < levels; i++)
+                        {
+                            total += cost;
+                            cost = b.Local ? Math.Ceiling(Math.Ceiling(Math.Pow(cost + b.Add, b.Pow) * b.Scale)) : Math.Round(Math.Pow(cost + b.Add, b.Pow) * b.Scale);
+                        }
+                        double need = total - _s.C[b.Currency];
                         if (need > 0) wait = rate[b.Currency] > 0 ? need / rate[b.Currency] : Never;
-                        if (wait == Never) return;
-                        wait += TravelSeconds(_d, x, y, b.X, b.Y);
+                        if (wait == Never) return false;
+                        wait += TravelSeconds(_d, x, y, b.X, b.Y) + 0.2 * (levels - 1);
                         x = b.X; y = b.Y;
                     }
-                    if (course >= 0 && s.Path[course] <= 0.1)
+                    if (course >= 0)
                     {
                         Course c = _d.Courses[course];
                         wait += TravelSeconds(_d, x, y, c.StartX, c.StartY) + c.Game;
                     }
-                    if (wait >= bestTime) return;
-                    for (int i = 0; i < Currencies; i++) s.C[i] += rate[i] * wait;
+                    if (wait >= bestTime) return false;
+                    State s = _s.Clone();
+                    // The wait pays for the box (its currency) and brings GP; clone dust piling up meanwhile would lift the GP
+                    // multiplier whatever is bought, so it isn't counted for the box.
+                    s.C[W] += rate[W] * wait;
+                    s.C[GP] += rate[GP] * wait;
                     s.T += wait;
-                    if (box >= 0 && Touch(_d, s, box) == 0) return;
-                    if (course >= 0 && s.Path[course] <= 0.1) { s.Path[course] = _d.Courses[course].Game; s.Best[course] = s.Path[course]; }
+                    if (box >= 0)
+                        for (int i = 0; i < levels; i++)
+                        {
+                            Box b = _d.Boxes[box];
+                            s.C[b.Currency] = Math.Max(s.C[b.Currency], s.Cost[box]);
+                            if (Touch(_d, s, box) == 0) return false;
+                        }
+                    if (course >= 0)
+                    {
+                        // The lap after it: the course's path, and its clone dust reward once clone dust is on.
+                        if (s.Path[course] <= 0.1) { s.Path[course] = _d.Courses[course].Game; s.Best[course] = s.Path[course]; }
+                        if (Lo(s, course, L.enableCloneDustGeneration) >= 1.0) s.C[CD] += Math.Ceiling(CdReward(_d, s, course) * 10.0 * CdMult(s));
+                    }
                     Box bx = box >= 0 ? _d.Boxes[box] : null;
                     int k2 = bx != null && !bx.Local && (bx.GlobalKind == G.increasedNuclearPower || bx.GlobalKind == G.tripleThreatIncrease || bx.GlobalKind == G.atomLevelChance)
-                        ? AtomsForCap(_d, s, s.Cost[_d.Zip]) : k;
-                    if (k2 < 0) return;
-                    double gp = Income(_d, s).GP, cost = AtomCost(s, atom, k2);
-                    double t = wait + (s.C[GP] >= cost ? 0 : gp > 0 ? (cost - s.C[GP]) / gp : Never);
-                    if (t < bestTime) { bestTime = t; best = (box, course); }
+                        ? AtomsForCap(_d, s, target) : k;
+                    if (k2 < 0) return true;
+                    double gp = Income(_d, s).GP, gpCost = AtomCost(s, atom, k2);
+                    double t = wait + (s.C[GP] >= gpCost ? 0 : gp > 0 ? (gpCost - s.C[GP]) / gp : Never);
+                    if (t < bestTime) { bestTime = t; best = (box, course, levels); }
+                    return true;
                 }
                 foreach (Box b in _d.Boxes)
                 {
                     // The way's boxes are bought by the round above; their further levels (green clone chance, NP) are investments.
                     if (b.Atom || b.Index == _d.Zip || Array.IndexOf(_d.Path, b.Index) >= 0 && _s.Times[b.Index] == 0 || !Available(_s, b.Index) || !Reachable(b.Zone)) continue;
-                    if (b.Local && b.LocalKind == L.cloneCount && _s.Path[b.Owner] <= 0.1)
+                    int course = -1;
+                    if (b.Local && (b.LocalKind == L.cloneCount && _s.Path[b.Owner] <= 0.1 || b.LocalKind == L.enableCloneDustGeneration))
                     {
-                        if (_d.LapCourses.Contains(b.Owner)) Try(b.Index, b.Owner);
+                        // A course's first clone runs once it has a path; clone dust (it multiplies green power,
+                        // globalStats.RecalcCloneDustMult) comes from a lap: both are tried with the lap after them.
+                        if (!_d.LapCourses.Contains(b.Owner)) continue;
+                        course = b.Owner;
                     }
-                    else Try(b.Index, -1);
+                    bool multi = !(_s.BuyMax[b.Index] && !b.NeverBuyMax) && b.Cap > 1;
+                    for (int levels = 1; levels <= (multi ? 32 : 1); levels *= 2)
+                        if (!Try(b.Index, course, levels)) break;
                 }
                 foreach (Course c in _d.Courses)
-                    if (_s.Clones[c.Index] > 0 && _s.Path[c.Index] <= 0.1 && _d.LapCourses.Contains(c.Index)) Try(-1, c.Index);
+                    if (_s.Clones[c.Index] > 0 && _s.Path[c.Index] <= 0.1 && _d.LapCourses.Contains(c.Index)) Try(-1, c.Index, 1);
                 return best;
             }
         }
@@ -1008,6 +1084,18 @@ namespace IGTAP.EngineSim.Cli
                 lock (this) if (time < BestTime) { BestTime = time; Best = new List<Step>(plan); }
             }
 
+            /// <summary>Drops every step whose removal doesn't make the plan slower (no-ops, capped boxes, detours that don't pay).</summary>
+            public void Prune()
+            {
+                for (int i = Best.Count - 1; i >= 0; i--)
+                {
+                    var p = new List<Step>(Best);
+                    p.RemoveAt(i);
+                    double t = Score(p);
+                    if (t <= BestTime + 1e-6) { Best = p; BestTime = Math.Min(BestTime, t); }
+                }
+            }
+
             public void Seed(List<Step> plan) { Offer(plan, Score(plan)); }
 
             /// <summary>Iterated local search from the best plan: delete, swap, move, insert and resize steps; keeps any improvement.</summary>
@@ -1064,8 +1152,15 @@ namespace IGTAP.EngineSim.Cli
                         { int i = rng.Next(n); Step s = p[i]; p.RemoveAt(i); p.Insert(rng.Next(p.Count + 1), s); }
                         break;
                     case 3:
-                    case 4:
                         p.Insert(rng.Next(n + 1), _vocabulary[rng.Next(_vocabulary.Length)]);
+                        break;
+                    case 4:
+                        // Two steps together (a box and the lap that makes it pay, say): neither may help alone.
+                        {
+                            int at = rng.Next(n + 1);
+                            p.Insert(at, _vocabulary[rng.Next(_vocabulary.Length)]);
+                            p.Insert(at + 1, _vocabulary[rng.Next(_vocabulary.Length)]);
+                        }
                         break;
                     case 5:
                         {
@@ -1225,6 +1320,8 @@ namespace IGTAP.EngineSim.Cli
                 foreach (JsonProperty p in legs.EnumerateObject()) d.Legs[p.Name] = p.Value.GetDouble();
             if (config.TryGetProperty("waitLimitSeconds", out JsonElement wl)) d.WaitLimit = wl.GetDouble();
             if (config.TryGetProperty("wayBackToZone1", out JsonElement wb)) d.WayBack = wb.GetBoolean();
+            if (config.TryGetProperty("cloneFrameSeconds", out JsonElement cf)) d.Frame = cf.GetDouble();
+            d.OffscreenFrames = FramesTo(1f, (float)d.Frame);
             globalStats stats = world.All<globalStats>().FirstOrDefault();
             if ((object)stats != null) { d.GameSpeed = stats.GameSpeed == 0 ? 1 : stats.GameSpeed; d.VmanMult = stats.vmanMult == 0 ? 1 : stats.vmanMult; d.WayBack |= stats.Zone2toZone1PathOpen; }
 
@@ -1256,6 +1353,15 @@ namespace IGTAP.EngineSim.Cli
             int CourseIndex(courseScript cs) { return (object)cs == null ? -1 : Array.FindIndex(d.Courses, k => k.Number == cs.courseNumber); }
             int[] lapCourses = config.TryGetProperty("lapCourses", out JsonElement lc) ? lc.EnumerateArray().Select(x => x.GetInt32()).ToArray() : Enumerable.Range(1, 10).ToArray();
             foreach (Course k in d.Courses) if (lapCourses.Contains(k.Number)) d.LapCourses.Add(k.Index);
+            d.LoD = d.Courses.Select(_ => new List<Vector2[]>()).ToArray();
+            foreach (ColliderData cd in world.Colliders)
+            {
+                if ((object)cd.Collider == null || cd.Collider.GetComponent<clonesLoD>() == null) continue;
+                clonesScript clones = cd.Collider.GetComponentInParent<clonesScript>();
+                int c = (object)clones == null ? -1 : CourseIndex(Get<courseScript>(clones, "course"));
+                if (c < 0) continue;
+                foreach (ShapeData shape in cd.Shapes) if (shape.Vertices != null && shape.Vertices.Length >= 3) d.LoD[c].Add(shape.Vertices);
+            }
 
             // Trees
             TreeController[] trees = world.All<TreeController>();
@@ -1409,7 +1515,7 @@ namespace IGTAP.EngineSim.Cli
         {
             if (args.Length == 0 || args[0].StartsWith("--"))
             {
-                Console.Error.WriteLine("usage: zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--minutes M] [--threads N] [--out plan.json] [--seed N]");
+                Console.Error.WriteLine("usage: zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--minutes M] [--threads N] [--out plan.json] [--seed N]");
                 return 2;
             }
             string trace = args[0];
@@ -1439,7 +1545,7 @@ namespace IGTAP.EngineSim.Cli
                 + string.Join(", ", d.Courses.Where(k => start.Clones[k.Index] > 0).Select(k => $"C{k.Number} {start.Clones[k.Index]} (path {start.Path[k.Index]:0.##} s)")));
 
             int threads = Solve.Option(args, "--threads", Environment.ProcessorCount);
-            double minutes = Solve.Option(args, "--minutes", 2.0);
+            double minutes = Solve.Option(args, "--minutes", 5.0);
             var search = new Search(d, start, threads);
             var clock = Stopwatch.StartNew();
             string given = Solve.Option(args, "--plan", "");
@@ -1461,15 +1567,26 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine("Polish:");
                 search.Polish(left, Solve.Option(args, "--seed", 1), Console.WriteLine);
             }
+            search.Prune();
             Result best = Evaluate(d, start, search.Best, record: true);
             Console.WriteLine("\nPlan steps (--plan): " + string.Join(",", search.Best.Select(p => PlanToken(d, p))));
             Console.WriteLine($"\nBest plan: {Show(best.Time)} from the start state ({search.Evaluations} plans evaluated)\n");
             var goals = new List<string>();
-            foreach (Record r in best.Records)
+            for (int i = 0; i < best.Records.Count; i++)
             {
-                Console.WriteLine($"{r.Start,8:0.0}-{r.End,8:0.0}s  {r.What}");
-                if (!string.IsNullOrEmpty(r.Detail)) Console.WriteLine($"{"",20}{r.Detail}");
+                Record r = best.Records[i];
                 if (r.Goal != null) goals.AddRange(r.Goal.Split(' '));
+                // Repeated purchases of one box (standing in it) print as one line.
+                int j = i;
+                while (r.Goal != null && r.Goal.StartsWith("buy:", StringComparison.Ordinal) && j + 1 < best.Records.Count && best.Records[j + 1].Goal == r.Goal)
+                {
+                    j++;
+                    goals.Add(best.Records[j].Goal);
+                }
+                Record last = best.Records[j];
+                Console.WriteLine($"{r.Start,8:0.0}-{last.End,8:0.0}s  {last.What}{(j > i ? $"  ({j - i + 1} touches)" : "")}");
+                if (!string.IsNullOrEmpty(last.Detail)) Console.WriteLine($"{"",20}{last.Detail}");
+                i = j;
             }
             Console.WriteLine($"\n{goals.Count} Full-TAS goals:\n" + string.Join(" ", goals.Select(g => "\"" + g + "\"")));
             string outFile = Solve.Option(args, "--out", "");

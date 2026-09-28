@@ -355,9 +355,10 @@ inputs past the last unchanged goal the same way.
   3 rounds without the goal, or when the builder finds no way to a goal, the solve stops with an error saying which
   goal (it doesn't search on all night: a different plan, goal list or avoid box is needed). Polishing starts once a
   run reaches every goal.
-- Polishing: first the loop goals are rebuilt from the piece library, stretch by stretch (kept when the whole run gets
-  faster), and each piece the rebuild played is searched for a faster one (`--window-minutes`, most-played first),
-  which the next rebuild uses everywhere it fits. Then windows of W goals (default 2) from goal 1 up to the last goal
+- Polishing: first the loop goals are rebuilt from the piece library and the best's own ways, stretch by stretch (kept
+  when the whole run gets faster). Then each piece the best plays there is searched for a faster one (`--window-minutes`,
+  most-played first, each at most once a solve), from the best's own states, and when any is found the stretch is
+  rebuilt with it right away (see [Loop builder](#loop-builder)). Then windows of W goals (default 2) from goal 1 up to the last goal
   the best reaches, skipping windows made only of loop goals: each worker replays the best up to goal i-1
   (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal i+W-1. The first
   goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap that ends slower
@@ -485,6 +486,15 @@ them together from pieces instead:
   the last dash cools down, and a piece's timing needs the same pad-to-dash distance it was found with). It plays each
   in the run from the current state and keeps the one that reaches the goal soonest. A piece is only
   ever used after it has been played in the run: a spot that differs (a grown tree, another speed) just fails the check.
+- A polish rebuild also plays the best's own way to the goal from where the build stands. When that and the library's
+  fastest differ, it takes the one after which the next goal comes sooner (the next goal by the library or the best's own
+  way), and only on a tie the one that reaches its own goal first. Picking the soonest piece alone traded 3 ticks for 141:
+  `FalseEnding-Any%`'s rebuild reached its second `start:1` 3 ticks early, at a gate height where only a 222-tick
+  `finish:1` piece played, so every rebuild was slower than the best and was thrown away.
+- Polish searches a piece from the state the best plays it in. When the best's next step is the run's next goal, the
+  search runs through that goal too and is scored there (a `piece` window for `start:1 + finish:1`, say), with the best's
+  tick there as its "To beat": a way that reaches its own goal later but the next one sooner is kept and filed as two
+  pieces, and the pair rule above lets the rebuild take it.
 - When no piece reaches it, the goal is searched once (a `piece` window of up to `--piece-minutes`, default 3; three
   times as long once more if that finds nothing), seeded with the library's pieces for it and the saved course routes.
   The build takes the first way found once a quarter minute passes without a faster one (polish searches the pieces
@@ -570,12 +580,18 @@ engine holds them there.
 
 The model follows the decompiled code:
 
-- **Clones** (`clonesScript.SpawnClone`): off screen a course with clones and a path spawns one per second and pays
-  `ceil(value (2j+1) / previous interval)`, the interval being path / clones with the speed and size rolls
-  (`Random.Range(0, 101)` against the chances, per tier) averaged exactly; the course being lapped pays on screen. Watts
-  are `reward × clone multiplier`, green power `gpReward × clone dust multiplier` on a green clone (a fraction
-  `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward × clone dust multiplier` with
-  clone dust on. The `ceil` makes every course with one clone worth at least one GP per green spawn.
+- **Clones** (`clonesScript.Update`/`SpawnClone`), frame by frame as the engine and the gate step them (one frame per
+  physics tick; `cloneFrameSeconds` 1/280 for 1x): off screen a course with clones and a path spawns once
+  `timeSinceLastClone` reaches 1 s (51 frames) and pays `ceil(value (2j+1) / previous interval)`; on screen (the player
+  inside the course's `activeCloneArea`, its `clonesLoD` polygon: Course 9's covers most of zone 2, or lapping it) one
+  spawns once the rolled interval's frames pass and the pool has one free, and pays `ceil(value (2j+1))` at its path's
+  end. The interval is path / clones with the speed and size rolls (`Random.Range(0, 101)` against the chances, per
+  tier) averaged exactly. Watts are `reward × clone multiplier`, green power `gpReward × clone dust multiplier` on a
+  green clone (a fraction `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward ×
+  clone dust multiplier` with clone dust on. The `ceil` makes every course with one clone worth at least one GP per
+  green spawn off screen, and one more clone or reward level often worth nothing until a few come together. Against
+  the engine's own clone economy (`FalseEnding-Any%` replayed, 60-70 s idle, Courses 1-3 with Course 3 on screen) the
+  model's W per second is within 1-3 %.
 - **Rewards** (`courseScript.UpdateReward`): W, GP, CD rewards and the comp boost (`2 + 0.5 × strength`, `30 + 10 ×
   time` s, renewed by a lap once TreePart12's box is bought).
 - **Atoms** (`AtomColliderSystem`): the atom box (`AtomUpgrades/AtomUpgrade`, GP, buy-max) first resets Courses 1-10
@@ -586,9 +602,10 @@ The model follows the decompiled code:
   the atom box's price.
 - **NP** (`globalStats.DoConstantCurrency`): `NPrewardPerTick` per physics tick while NP is under the cap, 6000 ticks'
   worth. The zip box needs the cap at 625,000,000: about 104,000 NP per tick.
-- **Boxes** (`upgradeBox`): local costs `ceil` their scaling and reset with an atom, global ones round it and stay; a
-  touch buys once per 0.2 s cooldown, a buy-max box all `GetNumPlayerCouldBuy` counts; exempting and buy-max boxes,
-  tree growth (each trunk 1/0.6 s, the land 1/3.5 s, the box's 2000-unit drop ln(400)/3 s, auto-grown segments).
+- **Boxes** (`upgradeBox`): local costs `ceil` their scaling and reset with an atom, global ones round it and stay (the
+  model's costs match the engine's on every box `FalseEnding-Any%` bought); a touch buys once per 0.2 s cooldown, a
+  buy-max box all `GetNumPlayerCouldBuy` counts; exempting and buy-max boxes, tree growth (each trunk 1/0.6 s, the land
+  1/3.5 s, the box's 2000-unit drop ln(400)/3 s, auto-grown segments).
 - **Where**: the player's position is followed; a walk is estimated from the distance (`travel` in `zip-plan.json`:
   units per tick sideways, up and down, plus overhead ticks) unless `legs` names it (`"<from>><to>": seconds`). Zone 2
   is a drop from zone 1: once in it, nothing in zone 1 is reachable (`wayBackToZone1` or the game's
@@ -604,17 +621,21 @@ true` on an entry overrides a saved route). Which courses the plan may lap: `lap
 `atoms:<count>`: saves GP for that many and touches the box); whatever it can't pay for yet it earns first, lapping the
 course that earns it fastest (its reward and the comp boost on its clones) or standing. After the steps an autopilot
 finishes the run: the tree's boxes from the root to the zip box as it can pay for them, the free first atom, and when
-the NP cap can't reach the next box's price, the purchase (or a course's first clone and lap) that pays for the atoms
-it needs soonest, or those atoms. The search builds the steps greedily, then polishes them on every core (delete,
-swap, move, insert, resize) for `--minutes` (default 2). `--plan "all:buynp10,buy:buyatomlevel10"` starts from a
+the NP cap can't reach the next box's price, the purchase (1 to 32 levels of a box, or a course's first clone or clone
+dust with the lap after it) that pays for the atoms it needs soonest, or those atoms. The search builds the steps
+greedily, then polishes them on every core (delete, swap, move, insert one or two, resize) for `--minutes` (default
+5), and drops steps that don't help. `--plan "all:buynp10,buy:buyatomlevel10"` starts from a
 given list instead (with `--minutes 0`: only evaluates it). It prints the timeline (each step's times, currencies,
 rates, NP cap and atoms), the plan as `--plan` text and the Full-TAS goals (`start:N finish:N` per lap, `buy:<token>` per
 purchase); `--out` writes them as JSON.
 
-From `TouchGrass-ANY%`'s best replayed (Course 4 farmed after the breaker, 9.5e24 W): the W buys `buyatomlevel10` and
-`buynp10` (+175 % NP a level) before the first atom resets it, then the tree and the green clones, 17-18 atoms at the end
-(one tier-3 atom, ~160,000 NP per tick): about 21-26 min in the model, with Courses 7-10's laps estimated. The engine
-can't play these goals yet (Area 2's economy is unmodeled there); the plan is for building the run's goals.
+From `TouchGrass-ANY%`'s best replayed (goal 529 of 543: Course 4 farmed after the breaker, 9.5e24 W, no clones): 11.2
+min in the model after a 4-minute search. The W is spent before the first atom resets it: 100 Course 9 clones with
+clone dust on (`buycd9`) and a lap (the clone dust stays through the atoms' resets and multiplies green power from then
+on), `buyatomlevel10` and 20 `buynp10` (+175 % NP a level); then the tree, green clones on Courses 6 and 7, atoms in
+three buys (3, 4, then 21 for the cap: 104,000 NP per tick) and the zip box. Courses 7-10's laps are estimates until
+their routes are saved, and the walks are distance guesses. The engine can't play these goals yet (Area 2's economy is
+unmodeled there); the plan is for building the run's goals.
 
 ## Offline economy
 
