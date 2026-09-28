@@ -534,6 +534,13 @@ after the target doesn't play on to the end, the join that gets furthest is writ
 earlier `buywj` has the Cash to buy Course 2's `CashPerLoop` box on the walk to Course 2's gate), for the next stretch
 to be planned or solved from.
 
+`--harvest FILE` (the solve and `fulltas-plan`) plays a saved route (a `fulltas/<run>.json`: its goals and inputs, goals
+of the run's labels) under its own goals from the run's start and files each of its gates, finishes and buys as a library
+piece. After a plan changes the goals, the builder then plays the old route's laps and box walks wherever the player
+stands as it did, and only searches the steps that changed: `FalseEnding-Any%`'s run after the new Course 1 plan (goal
+129 on) was rebuilt in 3 minutes with the 499.42 s route harvested, where the build had done 25 goals in 3 minutes
+without it.
+
 ## Offline economy
 
 The whole run needs Cash offline. A start state whose economy carries the clones (every Full-TAS trace) runs the

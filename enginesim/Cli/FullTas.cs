@@ -75,6 +75,8 @@ namespace IGTAP.EngineSim.Cli
         const float MaxWalk = 1500f, MaxWalkMiss = 8f, MaxWalkRise = 4f;
         const int MaxWalkTicks = 240, MaxWalks = 3, StandTicks = 7;
         readonly List<string> _seedFiles = new List<string>();
+        /// <summary>--harvest: saved routes whose steps are filed as library pieces at the start (FullTasPlan.cs, HarvestRoute).</summary>
+        readonly List<string> _harvestFiles = new List<string>();
         readonly List<Seed> _seeds = new List<Seed>();
         (int, long) _seededFrontier = (-1, -1);
 
@@ -94,6 +96,7 @@ namespace IGTAP.EngineSim.Cli
             _onlySegment = Solve.Option(args, "--segment", 0);
             _resets = args.Contains("--resets") || _onlySegment > 0;
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
+            for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--harvest") _harvestFiles.Add(args[i + 1]);
         }
 
         public static int Run(string[] args) { return new FullTas(args).Search(); }
@@ -239,6 +242,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
             LoadKnown(dir);
+            foreach (string file in _harvestFiles) HarvestRoute(file);
             return from;
         }
 

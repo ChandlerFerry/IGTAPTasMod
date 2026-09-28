@@ -239,14 +239,15 @@ namespace IGTAP.EngineSim.Cli
         /// Files the best's own steps from goal from on (each goal's inputs from where the goal before left the player) as library
         /// pieces: the builder files only the pieces it builds, and a polished route passes spots none starts from (after the
         /// statue a quick restart lands at its checkpoint, and the lap from there crosses Course 3's gate where no finish piece began).
+        /// Goals that aren't buys, gates or finishes are played through, not filed.
         /// </summary>
         void Harvest(SimSnapshot at, List<InputTick> route, int from, int until)
         {
             int filed = _pieces.Count, length = route.Count;
-            for (int k = from; k < until && IsLoop(k); k++)
+            for (int k = from; k < until; k++)
             {
                 int end = (int)Math.Min(_best.GoalInput[k], _best.Inputs.Count);
-                if (end > length)
+                if (end > length && IsLoop(k))
                     Keep(new Step { Inputs = _best.Inputs.GetRange(length, Math.Min(end + 2, _best.Inputs.Count) - length) }, at, _best.Inputs.GetRange(0, length),
                         new Target { Goal = k, Key = _labels[k] });
                 SimSnapshot next = null;
@@ -261,6 +262,49 @@ namespace IGTAP.EngineSim.Cli
                 length = used;
             }
             Log($"harvest: {_pieces.Count - filed} pieces from the best's goals {from + 1}-{until}");
+        }
+
+        /// <summary>
+        /// --harvest FILE: a saved route (a fulltas/&lt;run&gt;.json: goals and inputs, for goals of this run's labels) played under
+        /// its own goals from the run's start, its steps filed as library pieces (<see cref="Harvest"/>). A build or reach after a
+        /// plan changed the goals then plays the old route's laps and box walks where the player stands as it did, instead of
+        /// searching each goal again.
+        /// </summary>
+        void HarvestRoute(string file)
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
+            string[] labels = doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+            List<InputTick> inputs = Solve.ReadInputs(doc.RootElement);
+            var byLabel = new Dictionary<string, FullTasGoal>();
+            foreach (FullTasGoal g in _runGoals.Goals) byLabel.TryAdd(g.label, g);
+            string unknown = labels.FirstOrDefault(l => !byLabel.ContainsKey(l));
+            if (unknown != null) { Log($"harvest {Path.GetFileName(file)}: goal {unknown} isn't one of the run's; skipped"); return; }
+            FullTasTracker goals = _runGoals;
+            string[] runLabels = _labels;
+            int count = _goals;
+            Route best = _best;
+            try
+            {
+                _runGoals = goals.For(labels.Select(l => byLabel[l]).ToArray());
+                _labels = labels;
+                _goals = labels.Length;
+                _eval.UseGoals(_runGoals);
+                SimSnapshot start = _origin.WithGoal(Fresh(_goals, 0));
+                _eval.SetStart(start, 0);
+                _eval.Goals.Limit = _goals;
+                RunResult r = _eval.Run(inputs, null, null, 1000000);
+                _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
+                Log($"harvest {Path.GetFileName(file)}: plays {r.Progress} of its {labels.Length} goals");
+                Harvest(start, new List<InputTick>(), 0, r.Progress);
+            }
+            finally
+            {
+                _runGoals = goals;
+                _labels = runLabels;
+                _goals = count;
+                _best = best;
+                _eval.UseGoals(_runGoals);
+            }
         }
 
         /// <summary>A goal given as its 1-based number or its label (first occurrence); fallback when empty.</summary>
