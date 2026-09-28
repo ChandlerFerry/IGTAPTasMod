@@ -113,7 +113,9 @@ for exactly those runs. **Remove** under the map (`remove: true`, `name`) takes 
 so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
 copy beside its exe, and a solve rereads the boxes before every window, so a box drawn mid-solve applies from the next
 window on. A hand edit of the source file needs an engine rebuild
-(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy.
+(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy. Course search maps draw
+their rules the same way (**Draw avoid**, `POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}`;
+a named box becomes a pickable optional block of the rule covering the map's category).
 
 A Full-TAS rule's `optional` blocks (`name`, `note`, `avoid`, `offFor`) are avoid boxes that are on except in windows
 heading for one of the goals in `offFor` (a reach or polish window whose goals include it, or a loop piece for it).

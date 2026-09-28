@@ -310,8 +310,7 @@ namespace IGTAPTasMod
             _newGameRebased = false;
             _newGameUnlocks = default;
             _vmanSetupPlayer = null;
-            _startState = null;
-            _engineSimStartKey = null;
+            ClearEngineSimStarts();
             _newGameNotes.Clear();
             _newGameFrame = Time.frameCount;
             _newGamePhase = 1;
