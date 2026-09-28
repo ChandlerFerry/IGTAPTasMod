@@ -463,8 +463,19 @@ namespace IGTAPTasMod
             string caps = _solverCaps;
             string name = Text(body, "name") ?? ("trace-" + course + "_" + caps);
             string path = Path.Combine(EngineSimDir, name + ".json");
-            if (Truthy(body, "world")) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             Movement player = FindWorldMovement();
+            if (Truthy(body, "world"))
+            {
+                // The world as the run starts it, not as the live game has it: the category's abilities are applied while it
+                // is written (below block swap the coloured blocks start unswapped, README ### Rules 13), so a trace's world
+                // agrees with the state its run and the judge start from.
+                List<(string field, object value)> exportAbilities = player == null ? null : ApplyAbilities(player, caps);
+                try { EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json")); }
+                finally
+                {
+                    if (exportAbilities != null) foreach (var (field, value) in exportAbilities) SetMovementField(player, field, value);
+                }
+            }
             bool finished;
             float time;
             int finishTick;
