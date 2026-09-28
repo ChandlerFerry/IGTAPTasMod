@@ -136,13 +136,57 @@ namespace IGTAP.EngineSim.Cli
             {
                 var full = _kept.Concat(planned).Concat(all.Skip(targetIndex + 1)).ToList();
                 Track(full);
-                _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
-                _eval.Goals.Limit = full.Count;
-                RunResult r = _eval.Run(route, null, null, 1000000);
+                RunResult Play(List<InputTick> inputs)
+                {
+                    _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
+                    _eval.Goals.Limit = full.Count;
+                    return _eval.Run(inputs, null, null, 1000000);
+                }
+                RunResult r = Play(route);
+                List<InputTick> written = route;
+                // The old route after the target, from its first Quick Restart on: kept when it plays on from the plan's end, as a
+                // reset segment's old route is (the same Quick Restart after the plan's target, after the old inputs between the
+                // two or 0-24 idle ticks). A plan whose end leaves a course running Quick Restarts to that course's reset point
+                // instead of the Checkpoint the old route went to, and doesn't.
+                int oldCut = (int)Math.Min(_best.GoalInput[targetIndex], _best.Inputs.Count);
+                int oldRestart = targetIndex + 1 < all.Length ? _best.Inputs.FindIndex(oldCut, k => k.reset) : -1;
+                int reached = kept + planned.Count;
+                if (oldRestart >= 0 && r.Progress >= reached)
+                {
+                    int cut = (int)r.GoalInputTicks[reached - 1];
+                    List<InputTick> head = route.Take(cut).ToList();
+                    Pad(head, cut);
+                    List<InputTick> oldRunout = _best.Inputs.GetRange(oldCut, oldRestart - oldCut);
+                    var runouts = new List<List<InputTick>> { oldRunout };
+                    for (int wait = 0; wait <= 24; wait++) runouts.Add(Enumerable.Repeat(new InputTick { held = head.Count > 0 && head[head.Count - 1].held }, wait).ToList());
+                    List<InputTick> tail = _best.Inputs.Skip(oldRestart).ToList();
+                    foreach (List<InputTick> runout in runouts)
+                    {
+                        if (runout.Count == 0 && head.Count > 0 && head[head.Count - 1].reset) continue;
+                        List<InputTick> joined = head.Concat(runout).Concat(tail).ToList();
+                        RunResult j = Play(joined);
+                        if (j.Progress < full.Count) continue;
+                        written = joined;
+                        r = j;
+                        Log($"route: the old route after {targetLabel} plays on from the plan's end ({runout.Count} ticks before its Quick Restart)");
+                        break;
+                    }
+                    if (written == route)
+                    {
+                        _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
+                        _eval.Goals.Limit = full.Count;
+                        SimSnapshot end = _eval.Advance(head);
+                        courseScript running = null;
+                        if (end != null) { _eval.Restore(end); running = _eval.TimingCourse(); }
+                        Log($"route: the old route after {targetLabel} doesn't play on from the plan's end"
+                            + (running != null ? $" (Course {running.courseNumber} is still running there, so its Quick Restart goes to the course's reset point, not the old route's Checkpoint)" : "")
+                            + "; solve the run's goals after it (Solve unsolved) to find the rest");
+                    }
+                }
                 // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.
-                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = full.Select(g => g.label), inputs = route.Select(t => t.ToJson()),
-                    goalInputTicks = r.GoalInputTicks, goalPhysicsTicks = r.GoalPhysicsTicks, total = -1 }));
-                Log($"route: reaches {r.Progress} of {full.Count} goals -> {routeFile}");
+                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = full.Select(g => g.label), inputs = written.Select(t => t.ToJson()),
+                    goalInputTicks = r.GoalInputTicks, goalPhysicsTicks = r.GoalPhysicsTicks, total = r.Progress == full.Count ? r.GoalPhysicsTicks[full.Count - 1] : -1 }));
+                Log($"route: reaches {r.Progress} of {full.Count} goals" + (r.Progress == full.Count ? $" in {r.GoalPhysicsTicks[full.Count - 1] * _dt:0.00}s" : "") + $" -> {routeFile}");
             }
             return done ? 0 : 3;
         }
