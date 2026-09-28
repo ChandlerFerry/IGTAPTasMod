@@ -60,6 +60,7 @@ namespace IGTAPTasMod
         private Vector2 _tickStick;
         private bool _waitingForStable;
         private int _stableTicks;
+        private bool _waitAdvanced;
         private bool _hasSynchronizationPosition;
         private Vector2 _synchronizationPosition;
         private int _preRollTicksRemaining;
@@ -198,6 +199,7 @@ namespace IGTAPTasMod
             JumpHeld = false;
             _waitingForStable = synchronizeStart;
             _stableTicks = 0;
+            _waitAdvanced = false;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
             _synchronizationPosition = synchronizationPosition.GetValueOrDefault();
             _preRollTicksRemaining = Mathf.Max(0, startDelayTicks);
@@ -251,7 +253,12 @@ namespace IGTAPTasMod
         public void BeforeTick(Movement movement)
         {
             _turnArmed = false;
-            if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0) { _tickStick = Vector2.zero; return; }
+            if (!IsRunning) { _waitAdvanced = false; _tickStick = Vector2.zero; return; }
+            // The wait advances here, every FixedUpdate: the game reaches getPlayerControlledInput (FixedTick's hook) only
+            // with cutsceneMode none and the menu shut (Movement.FixedUpdate 1148-1156), so a dead or cutscened player would
+            // never tick the wait and a start capture would run its whole budget without the macro ever starting.
+            if (_waitingForStable || _preRollTicksRemaining > 0) { AdvanceWait(movement); _waitAdvanced = true; _tickStick = Vector2.zero; return; }
+            _waitAdvanced = false;
             string mode = ReadObject(CutsceneModeField, movement);
             bool dash = string.Equals(mode, "dash", StringComparison.OrdinalIgnoreCase);
             bool dashEnds = dash && ReadBool(DashActiveField, movement) && ReadFloat(DashFramesRemainingField, movement) <= 0f;
@@ -410,27 +417,8 @@ namespace IGTAPTasMod
         {
             if (!IsRunning)
                 return;
-            if (_waitingForStable)
-            {
-                NormalizeQuickRestartState(movement);
-                PinSynchronizationPosition(movement);
-                bool stable = !ReadBool(IsDeadField, movement)
-                    && ReadBool(OnGroundField, movement)
-                    && string.Equals(ReadObject(CutsceneModeField, movement), "none", StringComparison.OrdinalIgnoreCase);
-                _stableTicks = stable ? _stableTicks + 1 : 0;
-                Status = "Synchronizing start: " + _stableTicks + "/3 stable ticks";
-                if (_stableTicks < 3) return;
-                _waitingForStable = false;
-                Status = "Running: " + _macroName;
-            }
-            if (_preRollTicksRemaining > 0)
-            {
-                NormalizeQuickRestartState(movement);
-                PinSynchronizationPosition(movement);
-                _preRollTicksRemaining--;
-                Status = "Start alignment: " + (_preRollTicksTotal - _preRollTicksRemaining) + "/" + _preRollTicksTotal + " ticks";
-                return;
-            }
+            if (_waitAdvanced) return;
+            if (_waitingForStable || _preRollTicksRemaining > 0) return;
             _runTicks++;
             if (_stepIndex < 0 || _stepIndex >= _steps.Count)
             {
@@ -635,6 +623,31 @@ namespace IGTAPTasMod
             else if ((double)Mathf.Abs(x) < 0.3) x = 0f;
             y = (double)y > 0.4 ? 1f : (double)y < -0.4 ? -1f : 0f;
             return new Vector2(x, y);
+        }
+
+        /// <summary>The start's stable-tick wait (synchronizeStart) or start alignment, one tick of it per FixedUpdate.</summary>
+        private void AdvanceWait(Movement movement)
+        {
+            if (_waitingForStable)
+            {
+                NormalizeQuickRestartState(movement);
+                PinSynchronizationPosition(movement);
+                bool stable = !ReadBool(IsDeadField, movement)
+                    && ReadBool(OnGroundField, movement)
+                    && string.Equals(ReadObject(CutsceneModeField, movement), "none", StringComparison.OrdinalIgnoreCase);
+                _stableTicks = stable ? _stableTicks + 1 : 0;
+                Status = "Synchronizing start: " + _stableTicks + "/3 stable ticks";
+                if (_stableTicks < 3) return;
+                _waitingForStable = false;
+                Status = "Running: " + _macroName;
+            }
+            if (_preRollTicksRemaining > 0)
+            {
+                NormalizeQuickRestartState(movement);
+                PinSynchronizationPosition(movement);
+                _preRollTicksRemaining--;
+                Status = "Start alignment: " + (_preRollTicksTotal - _preRollTicksRemaining) + "/" + _preRollTicksTotal + " ticks";
+            }
         }
 
         private static void NormalizeQuickRestartState(Movement movement)
