@@ -7,9 +7,13 @@ export type TechCategory = "glitchless" | "nmg" | "major";
 export type TechOrigin = "community" | "game" | "ours";
 export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" | "OMNI";
 export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; confirmed: boolean; omniDash?: boolean; floatingOrigin?: boolean; fastForward?: number; description: string; note?: string | null; detector?: string | null;
-  related: string[]; start?: string | null; routeId?: string | null; savestate: boolean; ticks: number };
+  related: string[]; start?: string | null; routeId?: string | null; savestate: boolean; ticks: number; labmap?: string | null };
+export type LabShape = { kind: string; at?: number[] | null; size?: number[] | null; points?: number[][] | null; layer: string; tag: string; trigger: boolean; spike: boolean };
+export type LabInfo = { id: string; tech: string; name: string; category: string; techNote?: string | null; anchor: number[]; region?: number[] | null; finish: number[];
+  start: { x?: number | null; y?: number | null; vx?: number | null; vy?: number | null; facing?: number | null; fields?: Record<string, unknown> | null };
+  shapes: LabShape[]; demoTicks?: number | null; demoInputTicks?: number | null; error?: string };
 export type TechSeen = { detector: string; label: string; start: number; end: number; input: number };
-export type TechState = { list: Tech[]; detectors: { id: string; label: string }[];
+export type TechState = { list: Tech[]; detectors: { id: string; label: string }[]; labs?: LabInfo[];
   seen: { routeId: string; route: string; running: boolean; items: TechSeen[] } | null };
 
 type Command = (path: string, body?: unknown) => Promise<boolean>;
@@ -110,6 +114,7 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
 function TechCard({tech, byId, techs, running, selectedRoute, editing, focused, onEdit, onFocus, onCommand, onEditInputs}: {tech: Tech; byId: Map<string, Tech>; techs: TechState; running: boolean;
   selectedRoute?: {id: string; name: string}; editing: boolean; focused: boolean; onEdit: () => void; onFocus: (id: string) => void; onCommand: Command; onEditInputs: (routeId: string) => void}) {
   const seen = techs.seen;
+  const lab = tech.labmap ? techs.labs?.find(l => l.id === tech.labmap) : undefined;
   const detectorLabel = tech.detector ? techs.detectors.find(d => d.id === tech.detector)?.label ?? tech.detector : null;
   const playedDemo = seen && tech.routeId && seen.routeId === tech.routeId && !seen.running;
   const sawIt = !!tech.detector && !!seen?.items.some(s => s.detector === tech.detector);
@@ -133,23 +138,57 @@ function TechCard({tech, byId, techs, running, selectedRoute, editing, focused, 
       {tech.routeId
         ? <span className="demoInfo" title={tech.savestate ? `Starts at its own savestate${tech.start ? `, with ${tech.start}'s unlocks when that is a course category` : ""}`
             : tech.start ? `Starts as ${tech.start} (course quick restart and unlocks, or the Full-TAS run's new game)` : "Starts at the quick restart where you are"}>
-            Demo · {tech.ticks} t · {(tech.ticks * TICK_SECONDS).toFixed(2)}s{tech.savestate ? " · from its savestate" : tech.start ? ` · from ${tech.start}` : ""}{tech.fastForward ? `, turbo to input ${tech.fastForward}` : ""}{tech.omniDash ? " · + omnidash" : ""}{tech.floatingOrigin ? " · + origin overlay" : ""}</span>
+            Demo · {tech.ticks} t · {(tech.ticks * TICK_SECONDS).toFixed(2)}s{tech.savestate ? " · from its savestate" : tech.start ? ` · from ${tech.start}` : ""}{tech.labmap ? ` · in the injected lab map ${tech.labmap}` : ""}{tech.fastForward ? `, turbo to input ${tech.fastForward}` : ""}{tech.omniDash ? " · + omnidash" : ""}{tech.floatingOrigin ? " · + origin overlay" : ""}</span>
         : <span className="demoInfo missing">No demo yet</span>}
       {playedDemo && tech.detector && <span className={`verdict ${sawIt ? "good" : "bad"}`}>{sawIt ? "✓ performed in the last play" : "✗ not detected in the last play"}</span>}
       <div className="buttonRow">
-        <button className="secondary" disabled={!tech.routeId || running} onClick={() => onCommand("/techs/play", { id: tech.id })}>▶ Play</button>
+        <button className="secondary" disabled={!tech.routeId || running} onClick={() => onCommand("/techs/play", { id: tech.id })}>▶ Play{tech.labmap ? " lab" : ""}</button>
         <button className="secondary" disabled={!tech.routeId || running} title="Game time slowed 10×" onClick={() => onCommand("/techs/play", { id: tech.id, walk: true })}>⏵ Walk</button>
         {firstSeen >= 0 && !tech.routeId && <button className="secondary" disabled={running} onClick={() => onCommand("/techs/demo", { id: tech.id, from: "playback", seen: firstSeen })}>Demo from last playback</button>}
         <button className="secondary" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
       </div>
     </div>
+    {lab && <div className="techLab" title={lab.techNote ?? `${lab.shapes.length} shapes at anchor ${lab.anchor[0]},${lab.anchor[1]} (world frame)`}>
+      <div className="techLabHead"><strong>Lab map</strong><code>{lab.id}</code>
+        {lab.demoTicks ? <span className="demoInfo">solved exactly · {lab.demoTicks} physics ticks · {lab.demoInputTicks} inputs</span>
+          : <span className="demoInfo missing">{lab.error ?? "not solved yet"}</span>}
+      </div>
+      {lab.shapes.length > 0 && <LabPreview lab={lab} />}
+      {lab.techNote && <p className="techNote">{lab.techNote}</p>}
+    </div>}
     {editing && <TechEditor tech={tech} techs={techs} running={running} selectedRoute={selectedRoute} onCommand={onCommand} onEditInputs={onEditInputs} onClose={onEdit} />}
   </article>;
 }
 
+function LabPreview({lab}: {lab: LabInfo}) {
+  // The lab drawn in its own frame: shapes relative to the anchor, the start's dot and arrow, the finish box dashed.
+  const parts: {x: number; y: number; w: number; h: number; fill: string}[] = [];
+  const lines: {points: string; stroke: string}[] = [];
+  for (const s of lab.shapes) {
+    const fill = s.spike || s.layer === "Spikes" ? "#c0392b" : s.trigger ? "#8e44ad" : s.tag === "Moss" ? "#27ae60" : "#7f8c8d";
+    if (s.kind === "box" && s.at && s.size) parts.push({x: s.at[0] - s.size[0] / 2, y: s.at[1] - s.size[1] / 2, w: s.size[0], h: s.size[1], fill});
+    else if (s.points && s.points.length > 1) lines.push({points: s.points.map(p => `${p[0]},${p[1]}`).join(" "), stroke: fill});
+  }
+  const fx = lab.finish[0], fy = lab.finish[1], fw = lab.finish[2], fh = lab.finish[3];
+  const sx = lab.start.x ?? 0, sy = lab.start.y ?? 0;
+  const xs: number[] = [sx, fx - fw / 2, fx + fw / 2], ys: number[] = [sy, fy - fh / 2, fy + fh / 2];
+  for (const b of parts) { xs.push(b.x, b.x + b.w); ys.push(b.y, b.y + b.h); }
+  for (const l of lines) for (const p of l.points.split(" ")) { const [x, y] = p.split(",").map(Number); xs.push(x); ys.push(y); }
+  const pad = Math.max(20, (Math.max(...xs) - Math.min(...xs)) * 0.05);
+  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  const flip = (y: number) => y0 + y1 - y;
+  return <svg viewBox={`${x0} ${flip(y1)} ${x1 - x0} ${y1 - y0}`} style={{width: "100%", maxHeight: 180, background: "#11151c", borderRadius: 6, margin: "4px 0"}}>
+    {parts.map((b, i) => <rect key={i} x={b.x} y={flip(b.y + b.h)} width={b.w} height={b.h} fill={b.fill} opacity={0.85} />)}
+    {lines.map((l, i) => <polyline key={i} points={l.points.split(" ").map(p => { const [x, y] = p.split(",").map(Number); return `${x},${flip(y)}`; }).join(" ")} fill="none" stroke={l.stroke} strokeWidth={4} />)}
+    <rect x={fx - fw / 2} y={flip(fy + fh / 2)} width={fw} height={fh} fill="none" stroke="#f1c40f" strokeWidth={6} strokeDasharray="18 12" />
+    <circle cx={sx} cy={flip(sy)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#fff" />
+    <line x1={sx} y1={flip(sy)} x2={sx + (lab.start.vx ?? 0) * 0.12} y2={flip(sy + (lab.start.vy ?? 0) * 0.12)} stroke="#fff" strokeWidth={5} />
+  </svg>;
+}
+
 function TechEditor({tech, techs, running, selectedRoute, onCommand, onEditInputs, onClose}: {tech: Tech; techs: TechState; running: boolean; selectedRoute?: {id: string; name: string};
   onCommand: Command; onEditInputs: (routeId: string) => void; onClose: () => void}) {
-  const [draft, setDraft] = useState({ name: tech.name, category: tech.category, requires: tech.requires, origin: tech.origin, detector: tech.detector ?? "", start: tech.start ?? "",
+  const [draft, setDraft] = useState({ name: tech.name, category: tech.category, requires: tech.requires, origin: tech.origin, detector: tech.detector ?? "", start: tech.start ?? "", labmap: tech.labmap ?? "",
     floatingOrigin: !!tech.floatingOrigin, fastForward: tech.fastForward ?? 0, description: tech.description, note: tech.note ?? "", related: tech.related });
   const [into, setInto] = useState("");
   const [cut, setCut] = useState(-1);
@@ -167,6 +206,8 @@ function TechEditor({tech, techs, running, selectedRoute, onCommand, onEditInput
         <option value="">None</option>
         {techs.detectors.map(d => <option key={d.id} value={d.id} disabled={taken.has(d.id)}>{d.label}{taken.has(d.id) ? ` (${taken.get(d.id)})` : ""}</option>)}</select></label>
       <label className="field"><span>Demo start (2_WJ_DS, fulltas/VMAN_NONE, or empty)</span><input value={draft.start} placeholder="empty: savestate or quick restart" onChange={e => set({ start: e.target.value })} /></label>
+      <label className="field" title="The demo plays on an injected lab map (labmaps/<id>.json): injects, starts at the lab start, restores after. Lab-only: never a route">
+        <span>Lab map id (labmaps/&lt;id&gt;.json)</span><input value={draft.labmap} placeholder="empty: no lab map" onChange={e => set({ labmap: e.target.value.trim() })} /></label>
       <label className="field" title="The demo draws the FloatingOrigin sphere, coordinates and lastHyperY in game, and always plays from its start (a savestate doesn't hold the world's origin)">
         <span>FloatingOrigin demo</span><input type="checkbox" checked={draft.floatingOrigin} onChange={e => set({ floatingOrigin: e.target.checked })} /></label>
       <label className="field" title="A Full-TAS demo's first input ticks run in turbo after the new game loads, so it starts where the tech begins (the world as the run left it)">
@@ -185,6 +226,8 @@ function TechEditor({tech, techs, running, selectedRoute, onCommand, onEditInput
 
     <p className="eyebrow techEditorHead">DEMO</p>
     <div className="buttonRow">
+      <button className="secondary" disabled={running || !tech.labmap} title={tech.labmap ? `The solved demo of lab map ${tech.labmap}: plays on the injected lab, from its lab start` : "Attach a lab map first (Lab map id below)"}
+        onClick={() => onCommand("/techs/demo", { id: tech.id, from: "lab", labmap: tech.labmap })}>Use lab demo{tech.labmap ? ` (${tech.labmap})` : ""}</button>
       <button className="secondary" disabled={running || !selectedRoute || selectedRoute.id === tech.routeId} title={selectedRoute ? `The whole route, from its own start: ${selectedRoute.name}` : "Select a route in the sidebar"}
         onClick={() => onCommand("/techs/demo", { id: tech.id, from: "selected" })}>Use selected route{selectedRoute && selectedRoute.id !== tech.routeId ? ` (${selectedRoute.name})` : ""}</button>
       {seen && seen.items.length > 0 && <>

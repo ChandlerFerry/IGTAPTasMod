@@ -112,6 +112,8 @@ namespace IGTAPTasMod
         readonly List<string> _fullTasLog = new List<string>();
         readonly List<JObject> _fullTasEvents = new List<JObject>();
         JObject _fullTasProgress;
+        /// <summary>The solve's last "segments" event (--resets): kept apart, as the event list drops its oldest.</summary>
+        JObject _fullTasSegments;
         string _fullTasSolveError, _fullTasCommand;
         const int MaxFullTasEvents = 400, MaxFullTasLog = 300;
 
@@ -388,6 +390,8 @@ namespace IGTAPTasMod
             public int reached;
             public List<FullTasSplit> splits;
             public float time;
+            /// <summary>The route cut at its quick restarts, as the solver's --resets sees it: [goals before, goals by its restart, inputs] per segment.</summary>
+            public List<int[]> segments;
         }
         readonly Dictionary<string, FullTasOfflineFile> _fullTasOffline = new Dictionary<string, FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
 
@@ -423,7 +427,29 @@ namespace IGTAPTasMod
             offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].ticks * Time.fixedDeltaTime;
             int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
+            offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
             return offline;
+        }
+
+        /// <summary>enginesim FullTas.Segments: a segment ends at each quick restart after the first input, the last one at the route's end.</summary>
+        static List<int[]> ResetSegments(List<SolverTick> inputs, List<long> goalInputTicks, int reached)
+        {
+            var segments = new List<int[]>();
+            int Goals(int count)
+            {
+                int n = 0;
+                while (n < reached && goalInputTicks[n] <= count) n++;
+                return n;
+            }
+            int start = 0;
+            for (int i = 1; i < inputs.Count; i++)
+            {
+                if (!inputs[i].reset) continue;
+                segments.Add(new[] { Goals(start), Goals(i), i - start });
+                start = i + 1;
+            }
+            segments.Add(new[] { Goals(start), reached, inputs.Count - start });
+            return segments;
         }
 
         MacroDefinition FullTasPlayableRoute(FullTasRunDef run)
@@ -1128,8 +1154,11 @@ namespace IGTAPTasMod
             if (windowMinutes > 0f) args.Append(" --window-minutes ").Append(windowMinutes.ToString(CultureInfo.InvariantCulture));
             if (stallMinutes > 0f) args.Append(" --stall-minutes ").Append(stallMinutes.ToString(CultureInfo.InvariantCulture));
             if (window > 0) args.Append(" --window ").Append(window);
-            int goal = Number(body, "goal", 0);
-            if (goal > 0 && !Truthy(body, "unsolved")) args.Append(" --goal ").Append(goal);
+            int goal = Number(body, "goal", 0), segment = Number(body, "segment", 0);
+            bool resets = Truthy(body, "resets") && !Truthy(body, "unsolved");
+            if (goal > 0 && !resets && !Truthy(body, "unsolved")) args.Append(" --goal ").Append(goal);
+            if (resets) args.Append(" --resets");
+            if (resets && segment > 0) args.Append(" --segment ").Append(segment);
             if (Truthy(body, "fresh")) args.Append(" --fresh");
             if (Truthy(body, "unsolved")) args.Append(" --unsolved");
             if (Truthy(body, "noSubmit")) args.Append(" --no-submit");
@@ -1148,6 +1177,7 @@ namespace IGTAPTasMod
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
             _fullTasProgress = null;
+            _fullTasSegments = null;
             _fullTasSolveError = null;
             _fullTasCommand = EngineSimExe + " " + args;
             _fullTasSolveStatus = "Solving " + run.name + " offline on " + threads + " threads from " + seeds + " seed routes";
@@ -1376,6 +1406,7 @@ namespace IGTAPTasMod
                 {
                     e["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     if ((string)e["type"] == "status") { _fullTasProgress = e; return; }
+                    if ((string)e["type"] == "segments") { _fullTasSegments = e; return; }
                     _fullTasEvents.Add(e);
                     if (_fullTasEvents.Count > MaxFullTasEvents) _fullTasEvents.RemoveRange(1, _fullTasEvents.Count - MaxFullTasEvents);
                     return;
@@ -1537,7 +1568,7 @@ namespace IGTAPTasMod
                 return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
-                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits },
+                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
@@ -1546,7 +1577,7 @@ namespace IGTAPTasMod
             return new {
                 runs = runs,
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
-                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog },
+                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, segments = _fullTasSegments, log = _fullTasLog },
                 lastResult = _fullTasLastResult,
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,

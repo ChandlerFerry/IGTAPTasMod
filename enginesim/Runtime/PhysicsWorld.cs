@@ -60,6 +60,7 @@ namespace IGTAP.EngineSim
         readonly b2World _b2;
         readonly b2Body _ground;
         readonly Dictionary<Collider2D, ColliderState> _colliders = new Dictionary<Collider2D, ColliderState>();
+        readonly Dictionary<int, ColliderState> _byId = new Dictionary<int, ColliderState>();
         readonly Dictionary<Rigidbody2D, BodyState> _bodies = new Dictionary<Rigidbody2D, BodyState>();
         readonly Dictionary<GameObject, List<ColliderState>> _byObject = new Dictionary<GameObject, List<ColliderState>>();
         readonly int[] _layerMasks;
@@ -135,6 +136,7 @@ namespace IGTAP.EngineSim
                 state.Body = rb != null && _bodies.TryGetValue(rb, out BodyState b) ? b : null;
                 state.Body?.Colliders.Add(state);
                 _colliders[c] = state;
+                _byId[state.Id] = state;
                 if (!_byObject.TryGetValue(c.gameObject, out var list)) _byObject[c.gameObject] = list = new List<ColliderState>();
                 list.Add(state);
                 state.Handlers = Handlers(CallbackScripts(c));
@@ -1144,6 +1146,97 @@ namespace IGTAP.EngineSim
             foreach (Pair p in s.Touching) _touching.Add(p);
             _pairsBefore.Clear();
             _pairsBefore.AddRange(s.Touching);
+        }
+
+        // --- SnapshotStore: binds a persisted snapshot to this world's physics objects (Runtime/SnapshotStore.cs). ---
+
+        internal static readonly Type ColliderStateType = typeof(ColliderState);
+
+        internal int IdOfState(object state) => ((ColliderState)state).Id;
+
+        internal object StateAt(int id) => _byId.TryGetValue(id, out ColliderState s) ? s
+            : throw new KeyNotFoundException("no collider " + id + " in this world export");
+
+        internal (List<b2Fixture> fixtures, b2Fixture[] pristine) FixturesAt(int id) => (_byId[id].Fixtures, _byId[id].Pristine);
+
+        internal bool IsPlayerCollider(int id) => _byId.TryGetValue(id, out ColliderState s) && s.Body == _player;
+
+        internal IEnumerable<int> ChangedIdsOf(object snapshot) => ((PhysicsSnapshot)snapshot).Changed.Select(c => c.state.Id);
+
+        /// <summary>Which collider a fixture belongs to and where in its fixture list (its load fixtures' if it is gone).</summary>
+        internal (int owner, int index) LocateFixture(b2Fixture fixture)
+        {
+            if (!(fixture.UserData is ColliderState s)) return (-1, -1);
+            int index = s.Fixtures.IndexOf(fixture);
+            if (index < 0 && s.Pristine != null) index = Array.IndexOf(s.Pristine, fixture);
+            return (s.Id, index);
+        }
+
+        internal void RebuildCollider(int id) { Changed(_byId[id]); }
+
+        internal int RigidbodyIdOf(b2Body body)
+        {
+            if (ReferenceEquals(body, _ground)) return -1;
+            foreach (var pair in _bodies) if (ReferenceEquals(pair.Value.Body, body)) return pair.Key.GetInstanceID();
+            throw new NotSupportedException("a snapshot holds a physics body this world doesn't; not saved");
+        }
+
+        internal b2Body BodyAt(int rigidbodyId)
+        {
+            if (rigidbodyId == -1) return _ground;
+            return _world.Objects.TryGetValue(rigidbodyId, out UnityEngine.Object o) && o is Rigidbody2D rb
+                && _bodies.TryGetValue(rb, out BodyState s) ? s.Body
+                : throw new KeyNotFoundException("no body " + rigidbodyId + " in this world export");
+        }
+
+        /// <summary>
+        /// A restored snapshot's changed colliders that this world never rebuilt: line them up as Restore's loop would have
+        /// (their fixtures as the snapshot has them, what this world loaded as the pristine ones).
+        /// </summary>
+        internal void AdoptChanged(object snapshot)
+        {
+            foreach (var (state, saved) in ((PhysicsSnapshot)snapshot).Changed)
+            {
+                if (_changed.Contains(state)) continue;
+                state.Pristine = state.Fixtures.ToArray();
+                _changed.Add(state);
+                state.Fixtures.Clear();
+                state.Fixtures.AddRange(saved);
+                if (state.Layer != state.Collider.gameObject.m_Layer)
+                {
+                    state.Layer = state.Collider.gameObject.m_Layer;
+                    state.ContactMask = ContactMask(_layerMasks, state.Collider);
+                    if (state.Body != null) _movers = null;
+                }
+                if ((state.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(state);
+            }
+            _changedCapture = null;
+        }
+
+        /// <summary>What a fixture's shape is: a restored fixture must have been built from the same geometry.</summary>
+        public static int FingerprintOf(b2Fixture fixture)
+        {
+            var h = new HashCode();
+            switch (fixture.b2Shape)
+            {
+                case b2PolygonShape p:
+                    h.Add(1); h.Add(p.m_radius); h.Add(p.m_count);
+                    for (int i = 0; i < p.m_count; i++) { h.Add(p.m_vertices[i].x); h.Add(p.m_vertices[i].y); }
+                    break;
+                case b2CircleShape c: h.Add(2); h.Add(c.m_radius); h.Add(c.m_p.x); h.Add(c.m_p.y); break;
+                case b2EdgeShape e:
+                    h.Add(3); h.Add(e.m_radius); h.Add(e.m_oneSided);
+                    h.Add(e.m_vertex0?.x ?? 0f); h.Add(e.m_vertex0?.y ?? 0f);
+                    h.Add(e.m_vertex1.x); h.Add(e.m_vertex1.y); h.Add(e.m_vertex2.x); h.Add(e.m_vertex2.y);
+                    h.Add(e.m_vertex3?.x ?? 0f); h.Add(e.m_vertex3?.y ?? 0f);
+                    break;
+                case b2ChainShape ch:
+                    h.Add(4); h.Add(ch.m_radius); h.Add(ch.m_count);
+                    for (int i = 0; i < ch.m_count; i++) { h.Add(ch.m_vertices[i].x); h.Add(ch.m_vertices[i].y); }
+                    break;
+                default: h.Add(0); h.Add(fixture.b2Shape?.GetType().FullName); break;
+            }
+            return h.ToHashCode();
         }
     }
 

@@ -15,11 +15,11 @@ static class Prep
         {
             switch (args.FirstOrDefault())
             {
-                case "retarget": return Retarget(args[1], args[2], args[3], args[4], args[5]);
+                case "retarget": return Retarget(args[1], args[2], args[3], args[4], args[5], args[6]);
                 case "surface": return Surface(args[1], args[2], args[3]);
                 case "monofloat": return MonoFloatTypes(args[1], args.Skip(2).ToArray());
                 default:
-                    Console.Error.WriteLine("usage: retarget <managedDir> <outDir> <cuts.txt> <hooks.txt> <shim.dll> | surface <managedDir> <cuts.txt> <entries.txt>");
+                    Console.Error.WriteLine("usage: retarget <managedDir> <outDir> <cuts.txt> <hooks.txt> <shim.dll> <static-allow.txt> | surface <managedDir> <cuts.txt> <entries.txt>");
                     return 2;
             }
         }
@@ -43,13 +43,14 @@ static class Prep
         return AssemblyDefinition.ReadAssembly(Path.Combine(managedDir, file), new ReaderParameters { AssemblyResolver = resolver, ReadSymbols = false });
     }
 
-    static int Retarget(string managedDir, string outDir, string cutsPath, string hooksPath, string shimPath)
+    static int Retarget(string managedDir, string outDir, string cutsPath, string hooksPath, string shimPath, string allowPath)
     {
         var cuts = Lines(cutsPath).ToHashSet();
         var used = new HashSet<string>();
         AssemblyDefinition game = Load(managedDir, "Assembly-CSharp.dll");
         ModuleDefinition module = game.MainModule;
-        TypeDefinition hookType = ModuleDefinition.ReadModule(shimPath).GetType("IGTAP.EngineSim.Hooks")
+        ModuleDefinition shimModule = ModuleDefinition.ReadModule(shimPath);
+        TypeDefinition hookType = shimModule.GetType("IGTAP.EngineSim.Hooks")
             ?? throw new InvalidOperationException("IGTAP.EngineSim.Hooks is missing from " + shimPath);
         var hooks = Lines(hooksPath).Select(l => l.Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToList();
         var shim = new AssemblyNameReference(ShimName, new Version(1, 0, 0, 0));
@@ -82,7 +83,10 @@ static class Prep
                 throw new InvalidOperationException("hooks.txt: " + hook[2] + " must take (self, " + method.Parameters.Count + " args)");
             InjectHook(method, module.ImportReference(handler), hook[0] == "replace");
         }
-        int threadStatic = ThreadStaticFields(module);
+        var allowed = Allowed(allowPath);
+        StaticAudit.Report statics = StaticAudit.Analyze(module, shimModule);
+        int threadStatic = ThreadStaticFields(module, allowed, statics);
+        StaticAudit.Check(statics, allowed);
         int widened = 0;
         foreach (TypeDefinition type in module.GetTypes())
             foreach (MethodDefinition m in type.Methods) widened += MonoFloat.Apply(m);
@@ -93,23 +97,51 @@ static class Prep
         Directory.CreateDirectory(outDir);
         game.Write(Path.Combine(outDir, "Assembly-CSharp.dll"));
         Console.WriteLine("Retargeted Assembly-CSharp -> " + outDir + " (" + used.Count + " methods cut, " + widened + " float loads widened, "
-            + threadStatic + " static fields per thread)");
+            + threadStatic + " static fields per thread, " + allowed.Count + " shared by static-allow.txt)");
         return 0;
+    }
+
+    // static-allow.txt: one `Type::field  # reason` per line. Listing a mutable static keeps it shared between solver
+    // threads, so the reason says why that is safe; StaticAudit.Check names every mutable static that is neither listed
+    // nor per thread.
+    static Dictionary<string, string> Allowed(string path)
+    {
+        var allowed = new Dictionary<string, string>();
+        foreach (string line in File.ReadAllLines(path))
+        {
+            string name = line.Split('#')[0].Trim();
+            if (name.Length == 0) continue;
+            int hash = line.IndexOf('#');
+            if (hash < 0 || line.Substring(hash + 1).Trim().Length == 0)
+                throw new InvalidOperationException(path + ": " + name + " needs a `Type::field  # reason` saying why it stays shared");
+            if (allowed.ContainsKey(name)) throw new InvalidOperationException(path + ": " + name + " listed twice");
+            allowed[name] = line.Substring(hash + 1).Trim();
+        }
+        return allowed;
     }
 
     // The game's mutable statics (Singleton<T>.instance, VmanScript's flags, globalStats' dictionaries) hold one world's
     // state, and every solver thread runs its own world: shared, the last world loaded wins, and a thread's game code
     // reads another world's objects (a respawn adds another world's FloatingOrigin.currentOrigin). Per thread, each
-    // thread's World.Load sets its own. Constants, readonly fields and RVA data stay shared.
-    static int ThreadStaticFields(ModuleDefinition module)
+    // thread's World.Load sets its own. Constants, readonly fields and RVA data stay shared, and static-allow.txt names
+    // the mutable statics that stay shared on purpose (StaticAudit.Check fails the build on any other).
+    static int ThreadStaticFields(ModuleDefinition module, Dictionary<string, string> allowed, StaticAudit.Report statics)
     {
         var attribute = new MethodReference(".ctor", module.TypeSystem.Void,
             new TypeReference("System", "ThreadStaticAttribute", module, module.TypeSystem.CoreLibrary)) { HasThis = true };
+        var offenses = new HashSet<FieldDefinition>(statics.Offenses.Select(o => o.Field));
         int count = 0;
         foreach (TypeDefinition type in module.GetTypes())
             foreach (FieldDefinition f in type.Fields)
             {
-                if (!f.IsStatic || f.IsLiteral || f.IsInitOnly || f.HasFieldRVA) continue;
+                if (!f.IsStatic || f.IsLiteral || f.HasFieldRVA) continue;
+                if (allowed.ContainsKey(StaticAudit.Key(f))) continue;
+                // A readonly field is only assigned in its static constructor, whose initializer fills one thread's copy
+                // alone, so the plain readonly fields stay shared. A readonly field whose contents the game mutates (a
+                // StaticAudit offense) is per-world state like any other: per thread, with the readonly mark dropped so
+                // World.Load can set each thread's copy.
+                if (f.IsInitOnly && !offenses.Contains(f)) continue;
+                f.IsInitOnly = false;
                 if (f.CustomAttributes.Any(a => a.AttributeType.FullName == "System.ThreadStaticAttribute")) continue;
                 f.CustomAttributes.Add(new CustomAttribute(attribute));
                 count++;

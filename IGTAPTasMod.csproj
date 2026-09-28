@@ -38,6 +38,7 @@
   <ItemGroup>
 
     <EmbeddedResource Include="techs.json" LogicalName="IGTAPTasMod.techs.json" />
+    <EmbeddedResource Include="labmaps\*.json" LogicalName="IGTAPTasMod.labmaps.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <Target Name="BuildWebStudio" BeforeTargets="Build" Condition="'$(SkipDeploy)' != 'true'">

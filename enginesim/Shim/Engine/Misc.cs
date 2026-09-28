@@ -6,12 +6,18 @@ namespace UnityEngine
 {
     public static class Time
     {
-        public static float fixedDeltaTime { get; set; } = 0.0199999921f;
+        // The fixed step and the scale are per-world state (a thread's World.Load sets its step, Movement.Start its
+        // scale from globalStats.baseGameSpeed), so they are per thread like the game's own statics: Prep's static
+        // audit fails the build on a mutable static that is neither `[ThreadStatic]` nor in enginesim/static-allow.txt.
+        [ThreadStatic] static float _fixedDeltaTime = 0.0199999921f;
+        [ThreadStatic] static float _timeScale = 1f;
+
+        public static float fixedDeltaTime { get { return _fixedDeltaTime; } set { _fixedDeltaTime = value; } }
         public static float deltaTime { get { return fixedDeltaTime; } }
         public static float fixedTime { get; set; }
         public static float time { get; set; }
         public static float unscaledDeltaTime { get { return fixedDeltaTime; } }
-        public static float timeScale { get; set; } = 1f;
+        public static float timeScale { get { return _timeScale; } set { _timeScale = value; } }
         public static int frameCount { get; set; }
         public static float realtimeSinceStartup { get { return 0f; } }
     }

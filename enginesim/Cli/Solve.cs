@@ -25,6 +25,10 @@ namespace IGTAP.EngineSim.Cli
             double stallMinutes = Option(args, "--stall-minutes", double.PositiveInfinity);
             bool submit = !args.Contains("--no-submit");
             bool fresh = args.Contains("--fresh");
+            bool techGrafts = !args.Contains("--no-tech-grafts");
+            bool guide = !args.Contains("--no-guide");
+            double guideWeight = Option(args, "--guide-weight", 1.0);
+            if (!guide) DistanceField.Enabled = false;
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
             OfflineSolver.ForcedPath forced = CliBoxes(args);
@@ -52,7 +56,11 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            var solver = new OfflineSolver(create, caps, seeds, memory, forced);
+            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace))) : null;
+            if (mined != null)
+                Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
+                    + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
+            var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0));
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             var clock = Stopwatch.StartNew();
@@ -68,7 +76,8 @@ namespace IGTAP.EngineSim.Cli
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
                 humanize.Set(file, inputs);
             };
-            Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes");
+            Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
+                + (guide ? $", guide weight {guideWeight}" : ", no guide"));
             solver.Start(threads);
             Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
@@ -82,9 +91,10 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.Grafts)} grafts ({Interlocked.Read(ref solver.CornerGrafts)} corner hypers, {Interlocked.Read(ref solver.ClipsLanded)}/{Interlocked.Read(ref solver.ClipGrafts)} wall clips, {Interlocked.Read(ref solver.SetupsLanded)}/{Interlocked.Read(ref solver.SetupGrafts)} clip setups, {Interlocked.Read(ref solver.GateTaps)} gate taps), best {solver.Shared.Time:0.00}s"
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.Grafts)} grafts ({Interlocked.Read(ref solver.CornerGrafts)} corner hypers, {Interlocked.Read(ref solver.ClipsLanded)}/{Interlocked.Read(ref solver.ClipGrafts)} wall clips, {Interlocked.Read(ref solver.SetupsLanded)}/{Interlocked.Read(ref solver.SetupGrafts)} clip setups, {Interlocked.Read(ref solver.GateTaps)} gate taps, {Interlocked.Read(ref solver.TechGrafted)} tech grafts), best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
-                    + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)") + ", branch replays matching "
+                    + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)")
+                    + ", " + solver.GuideStatus() + ", branch replays matching "
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
                 if (++beats % 6 == 0) SaveMemory(archiveFile, solver.Export(5000));

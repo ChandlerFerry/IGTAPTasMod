@@ -1,0 +1,50 @@
+.slackTimeline { margin-top: 18px; }
+
+.slackLegend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.slackSummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.slackSummary strong { font-size: 13px; }
+.slackSummary small { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+.slackExact { color: #ff9eae; }
+.slackFine { color: #9af0cc; }
+
+.slackCell.slackOn b,
+.slackCell.slackOn span,
+.slackCell.slackOn small { color: #0b1220; }
+
+.slackCell.slackOn b { opacity: .75; }
+
+.slackList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.slackList li {
+  padding: 6px 10px;
+  border-left: 3px solid var(--muted);
+  background: #0d1c31;
+  font-size: 12px;
+}
+
+.slackList small { margin-left: 8px; color: var(--muted); }
+.slackFoot { margin: 10px 14px 14px; color: var(--muted); font-size: 11px; }

@@ -30,8 +30,8 @@
   </ItemGroup>
 
   <Target Name="RetargetGame" AfterTargets="ResolveProjectReferences" BeforeTargets="ResolveAssemblyReferences"
-          Inputs="$(GameManaged)\Assembly-CSharp.dll;..\cuts.txt;..\hooks.txt;..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll;..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll"
+          Inputs="$(GameManaged)\Assembly-CSharp.dll;..\cuts.txt;..\hooks.txt;..\static-allow.txt;..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll;..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll"
           Outputs="$(RetargetedGame)">
-    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; retarget &quot;$(GameManaged)&quot; &quot;$(MSBuildThisFileDirectory)..\obj\game&quot; &quot;$(MSBuildThisFileDirectory)..\cuts.txt&quot; &quot;$(MSBuildThisFileDirectory)..\hooks.txt&quot; &quot;$(MSBuildThisFileDirectory)..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll&quot;" />
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; retarget &quot;$(GameManaged)&quot; &quot;$(MSBuildThisFileDirectory)..\obj\game&quot; &quot;$(MSBuildThisFileDirectory)..\cuts.txt&quot; &quot;$(MSBuildThisFileDirectory)..\hooks.txt&quot; &quot;$(MSBuildThisFileDirectory)..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll&quot; &quot;$(MSBuildThisFileDirectory)..\static-allow.txt&quot;" />
   </Target>
 </Project>

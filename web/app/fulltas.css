@@ -73,3 +73,9 @@
 .ftEmpty { color: var(--muted); }
 .ftRaw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .ftRaw pre { max-height: 320px; overflow: auto; padding: 10px; border-radius: 8px; background: #081524; color: #aac0d7; font: 11px/1.6 ui-monospace,Consolas,monospace; white-space: pre-wrap; word-break: break-all; }
+.ftSegments { margin-top: 12px; }
+.ftSegments summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.ftSegments .resultTable { max-height: 320px; overflow-y: auto; margin-top: 8px; }
+.ftSegments .tableHead, .ftSegments .tableRow { grid-template-columns: 40px minmax(0,1fr) 70px minmax(0,1fr); }
+.ftSegments .tableRow { cursor: pointer; }
+.ftSegments .tableRow.selected { background: #10263d; box-shadow: inset 3px 0 0 var(--cyan); }

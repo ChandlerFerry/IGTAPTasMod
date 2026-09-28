@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -25,6 +26,11 @@ namespace IGTAP.EngineSim.Cli
             public float Time;
             public int TimerStart = -1;
             public readonly List<float> Points = new List<float>();
+            // The first arrival in each cell along the route (`Earlier`, the explore cells' time) and, per tick, the
+            // player's physical state fingerprint: the first tick two routes' fingerprints differ is where their
+            // bodies part (input and buffer fields stay out of it).
+            public readonly Dictionary<long, float> Cells = new Dictionary<long, float>();
+            public readonly List<int> State = new List<int>();
         }
 
         // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint.
@@ -50,7 +56,8 @@ namespace IGTAP.EngineSim.Cli
 
             string engine = EngineStamp();
             string simKey = engine + "|" + Stamp(trace) + "|" + Stamp(worldPath);
-            string outputKey = string.Join("\n", new[] { simKey, Stamp(archivePath), best ?? "-", Stamp(best),
+            string human = best == null ? null : HumanFile(dir, best);
+            string outputKey = string.Join("\n", new[] { simKey, Stamp(archivePath), best ?? "-", Stamp(best), Stamp(human),
                 Stamp(System.IO.Path.Combine(AppContext.BaseDirectory, "forced-paths.json")), string.Join("+", optional) }
                 .Concat(seedFiles.Select(f => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f))))));
             string keyPath = output + ".key";
@@ -69,8 +76,14 @@ namespace IGTAP.EngineSim.Cli
                     routes.Add((doc.RootElement.TryGetProperty("name", out JsonElement n) ? n.GetString() : System.IO.Path.GetFileNameWithoutExtension(seedFile),
                         "seed", Solve.ReadInputs(doc.RootElement)));
             if (best != null)
+            {
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(best), new JsonDocumentOptions { MaxDepth = 256 }))
                     routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", Solve.ReadInputs(doc.RootElement)));
+                // Its human version (humanize), so the studio can ghost it against the best or a saved route.
+                if (human != null)
+                    using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(human), new JsonDocumentOptions { MaxDepth = 256 }))
+                        routes.Add(("human " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "human", Solve.ReadInputs(doc.RootElement)));
+            }
             OfflineSolver.Memory memory = Solve.LoadMemory(archivePath);
             if (memory != null)
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
@@ -116,10 +129,8 @@ namespace IGTAP.EngineSim.Cli
                     var path = new Path { Name = name, Kind = kind };
                     RunResult r = sim.Run(inputs, extraTicks: 0, onStep: _ =>
                     {
-                        Vector3 p = sim.PlayerWorld;
                         if (path.TimerStart < 0 && sim.TimingCourse() != null) path.TimerStart = path.Points.Count / 2;
-                        path.Points.Add(Round(p.x));
-                        path.Points.Add(Round(p.y));
+                        Step(path, sim, sim.Elapsed(sim.TimingCourse()));
                     });
                     path.Finished = r.Finished;
                     path.Time = r.Time;
@@ -160,7 +171,12 @@ namespace IGTAP.EngineSim.Cli
                     avoid = b.Boxes.Avoid.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
                     via = b.Boxes.Via.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
                 }),
-                routes = paths.Select(p => new { name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = p.TimerStart, points = p.Points }),
+                routes = paths.Select(p => new
+                {
+                    name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = p.TimerStart, points = p.Points,
+                    cells = p.Cells.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
+                    state = p.State,
+                }),
                 explored = new
                 {
                     cell = Cell, runs = memory?.Runs ?? 0, prefixes = sources.Count,
@@ -212,12 +228,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 var path = new Path { Name = routeName, Kind = kind };
                 sim.Goals.Limit = traced.Length;
-                RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ =>
-                {
-                    Vector3 p = sim.PlayerWorld;
-                    path.Points.Add(Round(p.x));
-                    path.Points.Add(Round(p.y));
-                });
+                RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ => Step(path, sim, sim.Elapsed(sim.TimingCourse())));
                 path.Finished = r.Progress == traced.Length;
                 path.Time = r.Progress == 0 ? 0f : r.GoalPhysicsTicks[r.Progress - 1] * dt;
                 path.Name += $" ({r.Progress}/{traced.Length} goals)";
@@ -258,7 +269,12 @@ namespace IGTAP.EngineSim.Cli
                 avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = goals.Select(g => g.box),
                 goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
-                routes = paths.Select(p => new { name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = -1, points = p.Points }),
+                routes = paths.Select(p => new
+                {
+                    name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = -1, points = p.Points,
+                    cells = p.Cells.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
+                    state = p.State,
+                }),
                 explored = new
                 {
                     cell, runs = 0, prefixes = 0,
@@ -363,6 +379,61 @@ namespace IGTAP.EngineSim.Cli
         static float Round(float v) { return (float)Math.Round(v, 1); }
 
         static float Earlier(float a, float b) { return a < 0f ? b : b < 0f ? a : Math.Min(a, b); }
+
+        // One tick of a replayed route's path: the world position, the first arrival in its 16-unit cell (`t`, the
+        // explore cells' time: the course timer, or the run time where the run is timed from its start) and the
+        // player's physical state fingerprint. The studio's ghost compare draws two paths over the map with their first
+        // differing fingerprint tick and the per-cell `t` delta (`/api/enginesim/ghost`).
+        static void Step(Path path, Simulation sim, float t)
+        {
+            Vector3 p = sim.PlayerWorld;
+            path.Points.Add(Round(p.x));
+            path.Points.Add(Round(p.y));
+            long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
+            path.Cells[key] = Earlier(path.Cells.TryGetValue(key, out float earliest) ? earliest : -1f, t);
+            path.State.Add(PhysicalFingerprint(sim));
+        }
+
+        // The player's physical state at one tick, rounded to what the path draws: position (0.1), `Velocity`,
+        // `momentum` and the body's velocity (0.01), ground/wall, the dash state and the jumps/dashes left. Input and
+        // buffer fields (the stick, press buffers, coyote counters) stay out: a ghost compare's divergence tick is
+        // where the bodies part, not where two input streams first differ (`jumpBuffer` ticks before anything moves).
+        static readonly FieldInfo[] PhysicalFields = new[] { "Velocity", "momentum", "onGround", "OnWall", "dashActive",
+                "framesSinceLastDash", "airDashesLeft", "airJumpsLeft", "wallJumpsLeft" }
+            .Select(name => typeof(Movement).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            .Where(f => f != null).ToArray();
+
+        static int PhysicalFingerprint(Simulation sim)
+        {
+            var h = new HashCode();
+            Vector3 p = sim.PlayerWorld;
+            h.Add(Mathf.RoundToInt(p.x * 10f));
+            h.Add(Mathf.RoundToInt(p.y * 10f));
+            foreach (FieldInfo f in PhysicalFields)
+            {
+                object value = f.GetValue(sim.Player);
+                if (value is Vector2 v) { h.Add(Mathf.RoundToInt(v.x * 100f)); h.Add(Mathf.RoundToInt(v.y * 100f)); }
+                else if (value is float x) h.Add(Mathf.RoundToInt(x * 100f));
+                else if (value is bool b) h.Add(b ? 1 : 0);
+                else if (value is int i) h.Add(i);
+                else if (value is Enum e) h.Add(Convert.ToInt32(e));
+                else h.Add(value == null ? 0 : value.GetHashCode());
+            }
+            var body = sim.Physics.PlayerBody();
+            h.Add(Mathf.RoundToInt(body.vx * 100f));
+            h.Add(Mathf.RoundToInt(body.vy * 100f));
+            return h.ToHashCode();
+        }
+
+        // A best's human version (humanize): `<best>-human.json` beside it, or in `offline-best\` when the judged best
+        // has since moved to `offline-best\judged\`.
+        static string HumanFile(string dir, string best)
+        {
+            string name = System.IO.Path.GetFileNameWithoutExtension(best) + "-human.json";
+            string root = System.IO.Path.Combine(dir, "offline-best");
+            return new[] { System.IO.Path.Combine(root, "judged"), root }.Where(Directory.Exists)
+                .Select(d => System.IO.Path.Combine(d, name)).FirstOrDefault(File.Exists);
+        }
 
         static string FastestOfflineBest(string dir, string label)
         {

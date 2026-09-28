@@ -22,13 +22,15 @@ namespace IGTAP.EngineSim.Cli
             public List<InputTick> Inputs;
             public int Progress;
             public long[] GoalInput, GoalPhysics;
+            /// <summary>How its replay from the start ended (Evaluate's), for the log.</summary>
+            public string EndReason;
             public long Last { get { return Progress == 0 ? long.MaxValue : GoalPhysics[Progress - 1]; } }
         }
 
         readonly string _trace;
-        readonly int _threads, _window, _onlyGoal;
+        readonly int _threads, _window, _onlyGoal, _onlySegment;
         readonly double _minutes, _windowMinutes, _stallMinutes, _pieceMinutes;
-        readonly bool _submit, _fresh, _unsolved;
+        readonly bool _submit, _fresh, _unsolved, _resets;
         string _name, _caps, _runFile, _closestFile, _outDir;
         string[] _labels;
         int _goals;
@@ -49,6 +51,7 @@ namespace IGTAP.EngineSim.Cli
         Dictionary<long, float> _visits;
         string _visitsFile;
         string _archiveDir;
+        FullTasStates _states;
 
         sealed class Seed
         {
@@ -88,6 +91,8 @@ namespace IGTAP.EngineSim.Cli
             _fresh = args.Contains("--fresh");
             _unsolved = args.Contains("--unsolved");
             _onlyGoal = Solve.Option(args, "--goal", 0);
+            _onlySegment = Solve.Option(args, "--segment", 0);
+            _resets = args.Contains("--resets") || _onlySegment > 0;
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
         }
 
@@ -98,7 +103,7 @@ namespace IGTAP.EngineSim.Cli
             string from = Open();
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
             Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
-                from, best = RouteJson(_best) });
+                from, best = RouteJson(_best), resets = _resets, segment = _onlySegment });
             foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
             if (_seeds.Count > 0)
                 Console.WriteLine($"Seeds: {_seeds.Count} saved routes for " + string.Join(", ", _seeds.SelectMany(s => s.Goals).Distinct()
@@ -145,6 +150,15 @@ namespace IGTAP.EngineSim.Cli
                     continue;
                 }
                 Phase("polish");
+                // --resets: the route cut at its quick restarts, each piece polished on its own (FullTasSegments.cs).
+                if (_resets)
+                {
+                    (string level, string text) end = PolishSegments();
+                    if (end.text == null) continue;
+                    Log("stopped: " + end.text);
+                    Emit(new { type = "note", level = end.level, text = "Solve by resets stopped: " + end.text + "." });
+                    break;
+                }
                 // --goal N: only the window of --window goals ending at goal N (from goal N - window on), over and over.
                 int lastGoal = _onlyGoal > 0 ? Math.Min(_onlyGoal, _best.Progress) : 0;
                 int firstWindow = _onlyGoal > 0 ? Math.Max(0, lastGoal - _window) : 0;
@@ -208,6 +222,8 @@ namespace IGTAP.EngineSim.Cli
             File.WriteAllText(StartFile(dir, _name), startKey);
             _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
             LoadPieces(dir);
+            _states = new FullTasStates(_archiveDir, _fresh);
+            if (_states.Index.Count > 0) Log($"goal states: {_states.Index.Count} in {Path.Combine("archive", "fulltas-" + _name, "states")}");
 
             _best = Padded(Evaluate(Solve.ReadInputs(header)));
             string from = Path.GetFileName(_trace);
@@ -316,7 +332,7 @@ namespace IGTAP.EngineSim.Cli
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = limit < 0 ? _goals : limit;
             RunResult r = _eval.Run(inputs, null, null, 1000000);
-            return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
+            return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, EndReason = r.EndReason };
         }
 
         internal static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
@@ -335,7 +351,8 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> prefix = route.Inputs.GetRange(0, prefixLength);
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = _goals;
-            SimSnapshot at = _eval.Advance(prefix);
+            // The replay to the window's start also keeps every goal state along the way on disk (docs/fulltas.md).
+            SimSnapshot at = _states.ReplayAndRecord(_eval, route.Inputs, prefixLength, new SnapshotStore(_eval));
             if (at == null)
             {
                 Log(kind + ": the route ends before its first " + prefixLength + " inputs do; skipped");
@@ -388,14 +405,23 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// A fresh simulation that has replayed prefix, and the state after it. A worker's replay has now and then ended early
         /// where the evaluator's didn't (seen once at the end of a 30,000-input Full-TAS prefix); a fresh simulation replays it
-        /// again before the worker gives up, so one bad replay doesn't take the whole solve down.
+        /// again before the worker gives up, so one bad replay doesn't take the whole solve down. The run's stored goal state
+        /// at the prefix's end starts the simulation without a replay at all; a miss keeps it there for the next one.
         /// </summary>
         (Simulation sim, SimSnapshot state) Prefixed(List<InputTick> prefix, string title)
         {
             for (int attempt = 1; ; attempt++)
             {
                 Simulation sim = _create();
-                SimSnapshot state = sim.Advance(prefix);
+                SnapshotStore store = new SnapshotStore(sim);
+                ulong hash = SnapshotIndex.Hash(prefix, prefix.Count);
+                // The window's own inputs sit this far into the run: a resume from a stored goal state counts from here.
+                _states.Index.Base = prefix.Count;
+                _states.Index.BaseHash = hash;
+                SimSnapshot state = _states.Load(store, hash, 0);
+                if (state != null) return (sim, state);
+                try { state = _states.ReplayAndRecord(sim, prefix, prefix.Count, store); }
+                catch (NotSupportedException) { state = sim.Advance(prefix); }   // this state can't be stored; replay stays the way there
                 if (state != null) return (sim, state);
                 Log($"{title}: a worker's replay of the {prefix.Count}-input prefix ended early ({sim.Engine.Status}), try {attempt} of {PrefixTries}");
                 if (attempt == PrefixTries) throw new InvalidOperationException(title + ": the prefix replayed differently on a worker");
@@ -419,18 +445,21 @@ namespace IGTAP.EngineSim.Cli
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
             var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell);
+            solver.Resume = _states.Index;
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
             long windowBest = long.MaxValue;
             solver.Improved += (time, runTicks, inputs, how) =>
             {
+                // A Full-TAS sim is strict: its run ends StrictFinishTicks after its last goal, and the baseline is that goal's tick.
+                long atGoal = runTicks - Simulation.StrictFinishTicks;
                 last = _clock.Elapsed;
                 finished = true;
-                windowBest = Math.Min(windowBest, runTicks);
-                if (runTicks < baseline)
+                windowBest = Math.Min(windowBest, atGoal);
+                if (atGoal < baseline)
                 {
                     found.Add(inputs);
-                    if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(runTicks) });
+                    if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(atGoal) });
                 }
             };
             object Progress()

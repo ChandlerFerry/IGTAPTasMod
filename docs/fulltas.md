@@ -130,9 +130,9 @@ jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn'
 next goal, and until the window reaches its last goal, cells that have reached more of the run's goals are picked more
 (`OfflineSolver` `Weight`; run time doesn't count there: a run that wanders longer isn't closer to the next goal).
 While the next goal is an `at:` rect, cells nearer it are picked more among those with the same goals reached: a
-cell's nearness is (nearest + 48) / (its distance + 48), the distance from the player to the rect and the nearest any
-of the worker's cells came (`GoalReach`), so avoid boxes cut the corridor's dead ends and the rect pulls the search
-along it.
+cell's nearness is (nearest + 48) / (its distance + 48), the guide's walkable distance from the player to the rect (a
+straight line with `--no-guide`, `enginesim/README.md`'s guide) and the nearest any of the worker's cells came
+(`GoalReach`), so avoid boxes cut the corridor's dead ends and the rect pulls the search along it.
 
 ## Savestate starts
 
@@ -300,6 +300,12 @@ inputs past the last unchanged goal the same way.
   solve searches the goals in its trace's header. **Only goal** N (`goal: N`, the solver's `--goal N`) makes **Solve** polish just the
   **Window** goals ending at goal N (window 2: from goal N−2 through N−1 to N), window after window, keeping the rest
   of the route as it is and scoring the time at goal N. `threads` 0 or missing (the site sends none) is cores − 2.
+- **Solve by resets** (`resets: true`, the solver's `--resets`) polishes the best one reset segment at a time (see
+  [Reset segments](#reset-segments)); **Only segment** N (`segment: N`, `--segment N`) searches just that one, over and
+  over (**Solve segment N**). The **Reset segments** list under the buttons numbers the best's segments with their goals
+  and inputs (`/api/state` `fullTas.runs[].offline.segments`: `[goals before, goals by its restart, inputs]` each); a
+  row click picks it. Once a solve has sent them (`fullTas.solve.segments`, the solver's `segments` event) it also shows
+  what each closing restart leaves on after its tick.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.
@@ -317,7 +323,7 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --resets, --segment N
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
@@ -336,7 +342,9 @@ inputs past the last unchanged goal the same way.
   the best reaches, skipping windows made only of loop goals: each worker replays the best up to goal i-1
   (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal i+W-1. The first
   goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap that ends slower
-  but sets up the next one wins. `--goal N` polishes its window only, loop goals or not.
+  but sets up the next one wins. `--goal N` polishes its window only, loop goals or not. A window scores its way at its
+  last goal's tick: a strict run ends 12 ticks after that goal (`Simulation.StrictFinishTicks`), and windows used to
+  compare that end with the goal's tick, so a way had to be 13 ticks faster before it counted.
 - A window's best is spliced into the run with the old tail after it; when the old tail no longer reaches the rest (the
   state differs), the following windows are searched again from the new state (`repair`), seeded with the old tail,
   and the run is kept only if it ends sooner.
@@ -344,6 +352,12 @@ inputs past the last unchanged goal the same way.
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
   resumes it; `--fresh` ignores it.
+- The run's goal-boundary states are kept in `archive\fulltas-<run>\states\`: when the run first reaches goal k, or a
+  better arrival does, its state is written there, keyed by the hash of the run's inputs up to it (a route edit hashes
+  differently; the start.key drops them with the archive). A window starts from the stored state at its prefix's end
+  instead of replaying the run up to there, and an archive cell replays its prefix from the later of its worker's own
+  ancestor and a stored goal state on the same inputs. A state is a byte-for-byte snapshot walk (`enginesim/README.md`
+  "Memory"); one whose world this can't write is simply not kept, and the run replays to it as before.
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
 - Reach windows also write `<traces>\fulltas\<run>.closest.json`: this session's attempt furthest toward the goals (most
   goals reached, then nearest the next `at:` rect, then fewest inputs; `OfflineSolver.Closest`), from the run's start,
@@ -351,9 +365,63 @@ inputs past the last unchanged goal the same way.
   `fullTas.runs[].closest` has `reached`, `next`, `distance` and `ticks`. A playback of a partial route (this, or
   **Play** of an incomplete offline best) ends with its inputs; only a complete route waits for its last goal.
 - Besides its log lines the solver prints one `@fulltas {json}` line per event (`FullTas.Emit`): `session`, `phase`
-  (`reach`/`build`/`polish`), `window` (`kind`: `reach`, `polish`, `repair` or `piece`, goals `first`..`limit`, `target`,
-  `budget`; a piece window's `piece` says what it heads for), `status` (each second), `found`,
-  `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`. Times are seconds from the run's start.
+  (`reach`/`build`/`polish`), `window` (`kind`: `reach`, `polish`, `repair`, `piece` or `segment`, goals `first`..`limit`, `target`,
+  `budget`; a piece window's `piece` says what it heads for, a segment's extra lap too), `status` (each second), `found`,
+  `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`; with `--resets` also `segments` (every
+  segment: `n`, goals `first`..`last`, `start` and `reset` inputs, `from`/`to` times, `carries`) and `segment` (the one
+  searched next). Times are seconds from the run's start.
+
+### Reset segments
+
+`--resets` (`enginesim\Cli\FullTasSegments.cs`) cuts the best at its quick restarts: segment k runs from the input after
+restart k−1 (or the run's start) to restart k, the last one to the route's end. Polishing a goal window splices the old
+tail in at a goal, where the new state differs, so the tail breaks and `repair` re-finds it. A segment is spliced at a
+restart instead:
+
+- Its goals are searched (a `segment` window) from the state after the restart that opens it, for its last goal, faster
+  than the best reaches it there.
+- Each way found (the last five, fastest first) is cut at that goal and closed with the old restart's own input tick,
+  after the old segment's inputs between the goal and the restart, or after 0 to (old gap + 24) idle ticks, shortest
+  first. The old route after the restart follows unchanged.
+- The first close that leaves the player as the old restart did is replayed as a whole run. "As the old restart did"
+  means after the restart tick, every `Movement` field (`respawn` zeroes `Velocity`, `momentum` and
+  `movingPlatformVelocity` and keeps the rest: the wall jump's lock, the zip mover's history, the ground bounce's window,
+  coyote, the buffers, the dash, `respawnPoint`/`courseResetPoint`), the world position and origin, the body's position
+  and velocity, the interpolation's two ends, scale, rotation, colliders, the animator's `Animation`, and the invokes
+  and coroutines on the player (`cancelDashBuffer`) are equal, exactly. There are three exceptions, timers the game only
+  compares with thresholds (from every read in `Movement`): `dashCooldown` and `wallCoyoteFrames` once both are below 0, and
+  `framesSinceLastDash` once both are at least 4 and `dashBoostMax` × 1.4. A close that differs only off the player's
+  motion (position, origin, body, interpolation, `Velocity`, `momentum`, `movingPlatformVelocity`) is followed under the
+  old route's inputs after the restart, up to its next restart and at most 60 ticks: it counts when it moves exactly as
+  the old one every tick and has become equal in every field. `FalseEnding-Any%`'s first Course 1 lap found 0.12 s whose
+  restart differed only in `cancelJumpCutBuffer` pending 13 ticks instead of 11 (the jump release came 2 ticks later);
+  a press or release cancels that invoke, so the old route's next input decides whether it ever matters. Any other
+  close whose state differs isn't used, and a way with no close that matches is dropped with the fields that differed
+  (`Segment N is faster, but no restart after it leaves the player as the old one did (...)`). Nothing is re-solved.
+- The whole run still has to end sooner. The player is the same after the restart but the world may not be: Cash and
+  clone payouts come at other ticks, the RNG has drawn differently, the game's objects are elsewhere in their cycles. A
+  way whose run then misses a later goal is dropped as well (`the player is the same, the world isn't`), with one
+  fallback: when the old route after the restart stops on a purchase that isn't its next goal (it walks through a box it
+  can pay for now), that buy goal alone is rebuilt from loop pieces (the builder's, a piece search when none fits) and the
+  old route after it follows, up to 3 such buys. The run is kept only if it then reaches every goal it did and ends
+  sooner. `FalseEnding-Any%`'s 0.12 s faster first Course 1 lap is the case: with it, the old walk to goal 282
+  (`buy:buyclone3`) buys Course 3's `CashPerLoop` box on the way (`Bought Courses/course 3/localUpgrades/CashPerLoop, which isn't the next goal's box`).
+- A segment with no goal is first tried without: one restart where the two were (the opening one as it is, or the
+  closing one's input in its place), kept when that restart leaves the player as the closing one did and the run ends
+  sooner. An extra lap (the builder's, for Cash) is then searched as its course's gate and finish (`start:N + finish:N`,
+  `FullTasTracker.For`) and closed the same way. Anything else without a goal is kept as it is.
+- The last segment ends with the route, so its way is spliced in as a polish window's.
+
+`FalseEnding-Any%`'s 511.22 s best has 252 segments, 47 without a goal (the new game's first two restarts, the builder's
+extra Course 3 laps before `buy:buydj`, and a few idle-tick restarts in Course 3's buys). After 231 of its 251 restart
+ticks the player carries nothing of the tech's list; 19 leave a dash running or buffered, or a jump buffered, from the
+restart tick's own input; and the restart at input 12606, right after a wall jump, keeps the wall jump's lock: the
+restart tick runs at the locked 460 right and the next one does too (`wallJumpMovementLockRemaining` 0,
+`wallJumpDirection` 1). That is the tech's first carry-over, and it isn't a problem: a new way for the segment before
+counts only if its restart keeps the same lock (3 or more idle ticks before the restart leave `Velocity` x 0 and the
+lock −1). Its segment 2 (the new game's second restart) can't be dropped: the one restart left leaves
+`heightOfLastJumpStart` and `lastHyperY` 1.9 lower and `Velocity` y −27 instead of −37.8. Delaying most restarts by
+1–8 idle ticks changes only the three timers above.
 
 ### Loop builder
 

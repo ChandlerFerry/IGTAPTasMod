@@ -60,3 +60,10 @@
 .mapRoutes { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 12px 0 0; padding: 0; list-style: none; }
 .mapRoutes small { margin-left: 8px; color: var(--muted); }
 .mapSwatch { display: inline-block; width: 14px; height: 4px; border-radius: 2px; }
+
+.ghostBar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 2px 0 10px; font-size: 12px; }
+.ghostBar strong { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+.ghostPick { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.ghostPick select { max-width: 260px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #0d1c31; color: var(--text); font-size: 12px; }
+.ghostBar .mapSwatch { margin: 0 3px 0 8px; }
+.ghostBar .mapSwatch:first-of-type { margin-left: 0; }

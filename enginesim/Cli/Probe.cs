@@ -29,7 +29,7 @@ namespace IGTAP.EngineSim.Cli
             var (sim, _, _) = Program.Open(args[0]);
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(args[1]));
             JsonElement probe = doc.RootElement;
-            if (probe.TryGetProperty("start", out JsonElement start)) ApplyStart(sim, start, Path.GetDirectoryName(Path.GetFullPath(args[1])));
+            if (probe.TryGetProperty("start", out JsonElement start)) DemoStart.ApplyStart(sim, start, Path.GetDirectoryName(Path.GetFullPath(args[1])));
 
             List<InputTick> prefix = Ticks(probe, "prefix");
             int extraTicks = probe.TryGetProperty("extraTicks", out JsonElement e) ? e.GetInt32() : 30;
@@ -99,67 +99,8 @@ namespace IGTAP.EngineSim.Cli
             return parent.TryGetProperty(name, out JsonElement list) ? list.EnumerateArray().Select(InputTick.FromJson).ToList() : new List<InputTick>();
         }
 
-        /// <summary>
-        /// The probe's start: a studio savestate (its world position is its scene position minus the FloatingOrigin it recorded),
-        /// then any of position [x, y] and velocity [vx, vy] in the world frame, scaleX, and Movement fields by name.
-        /// </summary>
-        internal static void ApplyStart(Simulation sim, JsonElement start, string baseDir)
-        {
-            Vector2 position = sim.PlayerWorld, velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
-            float? scaleX = null;
-            if (start.TryGetProperty("savestate", out JsonElement ss))
-            {
-                string path = Path.IsPathRooted(ss.GetString()) ? ss.GetString() : Path.Combine(baseDir, ss.GetString());
-                using JsonDocument save = JsonDocument.Parse(File.ReadAllText(path));
-                JsonElement s = save.RootElement;
-                if (!s.TryGetProperty("hasOrigin", out JsonElement has) || !has.GetBoolean())
-                    throw new InvalidOperationException("The savestate has no FloatingOrigin (captured by an older plugin); capture it again.");
-                JsonElement ox = s.GetProperty("originX"), oy = s.GetProperty("originY");
-                position = new Vector2(s.GetProperty("positionX").GetSingle() - ox.GetSingle(), s.GetProperty("positionY").GetSingle() - oy.GetSingle());
-                scaleX = s.GetProperty("scaleX").GetSingle();
-                foreach (JsonProperty field in s.GetProperty("movementFields").EnumerateObject())
-                    SetField(sim.Player, field.Name, field.Value.GetProperty("value").GetString());
-                if (s.GetProperty("bodyFields").TryGetProperty("linearVelocity", out JsonElement lv))
-                    velocity = ParseVector(lv.GetProperty("value").GetString());
-            }
-            if (start.TryGetProperty("position", out JsonElement pos)) position = new Vector2(pos[0].GetSingle(), pos[1].GetSingle());
-            if (start.TryGetProperty("velocity", out JsonElement vel)) velocity = new Vector2(vel[0].GetSingle(), vel[1].GetSingle());
-            if (start.TryGetProperty("scaleX", out JsonElement sx)) scaleX = sx.GetSingle();
-            if (start.TryGetProperty("fields", out JsonElement fields))
-                foreach (JsonProperty field in fields.EnumerateObject())
-                    SetField(sim.Player, field.Name, field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : field.Value.GetRawText());
-            Transform t = sim.Player.transform;
-            Vector3 scene = new Vector3(position.x + sim.CurrentOrigin.x, position.y + sim.CurrentOrigin.y, t.position.z);
-            if (scaleX.HasValue) t.localScale = new Vector3(scaleX.Value, t.localScale.y, t.localScale.z);
-            sim.Physics.ResetPlayer(new Vector2(scene.x, scene.y), velocity, 0f, 0f);
-            t.position = scene;
-            if (Math.Abs(sim.PlayerWorld.x - position.x) > 0.01f || Math.Abs(sim.PlayerWorld.y - position.y) > 0.01f)
-                throw new InvalidOperationException("The start position did not stick: " + sim.PlayerWorld + " for " + position + ".");
-            // The trace's engine state still pins the player to the route start while it waits for stable ticks.
-            sim.Engine.GetType().GetField("_hasSynchronizationPosition", Fields).SetValue(sim.Engine, false);
-            sim.SetStart(sim.Capture(0), 0);
-        }
 
-        static void SetField(Movement player, string name, string text)
-        {
-            FieldInfo f = typeof(Movement).GetField(name, Fields);
-            if (f == null) return;
-            Type type = f.FieldType;
-            text = text.Trim('"', '[', ']');
-            object value;
-            if (type == typeof(Vector2)) value = ParseVector(text);
-            else if (type == typeof(Vector3)) { float[] p = Floats(text); value = new Vector3(p[0], p[1], p.Length > 2 ? p[2] : 0f); }
-            else if (type.IsEnum) value = Enum.Parse(type, text, true);
-            else if (type == typeof(bool)) value = bool.Parse(text);
-            else value = Convert.ChangeType(text, type, CultureInfo.InvariantCulture);
-            f.SetValue(player, value);
-        }
 
-        static Vector2 ParseVector(string text) { float[] p = Floats(text); return new Vector2(p[0], p[1]); }
 
-        static float[] Floats(string text)
-        {
-            return text.Trim('[', ']').Split(',').Select(x => float.Parse(x.Trim(), CultureInfo.InvariantCulture)).ToArray();
-        }
     }
 }

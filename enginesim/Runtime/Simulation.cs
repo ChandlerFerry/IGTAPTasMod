@@ -239,7 +239,7 @@ namespace IGTAP.EngineSim
         /// trigger after the goal's, the frame's end, or a box the player still stands in once its 0.2 s cooldown is over) still
         /// ends it. Stopping at the goal would hide that purchase from the search, and the next piece would make it.
         /// </summary>
-        const int StrictFinishTicks = 12;
+        internal const int StrictFinishTicks = 12;
         int _finishIn = -1;
         float _finishTimeAtGoal;
 
@@ -485,6 +485,13 @@ namespace IGTAP.EngineSim
             _rebases = rebases;
             Physics.WorldMoved();
         }
+
+        /// <summary>A persisted snapshot's restore (SnapshotStore) re-materializes its rebases before its physics rebuilds.</summary>
+        internal void PutRebases(Vector3[] rebases) { MaterializeRebases(rebases); }
+
+        internal IReadOnlyDictionary<GameObject, bool> ActiveAsLoaded { get { return _activeAsLoaded; } }
+        internal IReadOnlyDictionary<Behaviour, bool> EnabledAsLoaded { get { return _enabledAsLoaded; } }
+        internal IReadOnlyDictionary<GameObject, int> LayerAsLoaded { get { return _layerAsLoaded; } }
 
         public float Elapsed(courseScript active)
         {

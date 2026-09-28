@@ -69,9 +69,14 @@
   `rebaseAt` it also rebases the world around that point once the restored player rests, as FloatingOrigin would have
   with the player there, so the run's next rebase happens where the test needs it. It tests a stretch; it is not a
   whole-game route.
+- The one exception to "no teleports" for a lab: a lab map (`labmaps/<id>.json`, [`enginesim/README.md`](enginesim/README.md#lab-maps))
+  is a custom level piece injected additively into empty map space (a `lab space` region, far from routes) to demonstrate
+  one tech exactly, with its own start and finish box. It is lab-only: never a route, never on a route's path, and never
+  saved — `SaveSolverRoute` refuses while one is injected. It is always restored afterwards (the injected objects
+  destroyed, anything the session touched put back): at the demo's end, on a scene change, or by `POST /api/labmap/restore`.
 - Never change Unity's clock or fixed timestep.
 - Never edit the game's save files.
-- Never autosave while category unlocks or turbo are applied.
+- Never autosave while category unlocks, turbo or an injected lab map are applied.
 - Save category routes only through `SaveSolverRoute`.
 - Never loosen the gate or add another save path.
 - Search offline in `enginesim`, never in the game.
@@ -97,7 +102,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Shared with `enginesim`. |
 | `TurboRunner.cs` | Deterministic faster-than-real-time replay inside the game. |
 | `Solver.cs` | Optimize tab and `SaveSolverRoute`, the only way a category route gets saved. |
-| `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine. |
+| `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. |
 | `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and a demo route that performs it. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |

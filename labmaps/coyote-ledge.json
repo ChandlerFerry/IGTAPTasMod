@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "coyote-ledge",
+  "name": "Coyote jump off a plain ledge",
+  "tech": "coyote-jump",
+  "techNote": "A ground jump after the ground rays stopped hitting (coyoteFrames counting down from maxCoyoteFrames 6): the dot runs off a plain ledge and jumps up to 6 ticks later, off the edge it already left. The finish box is up and past the gap: only the coyote jump\u0027s 805 up reaches it, a fall passes under it.",
+  "category": "NONE",
+  "anchor": [
+    1664,
+    14912
+  ],
+  "region": [
+    1664,
+    14912,
+    11216,
+    12592
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        150,
+        20
+      ],
+      "size": [
+        300,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 330,
+    "y": 74,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "coyoteFrames": 6
+    }
+  },
+  "finish": [
+    600,
+    220,
+    240,
+    240
+  ],
+  "maxTicks": 60
+}

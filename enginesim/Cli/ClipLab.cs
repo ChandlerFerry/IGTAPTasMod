@@ -223,7 +223,7 @@ namespace IGTAP.EngineSim.Cli
             // rebaseAt [x, y]: the world rebased around that world point first, as if the player had rebased there.
             if (start.TryGetValue("rebaseAt", out JsonElement at)) sim.LabRebase(new Vector3(at[0].GetSingle(), at[1].GetSingle(), 0f));
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(probeStart));
-            Probe.ApplyStart(sim, doc.RootElement, baseDir);
+            DemoStart.ApplyStart(sim, doc.RootElement, baseDir);
             // A lab start is mid-air as often as not: the inputs start on the first tick, without the macro's wait for three
             // grounded ticks (which also normalizes the quick-restart state) or its start alignment.
             sim.Engine.GetType().GetField("_waitingForStable", Fields).SetValue(sim.Engine, false);

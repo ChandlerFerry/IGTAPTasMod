@@ -8,7 +8,9 @@ export type FullTasEvent = { type: string; at: number } & Record<string, unknown
 export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; error?: boolean; run?: string; finished?: boolean; time?: number | null; saved?: boolean;
   reason?: string | null; reached?: number; of?: number; expected?: number; next?: string | null; droppedFrames?: number; splits?: FullTasSplit[] };
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
-  events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[] };
+  events?: FullTasEvent[]; progress?: FullTasEvent | null; segments?: FullTasEvent | null; log: string[] };
+/** A stretch of the route between two quick restarts (the solver's --resets); carries is only known once a solve has replayed it. */
+export type SegmentRow = { n: number; first: number; last: number; inputs: number; from?: number; to?: number; reset?: number; carries?: string[] | null };
 
 export const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
@@ -55,7 +57,7 @@ const str = (v: unknown) => typeof v === "string" ? v : "";
 
 type Tone = "best" | "progress" | "miss" | "info" | "warn" | "error";
 type Item = { key: string; at: number; tone: Tone; title: string; detail?: string; count?: number; fold?: "reach" | "polish" };
-type Window = { id: number; kind: string; first: number; limit: number; logged: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number };
+type Window = { id: number; kind: string; first: number; limit: number; logged: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number; segment?: number };
 
 function asWindow(e: FullTasEvent): Window {
   return { id: num(e.id) ?? 0, kind: str(e.kind), first: num(e.first) ?? 0, limit: num(e.limit) ?? 0, logged: num(e.logged) ?? num(e.first) ?? 0, attempt: num(e.attempt) ?? 0, budget: num(e.budget) ?? 60,
@@ -63,6 +65,38 @@ function asWindow(e: FullTasEvent): Window {
 }
 
 function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit}` : `goals ${w.first + 1}–${w.limit}`; }
+
+function segmentGoals(r: { first: number; last: number }, goals: string[]) {
+  if (r.last <= r.first) return "no goal (an extra lap or idle ticks)";
+  return r.last - r.first === 1 ? `goal ${r.last}: ${goalName(goals[r.last - 1])}` : `goals ${r.first + 1}–${r.last}: ${goalName(goals[r.first])} … ${goalName(goals[r.last - 1])}`;
+}
+
+/** The best's reset segments: the solve's own (with what each restart carries) when it has sent them, else the plugin's count from the saved best. */
+export function resetSegments(saved: number[][] | undefined, live: FullTasEvent | null | undefined): SegmentRow[] {
+  const rows = live?.segments as SegmentRow[] | undefined;
+  if (rows?.length) return rows;
+  return (saved ?? []).map(([first, last, inputs], i) => ({ n: i + 1, first, last, inputs }));
+}
+
+export function ResetSegments({ rows, goals, selected, onSelect, disabled, checked }: { rows: SegmentRow[]; goals: string[]; selected: number;
+  onSelect: (n: number) => void; disabled: boolean; checked: boolean }) {
+  if (rows.length <= 1) return <p className="hint">The best has no quick restart, so it is one segment: Solve by resets has nothing to split.</p>;
+  return <details className="ftSegments">
+    <summary>Reset segments: {rows.length} ({rows.filter(r => r.last <= r.first).length} without a goal){selected > 0 ? ` · only segment ${selected}` : ""}</summary>
+    <div className="resultTable">
+      <div className="tableHead"><span>#</span><span>Goals</span><span>Inputs</span><span title="The player after the restart tick that closes the segment (that tick's own stick, jump and dash included): the momentum, wall-jump lock, zip-mover and bounce carry-over and buffers the next segment starts with">After its restart tick</span></div>
+      {rows.map((r, i) => {
+        const end = i === rows.length - 1;
+        const carried = end ? "route end" : r.carries == null ? checked ? "—" : "solve to check" : r.carries.length ? r.carries.join(", ") : "nothing carried";
+        return <div key={r.n} className={`tableRow ${selected === r.n ? "selected" : ""} ${r.last <= r.first ? "pending" : ""}`}
+          title={`Segment ${r.n}: ${segmentGoals(r, goals)}${r.to != null && r.last > r.first ? ` (last goal at ${s2(r.to)})` : ""}. Click to solve only this segment.`}
+          onClick={() => { if (!disabled) onSelect(selected === r.n ? 0 : r.n); }}>
+          <span>{r.n}</span><span>{segmentGoals(r, goals)}</span><span>{r.inputs}</span><span>{carried}</span>
+        </div>;
+      })}
+    </div>
+  </details>;
+}
 
 function recordItem(e: FullTasEvent, goals: string[]): Item {
   const prev = e.previous as RouteJson, best = e.best as RouteJson, of = goals.length;
@@ -81,6 +115,8 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
 function feed(events: FullTasEvent[], goals: string[]): Item[] {
   const windows = new Map<number, Window>();
   const items: Item[] = [];
+  const resets = !!events.find(e => e.type === "session")?.resets;
+  let segment = 0;
   const push = (item: Item) => {
     const last = items[items.length - 1];
     if (item.fold && last?.fold === item.fold) {
@@ -97,24 +133,30 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
       case "session": {
         const best = e.best as RouteJson;
         push({ key: `s${e.at}`, at: e.at, tone: "info", title: `Solve started at ${best.progress === goals.length ? `record ${s2(best.time)}` : `${best.progress}/${goals.length} goals`}`,
-          detail: `${num(e.threads)} threads · ${num(e.minutes)} min · ${num(e.window)}-goal windows · ${str(e.from)}` });
+          detail: `${num(e.threads)} threads · ${num(e.minutes)} min · ${e.resets ? `by reset segments${num(e.segment) ? ` (only segment ${num(e.segment)})` : ""}` : `${num(e.window)}-goal windows`} · ${str(e.from)}` });
         break;
       }
+      case "segment": segment = num(e.n) ?? 0; break;
       case "phase":
         push(e.phase === "reach"
           ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Reach phase", detail: "Searching only the next unreached goal. Polishing starts once every goal is reached." }
           : e.phase === "build"
             ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Build phase", detail: "Putting the buys and laps together from loop pieces. Only a step no saved piece covers is searched, once; a buy the run can't pay for yet gets an extra lap first." }
-            : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: "Rebuilding the buys and laps from faster pieces, and searching the other goal windows for time saves. The route changes only when its last goal comes sooner." });
+            : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: resets
+              ? "Searching the route one reset segment at a time: each way found ends with the old quick restart, and counts only if the player leaves that restart exactly as the old route did, so the rest of the route stays as it is."
+              : "Rebuilding the buys and laps from faster pieces, and searching the other goal windows for time saves. The route changes only when its last goal comes sooner." });
         break;
-      case "window": windows.set(num(e.id) ?? 0, asWindow(e)); break;
+      case "window": windows.set(num(e.id) ?? 0, { ...asWindow(e), segment }); break;
       case "found": {
         const w = windows.get(num(e.id) ?? 0), t = num(e.time);
         if (!w) break;
-        push(w.kind === "piece"
+        push(w.kind === "segment" && w.piece
+          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Segment ${w.segment}: found an extra lap (${w.piece})`, detail: "Closing it with the old restart and checking the state after it." }
+          : w.kind === "piece"
           ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
-          : w.kind === "polish" && w.target != null
-            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
+          : (w.kind === "polish" || w.kind === "segment") && w.target != null
+            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `${w.kind === "segment" ? `Segment ${w.segment} faster` : "Faster"} through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`,
+              detail: w.kind === "segment" ? "Closing it with the old restart and checking the state after it, then the whole run." : "Verifying in the whole run." }
             : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }
@@ -126,7 +168,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
           ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit}: ${w.piece} (${secs}s)` }
           : w.kind === "reach"
             ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : w.logged === w.limit - 1 ? `from just before goal ${w.logged}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
-            : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
+            : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${w.kind === "segment" ? `segment ${w.segment}${w.piece ? ` (${w.piece})` : `, ${span(w)}`}` : span(w)} (${secs}s)` });
         break;
       }
       case "record": push(recordItem(e, goals)); break;
@@ -202,6 +244,7 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
   const now = Date.now();
   const lastWindowEvent = [...events].reverse().find(e => e.type === "window");
   const window_ = lastWindowEvent ? asWindow(lastWindowEvent) : null;
+  const segmentNow = lastWindowEvent ? [...events.slice(0, events.indexOf(lastWindowEvent))].reverse().find(e => e.type === "segment") : undefined;
   const windowOpen = solve.running && window_ != null && !events.some(e => e.type === "windowEnd" && e.id === window_.id);
   const progress = solve.progress && window_ && solve.progress.id === window_.id ? solve.progress : null;
   const phase = [...events].reverse().find(e => e.type === "phase")?.phase;
@@ -267,14 +310,18 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
 
     {windowOpen && window_ && <div className={`ftNow ${window_.kind}`}>
       <p className="eyebrow">CURRENT WINDOW</p>
-      {window_.kind === "piece"
+      {window_.kind === "segment"
+        ? <h3>Segment {num(segmentNow?.n)} of {num(segmentNow?.of)}: {window_.piece ? `an extra lap (${window_.piece})` : `time saves through ${span(window_)}`}</h3>
+        : window_.kind === "piece"
         ? <h3>Searching a loop piece for goal {window_.limit}: {window_.piece}</h3>
         : window_.kind === "reach"
           ? <h3>Searching for goal {window_.limit}: {goalName(labels[window_.limit - 1])}</h3>
           : window_.kind === "repair"
             ? <h3>Re-finding {span(window_)} after an earlier change</h3>
             : <h3>Searching for time saves through {span(window_)}</h3>}
-      <p className="ftNowDetail">{window_.kind === "piece"
+      <p className="ftNowDetail">{window_.kind === "segment"
+        ? `From the quick restart that opens it (${window_.first > 0 ? `after goal ${window_.first}, ${s2(window_.start)}` : "before goal 1"}). A faster way ends with the old restart and counts only when the player leaves it exactly as the old route did; the route after it is kept as it is.`
+        : window_.kind === "piece"
         ? `From goal ${window_.first} (${s2(window_.start)}). Found once, then reused wherever the player is in the same spot.`
         : window_.kind === "reach"
           ? window_.first === window_.limit - 1 ? `Starting from goal ${window_.first} (${s2(window_.start)}).`

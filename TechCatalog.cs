@@ -38,6 +38,11 @@ namespace IGTAPTasMod
             /// begins with the world as the run left it (a savestate holds only the player).
             /// </summary>
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public int fastForward;
+            /// <summary>
+            /// The demo plays on an injected lab map (labmaps/&lt;id&gt;.json): it injects the lab, starts at its lab start and
+            /// restores at the end. Lab-only: never a route, never on a route's path (root README "### Rules").
+            /// </summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labmap;
         }
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
@@ -87,6 +92,8 @@ namespace IGTAPTasMod
                 if (!TechRequires.Contains(t.requires)) throw new InvalidDataException("tech " + t.id + ": requires is one of " + string.Join(", ", TechRequires) + ".");
                 if (!TechOrigins.Contains(t.origin)) throw new InvalidDataException("tech " + t.id + ": origin is one of " + string.Join(", ", TechOrigins) + ".");
                 if (t.detector != null && !Enum.IsDefined(typeof(Tech), t.detector)) throw new InvalidDataException("tech " + t.id + ": no detector " + t.detector + ".");
+                if (t.labmap != null && (t.labmap.Length == 0 || t.labmap.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+                    throw new InvalidDataException("tech " + t.id + ": labmap is a lab map's id (labmaps/<id>.json).");
                 if (t.description == null) t.description = "";
                 if (t.related == null) t.related = new List<string>();
             }
@@ -299,6 +306,12 @@ namespace IGTAPTasMod
                     }
                     if (body["floatingOrigin"] != null) tech.floatingOrigin = (bool)body["floatingOrigin"];
                     if (body["fastForward"] != null) tech.fastForward = Math.Max(0, Number(body, "fastForward", 0));
+                    if (body["labmap"] != null)
+                    {
+                        string labmap = Text(body, "labmap").Trim();
+                        if (labmap.Length > 0) LoadLabMap(labmap);
+                        tech.labmap = labmap.Length == 0 ? null : labmap;
+                    }
                     if (body["start"] != null)
                     {
                         string start = Text(body, "start").Trim();
@@ -378,8 +391,13 @@ namespace IGTAPTasMod
                 {
                     TechDef tech = FindTech(Text(body, "id"));
                     if (PlaybackActive) throw new InvalidOperationException("Stop playback first.");
-                    string from = OneOf(body, "from", new[] { "playback", "selected", "ticks", "none" });
-                    if (from == "playback")
+                    string from = OneOf(body, "from", new[] { "playback", "selected", "ticks", "lab", "none" });
+                    if (from == "lab")
+                    {
+                        // A lab map's solved demo (labmaps/<id>.demo.json): the tech's demo plays on the injected lab map.
+                        InstallLabDemo(tech, body);
+                    }
+                    else if (from == "playback")
                     {
                         int seen = Number(body, "seen", -1);
                         if (_techSeenRoute == null || seen < 0 || seen >= _techSeen.Count) throw new InvalidOperationException("That playback tech is gone.");
@@ -417,6 +435,7 @@ namespace IGTAPTasMod
                         MacroDefinition route = TechRoute(tech);
                         if (route != null) RemoveTechRoute(route);
                         tech.routeId = tech.start = null;
+                        tech.labmap = null;
                         tech.fastForward = 0;
                         SaveTechs();
                     }
@@ -438,11 +457,28 @@ namespace IGTAPTasMod
                 list = _techs.Select(t =>
                 {
                     MacroDefinition route = TechRoute(t);
-                    return new { t.id, t.name, t.category, t.requires, t.origin, confirmed = route != null, t.omniDash, t.floatingOrigin, t.fastForward, t.description, t.note, t.detector, t.related, t.start,
+                    return new { t.id, t.name, t.category, t.requires, t.origin, confirmed = route != null, t.omniDash, t.floatingOrigin, t.fastForward, t.description, t.note, t.detector, t.related, t.start, t.labmap,
                         routeId = route == null ? null : route.id,
                         savestate = route != null && _savestates.Any(c => c.id == route.savestateId),
                         ticks = route == null ? 0 : route.steps.Where(s => s.enabled).Sum(s => Math.Max(1, s.durationTicks)) };
                 }),
+                labs = _techs.Where(t => !string.IsNullOrEmpty(t.labmap)).Select(t =>
+                {
+                    try
+                    {
+                        LabMapDef lab = LoadLabMap(t.labmap);
+                        string demoFile = LabMapFile(lab.id + ".demo.json");
+                        JObject demo = demoFile == null ? null : JsonConvert.DeserializeObject<JObject>(File.ReadAllText(demoFile));
+                        return (object)new
+                        {
+                            lab.id, tech = t.id, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
+                            start = new { lab.start.x, lab.start.y, lab.start.vx, lab.start.vy, lab.start.facing, fields = lab.start.fields },
+                            shapes = lab.shapes.Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
+                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"],
+                        };
+                    }
+                    catch (Exception ex) { return new { id = t.labmap, tech = t.id, error = ex.Message } as object; }
+                }).ToList(),
                 detectors = Enumerable.Range(0, TechNames.Length).Select(i => new { id = ((Tech)i).ToString(), label = TechNames[i] }),
                 seen = _techSeenRoute == null ? null : new
                 {

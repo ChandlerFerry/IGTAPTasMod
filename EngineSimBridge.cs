@@ -30,6 +30,10 @@ namespace IGTAPTasMod
                 return EngineSimSubmit(request, body);
             if (request.Path == "/api/enginesim/map")
                 return EngineSimMap(request, body);
+            if (request.Path == "/api/enginesim/ghost")
+                return EngineSimGhost(request, body);
+            if (request.Path == "/api/enginesim/slack")
+                return EngineSimSlack(request, body);
             if (request.Path == "/api/enginesim/ultras")
                 return EngineSimUltras(request, body);
             if (request.Path == "/api/enginesim/play")
@@ -121,6 +125,119 @@ namespace IGTAPTasMod
             return new { ok = true, name = route.name, file = Path.GetFileName(newest.path) };
         }
 
+        // The studio's ghost compare: two routes' per-tick positions, per-cell first arrivals and physical state
+        // fingerprints (position, Velocity, momentum, body velocity, ground/wall, dash state, jumps/dashes left; no
+        // input or buffer fields), from the map JSON the engine's `map` wrote for this course and category (or a
+        // Full-TAS run), plus the first tick their bodies part (the first differing per-tick fingerprint). Read-only:
+        // the file on disk.
+        object EngineSimGhost(WebStudioRequest request, JObject body)
+        {
+            string mapPath;
+            string fullTas = Text(body, "fulltas");
+            if (fullTas != null)
+            {
+                if (!Regex.IsMatch(fullTas, "^[A-Za-z0-9%-]+$"))
+                {
+                    request.StatusCode = 400;
+                    return new { ok = false, error = "Unknown Full-TAS run '" + fullTas + "'." };
+                }
+                mapPath = Path.Combine(EngineSimDir, "map-fulltas-" + fullTas + ".json");
+            }
+            else
+            {
+                int id = Number(body, "course", 0);
+                string caps = Text(body, "capabilities");
+                CourseDef course = _courses.FirstOrDefault(c => c.id == id);
+                if (course == null || (caps != "none" && CapsLevel(caps) == 0) || !course.HasCategory(caps))
+                {
+                    request.StatusCode = 400;
+                    return new { ok = false, error = "Unknown course " + id + " or capabilities '" + caps + "'." };
+                }
+                mapPath = Path.Combine(EngineSimDir, "map-c" + course.Token + "-" + caps + ".json");
+            }
+            if (!File.Exists(mapPath))
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No map for this route yet: draw it with Show map first." };
+            }
+            JObject map;
+            try { map = JObject.Parse(File.ReadAllText(mapPath)); }
+            catch (Exception ex)
+            {
+                request.StatusCode = 500;
+                return new { ok = false, error = Path.GetFileName(mapPath) + ": " + ex.Message };
+            }
+            JToken routes = map["routes"];
+            JToken a = routes == null ? null : routes.FirstOrDefault(r => (string)r["name"] == Text(body, "a"));
+            JToken b = routes == null ? null : routes.FirstOrDefault(r => (string)r["name"] == Text(body, "b"));
+            if (a == null || b == null)
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "Route " + (a == null ? Text(body, "a") : Text(body, "b")) + " is not on this map: redraw it." };
+            }
+            if (a["state"] == null || b["state"] == null || a["cells"] == null || b["cells"] == null)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "This map predates the ghost compare: press Redraw." };
+            }
+            JArray sa = (JArray)a["state"], sb = (JArray)b["state"];
+            int common = Math.Min(sa.Count, sb.Count), diverge = -1;
+            for (int i = 0; i < common; i++)
+                if ((int)sa[i] != (int)sb[i]) { diverge = i; break; }
+            object mark = null;
+            if (diverge >= 0)
+            {
+                // The first tick the states differ; where one run simply ended first, its last tick's position.
+                JArray points = (JArray)(diverge < common ? a["points"] : (sa.Count > sb.Count ? a["points"] : b["points"]));
+                int at = diverge * 2;
+                mark = new
+                {
+                    tick = diverge,
+                    x = at + 1 < points.Count ? (float)points[at] : (float)points[points.Count - 2],
+                    y = at + 1 < points.Count ? (float)points[at + 1] : (float)points[points.Count - 1],
+                };
+            }
+            return new { ok = true, cell = (float?)map["explored"]?["cell"] ?? 16f, a, b, diverge = mark };
+        }
+
+        // The humanize slack report of a route's human version (`<best>-human.slack.json`, written by
+        // `IGTAP.EngineSim humanize`) with the human version's input ticks for the studio's frame timeline. Read-only.
+        object EngineSimSlack(WebStudioRequest request, JObject body)
+        {
+            string name = Text(body, "name") ?? "";
+            Match g = CategoryRoute.Match(name);
+            bool farm = !g.Success && (g = FarmRoute.Match(name)).Success;
+            if (!g.Success)
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No human version for " + name + ": only a category or farm route has one." };
+            }
+            string[] category = g.Groups[1].Value.Split(new[] { '_' }, 2);
+            CourseDef course = _courses.Find(c => string.Equals(c.Token, category[0], StringComparison.OrdinalIgnoreCase));
+            if (course != null)
+            {
+                string caps = CapsFor(category[1]);
+                float routeTime = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
+                long farmTicks = FarmTicks(routeTime);
+                foreach (var file in OfflineBestFiles(course.id, caps, HumanSlackFile))
+                {
+                    JObject slack;
+                    try { slack = JObject.Parse(File.ReadAllText(file.path)); }
+                    catch (Exception) { continue; }
+                    bool same = farm ? (long?)slack["runTicks"] == farmTicks
+                        : slack["time"] != null && ((float)slack["time"]).ToString("0.00", CultureInfo.InvariantCulture) == routeTime.ToString("0.00", CultureInfo.InvariantCulture);
+                    if (!same) continue;
+                    string humanPath = file.path.Substring(0, file.path.Length - ".slack.json".Length) + ".json";
+                    JArray ticks = null;
+                    if (File.Exists(humanPath))
+                        try { ticks = (JArray)JObject.Parse(File.ReadAllText(humanPath))["ticks"]; } catch (Exception) { }
+                    return new { ok = true, file = Path.GetFileName(file.path), human = Path.GetFileName(humanPath), slack, ticks };
+                }
+            }
+            request.StatusCode = 404;
+            return new { ok = false, error = "No slack report for " + name + " yet: humanize writes one next to every best." };
+        }
+
         IEnumerable<(string path, Match match)> OfflineBestFiles(int course, string caps, Regex pattern)
         {
             string root = Path.Combine(EngineSimDir, "offline-best");
@@ -199,6 +316,7 @@ namespace IGTAPTasMod
 
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
         static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.json$");
+        static readonly Regex HumanSlackFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.slack\.json$");
         const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();

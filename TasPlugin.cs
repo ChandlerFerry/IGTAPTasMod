@@ -114,6 +114,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
+            PatchOptional(typeof(Movement), "TimeStop", nameof(BeforeOverlayTimeStop), null);
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();
@@ -123,7 +124,7 @@ namespace IGTAPTasMod
         private static bool BlockSharedSave()
         {
             if (Instance == null) return true;
-            if (Instance._playbackSavedAbilities.Count != 0 || Instance._silentEvaluation || TurboRunner.Active || Instance._newGameSession) return false;
+            if (Instance._playbackSavedAbilities.Count != 0 || Instance._silentEvaluation || TurboRunner.Active || Instance._newGameSession || Instance.LabInjected) return false;
             if (Instance.SavedArea1State == null) return true;
             if (Instance._solverRunning || Instance.PlaybackActive || Instance._recorder.IsRecording) return false;
             Movement player = FindWorldMovement();
@@ -1150,6 +1151,7 @@ namespace IGTAPTasMod
             PumpFullTas();
             PumpFastForward();
             PumpProbe();
+            PumpLabMap();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -1180,6 +1182,7 @@ namespace IGTAPTasMod
 
         private bool RestoreRouteStart(MacroDefinition route)
         {
+            LabMapEnsureFor(route);
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
             CourseDef named = CourseOfRoute(route.name);
@@ -1640,6 +1643,7 @@ namespace IGTAPTasMod
             if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
             if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);
             if (request.Path.StartsWith("/api/probe/", StringComparison.Ordinal)) return HandleProbe(request.Path, body);
+            if (request.Path.StartsWith("/api/labmap/", StringComparison.Ordinal)) return HandleLabMap(request.Path, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new

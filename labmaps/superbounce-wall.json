@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "superbounce-wall",
+  "name": "Superbounce off a plain wall",
+  "tech": "superbounce",
+  "techNote": "The game\u0027s dash boost (Movement.SpecialWallJump(0.6, 1, up * dashBoostUpwards 410)): dash flat into a wall and have jump buffered within dashBoostMax (6) frames of the dash, so the wall touch ends the dash and bounces up on Velocity.y 730 plus 410 up momentum. Solved at WJ_DS (no double jump): nothing else reaches the finish above the wall.",
+  "category": "WJ_DS",
+  "anchor": [
+    7872,
+    14056
+  ],
+  "region": [
+    7872,
+    14056,
+    5008,
+    13448
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        250,
+        20
+      ],
+      "size": [
+        500,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        420,
+        320
+      ],
+      "size": [
+        40,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 200,
+    "y": 74,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "finish": [
+    420,
+    470,
+    400,
+    300
+  ],
+  "maxTicks": 80
+}

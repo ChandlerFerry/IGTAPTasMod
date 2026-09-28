@@ -81,7 +81,8 @@ namespace IGTAPTasMod
             bool platform = _velocityPlatform != Vector2.zero;
             int parts = platform ? 3 : 2;
             float bandHeight = 14 * scale + titleLine + 12 * scale;
-            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 4 * rowHeight + 12 * scale;
+            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 4 * rowHeight + 12 * scale
+                + DebugSectionHeight(scale);
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
             Fill(panel, PanelBack);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
@@ -137,6 +138,7 @@ namespace IGTAPTasMod
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), CheckpointRespawns ? "ON" : "OFF", CheckpointRespawns ? _overlayTitle : _overlayText, CheckpointRespawns ? JumpColor : GraceColor);
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
+            DrawDebugSection(panel, x, y + rowHeight, scale);
         }
 
         /// <summary>Interpolation stays on; playback runs on the fixed clock that turbo and enginesim model (MacroEngine.FrameGrid).</summary>

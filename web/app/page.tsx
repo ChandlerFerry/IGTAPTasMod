@@ -5,7 +5,8 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, place, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, ResetSegments, place, resetSegments, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { UltraMap, type UltraData } from "./ultras";
 import { GROWN_COLOR, MARKERS, SPRING_COLOR, TONE_COLORS, type TreeStep } from "./ultra-level";
@@ -21,7 +22,7 @@ type Course = { id: number; token: string; bonus: boolean; levels: number[]; fro
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
-  offline?: { reached: number; time: number; splits: FullTasSplit[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
+  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean;
@@ -42,6 +43,7 @@ async function request(path: string, body?: unknown) {
 
 // Module-level so the Ultra map's load effect doesn't rerun on every render.
 const loadUltras = (refresh: boolean): Promise<UltraData> => request("/enginesim/ultras", { refresh });
+const loadSlack = (name: string): Promise<SlackReply> => request("/enginesim/slack", { name });
 
 export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
@@ -105,7 +107,7 @@ export default function Studio() {
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
       <div className="content">
-        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><div className="timeline">{route?.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />)}</div></div>}
+        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />)}</div></div>}
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
@@ -289,7 +291,12 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null };
-type MapRoute = { name: string; kind: "seed" | "best" | "plateau"; finished: boolean; time: number; timerStart: number; points: number[] };
+type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
+// Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
+// per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
+type GhostRoute = MapRoute & { cells: number[][]; state: number[] };
+type GhostData = { cell: number; a: GhostRoute; b: GhostRoute; diverge: { tick: number; x: number; y: number } | null };
+const GHOST_A = "#4fc3f7", GHOST_B = "#ffb74d";
 // Every map coordinate is in the game world's frame (courses.json's, forced-paths.json's, --via/--avoid's, at:x,y goals'):
 // the same for every capture of a place, whatever FloatingOrigin the game had then.
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
@@ -308,8 +315,43 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [failure, setFailure] = useState("");
   const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true });
   const [hidden, setHidden] = useState<Set<number>>(new Set());
-  const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number } | null>(null);
+  const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
+  // Ghost compare: two routes picked from the map (saved, offline best, human version), drawn over it with their first
+  // state-divergence tick and, per map cell along the paths, the time delta at first arrival (B − A).
+  const [ghostA, setGhostA] = useState("");
+  const [ghostB, setGhostB] = useState("");
+  const [ghost, setGhost] = useState<GhostData | null>(null);
+  const [ghostError, setGhostError] = useState("");
+  const [ghostLoading, setGhostLoading] = useState(false);
+  useEffect(() => {
+    if (!data || !ghostA || !ghostB || ghostA === ghostB) { setGhost(null); setGhostError(""); return; }
+    let live = true;
+    setGhostLoading(true);
+    request("/enginesim/ghost", { course: target.course, capabilities: target.capabilities, fulltas: target.fulltas, a: ghostA, b: ghostB })
+      .then((g: GhostData) => { if (live) { setGhost(g); setGhostError(""); } })
+      .catch(e => { if (live) { setGhost(null); setGhostError(e instanceof Error ? e.message : String(e)); } })
+      .finally(() => { if (live) setGhostLoading(false); });
+    return () => { live = false; };
+  }, [data, ghostA, ghostB, target]);
+  // Cells both routes reach, by how much later B first arrives (seconds), and cells only one of them reaches.
+  const ghostCells = useMemo(() => {
+    if (!ghost) return null;
+    const both: { cx: number; cy: number; d: number }[] = [], onlyA: number[][] = [], onlyB: number[][] = [];
+    const at = new Map<string, number>(), deltaAt = new Map<string, number>();
+    for (const [cx, cy, t] of ghost.b.cells) at.set(`${cx},${cy}`, t);
+    for (const [cx, cy, t] of ghost.a.cells) {
+      const key = `${cx},${cy}`, tb = at.get(key);
+      if (tb === undefined) { onlyA.push([cx, cy]); continue; }
+      at.delete(key);
+      if (t < 0 || tb < 0) continue;
+      both.push({ cx, cy, d: tb - t });
+      deltaAt.set(key, tb - t);
+    }
+    for (const key of at.keys()) { const [cx, cy] = key.split(",").map(Number); onlyB.push([cx, cy]); }
+    return { both, onlyA, onlyB, deltaAt, max: both.reduce((m, v) => Math.max(m, Math.abs(v.d)), 0) || 1,
+      low: both.length ? both.reduce((m, v) => Math.min(m, v.d), both[0].d) : 0, high: both.length ? both.reduce((m, v) => Math.max(m, v.d), both[0].d) : 0 };
+  }, [ghost]);
   const latest = useMemo(() => data?.explored.cells.reduce((m, v) => Math.max(m, v[2]), 0) || 1, [data]);
   const canvas = useRef<HTMLCanvasElement>(null);
   // Full-TAS: an avoid box drawn on the map (world x0, y0, x1, y1 as dragged) and the runs it goes to.
@@ -322,7 +364,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [moving, setMoving] = useState(false);
   const [moved, setMoved] = useState<{ goal: MapGoal; box: number[] } | null>(null);
   const grab = useRef<{ goal: MapGoal; box: number[]; x: number; y: number } | null>(null);
-  const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
+  const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "human" ? "#c77dff" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
   const view = useRef({ ox: 0, oy: 0, scale: 1 });
   const drag = useRef<{ x: number; y: number } | null>(null);
   const fitted = useRef(false);
@@ -415,6 +457,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       g.fillStyle = "#3ddc97"; g.globalAlpha = .35; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
       g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
     }
+    // A ghost compare fades the overview and draws its two routes over it (A solid, B dashed).
+    if (ghost && ghostCells) g.globalAlpha = .15;
     data.routes.forEach((r, i) => {
       if (hidden.has(i) || r.points.length < 4) return;
       g.strokeStyle = colors[i]; g.lineWidth = (r.kind === "best" ? 3 : r.kind === "plateau" ? 1 : 2) * px; g.lineJoin = "round";
@@ -425,6 +469,43 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       g.fillStyle = g.strokeStyle; g.beginPath(); g.arc(r.points[end], r.points[end + 1], 4 * px, 0, Math.PI * 2); g.fill();
       if (r.timerStart >= 0) { g.beginPath(); g.arc(r.points[r.timerStart * 2], r.points[r.timerStart * 2 + 1], 5 * px, 0, Math.PI * 2); g.lineWidth = 1.5 * px; g.strokeStyle = "#fff"; g.stroke(); }
     });
+    g.globalAlpha = 1;
+    if (ghost && ghostCells) {
+      const size = ghost.cell;
+      // Per map cell along the paths: how much later B first arrives than A (blue: B earlier, red: B later).
+      for (const c of ghostCells.both) {
+        const m = Math.min(1, Math.abs(c.d) / ghostCells.max);
+        g.fillStyle = c.d < 0 ? `rgba(72,185,255,${.18 + .5 * m})` : `rgba(255,91,110,${.18 + .5 * m})`;
+        g.fillRect(c.cx * size, c.cy * size, size, size);
+      }
+      g.lineWidth = px;
+      for (const [cells, color] of [[ghostCells.onlyA, GHOST_A], [ghostCells.onlyB, GHOST_B]] as [number[][], string][]) {
+        g.strokeStyle = color; g.globalAlpha = .55;
+        for (const [cx, cy] of cells) g.strokeRect(cx * size, cy * size, size, size);
+      }
+      g.globalAlpha = 1;
+      for (const [route, color, dash] of [[ghost.a, GHOST_A, []], [ghost.b, GHOST_B, [7 * px, 4 * px]]] as [GhostRoute, string, number[]][]) {
+        if (route.points.length < 4) continue;
+        g.strokeStyle = color; g.lineWidth = 3 * px; g.lineJoin = "round"; g.setLineDash(dash);
+        g.beginPath(); g.moveTo(route.points[0], route.points[1]);
+        for (let k = 2; k < route.points.length; k += 2) g.lineTo(route.points[k], route.points[k + 1]);
+        g.stroke(); g.setLineDash([]);
+        const end = route.points.length - 2;
+        g.fillStyle = color; g.beginPath(); g.arc(route.points[end], route.points[end + 1], 5 * px, 0, Math.PI * 2); g.fill();
+      }
+      if (ghost.diverge) {
+        const { x, y, tick } = ghost.diverge;
+        g.strokeStyle = "#c77dff"; g.lineWidth = 2.5 * px;
+        g.beginPath(); g.arc(x, y, 9 * px, 0, Math.PI * 2); g.stroke();
+        g.fillStyle = "#c77dff"; g.beginPath(); g.arc(x, y, 3 * px, 0, Math.PI * 2); g.fill();
+        g.save(); g.setTransform(1, 0, 0, 1, 0, 0);
+        const screen = window.devicePixelRatio || 1, sx = (x - ox) * scale * screen, sy = (oy - y) * scale * screen;
+        g.font = `700 ${12 * screen}px sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+        g.lineWidth = 3 * screen; g.strokeStyle = "#07111f"; g.strokeText(`states diverge · tick ${tick}`, sx, sy - 17 * screen);
+        g.fillStyle = "#c77dff"; g.fillText(`states diverge · tick ${tick}`, sx, sy - 17 * screen);
+        g.restore();
+      }
+    }
     if (layers.markers) for (const m of data.markers) {
       g.fillStyle = m.kind === "goal" ? "#b9f6ca" : MARKERS[m.kind]?.color ?? "#4fc3f7";
       const s = (m.kind === "checkpoint" ? 4 : 6) * px;
@@ -432,7 +513,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       else if (m.kind === "teleporter") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, hidden, colors, latest, sketch, moved]);
+  }, [data, layers, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -483,7 +564,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     if (held) { const dx = x - held.x, dy = y - held.y; setMoved({ goal: held.goal, box: [held.box[0] + dx, held.box[1] + dy, held.box[2] + dx, held.box[3] + dy] }); }
     const near = layers.markers ? data?.markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
-    setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(`${Math.floor(x / size)},${Math.floor(y / size)}`) });
+    const cell = `${Math.floor(x / size)},${Math.floor(y / size)}`;
+    setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
   };
   const editAvoid = async (box: number[], names: string[], remove: boolean) => {
     setSaving(true); setFailure("");
@@ -510,7 +592,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
       ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals as they are in <code>fulltas.json</code> now (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. <strong>Move goals</strong>, then drag a green goal box (same size) or type its new centre, and save it: the run's goals change as with <b>Save goals</b>. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
-      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
+      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. <strong>Ghost compare</strong> draws any two routes (saved routes, the offline best, its human version) over the map with the first tick their states diverge and, per map cell along the paths, how much later one first arrives than the other. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
       {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"]] as [keyof MapLayers, string][]).map(([key, label]) =>
@@ -520,8 +602,35 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
       {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag an at: goal's green box to a new place; it keeps its size" onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
     </div>
+    <div className="ghostBar">
+      <strong>Ghost compare</strong>
+      <label className="ghostPick">A
+        <select value={ghostA} onChange={e => setGhostA(e.target.value)}>
+          <option value="">pick a route</option>
+          {data?.routes.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
+        </select>
+      </label>
+      <label className="ghostPick">B
+        <select value={ghostB} onChange={e => setGhostB(e.target.value)}>
+          <option value="">pick a route</option>
+          {data?.routes.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
+        </select>
+      </label>
+      {ghostA && ghostA === ghostB && <span className="hint">Pick two different routes.</span>}
+      {ghostLoading && <span className="hint">Comparing…</span>}
+      {ghost && ghostCells && <span className="hint">
+        <span className="mapSwatch" style={{ background: GHOST_A }} />A
+        <span className="mapSwatch" style={{ background: `repeating-linear-gradient(90deg, ${GHOST_B} 0 6px, transparent 6px 10px)` }} />B
+        {" · "}{ghost.diverge ? <>states first diverge at tick {ghost.diverge.tick}</> : <>same states all the way ({ghost.a.state.length} ticks)</>}
+        {ghostCells.onlyA.length + ghostCells.onlyB.length > 0 && <> · {ghostCells.onlyA.length + ghostCells.onlyB.length} cells on one path only</>}
+        {" · "}{ghostCells.both.length > 0
+          ? <>Δ first arrival (B − A): <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,#48b9ff,#8899aa,#ff5b6e)" }}/> {ghostCells.low.toFixed(2)}…{ghostCells.high.toFixed(2)}s</>
+          : <>no shared cells with both timers running</>}
+      </span>}
+    </div>
+    {ghostError && <p className="mapFailure">{ghostError}</p>}
     <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
-    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
+    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · ghost Δ first arrival {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {sketch && !sketchStart.current && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
       {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
@@ -631,6 +740,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [windowMinutes, setWindowMinutes] = useState(1);
   const [window_, setWindow] = useState(2);
   const [onlyGoal, setOnlyGoal] = useState(0);
+  const [onlySegment, setOnlySegment] = useState(0);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
   const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
@@ -644,6 +754,9 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const validName = /^[A-Za-z0-9%-]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
+  const liveSegments = solve.name === name ? solve.segments : null;
+  const segments = resetSegments(run?.offline?.segments, liveSegments);
+  const segment = onlySegment > 0 && onlySegment <= segments.length ? onlySegment : 0;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
     <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or an area goal <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after an area goal takes that goal back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
     <div className="fullTasRuns">
@@ -687,10 +800,13 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
             <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
             <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
             <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polish only the window of goals ending at this one (Window goals: 2 is the goal before it and this one), over and over, with the rest of the route kept as it is" onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
+            <Field label="Only segment (0: all)"><input type="number" min="0" max={segments.length} value={segment} disabled={solve.running || segments.length <= 1} title="Solve by resets: search only this reset segment (the route between two quick restarts), over and over. Pick one in the Reset segments list below too." onChange={e => setOnlySegment(Math.max(0, Math.min(segments.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
           </div>
           <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}, from ${onlyGoal - window_ > 0 ? "goal " + (onlyGoal - window_) : "the start"}` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, goal: onlyGoal })}>{onlyGoal > 0 ? (window_ > 1 ? `Solve goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}` : `Solve goal ${onlyGoal}`) : "Solve"}</button>
             <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length || segments.length <= 1} title={segments.length <= 1 ? "The best has no quick restart to split it at" : `Polishes the best one reset segment at a time${segment ? ` (only segment ${segment})` : ""}: from the state after the quick restart that opens it to its last goal, closed by the old restart. A way counts only when the player leaves that restart exactly as the old route did (no momentum, wall-jump lock, zip-mover or bounce carry-over, buffers or timers that differ), so the route after it is kept, never re-solved. Per segment: Minutes per window.`} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, resets: true, segment })}>{segment ? `Solve segment ${segment}` : "Solve by resets"}</button>
             <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
+          <ResetSegments rows={segments} goals={labels} selected={segment} onSelect={setOnlySegment} disabled={solve.running} checked={liveSegments != null}/>
         </div>
       </div>
       <div className="fullTasEditor">

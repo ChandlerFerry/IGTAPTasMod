@@ -568,9 +568,25 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine(report);
                 Console.WriteLine("-> " + OutputPath(bestPath, ".json"));
                 Console.WriteLine("-> " + OutputPath(bestPath, ".md"));
+                Console.WriteLine("-> " + OutputPath(bestPath, ".slack.json"));
             }
             finally { humanizer.Stop(); }
             return 0;
+        }
+
+        // One input's slack for the studio: `kind` names the input (stickX, stickY, press, release, dash), `value` its
+        // stick value (a dash's is its jump-on-dash frame), `class` the report's Class column and `window` the ticks it
+        // works on. `end` is the tick after the input's last (a stick run's span is tick..end-1).
+        static string KindName(Humanizer.Kind kind)
+        {
+            switch (kind)
+            {
+                case Humanizer.Kind.StickX: return "stickX";
+                case Humanizer.Kind.StickY: return "stickY";
+                case Humanizer.Kind.Press: return "press";
+                case Humanizer.Kind.Release: return "release";
+                default: return "dash";
+            }
         }
 
         public static string Write(string bestPath, int course, string caps, Humanizer.Result r)
@@ -589,6 +605,18 @@ namespace IGTAP.EngineSim.Cli
             }));
             string report = Report(Path.GetFileName(bestPath), course, caps, r, exact, exactBefore);
             Solve.WriteShared(OutputPath(bestPath, ".md"), report);
+            Solve.WriteShared(OutputPath(bestPath, ".slack.json"), JsonSerializer.Serialize(new
+            {
+                course, capabilities = caps, source = Path.GetFileName(bestPath),
+                human = Path.GetFileName(OutputPath(bestPath, ".json")),
+                time = r.Time, runTicks = r.RunTicks, exact, exactBefore,
+                inputs = r.After.Select(e => new
+                {
+                    tick = e.Tick,
+                    end = e.Kind == Humanizer.Kind.StickX || e.Kind == Humanizer.Kind.StickY ? e.End : e.Tick + 1,
+                    kind = KindName(e.Kind), value = e.Value, @class = e.Class, window = e.Window,
+                }),
+            }));
             return report;
         }
 

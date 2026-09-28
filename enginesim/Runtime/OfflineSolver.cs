@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using IGTAPTasMod;
 using UnityEngine;
+using static IGTAP.EngineSim.ContactRays;
 
 namespace IGTAP.EngineSim
 {
@@ -63,6 +64,10 @@ namespace IGTAP.EngineSim
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, ClipGrafts, ClipsLanded, SetupGrafts, SetupsLanded, GateTaps, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        /// <summary>Grafts made from mined tech demos (0 with --no-tech-grafts).</summary>
+        public long TechGrafted;
+        /// <summary>The tech demos mined into graft patterns (null: --no-tech-grafts), offered at the same contact kinds.</summary>
+        public readonly TechGrafts Mined;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
         volatile bool _stop;
@@ -79,16 +84,31 @@ namespace IGTAP.EngineSim
         long _stateBudget;
         public int StatesPerWorker { get; private set; }
         int _cells;
+        /// <summary>A Full-TAS run's stored goal-boundary states, resumed instead of replaying a cell's prefix over them (null: none).</summary>
+        public SnapshotIndex Resume;
+        /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
+        public long GoalResumes;
 
         public string ArchiveStatus()
         {
-            long hits = Interlocked.Read(ref StateHits), replays = Interlocked.Read(ref StateReplays);
+            long hits = Interlocked.Read(ref StateHits), replays = Interlocked.Read(ref StateReplays), goals = Interlocked.Read(ref GoalResumes);
             return $"archive {_cells} cells, states {(hits + replays == 0 ? 100 : 100 * hits / (hits + replays))}% cached ({StatesPerWorker} per worker), "
-                + $"{Interlocked.Read(ref ReplayTicks)} replay ticks";
+                + $"{Interlocked.Read(ref ReplayTicks)} replay ticks" + (goals == 0 ? "" : $", {goals} from stored goal states");
+        }
+
+        /// <summary>How hard the guide pulls explore cell picks toward the target (0: no guidance, 1: its full share).</summary>
+        public readonly float GuideWeight;
+        float _guideBest = float.PositiveInfinity;
+
+        /// <summary>The progress line's guide fragment: how close the closest cell filed has walked to the target.</summary>
+        public string GuideStatus()
+        {
+            return !DistanceField.Enabled || GuideWeight <= 0f ? "guide off"
+                : float.IsFinite(_guideBest) ? $"guide d={_guideBest:0}" : "guide d=-";
         }
 
         public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null, ForcedPath path = null,
-            float visitCell = 0f)
+            float visitCell = 0f, TechGrafts mined = null, float guide = 1f)
         {
             _createSimulation = createSimulation;
             Capabilities = capabilities;
@@ -96,6 +116,9 @@ namespace IGTAP.EngineSim
             _memory = memory;
             _path = path != null && !path.IsEmpty ? path : null;
             VisitCell = visitCell;
+            GuideWeight = guide;
+            Mined = mined;
+            Mined?.Prepare(capabilities);
         }
 
         public void Stop() { _stop = true; }
@@ -204,6 +227,8 @@ namespace IGTAP.EngineSim
             public int Length, Picks, Waypoints;
             public Cell Parent;
             public float Rank, Distance;
+            /// <summary>Its map cell: what a state's eviction weighs (the draw pool's pick weight).</summary>
+            public long Key;
         }
 
         static bool Earlier(float rank, int length, Cell than) { return than.Rank > rank || (than.Rank == rank && than.Length > length); }
@@ -226,6 +251,7 @@ namespace IGTAP.EngineSim
         void Extend(long key, Cell cell, int progress)
         {
             float rank = cell.Rank, distance = cell.Distance;
+            if (distance < _guideBest) _guideBest = distance;
             if (key < 0 && rank > _maxTimedRank) lock (_extent) _maxTimedRank = Math.Max(_maxTimedRank, rank);
             if (progress < 0) return;
             if (progress < _minProgress || progress > _maxProgress || distance < _near[progress] || Closer(cell, progress, _closest))
@@ -238,12 +264,14 @@ namespace IGTAP.EngineSim
                 }
         }
 
-        /// <summary>Goal mode: from the player to the next at: goal's rect, in the capture frame; NaN for any other next goal.</summary>
+        /// <summary>Goal mode: from the player to the next at: goal's rect, in the capture frame; NaN for any other next goal.
+        /// With guidance on the guide's walkable distance instead of the straight line.</summary>
         public static float GoalDistance(Simulation sim)
         {
             FullTasGoal goal = sim.Goals.Current;
             if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
             Vector3 p = sim.PlayerAtCapture;
+            if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
             float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
             return MathF.Sqrt(dx * dx + dy * dy);
         }
@@ -316,12 +344,25 @@ namespace IGTAP.EngineSim
             const int BranchCheckEvery = 10000;
             readonly OfflineSolver _owner;
             readonly Simulation _sim;
+            /// <summary>Decodes this world's copy of a stored goal state (SnapshotStore.StateOf).</summary>
+            readonly SnapshotStore _store;
             readonly colouredBlockSwapper _swapper;
             readonly System.Random _rng;
             readonly Queue<List<InputTick>> _seeds;
             readonly System.Collections.Concurrent.ConcurrentDictionary<long, Cell> _archive;
-            readonly Dictionary<Cell, LinkedListNode<(Cell cell, SimSnapshot state)>> _states = new Dictionary<Cell, LinkedListNode<(Cell, SimSnapshot)>>();
-            readonly LinkedList<(Cell cell, SimSnapshot state)> _recent = new LinkedList<(Cell, SimSnapshot)>();
+            readonly Dictionary<Cell, Entry> _states = new Dictionary<Cell, Entry>();
+            // Eviction is by the draw pool's pick weight first and recency second, so the frontier's hot cells stay through
+            // a wide draw's churn (plain LRU let them go). Superseded entries drop out when they surface.
+            readonly PriorityQueue<Entry, (double weight, long use)> _evict = new PriorityQueue<Entry, (double, long)>();
+            long _use;
+
+            sealed class Entry
+            {
+                public Cell Cell;
+                public SimSnapshot State;
+                /// <summary>When it was last touched; 0 once a newer entry for its cell replaces it.</summary>
+                public long Use;
+            }
             Cell[] _pool = Array.Empty<Cell>();
             double[] _poolWeights = Array.Empty<double>();
             int _poolPicks;
@@ -386,6 +427,7 @@ namespace IGTAP.EngineSim
                 _spliceScan = true;
             }
             readonly bool _goalMode;
+            readonly DistanceField _guide;
             readonly Queue<Memory.Source> _restore;
             List<InputTick> _plateau;
 
@@ -402,6 +444,8 @@ namespace IGTAP.EngineSim
             {
                 _owner = owner;
                 _sim = sim;
+                _store = new SnapshotStore(sim);
+                _gate = new ContactProbe(sim);
                 _rng = new System.Random(seed);
                 _seeds = new Queue<List<InputTick>>(seeds.Select(s => s.ToList()));
                 _seeds.Enqueue(new List<InputTick>());
@@ -410,6 +454,7 @@ namespace IGTAP.EngineSim
                 _omni = owner.Capabilities == "omni" || owner.Capabilities == "wjdsdjbsom";
                 _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
+                if (owner.GuideWeight > 0f && DistanceField.Enabled) _guide = DistanceField.For(sim);
                 if (_goalMode) Interlocked.CompareExchange(ref owner._near, Enumerable.Repeat(float.PositiveInfinity, sim.Goals.Goals.Length + 1).ToArray(), null);
                 _archive = owner._archive;
                 _swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
@@ -556,15 +601,11 @@ namespace IGTAP.EngineSim
             // within 12 u of the front edge) sets one up: the stick turns away from the wall for a few ticks and then rests,
             // which leaves the wall behind a player drifting off it. A start gate in reach while the timer is off is the late
             // gate touch: a tap toward the gate and back, as late as the route can leave it, so the timer starts only then.
-            enum Contact : byte
-            {
-                Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper, WallBehindLeft, WallBehindRight, WallAheadLeft, WallAheadRight,
-                NearGateLeft, NearGateRight, WallAboveLeft, WallAboveRight
-            }
-            readonly List<(int tick, Contact kind)> _contacts = new List<(int, Contact)>();
-            bool _recordContacts, _contactsPrimed, _wasGround, _wasWall, _wasDash, _wasSlide;
-            float _wasBehind, _wasAbove, _wasAhead, _wasNearGate;
-            int _dashStart;
+            // (The contacts themselves are the shared ContactLog's: the same detection the mined tech grafts replay demos with.)
+            readonly ContactLog _log = new ContactLog();
+            readonly ContactProbe _gate;
+            List<(int tick, Contact kind)> _contacts => _log.Contacts;
+            bool _recordContacts;
             const double GraftRate = .5;
             const int GraftCoast = 40;
 
@@ -589,135 +630,24 @@ namespace IGTAP.EngineSim
                 [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
             };
 
-            void RecordContact(int tick)
-            {
-                Movement player = _sim.Player;
-                bool ground = player.onGround, wall = player.OnWall;
-                float behind = WallBehind(player), above = behind == 0f ? WallBehindAbove(player) : 0f, ahead = WallAhead(player), gate = NearGate();
-                if (_contactsPrimed)
-                {
-                    if (ground != _wasGround) _contacts.Add((tick, ground ? Contact.Landed : Contact.LeftGround));
-                    if (wall != _wasWall) _contacts.Add((tick, wall ? Contact.TouchedWall : Contact.LeftWall));
-                    if (behind != 0f && behind != _wasBehind) _contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
-                    if (above != 0f && above != _wasAbove) _contacts.Add((tick, above < 0f ? Contact.WallAboveLeft : Contact.WallAboveRight));
-                    if (ahead != 0f && ahead != _wasAhead) _contacts.Add((tick, ahead < 0f ? Contact.WallAheadLeft : Contact.WallAheadRight));
-                    if (gate != 0f && gate != _wasNearGate) _contacts.Add((tick, gate < 0f ? Contact.NearGateLeft : Contact.NearGateRight));
-                }
-                else
-                {
-                    // An explore from a clip-ready cell (or one by the gate, or under a wall at its back) starts in it: that
-                    // is the contact too.
-                    if (behind != 0f) _contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
-                    if (above != 0f) _contacts.Add((tick, above < 0f ? Contact.WallAboveLeft : Contact.WallAboveRight));
-                    if (gate != 0f) _contacts.Add((tick, gate < 0f ? Contact.NearGateLeft : Contact.NearGateRight));
-                }
-                _contactsPrimed = true;
-                _wasGround = ground;
-                _wasWall = wall;
-                _wasBehind = behind;
-                _wasAbove = above;
-                _wasAhead = ahead;
-                _wasNearGate = gate;
-            }
+            void RecordContact(int tick) { _log.Tick(tick, _sim.Player, _gate.NearGate()); }
 
-            // The side of a wall at the player's back that isn't clip-ready yet because its bottom is still above the ground
-            // rays (the back ray at y + 19 or y + 45 hits it within 12 u, the one at y - 18 doesn't), 0 for none: rising up
-            // the wall's side with the stick at rest makes it clip-ready.
-            static float WallBehindAbove(Movement player)
-            {
-                if (player.onGround || player.dashActive) return 0f;
-                float back = player.facingRight ? -1f : 1f;
-                Vector3 p = player.transform.position;
-                var dir = new Vector2(back, 0f);
-                int layer = GroundLayer(player);
-                return Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y + 19f), dir, 12f, layer)
-                    || Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y + 45f), dir, 12f, layer) ? back : 0f;
-            }
 
-            // The side of the target course's start gate (-1: at -x) when the timer is off and the gate is within 16 u of the
-            // hitbox (x + 5 × facing ± 20.5, y ± 36) at its height, 0 otherwise.
-            float NearGate()
-            {
-                if (_sim.TimingCourse() != null) return 0f;
-                Movement player = _sim.Player;
-                Vector3 p = player.transform.position;
-                float cx = p.x + (player.facingRight ? 5f : -5f);
-                foreach (Rect box in Gates())
-                {
-                    if (p.y + 36f < box.yMin || p.y - 36f > box.yMax) continue;
-                    if (cx + 20.5f < box.xMin && box.xMin - (cx + 20.5f) <= 16f) return 1f;
-                    if (cx - 20.5f > box.xMax && (cx - 20.5f) - box.xMax <= 16f) return -1f;
-                }
-                return 0f;
-            }
-
-            // The target course's start gate boxes in the scene frame, cached until FloatingOrigin moves the world.
-            List<Rect> Gates()
-            {
-                Vector3 origin = _sim.CurrentOrigin;
-                if (_gates != null && origin == _gatesOrigin) return _gates;
-                _gates = new List<Rect>();
-                _gatesOrigin = origin;
-                foreach (startGate gate in _sim.World.All<startGate>())
-                {
-                    if (!gate.gameObject.activeInHierarchy) continue;
-                    courseScript course = gate.transform.parent != null ? gate.transform.parent.GetComponentInParent<courseScript>() : null;
-                    if (course == null || _sim.TargetCourse != 0 && course.courseNumber != _sim.TargetCourse) continue;
-                    BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
-                    if (box == null) continue;
-                    Vector3 s = gate.transform.lossyScale, at = gate.transform.position;
-                    float w = Math.Abs(box.size.x * s.x), h = Math.Abs(box.size.y * s.y);
-                    _gates.Add(new Rect(at.x + box.offset.x * s.x - w / 2f, at.y + box.offset.y * s.y - h / 2f, w, h));
-                }
-                return _gates;
-            }
-            List<Rect> _gates;
-            Vector3 _gatesOrigin;
-
-            // The side of a wall behind the player (-1: at -x, 1: at +x) that a wall clip can use now, 0 for none. The turn
-            // swings the hitbox's back edge (x ∓ 15.5, offset 5, width 41) 10 u into the wall, and the front ground ray (x ∓ 25
-            // after the turn) grounds the player from inside it while Velocity.y is under 200; a clip needs the back edge
-            // within ~8 u, so the ray looks 12 u out from x ∓ 15 at the ground rays' height (y - 18).
-            static float WallBehind(Movement player)
-            {
-                if (player.onGround || player.dashActive || player.Velocity.y >= 580f) return 0f;
-                float back = player.facingRight ? -1f : 1f;
-                Vector3 p = player.transform.position;
-                return Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y - 18f), new Vector2(back, 0f), 12f, GroundLayer(player)) ? back : 0f;
-            }
-
-            // The side of a wall in front of the player within 12 u of the hitbox's front edge (x ± 25.5), at the wall rays'
-            // heights (y + 19, y - 18) or just over the head (y + 45: a wall whose bottom the player is rising up to), 0 for none.
-            static float WallAhead(Movement player)
-            {
-                if (player.onGround || player.dashActive || player.OnWall) return 0f;
-                float front = player.facingRight ? 1f : -1f;
-                Vector3 p = player.transform.position;
-                var dir = new Vector2(front, 0f);
-                int layer = GroundLayer(player);
-                foreach (float dy in AheadHeights)
-                    if (Physics2D.Raycast(new Vector2(p.x + front * 25f, p.y + dy), dir, 12f, layer)) return front;
-                return 0f;
-            }
-            static readonly float[] AheadHeights = { -18f, 19f, 45f };
-
-            static readonly Func<Movement, LayerMask> GroundLayer = FieldGetter<LayerMask>("groundRaycastLayer");
 
             // Every physics step of an explore run (a dash runs ticks with no input tick, which RecordContact never sees): the
             // input tick a dash was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.
-            void RecordSlide()
-            {
-                Movement player = _sim.Player;
-                bool dash = player.cutsceneMode == Movement.cutsceneModes.dash;
-                if (dash && !_wasDash) _dashStart = (int)_sim.Engine.RunTicks - 1;
-                bool slide = dash && player.onGround && CanHyper(player) && CoyoteFrames(player) < player.maxCoyoteFrames;
-                if (slide && !_wasSlide) _contacts.Add((_dashStart, Contact.CornerHyper));
-                _wasDash = dash;
-                _wasSlide = slide;
-            }
+            void RecordSlide() { _log.Slide((int)_sim.Engine.RunTicks, _sim.Player); }
 
             void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
             {
+                // Tech demos mined into grafts (TechGrafts): the demo's own input window around the same contact kind, jittered
+                // and filtered by the run's category unlocks, offered in addition to the hand-written graft below.
+                if (_owner.Mined is TechGrafts mined && mined.Pick(contact, _rng) is TechPattern pattern
+                    && TechGrafts.Compose(run, tick, TechGrafts.Jitter, lo, pattern, out List<InputTick> tech))
+                {
+                    Try(tech, "tech graft", from);
+                    Interlocked.Increment(ref _owner.TechGrafted);
+                }
                 var (before, after, plain, omni) = GraftsAt[contact];
                 omni ??= OmniKinds;
                 int at = Math.Min(tick, run.Count) + _rng.Next(before, after + 1);
@@ -846,12 +776,29 @@ namespace IGTAP.EngineSim
             {
                 int n = _owner._cells + 64;
                 var cells = new List<Cell>(n);
-                var weights = new List<double>(n);
-                double total = 0;
+                var keys = new List<long>(n);
+                float near = float.PositiveInfinity, far = float.NegativeInfinity;
                 foreach (KeyValuePair<long, Cell> pair in _archive)
                 {
-                    total += Weight(pair.Key, pair.Value);
+                    keys.Add(pair.Key);
                     cells.Add(pair.Value);
+                    float d = pair.Value.Distance;
+                    if (float.IsFinite(d))
+                    {
+                        if (d < near) near = d;
+                        if (d > far) far = d;
+                    }
+                }
+                // The guide's closeness to the target: 1 for the pool's closest cell to it, 0 for cells a span of distance
+                // further out (the span capped, so one cell that wandered off doesn't flatten the rest).
+                float span = float.IsFinite(near) ? Math.Clamp(far - near, CellSize, GuideSpan) : 0f;
+                var weights = new List<double>(n);
+                double total = 0;
+                for (int i = 0; i < cells.Count; i++)
+                {
+                    float d = cells[i].Distance;
+                    float closeness = span <= 0f || !float.IsFinite(d) ? 0f : Math.Clamp((near + span - d) / span, 0f, 1f);
+                    total += Weight(keys[i], cells[i], closeness);
                     weights.Add(total);
                 }
                 _pool = cells.ToArray();
@@ -859,6 +806,8 @@ namespace IGTAP.EngineSim
                 _poolPicks = Math.Max(PoolPicks, _pool.Length / 256);
             }
             const int PoolPicks = 16;
+            /// <summary>The distance the guide's closeness fades out over.</summary>
+            const float GuideSpan = 2000f;
 
             Cell Draw()
             {
@@ -868,24 +817,39 @@ namespace IGTAP.EngineSim
 
             SimSnapshot StateOf(Cell cell)
             {
-                if (_states.TryGetValue(cell, out LinkedListNode<(Cell cell, SimSnapshot state)> node))
+                if (_states.TryGetValue(cell, out Entry entry))
                 {
-                    _recent.Remove(node);
-                    _recent.AddFirst(node);
+                    Touch(entry);
                     Interlocked.Increment(ref _owner.StateHits);
-                    return node.Value.state;
+                    return entry.State;
                 }
                 var path = new List<Cell> { cell };
-                LinkedListNode<(Cell cell, SimSnapshot state)> found = null;
+                Entry found = null;
                 for (Cell ancestor = cell.Parent; ancestor != null && !_states.TryGetValue(ancestor, out found); ancestor = ancestor.Parent) path.Add(ancestor);
                 path.Reverse();
+                if (found != null) Touch(found);
+                SimSnapshot from = found?.State;
+                // The run's stored goal state may sit later on the cell's own prefix than this worker's nearest state does.
+                if (_owner.Resume is SnapshotIndex resume && resume.Find(cell.Source, cell.Length, from?.Tick ?? -1) is SnapshotIndex.Entry goal)
+                    try
+                    {
+                        from = _store.StateOf(goal, goal.Tick - resume.Base);
+                        Interlocked.Increment(ref _owner.GoalResumes);
+                    }
+                    catch (NotSupportedException) { }
                 _capturePath = path;
                 _captureNext = 0;
                 _captured = null;
-                Evaluate(cell.Source, found?.Value.state, null, false, out _, out _, out _, judgeAfter: cell.Length);
+                Evaluate(cell.Source, from, null, false, out _, out _, out _, judgeAfter: cell.Length);
                 _capturePath = null;
                 Interlocked.Increment(ref _owner.StateReplays);
                 return _captured;
+            }
+
+            void Touch(Entry entry)
+            {
+                entry.Use = ++_use;
+                _evict.Enqueue(entry, (Weight(entry.Cell.Key, entry.Cell, 0f), entry.Use));
             }
             List<Cell> _capturePath;
             int _captureNext;
@@ -917,14 +881,16 @@ namespace IGTAP.EngineSim
 
             void Keep(Cell cell, SimSnapshot state)
             {
-                if (_states.TryGetValue(cell, out LinkedListNode<(Cell cell, SimSnapshot state)> node)) _recent.Remove(node);
-                _states[cell] = _recent.AddFirst((cell, state));
+                if (_states.TryGetValue(cell, out Entry old)) old.Use = 0;
+                var entry = new Entry { Cell = cell, State = state };
+                _states[cell] = entry;
+                Touch(entry);
                 int cap = (int)Math.Max(512, _owner._stateBudget / Math.Max(1024.0, _stateBytes));
                 _owner.StatesPerWorker = cap;
-                while (_recent.Count > cap)
+                while (_states.Count > cap && _evict.TryDequeue(out Entry victim, out _))
                 {
-                    _states.Remove(_recent.Last.Value.cell);
-                    _recent.RemoveLast();
+                    if (victim.Use == 0 || !_states.TryGetValue(victim.Cell, out Entry now) || now != victim) continue;
+                    _states.Remove(victim.Cell);
                 }
             }
 
@@ -948,7 +914,11 @@ namespace IGTAP.EngineSim
                 Try(t, "splice", from);
             }
 
-            double Weight(long key, Cell cell)
+            /// <summary>An explore cell's share of the picks: timed cells over untimed, ones further toward the run's goal (its
+            /// way through timed runs, its goal reach, its forced-path boxes), and by the guide ones closer to the target,
+            /// then the pick-count novelty that keeps it exploring. <paramref name="closeness"/> is 1 for the pool's closest
+            /// cell to the target and 0 for its far ones.</summary>
+            double Weight(long key, Cell cell, float closeness)
             {
                 double w = key < 0 ? 3.0 : 1.0;
                 if (key < 0 && _bestInputs == null)
@@ -957,6 +927,7 @@ namespace IGTAP.EngineSim
                     w *= 1 + 10 * Math.Pow(reach, 4);
                 }
                 if (_owner._path != null && _bestInputs == null) w *= 1 + 10 * cell.Waypoints;
+                if (closeness > 0f) w *= 1 + 10 * _owner.GuideWeight * closeness * closeness;
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
@@ -1494,7 +1465,7 @@ namespace IGTAP.EngineSim
                 ForcedPath path = _owner._path;
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
-                if (_recordContacts) { _contacts.Clear(); _contactsPrimed = false; _wasDash = _wasSlide = false; }
+                if (_recordContacts) _log.Reset();
                 Dictionary<long, float> visits = Visits;
                 bool corners = _recordContacts && _omni;
                 Action<int> onStep = path == null && visits == null && !corners ? null : _ =>
@@ -1598,16 +1569,7 @@ namespace IGTAP.EngineSim
                 return Expression.Lambda<Func<Movement, int>>(Expression.Convert(Expression.Field(player, field), typeof(int)), player).Compile();
             }
 
-            static readonly Func<Movement, bool> CanHyper = FieldGetter<bool>("canHyper");
-            static readonly Func<Movement, float> CoyoteFrames = FieldGetter<float>("coyoteFrames");
 
-            static Func<Movement, T> FieldGetter<T>(string name)
-            {
-                FieldInfo field = typeof(Movement).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
-                    ?? throw new MissingFieldException(nameof(Movement), name);
-                ParameterExpression player = Expression.Parameter(typeof(Movement));
-                return Expression.Lambda<Func<Movement, T>>(Expression.Field(player, field), player).Compile();
-            }
 
             // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,
             // moss 44, momentum x 45-47 and y 48-50 (a course: a wall clip's wall behind 45-46, and before the timer the Motion
@@ -1672,8 +1634,8 @@ namespace IGTAP.EngineSim
                 if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
-                float distance = _goalMode ? GoalDistance(_sim) : float.NaN;
-                var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell };
+                float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture) : _goalMode ? GoalDistance(_sim) : float.NaN;
+                var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
                 if (!_owner.File(key, filed)) return;
                 if (ClipLog && cell == null) Console.WriteLine($"NEWCELL {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(key < 0 ? 1 : 0)} {(_clipWatch >= 0 || _setupWatch >= 0 ? 1 : 0)}");
                 Keep(filed, state);

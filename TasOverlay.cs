@@ -45,6 +45,7 @@ namespace IGTAPTasMod
         {
             CountFrame();
             SampleLiveInput();
+            if (_overlayPlayer != null) SampleDebug(_overlayPlayer);
             int ticks = _ticksSinceFrame;
             _ticksSinceFrame = 0;
             if (ticks <= 1 || !OverlayListsRun) return;
