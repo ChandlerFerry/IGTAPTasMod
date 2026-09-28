@@ -150,7 +150,7 @@
     "description": "Standing against a wall, turn away from it and press dash and jump on the same tick. The dash start moves the dot 20 u against the dash, back into the wall, and the buffered jump is a grounded dash jump from inside it.",
     "related": ["inwall-super-into-wall", "inwall-reverse-super"] },
   { "id": "superbounce", "name": "Superbounce", "category": "glitchless", "requires": "WJ_DS", "origin": "ours", "detector": "Superbounce",
-    "description": "Dash into a wall and press jump 0-5 ticks later: the game's dash boost, SpecialWallJump(0.6, …). Demonstrated on the injected superbounce-wall lab map (a plain wall in empty space), solved at WJ_DS.",
+    "description": "Dash into a wall with the jump buffered within dashBoostMax (6) frames of the dash: the airborne wall touch ends the dash and the game's dash boost, SpecialWallJump(0.6, …), bounces up on Velocity.y 730 plus 410 up momentum (the touch must land inside those 6 frames and after the buffer, so a press a full tick later misses it). Demonstrated on the injected superbounce-wall lab map (a plain wall in empty space), solved at WJ_DS.",
     "start": "1_WJ_DS", "labmap": "superbounce-wall",
     "related": ["wallbounce", "fast-fall-wallbounce-double-jump"] },
   { "id": "fast-fall-wallbounce-double-jump", "name": "Superbounce double jump", "category": "glitchless", "requires": "WJ_DS_DJ", "origin": "community",
