@@ -456,6 +456,23 @@ namespace IGTAP.EngineSim
             _floating.currentOrigin -= by;
         }
 
+        /// <summary>
+        /// Labs only (clip): the world rebased around a world point as FloatingOrigin would have done when the player stood
+        /// there, and synced, so the next rebase measures from it.
+        /// </summary>
+        public void LabRebase(Vector3 world)
+        {
+            Vector3 by = world + CurrentOrigin;
+            by.z = 0f;
+            var rebases = new Vector3[_rebases.Length + 1];
+            _rebases.CopyTo(rebases, 0);
+            rebases[_rebases.Length] = by;
+            _rebases = rebases;
+            MoveWorld(by);
+            Physics.WorldMoved();
+            Physics.SyncTransforms();
+        }
+
         /// <summary>The world as a snapshot's rebases left it: from the capture's poses, each rebase again in order.</summary>
         void MaterializeRebases(Vector3[] rebases)
         {

@@ -59,6 +59,7 @@ namespace IGTAP.EngineSim.Cli
                         var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
                         bool was = false;
                         int lastRun = 0;
+                        Vector3 origin = sim.CurrentOrigin;
                         var bf = BindingFlags.Instance | BindingFlags.NonPublic;
                         FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
@@ -67,6 +68,11 @@ namespace IGTAP.EngineSim.Cli
                         RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
                             Vector3 pos = sim.PlayerWorld;
+                            if (sim.CurrentOrigin != origin)
+                            {
+                                Console.WriteLine($"tick {st}: REBASE origin {origin.x:0.0},{origin.y:0.0} -> {sim.CurrentOrigin.x:0.0},{sim.CurrentOrigin.y:0.0} player {pos.x:0.0},{pos.y:0.0}");
+                                origin = sim.CurrentOrigin;
+                            }
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
                                     Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x - sim.CurrentOrigin.x:0},{s.transform.position.y - sim.CurrentOrigin.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"

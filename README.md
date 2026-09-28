@@ -64,8 +64,10 @@
   game itself buys the box and loads the Vman world the run starts in.
 - The one exception to "no teleports" and "unlocks only through the game's purchases": a Full-TAS run with a
   `savestate` (`docs/fulltas.md#savestate-starts`) starts from that savestate, restored with its unlocks in the settled
-  new game. It sets no checkpoint: a quick restart before a real checkpoint (or a course reset point) ends the run. It
-  tests a stretch; it is not a whole-game route.
+  new game. It sets no checkpoint: a quick restart before a real checkpoint (or a course reset point) ends the run. With
+  `rebaseAt` it also rebases the world around that point once the restored player rests, as FloatingOrigin would have
+  with the player there, so the run's next rebase happens where the test needs it. It tests a stretch; it is not a
+  whole-game route.
 - Never change Unity's clock or fixed timestep.
 - Never edit the game's save files.
 - Never autosave while category unlocks or turbo are applied.

@@ -347,6 +347,12 @@ namespace IGTAP.EngineSim
         /// <summary>A FloatingOrigin rebase moved the world's transforms (Simulation.MoveWorld).</summary>
         public void WorldMoved() { _worldMoved = true; }
 
+        /// <summary>
+        /// A query after FloatingOrigin moved the world sees it moved, as the game's do (a 1x probe of Test-Pillar-Ghost: the
+        /// FixedUpdate after MoveOrigin read the spiked wall where it now is, not the geometry left at the old place).
+        /// </summary>
+        void SyncMovedWorld() { if (_worldMoved) SyncTransforms(); }
+
         void AddFixture(ColliderState s, b2Body body, b2Shape shape, float friction, float restitution)
         {
             var def = new b2FixtureDef
@@ -593,6 +599,7 @@ namespace IGTAP.EngineSim
 
         public RaycastHit2D Raycast(Vector2 origin, Vector2 direction, float distance, int layerMask)
         {
+            SyncMovedWorld();
             if (distance == 0f) return default;
             Vector2 dir = direction.normalized;
             if (distance < 0f) { dir = -dir; distance = -distance; }
@@ -912,6 +919,7 @@ namespace IGTAP.EngineSim
 
         public ColliderDistance2D Distance(Collider2D a, Collider2D b)
         {
+            SyncMovedWorld();
             if (!_colliders.TryGetValue(a, out ColliderState sa) || !_colliders.TryGetValue(b, out ColliderState sb)
                 || sa.Fixtures.Count == 0 || sb.Fixtures.Count == 0)
                 return new ColliderDistance2D { isValid = false };

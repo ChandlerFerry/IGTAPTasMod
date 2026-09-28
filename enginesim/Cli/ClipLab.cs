@@ -36,7 +36,7 @@ namespace IGTAP.EngineSim.Cli
                 default:
                     Console.Error.WriteLine("usage:\n  clip map <trace.json> x0 y0 x1 y1 [step]\n"
                         + "  clip run <trace.json> <lab.json> [--threads N] [--out results.csv] [--top N]\n"
-                        + "  clip log <trace.json> <lab.json> <start index> <branch name> [--out file]");
+                        + "  clip log <trace.json> <lab.json> <start index> <branch name> [--out file] [--fields a,b] [--rays rays.json]");
                     return 2;
             }
         }
@@ -192,7 +192,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 switch (key)
                 {
-                    case "savestate": case "x": case "y": case "vx": case "vy": case "mx": case "my": case "scaleX": case "facing": case "collider": case "note": break;
+                    case "savestate": case "x": case "y": case "vx": case "vy": case "mx": case "my": case "scaleX": case "facing": case "collider": case "note": case "rebaseAt": break;
                     default:
                         if (typeof(Movement).GetField(key, Fields) == null) throw new InvalidOperationException("Movement has no field " + key + ".");
                         fields[key] = value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
@@ -218,6 +218,8 @@ namespace IGTAP.EngineSim.Cli
                 fields["momentum"] = $"{m.x.ToString(CultureInfo.InvariantCulture)},{m.y.ToString(CultureInfo.InvariantCulture)}";
                 probeStart["velocity"] = new[] { v.x + m.x, v.y + m.y };
             }
+            // rebaseAt [x, y]: the world rebased around that world point first, as if the player had rebased there.
+            if (start.TryGetValue("rebaseAt", out JsonElement at)) sim.LabRebase(new Vector3(at[0].GetSingle(), at[1].GetSingle(), 0f));
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(probeStart));
             Probe.ApplyStart(sim, doc.RootElement, baseDir);
             // A lab start is mid-air as often as not: the inputs start on the first tick, without the macro's wait for three
@@ -234,13 +236,17 @@ namespace IGTAP.EngineSim.Cli
             public float MaxY, EndY, MaxX, MinX, LaunchVy, BodyVy, BodyVx, LaunchVx;
             public int MaxYStep;
             public string End;
+            /// <summary>The first step the player was on a wall after being off one (-1: never), and where.</summary>
+            public int WallStep;
+            public float WallX, WallY;
         }
 
         static Outcome RunOne(Simulation sim, SimSnapshot from, Lab lab, int startIndex, int branchIndex, List<InputTick> inputs)
         {
             float maxY = float.NegativeInfinity, maxX = float.NegativeInfinity, minX = float.PositiveInfinity, launch = float.NegativeInfinity, bodyVy = float.NegativeInfinity, bodyVx = 0f, launchVx = 0f;
-            int maxStep = 0;
-            float endY = 0f;
+            int maxStep = 0, wallStep = -1;
+            bool offWall = false;
+            float endY = 0f, wallX = 0f, wallY = 0f;
             RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
             {
                 Vector3 p = sim.PlayerWorld;
@@ -252,9 +258,11 @@ namespace IGTAP.EngineSim.Cli
                 bodyVy = Math.Max(bodyVy, body.vy);
                 if (Math.Abs(body.vx) > Math.Abs(bodyVx)) bodyVx = body.vx;
                 endY = p.y;
+                if (!sim.Player.OnWall) offWall = true;
+                else if (wallStep < 0 && offWall) { wallStep = step; wallX = p.x; wallY = p.y; }
             });
             return new Outcome { Start = startIndex, Branch = branchIndex, MaxY = maxY, MaxYStep = maxStep, EndY = endY, MaxX = maxX, MinX = minX,
-                LaunchVy = launch, BodyVy = bodyVy, BodyVx = bodyVx, LaunchVx = launchVx, End = r.EndReason };
+                LaunchVy = launch, BodyVy = bodyVy, BodyVx = bodyVx, LaunchVx = launchVx, End = r.EndReason, WallStep = wallStep, WallX = wallX, WallY = wallY };
         }
 
         static int RunGrid(string[] args)
@@ -313,12 +321,12 @@ namespace IGTAP.EngineSim.Cli
             {
                 using var w = new StreamWriter(outPath);
                 string[] keys = lab.Starts.SelectMany(s => s.Keys).Where(k => k != "savestate").Distinct().ToArray();
-                w.WriteLine("start,branch," + string.Join(",", keys) + ",maxY,maxYStep,endY,minX,maxX,launchVy,launchVx,bodyVy,bodyVx,end");
+                w.WriteLine("start,branch," + string.Join(",", keys) + ",maxY,maxYStep,endY,minX,maxX,launchVy,launchVx,bodyVy,bodyVx,end,wallStep,wallX,wallY");
                 foreach (Outcome o in valid)
                 {
                     var st = lab.Starts[o.Start];
                     w.WriteLine(o.Start + ",\"" + lab.Branches[o.Branch].name + "\"," + string.Join(",", keys.Select(k => st.TryGetValue(k, out JsonElement v) ? v.GetRawText().Trim('"').Replace(',', ';') : ""))
-                        + $",{o.MaxY:0.##},{o.MaxYStep},{o.EndY:0.##},{o.MinX:0.##},{o.MaxX:0.##},{o.LaunchVy:0.#},{o.LaunchVx:0.#},{o.BodyVy:0.#},{o.BodyVx:0.#},\"{o.End}\"");
+                        + $",{o.MaxY:0.##},{o.MaxYStep},{o.EndY:0.##},{o.MinX:0.##},{o.MaxX:0.##},{o.LaunchVy:0.#},{o.LaunchVx:0.#},{o.BodyVy:0.#},{o.BodyVx:0.#},\"{o.End}\",{o.WallStep},{o.WallX:0.##},{o.WallY:0.##}");
                 }
             }
             Console.WriteLine($"{valid.Count} runs in {clock.Elapsed.TotalSeconds:0.0}s; top {top} by maxY:");
@@ -344,16 +352,34 @@ namespace IGTAP.EngineSim.Cli
             var rows = new List<Dictionary<string, object>>();
             Dictionary<string, object> first = Probe.Row(sim, -1, extra, extraInfos);
             rows.Add(first);
-            RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step => rows.Add(Probe.Row(sim, step, extra, extraInfos)));
+            // --rays file: {"rays": [[dx, dy, dirX, dirY, length, layerMask], ...]} cast from the player's transform (the physics
+            // frame the game's scripts see) after every step, as "ray i: distance" (or "-" for no hit).
+            string raysPath = OptS(args, "--rays", null);
+            float[][] rays = raysPath == null ? Array.Empty<float[]>() : JsonDocument.Parse(File.ReadAllText(raysPath)).RootElement.GetProperty("rays")
+                .EnumerateArray().Select(a => a.EnumerateArray().Select(v => v.GetSingle()).ToArray()).ToArray();
+            var rayRows = new List<string>();
+            RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
+            {
+                rows.Add(Probe.Row(sim, step, extra, extraInfos));
+                if (rays.Length == 0) return;
+                Vector3 at = sim.Player.transform.position;
+                rayRows.Add($"t {at.x:0.#},{at.y:0.#} o {sim.CurrentOrigin.x:0.#},{sim.CurrentOrigin.y:0.#} " + string.Join(" ", rays.Select((a, i) =>
+                {
+                    RaycastHit2D hit = Physics2D.Raycast(new Vector2(at.x + a[0], at.y + a[1]), new Vector2(a[2], a[3]), a[4], (int)a[5]);
+                    return "ray" + i + "=" + (hit.collider == null ? "-" : hit.distance.ToString("0.##", CultureInfo.InvariantCulture));
+                })));
+            });
             var sb = new StringBuilder();
             sb.AppendLine("end: " + r.EndReason);
-            foreach (var row in rows)
+            for (int n = 0; n < rows.Count; n++)
             {
+                var row = rows[n];
                 int input = row.TryGetValue("input", out object i) ? (int)i : -1;
                 string tick = input >= 0 && input < inputs.Count ? TickText(inputs[input]) : "";
                 sb.AppendLine($"{row["step"],3} in{input,3} {tick,-12} pos {row["x"],9},{row["y"],9} V {row["vx"],7},{row["vy"],7} m {row["mx"],7},{row["my"],7} "
                     + $"body {row["bvx"],7},{row["bvy"],7} g{B(row["ground"])} w{B(row["wall"])} {row["mode"],-5} d{B(row["dash"])} f{row["f"]} R{B(row["facingRight"])} "
-                    + string.Join(" ", extra.Select(e => e + "=" + (row[e] is float[] a ? string.Join(",", a) : row[e]))));
+                    + string.Join(" ", extra.Select(e => e + "=" + (row[e] is float[] a ? string.Join(",", a) : row[e])))
+                    + (n > 0 && n - 1 < rayRows.Count ? " | " + rayRows[n - 1] : ""));
             }
             string outPath = OptS(args, "--out", null);
             if (outPath != null) File.WriteAllText(outPath, sb.ToString()); else Console.Write(sb);

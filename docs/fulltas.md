@@ -150,6 +150,16 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
+`"rebaseAt": [x, y]` (world) on a savestate run moves the world once the restored player has rested: FloatingOrigin's own
+moves (roots, camera, backgrounds, particles, trails, lines, `currentOrigin`) by that point's scene position, then a physics
+sync, as if the game had rebased with the player standing there. The player then rests again and the start is taken, so
+the trace, the offline search and playback all start in that frame, and the run's next rebase comes 17500 from the point
+(the player has to be inside that, or the start fails). `Test-Pillar-Ghost` uses it: from the GlobalCash box under the
+spiked pillar, a cling lift on the pillar's base crosses 17500 from its point at the lift's top. That run showed that
+the game's first FixedUpdate after a rebase already sees the moved world: the offline engine used to read the old place
+for that tick (a "ghost" wall that ended the dash in the spikes), and dies there now as the game does
+(`PhysicsWorld.SyncMovedWorld`).
+
 A savestate holds no checkpoint, and the plugin writes none: `respawnPoint` stays the new game's (the Vman spawn, world
 (-61, -301)), a place the run never reached. Until a real checkpoint (`checkpointScript`) moves it, or a start gate sets
 a course reset point, a quick restart would teleport there, so it ends the run (`Quick restart with no checkpoint

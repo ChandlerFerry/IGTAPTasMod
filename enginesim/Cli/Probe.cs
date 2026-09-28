@@ -129,7 +129,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (JsonProperty field in fields.EnumerateObject())
                     SetField(sim.Player, field.Name, field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : field.Value.GetRawText());
             Transform t = sim.Player.transform;
-            Vector3 scene = new Vector3(position.x + sim.Origin.x, position.y + sim.Origin.y, t.position.z);
+            Vector3 scene = new Vector3(position.x + sim.CurrentOrigin.x, position.y + sim.CurrentOrigin.y, t.position.z);
             if (scaleX.HasValue) t.localScale = new Vector3(scaleX.Value, t.localScale.y, t.localScale.z);
             sim.Physics.ResetPlayer(new Vector2(scene.x, scene.y), velocity, 0f, 0f);
             t.position = scene;

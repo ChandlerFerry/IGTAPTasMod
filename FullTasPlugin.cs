@@ -23,6 +23,13 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string start;
             /// <summary>A savestate id: the run starts from it, restored in the new game (or Vman world) with the unlocks it carries.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string savestate;
+            /// <summary>
+            /// A savestate start's rebase point (world x, y): once the restored player rests, the world is rebased around it as
+            /// FloatingOrigin would have done with the player there, so the run's next rebase measures from it. Test runs
+            /// only (docs/fulltas.md#savestate-starts).
+            /// </summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public float[] rebaseAt;
+            [JsonIgnore] public Vector2? RebaseAt { get { return rebaseAt == null || rebaseAt.Length < 2 ? (Vector2?)null : new Vector2(rebaseAt[0], rebaseAt[1]); } }
             /// <summary>Other runs whose offline bests seed this run's solve: from each of their goals on, their inputs are tried where this run reaches that goal.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> seeds;
             public List<string> goals = new List<string>();
@@ -238,7 +245,8 @@ namespace IGTAPTasMod
 
         bool FullTasRunChanged(FullTasRunDef old, FullTasRunDef run)
         {
-            return old == null || old.start != run.start || old.savestate != run.savestate || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
+            return old == null || old.start != run.start || old.savestate != run.savestate || old.RebaseAt != run.RebaseAt
+                || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
         }
 
         void RetireOutdatedFullTasRoutes(FullTasRunDef run, bool changed)
@@ -274,6 +282,8 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": start is \"" + VmanStart + "\" (a Vman speedrun's world) or unset (a new game), not \"" + run.start + "\".");
             if (run.savestate != null && _savestates.Find(s => s.id == run.savestate) == null)
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": no savestate " + run.savestate + ".");
+            if (run.rebaseAt != null && (run.savestate == null || run.rebaseAt.Length != 2))
+                throw new InvalidOperationException("Full-TAS run " + run.name + ": rebaseAt is a world [x, y] and needs a savestate start.");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
         }
 
@@ -340,7 +350,7 @@ namespace IGTAPTasMod
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, seeds = old?.seeds, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
@@ -649,6 +659,46 @@ namespace IGTAPTasMod
             _engine.Quiet = _vmanSetupQuiet;
         }
 
+        static Vector2? RebaseOf(JObject header)
+        {
+            return header["rebaseAt"] is JArray a && a.Count == 2 ? new Vector2((float)a[0], (float)a[1]) : (Vector2?)null;
+        }
+
+        static readonly System.Reflection.MethodInfo[] FloatingOriginMoves = new[] { "MoveRootTransforms", "MoveParticles", "MoveTrailRenderers", "MoveLineRenderers" }
+            .Select(n => AccessTools.Method(typeof(FloatingOrigin), n)).ToArray();
+
+        /// <summary>
+        /// A savestate start's rebaseAt: FloatingOrigin.MoveOrigin's own moves (roots, camera, backgrounds, particles, trails, lines,
+        /// currentOrigin) by the rebase point's scene position, done at once while the player rests, then a physics sync. The
+        /// player has to stay inside Threshold of it, or the game rebases again on the next frame.
+        /// </summary>
+        void ApplyNewGameRebase(Movement player)
+        {
+            _newGameRebased = true;
+            FloatingOrigin origin = CurrentFloatingOrigin();
+            if (origin == null) { FailNewGame("No FloatingOrigin to rebase."); return; }
+            Vector2 at = _newGameRebaseAt.Value;
+            var offset = new Vector3(at.x + origin.currentOrigin.x, at.y + origin.currentOrigin.y, 0f);
+            Vector2 after = (Vector2)(player.transform.position - offset);
+            if (after.magnitude >= origin.Threshold)
+            {
+                FailNewGame("rebaseAt " + at + " is " + after.magnitude.ToString("0.#") + " from the player, past FloatingOrigin's Threshold " + origin.Threshold + ".");
+                return;
+            }
+            FloatingOriginMoves[0].Invoke(origin, new object[] { offset });
+            Camera.main.GetComponent<cameraMover>().Translate(-offset);
+            Camera.main.transform.position += offset;
+            foreach (backgroundScroller scroller in FindObjectsByType<backgroundScroller>(FindObjectsSortMode.None)) scroller.Translate(offset);
+            if (origin.UpdateParticles) FloatingOriginMoves[1].Invoke(origin, new object[] { offset });
+            if (origin.UpdateTrailRenderers) FloatingOriginMoves[2].Invoke(origin, new object[] { offset });
+            if (origin.UpdateLineRenderers) FloatingOriginMoves[3].Invoke(origin, new object[] { offset });
+            origin.currentOrigin -= offset;
+            Physics2D.SyncTransforms();
+            _newGameNotes.Add("rebased around " + at.ToString("0.#") + " (player " + after.magnitude.ToString("0.#") + " from it)");
+            _newGamePhase = 2;
+            _newGameFrame = Time.frameCount;
+        }
+
         void ApplyNewGameSavestate(Movement player)
         {
             // Reread the file: a hand edit (the unlocks a savestate start carries) applies without a relaunch.
@@ -801,7 +851,7 @@ namespace IGTAPTasMod
             if (!fresh && _newGamePhase == 0)
             {
                 if (_solverRunning) throw new InvalidOperationException("A Full-TAS run needs a fresh new game: stop the Optimize run first.");
-                LoadNewGame(null, run.Vman, run.savestate);
+                LoadNewGame(null, run.Vman, run.savestate, run.RebaseAt);
                 pending.loaded = true;
             }
             _fullTasPending = pending;
@@ -826,7 +876,7 @@ namespace IGTAPTasMod
                     CompleteFullTasPending(500, new { ok = false, error = pending.what + ": no fresh " + (pending.run.Vman ? "Vman speedrun" : "new game") + (pending.run.savestate == null ? "" : " from savestate " + pending.run.savestate) + " in the world." });
                     return;
                 }
-                LoadNewGame(null, pending.run.Vman, pending.run.savestate);
+                LoadNewGame(null, pending.run.Vman, pending.run.savestate, pending.run.RebaseAt);
                 pending.loaded = true;
                 return;
             }
@@ -884,6 +934,12 @@ namespace IGTAPTasMod
                 w.WritePropertyName("format"); w.WriteValue(FullTasTraceFormat);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
+                if (run.rebaseAt != null)
+                {
+                    w.WritePropertyName("rebaseAt"); w.WriteStartArray();
+                    w.WriteValue(run.rebaseAt[0]); w.WriteValue(run.rebaseAt[1]);
+                    w.WriteEndArray();
+                }
                 w.WritePropertyName("goals"); w.WriteStartArray();
                 foreach (FullTasGoal g in goals)
                 {
@@ -984,7 +1040,7 @@ namespace IGTAPTasMod
             if (_fullTasPending != null) throw new InvalidOperationException("Busy: " + _fullTasPending.what + ".");
             if (route == null) throw new InvalidOperationException("Full-TAS run " + run.name + " has no route yet.");
             var tracker = new FullTasTracker(ResolveFullTasGoals(run));
-            StartNewGame(null, run.Vman, run.savestate);
+            StartNewGame(null, run.Vman, run.savestate, run.RebaseAt);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
             int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0);
@@ -1263,6 +1319,7 @@ namespace IGTAPTasMod
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
+                    && RebaseOf(header) == run.RebaseAt
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)

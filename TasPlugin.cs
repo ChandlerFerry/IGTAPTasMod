@@ -835,6 +835,8 @@ namespace IGTAPTasMod
         // captured when the player is at rest again from there, with the unlocks the savestate carries.
         string _newGameSavestate;
         bool _newGameSavestateApplied;
+        Vector2? _newGameRebaseAt;
+        bool _newGameRebased;
         FullTasUnlocks _newGameUnlocks;
         Movement _vmanSetupPlayer;
         bool _vmanSetupQuiet;
@@ -861,14 +863,14 @@ namespace IGTAPTasMod
             SaveloaderIsLoading.SetValue(__instance, false);
         }
 
-        void StartNewGame(WebStudioRequest request, bool vman, string savestate)
+        void StartNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
-            LoadNewGame(request, vman, savestate);
+            LoadNewGame(request, vman, savestate, rebaseAt);
         }
 
-        void LoadNewGame(WebStudioRequest request, bool vman, string savestate)
+        void LoadNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
@@ -887,6 +889,8 @@ namespace IGTAPTasMod
             _newGameVman = vman;
             _newGameSavestate = savestate;
             _newGameSavestateApplied = false;
+            _newGameRebaseAt = savestate == null ? null : rebaseAt;
+            _newGameRebased = false;
             _newGameUnlocks = default;
             _vmanSetupPlayer = null;
             _startState = null;
@@ -978,6 +982,7 @@ namespace IGTAPTasMod
         {
             if (_newGameVman && !VmanScript.isCurrentlyVman) { BuyVmanStart(player); return; }
             if (_newGameSavestate != null && !_newGameSavestateApplied) { ApplyNewGameSavestate(player); return; }
+            if (_newGameRebaseAt.HasValue && !_newGameRebased) { ApplyNewGameRebase(player); return; }
             _newGamePhase = 0;
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             bool quiet = _engine.Quiet;
@@ -1023,7 +1028,7 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate; }
+        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate && _newGameRebaseAt == run.RebaseAt; }
 
         TurboRunner.Snapshot NewGameStart(FullTasRunDef run)
         {
