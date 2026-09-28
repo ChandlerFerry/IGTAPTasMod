@@ -100,6 +100,9 @@ namespace IGTAP.EngineSim
             get { return _start[Cash] - _spent[Cash] + _awarded[Cash] + (Economy?.Earned ?? 0.0); }
         }
 
+        /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
+        internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
+
         /// <summary>
         /// Whether the run holds enough now to buy each of these boxes once (their costs added per currency); null when one of
         /// them can't be bought (not active: capped, or not unlocked yet), which Cash doesn't change.

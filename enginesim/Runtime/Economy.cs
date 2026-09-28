@@ -205,6 +205,21 @@ namespace IGTAP.EngineSim
 
         double Global(globalStats.globalUpgradeSet upgrade) { return _global[(int)upgrade]; }
 
+        // Reads for zip-plan's start state: a course's upgrades, the global upgrades and a course's clone count and path length as
+        // the run holds them now (the objects keep their loaded values).
+        internal double LocalOf(localUpgrades script, localUpgrades.localUpgradeSet upgrade)
+        {
+            int i = LocalIndex(script);
+            return i < 0 ? 0.0 : _locals[i][(int)upgrade];
+        }
+
+        internal double GlobalOf(globalStats.globalUpgradeSet upgrade) { return Global(upgrade); }
+
+        internal (int count, float pathLength)? ClonesOf(clonesScript script)
+        {
+            return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? (c.V.Count, c.V.PathLength) : null;
+        }
+
         bool Effect(Dictionary<globalStats.globalUpgradeSet, double> dict, globalStats.globalUpgradeSet upgrade, out double value)
         {
             if (dict != null && dict.TryGetValue(upgrade, out value)) return true;

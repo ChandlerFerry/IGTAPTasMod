@@ -120,46 +120,6 @@ namespace IGTAPTasMod
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%-]+)-([\d.]+)\.json$");
-        static readonly (string token, string path, int sibling)[] FullTasBoxes = {
-            ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
-            ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
-            ("buywj", "Courses/course 1/localUpgrades/Wall jump", 2),
-            ("buyomni", "Courses/course 1/localUpgrades/FreeOmnidash", 5),
-            ("buyreward2", "Courses/course 2/localUpgrades/CashPerLoop", 0),
-            ("buyclone2", "Courses/course 2/localUpgrades/Clone", 1),
-            ("buyclonemult2", "Courses/course 2/localUpgrades/CloneMult", 2),
-            ("buyglobalreward2", "Courses/course 2/localUpgrades/GLOBALcashPerLoop", 3),
-            ("buyds", "Courses/course 2/localUpgrades/DashUnlock", 4),
-            ("buyreward3", "Courses/course 3/localUpgrades/CashPerLoop", 0),
-            ("buyclone3", "Courses/course 3/localUpgrades/CloneCount", 1),
-            ("buyclonemult3", "Courses/course 3/localUpgrades/CloneMult", 2),
-            ("buyfast3", "Courses/course 3/localUpgrades/FastCloneChance", 3),
-            ("buyglobalreward3", "Courses/course 3/localUpgrades/GLOBALcash", 4),
-            ("buydj", "Courses/course 3/localUpgrades/Double jump", 5),
-            ("buyfree3", "Courses/course 3/localUpgrades/GLOBALWatt", 6),
-            ("buyclonespeed", "Courses/course 3/localUpgrades/GLOBALclonespeedmax", 9),
-            ("buystatue", "Courses/course 3/localUpgrades/enablePrestige", 10),
-            ("buyreward4", "Courses/course 4/localUpgrades/CashPerloop", 0),
-            ("buyclone4", "Courses/course 4/localUpgrades/Clone", 1),
-            ("buyclonemult4", "Courses/course 4/localUpgrades/CloneMult", 2),
-            ("buybig4", "Courses/course 4/localUpgrades/BigCloneChance", 3),
-            ("buyfast4", "Courses/course 4/localUpgrades/FastCloneChance", 4),
-            ("buymaxsize4", "Courses/course 4/localUpgrades/MaxCloneSize", 5),
-            ("buyglobalreward4", "Courses/course 4/localUpgrades/MaxCloneSize", 6),
-            ("buyswap", "Courses/course 4/localUpgrades/SwapBlocksOnce/endDemo", 7),
-            ("buyfree4a", "Courses/course 4/localUpgrades/GLOBALfastCloneChance", 8),
-            ("buyfree4b", "Courses/course 4/localUpgrades/GLOBALcashperloop", 9),
-            ("buyfree4c", "Courses/course 4/localUpgrades/GLOBALcash", 10),
-            ("buyprestige4", "Courses/course 4/localUpgrades/PrestigeUpgradeBox4", 11),
-            ("buyreward5", "Courses/course 5/localUpgrades/cashPerLoop", 0),
-            ("buyclone5", "Courses/course 5/localUpgrades/Clones", 1),
-            ("buyclonemult5", "Courses/course 5/localUpgrades/Clone mult", 2),
-            ("buyglobalreward5", "Courses/course 5/localUpgrades/global cash ", 3),
-            ("buybig5", "Courses/course 5/localUpgrades/Big clone chance", 4),
-            ("buyfast5", "Courses/course 5/localUpgrades/Fast clone chance", 5),
-            ("buyprestige5", "Courses/course 5/localUpgrades/prestige upgrade box", 6),
-            ("buyblockswap5", "Courses/course 5/localUpgrades/SwapBlocksOnDash", 7),
-            ("buyfree5", "Courses/course 5/localUpgrades/GLOBALCash", 8) };
         static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
         const int MaxBuyGoalBoxes = 8;
 

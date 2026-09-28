@@ -197,6 +197,15 @@ namespace IGTAPTasMod
         /// </summary>
         Savestate PlaceSavestate(JObject body)
         {
+            Savestate placed = PlacedSavestate(body);
+            _savestates.Insert(0, placed);
+            WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(placed.id) + ".json"), placed, false);
+            return placed;
+        }
+
+        /// <summary>The placed savestate of <see cref="PlaceSavestate"/>, not stored (a lab map's start played by hand).</summary>
+        Savestate PlacedSavestate(JObject body)
+        {
             Movement movement = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
             string fromId = Text(body, "from");
             Savestate source = fromId.Length == 0 ? SavestateService.Capture(movement, "", MacroLibrary.CurrentSchemaVersion)
@@ -236,8 +245,6 @@ namespace IGTAPTasMod
                 placed.bodyFields["linearVelocity"] = SnapshotVector(v + m);
                 placed.bodyFields.Remove("velocity");
             }
-            _savestates.Insert(0, placed);
-            WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(placed.id) + ".json"), placed, false);
             return placed;
         }
 

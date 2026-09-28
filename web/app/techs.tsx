@@ -9,11 +9,12 @@ export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" 
 export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; confirmed: boolean; omniDash?: boolean; floatingOrigin?: boolean; fastForward?: number; description: string; note?: string | null; detector?: string | null;
   related: string[]; start?: string | null; routeId?: string | null; savestate: boolean; ticks: number; labmap?: string | null };
 export type LabShape = { kind: string; at?: number[] | null; size?: number[] | null; points?: number[][] | null; layer: string; tag: string; trigger: boolean; spike: boolean };
-export type LabInfo = { id: string; tech: string; name: string; category: string; techNote?: string | null; anchor: number[]; region?: number[] | null; finish: number[];
-  start: { x?: number | null; y?: number | null; vx?: number | null; vy?: number | null; facing?: number | null; fields?: Record<string, unknown> | null };
-  shapes: LabShape[]; demoTicks?: number | null; demoInputTicks?: number | null; error?: string };
+export type LabInfo = { id: string; tech?: string | null; name?: string; category?: string; techNote?: string | null; anchor?: number[]; region?: number[] | null; finish?: number[];
+  start?: { x?: number | null; y?: number | null; vx?: number | null; vy?: number | null; facing?: number | null; fields?: Record<string, unknown> | null };
+  shapes?: LabShape[]; hand?: { shapes: LabShape[]; start?: { x?: number | null; y?: number | null; facing?: number | null } | null } | null;
+  demoTicks?: number | null; demoInputTicks?: number | null; demoPath?: number[][] | null; error?: string };
 export type TechSeen = { detector: string; label: string; start: number; end: number; input: number };
-export type TechState = { list: Tech[]; detectors: { id: string; label: string }[]; labs?: LabInfo[];
+export type TechState = { list: Tech[]; detectors: { id: string; label: string }[]; labs?: LabInfo[]; injectedLab?: string | null;
   seen: { routeId: string; route: string; running: boolean; items: TechSeen[] } | null };
 
 type Command = (path: string, body?: unknown) => Promise<boolean>;
@@ -90,6 +91,8 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
       </div>
     </div>}
 
+    {!!techs.labs?.length && <LabLoader labs={techs.labs} injected={techs.injectedLab ?? null} byId={byId} running={running} onCommand={onCommand} onFocus={setFocus} />}
+
     {STATUSES.map(([confirmed, title, blurb]) => {
       const group = shown.filter(t => t.confirmed === confirmed);
       return <div key={title} className={`techGroup ${confirmed ? "confirmed" : "unconfirmed"}`}>
@@ -148,41 +151,80 @@ function TechCard({tech, byId, techs, running, selectedRoute, editing, focused, 
         <button className="secondary" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
       </div>
     </div>
-    {lab && <div className="techLab" title={lab.techNote ?? `${lab.shapes.length} shapes at anchor ${lab.anchor[0]},${lab.anchor[1]} (world frame)`}>
+    {lab && <div className="techLab" title={lab.techNote ?? (lab.anchor ? `${lab.shapes?.length ?? 0} shapes at anchor ${lab.anchor[0]},${lab.anchor[1]} (world frame)` : undefined)}>
       <div className="techLabHead"><strong>Lab map</strong><code>{lab.id}</code>
         {lab.demoTicks ? <span className="demoInfo">solved exactly · {lab.demoTicks} physics ticks · {lab.demoInputTicks} inputs</span>
           : <span className="demoInfo missing">{lab.error ?? "not solved yet"}</span>}
+        <LabButtons lab={lab} injected={techs.injectedLab === lab.id} running={running} onCommand={onCommand} />
       </div>
-      {lab.shapes.length > 0 && <LabPreview lab={lab} />}
+      {!!lab.shapes?.length && <LabPreview lab={lab} />}
       {lab.techNote && <p className="techNote">{lab.techNote}</p>}
     </div>}
     {editing && <TechEditor tech={tech} techs={techs} running={running} selectedRoute={selectedRoute} onCommand={onCommand} onEditInputs={onEditInputs} onClose={onEdit} />}
   </article>;
 }
 
+function LabButtons({lab, injected, running, onCommand}: {lab: LabInfo; injected: boolean; running: boolean; onCommand: Command}) {
+  const unlocks = lab.category ? ` with ${lab.category} unlocks` : "";
+  return <span className="buttonRow">
+    <button className="secondary" disabled={running || !!lab.error} title={`Builds lab map ${lab.id} in empty map space and puts you at its start${unlocks}. Autosave and route saving are off until you unload it.`}
+      onClick={() => onCommand("/labmap/inject", { id: lab.id, place: true })}>{injected ? "↺ Back to start" : "Load lab"}</button>
+    {injected && <button className="secondary" disabled={running} title="Removes the lab and puts you, your unlocks and your course back where they were"
+      onClick={() => onCommand("/labmap/restore")}>Unload</button>}
+  </span>;
+}
+
+function LabLoader({labs, injected, byId, running, onCommand, onFocus}: {labs: LabInfo[]; injected: string | null; byId: Map<string, Tech>; running: boolean;
+  onCommand: Command; onFocus: (id: string) => void}) {
+  return <div className="techLabs">
+    <div className="techLabsHead"><div><p className="eyebrow">LAB MAPS</p><h3>Play a lab by hand</h3></div>
+      <span className={`labStatus ${injected ? "on" : ""}`}>{injected ? `Loaded: ${injected}` : "No lab loaded"}</span></div>
+    <p className="techBlurb">Load builds the lab and stands you on its floor with its unlocks, far from every route; dying or a quick restart puts you
+      back there. Load again to go back to the start. Unload puts you, your unlocks and your course back (a scene change or a playback&apos;s end does too).
+      Nothing is autosaved and no route can be saved while a lab is loaded. The dashed floor is only there when you play it by hand, never in its demo.</p>
+    <div className="techLabGrid">
+      {labs.map(lab => { const tech = lab.tech ? byId.get(lab.tech) : undefined;
+        return <div key={lab.id} className={`techLab ${injected === lab.id ? "loaded" : ""}`}>
+          <div className="techLabHead"><strong>{lab.name && lab.name !== lab.id ? lab.name : lab.id}</strong>{lab.category && <code>{lab.category}</code>}
+            {tech && <button className="relatedChip" onClick={() => onFocus(tech.id)} title={`Show ${tech.name}`}>{tech.name}</button>}
+            <LabButtons lab={lab} injected={injected === lab.id} running={running} onCommand={onCommand} /></div>
+          {lab.error ? <p className="demoInfo missing">{lab.error}</p> : !!lab.shapes?.length && <LabPreview lab={lab} />}
+        </div>; })}
+    </div>
+  </div>;
+}
+
 function LabPreview({lab}: {lab: LabInfo}) {
-  // The lab drawn in its own frame: shapes relative to the anchor, the start's dot and arrow, the finish box dashed.
-  const parts: {x: number; y: number; w: number; h: number; fill: string}[] = [];
+  // The lab drawn in its own frame: shapes relative to the anchor, the start's dot and arrow, the finish box dashed; the
+  // hand-play floor (only there when you play it) outlined, and where you stand for it in green.
+  const parts: {x: number; y: number; w: number; h: number; fill: string; hand: boolean}[] = [];
   const lines: {points: string; stroke: string}[] = [];
-  for (const s of lab.shapes) {
+  const shapes = [...(lab.shapes ?? []).map(s => ({ s, hand: false })), ...(lab.hand?.shapes ?? []).map(s => ({ s, hand: true }))];
+  for (const {s, hand} of shapes) {
     const fill = s.spike || s.layer === "Spikes" ? "#c0392b" : s.trigger ? "#8e44ad" : s.tag === "Moss" ? "#27ae60" : "#7f8c8d";
-    if (s.kind === "box" && s.at && s.size) parts.push({x: s.at[0] - s.size[0] / 2, y: s.at[1] - s.size[1] / 2, w: s.size[0], h: s.size[1], fill});
+    if (s.kind === "box" && s.at && s.size) parts.push({x: s.at[0] - s.size[0] / 2, y: s.at[1] - s.size[1] / 2, w: s.size[0], h: s.size[1], fill, hand});
     else if (s.points && s.points.length > 1) lines.push({points: s.points.map(p => `${p[0]},${p[1]}`).join(" "), stroke: fill});
   }
-  const fx = lab.finish[0], fy = lab.finish[1], fw = lab.finish[2], fh = lab.finish[3];
-  const sx = lab.start.x ?? 0, sy = lab.start.y ?? 0;
+  const handStart = lab.hand?.start;
+  const [fx, fy, fw, fh] = lab.finish ?? [0, 0, 0, 0];
+  const start = lab.start ?? {};
+  const sx = start.x ?? 0, sy = start.y ?? 0;
   const xs: number[] = [sx, fx - fw / 2, fx + fw / 2], ys: number[] = [sy, fy - fh / 2, fy + fh / 2];
+  if (handStart) { xs.push(handStart.x ?? 0); ys.push(handStart.y ?? 0); }
   for (const b of parts) { xs.push(b.x, b.x + b.w); ys.push(b.y, b.y + b.h); }
+  for (const [x, y] of lab.demoPath ?? []) { xs.push(x); ys.push(y); }
   for (const l of lines) for (const p of l.points.split(" ")) { const [x, y] = p.split(",").map(Number); xs.push(x); ys.push(y); }
   const pad = Math.max(20, (Math.max(...xs) - Math.min(...xs)) * 0.05);
   const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
   const flip = (y: number) => y0 + y1 - y;
   return <svg viewBox={`${x0} ${flip(y1)} ${x1 - x0} ${y1 - y0}`} style={{width: "100%", maxHeight: 180, background: "#11151c", borderRadius: 6, margin: "4px 0"}}>
-    {parts.map((b, i) => <rect key={i} x={b.x} y={flip(b.y + b.h)} width={b.w} height={b.h} fill={b.fill} opacity={0.85} />)}
+    {parts.map((b, i) => <rect key={i} x={b.x} y={flip(b.y + b.h)} width={b.w} height={b.h} fill={b.hand ? "none" : b.fill} stroke={b.hand ? "#5fd4ff" : "none"} strokeWidth={4} strokeDasharray={b.hand ? "10 8" : undefined} opacity={0.85} />)}
     {lines.map((l, i) => <polyline key={i} points={l.points.split(" ").map(p => { const [x, y] = p.split(",").map(Number); return `${x},${flip(y)}`; }).join(" ")} fill="none" stroke={l.stroke} strokeWidth={4} />)}
+    {lab.demoPath && lab.demoPath.length > 1 && <polyline points={lab.demoPath.map(([x, y]) => `${x},${flip(y)}`).join(" ")} fill="none" stroke="#9fe3ff" strokeWidth={3} strokeDasharray="6 6" opacity={0.8} />}
     <rect x={fx - fw / 2} y={flip(fy + fh / 2)} width={fw} height={fh} fill="none" stroke="#f1c40f" strokeWidth={6} strokeDasharray="18 12" />
     <circle cx={sx} cy={flip(sy)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#fff" />
-    <line x1={sx} y1={flip(sy)} x2={sx + (lab.start.vx ?? 0) * 0.12} y2={flip(sy + (lab.start.vy ?? 0) * 0.12)} stroke="#fff" strokeWidth={5} />
+    <line x1={sx} y1={flip(sy)} x2={sx + (start.vx ?? 0) * 0.12} y2={flip(sy + (start.vy ?? 0) * 0.12)} stroke="#fff" strokeWidth={5} />
+    {handStart && <circle cx={handStart.x ?? 0} cy={flip(handStart.y ?? 0)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#2ecc71" />}
   </svg>;
 }
 

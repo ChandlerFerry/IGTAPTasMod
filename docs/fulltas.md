@@ -22,7 +22,7 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 |---|---|
 | `start:N` | Course N's start gate starts its timer (it wasn't timing). |
 | `finish:N` | The player's own finish at course N's end gate. |
-| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). |
+| `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). Area 2: Course 6 `buyreward6`, `buygreen6`, `buyclone6`, `buyfree6a`–`buyfree6e` (the free global cash boxes); Course 7 `buyreward7`, `buyclone7`, `buyclonemult7`, `buygreen7`; Course 8 `buyclonecd8`, `buyclonegp8`, `buycd8` (clone dust on), `buycddigits8`; Course 9 `buyreward9`, `buyclone9`, `buygreen9`, `buycd9`, `buyatomlevel9`, `buyclonemult9`; Course 10 `buyreward10`, `buyfree10a`, `buyfree10b`, `buyclone10`, `buyclonemult10`, `buywatts10`, `buynp10`, `buyatomlevel10`, `buygreen10`; the atom box `buyatom`; the upgrade tree `buyplant` and `buytree<N>` (TreePart N's box: `buytree16` activates the zip movers; no `buytree23`, the OmniDash toggle); Tree 2's `buyplant2`. The table is `FullTasGoal.Boxes` (`FullTas.cs`), shared with enginesim. |
 | `reward:bonusN` | The game buys bonus N's reward box (the upgrade box nearest its end rect: the bonus's unlock). |
 | `at:x,y,w,h` | An area goal: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. Not the game's checkpoints (`checkpointScript`), which set where a death or quick restart off a course respawns. |
 | `at:x,y,w,h,from=left+bottom` | The same area goal, entered from one of these sides (`left`, `right`, `bottom`, `top`): on the tick the colliders first touch the rect, after the tick before they were wholly outside it on that side. Touching it any other way doesn't count; the player must leave and come in again. |
@@ -554,6 +554,67 @@ piece. After a plan changes the goals, the builder then plays the old route's la
 stands as it did, and only searches the steps that changed: `FalseEnding-Any%`'s run after the new Course 1 plan (goal
 129 on) was rebuilt in 3 minutes with the 499.42 s route harvested, where the build had done 25 goals in 3 minutes
 without it.
+
+### Zip planner
+
+```powershell
+& $exe zip-plan $traces\fulltas-TouchGrass-ANY%.json --route $traces\fulltas\TouchGrass-ANY%.json --minutes 5 --out zip.json
+```
+
+`zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
+NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
+(green clones, clone dust, atoms and the tree are unmodeled, below). The start is the trace's start, or `--route FILE`
+(a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
+global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
+engine holds them there.
+
+The model follows the decompiled code:
+
+- **Clones** (`clonesScript.SpawnClone`): off screen a course with clones and a path spawns one per second and pays
+  `ceil(value (2j+1) / previous interval)`, the interval being path / clones with the speed and size rolls
+  (`Random.Range(0, 101)` against the chances, per tier) averaged exactly; the course being lapped pays on screen. Watts
+  are `reward × clone multiplier`, green power `gpReward × clone dust multiplier` on a green clone (a fraction
+  `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward × clone dust multiplier` with
+  clone dust on. The `ceil` makes every course with one clone worth at least one GP per green spawn.
+- **Rewards** (`courseScript.UpdateReward`): W, GP, CD rewards and the comp boost (`2 + 0.5 × strength`, `30 + 10 ×
+  time` s, renewed by a lap once TreePart12's box is bought).
+- **Atoms** (`AtomColliderSystem`): the atom box (`AtomUpgrades/AtomUpgrade`, GP, buy-max) first resets Courses 1-10
+  that aren't exempt (local upgrades, clone counts; paths kept) and sets W to 0 (`doNewAtomPrestige`), then queues its
+  atoms; one lands every 0.4 s (+1 NP), its tier from `atomLevelChance × 25` per atom, `3 + t` atoms of tier t merge
+  into one of t + 1 (craft time from `HandleTierLogic`), the first merge into a new tier pays 1000 ticks of NP. The
+  collider stops while zone 1 is loaded. The atom level boxes (`buyatomlevel9`, `buyatomlevel10`) clear the atoms and
+  the atom box's price.
+- **NP** (`globalStats.DoConstantCurrency`): `NPrewardPerTick` per physics tick while NP is under the cap, 6000 ticks'
+  worth. The zip box needs the cap at 625,000,000: about 104,000 NP per tick.
+- **Boxes** (`upgradeBox`): local costs `ceil` their scaling and reset with an atom, global ones round it and stay; a
+  touch buys once per 0.2 s cooldown, a buy-max box all `GetNumPlayerCouldBuy` counts; exempting and buy-max boxes,
+  tree growth (each trunk 1/0.6 s, the land 1/3.5 s, the box's 2000-unit drop ln(400)/3 s, auto-grown segments).
+- **Where**: the player's position is followed; a walk is estimated from the distance (`travel` in `zip-plan.json`:
+  units per tick sideways, up and down, plus overhead ticks) unless `legs` names it (`"<from>><to>": seconds`). Zone 2
+  is a drop from zone 1: once in it, nothing in zone 1 is reachable (`wayBackToZone1` or the game's
+  `Zone2toZone1PathOpen` lifts that).
+
+**Course times.** A lap takes the course's farm time from its quick restart (the player is at its start) or its record
+plus the walk to it; the clones' path is the record. Both come from the saved routes (`routes.json`'s `<course>_<CAT>
+<time>` and `<course>_<CAT> farm <time>`, fastest in `categories`, non-stale first) as they're saved, and from
+`zip-plan.json`'s `laps` until then (Courses 7-10 have none yet: their estimates are printed as `ESTIMATE`; `"force":
+true` on an entry overrides a saved route). Which courses the plan may lap: `lapCourses` (default 1-10).
+
+**The plan** is a list of steps (`buy:<token>` once, `all:<token>` every level it can pay for, `lap:<course>`,
+`atoms:<count>`: saves GP for that many and touches the box); whatever it can't pay for yet it earns first, lapping the
+course that earns it fastest (its reward and the comp boost on its clones) or standing. After the steps an autopilot
+finishes the run: the tree's boxes from the root to the zip box as it can pay for them, the free first atom, and when
+the NP cap can't reach the next box's price, the purchase (or a course's first clone and lap) that pays for the atoms
+it needs soonest, or those atoms. The search builds the steps greedily, then polishes them on every core (delete,
+swap, move, insert, resize) for `--minutes` (default 2). `--plan "all:buynp10,buy:buyatomlevel10"` starts from a
+given list instead (with `--minutes 0`: only evaluates it). It prints the timeline (each step's times, currencies,
+rates, NP cap and atoms), the plan as `--plan` text and the Full-TAS goals (`start:N finish:N` per lap, `buy:<token>` per
+purchase); `--out` writes them as JSON.
+
+From `TouchGrass-ANY%`'s best replayed (Course 4 farmed after the breaker, 9.5e24 W): the W buys `buyatomlevel10` and
+`buynp10` (+175 % NP a level) before the first atom resets it, then the tree and the green clones, 17-18 atoms at the end
+(one tier-3 atom, ~160,000 NP per tick): about 21-26 min in the model, with Courses 7-10's laps estimated. The engine
+can't play these goals yet (Area 2's economy is unmodeled there); the plan is for building the run's goals.
 
 ## Offline economy
 

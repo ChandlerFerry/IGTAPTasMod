@@ -754,8 +754,8 @@ def any_choose(base):
 
 def invalid_goals(goals):
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "..", "FullTasPlugin.cs"), encoding="utf-8") as f:
-        boxes = set(re.findall(r'\("(\w+)", "Courses/', f.read()))
+    with open(os.path.join(here, "..", "FullTas.cs"), encoding="utf-8") as f:
+        boxes = set(re.findall(r'\("(buy\w+)", "', f.read()))
     bonuses = {c["name"] for c in json.load(open(os.path.join(CONFIG, "courses.json"), encoding="utf-8-sig")) if c.get("name")}
     bad = []
     for g in goals:

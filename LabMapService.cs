@@ -56,6 +56,15 @@ namespace IGTAPTasMod
             public LabStartDef start = new LabStartDef();
             public float[] finish;
             public int maxTicks = 90;
+            /// <summary>Playing the lab by hand (Tech tab, <c>inject {place: true}</c>): extra shapes and a standing start. The solver never sees it.</summary>
+            public LabHandDef hand;
+        }
+
+        /// <summary>A lab's hand-play setup: a floor to stand on (<c>shapes</c>, added to the lab's own) and where you stand (<c>start</c>).</summary>
+        public sealed class LabHandDef
+        {
+            public List<LabShapeDef> shapes = new List<LabShapeDef>();
+            public LabStartDef start;
         }
 
         sealed class LabSession
@@ -66,6 +75,16 @@ namespace IGTAPTasMod
             public Savestate PlayerBefore;
             public string Scene;
             public bool PlaybackSeen;
+            /// <summary>Built for hand play (its hand shapes are in): a demo re-injects the lab without them.</summary>
+            public bool Hand;
+            /// <summary>Set when the player was put at the lab start (<c>place</c>): the unlocks, course reset point and respawn point it replaced.</summary>
+            public List<(string field, object value)> SavedAbilities;
+            public Vector2? CourseResetPointBefore, RespawnPointBefore;
+            /// <summary>Hand play with a solved demo: the ghost replaying its path (x, y relative to the anchor, facing ±1) on a loop.</summary>
+            public Transform Ghost;
+            public List<Vector3> GhostPath;
+            public Vector2 GhostScale;
+            public float GhostStart;
         }
 
         LabSession _lab;
@@ -102,16 +121,37 @@ namespace IGTAPTasMod
             return lab;
         }
 
+        /// <summary>Every lab map's id: the config folder's files and the plugin's embedded seeds (solved demos excluded).</summary>
+        internal List<string> LabMapIds()
+        {
+            const string prefix = "IGTAPTasMod.labmaps.";
+            var ids = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (string resource in Assembly.GetExecutingAssembly().GetManifestResourceNames())
+                if (resource.StartsWith(prefix, StringComparison.Ordinal) && resource.EndsWith(".json", StringComparison.Ordinal) && !resource.EndsWith(".demo.json", StringComparison.Ordinal))
+                    ids.Add(resource.Substring(prefix.Length, resource.Length - prefix.Length - ".json".Length));
+            if (Directory.Exists(LabMapsDir))
+                foreach (string file in Directory.GetFiles(LabMapsDir, "*.json"))
+                    if (!file.EndsWith(".demo.json", StringComparison.Ordinal)) ids.Add(Path.GetFileNameWithoutExtension(file));
+            return ids.ToList();
+        }
+
+        internal string InjectedLabId { get { return _lab?.Id; } }
+
         object HandleLabMap(string path, JObject body)
         {
             switch (path)
             {
                 case "/api/labmap/inject":
                 {
+                    // place: also put the player at the lab start with the lab's unlocks, to play it by hand.
                     string id = Text(body, "id");
+                    bool place = body["place"] != null && (bool)body["place"];
+                    if (place && PlaybackActive) throw new InvalidOperationException("Stop playback first.");
+                    LabMapDef lab = LoadLabMap(id);
                     if (_lab != null) RestoreLab("another lab map");
-                    InjectLab(LoadLabMap(id));
-                    return new { ok = true, id, objects = _lab.Root.transform.childCount, anchor = _lab.Lab.anchor, scene = _lab.Scene };
+                    InjectLab(lab, place);
+                    if (place) PlaceAtLabStart();
+                    return new { ok = true, id, objects = _lab.Root.transform.childCount, anchor = _lab.Lab.anchor, scene = _lab.Scene, placed = place };
                 }
                 case "/api/labmap/restore":
                     if (_lab == null) return new { ok = true, injected = false };
@@ -136,21 +176,23 @@ namespace IGTAPTasMod
         {
             TechDef tech = _techStart ?? (route == null ? null : _techs.Find(t => t.routeId == route.id));
             if (tech == null || string.IsNullOrEmpty(tech.labmap)) return;
-            if (_lab != null && _lab.Id == tech.labmap) return;
-            if (_lab != null) RestoreLab("another lab map");
-            InjectLab(LoadLabMap(tech.labmap));
+            if (_lab != null && _lab.Id == tech.labmap && !_lab.Hand) return;
+            if (_lab != null) RestoreLab(_lab.Id == tech.labmap ? "the demo plays without the hand-play floor" : "another lab map");
+            InjectLab(LoadLabMap(tech.labmap), false);
         }
 
-        void InjectLab(LabMapDef lab)
+        /// <param name="hand">Hand play: the lab's <c>hand.shapes</c> go in too (a floor to stand on); a demo's and the solver's lab never has them.</param>
+        void InjectLab(LabMapDef lab, bool hand)
         {
             Movement player = FindWorldMovement();
             Vector2 origin = CurrentOrigin();
             (float ax, float ay) = (lab.anchor[0], lab.anchor[1]);
             var root = new GameObject("LabMap " + lab.id);
             root.transform.position = new Vector3(ax + origin.x, ay + origin.y, 0f);
-            for (int i = 0; i < lab.shapes.Count; i++)
+            List<LabShapeDef> shapes = hand && lab.hand != null ? lab.shapes.Concat(lab.hand.shapes ?? new List<LabShapeDef>()).ToList() : lab.shapes;
+            for (int i = 0; i < shapes.Count; i++)
             {
-                LabShapeDef shape = lab.shapes[i];
+                LabShapeDef shape = shapes[i];
                 var go = new GameObject(lab.id + " " + (i + 1) + " " + shape.kind);
                 go.transform.SetParent(root.transform, false);
                 go.transform.localPosition = new Vector3(shape.at != null ? shape.at[0] : 0f, shape.at != null ? shape.at[1] : 0f, 0f);
@@ -183,15 +225,84 @@ namespace IGTAPTasMod
                     default: throw new InvalidOperationException("A lab shape's kind is box, polygon or edge, not " + shape.kind + ".");
                 }
                 if (shape.spike) go.AddComponent<spikeScript>();
+                Color color = shape.spike || shape.layer == "Spikes" ? new Color(0.75f, 0.22f, 0.17f) : shape.trigger ? new Color(0.56f, 0.27f, 0.68f)
+                    : shape.tag == "Moss" ? new Color(0.15f, 0.68f, 0.38f) : new Color(0.10f, 0.14f, 0.20f);
+                if (shape.kind == "box")
+                {
+                    float w = shape.size[0] / 2f, h = shape.size[1] / 2f;
+                    LabBox(go.transform, Vector2.zero, new Vector2(shape.size[0], shape.size[1]), color);
+                    LabLine(go.transform, new[] { new Vector2(-w, -h), new Vector2(w, -h), new Vector2(w, h), new Vector2(-w, h) }, true, new Color(0.3f, 0.85f, 1f), 3f);
+                }
+                else LabLine(go.transform, shape.points.Select(p => new Vector2(p[0], p[1])).ToArray(), shape.kind == "polygon", color, 6f);
             }
             _lab = new LabSession
             {
-                Id = lab.id, Lab = lab, Root = root,
+                Id = lab.id, Lab = lab, Root = root, Hand = hand,
                 PlayerBefore = player != null ? SavestateService.Capture(player, "lab/" + lab.id + " before", MacroLibrary.CurrentSchemaVersion) : null,
                 Scene = SceneManager.GetActiveScene().name,
             };
+            if (hand && player != null) BuildLabGhost(lab, player);
             Logger.LogInfo("Lab map " + lab.id + " injected at " + ax.ToString("0.#", CultureInfo.InvariantCulture) + "," + ay.ToString("0.#", CultureInfo.InvariantCulture)
-                + " (" + lab.shapes.Count + " shapes); autosave and the route gate are off until it is restored.");
+                + " (" + shapes.Count + " shapes" + (hand ? ", for hand play" + (_lab.Ghost != null ? " with its demo's ghost" : "") : "") + "); autosave and the route gate are off until it is restored.");
+        }
+
+        /// <summary>Ticks the ghost holds its last position before the loop starts over.</summary>
+        const int GhostHoldTicks = 25;
+
+        /// <summary>
+        /// Hand play's ghost: the solved demo's path (labmaps/&lt;id&gt;.demo.json <c>path</c>, from <c>lab solve</c> or <c>lab replay
+        /// --write-path</c>) drawn as a faint line, and a see-through copy of the player's sprites replaying it on a loop at the
+        /// physics rate (<see cref="AnimateLabGhost"/>). Nothing to collide with: sprites only.
+        /// </summary>
+        void BuildLabGhost(LabMapDef lab, Movement player)
+        {
+            string file = LabMapFile(lab.id + ".demo.json");
+            if (file == null) return;
+            JArray points = JObject.Parse(File.ReadAllText(file))["path"] as JArray;
+            if (points == null || points.Count < 2) return;
+            var path = points.Select(p => new Vector3((float)p[0], (float)p[1], (float)p[2])).ToList();
+            var line = new GameObject(lab.id + " ghost path");
+            line.transform.SetParent(_lab.Root.transform, false);
+            LabLine(line.transform, path.Select(p => new Vector2(p.x, p.y)).ToArray(), false, new Color(1f, 1f, 1f, 0.35f), 3f);
+            var ghost = new GameObject(lab.id + " ghost");
+            ghost.transform.SetParent(_lab.Root.transform, false);
+            Vector3 playerScale = player.transform.lossyScale;
+            foreach (SpriteRenderer sprite in player.GetComponentsInChildren<SpriteRenderer>())
+            {
+                if (!sprite.enabled || sprite.sprite == null) continue;
+                var copy = new GameObject("ghost sprite");
+                copy.transform.SetParent(ghost.transform, false);
+                // In the player's frame (its scale's sign undone by the ghost's own facing).
+                copy.transform.localPosition = player.transform.InverseTransformPoint(sprite.transform.position);
+                Vector3 scale = sprite.transform.lossyScale;
+                copy.transform.localScale = new Vector3(scale.x / playerScale.x, scale.y / playerScale.y, 1f);
+                var renderer = copy.AddComponent<SpriteRenderer>();
+                renderer.sprite = sprite.sprite;
+                renderer.flipX = sprite.flipX;
+                renderer.flipY = sprite.flipY;
+                renderer.color = new Color(0.55f, 0.9f, 1f, 0.5f);
+                Material material = LabMaterial();
+                if (material != null) renderer.sharedMaterial = material;
+                LabSorting(renderer);
+            }
+            _lab.Ghost = ghost.transform;
+            _lab.GhostPath = path;
+            _lab.GhostScale = new Vector2(Mathf.Abs(playerScale.x), playerScale.y);
+            _lab.GhostStart = Time.time;
+            AnimateLabGhost();
+        }
+
+        /// <summary>The ghost at its place along the demo's path: one path point per physics tick, interpolated, held at the end, looped.</summary>
+        void AnimateLabGhost()
+        {
+            List<Vector3> path = _lab.GhostPath;
+            float ticks = (Time.time - _lab.GhostStart) / Time.fixedDeltaTime;
+            float t = Mathf.Min(ticks % (path.Count - 1 + GhostHoldTicks), path.Count - 1);
+            int i = Mathf.Min((int)t, path.Count - 2);
+            Vector3 a = path[i], b = path[i + 1];
+            Vector3 at = Vector3.Lerp(a, b, t - i);
+            _lab.Ghost.localPosition = new Vector3(at.x, at.y, 0f);
+            _lab.Ghost.localScale = new Vector3(_lab.GhostScale.x * (b.z < 0f ? -1f : 1f), _lab.GhostScale.y, 1f);
         }
 
         static int LayerNumber(string layer)
@@ -202,17 +313,128 @@ namespace IGTAPTasMod
             return named;
         }
 
-        /// <summary>Destroys the injected lab and puts back anything its session touched (the player's state).</summary>
+        static Material _labMaterial;
+        static Sprite _labPixel;
+
+        /// <summary>An unlit sprite material, so the lab stays visible with the game's 2D lights off (the breaker).</summary>
+        static Material LabMaterial()
+        {
+            if (_labMaterial != null) return _labMaterial;
+            Shader shader = Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default") ?? Shader.Find("Sprites/Default");
+            if (shader != null) return _labMaterial = new Material(shader);
+            SpriteRenderer any = FindAnyObjectByType<SpriteRenderer>();
+            return _labMaterial = any != null ? any.sharedMaterial : null;
+        }
+
+        /// <summary>Drawn above the level: the top sorting layer, the top order.</summary>
+        static void LabSorting(Renderer renderer)
+        {
+            SortingLayer[] layers = SortingLayer.layers;
+            if (layers.Length > 0) renderer.sortingLayerID = layers[layers.Length - 1].id;
+            renderer.sortingOrder = 32000;
+        }
+
+        /// <summary>A filled box (a scaled 1-unit sprite) as a child of <paramref name="parent"/>, centred at <paramref name="at"/>.</summary>
+        static void LabBox(Transform parent, Vector2 at, Vector2 size, Color color)
+        {
+            if (_labPixel == null)
+            {
+                var texture = new Texture2D(1, 1) { filterMode = FilterMode.Point };
+                texture.SetPixel(0, 0, Color.white);
+                texture.Apply();
+                _labPixel = Sprite.Create(texture, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            }
+            var go = new GameObject("visual");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = at;
+            go.transform.localScale = new Vector3(size.x, size.y, 1f);
+            var sprite = go.AddComponent<SpriteRenderer>();
+            sprite.sprite = _labPixel;
+            sprite.color = color;
+            Material material = LabMaterial();
+            if (material != null) sprite.sharedMaterial = material;
+            LabSorting(sprite);
+        }
+
+        /// <summary>A line through <paramref name="points"/> (local to <paramref name="parent"/>), closed when <paramref name="loop"/>.</summary>
+        static void LabLine(Transform parent, Vector2[] points, bool loop, Color color, float width)
+        {
+            var go = new GameObject("visual");
+            go.transform.SetParent(parent, false);
+            var line = go.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.loop = loop;
+            line.positionCount = points.Length;
+            line.SetPositions(points.Select(p => new Vector3(p.x, p.y, 0f)).ToArray());
+            line.startWidth = line.endWidth = width;
+            line.startColor = line.endColor = color;
+            Material material = LabMaterial();
+            if (material != null) line.sharedMaterial = material;
+            LabSorting(line);
+        }
+
+        /// <summary>
+        /// Puts the player at the injected lab's start to play it by hand (its <c>hand.start</c>, standing, when it has one): the lab
+        /// category's unlocks (put back on restore, never autosaved while the lab is injected), then that start as a lab savestate
+        /// restored in place (not kept on disk). A death or quick restart respawns there too until the lab is restored.
+        /// </summary>
+        void PlaceAtLabStart()
+        {
+            Movement player = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
+            LabMapDef lab = _lab.Lab;
+            string caps = CapsFor(lab.category ?? "NONE");
+            if (Array.IndexOf(CapsLadder, caps) < 0) throw new InvalidOperationException("Lab map " + lab.id + " has an unknown category " + lab.category + ".");
+            LabStartDef at = lab.hand?.start ?? lab.start;
+            _engine.ClearInjectedInput(player);
+            if (_lab.SavedAbilities == null) _lab.SavedAbilities = ApplyAbilities(player, caps);
+            else ApplyAbilities(player, caps);
+            if (_lab.CourseResetPointBefore == null) _lab.CourseResetPointBefore = player.courseResetPoint;
+            if (_lab.RespawnPointBefore == null) _lab.RespawnPointBefore = player.respawnPoint;
+            Savestate start = PlacedSavestate(LabStartBody(lab, at));
+            SavestateResult restored = SavestateService.Restore(player, start, MacroLibrary.CurrentSchemaVersion);
+            if (!restored.Success) throw new InvalidOperationException("Lab start: " + restored.Message);
+            LeaveCourses(player);
+            // Movement.respawn puts the dot at respawnPoint (world frame) 12 units down.
+            player.respawnPoint = new Vector2(lab.anchor[0] + (at.x ?? 0f), lab.anchor[1] + (at.y ?? 0f) + 12f);
+            Physics2D.SyncTransforms();
+            SnapCameraAtPlaybackStart(player);
+            Logger.LogInfo("Player placed at lab " + lab.id + "'s " + (lab.hand?.start != null ? "hand-play start" : "start") + " with " + lab.category + " unlocks.");
+        }
+
+        /// <summary>A lab start as a <c>/api/savestates/place</c> body: the start relative to the lab's anchor, in the world frame.</summary>
+        static JObject LabStartBody(LabMapDef lab, LabStartDef start)
+        {
+            return new JObject
+            {
+                ["name"] = "labmap-" + lab.id,
+                ["x"] = lab.anchor[0] + (start.x ?? 0f),
+                ["y"] = lab.anchor[1] + (start.y ?? 0f),
+                ["vx"] = start.vx ?? 0f,
+                ["vy"] = start.vy ?? 0f,
+                ["facing"] = start.facing ?? 1f,
+                ["fields"] = start.fields ?? new JObject(),
+            };
+        }
+
+        /// <summary>Destroys the injected lab and puts back anything its session touched (the player's state, unlocks, course reset and respawn points).</summary>
         void RestoreLab(string why)
         {
             if (_lab == null) return;
             LabSession lab = _lab;
             _lab = null;
             if (lab.Root != null) DestroyImmediate(lab.Root);
-            if (lab.PlayerBefore != null)
+            Movement player = FindWorldMovement();
+            if (player != null)
             {
-                Movement player = FindWorldMovement();
-                if (player != null) SavestateService.Restore(player, lab.PlayerBefore, MacroLibrary.CurrentSchemaVersion);
+                if (lab.SavedAbilities != null)
+                    foreach (var (field, value) in lab.SavedAbilities) SetMovementField(player, field, value);
+                if (lab.CourseResetPointBefore != null) player.courseResetPoint = lab.CourseResetPointBefore.Value;
+                if (lab.RespawnPointBefore != null) player.respawnPoint = lab.RespawnPointBefore.Value;
+                if (lab.PlayerBefore != null)
+                {
+                    SavestateService.Restore(player, lab.PlayerBefore, MacroLibrary.CurrentSchemaVersion);
+                    if (lab.SavedAbilities != null) { Physics2D.SyncTransforms(); SnapCameraAtPlaybackStart(player); }
+                }
             }
             Logger.LogInfo("Lab map " + lab.Id + " restored (" + why + ").");
         }
@@ -221,6 +443,7 @@ namespace IGTAPTasMod
         void PumpLabMap()
         {
             if (_lab == null) return;
+            if (_lab.Ghost != null) AnimateLabGhost();
             if (!string.Equals(_lab.Scene, SceneManager.GetActiveScene().name, StringComparison.Ordinal))
             {
                 RestoreLab("scene change");
@@ -248,16 +471,7 @@ namespace IGTAPTasMod
             if (start.Length == 0) start = tech.start ?? "";
             if (TechStart.Match(start).Length != start.Length || start.Length == 0)
                 throw new InvalidOperationException("start is a course category prefix (1_WJ_DS) matching the lab map's category " + lab.category + ".");
-            Savestate placed = PlaceSavestate(new JObject
-            {
-                ["name"] = "labmap-" + id,
-                ["x"] = lab.anchor[0] + (lab.start.x ?? 0f),
-                ["y"] = lab.anchor[1] + (lab.start.y ?? 0f),
-                ["vx"] = lab.start.vx ?? 0f,
-                ["vy"] = lab.start.vy ?? 0f,
-                ["facing"] = lab.start.facing ?? 1f,
-                ["fields"] = lab.start.fields ?? new JObject(),
-            });
+            Savestate placed = PlaceSavestate(LabStartBody(lab, lab.start));
             tech.labmap = id;
             tech.start = start;
             MacroDefinition route = TechRoute(tech);

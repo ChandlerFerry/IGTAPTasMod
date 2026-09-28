@@ -119,11 +119,11 @@ namespace IGTAPTasMod
             else if (kind == FullTasGoal.Buy)
             {
                 string[] parts = arg.Split('+').Select(p => p.Trim()).ToArray();
-                int[] boxes = parts.Select(p => Array.FindIndex(FullTasBoxes, b => b.token == p)).ToArray();
+                int[] boxes = parts.Select(p => Array.FindIndex(FullTasGoal.Boxes, b => b.token == p)).ToArray();
                 if (boxes.Any(i => i < 0))
-                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": boxes are " + string.Join(", ", FullTasBoxes.Select(b => b.token)) + " (joined with \"+\").");
+                    throw new InvalidOperationException("Full-TAS goal \"" + token + "\": boxes are " + string.Join(", ", FullTasGoal.Boxes.Select(b => b.token)) + " (joined with \"+\").");
                 if (parts.Length > MaxBuyGoalBoxes) throw new InvalidOperationException("Full-TAS goal \"" + token + "\" buys more than " + MaxBuyGoalBoxes + " boxes.");
-                goal.boxes = boxes.Select(i => FullTasGoal.BoxId(FullTasBoxes[i].path, FullTasBoxes[i].sibling)).ToArray();
+                goal.boxes = boxes.Select(i => FullTasGoal.BoxId(FullTasGoal.Boxes[i].path, FullTasGoal.Boxes[i].sibling)).ToArray();
                 goal.label = "buy:" + string.Join("+", parts);
             }
             else if (kind == FullTasGoal.At)
@@ -243,7 +243,7 @@ namespace IGTAPTasMod
         {
             if (_fullTas == null || !_engine.IsRunning) return;
             string path = HierarchyPath(box.transform);
-            _fullTasUnlocks.Bought(FullTasBoxes.FirstOrDefault(b => b.path == path).token);
+            _fullTasUnlocks.Bought(FullTasGoal.Boxes.FirstOrDefault(b => b.path == path).token);
             FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
         }
 

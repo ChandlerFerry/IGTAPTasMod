@@ -57,7 +57,7 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace))) : null;
+            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null)) : null;
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");

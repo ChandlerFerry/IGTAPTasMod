@@ -462,23 +462,30 @@ namespace IGTAPTasMod
                         savestate = route != null && _savestates.Any(c => c.id == route.savestateId),
                         ticks = route == null ? 0 : route.steps.Where(s => s.enabled).Sum(s => Math.Max(1, s.durationTicks)) };
                 }),
-                labs = _techs.Where(t => !string.IsNullOrEmpty(t.labmap)).Select(t =>
+                labs = LabMapIds().Select(id =>
                 {
+                    string techId = _techs.Find(t => t.labmap == id)?.id;
                     try
                     {
-                        LabMapDef lab = LoadLabMap(t.labmap);
+                        LabMapDef lab = LoadLabMap(id);
                         string demoFile = LabMapFile(lab.id + ".demo.json");
                         JObject demo = demoFile == null ? null : JsonConvert.DeserializeObject<JObject>(File.ReadAllText(demoFile));
                         return (object)new
                         {
-                            lab.id, tech = t.id, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
+                            lab.id, tech = techId ?? lab.tech, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
                             start = new { lab.start.x, lab.start.y, lab.start.vx, lab.start.vy, lab.start.facing, fields = lab.start.fields },
                             shapes = lab.shapes.Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
-                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"],
+                            hand = lab.hand == null ? null : new
+                            {
+                                shapes = (lab.hand.shapes ?? new List<LabShapeDef>()).Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
+                                start = lab.hand.start == null ? null : new { lab.hand.start.x, lab.hand.start.y, lab.hand.start.facing },
+                            },
+                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"], demoPath = demo?["path"],
                         };
                     }
-                    catch (Exception ex) { return new { id = t.labmap, tech = t.id, error = ex.Message } as object; }
+                    catch (Exception ex) { return new { id, tech = techId, error = ex.Message } as object; }
                 }).ToList(),
+                injectedLab = InjectedLabId,
                 detectors = Enumerable.Range(0, TechNames.Length).Select(i => new { id = ((Tech)i).ToString(), label = TechNames[i] }),
                 seen = _techSeenRoute == null ? null : new
                 {

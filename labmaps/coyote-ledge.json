@@ -1,24 +1,70 @@
 {
   "schema": 1,
   "id": "coyote-ledge",
-  "name": "Coyote jump off a plain ledge",
+  "name": "Coyote jump: any coyote tick, then the last one",
   "tech": "coyote-jump",
-  "techNote": "A ground jump after the ground rays stopped hitting (coyoteFrames counting down from maxCoyoteFrames 6): the dot runs along a plain ledge (a low ceiling over it), leaves the edge and jumps after the ground is gone — the jump still works inside the coyote window. Only the late jump clears the ceiling's overhang (its right edge is at x 310; the hitbox's left edge clears it at x 325.5, where the ground rays have already stopped at x 325) and reaches the finish box at y 130: a jump before that is capped by the ceiling (its bottom is at y 120) and the fall never rises. The negative-control run (no jump press while the game's own ground check cannot ground the dot) finds no solution, and the demo's jump is the coyote one (the ground check's rays already missing on its tick).",
+  "techNote": "Run right from the start and hold it. Gap A (to platform 2, edge x 918.5) is only crossed by a coyote jump: the farthest jump off the ledge while the ground check still hits lands short of it, from any run-up. Gap B (from platform 2 to platform 3) is the same gap moved 645.5 past platform 2's edge, and only the last coyote tick (coyoteFrames 1 before the jump) crosses it on a straight held-right run; the tick before lands short by about 3 u. Hold jump for the full height (letting go early cuts the jump). Measured offline: from the standing start, jump ticks 33-37 are coyote jumps and land on platform 2, tick 32 doesn't; at gap B only the last coyote tick lands, after a gap-A jump on tick 33, 35 or 37. A run-up that stops or turns shifts where the ticks fall, and gap B's margin is about 3 u.",
   "category": "NONE",
-  "anchor": [1664, 14912],
-  "region": [1664, 14912, 11216, 12592],
+  "anchor": [
+    -1333,
+    -10585
+  ],
   "shapes": [
-    { "kind": "box", "at": [150, 20], "size": [300, 40], "layer": "Ground", "tag": "Ground" },
-    { "kind": "box", "at": [150, 140], "size": [320, 40], "layer": "Ground", "tag": "Ground" }
+    {
+      "kind": "box",
+      "at": [
+        150.0,
+        20
+      ],
+      "size": [
+        300,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        1013.35,
+        20
+      ],
+      "size": [
+        189.7,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        1953.7,
+        20
+      ],
+      "size": [
+        400.0,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
   ],
   "start": {
-    "x": 306,
+    "x": 40,
     "y": 74,
-    "vx": 460,
+    "vx": 0,
     "vy": 0,
     "facing": 1,
-    "fields": { "onGround": true, "coyoteFrames": 6 }
+    "fields": {
+      "onGround": true
+    }
   },
-  "finish": [500, 230, 280, 200],
-  "maxTicks": 30
+  "finish": [
+    2103.7,
+    90,
+    60,
+    40
+  ],
+  "maxTicks": 240
 }

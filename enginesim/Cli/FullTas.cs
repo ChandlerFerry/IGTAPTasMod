@@ -236,10 +236,21 @@ namespace IGTAP.EngineSim.Cli
                 List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
                 string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
                 long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
-                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
+                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count), stored = inputs.Count;
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route run = Padded(Evaluate(inputs));
-                if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
+                if (!Better(_best, run))
+                {
+                    _best = run;
+                    from = "fulltas/" + Path.GetFileName(_runFile);
+                    // A run file written without its goal ticks (a hand-merged route) reads as reaching no goal in the studio,
+                    // which cuts its reset segments from those ticks: write them back from this replay.
+                    if (keep == stored && !goalInput.SequenceEqual(run.GoalInput))
+                    {
+                        WriteRunFile(run);
+                        Log($"{Path.GetFileName(_runFile)}: goal ticks rewritten from its replay ({run.Progress} of {_goals} goals)");
+                    }
+                }
             }
             LoadKnown(dir);
             foreach (string file in _harvestFiles) HarvestRoute(file);
@@ -1062,18 +1073,7 @@ namespace IGTAP.EngineSim.Cli
             r = Padded(r);
             Route previous = _best;
             _best = r;
-            Directory.CreateDirectory(Path.GetDirectoryName(_runFile));
-            string temp = _runFile + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new
-            {
-                name = _name,
-                goals = _labels,
-                inputs = r.Inputs.Select(t => t.ToJson()),
-                goalInputTicks = r.GoalInput,
-                goalPhysicsTicks = r.GoalPhysics,
-                total = r.Progress == _goals ? r.Last : -1,
-            }));
-            Solve.Replace(temp, _runFile);
+            WriteRunFile(r);
             SaveKnown();
             string file = _runFile;
             if (r.Progress == _goals)
@@ -1087,6 +1087,23 @@ namespace IGTAP.EngineSim.Cli
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
             Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = Path.GetFileName(file),
                 complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals });
+        }
+
+        /// <summary>The run file (fulltas/&lt;run&gt;.json): the route's inputs with the goal ticks it reaches them at.</summary>
+        void WriteRunFile(Route r)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_runFile));
+            string temp = _runFile + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new
+            {
+                name = _name,
+                goals = _labels,
+                inputs = r.Inputs.Select(t => t.ToJson()),
+                goalInputTicks = r.GoalInput,
+                goalPhysicsTicks = r.GoalPhysics,
+                total = r.Progress == _goals ? r.Last : -1,
+            }));
+            Solve.Replace(temp, _runFile);
         }
 
         sealed class Latest

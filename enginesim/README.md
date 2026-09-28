@@ -169,7 +169,10 @@ a window that presses dash needs the dash). The window nearest the demo's last p
 up to 8 contacts make patterns, and each side-tagged one is also offered mirrored for the other side.
 `IGTAP.EngineSim techgrafts <traces dir>` lists them per tech. A `solve` grafts them at the same contact kinds alongside the
 hand-written ones, jittered ±3 ticks and filtered by the run's category unlocks (`tech grafts` in the progress line); the
-hand-written grafts stay. `--no-tech-grafts` turns the mined ones off. The mining is cached in
+hand-written grafts stay. `--no-tech-grafts` turns the mined ones off. Whatever trace is solved, the catalog, the demo
+traces, savestates and the cache resolve from the configured traces dir (`tools/gamepaths.py`'s TRACES: the game's config
+folder's `enginesim`, when it exists), so a copied trace mines or reads the same patterns as the real folder;
+`--tech-dir <dir>` overrides it. The mining is cached in
 `<traces>\tech-grafts.cache.json`, keyed by the catalog, the demo files and the engine build (`techgrafts --refresh`
 re-mines); a grafted window keeps real button edges at the cut (a press or release as a controller makes them).
 
@@ -499,7 +502,12 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   `onGround` held with `coyoteFrames` counting, the dash boost's 730 up + 410 up momentum within `dashBoostMax` of a dash).
   `--forbid-jump-not-grounded` is the negative control: no jump press (nor a dash-jump frame) unless the state is on solid
   ground, and a lab whose start can only jump its own tech then has no solution at all — which is what makes the demo the tech
-  and not a hop. `lab replay <trace> <labmap.json> <demo.json>` plays one demo from the lab start, tick by tick.
+  and not a hop. `lab replay <trace> <labmap.json> <demo.json>` plays one demo from the lab start, tick by tick. The demo
+  also carries its ghost path (`path`: `[x, y, facing]` relative to the anchor at the lab start and after every physics tick,
+  on 150 ticks (3 s) past the finish with the stick held full the way the dot faces there). The ghost holds jump from the
+  demo's first press on (no release, so no jump cut: the full-height jump), so its arc shows the most the tech's jump buys,
+  not the demo's own minimum-tick inputs; `lab replay ... --write-path` rewrites it after the lab moves or for a demo solved
+  before demos had one.
 - In game (`LabMapService.cs`): `POST /api/labmap/inject {id}` builds one root of colliders at the anchor (world frame through
   `FloatingOrigin.currentOrigin`, BoxCollider2D/PolygonCollider2D/EdgeCollider2D with the layer and tag), `POST
   /api/labmap/restore` destroys it and puts back anything the session touched (the player included), `GET /api/labmap/status`
@@ -509,6 +517,17 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   `SaveSolverRoute` refuses: a lab is lab-only, never a route and never on a route's path (root `README.md` `### Rules`).
   `POST /api/enginesim/trace {tech}` captures a lab demo the same way, so its world export carries the injected geometry and
   `replay` (and `python tools/tech-check.py <id>`) need no injection of their own.
+  `POST /api/labmap/inject {id, place: true}` is hand play: it also builds the lab's `hand.shapes` (a floor to stand on, never
+  in a demo or `lab solve`, which ignore `hand`) and puts the player at `hand.start` (else `start`) with the lab's `category`
+  unlocks; a death or quick restart respawns there (`respawnPoint`). The placed state isn't kept as a savestate, and restore
+  puts the unlocks, the course reset point and the respawn point back too. A demo re-injects its lab without the hand shapes.
+  The shapes are drawn in game (ground dark with a cyan outline, spikes red, triggers purple, moss green; the finish box
+  isn't drawn), unlit, above the level. The studio's Tech tab lists every lab map (`labmaps/*.json`, the config
+  folder's and the plugin's embedded ones; a config copy wins, so delete a stale one after editing the repo's) with **Load
+  lab** / **Back to start** / **Unload**, and a tech card with a lab map has the same buttons. Both labs sit at anchor
+  (-1333, -10585). In hand play a lab whose demo has a `path` draws it as a faint line and replays it with a see-through
+  copy of the player's sprites (the ghost: one path point per physics tick, interpolated, held 25 ticks at the end, then
+  looped); the studio's lab preview draws the same path dashed.
 
 ## Humanize
 

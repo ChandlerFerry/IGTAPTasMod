@@ -349,8 +349,8 @@ namespace IGTAP.EngineSim
     /// its start (its category's start trace, its own savestate, or a captured tech-<id>.json trace), the contact events
     /// along it are detected with the solver's own contact detection (<see cref="ContactLog"/>), and the input window around
     /// each contact becomes a pattern. <c>solve</c> grafts them at the same contact kinds (filter by the run's unlocks),
-    /// in addition to the hand-written grafts; <c>--no-tech-grafts</c> turns them off. The mining is cached in the trace
-    /// folder, keyed by the catalog content and the engine build.</summary>
+    /// in addition to the hand-written grafts; <c>--no-tech-grafts</c> turns them off. The mining is cached in the configured
+    /// traces folder (where the demos resolve from; <c>--tech-dir</c>), keyed by the catalog content and the engine build.</summary>
     public sealed class TechGrafts
     {
         public List<TechDemo> Demos = new List<TechDemo>();
@@ -462,9 +462,13 @@ namespace IGTAP.EngineSim
         static readonly JsonSerializerOptions Json = new JsonSerializerOptions { IncludeFields = true, WriteIndented = true,
             Converters = { new JsonStringEnumConverter() } };
 
-        public static TechGrafts Load(string tracesDir, bool refresh = false)
+        /// <param name="tracesDir">The trace's own folder (the fallback when there is no configured traces dir).</param>
+        /// <param name="refresh">Re-mine instead of reading the cache.</param>
+        /// <param name="techDir">Where the demos' traces, savestates, lab maps and the cache resolve from
+        /// (<c>--tech-dir</c>); the configured traces dir when it is absent.</param>
+        public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null)
         {
-            tracesDir = Path.GetFullPath(tracesDir);
+            tracesDir = ResolveTechDir(tracesDir, techDir);
             string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
             List<TechDef> techs = Catalog(config);
             Dictionary<string, MacroDefinition> macros = Macros(config);
@@ -511,6 +515,20 @@ namespace IGTAP.EngineSim
             }
             catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
             return mined;
+        }
+
+        // The configured traces dir (tools/gamepaths.py's TRACES: the game's config folder's enginesim dir) when it exists:
+        // the catalog, the demo traces and the cache resolve from there whatever trace is being solved, so a copied trace
+        // mines (or reads) the same patterns as the real folder. --tech-dir overrides it; without a configured folder the
+        // trace's own folder is used.
+        public static string ResolveTechDir(string tracesDir, string techDir = null)
+        {
+            if (!string.IsNullOrEmpty(techDir)) return Path.GetFullPath(techDir);
+            string canonical = Path.Combine(
+                Environment.GetEnvironmentVariable("IGTAP_GAME")
+                    ?? @"C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer",
+                "BepInEx", "config", "IGTAPTasMod", "enginesim");
+            return Directory.Exists(canonical) ? canonical : Path.GetFullPath(tracesDir);
         }
 
         // The config folder's techs.json (the Tech tab's live copy) with the repo's seed filling in whatever it lacks.
@@ -907,17 +925,20 @@ namespace IGTAP.EngineSim
 
         // ---- the CLI listing ----
 
-        /// <summary>techgrafts &lt;traces dir or trace&gt; [--refresh]: every tech's demo replayed and mined, per contact.</summary>
+        /// <summary>techgrafts &lt;traces dir or trace&gt; [--refresh] [--tech-dir &lt;dir&gt;]: every tech's demo replayed and mined,
+        /// per contact. The demos' traces, savestates, lab maps and the cache resolve from the configured traces dir
+        /// (the game's config folder's enginesim dir when it exists) whatever trace is listed; --tech-dir overrides it.</summary>
         public static int Command(string[] args)
         {
             if (args.Length == 0)
             {
-                Console.Error.WriteLine("usage: techgrafts <traces dir or trace.json> [--refresh]   mine the tech tab's demos into graft patterns");
+                Console.Error.WriteLine("usage: techgrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>]   mine the tech tab's demos into graft patterns");
                 return 2;
             }
             string path = args[0];
             string tracesDir = Directory.Exists(path) ? Path.GetFullPath(path) : Path.GetDirectoryName(Path.GetFullPath(path));
-            TechGrafts mined = Load(tracesDir, args.Contains("--refresh"));
+            int at = Array.IndexOf(args, "--tech-dir");
+            TechGrafts mined = Load(tracesDir, args.Contains("--refresh"), at >= 0 && at + 1 < args.Length ? args[at + 1] : null);
             Console.WriteLine($"tech grafts: {mined.Patterns.Count} patterns over {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} demos"
                 + $" ({(mined.FromCache ? "cache" : "mined")}, key {mined.Key.Substring(0, 12)}, {mined.CacheFile})");
             foreach (TechDemo demo in mined.Demos)

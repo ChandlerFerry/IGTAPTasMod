@@ -41,8 +41,9 @@ namespace IGTAP.EngineSim.Cli
                         + "                                         injects the lab map into the trace's world and searches, exhaustively, for\n"
                         + "                                         the minimum-tick human-legal input sequence from the lab's start to its\n"
                         + "                                         finish box; writes labmaps/<id>.demo.json\n"
-                        + "  lab replay <trace.json> <labmap.json> <demo.json> [--out <file>]\n"
-                        + "                                         one demo replayed from the lab start, tick by tick");
+                        + "  lab replay <trace.json> <labmap.json> <demo.json> [--out <file>] [--write-path]\n"
+                        + "                                         one demo replayed from the lab start, tick by tick; --write-path\n"
+                        + "                                         (re)writes the demo's ghost path");
                     return 2;
             }
         }
@@ -403,6 +404,7 @@ namespace IGTAP.EngineSim.Cli
                 inputTicks = inputs.Count,
                 search,
                 inputs = inputs.Select(t => t.ToJson()).ToList(),
+                path = GhostPath(tracePath, lab, inputs, finishTick),
             };
             File.WriteAllText(outPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
             workers.Dispose();
@@ -506,6 +508,53 @@ namespace IGTAP.EngineSim.Cli
             return rows;
         }
 
+        /// <summary>Ticks the ghost path runs on past the finish (3 s), so the jump's whole arc and its reach show.</summary>
+        const int GhostTail = 150;
+
+        /// <summary>
+        /// The demo's ghost path (<c>path</c> in the demo file, the studio preview's and the in-game ghost's): the player's position
+        /// relative to the anchor and facing (±1) at the lab start and after every physics tick, to the finish and
+        /// <see cref="GhostTail"/> ticks on with the stick held full the way the dot faces at the finish and the jump button let go
+        /// (the run carries on, so the distance the tech buys shows), with no finish box to stop at.
+        /// </summary>
+        static List<float[]> GhostPath(string tracePath, LabMapDef lab, List<InputTick> inputs, int finishTick)
+        {
+            var (sim, trace, _) = Open(tracePath, lab);
+            using (trace)
+            {
+                Place(sim, lab);
+                sim.TargetCourse = -1;
+                (float ax, float ay) = lab.Anchor;
+                float[] Point()
+                {
+                    WorldPos p = sim.PlayerWorld;
+                    return new[] { MathF.Round(p.x - ax, 1), MathF.Round(p.y - ay, 1), sim.Player.facingRight ? 1f : -1f };
+                }
+                var path = new List<float[]> { Point() };
+                int keep = finishTick + GhostTail;
+                // The ghost shows each jump at its fullest: from a jump press on, the button stays held until the tick before the
+                // next press (no jump cut: Movement cuts a normal jump to 50 up when it's let go while Velocity.y is 150-580), and
+                // after the last press to the end. The engine ends with its inputs, so tail ticks carry the run on past the finish,
+                // the stick held the way it faces there.
+                bool facingRight = true;
+                sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 0,
+                    onStep: s => { if (s + 1 == finishTick) facingRight = sim.Player.facingRight; });
+                var run = new List<InputTick>(inputs.Take(Math.Min(inputs.Count, finishTick)));
+                bool holding = false;
+                for (int i = 0; i < run.Count; i++)
+                {
+                    if (run[i].press) { holding = true; continue; }
+                    if (!holding) continue;
+                    bool pressNext = i + 1 < run.Count && run[i + 1].press;
+                    run[i] = run[i] with { held = !pressNext, release = pressNext };
+                    if (pressNext) holding = false;
+                }
+                while (run.Count < keep + 1) run.Add(new InputTick { x = facingRight ? 1f : -1f, held = holding });
+                sim.Run(run, null, extraTicks: 0, onStep: _ => { if (path.Count <= keep) path.Add(Point()); });
+                return path;
+            }
+        }
+
         /// <summary>
         /// The tech a demo performs, from the Movement state on the jump tick (the in-game overlay detector's own conditions):
         /// a coyote jump is a ground jump taken with the coyote window counting (onGround held after the ground rays stopped
@@ -592,6 +641,15 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"demo: {inputs.Count} inputs, {steps} physics ticks; "
                 + (run.Finished ? "finish at tick " + steps : "no finish (" + run.EndReason + ")")
                 + "; tech: " + (signature ?? "none"));
+            // --write-path: (re)write the demo's ghost path, as `lab solve` writes it, after the lab moved or the demo was solved
+            // before demos carried one.
+            if (run.Finished && args.Contains("--write-path"))
+            {
+                var file = JsonNode.Parse(File.ReadAllText(demoPath))!.AsObject();
+                file["path"] = JsonSerializer.SerializeToNode(GhostPath(tracePath, lab, inputs, steps));
+                File.WriteAllText(demoPath, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine("wrote the ghost path to " + demoPath);
+            }
             return run.Finished ? 0 : 1;
         }
 

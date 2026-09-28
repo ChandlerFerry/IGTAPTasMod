@@ -5,8 +5,7 @@
   "tech": "superbounce",
   "techNote": "The game's dash boost (Movement.SpecialWallJump(0.6, 1, up * dashBoostUpwards 410)): dash flat into the wall with jump buffered within dashBoostMax (6) frames of the dash, so the airborne wall touch ends the dash and bounces up on Velocity.y 730 plus 410 up momentum. The start is a fall in the air with no jumps left (a lab puzzle's state: airJumpsLeft 0, wallJumpsLeft -1, no ground under the dot): the fall's hitbox top is 112 and the finish box starts at y 130, so only the bounce lifts the dot into it. The negative-control run (no jump press while the game's own ground check cannot ground the dot — every press here) finds no solution, and the demo's bounce is the boost (Velocity.y 730 with momentum.y 410 within 6 frames of the dash).",
   "category": "WJ_DS",
-  "anchor": [7872, 14056],
-  "region": [7872, 14056, 5008, 13448],
+  "anchor": [-1333, -10585],
   "shapes": [
     { "kind": "box", "at": [400, 250], "size": [40, 700], "layer": "Ground", "tag": "Ground" }
   ],
@@ -32,5 +31,6 @@
     }
   },
   "finish": [420, 230, 240, 200],
-  "maxTicks": 30
+  "maxTicks": 30,
+  "hand": {"shapes": [{"kind": "box", "at": [150, 0], "size": [460, 40], "layer": "Ground", "tag": "Ground"}], "start": {"x": 100, "y": 54, "facing": 1, "fields": {"onGround": true}}}
 }

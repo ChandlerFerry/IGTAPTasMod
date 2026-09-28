@@ -6,6 +6,17 @@
 .techSeen { display: flex; gap: 18px; align-items: center; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2036; }
 .techSeen strong { font-size: 13px; }
 .techSeenList { display: flex; flex-wrap: wrap; gap: 6px; }
+.techLabs { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2036; }
+.techLabsHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.techLabsHead h3 { margin: 0; }
+.labStatus { padding: 3px 9px; border-radius: 999px; background: #10263d; color: var(--muted); font-size: 12px; }
+.labStatus.on { background: #2a2410; color: var(--amber); }
+.techLabGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin-top: 10px; }
+.techLab { margin-top: 8px; }
+.techLabGrid .techLab { margin-top: 0; padding: 10px; border: 1px solid #294563; border-radius: 8px; }
+.techLabGrid .techLab.loaded { border-color: var(--amber); }
+.techLabHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.techLabHead .buttonRow { margin-left: auto; }
 .seenChip { padding: 3px 9px; border: 1px solid #294563; border-radius: 999px; background: #10263d; color: var(--text); font-size: 12px; cursor: pointer; }
 .seenChip:disabled { color: var(--muted); cursor: default; }
 .muted { color: var(--muted); font-size: 13px; }

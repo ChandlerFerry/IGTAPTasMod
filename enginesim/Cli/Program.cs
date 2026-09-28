@@ -31,6 +31,7 @@ namespace IGTAP.EngineSim.Cli
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "fulltas-plan": return FullTas.Plan(args.Skip(1).ToArray());
+                    case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "archive-check":
                     {
@@ -115,7 +116,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --via/--avoid force a path (boxes passed in order / boxes that cut a run);\n"
                             + "                                         --optional/--no-optional turns a named optional block of forced-paths.json on/off\n"
                             + "                                         (blocks with \"default\": true start on)\n"
-                            + "                                         --no-tech-grafts grafts only the hand-written patterns, not the tech tab's mined demos\n"
+                            + "                                         --no-tech-grafts grafts only the hand-written patterns, not the tech tab's mined demos;\n"
+                            + "                                         --tech-dir <dir> mines them from that folder (default: the configured traces\n"
+                            + "                                         dir, the game's config enginesim folder when it exists, whatever trace is solved)\n"
                             + "                                         --guide (experimental, off by default) weights picks by the walkable\n"
                             + "                                         distance to the target; --guide-weight W is how hard it pulls (default 1);\n"
                             + "                                         --rng N seeds the search's randomness (worker i gets N + i) instead of\n"
@@ -141,14 +144,19 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
                             + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
                             + "                                         economy; a,b: a first); prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
+                            + "  zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--minutes M] [--threads N] [--out plan.json]\n"
+                            + "                                         the buy order from the trace's start (or the route replayed to input N)\n"
+                            + "                                         to the zip movers (buytree16), on a model of Area 2's economy; laps from\n"
+                            + "                                         the saved routes, else zip-plan.json's estimates; prints the Full-TAS goals\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
                             + "                                         inputs from it, every tick logged\n"
-                            + "  techgrafts <traces dir or trace.json> [--refresh]\n"
+                            + "  techgrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>]\n"
                             + "                                         every tech tab demo replayed from its start and mined into graft patterns\n"
                             + "                                         (contact type, input window, unlocks); --refresh re-mines instead of\n"
-                            + "                                         reading <traces>/tech-grafts.cache.json\n"
+                            + "                                         reading <traces>/tech-grafts.cache.json; the demos' traces, savestates and\n"
+                            + "                                         the cache resolve from --tech-dir (default: the configured traces dir)\n"
                             + "  clip map <trace.json> x0 y0 x1 y1 [step] | clip run <trace.json> <lab.json> [--threads N] [--out csv] [--top N]\n"
                             + "     | clip log <trace.json> <lab.json> <start> <branch> [--fields a,b,c]\n"
                             + "                                         lab for any start state (inside walls too): a grid of starts x branches\n"
