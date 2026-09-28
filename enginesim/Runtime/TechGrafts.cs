@@ -107,7 +107,7 @@ namespace IGTAP.EngineSim
 
         List<Rect> Gates()
         {
-            ScenePos origin = _sim.WorldOriginInScene();
+            ScenePos origin = _sim.WorldOriginInScene;
             if (_gates != null && origin == _gatesOrigin) return _gates;
             _gates = new List<Rect>();
             _gatesOrigin = origin;
@@ -193,7 +193,7 @@ namespace IGTAP.EngineSim
         /// then any of position [x, y] and velocity [vx, vy] in the world frame, scaleX, and Movement fields by name.</summary>
         public static void ApplyStart(Simulation sim, JsonElement start, string baseDir)
         {
-            WorldPos position = sim.PlayerWorldPos();
+            WorldPos position = sim.PlayerWorld;
             Vector2 velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
             float? scaleX = null;
             if (start.TryGetProperty("savestate", out JsonElement ss))
@@ -213,7 +213,7 @@ namespace IGTAP.EngineSim
         /// <summary>One studio savestate: its Movement fields and body velocity, its world position and facing.</summary>
         public static void ApplySavestate(Simulation sim, string path)
         {
-            WorldPos position = sim.PlayerWorldPos();
+            WorldPos position = sim.PlayerWorld;
             Vector2 velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
             float? scaleX = null;
             ApplySavestate(sim, path, ref position, ref velocity, ref scaleX);
@@ -280,7 +280,7 @@ namespace IGTAP.EngineSim
             if (scaleX.HasValue) t.localScale = new Vector3(scaleX.Value, t.localScale.y, t.localScale.z);
             sim.Physics.ResetPlayer(scene.AsVector2(), velocity, 0f, 0f);
             t.position = new Vector3(scene.x, scene.y, t.position.z);
-            WorldPos now = sim.PlayerWorldPos();
+            WorldPos now = sim.PlayerWorld;
             if (Math.Abs(now.x - position.x) > 0.01f || Math.Abs(now.y - position.y) > 0.01f)
                 throw new InvalidOperationException("The start position did not stick: " + now + " for " + position + ".");
             // The trace's engine state still pins the player to the route start while it waits for stable ticks.
@@ -738,7 +738,7 @@ namespace IGTAP.EngineSim
                     (float ax, float ay) = lab.Anchor;
                     sim.TargetCourse = -1;
                     CapturePos finishAt = sim.ToCapture(new WorldPos(fx + ax, fy + ay));
-                    sim.TargetFinish = (finishAt.x, finishAt.y, fw, fh);
+                    sim.TargetFinish = new CaptureRect(finishAt, fw, fh);
                 }
                 else if (source.Macro == null)
                 {

@@ -505,7 +505,7 @@ namespace IGTAP.EngineSim.Cli
                 _avoided = false;
                 Action<int> onStep = _path.IsEmpty ? null : _ =>
                 {
-                    WorldPos p = _sim.PlayerWorldPos();
+                    WorldPos p = _sim.PlayerWorld;
                     if (_waypoints < _path.Via.Count && _path.Via[_waypoints].Contains(p)) _waypoints++;
                     foreach (OfflineSolver.Box box in _path.Avoid) if (box.Contains(p)) _avoided = true;
                 };

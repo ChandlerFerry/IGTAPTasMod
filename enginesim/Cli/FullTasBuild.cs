@@ -123,7 +123,8 @@ namespace IGTAP.EngineSim.Cli
         (Vector3 at, int unlocks) Where(SimSnapshot s)
         {
             _eval.Restore(s);
-            return (_eval.PlayerWorld, Unlocks(_eval.Player));
+            WorldPos start = _eval.PlayerWorld;
+            return (new UnityEngine.Vector3(start.x, start.y, 0f), Unlocks(_eval.Player));
         }
 
         SimSnapshot AdvanceFrom(SimSnapshot at, int length, List<InputTick> inputs)

@@ -340,7 +340,7 @@ namespace IGTAP.EngineSim
                     return new[] { Moved(captured[0], Point(o.x - along, o.y), Point(o.x + along, o.y)) };
                 }
             }
-            Vector3 by = _sim.CurrentOrigin - _sim.Origin;
+            ScenePos by = _sim.FromCapture(new CapturePos(0f, 0f));
             return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
         }
 

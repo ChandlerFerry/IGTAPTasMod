@@ -83,7 +83,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, extra fields.</summary>
         internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
-            WorldPos p = sim.PlayerWorldPos();
+            WorldPos p = sim.PlayerWorld;
             Vector2 v = (Vector2)Vel.GetValue(sim.Player), m = (Vector2)Mom.GetValue(sim.Player), d = (Vector2)Dir.GetValue(sim.Player);
             var (_, _, _, bvx, bvy, _) = sim.Physics.PlayerBody();
             var row = new Dictionary<string, object>

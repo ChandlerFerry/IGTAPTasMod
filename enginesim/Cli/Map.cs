@@ -111,7 +111,7 @@ namespace IGTAP.EngineSim.Cli
                     local.Clear();
                     sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                     {
-                        WorldPos p = sim.PlayerWorldPos();
+                        WorldPos p = sim.PlayerWorld;
                         long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
                         float t = sim.Elapsed(sim.TimingCourse());
                         local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
@@ -123,7 +123,7 @@ namespace IGTAP.EngineSim.Cli
             CapturePos origin;
             {
                 Simulation sim = create();
-                origin = sim.WorldOriginInCapture();
+                origin = sim.WorldOriginInCapture;
                 foreach (var (name, kind, inputs) in routes)
                 {
                     var path = new Path { Name = name, Kind = kind };
@@ -222,7 +222,7 @@ namespace IGTAP.EngineSim.Cli
 
             var paths = new List<Path>();
             Simulation sim = create();
-            CapturePos origin = sim.WorldOriginInCapture();
+            CapturePos origin = sim.WorldOriginInCapture;
             float dt = sim.World.FixedDeltaTime;
             foreach (var (routeName, kind, inputs) in routes)
             {
@@ -397,7 +397,7 @@ namespace IGTAP.EngineSim.Cli
         // differing fingerprint tick and the per-cell `t` delta (`/api/enginesim/ghost`).
         static void Step(Path path, Simulation sim, float t)
         {
-            WorldPos p = sim.PlayerWorldPos();
+            WorldPos p = sim.PlayerWorld;
             path.Points.Add(Round(p.x));
             path.Points.Add(Round(p.y));
             long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
@@ -417,7 +417,7 @@ namespace IGTAP.EngineSim.Cli
         static int PhysicalFingerprint(Simulation sim)
         {
             var h = new HashCode();
-            WorldPos p = sim.PlayerWorldPos();
+            WorldPos p = sim.PlayerWorld;
             h.Add(Mathf.RoundToInt(p.x * 10f));
             h.Add(Mathf.RoundToInt(p.y * 10f));
             foreach (FieldInfo f in PhysicalFields)

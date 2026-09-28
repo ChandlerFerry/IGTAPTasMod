@@ -52,8 +52,8 @@ namespace IGTAP.EngineSim
             public readonly float X0, Y0, X1, Y1;
             /// <summary>Goal mode: the box cuts a run only once it has reached this many goals (0: always).</summary>
             public readonly int After;
-            public Box(float x0, float y0, float x1, float y1, int after = 0) { X0 = Math.Min(x0, x1); Y0 = Math.Min(y0, y1); X1 = Math.Max(x0, x1); Y1 = Math.Max(y0, y1); After = after; }
-            public bool Contains(Vector3 p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
+            public Box(WorldPos a, WorldPos b, int after = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; }
+            public bool Contains(WorldPos p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
             public override string ToString() { return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : ""); }
         }
 
@@ -186,7 +186,7 @@ namespace IGTAP.EngineSim
 
         public readonly float VisitCell;
 
-        public static long VisitKey(Vector3 world, float cell)
+        public static long VisitKey(WorldPos world, float cell)
         {
             return ((long)Mathf.FloorToInt(world.x / cell) << 32) | (uint)Mathf.FloorToInt(world.y / cell);
         }
@@ -273,9 +273,10 @@ namespace IGTAP.EngineSim
         {
             FullTasGoal goal = sim.Goals.Current;
             if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
-            Vector3 p = sim.PlayerAtCapture;
+            CapturePos p = sim.PlayerAtCapture;
             if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
-            float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
+            CaptureRect r = goal.AtRect();
+            float dx = Math.Max(0f, Math.Abs(p.x - r.At.x) - r.W / 2f), dy = Math.Max(0f, Math.Abs(p.y - r.At.y) - r.H / 2f);
             return MathF.Sqrt(dx * dx + dy * dy);
         }
 
@@ -1476,7 +1477,7 @@ namespace IGTAP.EngineSim
                 {
                     if (corners) RecordSlide();
                     if (path == null && visits == null) return;
-                    Vector3 p = _sim.PlayerWorld;
+                    WorldPos p = _sim.PlayerWorld;
                     if (visits != null)
                     {
                         long cell = VisitKey(p, _owner.VisitCell);
@@ -1584,7 +1585,7 @@ namespace IGTAP.EngineSim
             static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources)
             {
                 Movement player = sim.Player;
-                Vector3 position = sim.PlayerAtCapture;
+                CapturePos position = sim.PlayerAtCapture;
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFF;
                 long key = (x << 16) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;

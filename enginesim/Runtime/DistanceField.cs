@@ -80,13 +80,13 @@ namespace IGTAP.EngineSim
         /// Full-TAS goal mode, else the finish box, the finish start's gate or the course's end gate. NaN when the run has no
         /// place to walk to yet (a goal that isn't an at: one, or a world with no gate for it).
         /// </summary>
-        public float Distance(Vector2 at)
+        public float Distance(CapturePos at)
         {
             if (!Target(out int key, out List<Rect> boxes)) return float.NaN;
             int version = Version();
             lock (_gate)
             {
-                Grow(at, boxes);
+                Grow(at.AsVector2(), boxes);
                 Field field = null;
                 for (int i = 0; i < _built.Count; i++)
                     if (_built[i].Version == version && _built[i].Target == key && _built[i].Region == _region) { field = _built[i]; _built.RemoveAt(i); break; }
@@ -96,7 +96,7 @@ namespace IGTAP.EngineSim
                     if (_built.Count >= CachedFields) _built.RemoveAt(_built.Count - 1);
                 }
                 _built.Insert(0, field);
-                return At(field, at);
+                return At(field, at.AsVector2());
             }
         }
 
@@ -116,11 +116,11 @@ namespace IGTAP.EngineSim
                     _goalBoxes[key] = boxes = new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
                 return true;
             }
-            if (_sim.TargetFinish.w > 0f)
+            if (_sim.TargetFinish.W > 0f)
             {
-                (float x, float y, float w, float h) = _sim.TargetFinish;
+                CaptureRect r = _sim.TargetFinish;
                 key = -1;
-                boxes = _finish ?? (_finish = new List<Rect> { new Rect(x - w / 2f, y - h / 2f, w, h) });
+                boxes = _finish ?? (_finish = new List<Rect> { new Rect(r.X0, r.Y0, r.W, r.H) });
                 return true;
             }
             bool start = _sim.TargetStart != 0;
@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim
         List<Rect> GateBoxes(int course, bool start)
         {
             var boxes = new List<Rect>();
-            Vector3 by = _sim.CurrentOrigin - _sim.Origin;
+            ScenePos by = _sim.FromCapture(new CapturePos(0f, 0f));
             if (start)
                 foreach (startGate gate in _world.All<startGate>()) GateBox(boxes, gate, gate.GetComponentInParent<courseScript>(), course, by, true);
             else
@@ -145,12 +145,13 @@ namespace IGTAP.EngineSim
             return boxes;
         }
 
-        void GateBox(List<Rect> boxes, MonoBehaviour gate, courseScript course, int want, Vector3 by, bool counts)
+        void GateBox(List<Rect> boxes, MonoBehaviour gate, courseScript course, int want, ScenePos by, bool counts)
         {
             if (!counts || course == null || want != 0 && course.courseNumber != want) return;
             BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
             if (box == null) return;
-            Vector3 scale = gate.transform.lossyScale, at = gate.transform.position - by;
+            Vector3 scale = gate.transform.lossyScale, gateAt = gate.transform.position;
+            Vector2 at = new Vector2(gateAt.x - by.x, gateAt.y - by.y);
             float w = Math.Abs(box.size.x * scale.x), h = Math.Abs(box.size.y * scale.y);
             boxes.Add(new Rect(at.x + box.offset.x * scale.x - w / 2f, at.y + box.offset.y * scale.y - h / 2f, w, h));
         }
@@ -222,7 +223,7 @@ namespace IGTAP.EngineSim
         /// are capture-frame already.</summary>
         void Raster(Field field)
         {
-            Vector3 by = _sim.CurrentOrigin - _sim.Origin;
+            ScenePos by = _sim.FromCapture(new CapturePos(0f, 0f));
             GameObject player = _sim.Player.gameObject;
             float dilate = field.Cell / 4f;
             List<ColliderData> all = _world.Colliders;
@@ -255,7 +256,7 @@ namespace IGTAP.EngineSim
                 bool spike = c.gameObject.layer == SpikeLayer || _spikes.Contains(c.gameObject);
                 // A trigger stops no one: camera zones, buy machines and gate boxes are not walls. A spike's trigger kills.
                 if (c.m_IsTrigger && !spike) continue;
-                for (int s = 0; s < shapes.Length; s++) Raster(field, shapes[s], pose, by, dilate, spike);
+                for (int s = 0; s < shapes.Length; s++) Raster(field, shapes[s], pose, new Vector3(by.x, by.y, 0f), dilate, spike);
             }
         }
 

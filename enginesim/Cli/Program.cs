@@ -61,7 +61,7 @@ namespace IGTAP.EngineSim.Cli
                         var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
                         bool was = false;
                         int lastRun = 0;
-                        ScenePos origin = sim.WorldOriginInScene();
+                        ScenePos origin = sim.WorldOriginInScene;
                         var bf = BindingFlags.Instance | BindingFlags.NonPublic;
                         FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
@@ -69,8 +69,8 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
-                            WorldPos pos = sim.PlayerWorldPos();
-                            ScenePos now = sim.WorldOriginInScene();
+                            WorldPos pos = sim.PlayerWorld;
+                            ScenePos now = sim.WorldOriginInScene;
                             if (now != origin)
                             {
                                 Console.WriteLine($"tick {st}: REBASE origin {origin.x:0.0},{origin.y:0.0} -> {now.x:0.0},{now.y:0.0} player {pos.x:0.0},{pos.y:0.0}");

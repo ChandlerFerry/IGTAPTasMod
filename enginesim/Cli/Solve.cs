@@ -123,7 +123,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     float[] c = args[i + 1].Split(',').Select(v => float.Parse(v, CultureInfo.InvariantCulture)).ToArray();
                     if (c.Length != 4) throw new ArgumentException(args[i] + " needs x0,y0,x1,y1, got " + args[i + 1]);
-                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                    (args[i] == "--via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3])));
                 }
             return forced;
         }
@@ -251,7 +251,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonElement b in list.EnumerateArray())
             {
                 float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                forced.Avoid.Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3], after));
+                forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
             }
         }
 
@@ -262,7 +262,7 @@ namespace IGTAP.EngineSim.Cli
                     foreach (JsonElement b in list.EnumerateArray())
                     {
                         float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                        (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(c[0], c[1], c[2], c[3]));
+                        (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3])));
                     }
         }
 

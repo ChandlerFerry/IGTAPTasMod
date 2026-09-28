@@ -162,8 +162,10 @@ namespace IGTAP.EngineSim.Cli
                 values.Add(s.Movement[i]);
             }
             void Add(string name, object value) { names.Add(name); values.Add(value); }
-            Add("position (world)", _eval.PlayerWorld);
-            Add("floating origin", _eval.CurrentOrigin);
+            WorldPos at = _eval.PlayerWorld;
+            Add("position (world)", new UnityEngine.Vector3(at.x, at.y, 0f));
+            ScenePos floating = _eval.WorldOriginInScene;
+            Add("floating origin", new UnityEngine.Vector3(floating.x, floating.y, 0f));
             Add("physics body", _eval.Physics.PlayerBody());
             Add("interpolation ends", (s.StepFrom, s.StepTo));
             Add("transform scale", s.LocalScale);
@@ -410,7 +412,7 @@ namespace IGTAP.EngineSim.Cli
                     Movement p = _eval.Player;
                     courseScript course = _eval.TimingCourse();
                     targets[tick] = p.courseResetPoint != UnityEngine.Vector2.zero
-                        ? (course != null ? $"Course {course.courseNumber} reset point" : "course reset point") + $" ({p.courseResetPoint.x - _eval.CurrentOrigin.x:0}, {p.courseResetPoint.y - _eval.CurrentOrigin.y:0})"
+                        ? (course != null ? $"Course {course.courseNumber} reset point" : "course reset point") + $" ({_eval.ToWorld(new ScenePos(p.courseResetPoint.x, p.courseResetPoint.y)).x:0}, {_eval.ToWorld(new ScenePos(p.courseResetPoint.x, p.courseResetPoint.y)).y:0})"
                         : $"Checkpoint ({p.respawnPoint.x:0}, {p.respawnPoint.y:0})";
                 }
                 return tick < last;

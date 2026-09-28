@@ -323,8 +323,8 @@ namespace IGTAP.EngineSim
 
         bool TouchesReward()
         {
-            Vector2 at = Now(TargetFinish.x, TargetFinish.y);
-            return Touches(at.x, at.y, TargetFinish.w, TargetFinish.h);
+            ScenePos at = FromCapture(TargetFinish.At);
+            return Touches(at.x, at.y, TargetFinish.W, TargetFinish.H);
         }
 
         bool Touches(float x, float y, float w, float h)
@@ -369,33 +369,68 @@ namespace IGTAP.EngineSim
 
         public int TargetCourse;
 
-        public (float x, float y, float w, float h) TargetFinish;
+        public CaptureRect TargetFinish;
 
         public bool Transition { get; private set; }
         public int TargetStart { get; private set; }
         courseScript _targetStartCourse;
 
-        public bool TimedFromRunStart { get { return TargetFinish.w > 0f || Transition || Goals != null; } }
+        public bool TimedFromRunStart { get { return TargetFinish.W > 0f || Transition || Goals != null; } }
 
         public bool CheckpointRespawns;
 
         /// <summary>FloatingOrigin.currentOrigin when the world was captured: the frame of the trace's rects and goals.</summary>
-        public readonly Vector3 Origin;
+        readonly Vector3 Origin;
 
         /// <summary>FloatingOrigin.currentOrigin now: each rebase lowers it by the position it moved the world back by.</summary>
-        public Vector3 CurrentOrigin { get { return _floating?.currentOrigin ?? Vector3.zero; } }
+        Vector3 CurrentOrigin { get { return _floating?.currentOrigin ?? Vector3.zero; } }
 
-        public Vector3 PlayerWorld { get { return Player.transform.m_Position - CurrentOrigin; } }
+        /// <summary>The world frame's origin in the scene frame now: FloatingOrigin.currentOrigin.</summary>
+        public ScenePos WorldOriginInScene { get { Vector3 o = CurrentOrigin; return new ScenePos(o.x, o.y); } }
+
+        /// <summary>The world frame's origin in the capture's frame: FloatingOrigin.currentOrigin at the capture (<see cref="Origin"/>).</summary>
+        public CapturePos WorldOriginInCapture { get { return new CapturePos(Origin.x, Origin.y); } }
+
+        /// <summary>The player's position in the world frame (the scene position minus FloatingOrigin.currentOrigin).</summary>
+        public WorldPos PlayerWorld { get { Vector3 p = Player.transform.m_Position - CurrentOrigin; return new WorldPos(p.x, p.y); } }
 
         /// <summary>The player's position in the capture's scene frame (the trace's rects, goals and map cells).</summary>
-        public Vector3 PlayerAtCapture { get { return _rebases.Length == 0 ? Player.transform.m_Position : PlayerWorld + Origin; } }
-
-        /// <summary>A capture-frame point in the scene frame now.</summary>
-        Vector2 Now(float x, float y)
+        public CapturePos PlayerAtCapture
         {
-            if (_rebases.Length == 0) return new Vector2(x, y);
-            Vector3 origin = CurrentOrigin;
-            return new Vector2(x - Origin.x + origin.x, y - Origin.y + origin.y);
+            get
+            {
+                if (_rebases.Length == 0) { Vector3 p = Player.transform.m_Position; return new CapturePos(p.x, p.y); }
+                WorldPos world = PlayerWorld;
+                return new CapturePos(world.x + Origin.x, world.y + Origin.y);
+            }
+        }
+
+        /// <summary>A world point in the scene frame now (scene = world + FloatingOrigin.currentOrigin).</summary>
+        public ScenePos ToScene(WorldPos w) { Vector3 o = CurrentOrigin; return new ScenePos(w.x + o.x, w.y + o.y); }
+
+        /// <summary>A scene point now in the world frame (world = scene - FloatingOrigin.currentOrigin).</summary>
+        public WorldPos ToWorld(ScenePos s) { Vector3 o = CurrentOrigin; return new WorldPos(s.x - o.x, s.y - o.y); }
+
+        /// <summary>A capture point in the world frame (world = capture - the capture's origin).</summary>
+        public WorldPos ToWorld(CapturePos c) { return new WorldPos(c.x - Origin.x, c.y - Origin.y); }
+
+        /// <summary>A world point in the capture's frame (capture = world + the capture's origin).</summary>
+        public CapturePos ToCapture(WorldPos w) { return new CapturePos(w.x + Origin.x, w.y + Origin.y); }
+
+        /// <summary>A scene point now in the capture's frame (what <see cref="PlayerAtCapture"/> does).</summary>
+        public CapturePos ToCapture(ScenePos s)
+        {
+            if (_rebases.Length == 0) return new CapturePos(s.x, s.y);
+            Vector3 o = CurrentOrigin;
+            return new CapturePos(s.x - o.x + Origin.x, s.y - o.y + Origin.y);
+        }
+
+        /// <summary>A capture point in the scene frame now (the trace's goal and finish rects are given in it).</summary>
+        public ScenePos FromCapture(CapturePos c)
+        {
+            if (_rebases.Length == 0) return new ScenePos(c.x, c.y);
+            Vector3 o = CurrentOrigin;
+            return new ScenePos(c.x - Origin.x + o.x, c.y - Origin.y + o.y);
         }
 
         /// <summary>
@@ -468,10 +503,9 @@ namespace IGTAP.EngineSim
         /// Labs only (clip): the world rebased around a world point as FloatingOrigin would have done when the player stood
         /// there, and synced, so the next rebase measures from it.
         /// </summary>
-        public void LabRebase(Vector3 world)
+        public void LabRebase(WorldPos world)
         {
-            Vector3 by = world + CurrentOrigin;
-            by.z = 0f;
+            Vector3 by = new Vector3(world.x + CurrentOrigin.x, world.y + CurrentOrigin.y, 0f);
             var rebases = new Vector3[_rebases.Length + 1];
             _rebases.CopyTo(rebases, 0);
             rebases[_rebases.Length] = by;
@@ -509,7 +543,7 @@ namespace IGTAP.EngineSim
         {
             TargetCourse = (header.TryGetProperty("gameCourse", out JsonElement gameCourse) ? gameCourse : header.GetProperty("course")).GetInt32();
             if (header.TryGetProperty("finish", out JsonElement finish))
-                TargetFinish = (finish[0].GetSingle(), finish[1].GetSingle(), finish[2].GetSingle(), finish[3].GetSingle());
+                TargetFinish = new CaptureRect(new CapturePos(finish[0].GetSingle(), finish[1].GetSingle()), finish[2].GetSingle(), finish[3].GetSingle());
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
             if (header.TryGetProperty("finishStart", out JsonElement next))
             {
@@ -978,7 +1012,7 @@ namespace IGTAP.EngineSim
                 Shop.EndOfFrame();
                 Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();
-                if (Engine.IsRunning && TargetFinish.w > 0f && TouchesReward())
+                if (Engine.IsRunning && TargetFinish.W > 0f && TouchesReward())
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                         Engine.PhysicsTicks * World.FixedDeltaTime);
                 if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && Tracking(_targetStartCourse))
@@ -988,7 +1022,7 @@ namespace IGTAP.EngineSim
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && Tracking(startGoal))
                         GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                     FullTasGoal now = Goals.Current;
-                    Vector2 goalAt = now != null ? Now(now.x, now.y) : default;
+                    ScenePos goalAt = now != null ? FromCapture(new CapturePos(now.x, now.y)) : default;
                     if (_rebases.Length != rebasesBefore)
                     {
                         Vector3 by = _rebases[_rebases.Length - 1];

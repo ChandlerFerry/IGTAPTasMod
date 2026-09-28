@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
 
             Simulation probe = create();
-            CapturePos origin = probe.WorldOriginInCapture();
+            CapturePos origin = probe.WorldOriginInCapture;
             Vector2 stand = (Vector2)DefaultSize.GetValue(probe.Player), standOffset = (Vector2)DefaultOffset.GetValue(probe.Player);
             Vector2 dash = (Vector2)DashSize.GetValue(probe.Player), dashOffset = (Vector2)DashOffset.GetValue(probe.Player);
             FloatingOrigin rebase = probe.World.All<FloatingOrigin>().FirstOrDefault();
@@ -304,7 +304,7 @@ namespace IGTAP.EngineSim.Cli
                     if (at.magnitude <= _threshold) return;
                     pending = at;
                     due = 1;
-                    WorldPos p = sim.PlayerWorldPos();
+                    WorldPos p = sim.PlayerWorld;
                     points.Add(new object[] { R(p.x), R(p.y), tick, R(shift.x - origin.x), R(shift.y - origin.y) });
                 }
             });
@@ -351,7 +351,7 @@ namespace IGTAP.EngineSim.Cli
             float from = float.NaN, top = float.MinValue;
             sim.Run(t, placed, extraTicks: 0, onStep: tick =>
             {
-                float py = sim.PlayerWorldPos().y;
+                float py = sim.PlayerWorld.y;
                 if (tick == Settle) from = py;
                 top = Math.Max(top, py);
             });
@@ -690,13 +690,13 @@ namespace IGTAP.EngineSim.Cli
             sim.Run(inputs, placed, extraTicks: 60, onStep: _ =>
             {
                 bool nowCan = (bool)CanHyper.GetValue(m);
-                if (nowCan && !canHyper) landX = sim.PlayerWorldPos().x;
+                if (nowCan && !canHyper) landX = sim.PlayerWorld.x;
                 float nowLast = (float)LastHyperY.GetValue(m);
                 if (canHyper && !m.onGround && m.Velocity.y > 0f && nowLast != last)
                 {
                     float x = ((Vector2)DashDirection.GetValue(m)).x, pre = ((Vector2)PreDashMomentum.GetValue(m)).x;
                     bool ultra = Mathf.Sign(pre) == Mathf.Sign(x) && nowLast < last - 4f;
-                    float feet = nowLast - sim.WorldOriginInCapture().y - 2f + dashOffset.y - dash.y / 2f;
+                    float feet = nowLast - sim.WorldOriginInCapture.y - 2f + dashOffset.y - dash.y / 2f;
                     hypers.Add(new Hyper(hypers.Count + 1, landX, sim.ToWorld(ScenePos.From(m.transform.position)).x, feet, last - stale - nowLast, ultra, stale != 0f));
                     if (hypers.Count >= wanted) after = 0;
                 }

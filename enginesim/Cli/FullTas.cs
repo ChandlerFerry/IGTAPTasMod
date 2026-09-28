@@ -794,7 +794,7 @@ namespace IGTAP.EngineSim.Cli
                     still = _eval.Still(walk, 300);
                     if (still < 0) return null;
                 }
-                UnityEngine.Vector3 p = _eval.PlayerWorld;
+                WorldPos p = _eval.PlayerWorld;
                 if (Math.Abs(p.y - to.Y) > MaxWalkRise) return null;
                 float miss = Math.Abs(p.x - to.X);
                 if (miss <= MaxWalkMiss && _eval.Player.facingRight == to.FacingRight)
@@ -841,7 +841,7 @@ namespace IGTAP.EngineSim.Cli
             var found = new List<List<InputTick>>();
             foreach (Seed s in walkers)
             {
-                var spot = new UnityEngine.Vector2(s.At.X + _eval.Origin.x, s.At.Y + _eval.Origin.y);
+                var spot = _eval.ToCapture(new WorldPos(s.At.X, s.At.Y)).AsVector2();
                 foreach (List<InputTick> cell in solver.Near(spot, p => p < _goals && s.Goals.Contains(_labels[p]), MaxWalk, CellWalkRise, tried, CellWalksPerCheck))
                 {
                     _eval.SetStart(at, prefixLength);

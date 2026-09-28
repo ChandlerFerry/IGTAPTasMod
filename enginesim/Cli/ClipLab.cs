@@ -47,7 +47,7 @@ namespace IGTAP.EngineSim.Cli
             var (sim, _, _) = Program.Open(args[0]);
             float x0 = F(args[1]), y0 = F(args[2]), x1 = F(args[3]), y1 = F(args[4]), step = args.Length > 5 ? F(args[5]) : 4f;
             var sb = new StringBuilder();
-            CapturePos capture = sim.WorldOriginInCapture();
+            CapturePos capture = sim.WorldOriginInCapture;
             sb.AppendLine($"x {x0}..{x1}, y {y1} (top row) .. {y0}, step {step}; origin {capture.x},{capture.y}");
             for (float y = y1; y >= y0; y -= step)
             {
@@ -181,7 +181,7 @@ namespace IGTAP.EngineSim.Cli
             sim.Restore(sim.Start);
             var probeStart = new Dictionary<string, object>();
             if (start.TryGetValue("savestate", out JsonElement ss)) probeStart["savestate"] = ss.GetString();
-            WorldPos world = sim.PlayerWorldPos();
+            WorldPos world = sim.PlayerWorld;
             bool moved = start.ContainsKey("x") || start.ContainsKey("y");
             if (moved) probeStart["position"] = new[] { start.TryGetValue("x", out JsonElement x) ? x.GetSingle() : world.x, start.TryGetValue("y", out JsonElement y) ? y.GetSingle() : world.y };
             if (start.TryGetValue("scaleX", out JsonElement sx)) probeStart["scaleX"] = sx.GetSingle();
@@ -222,7 +222,7 @@ namespace IGTAP.EngineSim.Cli
                 probeStart["velocity"] = new[] { v.x + m.x, v.y + m.y };
             }
             // rebaseAt [x, y]: the world rebased around that world point first, as if the player had rebased there.
-            if (start.TryGetValue("rebaseAt", out JsonElement at)) sim.LabRebase(new Vector3(at[0].GetSingle(), at[1].GetSingle(), 0f));
+            if (start.TryGetValue("rebaseAt", out JsonElement at)) sim.LabRebase(new WorldPos(at[0].GetSingle(), at[1].GetSingle()));
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(probeStart));
             DemoStart.ApplyStart(sim, doc.RootElement, baseDir);
             // A lab start is mid-air as often as not: the inputs start on the first tick, without the macro's wait for three
@@ -252,7 +252,7 @@ namespace IGTAP.EngineSim.Cli
             float endY = 0f, wallX = 0f, wallY = 0f;
             RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
             {
-                WorldPos p = sim.PlayerWorldPos();
+                WorldPos p = sim.PlayerWorld;
                 if (p.y > maxY) { maxY = p.y; maxStep = step; }
                 maxX = Math.Max(maxX, p.x); minX = Math.Min(minX, p.x);
                 Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
@@ -366,7 +366,7 @@ namespace IGTAP.EngineSim.Cli
                 rows.Add(Probe.Row(sim, step, extra, extraInfos));
                 if (rays.Length == 0) return;
                 ScenePos at = ScenePos.From(sim.Player.transform.position);
-                ScenePos currentOrigin = sim.WorldOriginInScene();
+                ScenePos currentOrigin = sim.WorldOriginInScene;
                 rayRows.Add($"t {at.x:0.#},{at.y:0.#} o {currentOrigin.x:0.#},{currentOrigin.y:0.#} " + string.Join(" ", rays.Select((a, i) =>
                 {
                     RaycastHit2D hit = Physics2D.Raycast(new Vector2(at.x + a[0], at.y + a[1]), new Vector2(a[2], a[3]), a[4], (int)a[5]);

@@ -273,7 +273,7 @@ namespace IGTAP.EngineSim.Cli
 
             var clock = System.Diagnostics.Stopwatch.StartNew();
             bool startCanDash = GetMovementBool(sim, "dashUnlocked");
-            Vector3 startAt = sim.PlayerWorld;
+            WorldPos startAt = sim.PlayerWorld;
             var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash,
                 Key = KeyOf(sim, exact), MaxY = MaxReach(sim, control), X = startAt.x, Y = startAt.y,
                 SolidGround = GroundCheckGrounds(sim, startAt.x, startAt.y) };
@@ -436,7 +436,7 @@ namespace IGTAP.EngineSim.Cli
                 key = KeyOf(sim, exact);
                 canDash = GetMovementBool(sim, "dashUnlocked");
                 maxY = MaxReach(sim, control);
-                Vector3 at = sim.PlayerWorld;
+                WorldPos at = sim.PlayerWorld;
                 x = at.x; y = at.y;
                 solid = GroundCheckGrounds(sim, x, y);
                 return false;
@@ -465,7 +465,8 @@ namespace IGTAP.EngineSim.Cli
 
         static bool TouchesAtStart(Simulation sim)
         {
-            (float x, float y, float w, float h) = sim.TargetFinish;
+            CaptureRect finish = sim.TargetFinish;
+            float x = finish.At.x, y = finish.At.y, w = finish.W, h = finish.H;
             float x0 = x - w / 2f, x1 = x + w / 2f, y0 = y - h / 2f, y1 = y + h / 2f;
             Vector3 at = sim.Player.transform.position;
             foreach (BoxCollider2D box in sim.Player.GetComponents<BoxCollider2D>())
@@ -489,7 +490,7 @@ namespace IGTAP.EngineSim.Cli
         static TickRow Row(Simulation sim, int tick)
         {
             Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
-            Vector3 p = sim.PlayerWorld;
+            WorldPos p = sim.PlayerWorld;
             return new TickRow { Tick = tick, X = p.x, Y = p.y, Vx = v.x, Vy = v.y, Mx = m.x, My = m.y,
                 Ground = GetMovementBool(sim, "onGround"), Coyote = GetMovementFloat(sim, "coyoteFrames"),
                 MaxCoyote = GetMovementFloat(sim, "maxCoyoteFrames"), Dash = GetMovementBool(sim, "dashActive"),
@@ -578,7 +579,7 @@ namespace IGTAP.EngineSim.Cli
             int steps = 0;
             RunResult run = sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 400, onStep: s =>
             {
-                Vector3 p = sim.PlayerWorld;
+                WorldPos p = sim.PlayerWorld;
                 log.AppendLine($"{steps,3} in{(int)sim.Engine.RunTicks - 1,3} pos {p.x - anchor.x,9:0.#},{p.y - anchor.y,9:0.#}"
                     + $" V {sim.Player.Velocity.x,7:0.#},{sim.Player.Velocity.y,7:0.#} m {sim.Player.momentum.x,7:0.#},{sim.Player.momentum.y,7:0.#}"
                     + $" g{(sim.Player.onGround ? 1 : 0)} w{(sim.Player.OnWall ? 1 : 0)} {sim.Player.cutsceneMode}"
@@ -617,7 +618,7 @@ namespace IGTAP.EngineSim.Cli
             var (fx, fy, fw, fh) = lab.Finish;
             (float ax, float ay) = lab.Anchor;
             sim.TargetCourse = -1;
-            sim.TargetFinish = (fx + ax + sim.Origin.x, fy + ay + sim.Origin.y, fw, fh);
+            sim.TargetFinish = new CaptureRect(sim.ToCapture(new WorldPos(fx + ax, fy + ay)), fw, fh);
         }
 
         /// <summary>The player at the lab's start (the probe/clip start): position and velocity in the world frame, facing, Movement fields.</summary>
@@ -662,7 +663,7 @@ namespace IGTAP.EngineSim.Cli
         static string KeyOf(Simulation sim, bool exact)
         {
             var sb = new StringBuilder(512);
-            Vector3 p = sim.PlayerWorld;
+            WorldPos p = sim.PlayerWorld;
             Quantize(sb, p.x, 1f); Quantize(sb, p.y, 1f);
             Quantize(sb, sim.Player.transform.localScale.x, 0.01f);
             var body = sim.Physics.PlayerBody();
