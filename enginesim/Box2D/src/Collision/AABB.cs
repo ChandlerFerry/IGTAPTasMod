@@ -99,12 +99,14 @@ namespace Box2D
             return result;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2AABB Enlarged(float amount)
         {
             b2Vec2 vecAmt = new b2Vec2(amount, amount);
             return new b2AABB(lowerBound - vecAmt, upperBound + vecAmt);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Intersects(in b2AABB other)
         {
             return other.lowerBound.Y <= this.upperBound.Y &&

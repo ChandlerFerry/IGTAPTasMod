@@ -104,7 +104,15 @@
       "capabilities": ["wjdsdjbs", "wjdsdjbsom"],
       "note": "x 20301 to 20582, y 2941 to 4703, is cut.",
       "avoid": [[20301, 2941, 20582, 4703]],
-      "via": []
+      "via": [],
+      "optional": [
+        {
+          "name": "avoid-backwards",
+          "note": "x 19800.2 to 19978.2, y 3538.6 to 3581.9. Off unless picked.",
+          "avoid": [[19800.2, 3538.6, 19978.2, 3581.9]],
+          "via": []
+        }
+      ]
     },
     {
       "course": 8,

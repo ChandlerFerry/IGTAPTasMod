@@ -285,11 +285,17 @@ A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) tha
 `"default": true` is picked unless turned off (`--no-optional <name>`, or unticking its checkbox, which starts ticked);
 the Optimize matrix's queue takes each course's defaults. Each set of picked
 blocks has its own search state, `archive\<label>-opt-<name>+<name>.json`; the map draws an optional block dashed while
-it's off. Course 1 has `avoid-forwards` (x 2436 to 2522, y -361 to -180), `avoid-backwards` (x 2168.3 to 2347.6, y
+it's off. The studio's course search map edits these rules too: **Draw avoid**, drag a box, and **Add avoid**
+(`POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}`) cuts it for every solve the map's rules
+cover; named, it becomes one such optional block (`"default": true` with "on by default"), created on the rule covering
+the map's category (a rule is drawn for the course's categories when none covers it). **Remove** under the map takes a
+box back out of the rules' standing avoids and optional blocks, dropping blocks left without boxes. Course 1 has
+`avoid-forwards` (x 2436 to 2522, y -361 to -180), `avoid-backwards` (x 2168.3 to 2347.6, y
 213.4 to 235.5) and `avoid-right` (x 2671.1 to 3503.8, y -478.2 to 557.8, on by default), in every category; Course 2 has
 `avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
 to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS`, `WJ_DS_DJ`
-and `WJ_DS_DJ_BS_OM`.
+and `WJ_DS_DJ_BS_OM`; Course 7 has `avoid-backwards` (x 19800.2 to 19978.2, y 3538.6 to 3581.9), in `WJ_DS_DJ_BS` and
+`WJ_DS_DJ_BS_OM`.
 
 A rule with `"fulltas": ["VMAN", ...]` instead of `course`/`capabilities` holds a Full-TAS run's avoid boxes: every
 search window of those runs cuts a run entering one (its `via` isn't used; the run's `at:` goals are its waypoints).
@@ -535,7 +541,8 @@ A best comes out of the search full of tick-exact and analog-exact inputs, most 
 `humanize <start-trace> <best.json>` writes `<best>-human.json`, a same-time version that is easier to play,
 `<best>-human.md`, which says how much slack each of its inputs has, and `<best>-human.slack.json`, the same slack
 structured for the studio (below). `solve` does this for every new best on one
-background thread (a newer best replaces one still waiting; the last one is finished before `solve` exits).
+background thread (a newer best replaces one still waiting; the last one is finished before `solve` exits, on the
+solve's `--threads` workers once the search has stopped, since its tolerance runs are independent).
 
 Simplify: greedy passes, repeated until none changes anything. A change stays only if the run still finishes offline in
 the same time (the course timer, or physics ticks for a bonus or transition), in no more physics ticks from the run

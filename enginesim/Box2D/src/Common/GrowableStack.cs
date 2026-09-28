@@ -51,27 +51,31 @@ namespace Box2D
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Push(in T element)
         {
-            if (_count == _capacity)
-            {
-                var old = _stack;
-                _capacity *= 2;
-                var dstSize = _capacity * sizeof(T);
-                _stack = (T*)Marshal.AllocHGlobal(dstSize);
-                Buffer.MemoryCopy(old, _stack, dstSize, _count * sizeof(T));
-                if (_wasReallocated)
-                {
-                    Marshal.FreeHGlobal((IntPtr)old);
-                }
-
-                _wasReallocated = true;
-            }
-
+            if (_count == _capacity) Grow();
             _stack[_count] = element;
             ++_count;
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void Grow()
+        {
+            var old = _stack;
+            _capacity *= 2;
+            var dstSize = _capacity * sizeof(T);
+            _stack = (T*)Marshal.AllocHGlobal(dstSize);
+            Buffer.MemoryCopy(old, _stack, dstSize, _count * sizeof(T));
+            if (_wasReallocated)
+            {
+                Marshal.FreeHGlobal((IntPtr)old);
+            }
+
+            _wasReallocated = true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public T Pop()
         {
             Debug.Assert(_count > 0);

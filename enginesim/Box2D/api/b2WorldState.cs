@@ -565,21 +565,26 @@ namespace Box2D
         {
             if (!_snapshotBases.TryGetValue(_capacity, out Node[] baseNodes))
                 _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
-            var index = new List<int>();
-            var node = new List<Node>();
+            // Count the changed nodes first so the delta arrays are exactly sized: no List growth chain, no ToArray
+            // copies. The second pass reads the same unchanged nodes as the first, so the delta is identical.
+            int changed = 0;
             for (int i = 0; i < _capacity; i++)
-                if (!Same(_nodes[i], baseNodes[i])) { index.Add(i); node.Add(_nodes[i]); }
+                if (!Same(_nodes[i], baseNodes[i])) changed++;
             // A tree rebuilt since the base (a FloatingOrigin rebase rebuilds every body-less collider) differs from it almost
             // everywhere: this state becomes the base, so later snapshots near it hold only what moved. Older ones keep theirs.
-            if (index.Count * 4 > _capacity)
+            if (changed * 4 > _capacity)
             {
                 _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
-                index.Clear();
-                node.Clear();
+                changed = 0;
             }
+            int[] index = changed == 0 ? Array.Empty<int>() : new int[changed];
+            Node[] node = changed == 0 ? Array.Empty<Node>() : new Node[changed];
+            int n = 0;
+            for (int i = 0; i < _capacity && n < changed; i++)
+                if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
             return new TreeSnapshot
             {
-                baseNodes = baseNodes, changedIndex = index.ToArray(), changedNode = node.ToArray(),
+                baseNodes = baseNodes, changedIndex = index, changedNode = node,
                 root = _root, freeNodes = _freeNodes, nodeCount = _nodeCount,
             };
         }

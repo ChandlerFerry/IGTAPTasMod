@@ -217,8 +217,17 @@ namespace IGTAPTasMod
 
         public void Resume(object[] state, List<MacroStep> remaining, int elapsedTicks)
         {
+            ResumeOwned(state, Expand(remaining), elapsedTicks);
+        }
+
+        /// <summary>Resume on a caller-owned, already-filtered step list: skips Expand's per-step Copy (its
+        /// Guid.NewGuid id is never read by the engine). Exact where the list holds only enabled non-Bundle steps
+        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id. NormalizeFrameTiming
+        /// still runs, mutating the caller's steps in place of the copies.</summary>
+        public void ResumeOwned(object[] state, List<MacroStep> steps, int elapsedTicks)
+        {
             FieldState.Restore(this, state);
-            _steps = Expand(remaining);
+            _steps = steps;
             NormalizeFrameTiming(_steps);
             _stepIndex = 0;
             _elapsedMs = elapsedTicks * Time.fixedDeltaTime * 1000f;

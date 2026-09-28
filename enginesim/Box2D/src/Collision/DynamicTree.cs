@@ -858,6 +858,7 @@ namespace Box2D
 			}
 		}
 
+		[SkipLocalsInit]
 		public void Query(Func<int, bool> queryCallback, in b2AABB aabb)
 		{
 			using var stack = new b2GrowableStack<Proxy>(stackalloc Proxy[256]);
@@ -871,8 +872,7 @@ namespace Box2D
 					continue;
 				}
 
-				// Skip bounds check with Unsafe.Add().
-				var node = _nodes[nodeId];
+				ref Node node = ref _nodes[nodeId];
 				if (node.Aabb.Intersects(aabb))
 				{
 					if (node.IsLeaf)
@@ -892,6 +892,7 @@ namespace Box2D
 			}
 		}
 
+		[SkipLocalsInit]
 		public void RayCast(Func<b2RayCastInput, int, float> RayCastCallback, in b2RayCastInput input)
 		{
 			b2Vec2 p1 = input.p1;
@@ -928,8 +929,7 @@ namespace Box2D
 					continue;
 				}
 
-				// Skip bounds check with Unsafe.Add().
-				var node = _nodes[nodeId];
+				ref Node node = ref _nodes[nodeId];
 				if (node.Aabb.Intersects(segmentAABB) == false)
 				{
 					continue;

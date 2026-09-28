@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Box2D;
 using static Box2D.b2Collision;
@@ -65,6 +66,10 @@ namespace IGTAP.EngineSim
         readonly Dictionary<int, ColliderState> _byId = new Dictionary<int, ColliderState>();
         readonly Dictionary<Rigidbody2D, BodyState> _bodies = new Dictionary<Rigidbody2D, BodyState>();
         readonly Dictionary<GameObject, List<ColliderState>> _byObject = new Dictionary<GameObject, List<ColliderState>>();
+        // _bodies/_colliders are filled only in the constructor and nothing is ever removed, so these copies of their
+        // Values (taken at the constructor's end) hold exactly the order a foreach over .Values would walk forever.
+        BodyState[] _bodyList = Array.Empty<BodyState>();
+        ColliderState[] _colliderList = Array.Empty<ColliderState>();
         readonly int[] _layerMasks;
         readonly float _contactOffset;
         readonly int _velocityIterations, _positionIterations;
@@ -162,6 +167,10 @@ namespace IGTAP.EngineSim
                 composite.Sources = list.ToArray();
                 composite.SourcesLiveAtLoad = list.Select(Live).ToArray();
             }
+            _bodyList = new BodyState[_bodies.Count];
+            _bodies.Values.CopyTo(_bodyList, 0);
+            _colliderList = new ColliderState[_colliders.Count];
+            _colliders.Values.CopyTo(_colliderList, 0);
             _loaded = true;
         }
 
@@ -413,11 +422,12 @@ namespace IGTAP.EngineSim
             if (_worldMoved)
             {
                 _worldMoved = false;
-                foreach (BodyState b in _bodies.Values) b.TransformDirty = true;
-                foreach (ColliderState s in _colliders.Values) if (s.Body == null) Rebuild(s);
+                for (int i = 0; i < _bodyList.Length; i++) _bodyList[i].TransformDirty = true;
+                for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
             }
-            foreach (BodyState b in _bodies.Values)
+            for (int bi = 0; bi < _bodyList.Length; bi++)
             {
+                BodyState b = _bodyList[bi];
                 if (!b.TransformDirty && !b.ScaleDirty) continue;
                 Transform t = b.Rigidbody.transform;
                 if (b.TransformDirty)
@@ -435,20 +445,24 @@ namespace IGTAP.EngineSim
         {
             SyncTransforms();
             _b2.Step(deltaTime, _velocityIterations, _positionIterations);
-            foreach (BodyState b in _bodies.Values)
+            for (int bi = 0; bi < _bodyList.Length; bi++)
             {
+                BodyState b = _bodyList[bi];
                 if (b.Rigidbody.bodyType == RigidbodyType2D.Static) continue;
                 b2Vec2 p = b.Body.GetPosition();
                 Transform t = b.Rigidbody.transform;
                 t.StoreWorldPosition(new Vector3(p.x, p.y, t.m_Position.z));
             }
             DispatchCallbacks();
-            foreach (ColliderState s in _rescaled) s.Rescaled = false;
+            for (int i = 0; i < _rescaled.Count; i++) _rescaled[i].Rescaled = false;
             _rescaled.Clear();
         }
 
         readonly List<Pair> _pairsNow = new List<Pair>();
         readonly Dictionary<Pair, List<b2Contact>> _contactsNow = new Dictionary<Pair, List<b2Contact>>();
+        // Parallel to _pairsNow (both grow in the same branch of CollectTouching): DispatchCallbacks reads a pair's
+        // contacts by index instead of hashing the pair in _contactsNow again.
+        readonly List<List<b2Contact>> _pairContacts = new List<List<b2Contact>>();
         readonly Stack<List<b2Contact>> _contactLists = new Stack<List<b2Contact>>();
         List<Pair> _pairsBefore = new List<Pair>();
         readonly List<ColliderState> _rescaled = new List<ColliderState>();
@@ -463,17 +477,33 @@ namespace IGTAP.EngineSim
         {
             CollectTouching();
             _sends.Clear();
-            foreach (Pair p in _pairsBefore)
-                if (!_touchingNext.Contains(p)) Queue(p, "Exit", null);
-            foreach (Pair p in _pairsNow)
-                Queue(p, _touching.Contains(p) ? "Stay" : "Enter", _contactsNow[p]);
-            foreach (var (pair, message, a, b) in _sends) Send(pair, message, a, b);
+            for (int i = 0; i < _pairsBefore.Count; i++)
+            {
+                Pair p = _pairsBefore[i];
+                if (!_touchingNext.Contains(p)) Queue(p, PhaseExit, null);
+            }
+            for (int i = 0; i < _pairsNow.Count; i++)
+            {
+                Pair p = _pairsNow[i];
+                Queue(p, _touching.Contains(p) ? PhaseStay : PhaseEnter, _pairContacts[i]);
+            }
+            for (int i = 0; i < _sends.Count; i++)
+            {
+                var (pair, message, a, b) = _sends[i];
+                Send(pair, message, a, b);
+            }
             AdvanceTouching();
         }
 
         void CollectTouching()
         {
-            foreach (List<b2Contact> list in _contactsNow.Values) { list.Clear(); _contactLists.Push(list); }
+            for (int i = 0; i < _pairContacts.Count; i++)
+            {
+                List<b2Contact> list = _pairContacts[i];
+                list.Clear();
+                _contactLists.Push(list);
+            }
+            _pairContacts.Clear();
             _contactsNow.Clear();
             _pairsNow.Clear();
             _touchingNext.Clear();
@@ -494,8 +524,9 @@ namespace IGTAP.EngineSim
                 if (!_contactsNow.TryGetValue(pair, out List<b2Contact> contacts))
                 {
                     contacts = _contactLists.Count > 0 ? _contactLists.Pop() : new List<b2Contact>(2);
-                    _contactsNow[pair] = contacts;
+                    _contactsNow.Add(pair, contacts);
                     _pairsNow.Add(pair);
+                    _pairContacts.Add(contacts);
                     _touchingNext.Add(pair);
                 }
                 int at = contacts.Count;
@@ -511,9 +542,12 @@ namespace IGTAP.EngineSim
             _pairsBefore.AddRange(_pairsNow);
         }
 
-        void Queue(Pair p, string phase, List<b2Contact> contacts)
+        // Message index offsets for Queue's phase (message = (Trigger ? 0 : 3) + phase), as the old "Enter"/"Stay"/"Exit" compares gave.
+        const int PhaseEnter = 0, PhaseStay = 1, PhaseExit = 2;
+
+        void Queue(Pair p, int phase, List<b2Contact> contacts)
         {
-            int message = (p.Trigger ? 0 : 3) + (phase == "Enter" ? 0 : phase == "Stay" ? 1 : 2);
+            int message = (p.Trigger ? 0 : 3) + phase;
             if (p.Trigger) { _sends.Add((p, message, null, null)); return; }
             _sends.Add((p, message, p.A.Handlers[message].Length > 0 ? MakeCollision(p.A, p.B, contacts) : null,
                 p.B.Handlers[message].Length > 0 ? MakeCollision(p.B, p.A, contacts) : null));
@@ -596,10 +630,11 @@ namespace IGTAP.EngineSim
 
         void Call(ColliderState target, int message, object argument)
         {
-            foreach (var (script, call) in target.Handlers[message])
+            (MonoBehaviour script, Action<object> call)[] handlers = target.Handlers[message];
+            for (int i = 0; i < handlers.Length; i++)
             {
-                _sim.Touch(script);
-                call(argument);
+                _sim.Touch(handlers[i].script);
+                handlers[i].call(argument);
             }
         }
 
@@ -641,17 +676,20 @@ namespace IGTAP.EngineSim
         int _stamp, _cellsX, _cellsY;
         float _gridX, _gridY;
         List<(b2Fixture fixture, ColliderState state)>[] _movers;
-        static readonly List<(b2Fixture, ColliderState)> NoMovers = new List<(b2Fixture, ColliderState)>();
+        // The layers _movers has a list for: a query walks only the ones its mask shares, not every bit of the mask.
+        uint _moverLayers;
 
         void BuildMovers()
         {
             _movers = new List<(b2Fixture, ColliderState)>[32];
+            _moverLayers = 0;
             for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
                 if (body.Type() != b2BodyType.Static)
                     for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
                     {
                         var s = (ColliderState)f.UserData;
                         (_movers[s.Layer] ??= new List<(b2Fixture, ColliderState)>()).Add((f, s));
+                        _moverLayers |= 1u << s.Layer;
                     }
         }
 
@@ -823,13 +861,13 @@ namespace IGTAP.EngineSim
                 foreach (int i in _cells[y0 * _cellsX + x0])
                 {
                     ref StaticShape s = ref _static[i];
-                    if (!Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
+                    if (!Contains(s.Box, p) || !Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
                     found = s.State;
                     count++;
                 }
             if (_movers == null) BuildMovers();
-            for (uint layers = (uint)layerMask; layers != 0; layers &= layers - 1)
-                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)] ?? NoMovers)
+            for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
+                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)])
                 {
                     if (!Accept(s, layerMask)) continue;
                     for (int c = 0; c < f.m_proxyCount; c++)
@@ -859,11 +897,12 @@ namespace IGTAP.EngineSim
                         if (_seen[i] == _stamp) continue;
                         _seen[i] = _stamp;
                         ref StaticShape s = ref _static[i];
+                        if (SegmentMisses(s.Box, p1, p2)) continue;
                         if (Accept(s.State, layerMask) && RayHit(s.Fixture, s.Child, s.State, input) && ++count > 1) return false;
                     }
             if (_movers == null) BuildMovers();
-            for (uint layers = (uint)layerMask; layers != 0; layers &= layers - 1)
-                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)] ?? NoMovers)
+            for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
+                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)])
                 {
                     if (!Accept(s, layerMask)) continue;
                     for (int c = 0; c < f.m_proxyCount; c++)
@@ -872,6 +911,28 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        // A grid shape's Box is its AABB grown by 1 on every side (GridBox): a point inside the shape, or a ray's hit on it,
+        // lies inside the AABB, so a point or segment outside the Box can't test inside or hit, and skipping it changes nothing.
+        static bool Contains(in b2AABB box, b2Vec2 p)
+        {
+            return p.x >= box.lowerBound.x && p.x <= box.upperBound.x && p.y >= box.lowerBound.y && p.y <= box.upperBound.y;
+        }
+
+        /// <summary>
+        /// The segment p1–p2 surely misses the box: separated on x, on y, or along the segment's normal (Gino's axis, as
+        /// b2DynamicTree.RayCast). The Box's margin of 1 dwarfs the float error of the test.
+        /// </summary>
+        static bool SegmentMisses(in b2AABB box, b2Vec2 p1, b2Vec2 p2)
+        {
+            if (MathF.Max(p1.x, p2.x) < box.lowerBound.x || MathF.Min(p1.x, p2.x) > box.upperBound.x
+                || MathF.Max(p1.y, p2.y) < box.lowerBound.y || MathF.Min(p1.y, p2.y) > box.upperBound.y) return true;
+            float dx = p2.x - p1.x, dy = p2.y - p1.y;
+            float cx = (box.lowerBound.x + box.upperBound.x) * 0.5f, cy = (box.lowerBound.y + box.upperBound.y) * 0.5f;
+            float hx = (box.upperBound.x - box.lowerBound.x) * 0.5f, hy = (box.upperBound.y - box.lowerBound.y) * 0.5f;
+            return MathF.Abs(dx * (p1.y - cy) - dy * (p1.x - cx)) > MathF.Abs(dy) * hx + MathF.Abs(dx) * hy;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         bool RayHit(b2Fixture fixture, int child, ColliderState s, in b2RayCastInput input)
         {
             if (!fixture.RayCast(out b2RayCastOutput output, input, child)) return false;
@@ -918,6 +979,7 @@ namespace IGTAP.EngineSim
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         bool Accept(ColliderState s, int layerMask)
         {
             return (layerMask & (1 << s.Layer)) != 0 && (_queriesHitTriggers || !s.Collider.m_IsTrigger);

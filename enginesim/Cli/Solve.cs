@@ -67,7 +67,7 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
-            var humanize = new Humanize.Background(create, forced, course, caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
+            var humanize = new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;

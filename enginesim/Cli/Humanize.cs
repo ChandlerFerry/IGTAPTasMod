@@ -60,19 +60,34 @@ namespace IGTAP.EngineSim.Cli
         }
 
         readonly Judge _main;
+        readonly Func<Simulation> _create;
+        readonly OfflineSolver.ForcedPath _path;
         readonly List<Worker> _workers = new List<Worker>();
         float _time;
         long _runTicks;
 
         public Humanizer(Func<Simulation> create, OfflineSolver.ForcedPath path, int threads)
         {
+            _create = create;
+            _path = path;
             _main = new Judge(create(), path);
-            for (int i = 1; i < threads; i++) _workers.Add(new Worker(create, path));
+            Grow(threads);
+        }
+
+        /// <summary>
+        /// Adds workers up to <paramref name="threads"/> in all, callable from any thread while a Humanize runs: its next
+        /// tolerance batch uses them (a solve's background humanizer takes the solver's threads once the solver stops).
+        /// </summary>
+        public void Grow(int threads)
+        {
+            lock (_workers)
+                while (_workers.Count + 1 < threads) _workers.Add(new Worker(_create, _path));
         }
 
         public void Stop()
         {
-            foreach (Worker w in _workers) w.Stop();
+            lock (_workers)
+                foreach (Worker w in _workers) w.Stop();
         }
 
         public Result Humanize(List<InputTick> best)
@@ -266,8 +281,10 @@ namespace IGTAP.EngineSim.Cli
                 }
                 catch (Exception ex) { failure = ex; }
             }
-            using var done = new CountdownEvent(_workers.Count + 1);
-            foreach (Worker w in _workers) w.Post(judge => { Work(judge); done.Signal(); });
+            Worker[] workers;
+            lock (_workers) workers = _workers.ToArray();
+            using var done = new CountdownEvent(workers.Length + 1);
+            foreach (Worker w in workers) w.Post(judge => { Work(judge); done.Signal(); });
             Work(_main);
             done.Signal();
             done.Wait();
@@ -695,17 +712,24 @@ namespace IGTAP.EngineSim.Cli
             readonly OfflineSolver.ForcedPath _path;
             readonly int _course;
             readonly string _caps;
+            readonly int _finishThreads;
             readonly Action<string> _log;
             (string file, List<InputTick> inputs)? _next;
             bool _busy, _stopping;
+            Humanizer _humanizer;
             readonly Thread _thread;
 
-            public Background(Func<Simulation> create, OfflineSolver.ForcedPath path, int course, string caps, Action<string> log)
+            /// <summary>
+            /// Humanizes each new best on one thread while the solver runs; <see cref="Finish"/> hands the rest
+            /// <paramref name="finishThreads"/> threads, the solver's, which are free by then.
+            /// </summary>
+            public Background(Func<Simulation> create, OfflineSolver.ForcedPath path, int course, string caps, int finishThreads, Action<string> log)
             {
                 _create = create;
                 _path = path;
                 _course = course;
                 _caps = caps;
+                _finishThreads = finishThreads;
                 _log = log;
                 _thread = new Thread(Loop) { IsBackground = true, Name = "humanize" };
                 _thread.Start();
@@ -721,17 +745,19 @@ namespace IGTAP.EngineSim.Cli
                 lock (this)
                 {
                     _stopping = true;
+                    _humanizer?.Grow(_finishThreads);
                     Monitor.PulseAll(this);
                     while (_next != null || _busy) Monitor.Wait(this);
                 }
+                _humanizer?.Stop();
             }
 
             void Loop()
             {
-                Humanizer humanizer = null;
                 while (true)
                 {
                     (string file, List<InputTick> inputs) job;
+                    bool stopping;
                     lock (this)
                     {
                         _busy = false;
@@ -741,10 +767,20 @@ namespace IGTAP.EngineSim.Cli
                         job = _next.Value;
                         _next = null;
                         _busy = true;
+                        stopping = _stopping;
                     }
                     try
                     {
-                        humanizer ??= new Humanizer(_create, _path, 1);
+                        if (_humanizer == null)
+                        {
+                            var created = new Humanizer(_create, _path, stopping ? _finishThreads : 1);
+                            lock (this)
+                            {
+                                _humanizer = created;
+                                if (_stopping) created.Grow(_finishThreads);
+                            }
+                        }
+                        Humanizer humanizer = _humanizer;
                         Humanizer.Result r = humanizer.Humanize(job.inputs);
                         Write(job.file, _course, _caps, r);
                         _log($"human version of {Path.GetFileName(job.file)}: {r.Changes.Count} changes, exact inputs {r.Before.Count(e => e.Exact)} -> "

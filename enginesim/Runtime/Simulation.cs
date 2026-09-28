@@ -945,7 +945,9 @@ namespace IGTAP.EngineSim
             _inRun = true;
             int step = from.Tick;
             while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
-            Engine.Resume(from.Engine, ToSteps(inputs, step), from.Tick - step);
+            // ResumeOwned: ToSteps already emits only enabled RawInput steps (Expand's filter would pass them all), so
+            // Expand's Copy is redundant work here; the engine never reads the copied step ids.
+            Engine.ResumeOwned(from.Engine, ToSteps(inputs, step), from.Tick - step);
             _finished = false;
             _finishTime = 0f;
             _endReason = null;
