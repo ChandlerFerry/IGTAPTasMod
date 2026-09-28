@@ -440,7 +440,7 @@ namespace IGTAPTasMod
             {
                 _optionalBlocksRead = stamp;
                 _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
-                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>()
+                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
                         .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
                             course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
                             caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
