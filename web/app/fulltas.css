@@ -73,9 +73,15 @@
 .ftEmpty { color: var(--muted); }
 .ftRaw summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .ftRaw pre { max-height: 320px; overflow: auto; padding: 10px; border-radius: 8px; background: #081524; color: #aac0d7; font: 11px/1.6 ui-monospace,Consolas,monospace; white-space: pre-wrap; word-break: break-all; }
-.ftSegments { margin-top: 12px; }
-.ftSegments summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-.ftSegments .resultTable { max-height: 320px; overflow-y: auto; margin-top: 8px; }
-.ftSegments .tableHead, .ftSegments .tableRow { grid-template-columns: 40px minmax(0,1fr) 70px minmax(0,1fr); }
-.ftSegments .tableRow { cursor: pointer; }
-.ftSegments .tableRow.selected { background: #10263d; box-shadow: inset 3px 0 0 var(--cyan); }
+.resultTable.segmented > .tableHead, .resultTable.segmented > .tableRow { margin-left: 18px; }
+.segmentGroup { display: grid; grid-template-columns: 18px minmax(0,1fr); }
+.segmentGroup.empty { min-height: 8px; }
+.segmentBar { position: relative; padding: 0; border: 0; background: none; color: var(--cyan); cursor: pointer; }
+.segmentBar:disabled { cursor: default; }
+.segmentBar::before { content: ""; position: absolute; left: 3px; top: 3px; bottom: 3px; width: 3px; border-radius: 2px; background: currentColor; }
+.segmentGroup.alt .segmentBar { color: #8a7dff; }
+.segmentGroup.empty .segmentBar { color: #3a5575; }
+.segmentGroup.empty .segmentBar::before { top: 2px; bottom: 2px; }
+.segmentGroup.selected .segmentBar { color: var(--amber); }
+.segmentBar span { position: absolute; left: 7px; top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl; font-size: 10px; font-weight: 700; line-height: 1; }
+.segmentBar:hover:not(:disabled) { background: #10263d; }

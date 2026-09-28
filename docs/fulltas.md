@@ -302,10 +302,11 @@ inputs past the last unchanged goal the same way.
   of the route as it is and scoring the time at goal N. `threads` 0 or missing (the site sends none) is cores − 2.
 - **Solve by resets** (`resets: true`, the solver's `--resets`) polishes the best one reset segment at a time (see
   [Reset segments](#reset-segments)); **Only segment** N (`segment: N`, `--segment N`) searches just that one, over and
-  over (**Solve segment N**). The **Reset segments** list under the buttons numbers the best's segments with their goals
-  and inputs (`/api/state` `fullTas.runs[].offline.segments`: `[goals before, goals by its restart, inputs]` each); a
-  row click picks it. Once a solve has sent them (`fullTas.solve.segments`, the solver's `segments` event) it also shows
-  what each closing restart leaves on after its tick.
+  over (**Solve segment N**). The goals table draws a numbered bar down each segment's goals, as the TAS overlay marks a
+  tech's ticks (`/api/state`
+  `fullTas.runs[].offline.segments`: `[goals before, goals by its Quick Restart, inputs]` each): its number, goals and
+  inputs in its tooltip; clicking the bar picks it for **Only segment**. Once a solve has sent them (`fullTas.solve.segments`,
+  the solver's `segments` event) the tooltip also says where its Quick Restart sends the player and what that leaves on.
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.
@@ -368,23 +369,32 @@ inputs past the last unchanged goal the same way.
   (`reach`/`build`/`polish`), `window` (`kind`: `reach`, `polish`, `repair`, `piece` or `segment`, goals `first`..`limit`, `target`,
   `budget`; a piece window's `piece` says what it heads for, a segment's extra lap too), `status` (each second), `found`,
   `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`; with `--resets` also `segments` (every
-  segment: `n`, goals `first`..`last`, `start` and `reset` inputs, `from`/`to` times, `carries`) and `segment` (the one
-  searched next). Times are seconds from the run's start.
+  segment: `n`, goals `first`..`last`, `start` and `reset` inputs, `from`/`to` times, `carries`, `quickRestart`: where
+  its Quick Restart sends the player) and `segment` (the one searched next). Times are seconds from the run's start.
 
 ### Reset segments
 
-`--resets` (`enginesim\Cli\FullTasSegments.cs`) cuts the best at its quick restarts: segment k runs from the input after
-restart k−1 (or the run's start) to restart k, the last one to the route's end. Polishing a goal window splices the old
-tail in at a goal, where the new state differs, so the tail breaks and `repair` re-finds it. A segment is spliced at a
-restart instead:
+Terms: a *goal* is one of the run's Full-TAS goals (numbered, where to go next); a *Checkpoint* is the game's
+`checkpointScript` trigger, which sets `respawnPoint`; a *Quick Restart* is the TAS's `reset` input, the game's
+`Movement.respawn(true)`. A Quick Restart goes to `courseResetPoint` while a course is running (its start gate sets its
+reset point, `courseScript.FixedUpdate` keeps it there, the finish clears it), else to the last Checkpoint touched. The
+course-checkpoints toggle (`isRespawningAtCheckpoints`) only changes where a death respawns: `respawn(true)` ignores it,
+so while a course runs a Quick Restart goes to its reset point even after a Checkpoint. A death ends every Full-TAS run,
+so only Quick Restarts split one.
 
-- Its goals are searched (a `segment` window) from the state after the restart that opens it, for its last goal, faster
+`--resets` (`enginesim\Cli\FullTasSegments.cs`) cuts the best at its Quick Restarts: segment k runs from the input
+after Quick Restart k−1 (or the run's start) to Quick Restart k, the last one to the route's end. The studio's list
+shows where each segment's Quick Restart goes (`Course 1 reset point (x, y)` or `Checkpoint (x, y)`, read on the tick
+before it). Polishing a goal window splices the old tail in at a goal, where the new state differs, so the tail breaks
+and `repair` re-finds it. A segment is spliced at a Quick Restart instead:
+
+- Its goals are searched (a `segment` window) from the state after the Quick Restart that opens it, for its last goal, faster
   than the best reaches it there.
-- Each way found (the last five, fastest first) is cut at that goal and closed with the old restart's own input tick,
-  after the old segment's inputs between the goal and the restart, or after 0 to (old gap + 24) idle ticks, shortest
-  first. The old route after the restart follows unchanged.
-- The first close that leaves the player as the old restart did is replayed as a whole run. "As the old restart did"
-  means after the restart tick, every `Movement` field (`respawn` zeroes `Velocity`, `momentum` and
+- Each way found (the last five, fastest first) is cut at that goal and closed with the old Quick Restart's own input tick,
+  after the old segment's inputs between the goal and the Quick Restart, or after 0 to (old gap + 24) idle ticks, shortest
+  first. The old route after the Quick Restart follows unchanged.
+- The first close that leaves the player as the old Quick Restart did is replayed as a whole run. "As the old Quick Restart did"
+  means after the Quick Restart tick, every `Movement` field (`respawn` zeroes `Velocity`, `momentum` and
   `movingPlatformVelocity` and keeps the rest: the wall jump's lock, the zip mover's history, the ground bounce's window,
   coyote, the buffers, the dash, `respawnPoint`/`courseResetPoint`), the world position and origin, the body's position
   and velocity, the interpolation's two ends, scale, rotation, colliders, the animator's `Animation`, and the invokes
@@ -392,35 +402,37 @@ restart instead:
   compares with thresholds (from every read in `Movement`): `dashCooldown` and `wallCoyoteFrames` once both are below 0, and
   `framesSinceLastDash` once both are at least 4 and `dashBoostMax` × 1.4. A close that differs only off the player's
   motion (position, origin, body, interpolation, `Velocity`, `momentum`, `movingPlatformVelocity`) is followed under the
-  old route's inputs after the restart, up to its next restart and at most 60 ticks: it counts when it moves exactly as
+  old route's inputs after the Quick Restart, up to its next Quick Restart and at most 60 ticks: it counts when it moves exactly as
   the old one every tick and has become equal in every field. `FalseEnding-Any%`'s first Course 1 lap found 0.12 s whose
-  restart differed only in `cancelJumpCutBuffer` pending 13 ticks instead of 11 (the jump release came 2 ticks later);
+  Quick Restart differed only in `cancelJumpCutBuffer` pending 13 ticks instead of 11 (the jump release came 2 ticks later);
   a press or release cancels that invoke, so the old route's next input decides whether it ever matters. Any other
   close whose state differs isn't used, and a way with no close that matches is dropped with the fields that differed
-  (`Segment N is faster, but no restart after it leaves the player as the old one did (...)`). Nothing is re-solved.
-- The whole run still has to end sooner. The player is the same after the restart but the world may not be: Cash and
-  clone payouts come at other ticks, the RNG has drawn differently, the game's objects are elsewhere in their cycles. A
-  way whose run then misses a later goal is dropped as well (`the player is the same, the world isn't`), with one
-  fallback: when the old route after the restart stops on a purchase that isn't its next goal (it walks through a box it
-  can pay for now), that buy goal alone is rebuilt from loop pieces (the builder's, a piece search when none fits) and the
-  old route after it follows, up to 3 such buys. The run is kept only if it then reaches every goal it did and ends
-  sooner. `FalseEnding-Any%`'s 0.12 s faster first Course 1 lap is the case: with it, the old walk to goal 282
-  (`buy:buyclone3`) buys Course 3's `CashPerLoop` box on the way (`Bought Courses/course 3/localUpgrades/CashPerLoop, which isn't the next goal's box`).
-- A segment with no goal is first tried without: one restart where the two were (the opening one as it is, or the
-  closing one's input in its place), kept when that restart leaves the player as the closing one did and the run ends
+  (`Segment N is faster, but no Quick Restart after it leaves the player as the old one did (...)`); nothing is rebuilt for it.
+- The whole run still has to end sooner. The player is the same after the Quick Restart but the world may not be:
+  Cash and clone payouts come at other ticks, the RNG has drawn differently, the game's objects are elsewhere in their
+  cycles. When the old route after it then stops at a later goal, the old segment holding that goal is searched again
+  from its own opening Quick Restart (a `repair` window, seeded with its old way) and closed with its old Quick Restart
+  under the same state check, so everything after it stays good; then the next segment that stops, each at most once,
+  until the run reaches every goal the old one did (kept if it ends sooner), reaches a goal no sooner than the record
+  does (it can't end sooner any more), or a segment has no way through. Only the first way whose Quick Restart matched
+  is repaired, as each rebuilt segment is a window of its own. `FalseEnding-Any%`'s 0.12 s faster Course 1 laps are the
+  case: with one, the old walk to goal 230 or 283 (`buy:buyclone3`) buys Course 3's `CashPerLoop` box on the way
+  (`Bought Courses/course 3/localUpgrades/CashPerLoop, which isn't the next goal's box`).
+- A segment with no goal is first tried without: one Quick Restart where the two were (the opening one as it is, or the
+  closing one's input in its place), kept when that Quick Restart leaves the player as the closing one did and the run ends
   sooner. An extra lap (the builder's, for Cash) is then searched as its course's gate and finish (`start:N + finish:N`,
   `FullTasTracker.For`) and closed the same way. Anything else without a goal is kept as it is.
 - The last segment ends with the route, so its way is spliced in as a polish window's.
 
-`FalseEnding-Any%`'s 511.22 s best has 252 segments, 47 without a goal (the new game's first two restarts, the builder's
-extra Course 3 laps before `buy:buydj`, and a few idle-tick restarts in Course 3's buys). After 231 of its 251 restart
+`FalseEnding-Any%`'s 511.22 s best has 252 segments, 47 without a goal (the new game's first two Quick Restarts, the builder's
+extra Course 3 laps before `buy:buydj`, and a few idle-tick Quick Restarts in Course 3's buys). After 231 of its 251 Quick Restart
 ticks the player carries nothing of the tech's list; 19 leave a dash running or buffered, or a jump buffered, from the
-restart tick's own input; and the restart at input 12606, right after a wall jump, keeps the wall jump's lock: the
-restart tick runs at the locked 460 right and the next one does too (`wallJumpMovementLockRemaining` 0,
+Quick Restart tick's own input; and the Quick Restart at input 12606, right after a wall jump, keeps the wall jump's lock: the
+Quick Restart tick runs at the locked 460 right and the next one does too (`wallJumpMovementLockRemaining` 0,
 `wallJumpDirection` 1). That is the tech's first carry-over, and it isn't a problem: a new way for the segment before
-counts only if its restart keeps the same lock (3 or more idle ticks before the restart leave `Velocity` x 0 and the
-lock −1). Its segment 2 (the new game's second restart) can't be dropped: the one restart left leaves
-`heightOfLastJumpStart` and `lastHyperY` 1.9 lower and `Velocity` y −27 instead of −37.8. Delaying most restarts by
+counts only if its Quick Restart keeps the same lock (3 or more idle ticks before the Quick Restart leave `Velocity` x 0 and the
+lock −1). Its segment 2 (the new game's second Quick Restart) can't be dropped: the one Quick Restart left leaves
+`heightOfLastJumpStart` and `lastHyperY` 1.9 lower and `Velocity` y −27 instead of −37.8. Delaying most Quick Restarts by
 1–8 idle ticks changes only the three timers above.
 
 ### Loop builder

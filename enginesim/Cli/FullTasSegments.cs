@@ -10,16 +10,16 @@ using FullTasTracker = IGTAPTasMod.FullTasTracker;
 namespace IGTAP.EngineSim.Cli
 {
     // Reset segments (docs/fulltas.md, "Reset segments"): the route cut at its quick restarts. A segment is polished on its own:
-    // its goals are searched from the state after the restart that opens it, the way found ends with the restart that closed the
+    // its goals are searched from the state after the Quick Restart that opens it, the way found ends with the restart that closed the
     // old segment, and the old route after that restart is kept as it is. That is only sound when the player leaves the new
-    // restart exactly as it left the old one, so every candidate's state after its restart tick is compared with the old one's,
+    // restart exactly as it left the old one, so every candidate's state after its Quick Restart tick is compared with the old one's,
     // field by field; one that differs is dropped, never re-solved.
     sealed partial class FullTas
     {
         /// <summary>
-        /// The route between two quick restarts: inputs Start..Reset-1 (Start is 0 or the input after the restart that opens it),
+        /// The route between two quick restarts: inputs Start..Reset-1 (Start is 0 or the input after the Quick Restart that opens it),
         /// closed by the restart at input Reset (-1: the last segment, closed by the route's end). First and Last are the goals
-        /// reached before its first input and before its closing restart.
+        /// reached before its first input and before its closing Quick Restart.
         /// </summary>
         sealed class Segment
         {
@@ -240,7 +240,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Polish by reset segments (--resets): each segment of the best (or only --segment N), in order. A segment with goals is
-        /// searched for its last goal from the state after its opening restart, then closed by the old restart; a segment with none
+        /// searched for its last goal from the state after its opening Quick Restart, then closed by the old Quick Restart; a segment with none
         /// (an extra lap for Cash, a few idle ticks) is tried without, and an extra lap is searched as its course's lap.
         /// </summary>
         /// <returns>Why the solve ends here (level "info" or "warn"), or nulls to go on.</returns>
@@ -260,7 +260,7 @@ namespace IGTAP.EngineSim.Cli
                 searched |= PolishSegment(segments[n - 1], segments.Count);
             }
             // Segment numbers after a dropped one move down one: --segment N would polish another segment from here on.
-            if (_onlySegment > 0 && Segments(_best).Count < before) return ("info", $"segment {first} was dropped (the route has one quick restart fewer), so its number is another segment now");
+            if (_onlySegment > 0 && Segments(_best).Count < before) return ("info", $"segment {first} was dropped (the route has one Quick Restart fewer), so its number is another segment now");
             if (searched || TimeUp) return (null, null);
             return ("warn", _onlySegment > 0 ? $"segment {first} has no goal or lap to search, and can't be dropped" : "no segment has a goal or lap to search");
         }
@@ -268,7 +268,9 @@ namespace IGTAP.EngineSim.Cli
         void EmitSegments(List<Segment> segments)
         {
             Route best = _best;
-            Dictionary<int, Carried> states = ResetStates(best.Inputs, segments.Where(s => s.Reset >= 0).Select(s => s.Reset).ToList());
+            List<int> resets = segments.Where(s => s.Reset >= 0).Select(s => s.Reset).ToList();
+            Dictionary<int, Carried> states = ResetStates(best.Inputs, resets);
+            Dictionary<int, string> targets = QuickRestartTargets(best.Inputs, resets);
             double At(int goals) { return goals == 0 ? 0.0 : Seconds(best.GoalPhysics[goals - 1]); }
             Emit(new
             {
@@ -278,9 +280,39 @@ namespace IGTAP.EngineSim.Cli
                     n = s.Number, first = s.First, last = s.Last, start = s.Start, reset = s.Reset, inputs = (s.Reset < 0 ? best.Inputs.Count : s.Reset) - s.Start,
                     from = At(s.First), to = At(s.Last),
                     carries = s.Reset >= 0 && states.TryGetValue(s.Reset, out Carried c) ? Carries(c) : null,
+                    quickRestart = s.Reset >= 0 && targets.TryGetValue(s.Reset, out string target) ? target : null,
                 }).ToArray(),
             });
             Log($"reset segments: {segments.Count} ({segments.Count(s => s.Last == s.First)} without a goal)");
+        }
+
+        /// <summary>
+        /// Where each of these Quick Restarts (input indices) sends the player, read on the tick before it: Movement.respawn(true)
+        /// goes to courseResetPoint while a course's start gate has set it (the course's reset point, until its finish clears
+        /// it), else to respawnPoint, the last Checkpoint touched. The course-checkpoints toggle (isRespawningAtCheckpoints) only
+        /// changes where a death respawns.
+        /// </summary>
+        Dictionary<int, string> QuickRestartTargets(List<InputTick> inputs, ICollection<int> resets)
+        {
+            var targets = new Dictionary<int, string>();
+            if (resets.Count == 0) return targets;
+            var at = new HashSet<int>(resets);
+            int last = resets.Max();
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            _eval.Run(inputs, null, tick =>
+            {
+                if (at.Contains(tick))
+                {
+                    Movement p = _eval.Player;
+                    courseScript course = _eval.TimingCourse();
+                    targets[tick] = p.courseResetPoint != UnityEngine.Vector2.zero
+                        ? (course != null ? $"Course {course.courseNumber} reset point" : "course reset point") + $" ({p.courseResetPoint.x - _eval.CurrentOrigin.x:0}, {p.courseResetPoint.y - _eval.CurrentOrigin.y:0})"
+                        : $"Checkpoint ({p.respawnPoint.x:0}, {p.respawnPoint.y:0})";
+                }
+                return tick < last;
+            }, 1000000);
+            return targets;
         }
 
         /// <summary>One segment polished; false when there was nothing in it to search.</summary>
@@ -303,7 +335,7 @@ namespace IGTAP.EngineSim.Cli
             Dictionary<int, Carried> states = ResetStates(best.Inputs, seg.Start > 0 ? new[] { seg.Start - 1, seg.Reset } : new[] { seg.Reset });
             if (!states.TryGetValue(seg.Reset, out Carried closing))
             {
-                Log($"{title}: the best doesn't replay to its restart at input {seg.Reset}; skipped");
+                Log($"{title}: the best doesn't replay to its Quick Restart at input {seg.Reset}; skipped");
                 return false;
             }
             if (seg.Last == seg.First && seg.Start > 0 && TryDrop(seg, best, states[seg.Start - 1], closing, title)) return true;
@@ -317,15 +349,15 @@ namespace IGTAP.EngineSim.Cli
                     best.GoalPhysics[seg.Last - 1], _windowMinutes, 0)
                 : SearchLap(seg, best, lap, title);
             if (found.Count == 0) return true;
-            string where = lap == null ? $"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last}), same state after its restart"
-                : $"faster extra lap in segment {seg.Number} ({lap[1].label}), same state after its restart";
+            string where = lap == null ? $"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last}), same state after its Quick Restart"
+                : $"faster extra lap in segment {seg.Number} ({lap[1].label}), same state after its Quick Restart";
             CloseSegment(seg, best, lap, closing, found, where, title);
             return true;
         }
 
         /// <summary>
-        /// A segment without goals taken out, when one restart then leaves the player as the closing one did: the opening restart
-        /// as it is, or the closing restart pressed in its place.
+        /// A segment without goals taken out, when one restart then leaves the player as the closing one did: the opening Quick Restart
+        /// as it is, or the closing Quick Restart pressed in its place.
         /// </summary>
         bool TryDrop(Segment seg, Route best, Carried opening, Carried closing, string title)
         {
@@ -345,7 +377,7 @@ namespace IGTAP.EngineSim.Cli
             }
             if (diff.Count > 0)
             {
-                Log($"{title}: can't drop it, no restart in its place leaves the player as its closing restart did ({string.Join("; ", diff.Take(4))})");
+                Log($"{title}: can't drop it, no restart in its place leaves the player as its closing Quick Restart did ({string.Join("; ", diff.Take(4))})");
                 return false;
             }
             Route run = Evaluate(inputs);
@@ -421,146 +453,228 @@ namespace IGTAP.EngineSim.Cli
         const int RestartWaits = 24;
 
         /// <summary>
-        /// Closes each found way (fastest first) with the old restart and the old route after it. Between the way's last goal and
-        /// the restart it plays the old segment's own inputs there, or 0.. idle ticks: the first that leaves the player after the
-        /// restart as the old route did is judged in the whole run. A way whose restart never matches is dropped.
+        /// What closing a segment of a route needs: the route before it and the state at its start (Prefix, Start), and from the
+        /// old route it replaces: the old way's inputs between its last goal and its Quick Restart, the restart's input, the state that
+        /// restart left (State) and the old route after it. Seg is the segment in the route being closed; OldReset the old
+        /// restart's input in Old.
+        /// </summary>
+        sealed class Closing
+        {
+            public Segment Seg;
+            public FullTasGoal[] Lap;
+            public List<InputTick> Prefix, OldRunout, After, Follow;
+            public SimSnapshot Start;
+            public InputTick Restart;
+            public Carried State;
+            public List<Carried> OldFollow;
+            public Route Old;
+            public int OldReset;
+        }
+
+        Closing ClosingOf(Segment seg, Route route, Segment oldSeg, Route old, FullTasGoal[] lap, Carried state)
+        {
+            var c = new Closing { Seg = seg, Lap = lap, Old = old, OldReset = oldSeg.Reset, State = state, Prefix = route.Inputs.Take(seg.Start).ToList() };
+            c.Start = SegmentStart(seg, route);
+            if (c.Start == null) return c;
+            List<InputTick> oldSegment = old.Inputs.Skip(oldSeg.Start).Take(oldSeg.Reset - oldSeg.Start).ToList();
+            int oldCut = lap == null ? (int)old.GoalInput[oldSeg.Last - 1] - oldSeg.Start
+                : LapCut(ReferenceEquals(route, old) ? c.Start : SegmentStart(oldSeg, old), oldSeg.Start, oldSegment, lap);
+            c.OldRunout = oldCut >= 0 && oldCut <= oldSegment.Count ? oldSegment.Skip(oldCut).ToList() : new List<InputTick>();
+            c.Restart = old.Inputs[oldSeg.Reset];
+            c.After = old.Inputs.Skip(oldSeg.Reset + 1).ToList();
+            // The old route's inputs after the restart, up to its next restart: what a close that differs only in buffers is followed under.
+            c.Follow = c.After.TakeWhile(k => !k.reset).Take(ConvergeTicks).ToList();
+            return c;
+        }
+
+        /// <summary>
+        /// One way through a segment, cut at its last goal and closed with the old Quick Restart and the old route after it. Between the
+        /// goal and the restart it plays the old way's inputs there, or 0.. idle ticks: the first close that leaves the player as
+        /// the old Quick Restart did is replayed as the whole run (run). Otherwise run is null, with the smallest difference seen (diff),
+        /// or missed when the way doesn't reach the segment's goals.
+        /// </summary>
+        (Route run, List<string> diff, string extra, bool missed) TryWay(Closing c, List<InputTick> way, string title)
+        {
+            Segment seg = c.Seg;
+            int cut;
+            if (c.Lap != null) cut = LapCut(c.Start, seg.Start, way, c.Lap);
+            else
+            {
+                _eval.SetStart(c.Start, seg.Start);
+                _eval.Goals.Limit = seg.Last;
+                RunResult r = _eval.Run(way.Concat(Enumerable.Repeat(new InputTick(), Settle)).ToList());
+                cut = r.Progress < seg.Last ? -1 : (int)(r.GoalInputTicks[seg.Last - 1] - seg.Start);
+            }
+            if (cut < 0) return (null, null, null, true);
+            List<InputTick> head = way.Concat(Enumerable.Repeat(new InputTick { held = way.Count > 0 && way[way.Count - 1].held }, Math.Max(0, cut - way.Count))).Take(cut).ToList();
+            _eval.SetStart(c.Start, seg.Start);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot there = head.Count == 0 ? c.Start : _eval.Advance(head);
+            if (there == null) return (null, null, null, true);
+            InputTick idle = new InputTick { held = head.Count > 0 ? head[head.Count - 1].held : c.Prefix.Count > 0 && c.Prefix[c.Prefix.Count - 1].held };
+            var runouts = new List<List<InputTick>> { c.OldRunout };
+            for (int wait = 0; wait <= c.OldRunout.Count + RestartWaits; wait++)
+                if (wait != c.OldRunout.Count || !c.OldRunout.All(k => k.Equals(idle))) runouts.Add(Enumerable.Repeat(idle, wait).ToList());
+            List<string> smallest = null;
+            foreach (List<InputTick> runout in runouts.OrderBy(r => r.Count))
+            {
+                InputTick before = runout.Count > 0 ? runout[runout.Count - 1] : head.Count > 0 ? head[head.Count - 1] : c.Prefix.Count > 0 ? c.Prefix[c.Prefix.Count - 1] : default;
+                if (before.reset) continue;
+                List<InputTick> close = runout.Append(c.Restart).ToList();
+                Carried now = CarriedAfter(there, seg.Start + head.Count, close);
+                if (now == null) continue;
+                List<string> diff = CarriedDifference(c.State, now);
+                int caughtUp = 0;
+                if (diff.Count > 0 && c.Follow.Count > 0 && MovesAlike(c.State, now))
+                {
+                    if (c.OldFollow == null)
+                    {
+                        _eval.SetStart(_origin, 0);
+                        _eval.Goals.Limit = _goals;
+                        SimSnapshot oldAfter = _eval.Advance(c.Old.Inputs.Take(c.OldReset + 1).ToList());
+                        c.OldFollow = oldAfter == null ? new List<Carried>() : Follow(oldAfter, c.OldReset + 1, c.Follow);
+                    }
+                    _eval.SetStart(there, seg.Start + head.Count);
+                    _eval.Goals.Limit = _goals;
+                    SimSnapshot nowAfter = _eval.Advance(close);
+                    List<Carried> nowFollow = nowAfter == null ? new List<Carried>() : Follow(nowAfter, seg.Start + head.Count + close.Count, c.Follow);
+                    caughtUp = Converges(c.State, now, c.OldFollow, nowFollow);
+                    if (caughtUp > 0)
+                    {
+                        Log($"{title}: its Quick Restart differs only in {string.Join("; ", diff.Take(3))}; moving the same, it is the same {caughtUp} tick{(caughtUp == 1 ? "" : "s")} after");
+                        diff.Clear();
+                    }
+                }
+                if (diff.Count > 0)
+                {
+                    if (smallest == null || diff.Count < smallest.Count) smallest = diff;
+                    continue;
+                }
+                Route run = Evaluate(c.Prefix.Concat(head).Concat(close).Concat(c.After).ToList());
+                string extra = (runout.Count == c.OldRunout.Count ? "" : $" ({runout.Count} ticks before it, the old way {c.OldRunout.Count})")
+                    + (caughtUp > 0 ? $" (a buffer differed, the same {caughtUp} tick{(caughtUp == 1 ? "" : "s")} after it)" : "");
+                return (run, null, extra, false);
+            }
+            return (null, smallest ?? new List<string>(), null, false);
+        }
+
+        /// <summary>
+        /// Closes each found way (fastest first) with the old Quick Restart and the old route after it (<see cref="TryWay"/>). When the
+        /// whole run then stops at a later goal (the world differs: Cash, clones), the segments that break are rebuilt one by one
+        /// from their own restarts (<see cref="RepairSegments"/>). A way whose restart never matches is dropped.
         /// </summary>
         void CloseSegment(Segment seg, Route best, FullTasGoal[] lap, Carried closing, List<List<InputTick>> found, string where, string title)
         {
-            List<InputTick> prefix = best.Inputs.Take(seg.Start).ToList();
-            SimSnapshot start = SegmentStart(seg, best);
-            List<InputTick> oldSegment = best.Inputs.Skip(seg.Start).Take(seg.Reset - seg.Start).ToList();
-            int oldCut = lap == null ? (int)best.GoalInput[seg.Last - 1] - seg.Start : LapCut(start, seg.Start, oldSegment, lap);
-            List<InputTick> oldRunout = oldCut >= 0 && oldCut <= oldSegment.Count ? oldSegment.Skip(oldCut).ToList() : new List<InputTick>();
-            InputTick restart = best.Inputs[seg.Reset];
-            List<InputTick> after = best.Inputs.Skip(seg.Reset + 1).ToList();
-            // The old route's inputs after the restart, up to its next restart: what a close that differs only in buffers is followed under.
-            List<InputTick> follow = after.TakeWhile(k => !k.reset).Take(ConvergeTicks).ToList();
-            List<Carried> oldFollow = null;
+            Closing c = ClosingOf(seg, best, seg, best, lap, closing);
+            if (c.Start == null)
+            {
+                Log($"{title}: the best doesn't replay to the segment's start; skipped");
+                return;
+            }
             int unmatched = 0, slower = 0, missed = 0;
             List<string> firstDiff = null;
             string slowerWhy = null;
+            bool repairTried = false;
             foreach (List<InputTick> way in Enumerable.Reverse(found).Distinct(SequenceComparer.Instance).Take(5))
             {
-                int cut;
-                if (lap != null) cut = LapCut(start, seg.Start, way, lap);
-                else
+                var t = TryWay(c, way, title);
+                if (t.missed) { missed++; continue; }
+                if (t.run == null)
                 {
-                    _eval.SetStart(start, seg.Start);
-                    _eval.Goals.Limit = seg.Last;
-                    RunResult r = _eval.Run(way.Concat(Enumerable.Repeat(new InputTick(), Settle)).ToList());
-                    cut = r.Progress < seg.Last ? -1 : (int)(r.GoalInputTicks[seg.Last - 1] - seg.Start);
+                    unmatched++;
+                    if (firstDiff == null || t.diff.Count < firstDiff.Count) firstDiff = t.diff;
+                    continue;
                 }
-                if (cut < 0) { missed++; continue; }
-                List<InputTick> head = way.Concat(Enumerable.Repeat(new InputTick { held = way.Count > 0 && way[way.Count - 1].held }, Math.Max(0, cut - way.Count))).Take(cut).ToList();
-                _eval.SetStart(start, seg.Start);
-                _eval.Goals.Limit = _goals;
-                SimSnapshot there = head.Count == 0 ? start : _eval.Advance(head);
-                if (there == null) { missed++; continue; }
-                InputTick idle = new InputTick { held = head.Count > 0 ? head[head.Count - 1].held : prefix.Count > 0 && prefix[prefix.Count - 1].held };
-                var runouts = new List<List<InputTick>> { oldRunout };
-                for (int wait = 0; wait <= oldRunout.Count + RestartWaits; wait++)
-                    if (wait != oldRunout.Count || !oldRunout.All(k => k.Equals(idle))) runouts.Add(Enumerable.Repeat(idle, wait).ToList());
-                bool matched = false;
-                foreach (List<InputTick> runout in runouts.OrderBy(r => r.Count))
+                Route run = t.run;
+                if (Better(run, _best))
                 {
-                    InputTick before = runout.Count > 0 ? runout[runout.Count - 1] : head.Count > 0 ? head[head.Count - 1] : prefix.Count > 0 ? prefix[prefix.Count - 1] : default;
-                    if (before.reset) continue;
-                    List<InputTick> close = runout.Append(restart).ToList();
-                    Carried now = CarriedAfter(there, seg.Start + head.Count, close);
-                    if (now == null) continue;
-                    List<string> diff = CarriedDifference(closing, now);
-                    int caughtUp = 0;
-                    if (diff.Count > 0 && follow.Count > 0 && MovesAlike(closing, now))
-                    {
-                        if (oldFollow == null)
-                        {
-                            _eval.SetStart(_origin, 0);
-                            _eval.Goals.Limit = _goals;
-                            SimSnapshot oldAfter = _eval.Advance(best.Inputs.Take(seg.Reset + 1).ToList());
-                            oldFollow = oldAfter == null ? new List<Carried>() : Follow(oldAfter, seg.Reset + 1, follow);
-                        }
-                        _eval.SetStart(there, seg.Start + head.Count);
-                        _eval.Goals.Limit = _goals;
-                        SimSnapshot nowAfter = _eval.Advance(close);
-                        List<Carried> nowFollow = nowAfter == null ? new List<Carried>() : Follow(nowAfter, seg.Start + head.Count + close.Count, follow);
-                        caughtUp = Converges(closing, now, oldFollow, nowFollow);
-                        if (caughtUp > 0)
-                        {
-                            Log($"{title}: its restart differs only in {string.Join("; ", diff.Take(3))}; moving the same, it is the same {caughtUp} tick{(caughtUp == 1 ? "" : "s")} after");
-                            diff.Clear();
-                        }
-                    }
-                    if (diff.Count > 0)
-                    {
-                        if (firstDiff == null || diff.Count < firstDiff.Count) firstDiff = diff;
-                        continue;
-                    }
-                    matched = true;
-                    List<InputTick> inputs = prefix.Concat(head).Concat(close).Concat(after).ToList();
-                    Route run = Evaluate(inputs);
-                    string extra = (runout.Count == oldRunout.Count ? "" : $" ({runout.Count} ticks before it, the old way {oldRunout.Count})")
-                        + (caughtUp > 0 ? $" (a buffer differed, the same {caughtUp} tick{(caughtUp == 1 ? "" : "s")} after it)" : "");
-                    if (Better(run, _best))
-                    {
-                        Commit(run, where + extra);
-                        return;
-                    }
-                    string brokeAt = run.Progress < best.Progress
-                        ? $"the run after its restart stops after goal {run.Progress}/{_goals} (goal {run.Progress + 1}, {(run.Progress < _goals ? _labels[run.Progress] : "")}, missed: {run.EndReason})" : null;
-                    // Fallback: the old tail walked into a box the run can now pay for (a faster lap's clones pay more). Only those buys are rebuilt.
-                    (Route repaired, string rebuilt, string stuck) = brokeAt == null ? (null, null, null) : RepairBuys(run, best, title);
-                    if (repaired != null && Better(repaired, _best))
-                    {
-                        Commit(repaired, where + extra + ", then rebuilt " + rebuilt + " from loop pieces");
-                        return;
-                    }
-                    slower++;
-                    slowerWhy ??= brokeAt != null
-                        ? brokeAt + (stuck != null ? "; rebuilding it failed (" + stuck + ")" : repaired != null ? $"; rebuilt {rebuilt}, the run ends at {Describe(repaired)}" : "")
-                            + ": the player is the same, the world isn't (Cash, clones, the game's objects)"
-                        : $"the whole run ends at {Describe(run)}, not before {Describe(_best)}";
-                    break;
+                    Commit(run, where + t.extra);
+                    return;
                 }
-                if (!matched) unmatched++;
+                slower++;
+                if (run.Progress >= best.Progress)
+                {
+                    slowerWhy ??= $"the whole run ends at {Describe(run)}, not before {Describe(_best)}";
+                    continue;
+                }
+                string brokeAt = $"the run after its Quick Restart stops after goal {run.Progress}/{_goals} (goal {run.Progress + 1}, {(run.Progress < _goals ? _labels[run.Progress] : "")}, missed: {run.EndReason})";
+                // Rebuilding searches a window per broken segment: once, for the fastest way whose restart matched.
+                if (repairTried) { slowerWhy ??= brokeAt; continue; }
+                repairTried = true;
+                (Route repaired, List<int> rebuilt, string stuck) = RepairSegments(run, best, title);
+                string segments = $"segment{(rebuilt.Count == 1 ? "" : "s")} {string.Join(", ", rebuilt)}";
+                if (repaired != null && Better(repaired, _best))
+                {
+                    Commit(repaired, where + t.extra + (rebuilt.Count > 0 ? $", then rebuilt {segments} from their Quick Restarts" : ""));
+                    return;
+                }
+                slowerWhy = brokeAt + (stuck != null ? $"; rebuilding the segments after it stopped ({(rebuilt.Count > 0 ? "rebuilt " + segments + ", then " : "")}{stuck})"
+                    : repaired != null ? $"; with {segments} rebuilt the run ends at {Describe(repaired)}" : "");
             }
             string text = unmatched > 0 && slower == 0 && missed == 0
-                ? $"Segment {seg.Number} is faster, but no restart after it leaves the player as the old one did ({string.Join("; ", (firstDiff ?? new List<string>()).Take(4))}); dropped."
-                : slower > 0 ? $"Segment {seg.Number} is faster with the same state after its restart, but {slowerWhy}; dropped."
+                ? $"Segment {seg.Number} is faster, but no Quick Restart after it leaves the player as the old one did ({string.Join("; ", (firstDiff ?? new List<string>()).Take(4))}); dropped."
+                : slower > 0 ? $"Segment {seg.Number} is faster with the same state after its Quick Restart, but {slowerWhy}; dropped."
                 : $"Segment {seg.Number}: the way found didn't reach its goals when replayed in the run; dropped.";
             Log(title + ": " + text);
             Emit(new { type = "dropped", missed, slower, unmatched, text });
         }
 
-        const int MaxBuyRepairs = 3;
-
         /// <summary>
-        /// A run whose old tail stops on a purchase that isn't its next goal (walking through a box it can pay for now): that buy
-        /// goal is rebuilt from loop pieces (<see cref="BuildLoops"/>, a piece search when none fits) and the old route after it
-        /// follows, up to <see cref="MaxBuyRepairs"/> times. Nothing else is re-solved. Returns the run (null when a repair
-        /// doesn't reach its goal), the goals rebuilt, and why it stopped.
+        /// A run whose old route after a new segment stops at a later goal: the old segment holding that goal is searched again
+        /// from its own opening Quick Restart (a <c>repair</c> window, seeded with its old way) and closed with its old Quick Restart, left
+        /// exactly as before, so the old route after it stays good; then the next segment that breaks, until the run reaches every
+        /// goal the old one did, it can no longer beat the record, or a segment has no such way. Each segment is rebuilt at most
+        /// once. Returns the run (null when it stopped), the segments rebuilt, and why it stopped.
         /// </summary>
-        (Route run, string rebuilt, string stuck) RepairBuys(Route run, Route old, string title)
+        (Route run, List<int> rebuilt, string stuck) RepairSegments(Route run, Route old, string title)
         {
-            var goals = new List<int>();
-            for (int k = 0; k < MaxBuyRepairs && run.Progress < old.Progress && !TimeUp; k++)
+            var rebuilt = new List<int>();
+            List<Segment> oldSegments = Segments(old);
+            while (run.Progress < old.Progress)
             {
+                if (TimeUp) return (null, rebuilt, "the solve's time is up");
                 int g = run.Progress;
-                if (run.EndReason == null || !run.EndReason.StartsWith("Bought ", StringComparison.Ordinal) || g == 0 || !IsLoop(g) || _runGoals.Goals[g].kind != FullTasGoal.Buy)
-                    return (goals.Count == 0 ? null : run, Rebuilt(goals), goals.Count == 0 ? null : $"goal {g + 1} ({(g < _goals ? _labels[g] : "")}) stops otherwise: {run.EndReason}");
-                Log($"{title}: rebuilding goal {g + 1} ({_labels[g]}) from loop pieces: {run.EndReason}");
-                Emit(new { type = "note", level = "info", text = $"The faster segment's run walks into another box on the way to goal {g + 1} ({_labels[g]}); rebuilding that buy from loop pieces." });
-                Built built = BuildLoops(run, g, g + 1, old, null);
-                if (built.Reached != g + 1) return (null, Rebuilt(goals), $"goal {g + 1}: {built.Stuck ?? "no way found"}");
-                goals.Add(g);
-                List<InputTick> inputs = built.Inputs.Concat(old.Inputs.Skip((int)old.GoalInput[g])).ToList();
-                for (int i = 1; i < inputs.Count; i++)
-                    if (inputs[i].reset && inputs[i - 1].reset) return (null, Rebuilt(goals), $"goal {g + 1}'s rebuilt buy would quick restart twice in a row");
-                run = Evaluate(inputs);
+                if (g > 0 && run.GoalPhysics[g - 1] >= _best.GoalPhysics[g - 1])
+                    return (null, rebuilt, $"it reaches goal {g} no sooner than the record, so it can't end sooner");
+                Segment os = oldSegments.FirstOrDefault(s => s.First <= g && g < s.Last);
+                if (os == null) return (null, rebuilt, $"goal {g + 1} lies in no segment of the old route");
+                if (rebuilt.Contains(os.Number)) return (null, rebuilt, $"segment {os.Number} breaks again after rebuilding it ({run.EndReason})");
+                int delta = run.Inputs.Count - old.Inputs.Count;
+                var ns = new Segment { Number = os.Number, Start = os.Start + delta, Reset = os.Reset < 0 ? -1 : os.Reset + delta, First = os.First, Last = os.Last };
+                if (ns.Reset >= run.Inputs.Count || ns.Reset >= 0 && !run.Inputs[ns.Reset].reset || ns.Start > 0 && !run.Inputs[ns.Start - 1].reset)
+                    return (null, rebuilt, $"segment {os.Number} doesn't line up with the new run's restarts");
+                string span = ns.Last - ns.First == 1 ? $"goal {ns.Last}" : $"goals {ns.First + 1}-{ns.Last}";
+                Log($"{title}: rebuilding segment {os.Number} ({span}) from its Quick Restart: {run.EndReason}");
+                Emit(new { type = "note", level = "info", text = $"The old route stops at goal {g + 1} ({_labels[g]}): {run.EndReason}. Rebuilding segment {os.Number} ({span}) from its own Quick Restart." });
+                var seeds = new List<List<InputTick>> { old.Inputs.Skip(os.Start).Take((os.Reset < 0 ? old.Inputs.Count : os.Reset) - os.Start).ToList() };
+                List<List<InputTick>> found = SearchWindow("repair", run, ns.Start, ns.Last, seeds, long.MaxValue, _windowMinutes, 0);
+                Route next = null;
+                if (os.Reset < 0)
+                {
+                    // The route's last segment: nothing after it to keep.
+                    foreach (List<InputTick> way in Enumerable.Reverse(found).Take(5))
+                    {
+                        Route r = Splice(run, ns.Start, way, ns.Last, run);
+                        if (r != null && (next == null || Better(r, next))) next = r;
+                    }
+                }
+                else
+                {
+                    Carried state = ResetStates(old.Inputs, new[] { os.Reset }).TryGetValue(os.Reset, out Carried s) ? s : null;
+                    Closing c = state == null ? null : ClosingOf(ns, run, os, old, null, state);
+                    if (c?.Start == null) return (null, rebuilt, $"segment {os.Number}'s start doesn't replay");
+                    foreach (List<InputTick> way in Enumerable.Reverse(found).Distinct(SequenceComparer.Instance).Take(5))
+                    {
+                        Route r = TryWay(c, way, title).run;
+                        if (r != null && (next == null || Better(r, next))) next = r;
+                    }
+                }
+                if (next == null || next.Progress <= g)
+                    return (null, rebuilt, $"no way through segment {os.Number} reaches {span} and leaves its Quick Restart as before");
+                rebuilt.Add(os.Number);
+                run = next;
             }
-            return (run, Rebuilt(goals), run.Progress < old.Progress ? $"still stops at goal {run.Progress + 1}: {run.EndReason}" : null);
+            return (run, rebuilt, null);
         }
-
-        string Rebuilt(List<int> goals) { return string.Join(", ", goals.Select(g => $"goal {g + 1} ({_labels[g]})")); }
     }
 }

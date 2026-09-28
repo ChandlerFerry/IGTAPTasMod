@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 export type FullTasSplit = { label: string; ticks: number };
 export type RouteJson = { progress: number; time: number | null; splits: number[] };
@@ -9,8 +9,8 @@ export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; er
   reason?: string | null; reached?: number; of?: number; expected?: number; next?: string | null; droppedFrames?: number; splits?: FullTasSplit[] };
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
   events?: FullTasEvent[]; progress?: FullTasEvent | null; segments?: FullTasEvent | null; log: string[] };
-/** A stretch of the route between two quick restarts (the solver's --resets); carries is only known once a solve has replayed it. */
-export type SegmentRow = { n: number; first: number; last: number; inputs: number; from?: number; to?: number; reset?: number; carries?: string[] | null };
+/** The route between two Quick Restarts (the solver's --resets); carries and quickRestart (where it sends the player) are only known once a solve has replayed it. */
+export type SegmentRow = { n: number; first: number; last: number; inputs: number; from?: number; to?: number; reset?: number; carries?: string[] | null; quickRestart?: string | null };
 
 export const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
@@ -66,36 +66,35 @@ function asWindow(e: FullTasEvent): Window {
 
 function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit}` : `goals ${w.first + 1}–${w.limit}`; }
 
-function segmentGoals(r: { first: number; last: number }, goals: string[]) {
+function segmentGoals(r: { first: number; last: number }) {
   if (r.last <= r.first) return "no goal (an extra lap or idle ticks)";
-  return r.last - r.first === 1 ? `goal ${r.last}: ${goalName(goals[r.last - 1])}` : `goals ${r.first + 1}–${r.last}: ${goalName(goals[r.first])} … ${goalName(goals[r.last - 1])}`;
+  return r.last - r.first === 1 ? `goal ${r.last}` : `goals ${r.first + 1}–${r.last}`;
 }
 
-/** The best's reset segments: the solve's own (with what each restart carries) when it has sent them, else the plugin's count from the saved best. */
+/** The best's reset segments: the solve's own (with where each Quick Restart goes and what it carries) when it has sent them, else the plugin's count from the saved best. */
 export function resetSegments(saved: number[][] | undefined, live: FullTasEvent | null | undefined): SegmentRow[] {
   const rows = live?.segments as SegmentRow[] | undefined;
   if (rows?.length) return rows;
   return (saved ?? []).map(([first, last, inputs], i) => ({ n: i + 1, first, last, inputs }));
 }
 
-export function ResetSegments({ rows, goals, selected, onSelect, disabled, checked }: { rows: SegmentRow[]; goals: string[]; selected: number;
-  onSelect: (n: number) => void; disabled: boolean; checked: boolean }) {
-  if (rows.length <= 1) return <p className="hint">The best has no quick restart, so it is one segment: Solve by resets has nothing to split.</p>;
-  return <details className="ftSegments">
-    <summary>Reset segments: {rows.length} ({rows.filter(r => r.last <= r.first).length} without a goal){selected > 0 ? ` · only segment ${selected}` : ""}</summary>
-    <div className="resultTable">
-      <div className="tableHead"><span>#</span><span>Goals</span><span>Inputs</span><span title="The player after the restart tick that closes the segment (that tick's own stick, jump and dash included): the momentum, wall-jump lock, zip-mover and bounce carry-over and buffers the next segment starts with">After its restart tick</span></div>
-      {rows.map((r, i) => {
-        const end = i === rows.length - 1;
-        const carried = end ? "route end" : r.carries == null ? checked ? "—" : "solve to check" : r.carries.length ? r.carries.join(", ") : "nothing carried";
-        return <div key={r.n} className={`tableRow ${selected === r.n ? "selected" : ""} ${r.last <= r.first ? "pending" : ""}`}
-          title={`Segment ${r.n}: ${segmentGoals(r, goals)}${r.to != null && r.last > r.first ? ` (last goal at ${s2(r.to)})` : ""}. Click to solve only this segment.`}
-          onClick={() => { if (!disabled) onSelect(selected === r.n ? 0 : r.n); }}>
-          <span>{r.n}</span><span>{segmentGoals(r, goals)}</span><span>{r.inputs}</span><span>{carried}</span>
-        </div>;
-      })}
-    </div>
-  </details>;
+/**
+ * A segment's goals with a bar down their left side, as the TAS overlay marks a tech's ticks: the bar is labeled with the
+ * segment's number, its tooltip says what it holds, where its closing Quick Restart sends the player and what that leaves on
+ * (once a solve has sent them). Click the bar to solve only that segment.
+ */
+export function SegmentGroup({ r, end, alt, selected, onSelect, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; selected: boolean;
+  onSelect: (n: number) => void; disabled: boolean; children: ReactNode }) {
+  const restart = end ? "ends with the route" : `ends with a Quick Restart${r.quickRestart ? ` to ${r.quickRestart}` : ""}`;
+  const carried = end || r.carries == null ? "" : r.carries.length ? `, carrying ${r.carries.join(", ")}` : ", nothing carried";
+  const empty = r.last <= r.first;
+  return <div className={`segmentGroup ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""}`}>
+    <button type="button" className="segmentBar" disabled={disabled} onClick={() => onSelect(selected ? 0 : r.n)}
+      title={`Segment ${r.n}: ${segmentGoals(r)}, ${r.inputs} inputs, ${restart}${carried}.\n${selected ? "Click to solve every segment again." : `Click to solve only this segment.`}`}>
+      {!empty && <span>{r.n}</span>}
+    </button>
+    <div className="segmentRows">{children}</div>
+  </div>;
 }
 
 function recordItem(e: FullTasEvent, goals: string[]): Item {
@@ -143,7 +142,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
           : e.phase === "build"
             ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Build phase", detail: "Putting the buys and laps together from loop pieces. Only a step no saved piece covers is searched, once; a buy the run can't pay for yet gets an extra lap first." }
             : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: resets
-              ? "Searching the route one reset segment at a time: each way found ends with the old quick restart, and counts only if the player leaves that restart exactly as the old route did, so the rest of the route stays as it is."
+              ? "Searching the route one reset segment at a time: each way found ends with the old Quick Restart, and counts only if the player leaves that Quick Restart exactly as the old route did, so the rest of the route stays as it is."
               : "Rebuilding the buys and laps from faster pieces, and searching the other goal windows for time saves. The route changes only when its last goal comes sooner." });
         break;
       case "window": windows.set(num(e.id) ?? 0, { ...asWindow(e), segment }); break;
@@ -151,12 +150,12 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         const w = windows.get(num(e.id) ?? 0), t = num(e.time);
         if (!w) break;
         push(w.kind === "segment" && w.piece
-          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Segment ${w.segment}: found an extra lap (${w.piece})`, detail: "Closing it with the old restart and checking the state after it." }
+          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Segment ${w.segment}: found an extra lap (${w.piece})`, detail: "Closing it with the old Quick Restart and checking the state after it." }
           : w.kind === "piece"
           ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
           : (w.kind === "polish" || w.kind === "segment") && w.target != null
             ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `${w.kind === "segment" ? `Segment ${w.segment} faster` : "Faster"} through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`,
-              detail: w.kind === "segment" ? "Closing it with the old restart and checking the state after it, then the whole run." : "Verifying in the whole run." }
+              detail: w.kind === "segment" ? "Closing it with the old Quick Restart and checking the state after it, then the whole run." : "Verifying in the whole run." }
             : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }
@@ -320,7 +319,7 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
             ? <h3>Re-finding {span(window_)} after an earlier change</h3>
             : <h3>Searching for time saves through {span(window_)}</h3>}
       <p className="ftNowDetail">{window_.kind === "segment"
-        ? `From the quick restart that opens it (${window_.first > 0 ? `after goal ${window_.first}, ${s2(window_.start)}` : "before goal 1"}). A faster way ends with the old restart and counts only when the player leaves it exactly as the old route did; the route after it is kept as it is.`
+        ? `From the Quick Restart that opens it (${window_.first > 0 ? `after goal ${window_.first}, ${s2(window_.start)}` : "before goal 1"}). A faster way ends with the old Quick Restart and counts only when the player leaves it exactly as the old route did; the route after it is kept as it is.`
         : window_.kind === "piece"
         ? `From goal ${window_.first} (${s2(window_.start)}). Found once, then reused wherever the player is in the same spot.`
         : window_.kind === "reach"

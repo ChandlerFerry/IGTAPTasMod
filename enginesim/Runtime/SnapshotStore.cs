@@ -105,10 +105,14 @@ namespace IGTAP.EngineSim
 
         static FieldInfo RootField(string name)
         {
-            if (RootFields.TryGetValue(name, out FieldInfo cached)) return cached;
-            FieldInfo f = typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                ?? throw new MissingFieldException(nameof(SimSnapshot), name);
-            return RootFields[name] = f;
+            // Solver workers load snapshots on their own threads.
+            lock (RootFields)
+            {
+                if (RootFields.TryGetValue(name, out FieldInfo cached)) return cached;
+                FieldInfo f = typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?? throw new MissingFieldException(nameof(SimSnapshot), name);
+                return RootFields[name] = f;
+            }
         }
 
         /// <summary>Written and read in this order: the fields <see cref="Load"/> pre-applies come before <c>Physics</c>.</summary>
@@ -649,16 +653,19 @@ namespace IGTAP.EngineSim
         /// <summary>A field setter that also works on initonly fields (WaitForSeconds.m_Seconds, Pair.A) and boxed structs.</summary>
         static Action<object, object> Setter(FieldInfo f)
         {
-            if (Setters.TryGetValue(f, out Action<object, object> setter)) return setter;
-            var dm = new DynamicMethod("snapset_" + f.Name, typeof(void), new[] { typeof(object), typeof(object) }, f.DeclaringType.Module, true);
-            ILGenerator il = dm.GetILGenerator();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(f.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, f.DeclaringType);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Unbox_Any, f.FieldType);
-            il.Emit(OpCodes.Stfld, f);
-            il.Emit(OpCodes.Ret);
-            return Setters[f] = (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
+            lock (Setters)
+            {
+                if (Setters.TryGetValue(f, out Action<object, object> setter)) return setter;
+                var dm = new DynamicMethod("snapset_" + f.Name, typeof(void), new[] { typeof(object), typeof(object) }, f.DeclaringType.Module, true);
+                ILGenerator il = dm.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(f.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, f.DeclaringType);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Unbox_Any, f.FieldType);
+                il.Emit(OpCodes.Stfld, f);
+                il.Emit(OpCodes.Ret);
+                return Setters[f] = (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
+            }
         }
 
         #endregion

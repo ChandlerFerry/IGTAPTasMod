@@ -1,11 +1,11 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, ResetSegments, place, resetSegments, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, SegmentGroup, place, resetSegments, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { UltraMap, type UltraData } from "./ultras";
@@ -775,13 +775,24 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     {name && <div className="fullTasGrid">
       <div className="fullTasGoals">
         <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached} OF ${run.goals.length} GOALS · NOT SAVED (ONLY COMPLETE RUNS GO TO THE GATE)`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:run?.offline?` · ${run.offline.time.toFixed(2)}s to goal ${run.offline.reached}`:""}</h2></div></div>
-        <div className="resultTable">
+        <div className={`resultTable ${segments.length > 1 ? "segmented" : ""}`}>
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
-          {labels.map((label, i) => { const s = splits[i]; const b = run?.breaker; const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? ""].filter(Boolean).join("\n"); return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"}`} key={i} title={title || undefined}>
-            <span>{i + 1}</span><span>{label}</span>
-            <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
-            <span>{s ? tickText(s.ticks) : "—"}</span>
-          </div>; })}
+          {(() => {
+            const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = run?.breaker; const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? ""].filter(Boolean).join("\n"); return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"}`} key={i} title={title || undefined}>
+              <span>{i + 1}</span><span>{label}</span>
+              <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
+              <span>{s ? tickText(s.ticks) : "—"}</span>
+            </div>; };
+            if (segments.length <= 1) return labels.map((_, i) => goalRow(i));
+            // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last.
+            const rows: ReactElement[] = segments.map((r, k) => {
+              const goals: ReactElement[] = [];
+              for (let i = r.first; i < r.last && i < labels.length; i++) goals.push(goalRow(i));
+              return <SegmentGroup key={`segment${r.n}`} r={r} end={k === segments.length - 1} alt={k % 2 === 1} selected={segment === r.n} onSelect={setOnlySegment} disabled={solve.running}>{goals}</SegmentGroup>;
+            });
+            for (let i = segments[segments.length - 1].last; i < labels.length; i++) rows.push(goalRow(i));
+            return rows;
+          })()}
           {!labels.length && <div className="tableRow pending"><span>—</span><span>No goals</span></div>}
         </div>
         <div className="fullTasSolve">
@@ -804,9 +815,8 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           </div>
           <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}, from ${onlyGoal - window_ > 0 ? "goal " + (onlyGoal - window_) : "the start"}` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, goal: onlyGoal })}>{onlyGoal > 0 ? (window_ > 1 ? `Solve goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}` : `Solve goal ${onlyGoal}`) : "Solve"}</button>
             <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length || segments.length <= 1} title={segments.length <= 1 ? "The best has no quick restart to split it at" : `Polishes the best one reset segment at a time${segment ? ` (only segment ${segment})` : ""}: from the state after the quick restart that opens it to its last goal, closed by the old restart. A way counts only when the player leaves that restart exactly as the old route did (no momentum, wall-jump lock, zip-mover or bounce carry-over, buffers or timers that differ), so the route after it is kept, never re-solved. Per segment: Minutes per window.`} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, resets: true, segment })}>{segment ? `Solve segment ${segment}` : "Solve by resets"}</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length || segments.length <= 1} title={segments.length <= 1 ? "The best has no quick restart to split it at" : `Polishes the best one reset segment at a time${segment ? ` (only segment ${segment})` : ""}: from the state after the Quick Restart that opens it to its last goal, closed by the old Quick Restart. A way counts only when the player leaves that restart exactly as the old route did (no momentum, wall-jump lock, zip-mover or bounce carry-over, buffers or timers that differ), so the route after it is kept, never re-solved. Per segment: Minutes per window.`} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, resets: true, segment })}>{segment ? `Solve segment ${segment}` : "Solve by resets"}</button>
             <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
-          <ResetSegments rows={segments} goals={labels} selected={segment} onSelect={setOnlySegment} disabled={solve.running} checked={liveSegments != null}/>
         </div>
       </div>
       <div className="fullTasEditor">
