@@ -222,11 +222,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 var start = new Target { Goal = reached, Extra = new[] { lap[0] }, Key = lap[0].label };
                 Step gate = Reaches(restart.state, before.Count, s.Inputs, start);
-                if (gate == null || gate.Next == null) continue;
+                if (gate == null || gate.Next == null) { Log($"lap seeds: {s.Name} doesn't reach {lap[0].label} from the quick restart's spot at {Where(restart.state.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); continue; }
                 var finish = new Target { Goal = reached, Extra = new[] { lap[1] }, Key = lap[1].label };
                 List<InputTick> afterGate = before.Concat(gate.Inputs).ToList();
                 Step end = Reaches(gate.Next, afterGate.Count, s.Inputs.Skip(gate.Inputs.Count).ToList(), finish);
-                if (end == null) continue;
+                if (end == null) { Log($"lap seeds: {s.Name} crosses {lap[0].label} but doesn't reach {lap[1].label} after it ({_whyNot})"); continue; }
                 Keep(gate, restart.state, before, start);
                 Keep(end, gate.Next, afterGate, finish);
                 filed++;
