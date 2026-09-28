@@ -51,7 +51,8 @@ namespace IGTAP.EngineSim.Cli
             Index.Add(new SnapshotIndex.Entry { Hash = hash, Tick = tick, Goal = goal, Data = data });
             Directory.CreateDirectory(_dir);
             string file = Path.Combine(_dir, goal + "-" + hash.ToString("x16") + ".bin");
-            string temp = file + ".tmp";
+            // Solver workers can record the same state at once: each writes its own temp file, the last move wins.
+            string temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
             using (FileStream stream = File.Create(temp))
             using (var writer = new BinaryWriter(stream))
             {
