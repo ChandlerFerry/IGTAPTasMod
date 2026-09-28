@@ -29,6 +29,8 @@ namespace IGTAP.EngineSim.Cli
             bool guide = args.Contains("--guide");
             double guideWeight = Option(args, "--guide-weight", 1.0);
             int rng = Option(args, "--rng", 0);
+            string logJson = Option(args, "--log-json", (string)null);
+            if (logJson != null) File.WriteAllText(logJson, "");
             if (guide) DistanceField.Enabled = true;
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
@@ -57,7 +59,8 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null)) : null;
+            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null),
+                cacheFile: Option(args, "--tech-cache", (string)null)) : null;
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
@@ -67,7 +70,8 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
-            var humanize = new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
+            Humanize.Background humanize = args.Contains("--no-humanize") ? null
+                : new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;
@@ -75,7 +79,10 @@ namespace IGTAP.EngineSim.Cli
                 WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
-                humanize.Set(file, inputs);
+                humanize?.Set(file, inputs);
+                // Raised under the solver's lock, so the appends never interleave.
+                if (logJson != null)
+                    File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how }) + "\n");
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
@@ -102,7 +109,7 @@ namespace IGTAP.EngineSim.Cli
             }
             SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
-            humanize.Finish();
+            humanize?.Finish();
             Console.WriteLine("Done. Best " + solver.Shared.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s");
             return 0;
         }

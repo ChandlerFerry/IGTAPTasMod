@@ -466,7 +466,9 @@ namespace IGTAP.EngineSim
         /// <param name="refresh">Re-mine instead of reading the cache.</param>
         /// <param name="techDir">Where the demos' traces, savestates, lab maps and the cache resolve from
         /// (<c>--tech-dir</c>); the configured traces dir when it is absent.</param>
-        public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null)
+        /// <param name="cacheFile">Where the mining is cached (<c>--tech-cache</c>); <c>tech-grafts.cache.json</c> in the tech dir
+        /// when it is absent.</param>
+        public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null, string cacheFile = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
             string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
@@ -489,7 +491,7 @@ namespace IGTAP.EngineSim
                 }
             }
             string key = CacheKey(sources, tracesDir);
-            string cache = Path.Combine(tracesDir, "tech-grafts.cache.json");
+            string cache = cacheFile == null ? Path.Combine(tracesDir, "tech-grafts.cache.json") : Path.GetFullPath(cacheFile);
             if (!refresh && File.Exists(cache))
             {
                 try
@@ -510,7 +512,7 @@ namespace IGTAP.EngineSim
             mined.Dedupe();
             try
             {
-                Directory.CreateDirectory(tracesDir);
+                Directory.CreateDirectory(Path.GetDirectoryName(cache));
                 File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
             }
             catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
