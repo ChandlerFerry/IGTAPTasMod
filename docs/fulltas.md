@@ -515,6 +515,16 @@ goals and a line per step (tick, Cash, estimate, box levels); `--out` writes the
 place of the old stretch (the goals up to and after it kept), for `fulltas.json` by hand. Planning is greedy and takes
 a few seconds a step.
 
+`--route FILE` writes the planned route too, under the planned goal list (the goals up to `--from`, the plan, the goals
+after the target). When the best Quick Restarts after the target, the old route from that Quick Restart on is joined to the
+plan's end, after the old inputs between the two or 0-24 idle ticks, and kept when the whole run then reaches every goal:
+the file is then a complete route (`total` set). When it doesn't play on the log says so, and why when the plan's end
+leaves a course running (its Quick Restart goes to that course's reset point, not the old route's Checkpoint). To use a
+complete route: save the `--out` goals (**Save goals**, which marks the run's saved routes stale), put the route file in
+`fulltas/<run>.json`, submit it (`/api/fulltas/submit`) and **Capture start** again. `FalseEnding-Any%`'s statue to
+`buy:buydj` (`--from 298 --target buy:buydj`) bought `buydj` 86 ticks sooner with 64 goals for 66; joined after 23 idle
+ticks it made the record 507.14 s (from 509.28 s).
+
 ## Offline economy
 
 The whole run needs Cash offline. A start state whose economy carries the clones (every Full-TAS trace) runs the
