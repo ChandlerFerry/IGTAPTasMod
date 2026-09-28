@@ -53,6 +53,8 @@ namespace IGTAPTasMod
         private bool _turnArmed;
         private float? _turnX, _turnY;
         private int _pressedStep = -1;
+        // A step's pause (MacroStep.pauseFrames): physics ticks still to run before it opens, and its length in frames.
+        private int _pauseTicksLeft, _pauseFrames;
         private bool _tickLocked;
         private Vector2 _tickStick;
         private bool _waitingForStable;
@@ -188,6 +190,7 @@ namespace IGTAPTasMod
             _pendingTurnX = _pendingTurnY = null;
             _turnArmed = false;
             _pressedStep = -1;
+            _pauseFrames = 0;
             _tickLocked = false;
             _tickStick = Vector2.zero;
             LastJumpPress = LastJumpRelease = LastDashPress = Never;
@@ -278,6 +281,11 @@ namespace IGTAPTasMod
             MacroStep step = _steps[_stepIndex];
             if (step.type != MacroStepType.RawInput) return;
             _pressedStep = _stepIndex;
+            if (step.pauseFrames > 0)
+            {
+                _pauseFrames = step.pauseFrames;
+                _pauseTicksLeft = step.pauseTick;
+            }
             if (step.rawJumpPressed) PressJump(movement);
             if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld)) ReleaseJump(movement);
             if (step.rawDashPressed)
@@ -289,6 +297,19 @@ namespace IGTAPTasMod
                 _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
             }
             _rawJumpHeld = step.rawJumpHeld;
+        }
+
+        /// <summary>
+        /// After each physics tick: the frames to hold the pause menu open when a step's pause falls due on this tick, else 0.
+        /// Only 1x playback asks; turbo and the offline engine never pause.
+        /// </summary>
+        public int TakePause()
+        {
+            if (!IsRunning || _pauseFrames <= 0) return 0;
+            if (_pauseTicksLeft-- > 0) return 0;
+            int frames = _pauseFrames;
+            _pauseFrames = 0;
+            return frames;
         }
 
         public void RebaseInputs()

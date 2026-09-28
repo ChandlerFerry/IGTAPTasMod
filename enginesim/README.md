@@ -315,14 +315,20 @@ probe: Test-No-Omni-Skip's 7.92 inputs at 280 fps (90 ticks, within 0.001, both 
 route at 240 fps (a dash freeze of 12 frames and a step-up, tick for tick).
 
 The in-game counterpart is the plugin's 1x probe (`ProbeRunner.cs`): `POST /api/probe/run {name, route: "1_WJ_DS",
-savestateId?, ticks, captureAt?, fps?, omniDash?}` plays the ticks at normal speed from the category's quick restart
+savestateId?, ticks, captureAt?, fps?, omniDash?, pauseAt?, pauseOffset?, pauseFrames?}` plays the ticks at normal speed from the category's quick restart
 (a Full-TAS run's `route: "fulltas/VMAN_NONE"`: from a new game of that run; or the savestate) and writes
 `BepInEx/config/IGTAPTasMod/probes/<name>.json`: one row per physics tick (`kind: "tick"`) and one per rendered frame
 (`kind: "frame"`, with `timeScale`, so a TimeStop's frames show as `timeScale` 0). Positions are in the world frame; each
 row also has the FloatingOrigin (`originX/Y`), `lastHyperY` (scene frame: world y + `originY`), the game time (`time`),
 the camera (`camX/Y` in the world frame, `camSize`) and Cash (`cash`). `captureAt`
 saves a studio savestate (`probe/<name> @<tick>`, with its FloatingOrigin) after that input tick, the start for later
-probes there. Playback runs on a fixed clock at 280 fps with vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
+probes there. `pauseAt` opens the pause menu (`pauseMenuScript.menuButtonPressed`, what the Pause button calls) right
+after that physics tick, or `pauseOffset` `Movement.Update` frames after it, and `pauseFrames` closes it after that many
+frames (rows have `paused`): `timeScale` is 0 and no FixedUpdate runs, but Update's step-up runs every frame
+(`tools/probe.py --pause-at --pause-offset --pause-frames`).
+A probe's ticks can also carry a route's own pause (`pause`, `pauseTick`: `MacroStep.pauseFrames`); turbo and enginesim
+model neither, so both are 1x only. Playback runs on a fixed clock at 280 fps with
+vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world

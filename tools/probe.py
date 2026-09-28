@@ -1,6 +1,7 @@
 """Run a 1x probe in the game and summarise its log (ProbeRunner.cs; enginesim/README.md#probe).
 
   probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--fps N] [--omni]
+           [--pause-at N [--pause-offset K] --pause-frames F]
   probe.py --show <name>          summarise a probe log already written
 
 route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
@@ -8,7 +9,10 @@ lockX, lockY, turnX, turnY}). --fps sets the playback's fixed clock (default 280
 more, see enginesim/README.md#probe).
 Plays at normal speed from the category's quick restart (or the savestate), waits for the log, and prints each
 physics tick plus every rendered frame where the player moved with no physics tick since the frame before (the moves
-only Update makes: a TimeStop's frames, or several frames between two ticks).
+only Update makes: a TimeStop's frames, the pause menu's, or several frames between two ticks).
+--pause-at N opens the pause menu (the Pause button's menuButtonPressed) right after physics tick N (the log's `tick N`),
+or --pause-offset K Movement.Update frames after it, and --pause-frames F closes it after F frames: time stands still
+(timeScale 0), but Update's step-up runs every frame.
 """
 import argparse
 import json
@@ -42,9 +46,14 @@ def show(name):
                   f" m {row['mx']:8.2f},{row['my']:8.2f} {row['mode']:5} dash={row['dash']} f={row['f']} wall={row['wall']} ground={row['ground']}")
             continue
         if last_frame is not None and not ticked and (abs(row["x"] - last_frame["x"]) > 0.01 or abs(row["y"] - last_frame["y"]) > 0.01):
-            print(f"  frame {row['frame']} timeScale {row['timeScale']}: moved {row['x'] - last_frame['x']:+.2f},{row['y'] - last_frame['y']:+.2f}"
+            paused = " (paused)" if row.get("paused") else ""
+            print(f"  frame {row['frame']} timeScale {row['timeScale']}{paused}: moved {row['x'] - last_frame['x']:+.2f},{row['y'] - last_frame['y']:+.2f}"
                   " with no physics tick")
         last_frame, ticked = row, False
+    paused = [r for r in log["rows"] if r.get("paused")]
+    if paused:
+        print(f"paused {len(paused)} frames: y {paused[0]['y']:.2f} -> {paused[-1]['y']:.2f}"
+              f" ({paused[-1]['y'] - paused[0]['y']:+.2f}), x {paused[0]['x']:.2f} -> {paused[-1]['x']:.2f}")
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--show":
@@ -58,11 +67,18 @@ def main():
     parser.add_argument("--capture-at", type=int)
     parser.add_argument("--omni", action="store_true", help="play with the omnidirectional dash too (restored after)")
     parser.add_argument("--fps", type=int, default=0, help="playback fixed-clock frame rate (default 280), e.g. 60, 144, 240")
+    parser.add_argument("--pause-at", type=int, help="open the pause menu right after this physics tick")
+    parser.add_argument("--pause-offset", type=int, default=0, help="Movement.Update frames after --pause-at before pausing")
+    parser.add_argument("--pause-frames", type=int, default=0, help="Movement.Update frames to keep the pause menu open")
     args = parser.parse_args()
     body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "ticks": json.load(open(args.ticks)),
             "fps": args.fps, "omniDash": args.omni}
     if args.capture_at is not None:
         body["captureAt"] = args.capture_at
+    if args.pause_at is not None:
+        body["pauseAt"] = args.pause_at
+        body["pauseFrames"] = args.pause_frames
+        body["pauseOffset"] = args.pause_offset
     started = call("/api/probe/run", body)
     if not started.get("ok"):
         raise SystemExit(started)

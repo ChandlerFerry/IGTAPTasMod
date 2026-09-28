@@ -160,6 +160,11 @@ the game's first FixedUpdate after a rebase already sees the moved world: the of
 for that tick (a "ghost" wall that ended the dash in the spikes), and dies there now as the game does
 (`PhysicsWorld.SyncMovedWorld`).
 
+`Test-Pauselift` (savestate `lab/pauselift`, `02db5c474fdb4e9cb3230c042ce328b5`: standing on the floating block at world
+(19730.86, 10933.51), facing left, with wall jump, 1 dash and 1 double jump, on a plain new game) is the pauselift's
+start ([`human-input.md`](human-input.md), tech demo `pauselift`). Its goal (`at:19880,14200,200,100`) is out of reach, so a
+playback runs through all its inputs. Its routes pause, which only 1x playback plays, so the gate can't judge them yet.
+
 A savestate holds no checkpoint, and the plugin writes none: `respawnPoint` stays the new game's (the Vman spawn, world
 (-61, -301)), a place the run never reached. Until a real checkpoint (`checkpointScript`) moves it, or a start gate sets
 a course reset point, a quick restart would teleport there, so it ends the run (`Quick restart with no checkpoint

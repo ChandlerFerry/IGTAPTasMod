@@ -47,6 +47,8 @@ namespace IGTAPTasMod
             public float? lockX, lockY;
             public float? turnX, turnY;
             public bool reset;
+            /// <summary>MacroStep.pauseFrames / pauseTick (1x playback only).</summary>
+            public int pause, pauseTick;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
 
@@ -996,7 +998,7 @@ namespace IGTAPTasMod
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, springDash = i == 0 ? s.springDashFrame : 0,
                         lockX = i == 0 ? s.lockMoveX : null, lockY = i == 0 ? s.lockMoveY : null,
                         turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null, turnY = i == 0 && s.rawDashPressed ? s.dashTurnY : null,
-                        reset = i == 0 && s.rawQuickRestart });
+                        reset = i == 0 && s.rawQuickRestart, pause = i == 0 ? s.pauseFrames : 0, pauseTick = i == 0 ? s.pauseTick : 0 });
             return ticks;
         }
 
@@ -1008,7 +1010,7 @@ namespace IGTAPTasMod
                 MacroStep last = steps.Count > 0 ? steps[steps.Count - 1] : null;
                 bool arms = k.springDash != 0 || k.lockX.HasValue || k.lockY.HasValue;
                 bool lastArms = last != null && (last.springDashFrame != 0 || last.lockMoveX.HasValue || last.lockMoveY.HasValue);
-                if (last != null && !k.press && !k.release && !k.dash && !k.reset && !arms && !lastArms
+                if (last != null && !k.press && !k.release && !k.dash && !k.reset && k.pause == 0 && !arms && !lastArms
                     && last.rawMoveX == k.x && last.rawMoveY == k.y && last.rawJumpHeld == k.held)
                 {
                     last.durationTicks++;
@@ -1021,7 +1023,7 @@ namespace IGTAPTasMod
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
                     dashTurnX = k.dash ? k.turnX : null, dashTurnY = k.dash ? k.turnY : null,
-                    rawQuickRestart = k.reset });
+                    rawQuickRestart = k.reset, pauseFrames = k.pause, pauseTick = k.pause > 0 ? k.pauseTick : 0 });
             }
             return steps;
         }

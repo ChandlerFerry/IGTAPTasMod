@@ -312,6 +312,7 @@ namespace IGTAPTasMod
             if (!Instance._recorder.IsRecording) Instance._engine.AfterFixedTick(__instance);
             Instance.OverlayTick(__instance);
             Instance.ProbeAfterTick(__instance);
+            Instance.OpenPlaybackPause(__instance, Instance._engine.TakePause());
             RunDeferredFixedUpdates();
         }
 

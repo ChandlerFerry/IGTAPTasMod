@@ -31,6 +31,14 @@ namespace IGTAPTasMod
             public int fps;
             /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
+            /// <summary>
+            /// The pause menu (<see cref="OpenPlaybackPause"/>): opened <c>pauseOffset</c> Movement.Update frames after physics
+            /// tick <c>pauseAt</c> (the log's <c>physics</c>: a dash's locked ticks share one input tick; 0: right after the tick,
+            /// before its first frame) and closed after <c>pauseFrames</c> frames with it open. A frame-exact test; a route's
+            /// own pause is MacroStep.pauseFrames.
+            /// </summary>
+            public long pauseAt = -1;
+            public int pauseOffset, pauseFrames, framesSincePauseTick = -1;
             public bool started;
             public List<SolverTick> ticks;
             /// <summary>Extra Movement fields logged on every row (as enginesim's <c>probe</c> <c>fields</c>).</summary>
@@ -67,6 +75,8 @@ namespace IGTAPTasMod
                         ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
                     _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields,
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
+                        pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
+                        pauseFrames = Number(body, "pauseFrames", 0),
                         fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"] };
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
@@ -120,6 +130,7 @@ namespace IGTAPTasMod
             _probe.rows.Add(new
             {
                 kind, frame = Time.frameCount, unscaled = Time.unscaledTime, timeScale = Time.timeScale, time = Time.timeAsDouble,
+                paused = movement.pauseMenu != null && movement.pauseMenu.menuOpen,
                 camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
                 cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
                 physics = _engine.PhysicsTicks, input = _engine.RunTicks,
@@ -137,6 +148,11 @@ namespace IGTAPTasMod
         {
             if (!ProbeActive(movement)) return;
             ProbeRow(movement, "tick");
+            if (_probe.pauseAt >= 0 && _probe.framesSincePauseTick < 0 && _engine.PhysicsTicks == _probe.pauseAt)
+            {
+                _probe.framesSincePauseTick = 0;
+                if (_probe.pauseOffset == 0) OpenPlaybackPause(movement, _probe.pauseFrames);
+            }
             if (_probe.captureAt >= 0 && _probe.capturedSavestateId == null && _engine.RunTicks >= _probe.captureAt)
             {
                 Savestate savestate = SavestateService.Capture(movement, "probe/" + _probe.name + " @" + _engine.RunTicks, MacroLibrary.CurrentSchemaVersion);
@@ -144,6 +160,24 @@ namespace IGTAPTasMod
                 WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
                 _probe.capturedSavestateId = savestate.id;
             }
+        }
+
+        int _pauseLeft, _pausedFrames;
+
+        /// <summary>
+        /// 1x playback's pause (a route step's MacroStep.pauseFrames, or a probe's pauseAt): the Pause button's
+        /// pauseMenuScript.menuButtonPressed, closed the same way after <paramref name="frames"/> Movement.Update frames
+        /// (<see cref="AfterMovementUpdate"/>). Paused, timeScale is 0 and no FixedUpdate runs, but Movement.Update's step-up
+        /// (806-816) still runs every frame. Turbo never pauses.
+        /// </summary>
+        void OpenPlaybackPause(Movement movement, int frames)
+        {
+            if (frames <= 0 || TurboRunner.Active || movement.pauseMenu == null || movement.pauseMenu.menuOpen) return;
+            movement.pauseMenu.menuButtonPressed();
+            if (!movement.pauseMenu.menuOpen) return;
+            _pauseLeft = frames;
+            _pausedFrames = 0;
+            Logger.LogInfo("Pause menu opened for " + frames + " frames at physics tick " + _engine.PhysicsTicks);
         }
 
         /// <summary>
@@ -213,7 +247,20 @@ namespace IGTAPTasMod
 
         private static void AfterMovementUpdate(Movement __instance)
         {
-            if (Instance != null && Instance.ProbeActive(__instance)) Instance.ProbeRow(__instance, "frame");
+            if (Instance == null) return;
+            bool probing = Instance.ProbeActive(__instance);
+            if (probing) Instance.ProbeRow(__instance, "frame");
+            if (Instance._pauseLeft > 0 && (__instance.pauseMenu == null || !__instance.pauseMenu.menuOpen)) Instance._pauseLeft = 0;
+            if (Instance._pauseLeft > 0 && ++Instance._pausedFrames >= Instance._pauseLeft)
+            {
+                Instance._pauseLeft = 0;
+                if (__instance.pauseMenu != null && __instance.pauseMenu.menuOpen) __instance.pauseMenu.menuButtonPressed();
+                Instance.Logger.LogInfo("Pause menu closed after " + Instance._pausedFrames + " frames");
+            }
+            if (!probing) return;
+            ProbeRun probe = Instance._probe;
+            if (probe.framesSincePauseTick >= 0 && probe.pauseOffset > 0 && ++probe.framesSincePauseTick == probe.pauseOffset)
+                Instance.OpenPlaybackPause(__instance, probe.pauseFrames);
         }
 
         /// <summary>Writes the probe's log once its playback is over (plugin Update).</summary>

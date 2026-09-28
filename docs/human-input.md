@@ -170,6 +170,17 @@ move a press or a dash a few ticks while keeping where the hold ends.
   The overlay labels the chain and its wallbounce INWALL WALLBOUNCE
   (`Tech.InwallWallBounce`: a step-up whose forward rays, `wallJumpFacing`, looked away from the dot's facing, then a
   wall kick within 6 ticks).
+- **Pauselift** (`WJ_DS` and up, Full-TAS run `Test-Pauselift`, tech demo `pauselift`): an inwall wallbounce with the
+  pause menu open. Pausing (`pauseMenuScript.menuButtonPressed`) sets `timeScale` 0, so no FixedUpdate runs, but the
+  step-up (Movement.cs 801-816) sits outside `Update`'s pause check and keeps running every rendered frame. Paused in the
+  frames after the turned dash's tick (the dash's second physics tick), every paused frame lifts the dot 56 units until
+  its down ray hits the wall's top face: one dash climbs the whole wall, whatever the frame rate. One frame earlier (the
+  tick before, or the dash freeze) the turn hasn't happened and the pause lifts nothing. On Course 3's `3_WJ_DS 3.78`
+  wall it reaches the top (8557) on the first dash; on Course 4's left column (face x 19936) 40 paused frames lift the
+  dot 35 times, 11111.6 to the slab top at 13037. A shorter pause stops the climb partway: 26 frames leave it at 12847.6,
+  under the slab. A route step's `pauseFrames` / `pauseTick` (`MacroStep`, `SolverTick` `pause` / `pauseTick`) opens the
+  menu after that step's `pauseTick`-th physics tick and closes it after that many frames. It plays at 1x only: turbo
+  and the offline engine don't model the pause, so a route with one can't be judged or saved yet.
 
 ### Omnidirectional dash (Vman)
 

@@ -34,6 +34,14 @@ namespace IGTAPTasMod
         /// turns an omnidash.</summary>
         public float? dashTurnX, dashTurnY;
         public bool rawQuickRestart;
+        /// <summary>
+        /// Open the pause menu (pauseMenuScript.menuButtonPressed, the Pause button's) after this step's <c>pauseTick</c>-th
+        /// physics tick (0: its first; a dash's locked ticks count) and close it after <c>pauseFrames</c> Movement.Update
+        /// frames. Paused, time stands still but Update's step-up runs every frame (the pauselift). 1x playback only: turbo
+        /// and the offline engine don't model it.
+        /// </summary>
+        public int pauseFrames;
+        public int pauseTick;
 
         public MacroStep Copy()
         {
