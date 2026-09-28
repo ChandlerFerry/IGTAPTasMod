@@ -437,20 +437,14 @@ namespace IGTAP.EngineSim.Cli
             }
             if (seg.Reset < 0)
             {
-                // The route's end closes it: nothing after it to keep, and no buy after it to break. It is polished as the
-                // plain polish does, windows of --window goals from its first goal on, each judged in the whole run.
+                // The route's end closes it: nothing after it to keep. The whole segment is one search, from its Quick Restart
+                // to the route's last goal (a budget of Minutes per window for each of its goals), so no way is spliced in front
+                // of an old tail it doesn't fit.
                 if (seg.Last <= seg.First) return false;
-                for (int i = seg.First; i < seg.Last && !TimeUp; i++)
-                {
-                    Route now = _best;
-                    if (now.Progress < seg.Last) break;
-                    int limit = Math.Min(i + _window, seg.Last);
-                    int prefixLength = i == 0 ? 0 : (int)Math.Min(now.GoalInput[i - 1], now.Inputs.Count);
-                    if (i == seg.First) prefixLength = Math.Max(prefixLength, seg.Start);
-                    var seeds = new List<List<InputTick>> { now.Inputs.Skip(prefixLength).ToList() };
-                    List<List<InputTick>> faster = SearchWindow("segment", now, prefixLength, limit, seeds, now.GoalPhysics[limit - 1], _windowMinutes, 0);
-                    if (faster.Count > 0) Merge($"faster through goals {i + 1}-{limit} (segment {seg.Number}, after the last Quick Restart)", now, prefixLength, limit, faster);
-                }
+                var tail = new List<List<InputTick>> { best.Inputs.Skip(seg.Start).ToList() };
+                List<List<InputTick>> last = SearchWindow("segment", best, seg.Start, seg.Last, tail, best.GoalPhysics[seg.Last - 1],
+                    _windowMinutes * (seg.Last - seg.First), 0);
+                if (last.Count > 0) Merge($"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last}, after the last Quick Restart)", best, seg.Start, seg.Last, last);
                 if (!TimeUp && _best == best) RememberSearched(seg, best);
                 return true;
             }

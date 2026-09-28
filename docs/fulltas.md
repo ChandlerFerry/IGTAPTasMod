@@ -394,9 +394,10 @@ and `repair` re-finds it. A segment is spliced at a Quick Restart instead:
 
 Segments are polished from the last one back. A segment saves time without touching the route before it, and the later
 it is the less it can break after it: an early faster lap changes the Cash of every buy after it, so a later buy walk takes
-a box it can now pay for and the run stops there. The last segment (after the last Quick Restart) is polished in windows of
-`--window` goals, as the plain polish does; no buy comes after it in `FalseEnding-Any%` (its goals after `buy:buydj` are
-all area goals), and its windows took the record from 511.22 s to 510.52 s.
+a box it can now pay for and the run stops there. The last segment (after the last Quick Restart) is one search from its
+Quick Restart to the route's last goal, with Minutes per window for each of its goals; no buy comes after it in
+`FalseEnding-Any%` (its goals after `buy:buydj` are all area goals). Searched in windows of two goals it took the record
+from 511.22 s to 509.96 s, but each window's faster way broke the old goals after it and re-finding those cost more than it saved.
 
 - Its goals are searched (a `segment` window) from the state after the Quick Restart that opens it, for its last goal, faster
   than the best reaches it there.

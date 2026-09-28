@@ -139,7 +139,8 @@ namespace IGTAP.EngineSim.Cli
                 _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
                 _eval.Goals.Limit = full.Count;
                 RunResult r = _eval.Run(route, null, null, 1000000);
-                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = _labels, inputs = route.Select(t => t.ToJson()),
+                // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.
+                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = full.Select(g => g.label), inputs = route.Select(t => t.ToJson()),
                     goalInputTicks = r.GoalInputTicks, goalPhysicsTicks = r.GoalPhysicsTicks, total = -1 }));
                 Log($"route: reaches {r.Progress} of {full.Count} goals -> {routeFile}");
             }
