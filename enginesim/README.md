@@ -1,7 +1,8 @@
 # Offline engine host (enginesim)
 
 Runs the game's own code outside Unity, so route searches run on every CPU core instead of inside the game.
-The game (turbo) stays the judge: every offline best is replayed there before it becomes a route.
+The game (turbo) stays the judge: every offline best is replayed there before it becomes a route. What has diverged
+from 1x before, and how it was fixed: [`docs/fidelity-log.md`](../docs/fidelity-log.md).
 
 ## How it works
 
@@ -90,8 +91,12 @@ cut or splice over a later one that has them (`OfflineSolver.CellKey`). A Full-T
 left, and its momentum too, in steps of 250 each way on x and y (`MomentumBucket`): a superjump or spike super carries
 its momentum for a hundred ticks, so an arrival that has it and one that doesn't don't replace each other.
 
-The guide weighs each explore pick by how close the cell is to the target: `guide d=` in the progress line is the best
-cell's walkable distance to it (`--no-guide` searches without the guide, `--guide-weight W` how hard it pulls, default 1).
+The guide (`--guide`, experimental and off by default) weighs each explore pick by how close the cell is to the target:
+`guide d=` in the progress line is the best cell's walkable distance to it (`--guide-weight W` how hard it pulls, default
+1). On two Course 4 WJ_DS_DJ pairs of 2-minute 8-thread arms it won one and lost one (unseeded: 12.62 vs 11.46 lost;
+`--rng 4242`: 11.32 vs 11.90 won; the `--rng 777` pair was cut short), so the default stays the plain search. `--rng N`
+seeds the search's randomness, worker `i` getting `N + i`, instead of the clock: two runs with the same seed on one thread
+find the same bests in the same order.
 The distance comes from a Dijkstra field over the static collision geometry on a 24-unit grid of world cells, flooded from
 the target (the course's end gate, a bonus's reward box, a transition's finish box or its finish start's gate, or the
 current `at:` goal rect in Full-TAS goal mode, which also replaces its straight-line `GoalDistance`): free where no solid
@@ -210,9 +215,8 @@ scene-frame numbers the game keeps (`lastHyperY`, `courseResetPoint`) alone: tha
 whose second jump is ~11,700 u under `lastHyperY` after a rebase). Turbo runs the game's own `LateUpdate` after each
 tick's `Update` and resumes the coroutine right after the next `Physics2D.Simulate` (`TurboRunner.OriginFrame`,
 `ResumeRebase`); a turbo snapshot carries `currentOrigin` and a waiting rebase, and a restore moves the world back to
-it (`TurboRunner.PutOrigin`), so every judged run starts where its start was taken. Before this, turbo never rebased
-while 1x did: a route that crossed the sphere (the bonus1 8.28 seed, captured at origin (-20200, -10543), crosses it at
-tick 334) played differently at 1x than turbo judged it.
+it (`TurboRunner.PutOrigin`), so every judged run starts where its start was taken (before this, turbo never rebased
+while 1x did — [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Turbo never rebased*).
 
 The engine does the same (`Simulation.FloatingOriginFrame`, `ResumeRebase`, `MoveWorld`): every transform of the active
 scene moves back by the reference (a root's local position with it), `currentOrigin` drops, bodies take their
@@ -227,19 +231,15 @@ momentum) replay with every position and Movement field identical; only the body
 there).
 
 After a rebase the tick's rendered frames end with the player at the step's end moved with the world (`_stepTo`, as
-turbo's `Place(player, _stepTo)`), not at the Box2D body, which only follows at the next sync. Reading the body there
-put the player back at its pre-rebase scene position, so a far teleport (a quick restart or death across the map)
-rebased again every tick or two and the player's world position jumped by the origin each time (Test-No-Omni-Skip's
-windows reached world (-21055, -15606) and ±k × (20933, 14987)).
+turbo's `Place(player, _stepTo)`), not at the Box2D body, which only follows at the next sync (reading the body there
+let a far teleport rebase every tick or two — [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Far teleport rebased
+every other tick*).
 
 The game's mutable statics (`Singleton<T>.instance`, `VmanScript`'s flags, `globalStats`' dictionaries) are
 `[ThreadStatic]` in the engine's copy of the game (`Prep`'s `ThreadStaticFields`), and a thread's `World.Load` sets its
-own world's; a `Simulation` runs on the thread that loaded its world, as the shim's backends already required. They
-used to be shared by every solver thread, so the last world loaded won: after a rebase, a worker's quick restart or death
-put the player at `respawnPoint` plus another world's `FloatingOrigin.currentOrigin` (and a checkpoint stored
-`respawnPoint` against it). `TrueEnding-ANY%`'s windows past its rebase drew chains of cells ~(12000, 11700) off the
-route, e.g. world (25147, 23760) and (567, -15539). The visits map is versioned (`VisitsVersion` 2), so the maps drop
-every visit recorded before this.
+own world's; a `Simulation` runs on the thread that loaded its world, as the shim's backends already required (they
+used to be shared by every solver thread — [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Statics shared between
+solver threads*). The visits map is versioned (`VisitsVersion` 2).
 
 A build-time check (`Prep`'s `StaticAudit`) keeps the split from silently rotting: every static field the rewritten game
 writes outside a static constructor, or whose contents it mutates (the shim's own mutable statics too), must be per
@@ -371,8 +371,10 @@ probes there. `pauseAt` opens the pause menu (`pauseMenuScript.menuButtonPressed
 after that physics tick, or `pauseOffset` `Movement.Update` frames after it, and `pauseFrames` closes it after that many
 frames (rows have `paused`): `timeScale` is 0 and no FixedUpdate runs, but Update's step-up runs every frame
 (`tools/probe.py --pause-at --pause-offset --pause-frames`).
-A probe's ticks can also carry a route's own pause (`pause`, `pauseTick`: `MacroStep.pauseFrames`); turbo and enginesim
-model neither, so both are 1x only. Playback runs on a fixed clock at 280 fps with
+A probe's ticks can also carry a route's own pause (`pause`, `pauseTick`, `pauseFrame`: `MacroStep.pauseFrames`), which turbo
+and enginesim model too (`MacroEngine.FrameRepeats`, `Simulation.InterpolatedFrames`); `pauseAt`/`pauseOffset` are 1x only. Offline
+`probe` takes `base` (inputs played once, unlogged, as every branch's start) and `frames: true` (a row per rendered frame:
+`kind` `frame`, its `alpha`, `still` in a freeze or pause). Playback runs on a fixed clock at 280 fps with
 vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
@@ -393,9 +395,9 @@ play-time display still counts the wall clock.
 A write from a physics callback inside the step moves the body at once and drops the interpolation: a sideways spring
 (`SpringScript.OnTriggerStay2D` → `Movement.hitSpring`, `transform.position += up * 10f`). Turbo syncs it right after
 `Physics2D.Simulate` when the transform has moved off the body (`TurboRunner`), and the engine does the same when the
-player's transform is dirty after `Physics.Simulate` (`Simulation.Run`). Before this both dropped the push: the tick's
-frames and the next tick blended from the step's end, so a sideways spring came out 10 u short of 1x (Course 5's
-`Spring (1)`: `5_WJ_DS_DJ 13.46` finished in turbo and offline, and died on `Spikes` at 1x).
+player's transform is dirty after `Physics.Simulate` (`Simulation.Run`) (before this both dropped the push, and a
+sideways spring came out 10 u short of 1x — [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Sideways spring lost
+its push*).
 
 `POST /api/savestates/place {name?, from?, x?, y?, vx?, vy?, facing?, fields?}` makes a probe start anywhere, inside a
 wall too: a copy of a studio savestate (`from`) or of the player now, with the world-frame position, `Velocity` (the body
@@ -474,17 +476,25 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   empty rectangles at least `w x h` in the world frame: no collider, trigger or zone geometry at all (the world export, off
   colliders and every zone's included, so the region is the same whatever is loaded), ranked by distance from the routes'
   paths. `--lab` records the best one (or `--index N`) as the lab map's `anchor` and `region`.
-- `lab solve <trace> <labmap.json> [--max-ticks N] [--threads N] [--out <file>]` injects the lab into the trace's world (static
-  colliders on the ground body, correct layer and tag, before the `Simulation` is built), puts the player at the lab start and
-  searches for the minimum-tick human-legal input sequence to the finish box: exhaustive breadth-first over the input alphabet
-  (stick x −1/−0.55/0/0.55/1, y −1/0/1, the jump button's press/hold/release by its state, a dash with any dash-jump frame
-  0–12; a dash press is pruned when the run can never dash), states deduplicated by a quantized key (0.25 u position, 2 u/s
-  velocity and momentum, 0.01 counters: two states in one cell are one search state) and bounded by the first finish — every
-  state below the bound is explored to prove the bound is the minimum. One world and `Simulation` per worker thread (the game's
-  statics are per thread); each extension replays the node's input path from the lab start in one run. The demo goes to
-  `labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose world it was solved in; `search`: states,
-  extensions, the bound, the quantization) and is verified by one replay to the same tick before it is written.
-  `lab replay <trace> <labmap.json> <demo.json>` plays one demo from the lab start, tick by tick.
+- `lab solve <trace> <labmap.json> [--max-ticks N] [--threads N] [--out <file>] [--exact] [--forbid-jump-not-grounded]` injects
+  the lab into the trace's world (static colliders on the ground body, correct layer and tag, before the `Simulation` is built),
+  puts the player at the lab start and searches for the minimum-tick human-legal input sequence to the finish box: exhaustive
+  breadth-first over the input alphabet (stick x −1/−0.55/0/0.55/1, y −1/0/1, the jump button's press/hold/release by its state,
+  a dash with any dash-jump frame 0–12; a dash press is pruned when the run can never dash) and bounded by the first finish —
+  every state below the bound is explored to prove the bound is the minimum. Two admissible prunes cut provably dead states: one
+  whose highest reachable y (the ballistic arc plus every jump and boost still in reach) is below the finish box, and one too far
+  from the box to reach it in the ticks left (the game's own 100 u/step max translation is the most any input can move the
+  player). States are deduplicated by a key of the state; the default key is coarse (1 u position, 10 u/s velocity, 1 u counters)
+  and gives a demo fast as an upper bound, and `--exact` deduplicates on the bit-exact state (position, velocity, momentum, body
+  and every Movement field as their float bits), which proves the bound is the true minimum (or finds a shorter demo). One world
+  and `Simulation` per worker thread (the game's statics are per thread); each extension replays the node's input path from the
+  lab start in one run. The demo goes to `labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose
+  world it was solved in; `search`: states, extensions, the bound, the key mode, the prune counts and the tech the demo
+  performs), verified by one replay to the same tick and by the tech's own Movement state on the jump tick (a coyote jump's
+  `onGround` held with `coyoteFrames` counting, the dash boost's 730 up + 410 up momentum within `dashBoostMax` of a dash).
+  `--forbid-jump-not-grounded` is the negative control: no jump press (nor a dash-jump frame) unless the state is on solid
+  ground, and a lab whose start can only jump its own tech then has no solution at all — which is what makes the demo the tech
+  and not a hop. `lab replay <trace> <labmap.json> <demo.json>` plays one demo from the lab start, tick by tick.
 - In game (`LabMapService.cs`): `POST /api/labmap/inject {id}` builds one root of colliders at the anchor (world frame through
   `FloatingOrigin.currentOrigin`, BoxCollider2D/PolygonCollider2D/EdgeCollider2D with the layer and tag), `POST
   /api/labmap/restore` destroys it and puts back anything the session touched (the player included), `GET /api/labmap/status`
@@ -560,39 +570,39 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   early TOI hits wins); a body's contact list is newest first (the island solver's order). A collider pair's contacts
   (`Collision2D`, `GetContact(0).normal` decides a head bump) are a list: a contact that starts touching goes to the
   end, one that stops is replaced by the last. All of it decides a player wedged in a corner of one composite
-  collider to the last bit (`diverge-c5-13.14` ticks 881-896: offline finished 13.14, turbo died).
+  collider to the last bit (`diverge-c5-13.14`: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Corner wedge
+  contact order*).
 - Turbo restores (`TurboRunner.Restore`) match that priming: one muted physics step at the restored pose rebuilds
-  Unity's contacts, so the first tick reports Stay, not a stale Exit plus a fresh Enter. Without it a start touching a
-  collider (a start under an upgrade box) ran differently in turbo from run to run.
+  Unity's contacts, so the first tick reports Stay, not a stale Exit plus a fresh Enter (without it, a start touching a
+  collider ran differently in turbo from run to run: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Restores
+  without contact priming*).
 - A trace start's pending Invokes (`endRecentJump`, the buffer cancels) are due counted from the start's next tick, in
-  turbo's snapshot and in `Simulation.LoadStart` alike. `LoadStart` used to count one tick less, so a start inside a
-  jump's `recentlyJumped` window (every omnidash tech demo) ended it a tick early offline.
+  turbo's snapshot and in `Simulation.LoadStart` alike (it used to count one tick less:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Trace start Invokes one tick early*).
 - A turbo snapshot keeps every active-scene object's on/off state (`TurboRunner.Scene.objects`), each clonesScript's
   best path arrays and `globalStats.visitedTeleporters`, and a new game's start is never taken while a zip mover's
   `reset` is on. `ObjectBobber.OnEnable` draws UnityEngine.Random, and `buystatue` turns the statue's
-  `StatuePrestigeText` on: a run that bought the statue left it on, so the next run from the same new game skipped that
-  draw and every clone roll after it (`TrueEnding-ANY%`'s 484.96 s route passed the gate once, then stopped at goal 318
-  on every later check). A Full-TAS trace exports its world after restoring the start (`FullTasTrace`).
+  `StatuePrestigeText` on (a run that bought the statue once left it on:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Statue text left on*). A Full-TAS trace exports its world after
+  restoring the start (`FullTasTrace`).
 - Clones step in scene-load order, instance id highest first, in turbo (`TurboRunner.Run`) and here (`Economy`) alike.
-  Two courses spawning on one tick take their fast/big rolls in that order. Turbo used `FindObjectsSortMode.None`, whose
-  order changed between game sessions (Course 3 before Course 1 in one, after it in the next): the same route's clone
-  rolls swapped at physics tick 16409 and one course's spawns ran 2 ticks late from then on. Instance ids keep their
+  Two courses spawning on one tick take their fast/big rolls in that order (turbo used `FindObjectsSortMode.None`
+  before: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Clone order changed between sessions*). Instance ids keep their
   relative order from load to load. 1x playback runs `clonesScript.Update` in Unity's own order, once per rendered frame
   (Δt 1/280): neither is proven to match yet.
 - `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
   it lists. Cash here is start − spent + awarded + earned, the game's a running total: they differ in the last bit
   (tick 13336 above), which only matters for a purchase within a rounding of its cost.
-- Turbo spawns no floating numbers (`FloatingNumberScript.ActuallySpawnText` off for the run). Their pool of 200 is only
-  refilled by their own `FixedUpdate`, which turbo doesn't step. A long replay drained it; the next pop threw out of
-  `courseScript.stopTracking` (no finish) or `clonesScript.DestroyClone` (the clone stays and pays again), at a point
-  that depended on how much real time refilled the pool since the last run.
+- Turbo spawns no floating numbers (`FloatingNumberScript.ActuallySpawnText` off for the run) — a long replay once
+  drained their pool of 200 ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Floating number pool drained*).
 - Raycasts: direction normalized, negative distance flips the ray, start-inside hits at fraction 0 with normal −dir,
   triggers are hit (`queriesHitTriggers`), and the nearest hit wins across a composite's shapes too (the port's
-  unclipped tree walk returned the last shape in tree order: a dash step-up onto a ledge landed 2.3 units low).
+  tree walk once returned the last shape in tree order:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Raycast tree walk returned the last shape*).
 - `Collider2D.Distance` is negative for overlapping colliders (the depth that separates them: separating-axis over the
   shapes' faces, minus both radii), as in Unity; GJK alone stops at 0. Movement's squish check (`distance <
-  squishDistance`, −20, for `SquishGraceFrames` + 1 ticks) is its only caller: a VMAN dash into the wall at 20776,15441
-  died squished in turbo and ran on offline.
+  squishDistance`, −20, for `SquishGraceFrames` + 1 ticks) is its only caller (a VMAN dash died squished in turbo and
+  ran on offline: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Squish death on the VMAN wall*).
 - Transforms: the player's parent (`PlayerObject`) follows the game's `FloatingOrigin` and sits at (−20200, −10539)
   on Course 4. Unity keeps only the local position, so a world position reads back as parent + (world − parent),
   rounded (20202.4453 → 20202.4434), while the body keeps the unrounded value. A scale change (facing flip) rebuilds
@@ -601,8 +611,8 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   the tick start (`MacroEngine.BeforeTick`: the plugin's `FixedUpdate` prefix, offline before `FixedUpdate`, both after
   the pending Invokes), not at the input hook, where the game already read the buttons (Movement.cs:1033-1056). A dash
   that hits a wall takes its input tick in that tick after all; its presses go in at the wall branch's first call
-  (`MacroEngine.WallTouch`: a `touchedSolidGround`/`touchedMossyGround` prefix). Traces captured before this pressed at
-  the hook and differ wherever a dash met a wall with a jump pressed that tick.
+  (`MacroEngine.WallTouch`: a `touchedSolidGround`/`touchedMossyGround` prefix) — traces captured before this pressed
+  at the hook ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Presses at the input hook*).
 - The stick: `Movement.FixedUpdate` reads the controller (`NormaliseInput(moveAction.ReadValue<Vector2>())`,
   Movement.cs:872) before the input hook, and fast fall (stick down: gravity ×1.4 while the body rises slower than 300,
   and a 1.4× fall speed cap, Movement.cs:1104-1128) and wall-slide speed (down ×1.5, up ×0.35,
@@ -629,8 +639,8 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   them on the run's ticks (`TurboRunner` and `Scheduler`: `WaitForSeconds` at the start of the tick an Invoke of that
   delay fires, `WaitForFixedUpdate` right after the next physics step, `null` after `Update`, `WaitForEndOfFrame` at the
   tick's end); snapshots keep the parked iterators, the movers' fields and layers. A layer write rebuilds that object's
-  colliders (`PhysicsWorld.LayerChanged`); before, the engine read layers once at load and turbo never resumed the
-  coroutine within a run. Other scripts' coroutines still run to their first yield only. At 1x the Ground layer comes back
+  colliders (`PhysicsWorld.LayerChanged`) (before, layers were read once at load and the coroutine never resumed within
+  a run: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Layers read once at load*). Other scripts' coroutines still run to their first yield only. At 1x the Ground layer comes back
   on the first rendered frame 0.15 s after the jump's frame, 0.01 s before the 8th tick after it: in 1x probes on Course
   9's pillar it was back for that tick 8 times in 12 and a tick later the other 4 (frame pacing, a dash freeze right
   after the jump). Turbo and the engine take the 8th tick; a route that needs the block back on exactly that tick can
@@ -641,8 +651,8 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   the lock on a buffered dash (Movement.cs:1214-1221). An input tick's `springDash` N (`MacroStep.springDashFrame`)
   presses dash at the start of the Nth spring tick after it (`MacroEngine.BeforeTick`).
 - Triggers after a facing flip: a trigger touched only at the start of the step enters, except when the touch comes from
-  shapes the step's transform sync rebuilt for a new scale. A flip that rebuilt the player's box into a spring's trigger
-  entered in turbo one tick later, when the step's positions overlapped (`div-c4-ff` tick 322, with fast fall).
+  shapes the step's transform sync rebuilt for a new scale (`div-c4-ff`:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Facing flip delayed a trigger*).
 - Every trace result matches turbo, and every tick of both `diverge-c5-*` traces. bonus1 (`seed-cbonus1-wj-*`) differs
   at one tick only: body velocity y 1.2e-14 instead of 0 from a contact on a ground seam whose normal is
   (0, 0.99999994); every later tick is identical.
@@ -652,8 +662,8 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
   dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (the root
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
-  and whether turbo can buy the box depends on the live save (1to2 NONE bought Course 1's Wall jump box offline and
-  wall-jumped; the live save had it bought already, so turbo died).
+  and whether turbo can buy the box depends on the live save (1to2 NONE:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Wall jump box the live save had bought*).
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): turbo resumes the coroutine at every tick's end
   (`TurboRunner.EndOfFrame`), `Shop.EndOfFrame` does the same offline. A 40-buy touch of Course 1's `CashPerLoop` matched
   turbo's Cash on every tick.
@@ -664,8 +674,9 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   `Range(float, float)` = min * value + max * (1 - value). Verified on Unity's own published draws (macklinb/MoatShrimp's
   parity tables: 50 draws word for word) and on the game's traces, where every tick carries the state (`"random"`).
   The state is per simulation: `SimSnapshot` captures, restores and fingerprints it, and a trace's start loads it.
-  Turbo's `TurboRunner.Restore` sets it last, after `RestoreEconomy` and the Vman restore: turning a box back on there
-  runs `upgradeBox.OnEnable` (two draws), which used to shift a restored state before the judged run began.
+  Turbo's `TurboRunner.Restore` sets it last, after `RestoreEconomy` and the Vman restore, because turning a box back
+  on there runs `upgradeBox.OnEnable` (two draws) (it used to shift a restored state before the judged run began:
+  [`docs/fidelity-log.md`](../docs/fidelity-log.md), *RNG state shifted before the judged run*).
 - When a draw happens: a turbo run is one synchronous batch in one Unity frame. `SetActive(true)` runs the woken
   behaviours' `OnEnable` at once (drawn in turbo); `Start` waits for the next frame's Start pass, `InvokeRepeating`
   and Unity-run coroutines wait for later frames (turbo parks only `Invoke`, zip movers, `IE_BuyMax` and the origin
@@ -716,15 +727,15 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
 A snapshot (for branching) is ~25 KB on the VMAN route: the broadphase tree stores only nodes that
 differ from a shared base, the pair/move buffers only their live prefix, and unchanged fixture records are shared
 between snapshots. So are the field captures of the touched scripts and the courses: a capture reuses the previous
-one's array while none of its fields changed (`Simulation.CaptureShared`, `FieldState.Matches`). A Full-TAS run touches
-~100 scripts (bought boxes, springs, gates); copied into every snapshot they were 130 KB of each 160 KB, and a VMAN
-search with 28 workers ran out of memory within minutes. `solve` prints heap and working set every 10 s, and the host
+one's array while none of its fields changed (`Simulation.CaptureShared`, `FieldState.Matches`) — before, every touched
+script's capture was copied into every snapshot, and a VMAN search with 28 workers ran out of memory within minutes
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Field captures copied into every snapshot*). `solve` prints heap and working set every 10 s, and the host
 runs with `System.GC.HeapHardLimit` at 70 GiB, so a leak throws OutOfMemory instead of paging the machine.
 
 A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
-tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick. Snapshotting
-every tick of Course 4's ~670-tick route on each drift left the workers waiting on the GC most of the time (C4 WJ_DS_DJ,
-30 threads: ~1,000 runs/s before, ~7,000-8,000 after). A mutation's replay starts from the snapshot it resumed from and
+tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick (snapshotting
+every tick left the workers waiting on the GC most of the time:
+[`docs/fidelity-log.md`](../docs/fidelity-log.md), *Snapshot every tick stalled the workers*). A mutation's replay starts from the snapshot it resumed from and
 copies the best's record before it (`OfflineSolver.Worker.Replay.CopyPrefix`): same inputs up to there, same states.
 
 The explore archive is one map shared by every worker (`OfflineSolver._archive`): a cell is its input prefix (the run's
@@ -735,9 +746,8 @@ the draw pool's pick weight first and recency second, so the frontier's hot cell
 (plain LRU let them go). A worker that picks a cell it has no snapshot for replays the cell's inputs from its nearest
 ancestor it has one for (from the start when none), and keeps a snapshot of every cell on that path. So an explore
 draws up to three cells and takes the first it has a snapshot for (`CachedDraws`): on C4 WJ_DS_DJ with 32 threads the
-replays were ~23% of all ticks simulated. Before, each worker kept
-its own archive with a snapshot per cell: the same place was stored once per worker, and a worker never explored from
-a cell another worker found. `solve` and `fulltas` print the archive's size, the share of picks whose snapshot was
+replays were ~23% of all ticks simulated (each worker used to keep its own archive with a snapshot per cell:
+[`docs/fidelity-log.md`](../docs/fidelity-log.md), *A snapshot per cell per worker*). `solve` and `fulltas` print the archive's size, the share of picks whose snapshot was
 cached and the ticks spent replaying (`ArchiveStatus`).
 
 A Full-TAS run's goal-boundary states also persist to disk (`SnapshotStore`, `SnapshotIndex`): when the run first
@@ -750,8 +760,13 @@ their collider and shape), so a restored one continues exactly as the replayed o
 it doesn't know) just isn't stored and the run replays to it as before. On the VMAN route a state is ~1.6 MB on disk
 (the broadphase tree's shared base is a full copy per state) against ~25 KB in memory.
 
+The physics backing those states rely on: a fixture's shape fingerprint is a plain deterministic mix
+(`PhysicsWorld.FingerprintOf`), `Pristine` is the fixtures the world loaded (`ColliderState.Tracked` marks the rebuilds
+that join `_changed`), and a capture after a restore re-derives its changed-collider list
+(`PhysicsWorld._changedCapture`). Storing states across runs needed all three
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Persisted states across runs*).
+
 Scene queries (raycasts, point tests, `Collider2D.Distance`) read static shapes from a grid built once over the world. A
-collider whose static fixtures change, or whose static body moves, is regridded alone at the next query. Rebuilding the
-whole grid on each change cost `WJ_DS_DJ_BS` a full-world rebuild four times per dash (block swap toggles the
-blue/orange composites), with the LOH garbage stalling every worker. On C11 at 30 threads, throughput went from
-~110 runs/s (4,000 ticks/s) to ~1,800 runs/s (205,000 ticks/s).
+collider whose static fixtures change, or whose static body moves, is regridded alone at the next query (the whole
+grid used to rebuild on each change, with the LOH garbage stalling every worker:
+[`docs/fidelity-log.md`](../docs/fidelity-log.md), *Grid rebuilt on every change*).

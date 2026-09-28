@@ -38,7 +38,8 @@ namespace IGTAPTasMod
             /// own pause is MacroStep.pauseFrames.
             /// </summary>
             public long pauseAt = -1;
-            public int pauseOffset, pauseFrames, framesSincePauseTick = -1;
+            public int pauseOffset, pauseFrames;
+            public bool pauseTaken;
             public bool started;
             public List<SolverTick> ticks;
             /// <summary>Extra Movement fields logged on every row (as enginesim's <c>probe</c> <c>fields</c>).</summary>
@@ -148,10 +149,10 @@ namespace IGTAPTasMod
         {
             if (!ProbeActive(movement)) return;
             ProbeRow(movement, "tick");
-            if (_probe.pauseAt >= 0 && _probe.framesSincePauseTick < 0 && _engine.PhysicsTicks == _probe.pauseAt)
+            if (_probe.pauseAt >= 0 && !_probe.pauseTaken && _engine.PhysicsTicks == _probe.pauseAt)
             {
-                _probe.framesSincePauseTick = 0;
-                if (_probe.pauseOffset == 0) OpenPlaybackPause(movement, _probe.pauseFrames);
+                _probe.pauseTaken = true;
+                OpenPlaybackPause(movement, _probe.pauseFrames, _probe.pauseOffset);
             }
             if (_probe.captureAt >= 0 && _probe.capturedSavestateId == null && _engine.RunTicks >= _probe.captureAt)
             {
@@ -162,17 +163,25 @@ namespace IGTAPTasMod
             }
         }
 
-        int _pauseLeft, _pausedFrames;
+        int _pauseLeft, _pausedFrames, _pauseDueFrames, _pauseDueIn;
 
         /// <summary>
         /// 1x playback's pause (a route step's MacroStep.pauseFrames, or a probe's pauseAt): the Pause button's
-        /// pauseMenuScript.menuButtonPressed, closed the same way after <paramref name="frames"/> Movement.Update frames
-        /// (<see cref="AfterMovementUpdate"/>). Paused, timeScale is 0 and no FixedUpdate runs, but Movement.Update's step-up
-        /// (806-816) still runs every frame. Turbo never pauses.
+        /// pauseMenuScript.menuButtonPressed, at once or after <paramref name="afterFrames"/> Movement.Update frames
+        /// (MacroStep.pauseFrame, a probe's pauseOffset), closed the same way after <paramref name="frames"/> frames with it
+        /// open (<see cref="AfterMovementUpdate"/>). Paused, timeScale is 0 and no FixedUpdate runs, but Movement.Update's
+        /// step-up (806-816) still runs every frame. Turbo models a route's pause instead (TurboRunner.Pause).
         /// </summary>
-        void OpenPlaybackPause(Movement movement, int frames)
+        void OpenPlaybackPause(Movement movement, int frames, int afterFrames)
         {
-            if (frames <= 0 || TurboRunner.Active || movement.pauseMenu == null || movement.pauseMenu.menuOpen) return;
+            if (frames <= 0 || TurboRunner.Active) return;
+            if (afterFrames > 0)
+            {
+                _pauseDueFrames = frames;
+                _pauseDueIn = afterFrames;
+                return;
+            }
+            if (movement.pauseMenu == null || movement.pauseMenu.menuOpen) return;
             movement.pauseMenu.menuButtonPressed();
             if (!movement.pauseMenu.menuOpen) return;
             _pauseLeft = frames;
@@ -248,8 +257,7 @@ namespace IGTAPTasMod
         private static void AfterMovementUpdate(Movement __instance)
         {
             if (Instance == null) return;
-            bool probing = Instance.ProbeActive(__instance);
-            if (probing) Instance.ProbeRow(__instance, "frame");
+            if (Instance.ProbeActive(__instance)) Instance.ProbeRow(__instance, "frame");
             if (Instance._pauseLeft > 0 && (__instance.pauseMenu == null || !__instance.pauseMenu.menuOpen)) Instance._pauseLeft = 0;
             if (Instance._pauseLeft > 0 && ++Instance._pausedFrames >= Instance._pauseLeft)
             {
@@ -257,10 +265,8 @@ namespace IGTAPTasMod
                 if (__instance.pauseMenu != null && __instance.pauseMenu.menuOpen) __instance.pauseMenu.menuButtonPressed();
                 Instance.Logger.LogInfo("Pause menu closed after " + Instance._pausedFrames + " frames");
             }
-            if (!probing) return;
-            ProbeRun probe = Instance._probe;
-            if (probe.framesSincePauseTick >= 0 && probe.pauseOffset > 0 && ++probe.framesSincePauseTick == probe.pauseOffset)
-                Instance.OpenPlaybackPause(__instance, probe.pauseFrames);
+            if (Instance._pauseDueIn > 0 && --Instance._pauseDueIn == 0)
+                Instance.OpenPlaybackPause(__instance, Instance._pauseDueFrames, 0);
         }
 
         /// <summary>Writes the probe's log once its playback is over (plugin Update).</summary>

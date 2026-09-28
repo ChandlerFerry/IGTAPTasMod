@@ -36,12 +36,15 @@ namespace IGTAPTasMod
         public bool rawQuickRestart;
         /// <summary>
         /// Open the pause menu (pauseMenuScript.menuButtonPressed, the Pause button's) after this step's <c>pauseTick</c>-th
-        /// physics tick (0: its first; a dash's locked ticks count) and close it after <c>pauseFrames</c> Movement.Update
-        /// frames. Paused, time stands still but Update's step-up runs every frame (the pauselift). 1x playback only: turbo
-        /// and the offline engine don't model it.
+        /// physics tick (0: its first; a dash's locked ticks count) and <c>pauseFrame</c> Movement.Update frames of the tick
+        /// after it (0: at once, in the tick), and close it after <c>pauseFrames</c> Movement.Update frames. Paused, time
+        /// stands still but Update's step-up runs every frame (the pauselift). 1x playback opens the menu; turbo and the
+        /// offline engine run the same frames (the tick's first frame repeated, or with a pauseFrame the frame before it,
+        /// whose blend the pause holds).
         /// </summary>
         public int pauseFrames;
         public int pauseTick;
+        public int pauseFrame;
 
         public MacroStep Copy()
         {

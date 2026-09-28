@@ -130,8 +130,8 @@ jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn'
 next goal, and until the window reaches its last goal, cells that have reached more of the run's goals are picked more
 (`OfflineSolver` `Weight`; run time doesn't count there: a run that wanders longer isn't closer to the next goal).
 While the next goal is an `at:` rect, cells nearer it are picked more among those with the same goals reached: a
-cell's nearness is (nearest + 48) / (its distance + 48), the guide's walkable distance from the player to the rect (a
-straight line with `--no-guide`, `enginesim/README.md`'s guide) and the nearest any of the worker's cells came
+cell's nearness is (nearest + 48) / (its distance + 48), the distance from the player to the rect (the guide's walkable
+distance with `--guide`, `enginesim/README.md`'s guide) and the nearest any of the worker's cells came
 (`GoalReach`), so avoid boxes cut the corridor's dead ends and the rect pulls the search along it.
 
 ## Savestate starts
@@ -144,6 +144,20 @@ unlocks are what the savestate carries: a savestate captures none, but its `move
 `maxAirJumps`, and the unlock audit starts from them (then follows the run's purchases). With "Don't touch my
 unlocks" on, a restore skips those fields and a savestate start that has them fails. `POST /api/session/newgame`
 takes `savestate` too. Changing a run's savestate retires its routes like a goals edit.
+
+A savestate in the air (its `movementFields.onGround` false) can't rest: after the restore (and the rebase) the plugin
+restores it again on every physics tick, holding the player where the savestate put it, and takes the start after the
+same 10 ticks, exactly at the savestate. Its routes start in the air on their first input.
+
+`Test-Pauselift-TrueEnd` starts in the air from `lab/pauselift-trueend-wall-17600` (`91d31236…`: world (28944.5, 17600)
+against the face at x 28960 below the spiked wall, facing away, 1 dash and 1 double jump) and pauselifts over the
+spikes (21932–23686) onto the block top at 23753 (`at:29048,23842,100,100`, 0.08 s). `Test-Pauselift-TrueEnd-Runup` is
+the same lift from a real start, `lab/pauselift-trueend` (`474ef8ab…`, standing at world (30653, 16779) under the Start
+Vman speedrun box, the same unlocks): it walks left to `Test-Right-Ghost`'s start (29010, 16779), plays that run's
+approach (the checkpoint trigger at x 29407–29707, the cling in the slab gap above the box, the quick restart whose wall coyote jump
+launches from the checkpoint: tech `checkpoint-midair-walljump`, the restart keeps the cling's `wallCoyoteFrames`
+and the dash-boosted wall jump adds 410 momentum up), clings to the face at (28934.5, 17762) with its dash, and
+pauselifts from the cling with the pause 5 frames into the turned tick (`pauseFrame`, [`human-input.md`](human-input.md)): 8.22 s.
 
 `Test-No-Omni-Skip` is the first: `VMAN`'s last four goals (the tunnel floor's corner exit, the spike tunnel, its
 right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df724bcc92c07a3cd8c577df`), standing at

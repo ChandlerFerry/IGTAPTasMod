@@ -3,49 +3,22 @@
   "id": "coyote-ledge",
   "name": "Coyote jump off a plain ledge",
   "tech": "coyote-jump",
-  "techNote": "A ground jump after the ground rays stopped hitting (coyoteFrames counting down from maxCoyoteFrames 6): the dot runs off a plain ledge and jumps up to 6 ticks later, off the edge it already left. The finish box is up and past the gap: only the coyote jump\u0027s 805 up reaches it, a fall passes under it.",
+  "techNote": "A ground jump after the ground rays stopped hitting (coyoteFrames counting down from maxCoyoteFrames 6): the dot runs along a plain ledge (a low ceiling over it), leaves the edge and jumps after the ground is gone — the jump still works inside the coyote window. Only the late jump clears the ceiling's overhang (its right edge is at x 310; the hitbox's left edge clears it at x 325.5, where the ground rays have already stopped at x 325) and reaches the finish box at y 130: a jump before that is capped by the ceiling (its bottom is at y 120) and the fall never rises. The negative-control run (no jump press while the game's own ground check cannot ground the dot) finds no solution, and the demo's jump is the coyote one (the ground check's rays already missing on its tick).",
   "category": "NONE",
-  "anchor": [
-    1664,
-    14912
-  ],
-  "region": [
-    1664,
-    14912,
-    11216,
-    12592
-  ],
+  "anchor": [1664, 14912],
+  "region": [1664, 14912, 11216, 12592],
   "shapes": [
-    {
-      "kind": "box",
-      "at": [
-        150,
-        20
-      ],
-      "size": [
-        300,
-        40
-      ],
-      "layer": "Ground",
-      "tag": "Ground"
-    }
+    { "kind": "box", "at": [150, 20], "size": [300, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [150, 140], "size": [320, 40], "layer": "Ground", "tag": "Ground" }
   ],
   "start": {
-    "x": 330,
+    "x": 306,
     "y": 74,
     "vx": 460,
     "vy": 0,
     "facing": 1,
-    "fields": {
-      "onGround": true,
-      "coyoteFrames": 6
-    }
+    "fields": { "onGround": true, "coyoteFrames": 6 }
   },
-  "finish": [
-    600,
-    220,
-    240,
-    240
-  ],
-  "maxTicks": 60
+  "finish": [500, 230, 280, 200],
+  "maxTicks": 30
 }

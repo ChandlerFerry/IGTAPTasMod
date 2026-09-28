@@ -52,6 +52,8 @@ namespace IGTAP.EngineSim
             hash = Feed(hash, t.turnX.HasValue);
             if (t.turnX.HasValue) hash = Feed(hash, t.turnX.Value);
             hash = Feed(hash, t.reset);
+            if (t.pause > 0) hash = Feed(hash, ((long)t.pauseTick << 32) | (uint)t.pause, 8);
+            if (t.pause > 0 && t.pauseFrame != 0) hash = Feed(hash, t.pauseFrame, 4);
             return hash;
         }
 
@@ -427,13 +429,13 @@ namespace IGTAP.EngineSim
             {
                 if (_bound != null) return;
                 _bound = new b2Fixture[_fixtures.Length];
-                // Rebuilds first (a collider's rebuild replaces its composite's fixtures too), binds second.
+                // Rebuilds first (a collider's rebuild replaces its composite's fixtures too), binds second. A fixture can
+                // be either generation its collider holds: the loaded one, or the rebuilt one a snapshot lists it for.
                 for (int i = 0; i < _fixtures.Length; i++)
                 {
                     var (owner, index, free, fingerprint) = _fixtures[i];
                     if (index < 0) continue;
-                    (List<b2Fixture> fixtures, b2Fixture[] pristine) = _owner._physics.FixturesAt(owner);
-                    if (Matches(free ? fixtures : (IList<b2Fixture>)pristine ?? fixtures, index, fingerprint)) continue;
+                    if (Found(owner, index, free, fingerprint) != null) continue;
                     if (!free) throw new NotSupportedException("a collider's loaded shapes differ from the snapshot's (collider " + owner + " #" + index + "); dropping it");
                     _owner._physics.RebuildCollider(owner);
                 }
@@ -441,12 +443,21 @@ namespace IGTAP.EngineSim
                 {
                     var (owner, index, free, fingerprint) = _fixtures[i];
                     if (index < 0) continue;
-                    (List<b2Fixture> fixtures, b2Fixture[] pristine) = _owner._physics.FixturesAt(owner);
-                    IList<b2Fixture> use = free ? fixtures : (IList<b2Fixture>)pristine ?? fixtures;
-                    if (!Matches(use, index, fingerprint))
+                    b2Fixture fixture = Found(owner, index, free, fingerprint);
+                    if (fixture == null)
                         throw new NotSupportedException("a collider's shapes can't be rebuilt to the snapshot's (collider " + owner + " #" + index + "); dropping it");
-                    _bound[i] = use[index];
+                    _bound[i] = fixture;
                 }
+            }
+
+            b2Fixture Found(int owner, int index, bool free, int fingerprint)
+            {
+                (List<b2Fixture> fixtures, b2Fixture[] pristine) = _owner._physics.FixturesAt(owner);
+                IList<b2Fixture> first = free ? fixtures : (IList<b2Fixture>)pristine ?? fixtures;
+                IList<b2Fixture> second = free ? (IList<b2Fixture>)pristine ?? fixtures : fixtures;
+                if (Matches(first, index, fingerprint)) return first[index];
+                if (Matches(second, index, fingerprint)) return second[index];
+                return null;
             }
 
             static bool Matches(IList<b2Fixture> list, int index, int fingerprint)
@@ -716,6 +727,8 @@ namespace IGTAP.EngineSim
 
         readonly Dictionary<ulong, Entry> _byHash = new Dictionary<ulong, Entry>();
         List<Entry> _byTick = new List<Entry>();
+        /// <summary>Workers look states up while a worker's first prefix replay files them.</summary>
+        readonly object _gate = new object();
 
         /// <summary>How many of the run's inputs come before the window these are used in, and their hash's chain.</summary>
         public int Base;
@@ -725,13 +738,16 @@ namespace IGTAP.EngineSim
 
         public void Add(Entry entry)
         {
-            if (_byHash.TryGetValue(entry.Hash, out Entry old)) { old.Data = entry.Data; old.Goal = entry.Goal; return; }
-            _byHash[entry.Hash] = entry;
-            _byTick.Add(entry);
-            _byTick.Sort((a, b) => a.Tick.CompareTo(b.Tick));
+            lock (_gate)
+            {
+                if (_byHash.TryGetValue(entry.Hash, out Entry old)) { old.Data = entry.Data; old.Goal = entry.Goal; return; }
+                _byHash[entry.Hash] = entry;
+                _byTick.Add(entry);
+                _byTick.Sort((a, b) => a.Tick.CompareTo(b.Tick));
+            }
         }
 
-        public bool TryGet(ulong hash, out Entry entry) { return _byHash.TryGetValue(hash, out entry); }
+        public bool TryGet(ulong hash, out Entry entry) { lock (_gate) return _byHash.TryGetValue(hash, out entry); }
 
         /// <summary>Hash of the run's inputs[0..count].</summary>
         public static ulong Hash(List<InputTick> inputs, int count, ulong from = SnapshotStore.HashSeed)
@@ -747,19 +763,21 @@ namespace IGTAP.EngineSim
         /// </summary>
         public Entry Find(List<InputTick> source, int through, int after)
         {
+            Entry[] byTick;
+            lock (_gate) byTick = _byTick.ToArray();
             Entry best = null;
             ulong hash = BaseHash;
             int next = 0;
             for (int i = 0; i <= through; i++)
             {
                 hash = SnapshotStore.Feed(hash, source[i]);
-                while (next < _byTick.Count && _byTick[next].Tick - Base <= i + 1)
+                while (next < byTick.Length && byTick[next].Tick - Base <= i + 1)
                 {
-                    Entry e = _byTick[next++];
+                    Entry e = byTick[next++];
                     int at = e.Tick - Base;
                     if (at == i + 1 && at > after && e.Hash == hash) best = e;
                 }
-                if (next == _byTick.Count && best != null) break;
+                if (next == byTick.Length && best != null) break;
             }
             return best;
         }

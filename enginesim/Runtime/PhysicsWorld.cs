@@ -24,6 +24,8 @@ namespace IGTAP.EngineSim
             public ColliderState[] Sources;
             public bool[] SourcesLiveAtLoad;
             public b2Fixture[] Pristine, Restoring;
+            /// <summary>Rebuilt since load, so it joins _changed and snapshots record its fixtures.</summary>
+            public bool Tracked;
             public bool Rescaled;
             public readonly List<int> GridSlots = new List<int>();
             public bool Regrid;
@@ -142,6 +144,8 @@ namespace IGTAP.EngineSim
                 state.Handlers = Handlers(CallbackScripts(c));
                 state.Listens = state.Handlers.Any(h => h.Length > 0);
                 Rebuild(state);
+                // What the world loaded it as: a snapshot that doesn't list it restores this, whatever its rebuilds made since.
+                state.Pristine = state.Fixtures.ToArray();
             }
             Movement player = sim.Player;
             _player = _bodies[player.GetComponent<Rigidbody2D>()];
@@ -202,12 +206,12 @@ namespace IGTAP.EngineSim
 
         void Rebuild(ColliderState s)
         {
-            if (_loaded && s.Body != _player && s.Pristine == null)
+            if (_loaded && s.Body != _player && !s.Tracked)
             {
-                s.Pristine = s.Fixtures.ToArray();
+                s.Tracked = true;
                 _changed.Add(s);
             }
-            if (s.Pristine != null) _changedCapture = null;
+            if (s.Tracked) _changedCapture = null;
             if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(s);
             else _movers = null;
             s.BuiltScale = s.Collider.transform.m_LossyScale;
@@ -1135,7 +1139,9 @@ namespace IGTAP.EngineSim
                 c.Fixtures.AddRange(fixtures);
                 if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(c);
             }
-            _changedCapture = s.Changed;
+            // A capture after this must re-derive the changed set: every collider whose fixtures now differ from its
+            // pristine ones, not the restored snapshot's own list.
+            _changedCapture = null;
             foreach (BodyState b in _movedStatic)
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
             _player.TransformDirty = s.TransformDirty;
@@ -1198,7 +1204,8 @@ namespace IGTAP.EngineSim
             foreach (var (state, saved) in ((PhysicsSnapshot)snapshot).Changed)
             {
                 if (_changed.Contains(state)) continue;
-                state.Pristine = state.Fixtures.ToArray();
+                // It changed first in the snapshot's world; what this world loaded takes the pristine fixtures' place.
+                state.Tracked = true;
                 _changed.Add(state);
                 state.Fixtures.Clear();
                 state.Fixtures.AddRange(saved);
@@ -1213,30 +1220,34 @@ namespace IGTAP.EngineSim
             _changedCapture = null;
         }
 
-        /// <summary>What a fixture's shape is: a restored fixture must have been built from the same geometry.</summary>
+        /// <summary>What a fixture's shape is: a restored fixture must have been built from the same geometry. Deterministic
+        /// (a plain mix): a state file outlives the process that wrote it.</summary>
         public static int FingerprintOf(b2Fixture fixture)
         {
-            var h = new HashCode();
+            ulong h = 14695981039346656037UL;
+            void MixF(float v) { MixL(BitConverter.SingleToInt32Bits(v)); }
+            void MixL(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (8 * i)); h *= 1099511628211UL; } }
+            void Shape(b2Vec2 v) { MixF(v.x); MixF(v.y); }
             switch (fixture.b2Shape)
             {
                 case b2PolygonShape p:
-                    h.Add(1); h.Add(p.m_radius); h.Add(p.m_count);
-                    for (int i = 0; i < p.m_count; i++) { h.Add(p.m_vertices[i].x); h.Add(p.m_vertices[i].y); }
+                    MixL(1); MixF(p.m_radius); MixL(p.m_count);
+                    for (int i = 0; i < p.m_count; i++) Shape(p.m_vertices[i]);
                     break;
-                case b2CircleShape c: h.Add(2); h.Add(c.m_radius); h.Add(c.m_p.x); h.Add(c.m_p.y); break;
+                case b2CircleShape c: MixL(2); MixF(c.m_radius); Shape(c.m_p); break;
                 case b2EdgeShape e:
-                    h.Add(3); h.Add(e.m_radius); h.Add(e.m_oneSided);
-                    h.Add(e.m_vertex0?.x ?? 0f); h.Add(e.m_vertex0?.y ?? 0f);
-                    h.Add(e.m_vertex1.x); h.Add(e.m_vertex1.y); h.Add(e.m_vertex2.x); h.Add(e.m_vertex2.y);
-                    h.Add(e.m_vertex3?.x ?? 0f); h.Add(e.m_vertex3?.y ?? 0f);
+                    MixL(3); MixF(e.m_radius); MixL(e.m_oneSided ? 1 : 0);
+                    if (e.m_vertex0.HasValue) Shape(e.m_vertex0.Value);
+                    if (e.m_vertex3.HasValue) Shape(e.m_vertex3.Value);
+                    Shape(e.m_vertex1); Shape(e.m_vertex2);
                     break;
                 case b2ChainShape ch:
-                    h.Add(4); h.Add(ch.m_radius); h.Add(ch.m_count);
-                    for (int i = 0; i < ch.m_count; i++) { h.Add(ch.m_vertices[i].x); h.Add(ch.m_vertices[i].y); }
+                    MixL(4); MixF(ch.m_radius); MixL(ch.m_count);
+                    for (int i = 0; i < ch.m_count; i++) Shape(ch.m_vertices[i]);
                     break;
-                default: h.Add(0); h.Add(fixture.b2Shape?.GetType().FullName); break;
+                default: MixL(0); break;
             }
-            return h.ToHashCode();
+            return (int)(h ^ (h >> 32));
         }
     }
 

@@ -425,7 +425,8 @@ namespace IGTAP.EngineSim.Cli
             var c = new List<InputTick>(route);
             InputTick from = c[d], to = c[q];
             to.dash = true; to.dashJump = from.dashJump; to.lockX = from.lockX; to.lockY = from.lockY; to.turnX = from.turnX; to.turnY = from.turnY;
-            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null; from.turnX = from.turnY = null;
+            to.pause = from.pause; to.pauseTick = from.pauseTick; to.pauseFrame = from.pauseFrame;
+            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null; from.turnX = from.turnY = null; from.pause = from.pauseTick = from.pauseFrame = 0;
             c[d] = from;
             c[q] = to;
             return c;
@@ -454,6 +455,7 @@ namespace IGTAP.EngineSim.Cli
             if (k.release) parts.Add("release");
             parts.Add(k.held ? "held" : "up");
             if (k.dash) parts.Add("dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue || k.turnY.HasValue ? " turn " + Num(k.turnX ?? 0f) + (k.turnY.HasValue ? "," + Num(k.turnY.Value) : "") : ""));
+            if (k.pause > 0) parts.Add("pause " + k.pause + " frames after tick " + k.pauseTick + (k.pauseFrame > 0 ? " frame " + k.pauseFrame : ""));
             return string.Join(" ", parts);
         }
 
@@ -503,7 +505,7 @@ namespace IGTAP.EngineSim.Cli
                 _avoided = false;
                 Action<int> onStep = _path.IsEmpty ? null : _ =>
                 {
-                    UnityEngine.Vector3 p = _sim.PlayerWorld;
+                    WorldPos p = _sim.PlayerWorldPos();
                     if (_waypoints < _path.Via.Count && _path.Via[_waypoints].Contains(p)) _waypoints++;
                     foreach (OfflineSolver.Box box in _path.Avoid) if (box.Contains(p)) _avoided = true;
                 };

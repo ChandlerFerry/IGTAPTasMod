@@ -22,8 +22,9 @@ namespace IGTAP.EngineSim
     {
         public const float DefaultCell = 24f;
 
-        /// <summary>Guidance on (`solve --no-guide` turns it off): distances come from the field, not from straight lines.</summary>
-        public static bool Enabled = true;
+        /// <summary>Guidance on (`solve --guide` turns it on): distances come from the field, not from straight lines. Off by
+        /// default: on two measured Course 4 pairs it won one and lost one.</summary>
+        public static bool Enabled = false;
 
         /// <summary>The cell size fields build with.</summary>
         public static float CellSize = DefaultCell;

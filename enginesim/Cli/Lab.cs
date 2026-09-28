@@ -236,6 +236,12 @@ namespace IGTAP.EngineSim.Cli
             public int Ticks;
             public bool JumpHeld, CanDash;
             public string Key;
+            /// <summary>The highest world y the player can still reach with any inputs (a dead node is below the finish box).</summary>
+            public float MaxY;
+            /// <summary>The player's world position (for the time-aware reachability prune).</summary>
+            public float X, Y;
+            /// <summary>On real ground (onGround with the coyote window reset): the negative control's predicate.</summary>
+            public bool SolidGround;
         }
 
         static int Solve(string[] args)
@@ -245,23 +251,32 @@ namespace IGTAP.EngineSim.Cli
             int maxTicks = Opt(args, "--max-ticks", lab.maxTicks);
             string outPath = OptS(args, "--out", DefaultDemoPath(labPath));
             int threads = Opt(args, "--threads", Environment.ProcessorCount);
+            // --exact: dedupe on the bit-exact state (no quantization). The default key is coarse (1 u, 10 u/s): it finds a
+            // demo fast for an upper bound B; the exact pass then proves nothing shorter exists (or finds the true minimum).
+            bool exact = args.Contains("--exact");
+            // The negative control: no jump press (nor a dash's dash-jump frame) unless the state is on solid ground. Every
+            // jump a lab's start can press is the tech's own (a coyote window, or a buffered jump for a dash boost), so a run
+            // that finds nothing proves the finish needs the tech.
+            bool control = args.Contains("--forbid-jump-not-grounded");
 
             var (sim, trace, _) = Open(tracePath, lab);
             Place(sim, lab);
+            Configure(sim, lab);
             var (fx, fy, fw, fh) = lab.Finish;
             Vector2 anchor = new Vector2(lab.Anchor.x, lab.Anchor.y);
-            sim.TargetCourse = -1;
-            sim.TargetFinish = (fx + anchor.x + sim.Origin.x, fy + anchor.y + sim.Origin.y, fw, fh);
             if (TouchesAtStart(sim)) throw new InvalidOperationException("The lab's start is inside its finish box.");
 
-            int alphabet = Alphabet(false, true).Count;
+            int alphabet = Alphabet(false, true, false).Count;
             Console.WriteLine($"lab {lab.id} at {anchor.x:0.#},{anchor.y:0.#} (world frame) in {Path.GetFileName(tracePath)}: "
                 + $"{lab.shapes.Count} shapes, category {lab.category}; finish box {fw:0}x{fh:0} at {fx:0.#},{fy:0.#} from the anchor; "
-                + $"search to {maxTicks} ticks, alphabet {alphabet} inputs/tick");
+                + $"search to {maxTicks} ticks, alphabet {alphabet} inputs/tick, {(exact ? "bit-exact" : "quantized")} key{(control ? ", control run (no jump press off solid ground)" : "")}");
 
             var clock = System.Diagnostics.Stopwatch.StartNew();
             bool startCanDash = GetMovementBool(sim, "dashUnlocked");
-            var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash, Key = KeyOf(sim) };
+            Vector3 startAt = sim.PlayerWorld;
+            var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash,
+                Key = KeyOf(sim, exact), MaxY = MaxReach(sim), X = startAt.x, Y = startAt.y,
+                SolidGround = GroundCheckGrounds(sim, startAt.x, startAt.y) };
             var visited = new Dictionary<string, int> { [start.Key] = 0 };
             var buckets = new List<Node>[maxTicks + 64];
             for (int i = 0; i < buckets.Length; i++) buckets[i] = new List<Node>();
@@ -274,10 +289,15 @@ namespace IGTAP.EngineSim.Cli
             // One world and simulation per worker (the game's statics are per thread), each replaying node paths from the lab
             // start. Ticks in order: the first finish is the minimum, and once one is found every state that could still reach
             // the finish box sooner (a state at tick T finishes at T + 1 at the earliest) is explored to prove it cannot.
+            float boxBottom = fy + anchor.y - fh / 2f;
+            float bx0 = fx + anchor.x - fw / 2f, bx1 = fx + anchor.x + fw / 2f;
+            float by0 = boxBottom, by1 = fy + anchor.y + fh / 2f;
+            long prunedHeight = 0, prunedTime = 0;
             var workers = new System.Threading.ThreadLocal<Simulation>(() =>
             {
                 var (worker, _, _) = Open(tracePath, lab);
                 Place(worker, lab);
+                Configure(worker, lab);
                 return worker;
             });
             for (int ticks = 0; ticks < buckets.Length && ticks < bound; ticks++)
@@ -290,12 +310,19 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (node.Ticks != ticks) return;
                     if (Volatile.Read(ref bound) <= ticks + 1) return;
+                    // Reachability (admissible: only provably dead states are cut). Height: no inputs can lift the player into
+                    // the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
+                    // maxTranslationSpeed (100 u/physics step) is the most any input can move the player either way, so a state
+                    // more than that per remaining tick from the box cannot finish before the bound.
+                    if (node.MaxY < boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
+                    float dx = MathF.Max(MathF.Max(bx0 - node.X, node.X - bx1), 0f), dy = MathF.Max(MathF.Max(by0 - node.Y, node.Y - by1), 0f);
+                    if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * 100f) { Interlocked.Increment(ref prunedTime); return; }
                     Simulation sim2 = workers.Value;
-                    foreach (InputTick input in Alphabet(node.JumpHeld, node.CanDash))
+                    foreach (InputTick input in Alphabet(node.JumpHeld, node.CanDash, control && !node.SolidGround))
                     {
                         if (Volatile.Read(ref bound) <= ticks + 1) break;
                         Interlocked.Increment(ref explored);
-                        Node child = Step(sim2, node, input, out RunResult run);
+                        Node child = Step(sim2, node, input, exact, out RunResult run);
                         if (child == null)
                         {
                             if (run != null && run.Finished) found.Add((node, input, run.Stepped));
@@ -329,28 +356,40 @@ namespace IGTAP.EngineSim.Cli
                 if (extensions > 0 && extensions / 5000 != (extensions - Interlocked.Read(ref explored)) / 5000)
                     Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, tick {ticks}, best {(best == null ? "-" : bound.ToString())}");
             }
-            workers.Dispose();
             if (best == null)
             {
-                Console.WriteLine($"No demo within {maxTicks} ticks: {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, {clock.Elapsed.TotalSeconds:0.0}s");
+                Console.WriteLine($"No demo within {maxTicks} ticks: {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, prunes {prunedHeight:N0} height / {prunedTime:N0} time, {clock.Elapsed.TotalSeconds:0.0}s");
+                workers.Dispose();
                 return 1;
             }
 
             List<InputTick> inputs = new List<InputTick>(best.Path);
             inputs.Add(bestInput);
+            Console.WriteLine("  inputs: " + string.Join(" | ", inputs.Select(TickText)));
+            // The search's workers set the shared input hooks on their own thread; the one created on this thread took
+            // this thread's hook, so the verification runs on that worker's simulation (its own world and lab).
+            Simulation verify = workers.Value;
+            int finishTick = RunToFinish(verify, inputs);
+            if (finishTick != bound)
+            {
+                foreach (TickRow row in Observe(verify, inputs))
+                    Console.WriteLine($"  row {row.Tick}: {row.X:0.#},{row.Y:0.#} V {row.Vx:0.#},{row.Vy:0.#} g{(row.Ground ? 1 : 0)} solid{(row.Solid ? 1 : 0)}");
+                throw new InvalidOperationException("The demo replays to tick " + finishTick + ", not the searched " + bound + ".");
+            }
             // The last inputs may sit past the finish (a dash's lock ticks finish mid-lock): drop any the replay doesn't need.
-            while (inputs.Count > 1 && RunToFinish(sim, inputs.Take(inputs.Count - 1).ToList()) == bound) inputs.RemoveAt(inputs.Count - 1);
-            int finishTick = RunToFinish(sim, inputs);
-            if (finishTick != bound) throw new InvalidOperationException("The demo replays to tick " + finishTick + ", not the searched " + bound + ".");
+            while (inputs.Count > 1 && RunToFinish(verify, inputs.Take(inputs.Count - 1).ToList()) == bound) inputs.RemoveAt(inputs.Count - 1);
+            List<TickRow> rows = Observe(verify, inputs);
+            string signature = TechSignature(rows);
+            Console.WriteLine("tech: " + (signature ?? "NONE FOUND (the demo performs no known tech)"));
             Console.WriteLine($"minimum-tick demo: {inputs.Count} input ticks, finish at physics tick {finishTick}; "
                 + $"{extensions:N0} extensions, {states:N0} states kept, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, "
-                + $"bound {finishTick} (every state below it exhausted), {clock.Elapsed.TotalSeconds:0.0}s");
+                + $"prunes {prunedHeight:N0} height / {prunedTime:N0} time, bound {finishTick} (every state below it exhausted), {clock.Elapsed.TotalSeconds:0.0}s");
 
             var search = new
             {
                 states, explored = extensions, keys = visited.Count, deadEnds = dead, duplicates = dupes,
-                bound = finishTick, complete = true, maxTicks, alphabet,
-                quantization = "0.25 u position, 2 u/s velocity and momentum, 0.01 counters, 1 u large floats",
+                bound = finishTick, complete = true, maxTicks, alphabet, exact, control, prunedHeight, prunedTime, tech = signature,
+                quantization = exact ? "none: bit-exact floats (position, velocity, momentum, body, every Movement field)" : "1 u position, 10 u/s velocity and momentum, 1 u counters",
                 seconds = Math.Round(clock.Elapsed.TotalSeconds, 1),
             };
             var file = new
@@ -366,6 +405,7 @@ namespace IGTAP.EngineSim.Cli
                 inputs = inputs.Select(t => t.ToJson()).ToList(),
             };
             File.WriteAllText(outPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
+            workers.Dispose();
             Console.WriteLine("wrote " + outPath);
             return 0;
         }
@@ -376,11 +416,9 @@ namespace IGTAP.EngineSim.Cli
             return Path.Combine(dir, Path.GetFileNameWithoutExtension(labPath) + ".demo.json");
         }
 
-        static List<InputTick> PathOf(Node node) { return node.Path; }
-
         /// <summary>One input tick from a node: replay its path plus the new input from the lab start in one run (the trailing
         /// duplicate keeps the engine from ending at the input tick's end), and stop as the new input is consumed.</summary>
-        static Node Step(Simulation sim, Node from, InputTick input, out RunResult run)
+        static Node Step(Simulation sim, Node from, InputTick input, bool exact, out RunResult run)
         {
             var path = new List<InputTick>(from.Path.Count + 2);
             path.AddRange(from.Path);
@@ -388,13 +426,19 @@ namespace IGTAP.EngineSim.Cli
             path.Add(input);
             string key = null;
             bool canDash = from.CanDash;
+            float maxY = from.MaxY, x = from.X, y = from.Y;
+            bool solid = from.SolidGround;
             run = sim.Run(path, null, afterTick: tick =>
             {
                 // tick 0 is the first scheduler tick of a run that starts inside a lock (a dash's or spring's remaining ticks:
                 // no input is consumed there). The new input tick is from.Path.Count + 1.
                 if (tick <= from.Path.Count) return true;
-                key = KeyOf(sim);
+                key = KeyOf(sim, exact);
                 canDash = GetMovementBool(sim, "dashUnlocked");
+                maxY = MaxReach(sim);
+                Vector3 at = sim.PlayerWorld;
+                x = at.x; y = at.y;
+                solid = GroundCheckGrounds(sim, x, y);
                 return false;
             }, extraTicks: 400);
             if (key == null) return null;
@@ -405,7 +449,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Path = childPath,
                 Ticks = run.Stepped, JumpHeld = input.press || input.held && !input.release || from.JumpHeld && !input.release && !input.press,
-                CanDash = canDash, Key = key,
+                CanDash = canDash, Key = key, MaxY = maxY, X = x, Y = y, SolidGround = solid,
             };
         }
 
@@ -435,10 +479,58 @@ namespace IGTAP.EngineSim.Cli
             return false;
         }
 
+        sealed class TickRow
+        {
+            public int Tick;
+            public float X, Y, Vx, Vy, Mx, My, Coyote, MaxCoyote, SinceDash;
+            public bool Ground, Dash, Solid;
+        }
+
+        static TickRow Row(Simulation sim, int tick)
+        {
+            Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+            Vector3 p = sim.PlayerWorld;
+            return new TickRow { Tick = tick, X = p.x, Y = p.y, Vx = v.x, Vy = v.y, Mx = m.x, My = m.y,
+                Ground = GetMovementBool(sim, "onGround"), Coyote = GetMovementFloat(sim, "coyoteFrames"),
+                MaxCoyote = GetMovementFloat(sim, "maxCoyoteFrames"), Dash = GetMovementBool(sim, "dashActive"),
+                SinceDash = GetMovementFloat(sim, "framesSinceLastDash"), Solid = GroundCheckGrounds(sim, p.x, p.y) };
+        }
+
+        /// <summary>Every physics tick of a demo from the lab start (the first row is the lab start itself).</summary>
+        static List<TickRow> Observe(Simulation sim, List<InputTick> inputs)
+        {
+            var rows = new List<TickRow> { Row(sim, 0) };
+            sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 400,
+                onStep: s => rows.Add(Row(sim, s + 1)));
+            return rows;
+        }
+
+        /// <summary>
+        /// The tech a demo performs, from the Movement state on the jump tick (the in-game overlay detector's own conditions):
+        /// a coyote jump is a ground jump taken with the coyote window counting (onGround held after the ground rays stopped
+        /// hitting: coyoteFrames below maxCoyoteFrames), and the dash boost (the superbounce) is SpecialWallJump's 730 up plus
+        /// 410 up momentum at a wall touch within dashBoostMax frames of a dash.
+        /// </summary>
+        static string TechSignature(List<TickRow> rows)
+        {
+            for (int i = 1; i < rows.Count; i++)
+            {
+                TickRow before = rows[i - 1], after = rows[i];
+                if (after.Vy - before.Vy > 500f && !before.Solid && before.Ground)
+                    return "coyote jump: tick " + after.Tick + " takes Velocity.y " + before.Vy.ToString("0") + " -> " + after.Vy.ToString("0")
+                        + " with onGround held at coyoteFrames " + before.Coyote.ToString("0") + "/" + before.MaxCoyote.ToString("0")
+                        + " and the ground check's rays already missing at x " + before.X.ToString("0.#") + " (the ground branch cannot ground there)";
+                if (after.Vy > 600f && after.My > 300f && before.Dash && before.SinceDash > 0f && before.SinceDash < 7f)
+                    return "dash boost bounce (superbounce): tick " + after.Tick + " takes Velocity.y " + after.Vy.ToString("0")
+                        + " with momentum.y " + after.My.ToString("0") + ", " + before.SinceDash.ToString("0") + " frames into the dash at x " + before.X.ToString("0.#");
+            }
+            return null;
+        }
+
         /// <summary>The human-legal input alphabet of one tick: stick x in {-1, -partial, 0, partial, 1}, y in {-1, 0, 1}, the jump
         /// button's press/hold/release/up by its state, and a dash pressed with any of its dash-jump frames (a dash press with
         /// no dash to spend is pruned: dashUnlocked is permanent in a lab run and the press can do nothing).</summary>
-        static List<InputTick> Alphabet(bool jumpHeld, bool canDash)
+        static List<InputTick> Alphabet(bool jumpHeld, bool canDash, bool noJumpPress)
         {
             float[] xs = { -1f, -0.55f, 0f, 0.55f, 1f };
             float[] ys = { -1f, 0f, 1f };
@@ -452,11 +544,13 @@ namespace IGTAP.EngineSim.Cli
                     for (int k = 0; k < jump.Length; k++)
                     {
                         InputTick j = jump[k];
+                        if (noJumpPress && j.press) continue;
                         j.x = x; j.y = y;
                         ticks.Add(j);
                         if (!canDash) continue;
                         for (int frame = 0; frame <= 12; frame++)
                         {
+                            if (noJumpPress && frame > 0) continue;
                             var d = j;
                             d.dash = true;
                             d.dashJump = frame;
@@ -475,10 +569,8 @@ namespace IGTAP.EngineSim.Cli
             LabMapDef lab = LabMapDef.Load(labPath);
             var (sim, _, _) = Open(tracePath, lab);
             Place(sim, lab);
-            var (fx, fy, fw, fh) = lab.Finish;
+            Configure(sim, lab);
             Vector2 anchor = new Vector2(lab.Anchor.x, lab.Anchor.y);
-            sim.TargetCourse = -1;
-            sim.TargetFinish = (fx + anchor.x + sim.Origin.x, fy + anchor.y + sim.Origin.y, fw, fh);
             using JsonDocument demo = JsonDocument.Parse(File.ReadAllText(demoPath));
             List<InputTick> inputs = demo.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
             string outPath = OptS(args, "--out", null);
@@ -490,12 +582,15 @@ namespace IGTAP.EngineSim.Cli
                 log.AppendLine($"{steps,3} in{(int)sim.Engine.RunTicks - 1,3} pos {p.x - anchor.x,9:0.#},{p.y - anchor.y,9:0.#}"
                     + $" V {sim.Player.Velocity.x,7:0.#},{sim.Player.Velocity.y,7:0.#} m {sim.Player.momentum.x,7:0.#},{sim.Player.momentum.y,7:0.#}"
                     + $" g{(sim.Player.onGround ? 1 : 0)} w{(sim.Player.OnWall ? 1 : 0)} {sim.Player.cutsceneMode}"
-                    + $" dash{(sim.Player.dashActive ? 1 : 0)} f{sim.Player.framesSinceLastDash:0} R{(sim.Player.facingRight ? 1 : 0)}");
+                    + $" dash{(sim.Player.dashActive ? 1 : 0)} f{sim.Player.framesSinceLastDash:0} R{(sim.Player.facingRight ? 1 : 0)}"
+                    + $" cf{GetMovementFloat(sim, "coyoteFrames"):0}/{GetMovementFloat(sim, "maxCoyoteFrames"):0}");
                 steps++;
             });
             if (outPath != null) File.WriteAllText(outPath, log.ToString()); else Console.Write(log);
+            string signature = TechSignature(Observe(sim, inputs));
             Console.WriteLine($"demo: {inputs.Count} inputs, {steps} physics ticks; "
-                + (run.Finished ? "finish at tick " + steps : "no finish (" + run.EndReason + ")"));
+                + (run.Finished ? "finish at tick " + steps : "no finish (" + run.EndReason + ")")
+                + "; tech: " + (signature ?? "none"));
             return run.Finished ? 0 : 1;
         }
 
@@ -514,6 +609,15 @@ namespace IGTAP.EngineSim.Cli
             sim.LoadStart(trace.RootElement.GetProperty("start"));
             var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
             return (sim, trace, inputs);
+        }
+
+        /// <summary>The lab's finish box (the capture frame) and no course finish: what a lab run is scored on.</summary>
+        static void Configure(Simulation sim, LabMapDef lab)
+        {
+            var (fx, fy, fw, fh) = lab.Finish;
+            (float ax, float ay) = lab.Anchor;
+            sim.TargetCourse = -1;
+            sim.TargetFinish = (fx + ax + sim.Origin.x, fy + ay + sim.Origin.y, fw, fh);
         }
 
         /// <summary>The player at the lab's start (the probe/clip start): position and velocity in the world frame, facing, Movement fields.</summary>
@@ -555,21 +659,21 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The dedupe key of a state: the world pose, velocity and body state quantized, every Movement field, and the
         /// macro engine's pending input state (a held jump, a dash-jump frame, a lock, the pending Invokes' timers).</summary>
-        static string KeyOf(Simulation sim)
+        static string KeyOf(Simulation sim, bool exact)
         {
             var sb = new StringBuilder(512);
             Vector3 p = sim.PlayerWorld;
-            Quantize(sb, p.x, 0.25f); Quantize(sb, p.y, 0.25f);
+            Quantize(sb, p.x, 1f); Quantize(sb, p.y, 1f);
             Quantize(sb, sim.Player.transform.localScale.x, 0.01f);
             var body = sim.Physics.PlayerBody();
-            Quantize(sb, body.px, 0.25f); Quantize(sb, body.py, 0.25f);
-            Quantize(sb, body.vx, 2f); Quantize(sb, body.vy, 2f); Quantize(sb, body.angle, 0.01f);
+            Quantize(sb, body.px, 1f); Quantize(sb, body.py, 1f);
+            Quantize(sb, body.vx, 10f); Quantize(sb, body.vy, 10f); Quantize(sb, body.angle, 0.1f);
             foreach (FieldInfo f in MovementFields)
             {
                 if (Simulation.MovementPresentationFields.Contains(f.Name)) continue;
-                AddValue(sb, f.GetValue(sim.Player));
+                AddValue(sb, f.GetValue(sim.Player), exact);
             }
-            foreach (FieldInfo f in EngineFields) AddValue(sb, f.GetValue(sim.Engine));
+            foreach (FieldInfo f in EngineFields) AddValue(sb, f.GetValue(sim.Engine), exact);
             foreach (Scheduler.Pending p2 in sim.Scheduler.Queue)
             {
                 sb.Append(p2.Method).Append(';').Append(p2.Due - sim.Scheduler.Tick - 1).Append(';')
@@ -584,6 +688,61 @@ namespace IGTAP.EngineSim.Cli
             return f != null && f.GetValue(sim.Player) is bool b && b;
         }
 
+        /// <summary>
+        /// The game's own ground check at a world position (Movement.FixedUpdate's ground-branch condition: the three
+        /// groundRaycastLayer rays from y - 18 down 22 u, minus the two blockingGroundRaycastLayer ones, and a jump's
+        /// recentlyJumped blocks it). False = the ground rays have stopped hitting: the coyote window's own state.
+        /// </summary>
+        static bool GroundCheckGrounds(Simulation sim, float x, float y)
+        {
+            if (GetMovementBool(sim, "recentlyJumped")) return false;
+            float f = sim.Player.transform.localScale.x >= 0f ? 1f : -1f;
+            int ground = GetMovementInt(sim, "groundRaycastLayer"), blocking = GetMovementInt(sim, "blockingGroundRaycastLayer");
+            bool h1 = Physics2D.Raycast(new Vector2(x - 15f * f, y - 18f), Vector2.down, 22f, ground);
+            bool h2 = Physics2D.Raycast(new Vector2(x - 9f * f, y - 18f), Vector2.down, 22f, blocking);
+            bool h3 = Physics2D.Raycast(new Vector2(x + 25f * f, y - 18f), Vector2.down, 22f, ground);
+            bool h4 = Physics2D.Raycast(new Vector2(x + 21f * f, y - 18f), Vector2.down, 22f, blocking);
+            bool h5 = Physics2D.Raycast(new Vector2(x + 6f * f, y - 18f), Vector2.down, 22f, ground);
+            float vy = ((Vector2)VelocityField.GetValue(sim.Player)).y;
+            return (h5 && !h2 && !h4) || (h1 && !h2) || (h3 && !h4 && vy < 200f);
+        }
+
+        static int GetMovementInt(Simulation sim, string name)
+        {
+            FieldInfo f = typeof(Movement).GetField(name, Fields);
+            object v = f == null ? null : f.GetValue(sim.Player);
+            return v is LayerMask m ? m.value : v is int i ? i : v is float x ? (int)x : 0;
+        }
+
+        static float GetMovementFloat(Simulation sim, string name)
+        {
+            FieldInfo f = typeof(Movement).GetField(name, Fields);
+            object v = f == null ? null : f.GetValue(sim.Player);
+            return v is float x ? x : v is int i ? i : 0f;
+        }
+
+        /// <summary>
+        /// The highest world y the player can still reach with any future inputs: the ballistic arc of Velocity + momentum
+        /// (momentum assumed not to decay) plus every jump and boost still in reach. A lab map has no springs or moving
+        /// geometry, so a ground or coyote jump (jumpForce 805 + the apex's anti-grav under 400 u), an air jump (745), each
+        /// wall jump left (wallJumpsLeft: 730 + a bounce's 220 momentum under 400 u) and one dash (a super's 805 or an
+        /// omnidash's ground bounce 1405 under 900 u) cover everything the game can give.
+        /// </summary>
+        static float MaxReach(Simulation sim)
+        {
+            Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+            float up = MathF.Max(0f, v.y + m.y);
+            float gain = up * up / 2700f + 50f;
+            if (GetMovementBool(sim, "onGround") || GetMovementFloat(sim, "coyoteFrames") > 0f || GetMovementFloat(sim, "wallCoyoteFrames") > 0f) gain += 400f;
+            if (GetMovementBool(sim, "doubleJumpUnlocked") && GetMovementFloat(sim, "airJumpsLeft") > 0f) gain += 400f;
+            if (GetMovementBool(sim, "wallJumpUnlocked"))
+                gain += 400f * MathF.Min(4f, MathF.Max(0f, GetMovementFloat(sim, "wallJumpsLeft")));
+            if (GetMovementBool(sim, "dashUnlocked") && GetMovementFloat(sim, "airDashesLeft") > 0f) gain += 900f;
+            return sim.PlayerWorld.y + gain;
+        }
+
+        static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", Fields),
+            MomentumField = typeof(Movement).GetField("momentum", Fields);
         static readonly FieldInfo[] MovementFields = FieldState.For(typeof(Movement));
         static readonly FieldInfo[] EngineFields = new[]
         {
@@ -591,7 +750,7 @@ namespace IGTAP.EngineSim.Cli
             "_pendingTurnX", "_turnArmed", "_turnX", "_tickLocked", "_tickStick", "_waitingForStable", "_preRollTicksRemaining",
         }.Select(n => typeof(MacroEngine).GetField(n, Fields)).Where(f => f != null).ToArray();
 
-        static void AddValue(StringBuilder sb, object value)
+        static void AddValue(StringBuilder sb, object value, bool exact)
         {
             switch (value)
             {
@@ -599,25 +758,30 @@ namespace IGTAP.EngineSim.Cli
                 case bool b: sb.Append(b ? '1' : '0'); break;
                 case char ch: sb.Append(ch).Append(';'); break;
                 case string s: sb.Append(s).Append(';'); break;
-                case float f: Quantize(sb, f, 1f); break;
-                case double d: Quantize(sb, (float)d, 1f); break;
-                case Vector2 v: Quantize(sb, v.x, 1f); Quantize(sb, v.y, 1f); break;
-                case Vector3 v: Quantize(sb, v.x, 1f); Quantize(sb, v.y, 1f); Quantize(sb, v.z, 1f); break;
+                case float f: if (exact) sb.Append(BitConverter.SingleToInt32Bits(f)).Append(','); else Quantize(sb, f, 1f); break;
+                case double d: if (exact) sb.Append(BitConverter.DoubleToInt64Bits(d)).Append(','); else Quantize(sb, (float)d, 1f); break;
+                case Vector2 v: if (exact) { sb.Append(BitConverter.SingleToInt32Bits(v.x)).Append(',').Append(BitConverter.SingleToInt32Bits(v.y)).Append(','); }
+                    else { Quantize(sb, v.x, 10f); Quantize(sb, v.y, 10f); } break;
+                case Vector3 v: if (exact) { sb.Append(BitConverter.SingleToInt32Bits(v.x)).Append(',').Append(BitConverter.SingleToInt32Bits(v.y)).Append(',').Append(BitConverter.SingleToInt32Bits(v.z)).Append(','); }
+                    else { Quantize(sb, v.x, 10f); Quantize(sb, v.y, 10f); Quantize(sb, v.z, 10f); } break;
                 case UnityEngine.Object o: sb.Append(o == null ? 0 : o.GetInstanceID()).Append(';'); break;
                 case System.Collections.IEnumerable items:
-                    foreach (object item in items) AddValue(sb, item);
+                    foreach (object item in items) AddValue(sb, item, exact);
                     sb.Append('~');
                     break;
                 default: sb.Append(Convert.ToString(value, CultureInfo.InvariantCulture)).Append(';'); break;
             }
         }
 
-        /// <summary>Counters (under 100) keep 0.01, larger values (positions, velocities) round to the step given: states within the
-        /// step are one search state.</summary>
+        /// <summary>States within one step of each other are one search state (a demo is replayed exactly before it counts).</summary>
         static void Quantize(StringBuilder sb, float value, float step)
         {
-            float q = MathF.Abs(value) < 100f ? MathF.Round(value * 100f) : MathF.Round(value / step);
-            sb.Append(q.ToString("0", CultureInfo.InvariantCulture)).Append(',');
+            sb.Append(MathF.Round(value / step).ToString("0", CultureInfo.InvariantCulture)).Append(',');
+        }
+
+        static string TickText(InputTick k)
+        {
+            return $"{k.x:0.##},{k.y:0.##},{(k.press ? "P" : k.held ? "H" : "")}{(k.release ? "R" : "")}{(k.dash ? "D" : "")}{(k.dashJump > 0 ? "J" + k.dashJump : "")}";
         }
 
         static float F(string s) { return float.Parse(s, CultureInfo.InvariantCulture); }

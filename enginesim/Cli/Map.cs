@@ -111,7 +111,7 @@ namespace IGTAP.EngineSim.Cli
                     local.Clear();
                     sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                     {
-                        Vector3 p = sim.PlayerWorld;
+                        WorldPos p = sim.PlayerWorldPos();
                         long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
                         float t = sim.Elapsed(sim.TimingCourse());
                         local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
@@ -120,10 +120,10 @@ namespace IGTAP.EngineSim.Cli
                 }
             })).ToArray();
             var paths = new List<Path>();
-            Vector3 origin;
+            CapturePos origin;
             {
                 Simulation sim = create();
-                origin = sim.Origin;
+                origin = sim.WorldOriginInCapture();
                 foreach (var (name, kind, inputs) in routes)
                 {
                     var path = new Path { Name = name, Kind = kind };
@@ -222,7 +222,7 @@ namespace IGTAP.EngineSim.Cli
 
             var paths = new List<Path>();
             Simulation sim = create();
-            Vector3 origin = sim.Origin;
+            CapturePos origin = sim.WorldOriginInCapture();
             float dt = sim.World.FixedDeltaTime;
             foreach (var (routeName, kind, inputs) in routes)
             {
@@ -309,8 +309,10 @@ namespace IGTAP.EngineSim.Cli
 
         static Hash HashInputs(List<InputTick> inputs)
         {
-            // 29 bytes a tick, plus 4 for a freeze stick's vertical (turnY) so older inputs keep their hash.
-            byte[] bytes = new byte[inputs.Count * 29 + inputs.Count(t => t.turnY.HasValue) * 4];
+            // 29 bytes a tick, plus 4 for a freeze stick's vertical (turnY), 8 for a pause and 4 for its frame offset, so older
+            // inputs keep their hash.
+            byte[] bytes = new byte[inputs.Count * 29 + inputs.Count(t => t.turnY.HasValue) * 4 + inputs.Count(t => t.pause > 0) * 8
+                + inputs.Count(t => t.pause > 0 && t.pauseFrame != 0) * 4];
             Span<byte> b = bytes;
             foreach (InputTick t in inputs)
             {
@@ -324,8 +326,17 @@ namespace IGTAP.EngineSim.Cli
                 BinaryPrimitives.WriteSingleLittleEndian(b[21..], t.lockY ?? 0f);
                 BinaryPrimitives.WriteSingleLittleEndian(b[25..], t.turnX ?? 0f);
                 b = b[29..];
-                if (!t.turnY.HasValue) continue;
-                BinaryPrimitives.WriteSingleLittleEndian(b, t.turnY.Value);
+                if (t.turnY.HasValue)
+                {
+                    BinaryPrimitives.WriteSingleLittleEndian(b, t.turnY.Value);
+                    b = b[4..];
+                }
+                if (t.pause <= 0) continue;
+                BinaryPrimitives.WriteInt32LittleEndian(b, t.pause);
+                BinaryPrimitives.WriteInt32LittleEndian(b[4..], t.pauseTick);
+                b = b[8..];
+                if (t.pauseFrame == 0) continue;
+                BinaryPrimitives.WriteInt32LittleEndian(b, t.pauseFrame);
                 b = b[4..];
             }
             Span<byte> digest = stackalloc byte[32];
@@ -386,7 +397,7 @@ namespace IGTAP.EngineSim.Cli
         // differing fingerprint tick and the per-cell `t` delta (`/api/enginesim/ghost`).
         static void Step(Path path, Simulation sim, float t)
         {
-            Vector3 p = sim.PlayerWorld;
+            WorldPos p = sim.PlayerWorldPos();
             path.Points.Add(Round(p.x));
             path.Points.Add(Round(p.y));
             long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
@@ -406,7 +417,7 @@ namespace IGTAP.EngineSim.Cli
         static int PhysicalFingerprint(Simulation sim)
         {
             var h = new HashCode();
-            Vector3 p = sim.PlayerWorld;
+            WorldPos p = sim.PlayerWorldPos();
             h.Add(Mathf.RoundToInt(p.x * 10f));
             h.Add(Mathf.RoundToInt(p.y * 10f));
             foreach (FieldInfo f in PhysicalFields)
@@ -486,7 +497,7 @@ namespace IGTAP.EngineSim.Cli
             return on;
         }
 
-        static Dictionary<int, (float x, float y, float cos, float sin, bool moving)> Bodies(JsonElement world, Vector3 origin)
+        static Dictionary<int, (float x, float y, float cos, float sin, bool moving)> Bodies(JsonElement world, CapturePos origin)
         {
             var bodies = new Dictionary<int, (float x, float y, float cos, float sin, bool moving)>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
@@ -503,7 +514,7 @@ namespace IGTAP.EngineSim.Cli
 
         // Shape or path vertices (relative to the collider's attached body, or scene positions without one) in
         // game-world coordinates, in place.
-        static void ToWorld(float[] v, (float x, float y, float cos, float sin, bool moving)? body, Vector3 origin)
+        static void ToWorld(float[] v, (float x, float y, float cos, float sin, bool moving)? body, CapturePos origin)
         {
             if (body is { } b)
                 for (int i = 0; i + 1 < v.Length; i += 2)
@@ -524,7 +535,7 @@ namespace IGTAP.EngineSim.Cli
 
         // With `allStates`, both colours of coloured blocks too: each coloured composite's geometry with its tilemap on
         // (`sourceShapes`), whichever colour is active.
-        internal static List<WorldShape> Shapes(JsonElement world, Vector3 origin, bool allStates)
+        internal static List<WorldShape> Shapes(JsonElement world, CapturePos origin, bool allStates)
         {
             var bodies = Bodies(world, origin);
             HashSet<int> on = OnObjects(world, allStates);
@@ -576,7 +587,7 @@ namespace IGTAP.EngineSim.Cli
             return shapesOut;
         }
 
-        internal static List<object> Solids(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
+        internal static List<object> Solids(JsonElement world, CapturePos origin, float x0, float y0, float x1, float y1)
         {
             var solids = new List<object>();
             foreach (WorldShape s in Shapes(world, origin, allStates: true))
@@ -604,7 +615,7 @@ namespace IGTAP.EngineSim.Cli
         // `box`: the box it carries.
         internal sealed record TreeGround(List<object> Shapes, List<object> Steps);
 
-        internal static TreeGround Grown(JsonElement world, Vector3 origin, float x0, float y0, float x1, float y1)
+        internal static TreeGround Grown(JsonElement world, CapturePos origin, float x0, float y0, float x1, float y1)
         {
             var objects = world.GetProperty("objects").EnumerateArray().ToList();
             var byId = objects.ToDictionary(o => o.GetProperty("id").GetInt32());
@@ -702,7 +713,7 @@ namespace IGTAP.EngineSim.Cli
             return new TreeGround(shapes, labels);
         }
 
-        internal static List<Marker> Markers(JsonElement world, Vector3 origin)
+        internal static List<Marker> Markers(JsonElement world, CapturePos origin)
         {
             // Refill orbs (JiggleDropScript on a trigger capsule) by what they give back: the name says which.
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint",
@@ -728,7 +739,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // An object's enabled collider shapes as game-world polygons (a box collider is one 4-corner polygon).
-        static float[][] TriggerArea(JsonElement o, Dictionary<int, (float x, float y, float cos, float sin, bool moving)> bodies, Vector3 origin)
+        static float[][] TriggerArea(JsonElement o, Dictionary<int, (float x, float y, float cos, float sin, bool moving)> bodies, CapturePos origin)
         {
             var area = new List<float[]>();
             foreach (JsonElement c in o.GetProperty("components").EnumerateArray())

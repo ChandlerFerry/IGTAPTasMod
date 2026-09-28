@@ -94,7 +94,7 @@ namespace IGTAP.EngineSim
         {
             if (_sim.TimingCourse() != null) return 0f;
             Movement player = _sim.Player;
-            Vector3 p = player.transform.position;
+            ScenePos p = ScenePos.From(player.transform.position);
             float cx = p.x + (player.facingRight ? 5f : -5f);
             foreach (Rect box in Gates())
             {
@@ -107,7 +107,7 @@ namespace IGTAP.EngineSim
 
         List<Rect> Gates()
         {
-            Vector3 origin = _sim.CurrentOrigin;
+            ScenePos origin = _sim.WorldOriginInScene();
             if (_gates != null && origin == _gatesOrigin) return _gates;
             _gates = new List<Rect>();
             _gatesOrigin = origin;
@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim
             return _gates;
         }
         List<Rect> _gates;
-        Vector3 _gatesOrigin;
+        ScenePos _gatesOrigin;
     }
 
     /// <summary>The contacts of one run: every tick where the player's contact changes (it leaves the ground at a ledge, lands,
@@ -193,14 +193,15 @@ namespace IGTAP.EngineSim
         /// then any of position [x, y] and velocity [vx, vy] in the world frame, scaleX, and Movement fields by name.</summary>
         public static void ApplyStart(Simulation sim, JsonElement start, string baseDir)
         {
-            Vector2 position = sim.PlayerWorld, velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
+            WorldPos position = sim.PlayerWorldPos();
+            Vector2 velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
             float? scaleX = null;
             if (start.TryGetProperty("savestate", out JsonElement ss))
             {
                 string path = Path.IsPathRooted(ss.GetString()) ? ss.GetString() : Path.Combine(baseDir, ss.GetString());
                 ApplySavestate(sim, path, ref position, ref velocity, ref scaleX);
             }
-            if (start.TryGetProperty("position", out JsonElement pos)) position = new Vector2(pos[0].GetSingle(), pos[1].GetSingle());
+            if (start.TryGetProperty("position", out JsonElement pos)) position = new WorldPos(pos[0].GetSingle(), pos[1].GetSingle());
             if (start.TryGetProperty("velocity", out JsonElement vel)) velocity = new Vector2(vel[0].GetSingle(), vel[1].GetSingle());
             if (start.TryGetProperty("scaleX", out JsonElement sx)) scaleX = sx.GetSingle();
             if (start.TryGetProperty("fields", out JsonElement fields))
@@ -212,7 +213,8 @@ namespace IGTAP.EngineSim
         /// <summary>One studio savestate: its Movement fields and body velocity, its world position and facing.</summary>
         public static void ApplySavestate(Simulation sim, string path)
         {
-            Vector2 position = sim.PlayerWorld, velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
+            WorldPos position = sim.PlayerWorldPos();
+            Vector2 velocity = sim.Physics.PlayerBody() is var body ? new Vector2(body.vx, body.vy) : default;
             float? scaleX = null;
             ApplySavestate(sim, path, ref position, ref velocity, ref scaleX);
             Place(sim, position, velocity, scaleX);
@@ -256,14 +258,14 @@ namespace IGTAP.EngineSim
             typeof(MacroEngine).GetField(name, Fields).SetValue(sim.Engine, value);
         }
 
-        static void ApplySavestate(Simulation sim, string path, ref Vector2 position, ref Vector2 velocity, ref float? scaleX)
+        static void ApplySavestate(Simulation sim, string path, ref WorldPos position, ref Vector2 velocity, ref float? scaleX)
         {
             using JsonDocument save = JsonDocument.Parse(File.ReadAllText(path));
             JsonElement s = save.RootElement;
             if (!s.TryGetProperty("hasOrigin", out JsonElement has) || !has.GetBoolean())
                 throw new InvalidOperationException("The savestate has no FloatingOrigin (captured by an older plugin); capture it again.");
             JsonElement ox = s.GetProperty("originX"), oy = s.GetProperty("originY");
-            position = new Vector2(s.GetProperty("positionX").GetSingle() - ox.GetSingle(), s.GetProperty("positionY").GetSingle() - oy.GetSingle());
+            position = new WorldPos(s.GetProperty("positionX").GetSingle() - ox.GetSingle(), s.GetProperty("positionY").GetSingle() - oy.GetSingle());
             scaleX = s.GetProperty("scaleX").GetSingle();
             foreach (JsonProperty field in s.GetProperty("movementFields").EnumerateObject())
                 SetField(sim.Player, field.Name, field.Value.GetProperty("value").GetString());
@@ -271,15 +273,16 @@ namespace IGTAP.EngineSim
                 velocity = ParseVector(lv.GetProperty("value").GetString());
         }
 
-        static void Place(Simulation sim, Vector2 position, Vector2 velocity, float? scaleX)
+        static void Place(Simulation sim, WorldPos position, Vector2 velocity, float? scaleX)
         {
             Transform t = sim.Player.transform;
-            Vector3 scene = new Vector3(position.x + sim.CurrentOrigin.x, position.y + sim.CurrentOrigin.y, t.position.z);
+            ScenePos scene = sim.ToScene(position);
             if (scaleX.HasValue) t.localScale = new Vector3(scaleX.Value, t.localScale.y, t.localScale.z);
-            sim.Physics.ResetPlayer(new Vector2(scene.x, scene.y), velocity, 0f, 0f);
-            t.position = scene;
-            if (Math.Abs(sim.PlayerWorld.x - position.x) > 0.01f || Math.Abs(sim.PlayerWorld.y - position.y) > 0.01f)
-                throw new InvalidOperationException("The start position did not stick: " + sim.PlayerWorld + " for " + position + ".");
+            sim.Physics.ResetPlayer(scene.AsVector2(), velocity, 0f, 0f);
+            t.position = new Vector3(scene.x, scene.y, t.position.z);
+            WorldPos now = sim.PlayerWorldPos();
+            if (Math.Abs(now.x - position.x) > 0.01f || Math.Abs(now.y - position.y) > 0.01f)
+                throw new InvalidOperationException("The start position did not stick: " + now + " for " + position + ".");
             // The trace's engine state still pins the player to the route start while it waits for stable ticks.
             sim.Engine.GetType().GetField("_hasSynchronizationPosition", Fields).SetValue(sim.Engine, false);
             sim.SetStart(sim.Capture(0), 0);
@@ -726,10 +729,16 @@ namespace IGTAP.EngineSim
                 List<InputTick> inputs;
                 if (lab != null)
                 {
-                    // A lab demo's start is the lab's own (its geometry injected above), and its inputs are `lab solve`'s.
+                    // A lab demo's start is the lab's own (its geometry injected above), and its inputs are `lab solve`'s; a lab
+                    // run is judged on its own finish box, not the host trace's course (Cli\Lab.cs's lab replay).
                     using JsonDocument solved = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
                     inputs = SolveInputs(solved.RootElement);
                     DemoStart.ApplyLabStart(sim, lab);
+                    (float fx, float fy, float fw, float fh) = lab.Finish;
+                    (float ax, float ay) = lab.Anchor;
+                    sim.TargetCourse = -1;
+                    CapturePos finishAt = sim.ToCapture(new WorldPos(fx + ax, fy + ay));
+                    sim.TargetFinish = (finishAt.x, finishAt.y, fw, fh);
                 }
                 else if (source.Macro == null)
                 {

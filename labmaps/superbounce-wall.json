@@ -3,64 +3,34 @@
   "id": "superbounce-wall",
   "name": "Superbounce off a plain wall",
   "tech": "superbounce",
-  "techNote": "The game\u0027s dash boost (Movement.SpecialWallJump(0.6, 1, up * dashBoostUpwards 410)): dash flat into a wall and have jump buffered within dashBoostMax (6) frames of the dash, so the wall touch ends the dash and bounces up on Velocity.y 730 plus 410 up momentum. Solved at WJ_DS (no double jump): nothing else reaches the finish above the wall.",
+  "techNote": "The game's dash boost (Movement.SpecialWallJump(0.6, 1, up * dashBoostUpwards 410)): dash flat into the wall with jump buffered within dashBoostMax (6) frames of the dash, so the airborne wall touch ends the dash and bounces up on Velocity.y 730 plus 410 up momentum. The start is a fall in the air with no jumps left (a lab puzzle's state: airJumpsLeft 0, wallJumpsLeft -1, no ground under the dot): the fall's hitbox top is 112 and the finish box starts at y 130, so only the bounce lifts the dot into it. The negative-control run (no jump press while the game's own ground check cannot ground the dot — every press here) finds no solution, and the demo's bounce is the boost (Velocity.y 730 with momentum.y 410 within 6 frames of the dash).",
   "category": "WJ_DS",
-  "anchor": [
-    7872,
-    14056
-  ],
-  "region": [
-    7872,
-    14056,
-    5008,
-    13448
-  ],
+  "anchor": [7872, 14056],
+  "region": [7872, 14056, 5008, 13448],
   "shapes": [
-    {
-      "kind": "box",
-      "at": [
-        250,
-        20
-      ],
-      "size": [
-        500,
-        40
-      ],
-      "layer": "Ground",
-      "tag": "Ground"
-    },
-    {
-      "kind": "box",
-      "at": [
-        420,
-        320
-      ],
-      "size": [
-        40,
-        600
-      ],
-      "layer": "Ground",
-      "tag": "Ground"
-    }
+    { "kind": "box", "at": [400, 250], "size": [40, 700], "layer": "Ground", "tag": "Ground" }
   ],
   "start": {
-    "x": 200,
+    "x": 300,
     "y": 74,
     "vx": 460,
     "vy": 0,
     "facing": 1,
     "fields": {
-      "onGround": true,
+      "onGround": false,
+      "coyoteFrames": 0,
+      "wallCoyoteFrames": 0,
+      "wallJumpsLeft": -1,
+      "maxWallJumps": 0,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
       "airJumpsLeft": 0,
       "maxAirJumps": 0,
       "doubleJumpUnlocked": false
     }
   },
-  "finish": [
-    420,
-    470,
-    400,
-    300
-  ],
-  "maxTicks": 80
+  "finish": [420, 230, 240, 200],
+  "maxTicks": 30
 }

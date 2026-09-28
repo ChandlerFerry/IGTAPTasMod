@@ -279,7 +279,8 @@ namespace IGTAP.EngineSim
                     box.InitCollider(Vector2.zero, shape.trigger, 0, 0, true);
                     box.InitSize(new Vector2(w, h));
                     box.edgeRadius = 0f;
-                    data.Shapes = new[] { Polygon(Vertices(x - w / 2f, y - h / 2f, x + w / 2f, y + h / 2f)) };
+                    // Shape vertices are scene-frame (the world export's own shape lists are): the box around the child's pose.
+                    data.Shapes = new[] { Polygon(Vertices(world3.x - w / 2f, world3.y - h / 2f, world3.x + w / 2f, world3.y + h / 2f)) };
                     break;
                 }
                 case "polygon":
@@ -288,7 +289,7 @@ namespace IGTAP.EngineSim
                     Attach(world, go, poly, data);
                     poly.InitCollider(Vector2.zero, shape.trigger, 0, 0, true);
                     poly.pathCount = 1;
-                    Vector2[] points = shape.points.Select(p => new Vector2(p[0], p[1])).ToArray();
+                    Vector2[] points = shape.points.Select(p => new Vector2(world3.x + p[0], world3.y + p[1])).ToArray();
                     if (points.Length < 3) throw new InvalidDataException("A lab polygon needs at least 3 points.");
                     data.Shapes = new[] { Polygon(points) };
                     break;
@@ -303,7 +304,7 @@ namespace IGTAP.EngineSim
                     data.Shapes = new[] { new ShapeData
                     {
                         Type = "Edges", Radius = 0f,
-                        Vertices = shape.points.Select(p => new Vector2(p[0], p[1])).ToArray(),
+                        Vertices = shape.points.Select(p => new Vector2(world3.x + p[0], world3.y + p[1])).ToArray(),
                         UseAdjacentStart = false, UseAdjacentEnd = false, AdjacentStart = Vector2.zero, AdjacentEnd = Vector2.zero,
                     } };
                     break;

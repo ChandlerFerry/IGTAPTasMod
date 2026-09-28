@@ -45,7 +45,6 @@ namespace IGTAP.EngineSim.Cli
                         return same ? 0 : 1;
                     }
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
-                    case "snapcheck": return SnapCheck.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
@@ -62,7 +61,7 @@ namespace IGTAP.EngineSim.Cli
                         var infos = fields.Select(f => typeof(Movement).GetField(f, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)).ToArray();
                         bool was = false;
                         int lastRun = 0;
-                        Vector3 origin = sim.CurrentOrigin;
+                        ScenePos origin = sim.WorldOriginInScene();
                         var bf = BindingFlags.Instance | BindingFlags.NonPublic;
                         FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
@@ -70,15 +69,16 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
-                            Vector3 pos = sim.PlayerWorld;
-                            if (sim.CurrentOrigin != origin)
+                            WorldPos pos = sim.PlayerWorldPos();
+                            ScenePos now = sim.WorldOriginInScene();
+                            if (now != origin)
                             {
-                                Console.WriteLine($"tick {st}: REBASE origin {origin.x:0.0},{origin.y:0.0} -> {sim.CurrentOrigin.x:0.0},{sim.CurrentOrigin.y:0.0} player {pos.x:0.0},{pos.y:0.0}");
-                                origin = sim.CurrentOrigin;
+                                Console.WriteLine($"tick {st}: REBASE origin {origin.x:0.0},{origin.y:0.0} -> {now.x:0.0},{now.y:0.0} player {pos.x:0.0},{pos.y:0.0}");
+                                origin = now;
                             }
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
-                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {s.transform.position.x - sim.CurrentOrigin.x:0},{s.transform.position.y - sim.CurrentOrigin.y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
+                                    Console.WriteLine($"tick {st}: SPIKE {s.name} at {sim.ToWorld(ScenePos.From(s.transform.position)).x:0},{sim.ToWorld(ScenePos.From(s.transform.position)).y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
                                         + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
                                         + $" player {pos.x:0.0},{pos.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
@@ -89,7 +89,8 @@ namespace IGTAP.EngineSim.Cli
                                 string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.y != 0f ? " y=" + k.y : "")}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
                                     + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue || k.turnY.HasValue ? " turn=" + k.turnX + (k.turnY.HasValue ? "," + k.turnY : "") : "") : "")
                                     + (k.springDash > 0 ? " springdash@" + k.springDash : "")
-                                    + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "");
+                                    + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "")
+                                    + (k.pause > 0 ? " pause=" + k.pause + "@" + k.pauseTick + (k.pauseFrame > 0 ? "+" + k.pauseFrame : "") : "");
                                 lastRun = run + 1;
                                 Console.WriteLine($"tick {st}: pos {pos.x:0.0},{pos.y:0.0}"
                                     + (timing ? " t=" + Simulation.CourseTime(sim.TimingCourse()).ToString("0.00") : "") + " " + input + " | "
@@ -108,15 +109,17 @@ namespace IGTAP.EngineSim.Cli
                             + "  bench <trace.json> [seconds]           runs/s and ticks/s on one core\n"
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit] [--fresh]\n"
                             + "        [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]... [--path-name name] [--optional name]... [--no-optional name]...\n"
-                            + "        [--no-guide] [--guide-weight W]\n"
+                            + "        [--guide] [--guide-weight W] [--rng N]\n"
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs;\n"
                             + "                                         --via/--avoid force a path (boxes passed in order / boxes that cut a run);\n"
                             + "                                         --optional/--no-optional turns a named optional block of forced-paths.json on/off\n"
                             + "                                         (blocks with \"default\": true start on)\n"
                             + "                                         --no-tech-grafts grafts only the hand-written patterns, not the tech tab's mined demos\n"
-                            + "                                         --no-guide searches without the distance guide; --guide-weight W is how hard\n"
-                            + "                                         it pulls explore cell picks toward the target (default 1)\n"
+                            + "                                         --guide (experimental, off by default) weights picks by the walkable\n"
+                            + "                                         distance to the target; --guide-weight W is how hard it pulls (default 1);\n"
+                            + "                                         --rng N seeds the search's randomness (worker i gets N + i) instead of\n"
+                            + "                                         the clock, so a one-thread run repeats exactly\n"
                             + "                                         each new best also gets a human version (humanize)\n"
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"

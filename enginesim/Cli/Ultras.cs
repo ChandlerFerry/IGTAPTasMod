@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
 
             Simulation probe = create();
-            Vector3 origin = probe.Origin;
+            CapturePos origin = probe.WorldOriginInCapture();
             Vector2 stand = (Vector2)DefaultSize.GetValue(probe.Player), standOffset = (Vector2)DefaultOffset.GetValue(probe.Player);
             Vector2 dash = (Vector2)DashSize.GetValue(probe.Player), dashOffset = (Vector2)DashOffset.GetValue(probe.Player);
             FloatingOrigin rebase = probe.World.All<FloatingOrigin>().FirstOrDefault();
@@ -275,7 +275,7 @@ namespace IGTAP.EngineSim.Cli
         // Where the Full-TAS run's best so far (the trace's `fulltas/<run>.json`) makes FloatingOrigin rebase: these sims
         // run with Rebases off, so each crossing of the threshold from the current origin is found here, and the next
         // one is measured from the new origin. `center`: the origin the player left (game-world coordinates).
-        static List<object> RouteRebases(string trace, JsonElement header, Func<Simulation> create, Vector3 origin)
+        static List<object> RouteRebases(string trace, JsonElement header, Func<Simulation> create, CapturePos origin)
         {
             var points = new List<object>();
             if (float.IsInfinity(_threshold) || !header.TryGetProperty("fulltas", out JsonElement fulltas)) return points;
@@ -304,7 +304,7 @@ namespace IGTAP.EngineSim.Cli
                     if (at.magnitude <= _threshold) return;
                     pending = at;
                     due = 1;
-                    Vector3 p = sim.PlayerWorld;
+                    WorldPos p = sim.PlayerWorldPos();
                     points.Add(new object[] { R(p.x), R(p.y), tick, R(shift.x - origin.x), R(shift.y - origin.y) });
                 }
             });
@@ -343,14 +343,15 @@ namespace IGTAP.EngineSim.Cli
             Movement m = sim.Player;
             m.Velocity = Vector2.zero;
             m.momentum = Vector2.zero;
-            m.transform.position = new Vector3(x - standOffset.x + sim.Origin.x, y + stand.y / 2f - standOffset.y + 1f + sim.Origin.y, m.transform.position.z);
+            ScenePos hop = sim.ToScene(new WorldPos(x - standOffset.x, y + stand.y / 2f - standOffset.y + 1f));
+            m.transform.position = new Vector3(hop.x, hop.y, m.transform.position.z);
             SimSnapshot placed = sim.Capture(0);
             var t = new List<InputTick>();
             for (int i = 0; i < 90; i++) t.Add(new InputTick { press = i == Settle, held = i > Settle && i < Settle + 45 });
             float from = float.NaN, top = float.MinValue;
             sim.Run(t, placed, extraTicks: 0, onStep: tick =>
             {
-                float py = sim.PlayerWorld.y;
+                float py = sim.PlayerWorldPos().y;
                 if (tick == Settle) from = py;
                 top = Math.Max(top, py);
             });
@@ -589,7 +590,8 @@ namespace IGTAP.EngineSim.Cli
             m.Velocity = Vector2.zero;
             m.momentum = Vector2.zero;
             m.facingRight = at.side > 0f;
-            m.transform.position = new Vector3(at.x - standOffset.x + sim.Origin.x, at.y + stand.y / 2f - standOffset.y + 1f + sim.Origin.y, m.transform.position.z);
+            ScenePos placedAt = sim.ToScene(new WorldPos(at.x - standOffset.x, at.y + stand.y / 2f - standOffset.y + 1f));
+            m.transform.position = new Vector3(placedAt.x, placedAt.y, m.transform.position.z);
             SimSnapshot placed = sim.Capture(0);
 
             var ultras = new List<object>();
@@ -688,14 +690,14 @@ namespace IGTAP.EngineSim.Cli
             sim.Run(inputs, placed, extraTicks: 60, onStep: _ =>
             {
                 bool nowCan = (bool)CanHyper.GetValue(m);
-                if (nowCan && !canHyper) landX = sim.PlayerWorld.x;
+                if (nowCan && !canHyper) landX = sim.PlayerWorldPos().x;
                 float nowLast = (float)LastHyperY.GetValue(m);
                 if (canHyper && !m.onGround && m.Velocity.y > 0f && nowLast != last)
                 {
                     float x = ((Vector2)DashDirection.GetValue(m)).x, pre = ((Vector2)PreDashMomentum.GetValue(m)).x;
                     bool ultra = Mathf.Sign(pre) == Mathf.Sign(x) && nowLast < last - 4f;
-                    float feet = nowLast - sim.Origin.y - 2f + dashOffset.y - dash.y / 2f;
-                    hypers.Add(new Hyper(hypers.Count + 1, landX, m.transform.position.x - sim.Origin.x, feet, last - stale - nowLast, ultra, stale != 0f));
+                    float feet = nowLast - sim.WorldOriginInCapture().y - 2f + dashOffset.y - dash.y / 2f;
+                    hypers.Add(new Hyper(hypers.Count + 1, landX, sim.ToWorld(ScenePos.From(m.transform.position)).x, feet, last - stale - nowLast, ultra, stale != 0f));
                     if (hypers.Count >= wanted) after = 0;
                 }
                 // `stale`: how far a rebase has moved the lastHyperY the game last wrote.

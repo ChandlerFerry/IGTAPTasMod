@@ -107,7 +107,11 @@ namespace IGTAP.EngineSim.Cli
         {
             if (!Index.TryGet(hash, out SnapshotIndex.Entry entry)) return null;
             try { return store.StateOf(entry, tick); }
-            catch (NotSupportedException) { return null; }
+            catch (NotSupportedException ex)
+            {
+                Console.WriteLine($"goal state (goal {entry.Goal}) can't be restored here: {ex.Message}; replaying to it");
+                return null;
+            }
         }
     }
 }

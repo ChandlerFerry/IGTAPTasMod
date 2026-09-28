@@ -65,6 +65,15 @@ cut before the tick reads it. A release lifts both. Dash presses on consecutive 
 overlay's JUMP and DASH columns and the pad under the input list show each tick this way (J1/J2 and D1/D2: bright on the
 tick a button goes down, dim while held), with "release" and "cut" while a release's jump cut is armed.
 
+With no route playing (manual play, a recording included), the list shows the player's own ticks under a `MANUAL`
+title: the stick the tick read (`MoveAxis`) and each press or release `Movement.Update` took since the tick before
+(read from the same four actions, outside the pause menu), J1/J2 and D1/D2 as the buttons actually pressed. Idle ticks
+count but aren't listed, as in a tech demo. The count starts at the first tick with an input (a playback's list stays
+until then) and again from tick 1 after every respawn. Tech bars are playback-only.
+
+A respawn doesn't clear the list, in manual play or a route's playback: a line splits the ticks before it from the ticks
+after, yellow for a quick restart (`respawn(true)`), red for a death's respawn. A route's ticks keep counting across it.
+
 ## Ticks that take no input
 
 Dash frames and spring ticks run no input hook (`Movement.FixedUpdate`'s spring branch skips
@@ -178,9 +187,24 @@ move a press or a dash a few ticks while keeping where the hold ends.
   tick before, or the dash freeze) the turn hasn't happened and the pause lifts nothing. On Course 3's `3_WJ_DS 3.78`
   wall it reaches the top (8557) on the first dash; on Course 4's left column (face x 19936) 40 paused frames lift the
   dot 35 times, 11111.6 to the slab top at 13037. A shorter pause stops the climb partway: 26 frames leave it at 12847.6,
-  under the slab. A route step's `pauseFrames` / `pauseTick` (`MacroStep`, `SolverTick` `pause` / `pauseTick`) opens the
-  menu after that step's `pauseTick`-th physics tick and closes it after that many frames. It plays at 1x only: turbo
-  and the offline engine don't model the pause, so a route with one can't be judged or saved yet.
+  under the slab. A route step's `pauseFrames` / `pauseTick` / `pauseFrame` (`MacroStep`, `SolverTick` and offline
+  `InputTick` `pause` / `pauseTick` / `pauseFrame`) opens the menu after that step's `pauseTick`-th physics tick and
+  `pauseFrame` of that tick's Update frames (0: at once), and closes it after `pauseFrames` frames. 1x opens the real
+  menu; turbo (`TurboRunner.Pause`) and the offline engine (`Simulation.InterpolatedFrames`) run the same frames
+  (`MacroEngine.FrameRepeats`): opened at once, time holds on the tick's first frame, whose blend is the step's start plus
+  0.089 of the step (a freeze on the same tick overlaps it; the longer counts); opened after frame k, it holds frame k's
+  blend for `pauseFrames` more Updates. `tools/tech-check.py pauselift` matches turbo and offline, and offline climbs to
+  13037.0 as the 1x probe does.
+
+  The pause lifts only if that first-frame blend already has the step-up's down ray inside the wall, so the dash must
+  start pressed flush against the face with the hitbox's short side (15.5 u; the long side is 25.5), facing away: the
+  first dash tick then moves 13.4 u away and the ray (29 u ahead) reaches 0.1 u into the face. One unit off and nothing
+  lifts. A super's momentum toward the wall holds the player there (the demo; Course 4's right column from the zip mover
+  at x 21951–22401: lab start x 21967.5–21967.6 climbs 13043.9 → 15725, the column's top, 21968.0 doesn't). A turned dash
+  from a cling or from the air starts 13 u too far out and lifts only on the tick's last frames (56–112 u), as unpaused:
+  paused on one of those frames (`pauseFrame` 5 at 280 fps) it climbs the whole wall too, so a plain wall cling is enough.
+  `Test-Pauselift-TrueEnd-Runup` does it on the face at x 28960 from the cling at (28934.5, 17762): 17762 → 23789 over the
+  spikes (21932–23686), then the dash carries onto the block top.
 
 ### Omnidirectional dash (Vman)
 

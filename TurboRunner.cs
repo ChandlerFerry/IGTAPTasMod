@@ -27,9 +27,24 @@ namespace IGTAPTasMod
         static IEnumerator _rebase;
         static int _tick;
         // Interpolation (MacroEngine.FrameGrid, as enginesim's Simulation): the body's position at the start and end of the
-        // last physics step, and the shortest TimeStop the tick asked for (its freeze's Update frames).
+        // last physics step, the shortest TimeStop the tick asked for (its freeze's Update frames), and the pause menu's
+        // frames a route step opens after the tick (MacroStep.pauseFrames, MacroEngine.TakePause).
         static Vector2 _stepFrom, _stepTo;
         static float _freezeFor = -1f;
+        static int _pauseFrames, _pauseAfter;
+
+        /// <summary>
+        /// The route's pause after this tick's FixedUpdate (TasPlugin.AfterMovementFixedUpdate): at 1x the menu stops time
+        /// and Movement.Update runs once per frame it is open, at the blend of the frame it holds (the tick's first, or the
+        /// one <paramref name="afterFrames"/> frames in: MacroEngine.FrameRepeats); the step-up in it lifts a turned dash
+        /// every frame (the pauselift).
+        /// </summary>
+        public static void Pause(int frames, int afterFrames)
+        {
+            if (!Active || frames <= _pauseFrames) return;
+            _pauseFrames = frames;
+            _pauseAfter = afterFrames;
+        }
 
         public static bool Active { get; private set; }
 
@@ -656,6 +671,7 @@ namespace IGTAPTasMod
                     // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
                     Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.LastAlpha));
                     _freezeFor = -1f;
+                    _pauseFrames = _pauseAfter = 0;
                     FixedUpdateMethod.Invoke(movement, null);
                     foreach (courseScript course in courses)
                         if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
@@ -692,10 +708,11 @@ namespace IGTAPTasMod
                         _stepTo += by;
                     }
                     // The tick's rendered frames, the dash freeze's first: Update at each blend. A step-up write moves the body
-                    // there and drops the interpolation, so the frames after show it.
+                    // there and drops the interpolation, so the frames after show it. A pause holds its frame's time as a
+                    // freeze does (MacroEngine.FrameRepeats).
                     int frozen = _freezeFor >= 0f ? frames.FrozenFrames(_freezeFor) : 0;
                     for (int k = 0; k < frames.Alphas.Length; k++)
-                        for (int repeat = k == 0 ? frozen : 0; repeat >= 0; repeat--)
+                        for (int repeat = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter); repeat >= 0; repeat--)
                         {
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));
                             UpdateMethod.Invoke(movement, null);

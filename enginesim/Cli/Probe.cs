@@ -30,9 +30,18 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(args[1]));
             JsonElement probe = doc.RootElement;
             if (probe.TryGetProperty("start", out JsonElement start)) DemoStart.ApplyStart(sim, start, Path.GetDirectoryName(Path.GetFullPath(args[1])));
+            // base: inputs played once, unlogged, whose end state every branch starts from (a long Full-TAS prefix).
+            List<InputTick> baseTicks = Ticks(probe, "base");
+            if (baseTicks.Count > 0)
+            {
+                SimSnapshot at = sim.Advance(baseTicks) ?? throw new InvalidOperationException("The base inputs end the run before their last tick.");
+                sim.SetStart(at, sim.InputBase + baseTicks.Count);
+            }
 
             List<InputTick> prefix = Ticks(probe, "prefix");
             int extraTicks = probe.TryGetProperty("extraTicks", out JsonElement e) ? e.GetInt32() : 30;
+            // frames: also a row per rendered frame (kind "frame", its blend alpha, still in a freeze or pause), logged before its tick's row.
+            bool frames = probe.TryGetProperty("frames", out JsonElement fr) && fr.GetBoolean();
             string[] extraFields = probe.TryGetProperty("fields", out JsonElement fe) ? fe.EnumerateArray().Select(x => x.GetString()).ToArray() : Array.Empty<string>();
             FieldInfo[] extraInfos = extraFields.Select(n => typeof(Movement).GetField(n, Fields)
                 ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray();
@@ -46,7 +55,17 @@ namespace IGTAP.EngineSim.Cli
             {
                 List<InputTick> inputs = prefix.Concat(ticks).ToList();
                 var log = new List<Dictionary<string, object>>();
-                RunResult r = sim.Run(inputs, null, extraTicks: extraTicks, onStep: step => log.Add(Row(sim, step, extraFields, extraInfos)));
+                int stepped = 0;
+                sim.OnFrame = !frames ? null : (alpha, still) =>
+                {
+                    Dictionary<string, object> row = Row(sim, stepped, extraFields, extraInfos);
+                    row["kind"] = "frame";
+                    row["alpha"] = Round(alpha);
+                    row["still"] = still;
+                    log.Add(row);
+                };
+                RunResult r = sim.Run(inputs, null, extraTicks: extraTicks, onStep: step => { log.Add(Row(sim, step, extraFields, extraInfos)); stepped = step + 1; });
+                sim.OnFrame = null;
                 output.Add(new { name, finished = r.Finished, time = r.Time, end = r.EndReason, ticks = log });
             }
             string json = JsonSerializer.Serialize(new { branches = output }, new JsonSerializerOptions { WriteIndented = false });
@@ -64,7 +83,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, extra fields.</summary>
         internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
-            Vector3 p = sim.PlayerWorld;
+            WorldPos p = sim.PlayerWorldPos();
             Vector2 v = (Vector2)Vel.GetValue(sim.Player), m = (Vector2)Mom.GetValue(sim.Player), d = (Vector2)Dir.GetValue(sim.Player);
             var (_, _, _, bvx, bvy, _) = sim.Physics.PlayerBody();
             var row = new Dictionary<string, object>

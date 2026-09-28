@@ -26,9 +26,10 @@ namespace IGTAP.EngineSim.Cli
             bool submit = !args.Contains("--no-submit");
             bool fresh = args.Contains("--fresh");
             bool techGrafts = !args.Contains("--no-tech-grafts");
-            bool guide = !args.Contains("--no-guide");
+            bool guide = args.Contains("--guide");
             double guideWeight = Option(args, "--guide-weight", 1.0);
-            if (!guide) DistanceField.Enabled = false;
+            int rng = Option(args, "--rng", 0);
+            if (guide) DistanceField.Enabled = true;
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
             OfflineSolver.ForcedPath forced = CliBoxes(args);
@@ -60,7 +61,7 @@ namespace IGTAP.EngineSim.Cli
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
-            var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0));
+            var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0), rng: rng);
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             var clock = Stopwatch.StartNew();
@@ -372,10 +373,13 @@ namespace IGTAP.EngineSim.Cli
                     | (t.y < 0f ? 32 : 0) | (t.y > 0f ? 64 : 0);
                 if (text.Length > 0) text.Append(';');
                 text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(j - i);
-                if (t.ArmsLock || t.turnX.HasValue || t.turnY.HasValue)
+                bool pause = t.pause > 0;
+                if (t.ArmsLock || t.turnX.HasValue || t.turnY.HasValue || pause)
                     text.Append(',').Append(t.springDash).Append(',').Append(Number(t.lockX)).Append(',').Append(Number(t.lockY));
-                if (t.turnX.HasValue || t.turnY.HasValue) text.Append(',').Append(Number(t.turnX));
-                if (t.turnY.HasValue) text.Append(',').Append(Number(t.turnY));
+                if (t.turnX.HasValue || t.turnY.HasValue || pause) text.Append(',').Append(Number(t.turnX));
+                if (t.turnY.HasValue || pause) text.Append(',').Append(Number(t.turnY));
+                if (pause) text.Append(',').Append(t.pause).Append(',').Append(t.pauseTick);
+                if (pause && t.pauseFrame != 0) text.Append(',').Append(t.pauseFrame);
                 i = j;
             }
             return text.ToString();
@@ -402,6 +406,9 @@ namespace IGTAP.EngineSim.Cli
                     lockY = f.Length > 6 && f[6].Length > 0 ? float.Parse(f[6], CultureInfo.InvariantCulture) : null,
                     turnX = f.Length > 7 && f[7].Length > 0 ? float.Parse(f[7], CultureInfo.InvariantCulture) : null,
                     turnY = f.Length > 8 && f[8].Length > 0 ? float.Parse(f[8], CultureInfo.InvariantCulture) : null,
+                    pause = f.Length > 9 ? int.Parse(f[9], CultureInfo.InvariantCulture) : 0,
+                    pauseTick = f.Length > 10 ? int.Parse(f[10], CultureInfo.InvariantCulture) : 0,
+                    pauseFrame = f.Length > 11 ? int.Parse(f[11], CultureInfo.InvariantCulture) : 0,
                 };
                 for (int n = int.Parse(f[3], CultureInfo.InvariantCulture); n > 0; n--) ticks.Add(t);
             }

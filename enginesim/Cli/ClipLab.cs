@@ -47,13 +47,14 @@ namespace IGTAP.EngineSim.Cli
             var (sim, _, _) = Program.Open(args[0]);
             float x0 = F(args[1]), y0 = F(args[2]), x1 = F(args[3]), y1 = F(args[4]), step = args.Length > 5 ? F(args[5]) : 4f;
             var sb = new StringBuilder();
-            sb.AppendLine($"x {x0}..{x1}, y {y1} (top row) .. {y0}, step {step}; origin {sim.Origin.x},{sim.Origin.y}");
+            CapturePos capture = sim.WorldOriginInCapture();
+            sb.AppendLine($"x {x0}..{x1}, y {y1} (top row) .. {y0}, step {step}; origin {capture.x},{capture.y}");
             for (float y = y1; y >= y0; y -= step)
             {
                 sb.Append(y.ToString("0").PadLeft(6)).Append(' ');
                 for (float x = x0; x <= x1; x += step)
                 {
-                    Vector2 p = new Vector2(x + sim.Origin.x, y + sim.Origin.y);
+                    Vector2 p = sim.ToScene(new WorldPos(x, y)).AsVector2();
                     bool ground = Physics2D.Raycast(p, Vector2.down, 0.001f, 128), spikes = Physics2D.Raycast(p, Vector2.down, step, 64);
                     sb.Append(spikes ? 'S' : ground ? '#' : '.');
                 }
@@ -180,7 +181,7 @@ namespace IGTAP.EngineSim.Cli
             sim.Restore(sim.Start);
             var probeStart = new Dictionary<string, object>();
             if (start.TryGetValue("savestate", out JsonElement ss)) probeStart["savestate"] = ss.GetString();
-            Vector3 world = sim.PlayerWorld;
+            WorldPos world = sim.PlayerWorldPos();
             bool moved = start.ContainsKey("x") || start.ContainsKey("y");
             if (moved) probeStart["position"] = new[] { start.TryGetValue("x", out JsonElement x) ? x.GetSingle() : world.x, start.TryGetValue("y", out JsonElement y) ? y.GetSingle() : world.y };
             if (start.TryGetValue("scaleX", out JsonElement sx)) probeStart["scaleX"] = sx.GetSingle();
@@ -251,7 +252,7 @@ namespace IGTAP.EngineSim.Cli
             float endY = 0f, wallX = 0f, wallY = 0f;
             RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
             {
-                Vector3 p = sim.PlayerWorld;
+                WorldPos p = sim.PlayerWorldPos();
                 if (p.y > maxY) { maxY = p.y; maxStep = step; }
                 maxX = Math.Max(maxX, p.x); minX = Math.Min(minX, p.x);
                 Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
@@ -364,8 +365,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 rows.Add(Probe.Row(sim, step, extra, extraInfos));
                 if (rays.Length == 0) return;
-                Vector3 at = sim.Player.transform.position;
-                rayRows.Add($"t {at.x:0.#},{at.y:0.#} o {sim.CurrentOrigin.x:0.#},{sim.CurrentOrigin.y:0.#} " + string.Join(" ", rays.Select((a, i) =>
+                ScenePos at = ScenePos.From(sim.Player.transform.position);
+                ScenePos currentOrigin = sim.WorldOriginInScene();
+                rayRows.Add($"t {at.x:0.#},{at.y:0.#} o {currentOrigin.x:0.#},{currentOrigin.y:0.#} " + string.Join(" ", rays.Select((a, i) =>
                 {
                     RaycastHit2D hit = Physics2D.Raycast(new Vector2(at.x + a[0], at.y + a[1]), new Vector2(a[2], a[3]), a[4], (int)a[5]);
                     return "ray" + i + "=" + (hit.collider == null ? "-" : hit.distance.ToString("0.##", CultureInfo.InvariantCulture));

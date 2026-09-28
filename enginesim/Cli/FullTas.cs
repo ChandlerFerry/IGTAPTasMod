@@ -645,6 +645,8 @@ namespace IGTAP.EngineSim.Cli
                 if (t.turnX.HasValue) hash = Feed(hash, t.turnX.Value);
                 if (t.turnY.HasValue) hash = Feed(hash, t.turnY.Value);
                 hash = Feed(hash, t.reset);
+                if (t.pause > 0) hash = Feed(hash, ((long)t.pauseTick << 32) | (uint)t.pause, 8);
+                if (t.pause > 0 && t.pauseFrame != 0) hash = Feed(hash, t.pauseFrame, 4);
             }
             foreach (string label in labels)
             {

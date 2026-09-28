@@ -98,6 +98,8 @@ namespace IGTAP.EngineSim
 
         /// <summary>How hard the guide pulls explore cell picks toward the target (0: no guidance, 1: its full share).</summary>
         public readonly float GuideWeight;
+        /// <summary>The search's random seed (each worker gets this + its index); 0: the clock, as ever.</summary>
+        public readonly int Rng;
         float _guideBest = float.PositiveInfinity;
 
         /// <summary>The progress line's guide fragment: how close the closest cell filed has walked to the target.</summary>
@@ -108,7 +110,7 @@ namespace IGTAP.EngineSim
         }
 
         public OfflineSolver(Func<Simulation> createSimulation, string capabilities, List<List<InputTick>> seeds, Memory memory = null, ForcedPath path = null,
-            float visitCell = 0f, TechGrafts mined = null, float guide = 1f)
+            float visitCell = 0f, TechGrafts mined = null, float guide = 1f, int rng = 0)
         {
             _createSimulation = createSimulation;
             Capabilities = capabilities;
@@ -117,6 +119,7 @@ namespace IGTAP.EngineSim
             _path = path != null && !path.IsEmpty ? path : null;
             VisitCell = visitCell;
             GuideWeight = guide;
+            Rng = rng;
             Mined = mined;
             Mined?.Prepare(capabilities);
         }
@@ -134,7 +137,7 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < workers; i++)
             {
                 int index = i;
-                int seed = Environment.TickCount * 31 + i * 7919;
+                int seed = Rng != 0 ? Rng + i : Environment.TickCount * 31 + i * 7919;
                 var seeds = i == 0 ? _seeds : new List<List<InputTick>>();
                 List<InputTick> plateau = _memory != null && _memory.Plateau.Count > 0 ? _memory.Plateau[i % _memory.Plateau.Count] : null;
                 threads[i] = new Thread(() =>
@@ -1327,7 +1330,8 @@ namespace IGTAP.EngineSim
                         if (from.dash)
                         {
                             dest.dash = true; dest.dashJump = from.dashJump; dest.turnX = from.turnX; dest.turnY = from.turnY;
-                            from.dash = false; from.dashJump = 0; from.turnX = from.turnY = null;
+                            dest.pause = from.pause; dest.pauseTick = from.pauseTick; dest.pauseFrame = from.pauseFrame;
+                            from.dash = false; from.dashJump = 0; from.turnX = from.turnY = null; from.pause = from.pauseTick = from.pauseFrame = 0;
                             t[q] = from; t[to] = dest;
                             break;
                         }

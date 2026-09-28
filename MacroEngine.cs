@@ -53,8 +53,9 @@ namespace IGTAPTasMod
         private bool _turnArmed;
         private float? _turnX, _turnY;
         private int _pressedStep = -1;
-        // A step's pause (MacroStep.pauseFrames): physics ticks still to run before it opens, and its length in frames.
-        private int _pauseTicksLeft, _pauseFrames;
+        // A step's pause (MacroStep.pauseFrames): physics ticks still to run before it opens, its length in frames, and the
+        // Update frames of its tick before it opens.
+        private int _pauseTicksLeft, _pauseFrames, _pauseFrame;
         private bool _tickLocked;
         private Vector2 _tickStick;
         private bool _waitingForStable;
@@ -285,6 +286,7 @@ namespace IGTAPTasMod
             {
                 _pauseFrames = step.pauseFrames;
                 _pauseTicksLeft = step.pauseTick;
+                _pauseFrame = step.pauseFrame;
             }
             if (step.rawJumpPressed) PressJump(movement);
             if (step.rawJumpReleased || (_rawJumpHeld && !step.rawJumpHeld)) ReleaseJump(movement);
@@ -300,16 +302,35 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// After each physics tick: the frames to hold the pause menu open when a step's pause falls due on this tick, else 0.
-        /// Only 1x playback asks; turbo and the offline engine never pause.
+        /// After each physics tick: the frames to hold the pause menu open when a step's pause falls due on this tick, else 0,
+        /// and in <paramref name="afterFrames"/> the tick's Update frames that run before it opens (MacroStep.pauseFrame).
+        /// 1x playback opens the menu for them; turbo and the offline engine run that many Update frames at the blend the
+        /// pause holds (TurboRunner.Pause, Simulation's InterpolatedFrames).
         /// </summary>
-        public int TakePause()
+        public int TakePause(out int afterFrames)
         {
+            afterFrames = 0;
             if (!IsRunning || _pauseFrames <= 0) return 0;
             if (_pauseTicksLeft-- > 0) return 0;
             int frames = _pauseFrames;
+            afterFrames = _pauseFrame;
             _pauseFrames = 0;
             return frames;
+        }
+
+        /// <summary>
+        /// The Update frames of a tick's frame grid (<paramref name="frameCount"/> of them) each one runs again: the dash
+        /// freeze's <paramref name="frozen"/> on the first frame, and a pause of <paramref name="pauseFrames"/> after
+        /// <paramref name="pauseAfter"/> frames. Opened in the tick (0) it holds the first frame, whose Update it is, so that
+        /// frame runs pauseFrames times in all (a freeze there overlaps it: the longer counts). Opened after frame k's Update
+        /// it holds frame k's blend for pauseFrames more Updates (past the tick's last frame: the last).
+        /// </summary>
+        public static int FrameRepeats(int k, int frameCount, int frozen, int pauseFrames, int pauseAfter)
+        {
+            int repeats = k == 0 ? frozen : 0;
+            if (pauseFrames <= 0) return repeats;
+            if (pauseAfter <= 0) return k == 0 ? Math.Max(repeats, pauseFrames - 1) : repeats;
+            return k == Math.Min(pauseAfter, frameCount) - 1 ? repeats + pauseFrames : repeats;
         }
 
         public void RebaseInputs()

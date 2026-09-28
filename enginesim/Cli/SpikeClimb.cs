@@ -80,7 +80,7 @@ namespace IGTAP.EngineSim.Cli
                         {
                             sim.Restore(start);
                             goal = sim.Progress;
-                            Console.WriteLine($"climb from input {from}: player {sim.PlayerWorld.x:0.0},{sim.PlayerWorld.y:0.0}, {goal}/{labels.Length} goals");
+                            Console.WriteLine($"climb from input {from}: player {sim.PlayerWorldPos().x:0.0},{sim.PlayerWorldPos().y:0.0}, {goal}/{labels.Length} goals");
                             if (args.Contains("--diagnose")) { Diagnose(sim, start, toward, wall, from > 0 && prefix[from - 1].held); Environment.Exit(0); }
                         }
                     }
@@ -149,7 +149,7 @@ namespace IGTAP.EngineSim.Cli
                 sim.Restore(end);
                 Movement p = sim.Player;
                 Vector2 v = (Vector2)VelocityField.GetValue(p) + (Vector2)MomentumField.GetValue(p);
-                Vector3 pos = sim.PlayerWorld;
+                WorldPos pos = sim.PlayerWorldPos();
                 float up = Math.Max(0f, v.y);
                 into.Add(new State
                 {
@@ -209,7 +209,7 @@ namespace IGTAP.EngineSim.Cli
                 RunResult r = sim.Run(padded, null, tick =>
                 {
                     Movement p = sim.Player;
-                    float dist = (sim.PlayerWorld.x - wall) * -toward;
+                    float dist = (sim.PlayerWorldPos().x - wall) * -toward;
                     if (tick == dashAt) dashDist = dist;
                     nearest = Math.Min(nearest, dist);
                     dashing = (bool)dashActive.GetValue(p);
@@ -217,7 +217,7 @@ namespace IGTAP.EngineSim.Cli
                     return true;
                 }, 20);
                 bool died = r.EndReason != null && r.EndReason.StartsWith("Player death", StringComparison.Ordinal);
-                Console.WriteLine($"{name} | dash at {dashDist:0.0} nearest {nearest:0.0} bounce {bounce:0} {(died ? "DIED" + (dashing ? " dashing" : "") : "alive")} y {sim.PlayerWorld.y:0.0}");
+                Console.WriteLine($"{name} | dash at {dashDist:0.0} nearest {nearest:0.0} bounce {bounce:0} {(died ? "DIED" + (dashing ? " dashing" : "") : "alive")} y {sim.PlayerWorldPos().y:0.0}");
             }
         }
 

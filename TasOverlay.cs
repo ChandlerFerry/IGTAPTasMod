@@ -17,7 +17,11 @@ namespace IGTAPTasMod
             public string stickText;
             public bool jumpPress, jumpRelease, jumpCut, dash;
             public bool jump1, jump2, jump1Press, jump2Press, dash1, dash2, dash1Press, dash2Press;
+            /// <summary>A respawn came between this row and the one listed before it (RowBreak).</summary>
+            public RowBreak breakBefore;
         }
+
+        enum RowBreak : byte { None, QuickRestart, Death }
 
         const float InputRowHeight = 30f, InputBandHeight = 14f + 26f + 22f + 22f + 12f, InputColumnLine = 28f;
         readonly List<InputRow> _inputRows = new List<InputRow>();
@@ -31,6 +35,12 @@ namespace IGTAPTasMod
         string _overlayClock;
         int _overlayJumpPresses, _overlayDashPresses, _overlayJumpRelease;
         bool _padJump1, _padJump2, _padJump2Newer, _padDash1Last;
+        // Manual play (OverlayListsManual): the list shows the player's own ticks. A session starts at the first tick that
+        // holds an input, or at a respawn, so the rows a playback left stay until the player plays.
+        bool _overlayManual, _manualRestart;
+        bool _manualJump1Press, _manualJump2Press, _manualDash1Press, _manualDash2Press, _manualRelease;
+        // A respawn since the last listed row: the next row the list adds draws a line above it.
+        RowBreak _pendingBreak;
         static readonly FieldInfo JumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
         GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
         int _overlayStyleHeight;
@@ -77,11 +87,22 @@ namespace IGTAPTasMod
                 if (_liveJump1 == null || _liveJump2 == null || _liveDash1 == null || _liveDash2 == null) { _liveJump1 = null; return; }
             }
             float now = Time.unscaledTime;
-            if (_liveJump1.WasPressedThisFrame()) _liveJump1At = now;
-            if (_liveJump2.WasPressedThisFrame()) _liveJump2At = now;
-            if (_liveDash1.WasPressedThisFrame()) _liveDash1At = now;
-            if (_liveDash2.WasPressedThisFrame()) _liveDash2At = now;
-            if (_liveJump1.WasReleasedThisFrame() || _liveJump2.WasReleasedThisFrame()) _liveReleaseAt = now;
+            bool jump1 = _liveJump1.WasPressedThisFrame(), jump2 = _liveJump2.WasPressedThisFrame();
+            bool dash1 = _liveDash1.WasPressedThisFrame(), dash2 = _liveDash2.WasPressedThisFrame();
+            bool release = _liveJump1.WasReleasedThisFrame() || _liveJump2.WasReleasedThisFrame();
+            if (jump1) _liveJump1At = now;
+            if (jump2) _liveJump2At = now;
+            if (dash1) _liveDash1At = now;
+            if (dash2) _liveDash2At = now;
+            if (release) _liveReleaseAt = now;
+            // Movement.Update takes a press or release only outside the pause menu and GamePaused; the next tick reads it.
+            Movement p = _overlayPlayer;
+            if (!OverlayListsManual || p == null || p.GamePaused || p.pauseMenu != null && p.pauseMenu.menuOpen) return;
+            _manualJump1Press |= jump1;
+            _manualJump2Press |= jump2;
+            _manualDash1Press |= dash1;
+            _manualDash2Press |= dash2;
+            _manualRelease |= release;
         }
 
         InputRow LiveRow(Movement player)
@@ -112,6 +133,20 @@ namespace IGTAPTasMod
 
         bool OverlayListsRun { get { return _engine.IsRunning && !_engine.Quiet && !_silentEvaluation && !TurboRunner.Active; } }
 
+        /// <summary>The player plays by hand: no route, turbo run or silent evaluation drives the ticks.</summary>
+        bool OverlayListsManual { get { return !_engine.IsRunning && !_silentEvaluation && !TurboRunner.Active; } }
+
+        /// <summary>
+        /// Movement.respawn (a quick restart or a death's respawn): the list draws a line between the ticks before and after it.
+        /// Manual play also counts its ticks from 1 again; a route's keep its own count.
+        /// </summary>
+        void OverlayRespawned(bool quickRestart)
+        {
+            if (!OverlayListsRun && !OverlayListsManual) return;
+            _pendingBreak = quickRestart ? RowBreak.QuickRestart : RowBreak.Death;
+            if (OverlayListsManual) _manualRestart = true;
+        }
+
         void OverlayCaptureAxis(Movement player)
         {
             if (_engine.IsRunning) _overlayAxis = player.MoveAxis;
@@ -120,7 +155,11 @@ namespace IGTAPTasMod
         void OverlayTick(Movement player)
         {
             _overlayPlayer = player;
-            if (!OverlayListsRun) _overlayLastTick = 0;
+            if (!OverlayListsRun)
+            {
+                _overlayLastTick = 0;
+                if (OverlayListsManual) ManualOverlayTick(player);
+            }
             else if (_engine.PhysicsTicks != _overlayLastTick)
             {
                 if (_overlayLastTick == 0 || _engine.PhysicsTicks < _overlayLastTick || !ReferenceEquals(_engine.ActiveMacroName, _overlayRoute))
@@ -128,6 +167,8 @@ namespace IGTAPTasMod
                     _inputRows.Clear();
                     _overlayTicks = 0;
                     _droppedFrames = _worstFrameTicks = 0;
+                    _overlayManual = _manualRestart = false;
+                    _pendingBreak = RowBreak.None;
                     _lastDropTick = 0;
                     _ticksSinceFrame = 0;
                     _padJump1 = _padJump2 = _padJump2Newer = _padDash1Last = false;
@@ -145,15 +186,7 @@ namespace IGTAPTasMod
                 bool idle = !jumpPress && !jumpRelease && !dash && !_engine.JumpHeld && _overlayAxis == Vector2.zero;
                 if (!(idle && IsTechDemo(_engine.ActiveMacro)))
                 {
-                    InputRow row;
-                    int slots = InputRowSlots;
-                    while (_inputRows.Count > slots) _inputRows.RemoveAt(0);
-                    if (_inputRows.Count < slots) row = new InputRow();
-                    else
-                    {
-                        row = _inputRows[0];
-                        _inputRows.RemoveAt(0);
-                    }
+                    InputRow row = NextInputRow();
                     row.tickText = _overlayTicks.ToString();
                     row.x = _overlayAxis.x;
                     row.y = _overlayAxis.y;
@@ -174,7 +207,71 @@ namespace IGTAPTasMod
             _overlayJumpPresses = _engine.JumpPresses;
             _overlayDashPresses = _engine.DashPresses;
             _overlayJumpRelease = _engine.LastJumpRelease;
+            _manualJump1Press = _manualJump2Press = _manualDash1Press = _manualDash2Press = _manualRelease = false;
             SampleVelocity(player);
+        }
+
+        /// <summary>A row for the list's newest tick: a new one until the list fills, then its oldest. It takes the pending break.</summary>
+        InputRow NextInputRow()
+        {
+            int slots = InputRowSlots;
+            while (_inputRows.Count > slots) _inputRows.RemoveAt(0);
+            InputRow row;
+            if (_inputRows.Count < slots) row = new InputRow();
+            else
+            {
+                row = _inputRows[0];
+                _inputRows.RemoveAt(0);
+            }
+            row.breakBefore = _inputRows.Count > 0 ? _pendingBreak : RowBreak.None;
+            _pendingBreak = RowBreak.None;
+            return row;
+        }
+
+        /// <summary>
+        /// One tick of manual play: the stick the tick read (MoveAxis) and the presses and releases Movement.Update took since the
+        /// last tick (SampleLiveInput). Idle ticks count but aren't listed, as a tech demo's.
+        /// </summary>
+        void ManualOverlayTick(Movement player)
+        {
+            bool jump1 = _manualJump1Press || _liveJump1 != null && _liveJump1.IsPressed();
+            bool jump2 = _manualJump2Press || _liveJump2 != null && _liveJump2.IsPressed();
+            bool jumpPress = _manualJump1Press || _manualJump2Press, dash = _manualDash1Press || _manualDash2Press;
+            Vector2 stick = player.MoveAxis;
+            bool idle = !jumpPress && !_manualRelease && !dash && !jump1 && !jump2 && stick == Vector2.zero;
+            if (_manualRestart || !_overlayManual && !idle)
+            {
+                if (!_overlayManual)
+                {
+                    _overlayCourse = "—";
+                    _inputRows.Clear();
+                    _pendingBreak = RowBreak.None;
+                }
+                _overlayTicks = 0;
+                _overlayManual = true;
+                _manualRestart = false;
+            }
+            if (!_overlayManual) return;
+            _overlayTicks++;
+            _overlayClock = null;
+            if (idle) return;
+            InputRow row = NextInputRow();
+            row.tick = _overlayTicks;
+            row.tickText = _overlayTicks.ToString();
+            row.x = stick.x;
+            row.y = stick.y;
+            row.stickText = StickText(row.x, row.y);
+            row.jumpPress = jumpPress;
+            row.jumpRelease = _manualRelease;
+            row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+            row.dash = dash;
+            row.jump1 = jump1;
+            row.jump2 = jump2;
+            row.jump1Press = _manualJump1Press;
+            row.jump2Press = _manualJump2Press;
+            row.dash1 = row.dash1Press = _manualDash1Press;
+            row.dash2 = row.dash2Press = _manualDash2Press;
+            _inputRows.Add(row);
         }
 
         void AssignPadButtons(InputRow row, bool jumpDown)
@@ -765,7 +862,7 @@ namespace IGTAPTasMod
         void DrawPanelTitle(float x, float y, float height, float scale)
         {
             float gap = 6 * scale;
-            x = Segment(x, y, height, gap, "TAS", _overlayTitle, TasColor);
+            x = Segment(x, y, height, gap, _overlayManual ? "MANUAL" : "TAS", _overlayTitle, TasColor);
             x = Segment(x, y, height, gap, "-", _overlayTitle, MutedColor);
             x = Segment(x, y, height, gap, _overlayCourse, _overlayTitle, PanelText);
             Movement p = _overlayPlayer;
@@ -800,7 +897,7 @@ namespace IGTAPTasMod
             DrawPanelTitle(x, y, titleLine, scale);
             Label(new Rect(x, y + titleLine, inner, clockLine), _overlayClock, _overlaySmall, MutedColor);
             Label(new Rect(x, y, inner, titleLine), _playbackSpeedText, _overlaySmallRight, _walkScaled ? TasColor : MutedColor);
-            if (_techOrder.Count > 0) DrawTechSummary(x, y + titleLine + clockLine, inner, clockLine, scale);
+            if (!_overlayManual && _techOrder.Count > 0) DrawTechSummary(x, y + titleLine + clockLine, inner, clockLine, scale);
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
@@ -814,7 +911,7 @@ namespace IGTAPTasMod
             y = panel.y + headerHeight;
             float listTop = y;
 
-            bool live = _overlayLastTick != 0;
+            bool live = _overlayLastTick != 0 || _overlayManual && OverlayListsManual;
             for (int i = _inputRows.Count - 1, n = 0; i >= _inputRows.Count - shown; i--, n++, y += rowHeight)
             {
                 InputRow row = _inputRows[i];
@@ -832,7 +929,16 @@ namespace IGTAPTasMod
             }
             for (int n = shown; n < slots; n++, y += rowHeight)
                 if (n % 2 == 1) Fill(new Rect(panel.x, y, width - 1, rowHeight), PanelStripe);
-            DrawTechBars(gutter, listTop, rowHeight, _inputRows[_inputRows.Count - 1].tick, shown, scale);
+            if (!_overlayManual) DrawTechBars(gutter, listTop, rowHeight, _inputRows[_inputRows.Count - 1].tick, shown, scale);
+            // A respawn between two listed ticks: a line under the first tick after it (the list runs newest first).
+            float breakLine = Mathf.Max(2f, Mathf.Round(3 * scale));
+            for (int i = _inputRows.Count - 1, n = 0; n < shown - 1; i--, n++)
+            {
+                RowBreak rowBreak = _inputRows[i].breakBefore;
+                if (rowBreak == RowBreak.None) continue;
+                float bottom = listTop + (n + 1) * rowHeight;
+                Fill(new Rect(panel.x, bottom - breakLine / 2f, width - 1, breakLine), rowBreak == RowBreak.Death ? KilledColor : GoalNextColor);
+            }
             DrawInputPad(InputPadRect(scale), liveInput ?? _inputRows[_inputRows.Count - 1], scale);
         }
 

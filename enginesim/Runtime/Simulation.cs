@@ -19,12 +19,15 @@ namespace IGTAP.EngineSim
         /// only turns an omnidash).</summary>
         public float? turnX, turnY;
         public bool reset;
+        /// <summary>The pause menu held open for this many frames after the tick's <see cref="pauseTick"/>-th physics tick and
+        /// <see cref="pauseFrame"/> Update frames of it (MacroStep.pauseFrames/pauseTick/pauseFrame): the pauselift.</summary>
+        public int pause, pauseTick, pauseFrame;
 
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
-        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && turnY == o.turnY && reset == o.reset; }
+        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && turnY == o.turnY && reset == o.reset && pause == o.pause && pauseTick == o.pauseTick && pauseFrame == o.pauseFrame; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
-        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, turnY, reset)); }
+        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, turnY, reset, pause, HashCode.Combine(pauseTick, pauseFrame))); }
 
         public static InputTick FromJson(JsonElement t)
         {
@@ -43,10 +46,13 @@ namespace IGTAP.EngineSim
                 turnX = t.TryGetProperty("turnX", out JsonElement turnX) && turnX.ValueKind == JsonValueKind.Number ? turnX.GetSingle() : null,
                 turnY = t.TryGetProperty("turnY", out JsonElement turnY) && turnY.ValueKind == JsonValueKind.Number ? turnY.GetSingle() : null,
                 reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
+                pause = t.TryGetProperty("pause", out JsonElement pause) && pause.ValueKind == JsonValueKind.Number ? pause.GetInt32() : 0,
+                pauseTick = t.TryGetProperty("pauseTick", out JsonElement pauseTick) && pauseTick.ValueKind == JsonValueKind.Number ? pauseTick.GetInt32() : 0,
+                pauseFrame = t.TryGetProperty("pauseFrame", out JsonElement pauseFrame) && pauseFrame.ValueKind == JsonValueKind.Number ? pauseFrame.GetInt32() : 0,
             };
         }
 
-        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, turnX, turnY, reset }; }
+        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, turnX, turnY, reset, pause, pauseTick, pauseFrame }; }
     }
     public sealed class RunResult
     {
@@ -657,6 +663,7 @@ namespace IGTAP.EngineSim
         static readonly MacroEngine.FrameGrid Frames = MacroEngine.FrameGrid.Playback;
         Vector3 _stepFrom, _stepTo;
         float _freezeFor = -1f;
+        int _pauseFrames, _pauseAfter;
         bool _inRun;
 
         Vector3 BodyPosition()
@@ -671,17 +678,23 @@ namespace IGTAP.EngineSim
             Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.LastAlpha));
         }
 
+        /// <summary>After each rendered frame's Movement.Update (probe's per-frame rows, as the plugin's 1x probe logs them):
+        /// the frame's blend, and whether time stood still in it (a freeze or a pause).</summary>
+        public Action<float, bool> OnFrame;
+
         /// <summary>
         /// The tick's rendered frames: one Movement.Update per frame at its blend, the first frame repeated for a dash freeze's
-        /// frames (time stands still, TimeStop). A step-up write moves the body at once and later frames show it. The
-        /// transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end, which a rebase
-        /// this tick has moved with the world (the body itself follows at the next sync), as turbo's Place(player, _stepTo).
+        /// frames (time stands still, TimeStop), and a route's pause (the menu held open for MacroStep.pauseFrames frames)
+        /// repeating the frame it holds (MacroEngine.FrameRepeats). A step-up write moves the body at once and later frames
+        /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
+        /// which a rebase this tick has moved with the world (the body itself follows at the next sync), as turbo's
+        /// Place(player, _stepTo).
         /// </summary>
         void InterpolatedFrames()
         {
             int frozen = _freezeFor >= 0f ? Frames.FrozenFrames(_freezeFor) : 0;
             for (int k = 0; k < Frames.Alphas.Length; k++)
-                for (int repeat = k == 0 ? frozen : 0; repeat >= 0; repeat--)
+                for (int repeat = MacroEngine.FrameRepeats(k, Frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter); repeat >= 0; repeat--)
                 {
                     Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Alphas[k]));
                     _update();
@@ -690,6 +703,7 @@ namespace IGTAP.EngineSim
                         Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
+                    OnFrame?.Invoke(Frames.Alphas[k], repeat > 0);
                 }
             Player.transform.StoreWorldPosition(_stepTo);
         }
@@ -917,6 +931,7 @@ namespace IGTAP.EngineSim
                 int rebasesBefore = _rebases.Length;
                 LagForFixedUpdate();
                 _freezeFor = -1f;
+                _pauseFrames = _pauseAfter = 0;
                 if (Engine.TakeQuickRestart())
                 {
                     string refused = Goals?.RestartRefused(Player.respawnPoint.x, Player.respawnPoint.y, Player.courseResetPoint != Vector2.zero);
@@ -932,6 +947,7 @@ namespace IGTAP.EngineSim
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
                 Engine.AfterFixedTick(Player);
+                _pauseFrames = Engine.TakePause(out _pauseAfter);
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 VmanClock();
@@ -1044,7 +1060,7 @@ namespace IGTAP.EngineSim
 
         static bool Merges(InputTick previous, InputTick k)
         {
-            return !k.press && !k.release && !k.dash && !k.reset && !k.ArmsLock && !previous.ArmsLock
+            return !k.press && !k.release && !k.dash && !k.reset && !k.ArmsLock && !previous.ArmsLock && k.pause == 0
                 && previous.x == k.x && previous.y == k.y && previous.held == k.held;
         }
 
@@ -1068,7 +1084,8 @@ namespace IGTAP.EngineSim
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
                     dashTurnX = k.dash ? k.turnX : null, dashTurnY = k.dash ? k.turnY : null,
-                    rawQuickRestart = k.reset });
+                    rawQuickRestart = k.reset, pauseFrames = k.pause, pauseTick = k.pause > 0 ? k.pauseTick : 0,
+                    pauseFrame = k.pause > 0 ? k.pauseFrame : 0 });
             }
             if (steps.Count == 0) steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,
                 endCondition = ActionEndCondition.FixedTicks });
