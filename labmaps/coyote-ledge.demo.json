@@ -20,9 +20,30 @@
     "control": false,
     "prunedHeight": 0,
     "prunedTime": 0,
-    "tech": "coyote jump: tick 3 takes Velocity.y 0 -\u003E 805 with onGround held at coyoteFrames 6/6 and the ground check\u0027s rays already missing at x 1985.9 (the ground branch cannot ground there)",
+    "tech": "coyote jump: tick 3 takes Velocity.y 0 -> 805 with onGround held at coyoteFrames 6/6 and the ground check's rays already missing at x 1985.9 (the ground branch cannot ground there)",
     "quantization": "1 u position, 10 u/s velocity and momentum, 1 u counters",
-    "seconds": 3.7
+    "seconds": 3.7,
+    "exactPass": {
+      "key": "bit-exact floats (position, velocity, momentum, body, every Movement field)",
+      "maxTicks": 3,
+      "explored": 7950,
+      "states": 2432,
+      "keys": 2432,
+      "duplicates": 5519,
+      "found": false,
+      "seconds": 2.0,
+      "conclusion": "no demo within 3 ticks on the bit-exact key (every state below 3 exhausted): the bound 4 is the true minimum, not an artifact of the quantized key"
+    },
+    "controlPass": {
+      "rule": "no jump press (nor a dash's dash-jump frame) unless the game's own ground check (Movement.FixedUpdate's ground-branch rays) grounds the dot",
+      "maxTicks": 20,
+      "explored": 0,
+      "states": 1,
+      "prunedHeight": 1,
+      "found": false,
+      "seconds": 0.0,
+      "conclusion": "no solution at any tick within 20: with the tech's jump forbidden the start cannot rise into the finish box (max reachable y 15036 world vs the box's bottom 15042, and every reachable state only falls)"
+    }
   },
   "inputs": [
     {

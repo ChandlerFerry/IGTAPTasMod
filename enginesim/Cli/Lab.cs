@@ -275,7 +275,7 @@ namespace IGTAP.EngineSim.Cli
             bool startCanDash = GetMovementBool(sim, "dashUnlocked");
             Vector3 startAt = sim.PlayerWorld;
             var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash,
-                Key = KeyOf(sim, exact), MaxY = MaxReach(sim), X = startAt.x, Y = startAt.y,
+                Key = KeyOf(sim, exact), MaxY = MaxReach(sim, control), X = startAt.x, Y = startAt.y,
                 SolidGround = GroundCheckGrounds(sim, startAt.x, startAt.y) };
             var visited = new Dictionary<string, int> { [start.Key] = 0 };
             var buckets = new List<Node>[maxTicks + 64];
@@ -322,7 +322,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         if (Volatile.Read(ref bound) <= ticks + 1) break;
                         Interlocked.Increment(ref explored);
-                        Node child = Step(sim2, node, input, exact, out RunResult run);
+                        Node child = Step(sim2, node, input, exact, control, out RunResult run);
                         if (child == null)
                         {
                             if (run != null && run.Finished) found.Add((node, input, run.Stepped));
@@ -418,7 +418,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>One input tick from a node: replay its path plus the new input from the lab start in one run (the trailing
         /// duplicate keeps the engine from ending at the input tick's end), and stop as the new input is consumed.</summary>
-        static Node Step(Simulation sim, Node from, InputTick input, bool exact, out RunResult run)
+        static Node Step(Simulation sim, Node from, InputTick input, bool exact, bool control, out RunResult run)
         {
             var path = new List<InputTick>(from.Path.Count + 2);
             path.AddRange(from.Path);
@@ -435,7 +435,7 @@ namespace IGTAP.EngineSim.Cli
                 if (tick <= from.Path.Count) return true;
                 key = KeyOf(sim, exact);
                 canDash = GetMovementBool(sim, "dashUnlocked");
-                maxY = MaxReach(sim);
+                maxY = MaxReach(sim, control);
                 Vector3 at = sim.PlayerWorld;
                 x = at.x; y = at.y;
                 solid = GroundCheckGrounds(sim, x, y);
@@ -728,8 +728,10 @@ namespace IGTAP.EngineSim.Cli
         /// wall jump left (wallJumpsLeft: 730 + a bounce's 220 momentum under 400 u) and one dash (a super's 805 or an
         /// omnidash's ground bounce 1405 under 900 u) cover everything the game can give.
         /// </summary>
-        static float MaxReach(Simulation sim)
+        static float MaxReach(Simulation sim, bool control = false)
         {
+            if (control) { Vector2 cv = (Vector2)VelocityField.GetValue(sim.Player), cm = (Vector2)MomentumField.GetValue(sim.Player);
+                float cup = MathF.Max(0f, cv.y + cm.y); return sim.PlayerWorld.y + cup * cup / 2700f + 50f; }
             Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
             float up = MathF.Max(0f, v.y + m.y);
             float gain = up * up / 2700f + 50f;

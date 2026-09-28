@@ -123,13 +123,13 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 
 | Piece | What it does |
 |---|---|
-| `TasPlugin.cs` | BepInEx plugin: route runner, recorder, HTTP API on `http://127.0.0.1:17426/`. |
+| `TasPlugin.cs`, `TasPlugin.*.cs` | BepInEx plugin, split by responsibility: `TasPlugin.cs` (state, lifecycle, shared helpers), `TasPlugin.Patches.cs` (all Harmony hooks), `TasPlugin.Playback.cs` (pacing & fixed clock), `TasPlugin.Session.cs` (new-game setup, unlocks, bootstrap), `TasPlugin.Savestates.cs`, `TasPlugin.Recording.cs`, `TasPlugin.Persistence.cs`, `TasPlugin.Http.cs` (HTTP API on `http://127.0.0.1:17426/`). Fields stay in `TasPlugin.cs`/`FullTasPlugin.cs` to keep the field-initializer order the compiler emits. |
 | `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Shared with `enginesim`. |
 | `TurboRunner.cs` | Deterministic faster-than-real-time replay inside the game. |
 | `Solver.cs` | Optimize tab and `SaveSolverRoute`, the only way a category route gets saved. |
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
-| `FullTas.cs`, `FullTasPlugin.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. |
+| `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
 | `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and a demo route that performs it. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `web/` | Next.js studio, served by the plugin. |

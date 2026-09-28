@@ -198,13 +198,18 @@ goes on from the frontier and doesn't start again from the course start. Each wo
 plateau route instead of the saved route. A plateau route's result is not submitted: its file was written when it
 was found. `--fresh` ignores the file for this solve but still overwrites it.
 
-Coordinates: every position you give or read (forced-path boxes, `--via`/`--avoid`, the studio map's readout, `path`'s
-`pos`, `courses.json`, `at:x,y,w,h` goals) is in the game world's frame: the scene position minus the game's
-`FloatingOrigin.currentOrigin`. The game shifts every root object whenever the player strays `Threshold` (17500 in
-every Overworld export) from the scene origin, so a capture's scene frame depends on where the game was when it was
-taken (Course 1's start gate: scene x -241 in one capture, 2000 in another); the world frame doesn't. A simulation
-keeps its capture's origin (`Simulation.Origin`, the frame of the trace's rects, goals and map cells) and its current one
-(`Simulation.CurrentOrigin`), and checks boxes against `Simulation.PlayerWorld`. Only the trace files themselves
+Coordinates: three frames, three types (`Runtime\Frames.cs`), so mixing frames is a compile error. `WorldPos` is the
+game world's frame: the scene position minus the game's `FloatingOrigin.currentOrigin`; every position you give or read
+(forced-path boxes, `--via`/`--avoid`, the studio map's readout, `path`'s `pos`, `courses.json`, `at:x,y,w,h` goals) is
+in it. The game shifts every root object whenever the player strays `Threshold` (17500 in every Overworld export) from
+the scene origin, so a capture's scene frame depends on where the game was when it was taken (Course 1's start gate:
+scene x -241 in one capture, 2000 in another); the world frame doesn't. `ScenePos` is the scene frame now (transform
+positions and raycasts; `ScenePos.From` and `AsVector2` are the only raw-vector escapes, at those Unity API boundaries).
+`CapturePos` is the scene frame at the trace's capture. A simulation keeps its capture's origin (`Simulation.Origin`,
+the frame of the trace's rects, goals and map cells) and its current one (`Simulation.CurrentOrigin`), converts between
+the frames around them (`sim.ToScene`, `sim.ToWorld`, `sim.ToCapture`, `sim.FromCapture`), and reads the player's
+position per frame (`Simulation.PlayerWorld`, `Simulation.PlayerAtCapture`); a box is checked against the frame it is
+given in. Only the trace files themselves
 (samples, the world export, the header's goal rects) stay in their capture's scene frame; each sample carries the
 `origin` it was taken at.
 
