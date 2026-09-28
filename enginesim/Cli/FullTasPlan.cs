@@ -54,6 +54,8 @@ namespace IGTAP.EngineSim.Cli
             }
             if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
             Harvest(at, route, kept, Math.Min(targetIndex + 1, _best.Progress));
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            SeedLaps(at, route, kept, lap);
             _kept = all.Take(kept).ToArray();
             _planBase = _runGoals;
             // Piece searches replay the plan so far on fresh simulations: they track the plan's goals, as the evaluator does.
@@ -160,11 +162,13 @@ namespace IGTAP.EngineSim.Cli
                     var runouts = new List<List<InputTick>> { oldRunout };
                     for (int wait = 0; wait <= 24; wait++) runouts.Add(Enumerable.Repeat(new InputTick { held = head.Count > 0 && head[head.Count - 1].held }, wait).ToList());
                     List<InputTick> tail = _best.Inputs.Skip(oldRestart).ToList();
+                    (List<InputTick> inputs, RunResult result, int wait) furthest = (null, null, 0);
                     foreach (List<InputTick> runout in runouts)
                     {
                         if (runout.Count == 0 && head.Count > 0 && head[head.Count - 1].reset) continue;
                         List<InputTick> joined = head.Concat(runout).Concat(tail).ToList();
                         RunResult j = Play(joined);
+                        if (furthest.result == null || j.Progress > furthest.result.Progress) furthest = (joined, j, runout.Count);
                         if (j.Progress < full.Count) continue;
                         written = joined;
                         r = j;
@@ -178,9 +182,18 @@ namespace IGTAP.EngineSim.Cli
                         SimSnapshot end = _eval.Advance(head);
                         courseScript running = null;
                         if (end != null) { _eval.Restore(end); running = _eval.TimingCourse(); }
-                        Log($"route: the old route after {targetLabel} doesn't play on from the plan's end"
+                        string stops = "";
+                        // The furthest join is kept when it gets past the plan's end: a later stretch that breaks (a buy walk that
+                        // now takes a box it can pay for) is re-planned from there, on top of this one.
+                        if (furthest.result != null && furthest.result.Progress > reached)
+                        {
+                            written = furthest.inputs;
+                            r = furthest.result;
+                            stops = $"; joined after {furthest.wait} ticks it stops at goal {r.Progress + 1} ({(r.Progress < full.Count ? full[r.Progress].label : "")}: {r.EndReason})";
+                        }
+                        Log($"route: the old route after {targetLabel} doesn't play on to the end from the plan's end"
                             + (running != null ? $" (Course {running.courseNumber} is still running there, so its Quick Restart goes to the course's reset point, not the old route's Checkpoint)" : "")
-                            + "; solve the run's goals after it (Solve unsolved) to find the rest");
+                            + stops + "; re-plan the stretch it stops in, or solve the goals after it (Solve unsolved)");
                     }
                 }
                 // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.
@@ -189,6 +202,37 @@ namespace IGTAP.EngineSim.Cli
                 Log($"route: reaches {r.Progress} of {full.Count} goals" + (r.Progress == full.Count ? $" in {r.GoalPhysicsTicks[full.Count - 1] * _dt:0.00}s" : "") + $" -> {routeFile}");
             }
             return done ? 0 : 3;
+        }
+
+        /// <summary>
+        /// Files the saved course routes (--seed files that run this course from standing at its start) as lap pieces at the
+        /// spot a quick restart from here lands: the gate's part as the lap's start piece, the rest as its finish piece, each
+        /// checked by playing it there. A lap the route polished in the run is often slower than the course's own record
+        /// (Course 1's farm route finishes 12 ticks sooner after the same quick restart), and the planner laps from the library.
+        /// </summary>
+        void SeedLaps(SimSnapshot at, List<InputTick> route, int reached, FullTasGoal[] lap)
+        {
+            var runs = _seeds.Where(s => s.Standing && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            if (runs.Count == 0) return;
+            var restart = Restarts(at, route, reached).FirstOrDefault();
+            if (restart.state == null) { Log("lap seeds: no quick restart from the stretch's start"); return; }
+            List<InputTick> before = route.Concat(restart.inputs).ToList();
+            int filed = 0;
+            foreach (Seed s in runs)
+            {
+                var start = new Target { Goal = reached, Extra = new[] { lap[0] }, Key = lap[0].label };
+                Step gate = Reaches(restart.state, before.Count, s.Inputs, start);
+                if (gate == null || gate.Next == null) continue;
+                var finish = new Target { Goal = reached, Extra = new[] { lap[1] }, Key = lap[1].label };
+                List<InputTick> afterGate = before.Concat(gate.Inputs).ToList();
+                Step end = Reaches(gate.Next, afterGate.Count, s.Inputs.Skip(gate.Inputs.Count).ToList(), finish);
+                if (end == null) continue;
+                Keep(gate, restart.state, before, start);
+                Keep(end, gate.Next, afterGate, finish);
+                filed++;
+                Log($"lap seeds: {s.Name} laps from the quick restart's spot to its finish in {gate.Inputs.Count + end.Inputs.Count} inputs (finish at physics tick {end.Physics})");
+            }
+            Log($"lap seeds: {filed} of {runs.Count} saved course routes filed as lap pieces");
         }
 
         /// <summary>

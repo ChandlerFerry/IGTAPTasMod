@@ -525,6 +525,15 @@ complete route: save the `--out` goals (**Save goals**, which marks the run's sa
 `buy:buydj` (`--from 298 --target buy:buydj`) bought `buydj` 86 ticks sooner with 64 goals for 66; joined after 23 idle
 ticks it made the record 507.14 s (from 509.28 s).
 
+`fulltas-plan` takes `--seed` files as the solve does: the saved course routes that run the stretch's course from
+standing at its start are played from the spot a quick restart lands at, and filed as its lap pieces (the gate's part and
+the finish's) when they reach both. The planner laps from the library, and a lap the route polished in the run is often
+slower than the course's own: `FalseEnding-Any%`'s Course 1 laps finish 12 ticks later after the same quick restart than
+`1_NONE farm 2.12`, and with it filed Course 1's plan buys `buywj` 252 ticks sooner (tick 5328). When the old route
+after the target doesn't play on to the end, the join that gets furthest is written (with where and why it stops: an
+earlier `buywj` has the Cash to buy Course 2's `CashPerLoop` box on the walk to Course 2's gate), for the next stretch
+to be planned or solved from.
+
 ## Offline economy
 
 The whole run needs Cash offline. A start state whose economy carries the clones (every Full-TAS trace) runs the
