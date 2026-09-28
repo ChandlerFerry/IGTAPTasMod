@@ -9,9 +9,15 @@ namespace IGTAPTasMod
     [Serializable]
     public sealed class MacroStep
     {
-        public string id = Guid.NewGuid().ToString("N");
+        public string id;
         public bool enabled = true;
         public string label = "New action";
+
+        public MacroStep() { id = Guid.NewGuid().ToString("N"); }
+
+        /// <summary>A step with no id (null), for the offline engine's per-run steps (Simulation.ToSteps): MacroEngine never
+        /// reads a step's id, and a Guid per merged input group per run is measurable in a search.</summary>
+        internal MacroStep(bool noId) { }
         public MacroStepType type = MacroStepType.Move;
         public int durationMs = 100;
         public int timeoutMs = 1200;
