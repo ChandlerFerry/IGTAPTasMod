@@ -285,7 +285,8 @@ namespace IGTAP.EngineSim
             if (kind == localUpgrades.localUpgradeSet.Movement)
             {
                 unlocksChange = move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.doubleJump
-                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash || move == upgradeBox.movementUpgrades.wallJump && !player.wallJumpUnlocked;
+                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash || move == upgradeBox.movementUpgrades.unlockBlockSwap
+                    || move == upgradeBox.movementUpgrades.wallJump && !player.wallJumpUnlocked;
                 switch (box.movementUpgrade)
                 {
                     case upgradeBox.movementUpgrades.dash: player.dashUnlocked = true; player.maxAirDashes++; break;
@@ -305,9 +306,7 @@ namespace IGTAP.EngineSim
             else ScaleBoxCost(box);
             if (box.TimesUsed >= box.Cap) box.isActive = false;
             _sim.Bought(path, _ids[box]);
-            if (kind == localUpgrades.localUpgradeSet.Movement && move == upgradeBox.movementUpgrades.unlockBlockSwap && _sim.Engine.IsRunning)
-                _sim.Engine.Abort("Unmodeled purchase: block swap on dash");
-            else if (unlocksChange && _sim.Goals == null && _sim.Engine.IsRunning)
+            if (unlocksChange && _sim.Goals == null && _sim.Engine.IsRunning)
                 _sim.Engine.Abort("Category unlocks changed: bought " + move + " at " + path);
         }
 

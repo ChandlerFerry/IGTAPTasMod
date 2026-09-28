@@ -73,6 +73,9 @@ namespace IGTAP.EngineSim.Cli
             long now = kept == 0 ? 0 : _best.GoalPhysics[kept - 1];
             bool done = false;
             int phase = 0;
+            // A box the piece search found no way to (a far global box) is dropped from the plan: searched again every step, its
+            // two budgets were most of the plan's time and it never played.
+            var unreachable = new HashSet<string>();
             while (!done && !TimeUp)
             {
                 string aim = targets[phase];
@@ -81,13 +84,17 @@ namespace IGTAP.EngineSim.Cli
                 double cost = Cost(at, target);
                 (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta)? pick = null;
                 var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap) };
-                options.AddRange(buys.Where(l => l != aim).Select(l => (l, new[] { byLabel[l] })));
+                options.AddRange(buys.Where(l => l != aim && !unreachable.Contains(l)).Select(l => (l, new[] { byLabel[l] })));
                 foreach (var (what, goals) in options)
                 {
                     bool? affordable = goals[0].kind == FullTasGoal.Buy ? Affordable(at, goals[0]) : true;
                     if (affordable == null) continue;
                     var played = what == "lap" ? Lap(at, route, planned, lap) : Play(at, route, planned, goals, affordable == true);
-                    if (played == null) continue;
+                    if (played == null)
+                    {
+                        if (affordable == true && what != "lap" && what != aim && unreachable.Add(what)) Log($"{what}: no way found from tick {now}; dropped from the plan");
+                        continue;
+                    }
                     var (inputs, state, tick) = played.Value;
                     double eta = tick;
                     if (what != aim)

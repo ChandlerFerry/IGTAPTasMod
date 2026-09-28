@@ -145,8 +145,11 @@ namespace IGTAPTasMod
         {
             Next = s.Next;
             _bought = s.Bought;
-            Array.Copy(s.InputTicks, InputTicks, InputTicks.Length);
-            Array.Copy(s.PhysicsTicks, PhysicsTicks, PhysicsTicks.Length);
+            // The engine farm planner's goal list grows as it plans: a snapshot taken with fewer goals leaves the rest unreached.
+            int n = Math.Min(s.InputTicks.Length, InputTicks.Length);
+            Array.Copy(s.InputTicks, InputTicks, n);
+            Array.Copy(s.PhysicsTicks, PhysicsTicks, n);
+            for (int i = n; i < InputTicks.Length; i++) InputTicks[i] = PhysicsTicks[i] = -1;
         }
 
         public int Hash() { return Next * 397 ^ _bought; }

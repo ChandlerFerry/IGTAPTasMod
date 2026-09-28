@@ -442,8 +442,9 @@ Course 4 `c5.tier + c4.tier - 1 + 4`, Course 5 keeps its tier), the Course 1–3
 `tripBreakerScript.TripBreaker`: Cash 0, `buyswap`'s box off and `buyblockswap5`'s on, and the coloured blocks swapped
 to orange (Courses 4–5 collide differently afterwards). The swap needs both colours' block geometry: the world export
 writes each coloured-block composite's `sourceShapes` (its geometry with its tilemap on); an older export stops the run
-at the breaker (`Unmodeled physics: ...`). `buyblockswap5` sets `blockSwapUnlocked` and ends the run (`Unmodeled
-purchase: block swap on dash`), so it works as a run's last goal. The turbo gate's snapshot restores what the breaker
+at the breaker (`Unmodeled physics: ...`). `buyblockswap5` sets `blockSwapUnlocked` and the run goes on: a dash then swaps
+the blocks through the game's own `colouredBlockSwapper`, as in the `WJ_DS_DJ_BS` courses (`TouchGrass-ANY%` drops down the
+hole left of Course 4 after it). The turbo gate's snapshot restores what the breaker
 changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights, the blocks' colliders). The lights it
 keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on unless Area 1 is overgrown, GlobalLight
 off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
