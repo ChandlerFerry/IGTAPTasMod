@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -26,7 +27,9 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<float> Points = new List<float>();
         }
 
-        internal sealed record Marker(string kind, string name, float x, float y);
+        // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint.
+        internal sealed record Marker(string kind, string name, float x, float y,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[][] area = null);
 
         public static int Run(string[] args)
         {
@@ -631,6 +634,7 @@ namespace IGTAP.EngineSim.Cli
                 ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill" };
             var markers = new List<Marker>();
             HashSet<int> on = OnObjects(world, allStates: true);
+            var bodies = Bodies(world, origin);
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
                 if (!on.Contains(o.GetProperty("id").GetInt32())) continue;
@@ -640,11 +644,33 @@ namespace IGTAP.EngineSim.Cli
                     string name = o.GetProperty("name").GetString();
                     if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
                     JsonElement p = o.GetProperty("position");
-                    markers.Add(new Marker(kind, name, Round(p.GetProperty("x").GetSingle() - origin.x), Round(p.GetProperty("y").GetSingle() - origin.y)));
+                    markers.Add(new Marker(kind, name, Round(p.GetProperty("x").GetSingle() - origin.x), Round(p.GetProperty("y").GetSingle() - origin.y),
+                        kind == "checkpoint" ? TriggerArea(o, bodies, origin) : null));
                     break;
                 }
             }
             return markers;
+        }
+
+        // An object's enabled collider shapes as game-world polygons (a box collider is one 4-corner polygon).
+        static float[][] TriggerArea(JsonElement o, Dictionary<int, (float x, float y, float cos, float sin, bool moving)> bodies, Vector3 origin)
+        {
+            var area = new List<float[]>();
+            foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+            {
+                if (!c.TryGetProperty("shapes", out JsonElement shapes) || shapes.ValueKind != JsonValueKind.Object) continue;
+                if (c.TryGetProperty("enabled", out JsonElement enabled) && !enabled.GetBoolean()) continue;
+                var body = BodyOf(c.GetProperty("props"), bodies);
+                foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
+                {
+                    if (s.GetProperty("type").GetString() != "Polygon") continue;
+                    float[] v = s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                    if (v.Length < 6) continue;
+                    ToWorld(v, body, origin);
+                    area.Add(v.Select(Round).ToArray());
+                }
+            }
+            return area.ToArray();
         }
     }
 }

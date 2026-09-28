@@ -6,7 +6,8 @@ import { memo } from "react";
 
 // `spring`: a spring's trigger box, launching along this unit vector (its transform.up).
 export type Solid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null };
-export type Marker = { kind: string; name: string; x: number; y: number };
+// `area`: a checkpoint's trigger (polygons, x, y pairs): touching it sets where a death or quick restart respawns.
+export type Marker = { kind: string; name: string; x: number; y: number; area?: number[][] };
 // One tree segment: the fewest tree purchases that grow it (Plant Tree is 1; 0: no box grows it), the box whose
 // purchase does, and the box it carries.
 export type TreeStep = { tree: number; step: number; via: string | null; box: string | null; x: number; y: number };
@@ -87,10 +88,13 @@ export const Level = memo(function Level({ paths, grown, px }: { paths: LevelPat
   </g>;
 });
 
-// Markers and tree purchase numbers, a constant size on screen (`px`: world units per screen pixel). Memoized: a pan
+// Markers and tree purchase numbers, a constant size on screen (`px`: world units per screen pixel), over each
+// checkpoint's trigger area (world size; no pointer events, so floors under it stay tappable). Memoized: a pan
 // keeps px, so only a zoom redraws them.
 export const Marks = memo(function Marks({ markers, steps, px, showMarkers, showSteps }: { markers: Marker[]; steps: TreeStep[]; px: number; showMarkers: boolean; showSteps: boolean }) {
   return <g>
+    {showMarkers && markers.map((m, i) => m.area && <path key={`area${i}`} d={m.area.map(polyPath).join("")} fill={MARKERS[m.kind]?.color} fillOpacity={.1}
+      stroke={MARKERS[m.kind]?.color} strokeWidth={1.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>)}
     {showMarkers && markers.map((m, i) => {
       const look = MARKERS[m.kind]; if (!look) return null;
       const s = (look.shape === "small" ? 4 : 7) * px, x = m.x, y = fy(m.y);
