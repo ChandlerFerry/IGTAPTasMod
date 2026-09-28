@@ -20,6 +20,8 @@ namespace IGTAPTasMod
         private object HandleWebRequest(WebStudioRequest request)
         {
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
+            // An avoid box drawn on a course's search map edits forced-paths.json (a new partial file, not the engine bridge).
+            if (request.Path == "/api/enginesim/avoid") return HandleCourseAvoid(body);
             if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
             if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
             if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);

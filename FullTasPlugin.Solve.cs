@@ -374,47 +374,39 @@ namespace IGTAPTasMod
 
         string FullTasSolvingGroup { get { return _fullTasProcess == null ? null : "fulltas-" + _fullTasSolveRun; } }
 
+        /// <summary>A box drawn on a Full-TAS run's map: under the rule with `"fulltas": [runs]` those runs share
+        /// (created when none is drawn yet), so every window of their solves that enters it is cut.</summary>
         int EditFullTasAvoids(string[] runs, float[] b, bool remove)
         {
-            string exe = EngineSimExe;
-            if (string.IsNullOrEmpty(exe)) throw new InvalidOperationException("The offline solver's path isn't known to this build.");
-            string built = Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
-            string source = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(exe), "..", "..", "..", "forced-paths.json"));
-            string[] files = new[] { source, built }.Where(File.Exists).ToArray();
-            if (files.Length == 0) throw new InvalidOperationException("No forced-paths.json at " + source + " or " + built + ".");
-            JObject root = JObject.Parse(File.ReadAllText(files[0]));
-            var paths = (JArray)root["paths"];
-            float x0 = Math.Min(b[0], b[2]), x1 = Math.Max(b[0], b[2]), y0 = Math.Min(b[1], b[3]), y1 = Math.Max(b[1], b[3]);
-            float[] wanted = new[] { x0, y0, x1, y1 }.Select(v => (float)Math.Round(v, 1)).ToArray();
-            Func<JToken, bool> same = t => t is JArray a && a.Count == 4 && Enumerable.Range(0, 4).All(i => Math.Abs((float)a[i] - wanted[i]) < .5f);
-            List<JObject> rules = paths.OfType<JObject>().Where(r => r["fulltas"] is JArray).ToList();
-            int changed = 0;
-            if (remove)
+            float[] wanted = NormalizedBox(b);
+            Func<JToken, bool> same = SameBox(wanted);
+            return EditForcedPaths(paths =>
             {
-                foreach (JObject rule in rules.Where(r => r["fulltas"].Any(n => runs.Contains((string)n))))
+                List<JObject> rules = paths.OfType<JObject>().Where(r => r["fulltas"] is JArray).ToList();
+                int changed = 0;
+                if (remove)
                 {
-                    if (!(rule["avoid"] is JArray avoid)) continue;
-                    foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
-                    if (avoid.Count == 0 && !(rule["via"] is JArray via && via.Count > 0)) rule.Remove();
+                    foreach (JObject rule in rules.Where(r => r["fulltas"].Any(n => runs.Contains((string)n))))
+                    {
+                        if (!(rule["avoid"] is JArray avoid)) continue;
+                        foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
+                        if (avoid.Count == 0 && !(rule["via"] is JArray via && via.Count > 0)) rule.Remove();
+                    }
                 }
-            }
-            else
-            {
-                JObject rule = rules.FirstOrDefault(r => (bool?)r["drawn"] == true
-                    && r["fulltas"].Select(n => (string)n).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(runs));
-                if (rule == null)
+                else
                 {
-                    rule = new JObject { ["fulltas"] = new JArray(runs), ["note"] = "Drawn on the Full-TAS map.", ["drawn"] = true, ["avoid"] = new JArray() };
-                    paths.Add(rule);
+                    JObject rule = rules.FirstOrDefault(r => (bool?)r["drawn"] == true
+                        && r["fulltas"].Select(n => (string)n).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(runs));
+                    if (rule == null)
+                    {
+                        rule = new JObject { ["fulltas"] = new JArray(runs), ["note"] = "Drawn on the Full-TAS map.", ["drawn"] = true, ["avoid"] = new JArray() };
+                        paths.Add(rule);
+                    }
+                    var avoid = (JArray)rule["avoid"];
+                    if (!avoid.Any(same)) { avoid.Add(new JArray(wanted)); changed++; }
                 }
-                var avoid = (JArray)rule["avoid"];
-                if (!avoid.Any(same)) { avoid.Add(new JArray(wanted)); changed++; }
-            }
-            string text = CompactScalarArrays.Replace(root.ToString(Formatting.Indented).Replace("\r\n", "\n"), m =>
-                "[" + string.Join(", ", m.Groups[1].Value.Split(',').Select(s => s.Trim())) + "]");
-            text = CompactBoxLists.Replace(text, m => "[" + string.Join(", ", InnerArrays.Matches(m.Groups[1].Value).Cast<Match>().Select(i => i.Value)) + "]") + "\n";
-            foreach (string file in new[] { source, built }.Where(f => Directory.Exists(Path.GetDirectoryName(f)))) File.WriteAllText(file, text);
-            return changed;
+                return changed;
+            });
         }
 
         List<float[]> FullTasAvoids(string run)

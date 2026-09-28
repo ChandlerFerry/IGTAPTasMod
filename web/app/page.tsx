@@ -358,6 +358,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [drawing, setDrawing] = useState(false);
   const [sketch, setSketch] = useState<number[] | null>(null);
   const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
+  // Course maps: the avoid box's optional block name (empty: cut for every solve) and whether that block starts on.
+  const [sketchName, setSketchName] = useState("");
+  const [sketchOn, setSketchOn] = useState(false);
   const [saving, setSaving] = useState(false);
   const sketchStart = useRef<{ x: number; y: number } | null>(null);
   // Full-TAS: an at: goal dragged to a new place (same size), shown there until it's saved or discarded.
@@ -573,6 +576,12 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
+  const editCourseAvoid = async (box: number[], name: string, on: boolean, remove: boolean) => {
+    setSaving(true); setFailure("");
+    try { await request("/enginesim/avoid", { course: target.course, capabilities: target.capabilities, box, name, on, remove }); if (!remove) setSketch(null); await load(); }
+    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
   const center = (b: number[]) => ({ x: Math.round((b[0] + b[2]) / 2 * 10) / 10, y: Math.round((b[1] + b[3]) / 2 * 10) / 10 });
   const placeMoved = (x: number, y: number) => setMoved(m => {
     if (!m) return m;
@@ -592,14 +601,14 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
       ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals as they are in <code>fulltas.json</code> now (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. <strong>Move goals</strong>, then drag a green goal box (same size) or type its new centre, and save it: the run's goals change as with <b>Save goals</b>. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
-      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. <strong>Ghost compare</strong> draws any two routes (saved routes, the offline best, its human version) over the map with the first tick their states diverge and, per map cell along the paths, how much later one first arrives than the other. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
+      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. <strong>Draw avoid</strong>, then drag a box on the map to cut it for every solve of this map (name it to make it a pickable optional block instead), or <strong>Remove</strong> a box listed below the map. <strong>Ghost compare</strong> draws any two routes (saved routes, the offline best, its human version) over the map with the first tick their states diverge and, per map cell along the paths, how much later one first arrives than the other. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
       {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"]] as [keyof MapLayers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
-      {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
+      {data && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
       {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag an at: goal's green box to a new place; it keeps its size" onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
     </div>
     <div className="ghostBar">
@@ -633,8 +642,14 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · ghost Δ first arrival {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {sketch && !sketchStart.current && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
-      {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
-      <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
+      {data?.fulltas ? <>
+        {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
+        <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
+      </> : <>
+        <input placeholder="block name (optional)" value={sketchName} onChange={e => setSketchName(e.target.value)} title="Empty: the box is cut for every solve of this map. Named: it becomes a pickable optional block of the forced-paths.json rule covering this map."/>
+        <label className="passLoop" title="'default': true for the block: it starts on for every solve that doesn't pick its own blocks."><input type="checkbox" disabled={!sketchName.trim()} checked={sketchOn} onChange={e => setSketchOn(e.target.checked)}/>on by default</label>
+        <button className="primary" disabled={saving} onClick={() => editCourseAvoid(sketch, sketchName.trim(), sketchOn, false)}>Add avoid</button>
+      </>}
       <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
     {moved && <div className="buttonRow">
       <span className="hint">Goal {moved.goal.index} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
@@ -644,6 +659,13 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       <button className="secondary" disabled={saving} onClick={() => setMoved(null)}>Discard</button></div>}
     {data?.fulltas && data.avoid.length > 0 && <ul className="mapRoutes">{data.avoid.map((b, i) => <li key={i}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
       <button className="secondary" disabled={saving} title={`Takes this box out of every forced-paths.json rule of ${data.fulltas} (a box shared with other runs goes for them too)`} onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
+    {data && !data.fulltas && (data.avoid.length > 0 || (data.optional ?? []).some(b => b.avoid.length + b.via.length > 0)) && <ul className="mapRoutes">
+      {data.avoid.map((b, i) => <li key={`standing${i}`}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
+        <button className="secondary" disabled={saving} title="Takes this box out of every forced-paths.json rule of this course and category (a box shared with other targets goes for them too)" onClick={() => editCourseAvoid(b, "", false, true)}>Remove</button></li>)}
+      {(data.optional ?? []).flatMap(block => [...block.avoid.map(b => ({ b, via: false })), ...block.via.map(b => ({ b, via: true }))].map(({ b, via }, j) =>
+        <li key={`${block.name}${via ? "v" : "a"}${j}`}><span className="mapSwatch" style={{ background: via ? "#3ddc97" : "#ff3030" }}/><code>{block.name}</code> {via ? "via" : "avoid"} {boxText(b)}
+          <button className="secondary" disabled={saving} title={`Takes this box out of the ${block.name} optional block (the block is dropped when no boxes are left)`} onClick={() => editCourseAvoid(b, "", false, true)}>Remove</button></li>))}
+    </ul>}
     {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>
       <span className="mapSwatch" style={{ background: colors[i] }}/>{r.name}<small>{r.finished ? `${r.time.toFixed(2)}s` : "no finish"} · {r.points.length / 2} ticks</small></label></li>)}</ul>}
   </div>;
