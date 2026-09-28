@@ -432,6 +432,10 @@ all area goals), and its windows took the record from 511.22 s to 510.52 s.
   (the segment as the best holds it, the way, the time it saves there and why the run failed) while the best holds that
   segment unchanged. That segment isn't searched again: each pass retries the known way in the whole run (no rebuild) and
   keeps it once the route after it takes it.
+- A segment searched with nothing faster found is kept in the same file (`searched`, with its minutes per window) and
+  skipped by later passes while the best holds it unchanged, unless **Minutes per window** is longer now or it is the
+  **Only segment**. A pass that has only such segments left stops (`every segment left has been searched at N min per
+  window`).
 - A segment with no goal is first tried without: one Quick Restart where the two were (the opening one as it is, or the
   closing one's input in its place), kept when that Quick Restart leaves the player as the closing one did and the run ends
   sooner. An extra lap (the builder's, for Cash) is then searched as its course's gate and finish (`start:N + finish:N`,

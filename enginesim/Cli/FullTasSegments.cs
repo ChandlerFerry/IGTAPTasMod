@@ -34,20 +34,24 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// A faster way through a segment of the best that its Quick Restart check passed but the whole run didn't take (a later
-        /// buy broke). Kept in <c>fulltas/&lt;run&gt;.faster.json</c> while the best still holds that segment as it was
-        /// (OldSegment at Start): the segment isn't searched again, only this way retried, and the studio marks it.
+        /// A segment of the best the solver has worked on, kept in <c>fulltas/&lt;run&gt;.faster.json</c> while the best still holds
+        /// it as it was (OldSegment at Start). With a Way: a faster way its Quick Restart check passed but the whole run didn't
+        /// take (a later buy broke); the segment isn't searched again, only this way retried, and the studio marks it. Without
+        /// one: searched for Minutes per window and nothing faster found; skipped until the route there changes or the window
+        /// gets longer.
         /// </summary>
         sealed class KnownWay
         {
             public int Start, Reset, First, Last;
-            public double Saves;
+            public double Saves, Minutes;
             public string Why;
             public List<InputTick> OldSegment, Way;
         }
 
         List<KnownWay> _known;
         string _knownFile;
+
+        static int SegmentLength(Segment s, Route r) { return (s.Reset < 0 ? r.Inputs.Count : s.Reset) - s.Start; }
 
         void LoadKnown(string traceDir)
         {
@@ -57,14 +61,18 @@ namespace IGTAP.EngineSim.Cli
             using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(_knownFile));
             System.Text.Json.JsonElement root = doc.RootElement;
             if (!root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_labels)) return;
-            foreach (System.Text.Json.JsonElement w in root.GetProperty("ways").EnumerateArray())
-                _known.Add(new KnownWay { Start = w.GetProperty("start").GetInt32(), Reset = w.GetProperty("reset").GetInt32(),
-                    First = w.GetProperty("first").GetInt32(), Last = w.GetProperty("last").GetInt32(), Saves = w.GetProperty("saves").GetDouble(),
-                    Why = w.GetProperty("why").GetString(), OldSegment = Solve.DecodeTicks(w.GetProperty("old").GetString()), Way = Solve.DecodeTicks(w.GetProperty("way").GetString()) });
+            KnownWay Read(System.Text.Json.JsonElement w, bool way) => new KnownWay { Start = w.GetProperty("start").GetInt32(), Reset = w.GetProperty("reset").GetInt32(),
+                First = w.GetProperty("first").GetInt32(), Last = w.GetProperty("last").GetInt32(), OldSegment = Solve.DecodeTicks(w.GetProperty("old").GetString()),
+                Saves = way ? w.GetProperty("saves").GetDouble() : 0.0, Why = way ? w.GetProperty("why").GetString() : null,
+                Way = way ? Solve.DecodeTicks(w.GetProperty("way").GetString()) : null,
+                Minutes = w.TryGetProperty("minutes", out System.Text.Json.JsonElement m) ? m.GetDouble() : 0.0 };
+            foreach (System.Text.Json.JsonElement w in root.GetProperty("ways").EnumerateArray()) _known.Add(Read(w, true));
+            if (root.TryGetProperty("searched", out System.Text.Json.JsonElement searched))
+                foreach (System.Text.Json.JsonElement w in searched.EnumerateArray()) _known.Add(Read(w, false));
             SaveKnown();
         }
 
-        /// <summary>Keeps the known ways whose segment the best still holds as it was (moved to its inputs now), and writes them.</summary>
+        /// <summary>Keeps the entries whose segment the best still holds as it was (moved to its inputs now), and writes them.</summary>
         void SaveKnown()
         {
             if (_knownFile == null) return;
@@ -72,9 +80,9 @@ namespace IGTAP.EngineSim.Cli
             var kept = new List<KnownWay>();
             foreach (KnownWay k in _known)
             {
-                Segment s = segments.FirstOrDefault(x => x.First == k.First && x.Last == k.Last && x.Reset >= 0 && x.Reset - x.Start == k.OldSegment.Count
-                    && _best.Inputs.Skip(x.Start).Take(k.OldSegment.Count).SequenceEqual(k.OldSegment));
-                if (s == null || kept.Any(o => o.Start == s.Start)) continue;
+                Segment s = segments.FirstOrDefault(x => x.First == k.First && x.Last == k.Last && (x.Reset < 0) == (k.Reset < 0)
+                    && SegmentLength(x, _best) == k.OldSegment.Count && _best.Inputs.Skip(x.Start).Take(k.OldSegment.Count).SequenceEqual(k.OldSegment));
+                if (s == null || kept.Any(o => o.Start == s.Start && (o.Way == null) == (k.Way == null))) continue;
                 k.Start = s.Start;
                 k.Reset = s.Reset;
                 kept.Add(k);
@@ -86,21 +94,36 @@ namespace IGTAP.EngineSim.Cli
                 name = _name,
                 goals = _labels,
                 bestTicks = _best.Progress == 0 ? -1 : _best.Last,
-                ways = _known.Select(k => new { start = k.Start, reset = k.Reset, first = k.First, last = k.Last, saves = k.Saves, why = k.Why,
+                ways = _known.Where(k => k.Way != null).Select(k => new { start = k.Start, reset = k.Reset, first = k.First, last = k.Last, saves = k.Saves, why = k.Why,
                     old = Solve.EncodeTicks(k.OldSegment), way = Solve.EncodeTicks(k.Way) }),
+                searched = _known.Where(k => k.Way == null).Select(k => new { start = k.Start, reset = k.Reset, first = k.First, last = k.Last, minutes = k.Minutes,
+                    old = Solve.EncodeTicks(k.OldSegment) }),
             }));
         }
 
-        KnownWay KnownFor(Segment seg) { return _known?.FirstOrDefault(k => k.Start == seg.Start && k.First == seg.First && k.Last == seg.Last); }
+        KnownWay KnownFor(Segment seg) { return _known?.FirstOrDefault(k => k.Way != null && k.Start == seg.Start && k.First == seg.First && k.Last == seg.Last); }
+
+        /// <summary>Minutes per window this segment was last searched for with nothing faster found (0: not since the route there changed).</summary>
+        double SearchedFor(Segment seg) { return _known?.FirstOrDefault(k => k.Way == null && k.Start == seg.Start && k.First == seg.First && k.Last == seg.Last)?.Minutes ?? 0.0; }
 
         void RememberFaster(Segment seg, Route best, List<InputTick> way, double saves, string why)
         {
             if (_known == null) return;
             _known.RemoveAll(k => k.Start == seg.Start);
             _known.Add(new KnownWay { Start = seg.Start, Reset = seg.Reset, First = seg.First, Last = seg.Last, Saves = Math.Round(saves, 2), Why = why,
-                OldSegment = best.Inputs.Skip(seg.Start).Take(seg.Reset - seg.Start).ToList(), Way = way });
+                OldSegment = best.Inputs.Skip(seg.Start).Take(SegmentLength(seg, best)).ToList(), Way = way });
             SaveKnown();
             _segmentsShown = null;
+        }
+
+        /// <summary>A segment searched with nothing faster kept: skipped by later passes at no more minutes per window.</summary>
+        void RememberSearched(Segment seg, Route best)
+        {
+            if (_known == null || _best != best || KnownFor(seg) != null) return;
+            _known.RemoveAll(k => k.Way == null && k.Start == seg.Start);
+            _known.Add(new KnownWay { Start = seg.Start, Reset = seg.Reset, First = seg.First, Last = seg.Last, Minutes = _windowMinutes,
+                OldSegment = best.Inputs.Skip(seg.Start).Take(SegmentLength(seg, best)).ToList() });
+            SaveKnown();
         }
 
         static List<Segment> Segments(Route r)
@@ -326,6 +349,7 @@ namespace IGTAP.EngineSim.Cli
             int end = _onlySegment > 0 ? first : segments.Count;
             bool searched = false;
             int before = segments.Count;
+            _skipped = 0;
             // Last segment first: a commit changes only the inputs from its segment on, so the segments before keep their numbers.
             for (int n = end; n >= first && !TimeUp; n--)
             {
@@ -336,6 +360,8 @@ namespace IGTAP.EngineSim.Cli
             // Segment numbers after a dropped one move down one: --segment N would polish another segment from here on.
             if (_onlySegment > 0 && Segments(_best).Count < before) return ("info", $"segment {first} was dropped (the route has one Quick Restart fewer), so its number is another segment now");
             if (searched || TimeUp) return (null, null);
+            if (_skipped > 0 && _onlySegment == 0)
+                return ("info", $"every segment left has been searched at {_windowMinutes:0.##} min per window since the route there last changed ({_skipped} skipped); raise Minutes per window to search them again");
             if (_onlySegment > 0 && first <= Segments(_best).Count && KnownFor(Segments(_best)[first - 1]) is KnownWay k)
                 return ("info", $"segment {first} already has a faster way ({k.Saves:0.00}s) that {k.Why.Replace("the run after its Quick Restart ", "the run ")}; it isn't searched again until the route after it changes");
             return ("warn", _onlySegment > 0 ? $"segment {first} has no goal or lap to search, and can't be dropped" : "no segment has a goal or lap to search");
@@ -400,6 +426,15 @@ namespace IGTAP.EngineSim.Cli
             FullTasGoal[] lap = seg.Last > seg.First || seg.Reset < 0 ? null : LapOf(seg, best);
             Emit(new { type = "segment", n = seg.Number, of = count, first = seg.First, last = seg.Last, start = seg.Start, reset = seg.Reset,
                 lap = lap == null ? null : lap[0].label + " + " + lap[1].label });
+            // Searched already with nothing faster since the route there last changed: skipped, unless the window is longer now
+            // or this segment was asked for by name.
+            double searchedFor = SearchedFor(seg);
+            if (_onlySegment == 0 && searchedFor >= _windowMinutes && KnownFor(seg) == null)
+            {
+                _skipped++;
+                Log($"{title}: searched at {searchedFor:0.##} min per window already, nothing faster; skipped");
+                return false;
+            }
             if (seg.Reset < 0)
             {
                 // The route's end closes it: nothing after it to keep, and no buy after it to break. It is polished as the
@@ -416,6 +451,7 @@ namespace IGTAP.EngineSim.Cli
                     List<List<InputTick>> faster = SearchWindow("segment", now, prefixLength, limit, seeds, now.GoalPhysics[limit - 1], _windowMinutes, 0);
                     if (faster.Count > 0) Merge($"faster through goals {i + 1}-{limit} (segment {seg.Number}, after the last Quick Restart)", now, prefixLength, limit, faster);
                 }
+                if (!TimeUp && _best == best) RememberSearched(seg, best);
                 return true;
             }
             Dictionary<int, Carried> states = ResetStates(best.Inputs, seg.Start > 0 ? new[] { seg.Start - 1, seg.Reset } : new[] { seg.Reset });
@@ -444,10 +480,12 @@ namespace IGTAP.EngineSim.Cli
                 ? SearchWindow("segment", best, seg.Start, seg.Last, new List<List<InputTick>> { best.Inputs.Skip(seg.Start).Take(seg.Reset - seg.Start).ToList() },
                     best.GoalPhysics[seg.Last - 1], _windowMinutes, 0)
                 : SearchLap(seg, best, lap, title);
-            if (found.Count == 0) return true;
-            CloseSegment(seg, best, lap, closing, found, where, title);
+            if (found.Count > 0) CloseSegment(seg, best, lap, closing, found, where, title);
+            if (!TimeUp && _best == best) RememberSearched(seg, best);
             return true;
         }
+
+        int _skipped;
 
         /// <summary>
         /// A segment without goals taken out, when one restart then leaves the player as the closing one did: the opening Quick Restart
