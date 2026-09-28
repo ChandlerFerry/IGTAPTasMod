@@ -195,6 +195,7 @@ namespace Box2D
 
 			// Peel a node off the free list.
 			var alloc = _freeNodes;
+			Touch(alloc);
 			ref var allocNode = ref _nodes[alloc];
 			Assert(allocNode.IsFree);
 			_freeNodes = allocNode.Parent;
@@ -221,7 +222,8 @@ namespace Box2D
 				}
 
 				// Reuse the array when it is already long enough; the new nodes start zeroed as in a fresh array.
-				if (_nodes.Length < newNodeCap) Array.Resize(ref _nodes, newNodeCap);
+				if (_nodes.Length < newNodeCap) { Array.Resize(ref _nodes, newNodeCap); Array.Resize(ref _dirtyFlag, newNodeCap); }
+				_synced = null;
 				Array.Clear(_nodes, _nodeCount, newNodeCap - _nodeCount);
 				_capacity = newNodeCap;
 
@@ -248,6 +250,7 @@ namespace Box2D
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		private void FreeNode(Proxy proxy)
 		{
+			Touch(proxy);
 			ref var node = ref _nodes[proxy];
 			node.Parent = _freeNodes;
 			node.Height = -1;
@@ -350,6 +353,7 @@ namespace Box2D
 				// Otherwise the tree b2AABB is huge and needs to be shrunk
 			}
 
+			Touch(proxy);
 			RemoveLeaf(proxy);
 
 			leafNode.Aabb = fatAabb;
@@ -376,6 +380,7 @@ namespace Box2D
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public void ClearMoved(Proxy proxy)
 		{
+			Touch(proxy);
 			_nodes[proxy].Moved = false;
 		}
 
@@ -404,10 +409,12 @@ namespace Box2D
 				              : parentNode.Child1;
 
 			ref var siblingNode = ref _nodes[sibling];
+			Touch(sibling);
 
 			if (grandParent != ProxyFree)
 			{
 				// Destroy parent and connect sibling to grandParent.
+				Touch(grandParent);
 				ref var grandParentNode = ref _nodes[grandParent];
 				if (grandParentNode.Child1 == parent)
 				{
@@ -439,6 +446,7 @@ namespace Box2D
 			if (_root == ProxyFree)
 			{
 				_root = leaf;
+				Touch(leaf);
 				_nodes[_root].Parent = ProxyFree;
 				return;
 			}
@@ -502,6 +510,8 @@ namespace Box2D
 			// Create a new parent.
 			ref var newParentNode = ref AllocateNode(out var newParent);
 			ref var siblingNode = ref _nodes[sibling];
+			Touch(sibling);
+			Touch(leaf);
 
 			var oldParent = siblingNode.Parent;
 
@@ -513,6 +523,7 @@ namespace Box2D
 			if (oldParent != ProxyFree)
 			{
 				// The sibling was not the root.
+				Touch(oldParent);
 				ref var oldParentNode = ref _nodes[oldParent];
 
 				if (oldParentNode.Child1 == sibling)
@@ -565,6 +576,7 @@ namespace Box2D
 			while (index != ProxyFree)
 			{
 				index = BalanceStep(index);
+				Touch(index);
 
 				ref var indexNode = ref _nodes[index];
 
@@ -622,6 +634,10 @@ namespace Box2D
 
 				ref var f = ref _nodes[iF];
 				ref var g = ref _nodes[iG];
+				Touch(iA);
+				Touch(iC);
+				Touch(iF);
+				Touch(iG);
 
 				// A <> C
 
@@ -636,6 +652,7 @@ namespace Box2D
 				}
 				else
 				{
+					Touch(c.Parent);
 					ref var cParent = ref _nodes[c.Parent];
 					if (cParent.Child1 == iA)
 					{
@@ -686,6 +703,10 @@ namespace Box2D
 
 				ref var d = ref _nodes[iD];
 				ref var e = ref _nodes[iE];
+				Touch(iA);
+				Touch(iB);
+				Touch(iD);
+				Touch(iE);
 
 				// A <> B
 
@@ -700,6 +721,7 @@ namespace Box2D
 				}
 				else
 				{
+					Touch(b.Parent);
 					ref var bParent = ref _nodes[b.Parent];
 					if (bParent.Child1 == iA)
 					{
@@ -767,6 +789,7 @@ namespace Box2D
 		[MethodImpl(MethodImplOptions.NoInlining)]
 		public void RebuildBottomUp(int free = 0)
 		{
+			_synced = null;
 			var proxies = new Proxy[NodeCount + free];
 			var count = 0;
 
@@ -848,6 +871,7 @@ namespace Box2D
 
 		public void ShiftOrigin(in b2Vec2 newOrigin)
 		{
+			_synced = null;
 			for (var i = 0; i < Capacity; i++)
 			{
 				ref var node = ref _nodes[i];

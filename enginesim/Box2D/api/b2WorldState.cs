@@ -561,15 +561,61 @@ namespace Box2D
             && a.Parent == b.Parent && a.Child1 == b.Child1 && a.Child2 == b.Child2
             && ReferenceEquals(a.UserData, b.UserData) && a.Height == b.Height && a.Moved == b.Moved;
 
+        // The tree equals _synced (the snapshot last loaded or saved) except at the _dirty indices written since; null means
+        // unknown (a pool growth, rebuild or origin shift), so the next load copies the whole base. Every node write in
+        // DynamicTree.cs calls Touch. IGTAP_TREE_CHECK=1 checks each load and save against the full copy/compare.
+        private TreeSnapshot _synced;
+        private bool[] _dirtyFlag = new bool[256];
+        private readonly List<int> _dirty = new List<int>();
+        private static readonly bool CheckTree = TreeCheckOn();
+        private static long TreeChecks, TreeMismatches;
+
+        private static bool TreeCheckOn()
+        {
+            if (Environment.GetEnvironmentVariable("IGTAP_TREE_CHECK") != "1") return false;
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+                Console.Error.WriteLine($"b2DynamicTree check: {TreeChecks} loads/saves checked, {TreeMismatches} mismatches");
+            return true;
+        }
+
+        private static void TreeMismatch(string message)
+        {
+            System.Threading.Interlocked.Increment(ref TreeMismatches);
+            throw new InvalidOperationException(message);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private void Touch(int i)
+        {
+            if (!_dirtyFlag[i]) { _dirtyFlag[i] = true; _dirty.Add(i); }
+        }
+
+        private void Resync(TreeSnapshot snap)
+        {
+            foreach (int i in _dirty) _dirtyFlag[i] = false;
+            _dirty.Clear();
+            _synced = snap;
+        }
+
         internal object SaveSnapshot()
         {
             if (!_snapshotBases.TryGetValue(_capacity, out Node[] baseNodes))
                 _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
             // Count the changed nodes first so the delta arrays are exactly sized: no List growth chain, no ToArray
-            // copies. The second pass reads the same unchanged nodes as the first, so the delta is identical.
+            // copies. The second pass reads the same unchanged nodes as the first, so the delta is identical. Only
+            // nodes written since the tree last matched a snapshot on this base can differ from it.
+            bool tracked = _synced != null && ReferenceEquals(_synced.baseNodes, baseNodes);
             int changed = 0;
-            for (int i = 0; i < _capacity; i++)
-                if (!Same(_nodes[i], baseNodes[i])) changed++;
+            if (tracked)
+            {
+                foreach (int i in _synced.changedIndex) Touch(i);
+                _dirty.Sort();
+                foreach (int i in _dirty)
+                    if (!Same(_nodes[i], baseNodes[i])) changed++;
+            }
+            else
+                for (int i = 0; i < _capacity; i++)
+                    if (!Same(_nodes[i], baseNodes[i])) changed++;
             // A tree rebuilt since the base (a FloatingOrigin rebase rebuilds every body-less collider) differs from it almost
             // everywhere: this state becomes the base, so later snapshots near it hold only what moved. Older ones keep theirs.
             if (changed * 4 > _capacity)
@@ -580,22 +626,57 @@ namespace Box2D
             int[] index = changed == 0 ? Array.Empty<int>() : new int[changed];
             Node[] node = changed == 0 ? Array.Empty<Node>() : new Node[changed];
             int n = 0;
-            for (int i = 0; i < _capacity && n < changed; i++)
-                if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
-            return new TreeSnapshot
+            if (tracked)
+                foreach (int i in _dirty)
+                {
+                    if (n == changed) break;
+                    if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
+                }
+            else
+                for (int i = 0; i < _capacity && n < changed; i++)
+                    if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
+            if (CheckTree)
+            {
+                int k = 0;
+                for (int i = 0; i < _capacity; i++)
+                    if (!Same(_nodes[i], baseNodes[i]) && (k >= changed || index[k++] != i))
+                        TreeMismatch($"b2DynamicTree.SaveSnapshot: node {i} changed but not in the delta");
+                if (k != changed) TreeMismatch("b2DynamicTree.SaveSnapshot: delta count differs from a full compare");
+                System.Threading.Interlocked.Increment(ref TreeChecks);
+            }
+            var saved = new TreeSnapshot
             {
                 baseNodes = baseNodes, changedIndex = index, changedNode = node,
                 root = _root, freeNodes = _freeNodes, nodeCount = _nodeCount,
             };
+            Resync(saved);
+            return saved;
         }
 
         internal void LoadSnapshot(object snapshot)
         {
             var snap = (TreeSnapshot)snapshot;
             int capacity = snap.baseNodes.Length;
-            if (_nodes.Length < capacity) _nodes = new Node[capacity];
-            Array.Copy(snap.baseNodes, _nodes, capacity);
+            if (_synced != null && ReferenceEquals(_synced.baseNodes, snap.baseNodes))
+            {
+                foreach (int i in _dirty) _nodes[i] = snap.baseNodes[i];
+                foreach (int i in _synced.changedIndex) _nodes[i] = snap.baseNodes[i];
+            }
+            else
+            {
+                if (_nodes.Length < capacity) { _nodes = new Node[capacity]; _dirtyFlag = new bool[capacity]; }
+                Array.Copy(snap.baseNodes, _nodes, capacity);
+            }
             for (int i = 0; i < snap.changedIndex.Length; i++) _nodes[snap.changedIndex[i]] = snap.changedNode[i];
+            Resync(snap);
+            if (CheckTree)
+            {
+                var full = (Node[])snap.baseNodes.Clone();
+                for (int i = 0; i < snap.changedIndex.Length; i++) full[snap.changedIndex[i]] = snap.changedNode[i];
+                for (int i = 0; i < capacity; i++)
+                    if (!Same(_nodes[i], full[i])) TreeMismatch($"b2DynamicTree.LoadSnapshot: node {i} differs from a full restore");
+                System.Threading.Interlocked.Increment(ref TreeChecks);
+            }
             _capacity = capacity;
             _root = snap.root;
             _freeNodes = snap.freeNodes;
