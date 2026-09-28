@@ -390,8 +390,28 @@ namespace IGTAPTasMod
             public int reached;
             public List<FullTasSplit> splits;
             public float time;
-            /// <summary>The route cut at its quick restarts, as the solver's --resets sees it: [goals before, goals by its restart, inputs] per segment.</summary>
+            /// <summary>The route cut at its Quick Restarts, as the solver's --resets sees it: [goals before, goals by its Quick Restart, inputs, first input] per segment.</summary>
             public List<int[]> segments;
+            /// <summary>Faster ways the solver found for a segment whose Quick Restart matched but whose whole run failed (fulltas/&lt;run&gt;.faster.json), while that file is of this best.</summary>
+            public List<JObject> faster;
+        }
+        readonly Dictionary<string, (DateTime written, JObject file)> _fullTasFaster = new Dictionary<string, (DateTime, JObject)>(StringComparer.OrdinalIgnoreCase);
+
+        List<JObject> FullTasFasterWays(string run, IList<string> labels, FullTasOffline offline)
+        {
+            string path = Path.Combine(EngineSimDir, "fulltas", run + ".faster.json");
+            if (!File.Exists(path) || offline.reached == 0) return new List<JObject>();
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            if (!_fullTasFaster.TryGetValue(run, out var cached) || cached.written != written)
+            {
+                try { cached = (written, JObject.Parse(File.ReadAllText(path))); }
+                catch (Exception) { return new List<JObject>(); }
+                _fullTasFaster[run] = cached;
+            }
+            JObject o = cached.file;
+            List<string> goals = o["goals"]?.ToObject<List<string>>();
+            if (goals == null || !goals.SequenceEqual(labels) || (long?)o["bestTicks"] != offline.splits[offline.reached - 1].ticks) return new List<JObject>();
+            return ((JArray)o["ways"]).Select(w => new JObject { ["start"] = w["start"], ["first"] = w["first"], ["last"] = w["last"], ["saves"] = w["saves"], ["why"] = w["why"] }).ToList();
         }
         readonly Dictionary<string, FullTasOfflineFile> _fullTasOffline = new Dictionary<string, FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
 
@@ -428,6 +448,7 @@ namespace IGTAPTasMod
             int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
             offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
+            offline.faster = FullTasFasterWays(run, labels, offline);
             return offline;
         }
 
@@ -445,10 +466,10 @@ namespace IGTAPTasMod
             for (int i = 1; i < inputs.Count; i++)
             {
                 if (!inputs[i].reset) continue;
-                segments.Add(new[] { Goals(start), Goals(i), i - start });
+                segments.Add(new[] { Goals(start), Goals(i), i - start, start });
                 start = i + 1;
             }
-            segments.Add(new[] { Goals(start), reached, inputs.Count - start });
+            segments.Add(new[] { Goals(start), reached, inputs.Count - start, start });
             return segments;
         }
 
@@ -1568,7 +1589,7 @@ namespace IGTAPTasMod
                 return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
-                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments },
+                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, faster = offline.faster },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };

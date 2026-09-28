@@ -238,6 +238,7 @@ namespace IGTAP.EngineSim.Cli
                 Route run = Padded(Evaluate(inputs));
                 if (!Better(_best, run)) { _best = run; from = "fulltas/" + Path.GetFileName(_runFile); }
             }
+            LoadKnown(dir);
             return from;
         }
 
@@ -346,7 +347,8 @@ namespace IGTAP.EngineSim.Cli
             return changed == 0 ? 0 : (int)Math.Min(goalInputTicks[changed - 1], count);
         }
 
-        List<List<InputTick>> SearchWindow(string kind, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline, double budgetMinutes, int attempt)
+        List<List<InputTick>> SearchWindow(string kind, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline, double budgetMinutes, int attempt,
+            double? stallMinutes = null)
         {
             List<InputTick> prefix = route.Inputs.GetRange(0, prefixLength);
             _eval.SetStart(_origin, 0);
@@ -394,7 +396,7 @@ namespace IGTAP.EngineSim.Cli
             List<Seed> walkers = kind == "reach" ? _seeds.Where(s => s.At != null && s.Goals.Any(labels.Contains)).ToList() : new List<Seed>();
             var tried = new HashSet<long>();
             List<List<InputTick>> found = Explore(id, title, span, create, caps, seeds, archiveFile, baseline, budgetMinutes,
-                kind == "reach" ? 0.0 : _stallMinutes, kind == "reach" ? prefix : null, _labels.Skip(first).Take(limit - first).ToList(), out List<InputTick> bestInputs,
+                stallMinutes ?? (kind == "reach" ? 0.0 : _stallMinutes), kind == "reach" ? prefix : null, _labels.Skip(first).Take(limit - first).ToList(), out List<InputTick> bestInputs,
                 walkers.Count == 0 ? null : solver => CellWalks(solver, at, prefix.Count, limit, walkers, tried, title));
             if (bestInputs != null) Remember(key, bestInputs);
             return found;
@@ -1066,6 +1068,7 @@ namespace IGTAP.EngineSim.Cli
                 total = r.Progress == _goals ? r.Last : -1,
             }));
             Solve.Replace(temp, _runFile);
+            SaveKnown();
             string file = _runFile;
             if (r.Progress == _goals)
             {

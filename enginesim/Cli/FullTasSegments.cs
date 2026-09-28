@@ -33,6 +33,76 @@ namespace IGTAP.EngineSim.Cli
             public object[] Values;
         }
 
+        /// <summary>
+        /// A faster way through a segment of the best that its Quick Restart check passed but the whole run didn't take (a later
+        /// buy broke). Kept in <c>fulltas/&lt;run&gt;.faster.json</c> while the best still holds that segment as it was
+        /// (OldSegment at Start): the segment isn't searched again, only this way retried, and the studio marks it.
+        /// </summary>
+        sealed class KnownWay
+        {
+            public int Start, Reset, First, Last;
+            public double Saves;
+            public string Why;
+            public List<InputTick> OldSegment, Way;
+        }
+
+        List<KnownWay> _known;
+        string _knownFile;
+
+        void LoadKnown(string traceDir)
+        {
+            _knownFile = Path.Combine(traceDir, "fulltas", _name + ".faster.json");
+            _known = new List<KnownWay>();
+            if (_fresh || !File.Exists(_knownFile)) return;
+            using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(_knownFile));
+            System.Text.Json.JsonElement root = doc.RootElement;
+            if (!root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_labels)) return;
+            foreach (System.Text.Json.JsonElement w in root.GetProperty("ways").EnumerateArray())
+                _known.Add(new KnownWay { Start = w.GetProperty("start").GetInt32(), Reset = w.GetProperty("reset").GetInt32(),
+                    First = w.GetProperty("first").GetInt32(), Last = w.GetProperty("last").GetInt32(), Saves = w.GetProperty("saves").GetDouble(),
+                    Why = w.GetProperty("why").GetString(), OldSegment = Solve.DecodeTicks(w.GetProperty("old").GetString()), Way = Solve.DecodeTicks(w.GetProperty("way").GetString()) });
+            SaveKnown();
+        }
+
+        /// <summary>Keeps the known ways whose segment the best still holds as it was (moved to its inputs now), and writes them.</summary>
+        void SaveKnown()
+        {
+            if (_knownFile == null) return;
+            List<Segment> segments = Segments(_best);
+            var kept = new List<KnownWay>();
+            foreach (KnownWay k in _known)
+            {
+                Segment s = segments.FirstOrDefault(x => x.First == k.First && x.Last == k.Last && x.Reset >= 0 && x.Reset - x.Start == k.OldSegment.Count
+                    && _best.Inputs.Skip(x.Start).Take(k.OldSegment.Count).SequenceEqual(k.OldSegment));
+                if (s == null || kept.Any(o => o.Start == s.Start)) continue;
+                k.Start = s.Start;
+                k.Reset = s.Reset;
+                kept.Add(k);
+            }
+            _known = kept;
+            Directory.CreateDirectory(Path.GetDirectoryName(_knownFile));
+            Solve.WriteShared(_knownFile, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                name = _name,
+                goals = _labels,
+                bestTicks = _best.Progress == 0 ? -1 : _best.Last,
+                ways = _known.Select(k => new { start = k.Start, reset = k.Reset, first = k.First, last = k.Last, saves = k.Saves, why = k.Why,
+                    old = Solve.EncodeTicks(k.OldSegment), way = Solve.EncodeTicks(k.Way) }),
+            }));
+        }
+
+        KnownWay KnownFor(Segment seg) { return _known?.FirstOrDefault(k => k.Start == seg.Start && k.First == seg.First && k.Last == seg.Last); }
+
+        void RememberFaster(Segment seg, Route best, List<InputTick> way, double saves, string why)
+        {
+            if (_known == null) return;
+            _known.RemoveAll(k => k.Start == seg.Start);
+            _known.Add(new KnownWay { Start = seg.Start, Reset = seg.Reset, First = seg.First, Last = seg.Last, Saves = Math.Round(saves, 2), Why = why,
+                OldSegment = best.Inputs.Skip(seg.Start).Take(seg.Reset - seg.Start).ToList(), Way = way });
+            SaveKnown();
+            _segmentsShown = null;
+        }
+
         static List<Segment> Segments(Route r)
         {
             var list = new List<Segment>();
@@ -239,9 +309,12 @@ namespace IGTAP.EngineSim.Cli
         Route _segmentsShown;
 
         /// <summary>
-        /// Polish by reset segments (--resets): each segment of the best (or only --segment N), in order. A segment with goals is
-        /// searched for its last goal from the state after its opening Quick Restart, then closed by the old Quick Restart; a segment with none
-        /// (an extra lap for Cash, a few idle ticks) is tried without, and an extra lap is searched as its course's lap.
+        /// Polish by reset segments (--resets): each segment of the best (or only --segment N), from the last one back. A segment
+        /// saves time without touching the route before it, and the later it is the less it changes after it: an early faster lap
+        /// changes the Cash of every buy after it (a buy walk then takes a box it can now pay for), a late one has few or no buys
+        /// left to break. A segment with goals is searched for its last goal from the state after its opening Quick Restart, then
+        /// closed by the old Quick Restart; a segment with none (an extra lap for Cash, a few idle ticks) is tried without, and an
+        /// extra lap is searched as its course's lap.
         /// </summary>
         /// <returns>Why the solve ends here (level "info" or "warn"), or nulls to go on.</returns>
         (string level, string text) PolishSegments()
@@ -253,15 +326,18 @@ namespace IGTAP.EngineSim.Cli
             int end = _onlySegment > 0 ? first : segments.Count;
             bool searched = false;
             int before = segments.Count;
-            for (int n = first; n <= end && !TimeUp; n++)
+            // Last segment first: a commit changes only the inputs from its segment on, so the segments before keep their numbers.
+            for (int n = end; n >= first && !TimeUp; n--)
             {
                 segments = Segments(_best);
-                if (n > segments.Count) break;
+                if (n > segments.Count) continue;
                 searched |= PolishSegment(segments[n - 1], segments.Count);
             }
             // Segment numbers after a dropped one move down one: --segment N would polish another segment from here on.
             if (_onlySegment > 0 && Segments(_best).Count < before) return ("info", $"segment {first} was dropped (the route has one Quick Restart fewer), so its number is another segment now");
             if (searched || TimeUp) return (null, null);
+            if (_onlySegment > 0 && first <= Segments(_best).Count && KnownFor(Segments(_best)[first - 1]) is KnownWay k)
+                return ("info", $"segment {first} already has a faster way ({k.Saves:0.00}s) that {k.Why.Replace("the run after its Quick Restart ", "the run ")}; it isn't searched again until the route after it changes");
             return ("warn", _onlySegment > 0 ? $"segment {first} has no goal or lap to search, and can't be dropped" : "no segment has a goal or lap to search");
         }
 
@@ -280,6 +356,7 @@ namespace IGTAP.EngineSim.Cli
                     n = s.Number, first = s.First, last = s.Last, start = s.Start, reset = s.Reset, inputs = (s.Reset < 0 ? best.Inputs.Count : s.Reset) - s.Start,
                     from = At(s.First), to = At(s.Last),
                     carries = s.Reset >= 0 && states.TryGetValue(s.Reset, out Carried c) ? Carries(c) : null,
+                    known = KnownFor(s)?.Saves,
                     quickRestart = s.Reset >= 0 && targets.TryGetValue(s.Reset, out string target) ? target : null,
                 }).ToArray(),
             });
@@ -325,11 +402,20 @@ namespace IGTAP.EngineSim.Cli
                 lap = lap == null ? null : lap[0].label + " + " + lap[1].label });
             if (seg.Reset < 0)
             {
-                // The route's end closes it: nothing after it to keep.
+                // The route's end closes it: nothing after it to keep, and no buy after it to break. It is polished as the
+                // plain polish does, windows of --window goals from its first goal on, each judged in the whole run.
                 if (seg.Last <= seg.First) return false;
-                var tail = new List<List<InputTick>> { best.Inputs.Skip(seg.Start).ToList() };
-                List<List<InputTick>> last = SearchWindow("segment", best, seg.Start, seg.Last, tail, best.GoalPhysics[seg.Last - 1], _windowMinutes, 0);
-                if (last.Count > 0) Merge($"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last})", best, seg.Start, seg.Last, last);
+                for (int i = seg.First; i < seg.Last && !TimeUp; i++)
+                {
+                    Route now = _best;
+                    if (now.Progress < seg.Last) break;
+                    int limit = Math.Min(i + _window, seg.Last);
+                    int prefixLength = i == 0 ? 0 : (int)Math.Min(now.GoalInput[i - 1], now.Inputs.Count);
+                    if (i == seg.First) prefixLength = Math.Max(prefixLength, seg.Start);
+                    var seeds = new List<List<InputTick>> { now.Inputs.Skip(prefixLength).ToList() };
+                    List<List<InputTick>> faster = SearchWindow("segment", now, prefixLength, limit, seeds, now.GoalPhysics[limit - 1], _windowMinutes, 0);
+                    if (faster.Count > 0) Merge($"faster through goals {i + 1}-{limit} (segment {seg.Number}, after the last Quick Restart)", now, prefixLength, limit, faster);
+                }
                 return true;
             }
             Dictionary<int, Carried> states = ResetStates(best.Inputs, seg.Start > 0 ? new[] { seg.Start - 1, seg.Reset } : new[] { seg.Reset });
@@ -344,13 +430,21 @@ namespace IGTAP.EngineSim.Cli
                 Log($"{title}: no goal and no lap in it; kept");
                 return false;
             }
+            string where = lap == null ? $"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last}), same state after its Quick Restart"
+                : $"faster extra lap in segment {seg.Number} ({lap[1].label}), same state after its Quick Restart";
+            KnownWay known = KnownFor(seg);
+            if (known != null)
+            {
+                // Already optimized: the faster way is known and waits for the run after it to take it. Retried, not searched again.
+                Log($"{title}: a faster way ({known.Saves:0.00}s) is known but {known.Why}; retrying it instead of searching");
+                CloseSegment(seg, best, lap, closing, new List<List<InputTick>> { known.Way }, where + " (the known faster way)", title, repair: false);
+                return false;
+            }
             List<List<InputTick>> found = lap == null
                 ? SearchWindow("segment", best, seg.Start, seg.Last, new List<List<InputTick>> { best.Inputs.Skip(seg.Start).Take(seg.Reset - seg.Start).ToList() },
                     best.GoalPhysics[seg.Last - 1], _windowMinutes, 0)
                 : SearchLap(seg, best, lap, title);
             if (found.Count == 0) return true;
-            string where = lap == null ? $"faster through segment {seg.Number} (goals {seg.First + 1}-{seg.Last}), same state after its Quick Restart"
-                : $"faster extra lap in segment {seg.Number} ({lap[1].label}), same state after its Quick Restart";
             CloseSegment(seg, best, lap, closing, found, where, title);
             return true;
         }
@@ -563,7 +657,7 @@ namespace IGTAP.EngineSim.Cli
         /// whole run then stops at a later goal (the world differs: Cash, clones), the segments that break are rebuilt one by one
         /// from their own restarts (<see cref="RepairSegments"/>). A way whose restart never matches is dropped.
         /// </summary>
-        void CloseSegment(Segment seg, Route best, FullTasGoal[] lap, Carried closing, List<List<InputTick>> found, string where, string title)
+        void CloseSegment(Segment seg, Route best, FullTasGoal[] lap, Carried closing, List<List<InputTick>> found, string where, string title, bool repair = true)
         {
             Closing c = ClosingOf(seg, best, seg, best, lap, closing);
             if (c.Start == null)
@@ -598,8 +692,12 @@ namespace IGTAP.EngineSim.Cli
                     continue;
                 }
                 string brokeAt = $"the run after its Quick Restart stops after goal {run.Progress}/{_goals} (goal {run.Progress + 1}, {(run.Progress < _goals ? _labels[run.Progress] : "")}, missed: {run.EndReason})";
-                // Rebuilding searches a window per broken segment: once, for the fastest way whose restart matched.
-                if (repairTried) { slowerWhy ??= brokeAt; continue; }
+                // Rebuilding searches a window per broken segment: once, for the fastest way whose restart matched; never on a retry.
+                if (repairTried || !repair)
+                {
+                    slowerWhy ??= brokeAt;
+                    continue;
+                }
                 repairTried = true;
                 (Route repaired, List<int> rebuilt, string stuck) = RepairSegments(run, best, title);
                 string segments = $"segment{(rebuilt.Count == 1 ? "" : "s")} {string.Join(", ", rebuilt)}";
@@ -610,6 +708,10 @@ namespace IGTAP.EngineSim.Cli
                 }
                 slowerWhy = brokeAt + (stuck != null ? $"; rebuilding the segments after it stopped ({(rebuilt.Count > 0 ? "rebuilt " + segments + ", then " : "")}{stuck})"
                     : repaired != null ? $"; with {segments} rebuilt the run ends at {Describe(repaired)}" : "");
+                // Found, and its Quick Restart matches: known from now on, so the segment isn't searched again (only this way retried).
+                int reached = run.Progress - 1;
+                double saves = reached < 0 ? 0.0 : Seconds(best.GoalPhysics[reached] - run.GoalPhysics[reached]);
+                RememberFaster(seg, best, way, saves, brokeAt);
             }
             string text = unmatched > 0 && slower == 0 && missed == 0
                 ? $"Segment {seg.Number} is faster, but no Quick Restart after it leaves the player as the old one did ({string.Join("; ", (firstDiff ?? new List<string>()).Take(4))}); dropped."
@@ -636,18 +738,28 @@ namespace IGTAP.EngineSim.Cli
                 int g = run.Progress;
                 if (g > 0 && run.GoalPhysics[g - 1] >= _best.GoalPhysics[g - 1])
                     return (null, rebuilt, $"it reaches goal {g} no sooner than the record, so it can't end sooner");
+                int delta = run.Inputs.Count - old.Inputs.Count;
+                Segment Shifted(Segment s) => new Segment { Number = s.Number, Start = s.Start + delta, Reset = s.Reset < 0 ? -1 : s.Reset + delta, First = s.First, Last = s.Last };
                 Segment os = oldSegments.FirstOrDefault(s => s.First <= g && g < s.Last);
                 if (os == null) return (null, rebuilt, $"goal {g + 1} lies in no segment of the old route");
+                var ns = Shifted(os);
+                // A run can stop on a segment's way out, after its last goal (it walks into a box): it never reaches the next
+                // goal's segment, so the segment it stops in, the one before, is rebuilt.
+                while (ns.Start > 0 && os.Number > 1 && SegmentStart(ns, run) == null)
+                {
+                    os = oldSegments[os.Number - 2];
+                    ns = Shifted(os);
+                }
+                if (os.Last <= os.First) return (null, rebuilt, $"it stops in segment {os.Number}, which has no goal to search ({run.EndReason})");
                 if (rebuilt.Contains(os.Number)) return (null, rebuilt, $"segment {os.Number} breaks again after rebuilding it ({run.EndReason})");
-                int delta = run.Inputs.Count - old.Inputs.Count;
-                var ns = new Segment { Number = os.Number, Start = os.Start + delta, Reset = os.Reset < 0 ? -1 : os.Reset + delta, First = os.First, Last = os.Last };
                 if (ns.Reset >= run.Inputs.Count || ns.Reset >= 0 && !run.Inputs[ns.Reset].reset || ns.Start > 0 && !run.Inputs[ns.Start - 1].reset)
                     return (null, rebuilt, $"segment {os.Number} doesn't line up with the new run's restarts");
                 string span = ns.Last - ns.First == 1 ? $"goal {ns.Last}" : $"goals {ns.First + 1}-{ns.Last}";
                 Log($"{title}: rebuilding segment {os.Number} ({span}) from its Quick Restart: {run.EndReason}");
                 Emit(new { type = "note", level = "info", text = $"The old route stops at goal {g + 1} ({_labels[g]}): {run.EndReason}. Rebuilding segment {os.Number} ({span}) from its own Quick Restart." });
                 var seeds = new List<List<InputTick>> { old.Inputs.Skip(os.Start).Take((os.Reset < 0 ? old.Inputs.Count : os.Reset) - os.Start).ToList() };
-                List<List<InputTick>> found = SearchWindow("repair", run, ns.Start, ns.Last, seeds, long.MaxValue, _windowMinutes, 0);
+                // Any way through the segment will do (the whole run is judged after): the window ends at the first one found.
+                List<List<InputTick>> found = SearchWindow("repair", run, ns.Start, ns.Last, seeds, long.MaxValue, _windowMinutes, 0, 0.0);
                 Route next = null;
                 if (os.Reset < 0)
                 {

@@ -76,12 +76,16 @@
 .resultTable.segmented > .tableHead, .resultTable.segmented > .tableRow { margin-left: 18px; }
 .segmentGroup { display: grid; grid-template-columns: 18px minmax(0,1fr); }
 .segmentGroup.empty { min-height: 8px; }
-.segmentBar { position: relative; padding: 0; border: 0; background: none; color: var(--cyan); cursor: pointer; }
+.segmentBar { position: relative; padding: 0; border: 0; background: none; color: var(--amber); cursor: pointer; }
 .segmentBar:disabled { cursor: default; }
 .segmentBar::before { content: ""; position: absolute; left: 3px; top: 3px; bottom: 3px; width: 3px; border-radius: 2px; background: currentColor; }
-.segmentGroup.alt .segmentBar { color: #8a7dff; }
+.segmentGroup.economy.alt .segmentBar { color: #ff8a4c; }
+.segmentGroup.safe .segmentBar { color: var(--green); }
+.segmentGroup.safe.alt .segmentBar { color: #2fc6b0; }
 .segmentGroup.empty .segmentBar { color: #3a5575; }
 .segmentGroup.empty .segmentBar::before { top: 2px; bottom: 2px; }
-.segmentGroup.selected .segmentBar { color: var(--amber); }
+.segmentGroup.selected .segmentBar { color: var(--text); }
+.segmentGroup.selected .segmentBar::before { width: 5px; left: 2px; }
 .segmentBar span { position: absolute; left: 7px; top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl; font-size: 10px; font-weight: 700; line-height: 1; }
 .segmentBar:hover:not(:disabled) { background: #10263d; }
+.segmentGroup.known .segmentBar::before { outline: 1px solid var(--text); outline-offset: 1px; box-shadow: 0 0 6px 2px currentColor; }

@@ -5,7 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, SegmentGroup, place, resetSegments, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, SegmentGroup, place, resetSegments, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { UltraMap, type UltraData } from "./ultras";
@@ -22,7 +22,7 @@ type Course = { id: number; token: string; bonus: boolean; levels: number[]; fro
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
-  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
+  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; faster?: FasterWay[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean;
@@ -755,7 +755,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
   const liveSegments = solve.name === name ? solve.segments : null;
-  const segments = resetSegments(run?.offline?.segments, liveSegments);
+  const segments = resetSegments(run?.offline?.segments, liveSegments, run?.offline?.faster);
   const segment = onlySegment > 0 && onlySegment <= segments.length ? onlySegment : 0;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
     <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or an area goal <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after an area goal takes that goal back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
@@ -784,11 +784,13 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
               <span>{s ? tickText(s.ticks) : "—"}</span>
             </div>; };
             if (segments.length <= 1) return labels.map((_, i) => goalRow(i));
-            // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last.
+            // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last. A
+            // segment is safe when no buy goal comes from its first goal on: time saved there reaches no Cash check.
+            const lastBuy = labels.reduce((at, label, i) => label.startsWith("buy:") ? i : at, -1);
             const rows: ReactElement[] = segments.map((r, k) => {
               const goals: ReactElement[] = [];
               for (let i = r.first; i < r.last && i < labels.length; i++) goals.push(goalRow(i));
-              return <SegmentGroup key={`segment${r.n}`} r={r} end={k === segments.length - 1} alt={k % 2 === 1} selected={segment === r.n} onSelect={setOnlySegment} disabled={solve.running}>{goals}</SegmentGroup>;
+              return <SegmentGroup key={`segment${r.n}`} r={r} end={k === segments.length - 1} alt={k % 2 === 1} safe={r.first > lastBuy} selected={segment === r.n} onSelect={setOnlySegment} disabled={solve.running}>{goals}</SegmentGroup>;
             });
             for (let i = segments[segments.length - 1].last; i < labels.length; i++) rows.push(goalRow(i));
             return rows;

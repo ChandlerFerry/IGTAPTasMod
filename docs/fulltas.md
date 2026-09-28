@@ -163,7 +163,7 @@ for that tick (a "ghost" wall that ended the dash in the spikes), and dies there
 `Test-Pauselift` (savestate `lab/pauselift`, `02db5c474fdb4e9cb3230c042ce328b5`: standing on the floating block at world
 (19730.86, 10933.51), facing left, with wall jump, 1 dash and 1 double jump, on a plain new game) is the pauselift's
 start ([`human-input.md`](human-input.md), tech demo `pauselift`). Its goal (`at:19880,14200,200,100`) is out of reach, so a
-playback runs through all its inputs. Its routes pause, which only 1x playback plays, so the gate can't judge them yet.
+playback runs through all its inputs. Its routes pause; turbo and the offline engine model the pause as 1x plays it.
 
 A savestate holds no checkpoint, and the plugin writes none: `respawnPoint` stays the new game's (the Vman spawn, world
 (-61, -301)), a place the run never reached. Until a real checkpoint (`checkpointScript`) moves it, or a start gate sets
@@ -307,6 +307,10 @@ inputs past the last unchanged goal the same way.
   `fullTas.runs[].offline.segments`: `[goals before, goals by its Quick Restart, inputs]` each): its number, goals and
   inputs in its tooltip; clicking the bar picks it for **Only segment**. Once a solve has sent them (`fullTas.solve.segments`,
   the solver's `segments` event) the tooltip also says where its Quick Restart sends the player and what that leaves on.
+  The bar is amber or orange while a buy goal comes from the segment's first goal on (time saved there changes the Cash
+  that buy sees) and green or teal after the last buy (time saved there is kept); neighbours alternate between the two
+  shades. A bar glows when a faster way is known for its segment (`fullTas.runs[].offline.faster`, from `.faster.json`
+  when that file is of the saved best).
 - The Solve panel shows the route so far or the record, this solve's gain, what the search is on right now, and a feed
   of records, finds, drops and gate checks. Any error gets a card whose **Copy details** puts a report (problem, best,
   events, command, log) on the clipboard.
@@ -388,6 +392,12 @@ shows where each segment's Quick Restart goes (`Course 1 reset point (x, y)` or 
 before it). Polishing a goal window splices the old tail in at a goal, where the new state differs, so the tail breaks
 and `repair` re-finds it. A segment is spliced at a Quick Restart instead:
 
+Segments are polished from the last one back. A segment saves time without touching the route before it, and the later
+it is the less it can break after it: an early faster lap changes the Cash of every buy after it, so a later buy walk takes
+a box it can now pay for and the run stops there. The last segment (after the last Quick Restart) is polished in windows of
+`--window` goals, as the plain polish does; no buy comes after it in `FalseEnding-Any%` (its goals after `buy:buydj` are
+all area goals), and its windows took the record from 511.22 s to 510.52 s.
+
 - Its goals are searched (a `segment` window) from the state after the Quick Restart that opens it, for its last goal, faster
   than the best reaches it there.
 - Each way found (the last five, fastest first) is cut at that goal and closed with the old Quick Restart's own input tick,
@@ -418,6 +428,10 @@ and `repair` re-finds it. A segment is spliced at a Quick Restart instead:
   is repaired, as each rebuilt segment is a window of its own. `FalseEnding-Any%`'s 0.12 s faster Course 1 laps are the
   case: with one, the old walk to goal 230 or 283 (`buy:buyclone3`) buys Course 3's `CashPerLoop` box on the way
   (`Bought Courses/course 3/localUpgrades/CashPerLoop, which isn't the next goal's box`).
+- A way whose Quick Restart matched but whose whole run still failed is kept in `<traces>\fulltas\<run>.faster.json`
+  (the segment as the best holds it, the way, the time it saves there and why the run failed) while the best holds that
+  segment unchanged. That segment isn't searched again: each pass retries the known way in the whole run (no rebuild) and
+  keeps it once the route after it takes it.
 - A segment with no goal is first tried without: one Quick Restart where the two were (the opening one as it is, or the
   closing one's input in its place), kept when that Quick Restart leaves the player as the closing one did and the run ends
   sooner. An extra lap (the builder's, for Cash) is then searched as its course's gate and finish (`start:N + finish:N`,

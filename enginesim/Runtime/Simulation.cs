@@ -829,6 +829,9 @@ namespace IGTAP.EngineSim
             _touched.Clear();
             foreach (var (target, fields) in s.Touched)
             {
+                // A snapshot from another simulation (a saved goal state) can hold objects this one never touched: its
+                // pristine copy is the object as it is now, as Touch would have taken it.
+                if (!_pristine.ContainsKey(target)) _pristine[target] = FieldState.Capture(target);
                 FieldState.Restore(target, fields);
                 _captured[target] = fields;
                 _touched.Add(target);

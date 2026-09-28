@@ -10,7 +10,10 @@ export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; er
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
   events?: FullTasEvent[]; progress?: FullTasEvent | null; segments?: FullTasEvent | null; log: string[] };
 /** The route between two Quick Restarts (the solver's --resets); carries and quickRestart (where it sends the player) are only known once a solve has replayed it. */
-export type SegmentRow = { n: number; first: number; last: number; inputs: number; from?: number; to?: number; reset?: number; carries?: string[] | null; quickRestart?: string | null };
+export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number; from?: number; to?: number; reset?: number; carries?: string[] | null;
+  quickRestart?: string | null; known?: number | null; knownWhy?: string | null };
+/** A faster way the solver found for a segment but the run after it didn't take (fulltas/<run>.faster.json, for the saved best). */
+export type FasterWay = { start: number; first: number; last: number; saves: number; why: string };
 
 export const place = (p: string) => /^\d+$/.test(p) ? `Course ${p}` : p.replace(/^bonus/i, "Bonus ");
 
@@ -71,26 +74,36 @@ function segmentGoals(r: { first: number; last: number }) {
   return r.last - r.first === 1 ? `goal ${r.last}` : `goals ${r.first + 1}–${r.last}`;
 }
 
-/** The best's reset segments: the solve's own (with where each Quick Restart goes and what it carries) when it has sent them, else the plugin's count from the saved best. */
-export function resetSegments(saved: number[][] | undefined, live: FullTasEvent | null | undefined): SegmentRow[] {
-  const rows = live?.segments as SegmentRow[] | undefined;
-  if (rows?.length) return rows;
-  return (saved ?? []).map(([first, last, inputs], i) => ({ n: i + 1, first, last, inputs }));
+/**
+ * The best's reset segments: the solve's own (with where each Quick Restart goes and what it carries) when it has sent them,
+ * else the plugin's from the saved best; each with the faster way known for it, if any.
+ */
+export function resetSegments(saved: number[][] | undefined, live: FullTasEvent | null | undefined, faster: FasterWay[] | undefined): SegmentRow[] {
+  const liveRows = live?.segments as SegmentRow[] | undefined;
+  const rows = liveRows?.length ? liveRows : (saved ?? []).map(([first, last, inputs, start], i) => ({ n: i + 1, first, last, inputs, start }));
+  return rows.map(r => {
+    const way = faster?.find(f => f.start === r.start && f.first === r.first && f.last === r.last);
+    return way ? { ...r, known: way.saves, knownWhy: way.why } : r;
+  });
 }
 
 /**
  * A segment's goals with a bar down their left side, as the TAS overlay marks a tech's ticks: the bar is labeled with the
  * segment's number, its tooltip says what it holds, where its closing Quick Restart sends the player and what that leaves on
- * (once a solve has sent them). Click the bar to solve only that segment.
+ * (once a solve has sent them). Its colour says whether time saved there is kept (safe: no buy from its first goal on, so
+ * no Cash can come short or a walk buy another box) or reaches the economy (a later buy depends on when it's reached).
+ * Click the bar to solve only that segment.
  */
-export function SegmentGroup({ r, end, alt, selected, onSelect, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; selected: boolean;
-  onSelect: (n: number) => void; disabled: boolean; children: ReactNode }) {
+export function SegmentGroup({ r, end, alt, safe, selected, onSelect, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; safe: boolean;
+  selected: boolean; onSelect: (n: number) => void; disabled: boolean; children: ReactNode }) {
   const restart = end ? "ends with the route" : `ends with a Quick Restart${r.quickRestart ? ` to ${r.quickRestart}` : ""}`;
   const carried = end || r.carries == null ? "" : r.carries.length ? `, carrying ${r.carries.join(", ")}` : ", nothing carried";
   const empty = r.last <= r.first;
-  return <div className={`segmentGroup ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""}`}>
+  const kind = safe ? "No buy comes after it: time saved here is kept." : "A buy comes after it: time saved here changes the Cash that buy sees.";
+  const known = r.known != null ? `\nA way ${r.known.toFixed(2)}s faster is known and not searched again: ${r.knownWhy ?? "the run after it didn't take it"}.` : "";
+  return <div className={`segmentGroup ${safe ? "safe" : "economy"} ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""} ${r.known != null ? "known" : ""}`}>
     <button type="button" className="segmentBar" disabled={disabled} onClick={() => onSelect(selected ? 0 : r.n)}
-      title={`Segment ${r.n}: ${segmentGoals(r)}, ${r.inputs} inputs, ${restart}${carried}.\n${selected ? "Click to solve every segment again." : `Click to solve only this segment.`}`}>
+      title={`Segment ${r.n}: ${segmentGoals(r)}, ${r.inputs} inputs, ${restart}${carried}.\n${kind}${known}\n${selected ? "Click to solve every segment again." : "Click to solve only this segment."}`}>
       {!empty && <span>{r.n}</span>}
     </button>
     <div className="segmentRows">{children}</div>
