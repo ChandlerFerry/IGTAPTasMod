@@ -30,8 +30,9 @@ namespace IGTAPTasMod
         public int dashJumpFrame;
         public int springDashFrame;
         public float? lockMoveX, lockMoveY;
-        /// <summary>On a dash step: the stick x held in the dash's freeze, before the next tick (MacroEngine.StickFor).</summary>
-        public float? dashTurnX;
+        /// <summary>On a dash step: the stick held in the dash's freeze, before the next tick (MacroEngine.StickFor). y only
+        /// turns an omnidash.</summary>
+        public float? dashTurnX, dashTurnY;
         public bool rawQuickRestart;
 
         public MacroStep Copy()
@@ -72,8 +73,8 @@ namespace IGTAPTasMod
         public bool dashPressed;
         public bool dashHeld;
         public int dashJumpFrame;
-        /// <summary>A dash pressed with no sideways stick that the stick turned in its freeze: the way it turned.</summary>
-        public float? dashTurnX;
+        /// <summary>A dash pressed with the stick at rest that the stick turned in its freeze: the stick that turned it.</summary>
+        public float? dashTurnX, dashTurnY;
         public float positionX;
         public float positionY;
         public float originX;

@@ -1127,8 +1127,8 @@ namespace IGTAP.EngineSim
             const int GateVariants = 8;
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
-            static readonly string[] OmniKinds = { "aim", "aim", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce", "wavejump",
-                "superground" };
+            static readonly string[] OmniKinds = { "aim", "aim", "steep", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce",
+                "wavejump", "superground" };
             static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
             static readonly int[] BounceHolds = { 3, 6, 10, 16 }, DashJumpHolds = { 2, 5, 10, 16 }, LateHolds = { 0, 2, 5, 10 };
             static readonly int[] Steps = { 1, 1, 2, 3, 5, 8 }, Nudges = { 1, 2, 3, 5, 8 }, Inserts = { 1, 2, 4, 8, 15 }, VerticalSpans = { 1, 3, 6, 12, 25, 50 };
@@ -1146,6 +1146,18 @@ namespace IGTAP.EngineSim
                     {
                         var (x, y) = OneOf(Aims);
                         return OmniDash(t, at, x, y, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, x != 0f ? x : side);
+                    }
+                    case "steep":
+                    {
+                        // Freeze aim: the dash pressed with the stick at rest, then the stick 0.35 sideways and near full
+                        // up (or down) in its freeze. Unsnapped, it goes 19° off vertical, which no dash pressed on a tick can
+                        // (MacroEngine.StickFor); (0.35, 0.94) is a stick a round gate allows.
+                        int end = OmniDash(t, at, 0f, 0f, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, side);
+                        InputTick d = t[at];
+                        d.turnX = side * 0.35f;
+                        d.turnY = _rng.NextDouble() < .75 ? 0.94f : -0.94f;
+                        t[at] = d;
+                        return end;
                     }
                     case "wavedash":
                         Airborne(t, at, lo);
@@ -1199,7 +1211,7 @@ namespace IGTAP.EngineSim
                 int hold = jump > 0 ? OneOf(DashHolds) : 0;
                 Pad(t, at + 1 + Math.Max(8, hold + 1));
                 InputTick d = t[at];
-                d.dash = true; d.x = x; d.y = y; d.dashJump = jump;
+                d.dash = true; d.x = x; d.y = y; d.dashJump = jump; d.turnX = d.turnY = null;
                 if (jump > 0) d.press = false;
                 t[at] = d;
                 for (int i = at + 1; i < at + 9; i++) { InputTick k = t[i]; k.x = side; k.y = 0f; t[i] = k; }
@@ -1270,7 +1282,7 @@ namespace IGTAP.EngineSim
                 string kind = OneOf(_kinds);
                 switch (kind)
                 {
-                    case "aim":
+                    case "aim": case "steep":
                     {
                         int dash = Pick(t, IsDash);
                         Omni(t, dash >= 0 && _rng.NextDouble() < .7 ? dash : p, 0, kind);
@@ -1343,8 +1355,8 @@ namespace IGTAP.EngineSim
                         InputTick from = t[q], dest = t[to];
                         if (from.dash)
                         {
-                            dest.dash = true; dest.dashJump = from.dashJump; dest.turnX = from.turnX;
-                            from.dash = false; from.dashJump = 0; from.turnX = null;
+                            dest.dash = true; dest.dashJump = from.dashJump; dest.turnX = from.turnX; dest.turnY = from.turnY;
+                            from.dash = false; from.dashJump = 0; from.turnX = from.turnY = null;
                             t[q] = from; t[to] = dest;
                             break;
                         }

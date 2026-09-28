@@ -15,15 +15,16 @@ namespace IGTAP.EngineSim
         public int dashJump;
         public int springDash;
         public float? lockX, lockY;
-        /// <summary>On a dash tick: the stick x held in the dash's freeze, before the next tick (MacroStep.dashTurnX).</summary>
-        public float? turnX;
+        /// <summary>On a dash tick: the stick held in the dash's freeze, before the next tick (MacroStep.dashTurnX/dashTurnY; y
+        /// only turns an omnidash).</summary>
+        public float? turnX, turnY;
         public bool reset;
 
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
-        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && reset == o.reset; }
+        public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && turnY == o.turnY && reset == o.reset; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
-        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, reset)); }
+        public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, turnY, reset)); }
 
         public static InputTick FromJson(JsonElement t)
         {
@@ -40,11 +41,12 @@ namespace IGTAP.EngineSim
                 lockX = t.TryGetProperty("lockX", out JsonElement lockX) && lockX.ValueKind == JsonValueKind.Number ? lockX.GetSingle() : null,
                 lockY = t.TryGetProperty("lockY", out JsonElement lockY) && lockY.ValueKind == JsonValueKind.Number ? lockY.GetSingle() : null,
                 turnX = t.TryGetProperty("turnX", out JsonElement turnX) && turnX.ValueKind == JsonValueKind.Number ? turnX.GetSingle() : null,
+                turnY = t.TryGetProperty("turnY", out JsonElement turnY) && turnY.ValueKind == JsonValueKind.Number ? turnY.GetSingle() : null,
                 reset = t.TryGetProperty("reset", out JsonElement reset) && reset.GetBoolean(),
             };
         }
 
-        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, turnX, reset }; }
+        public object ToJson() { return new { x, y, held, press, release, dash, dashJump, springDash, lockX, lockY, turnX, turnY, reset }; }
     }
     public sealed class RunResult
     {
@@ -1055,7 +1057,7 @@ namespace IGTAP.EngineSim
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
-                    dashTurnX = k.dash ? k.turnX : null,
+                    dashTurnX = k.dash ? k.turnX : null, dashTurnY = k.dash ? k.turnY : null,
                     rawQuickRestart = k.reset });
             }
             if (steps.Count == 0) steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,

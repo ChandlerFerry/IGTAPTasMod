@@ -4,7 +4,7 @@
   probe.py --show <name>          summarise a probe log already written
 
 route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
-lockX, lockY, turnX}). --fps sets the playback's fixed clock (default 280, the rate turbo and enginesim model; 50 or
+lockX, lockY, turnX, turnY}). --fps sets the playback's fixed clock (default 280, the rate turbo and enginesim model; 50 or
 more, see enginesim/README.md#probe).
 Plays at normal speed from the category's quick restart (or the savestate), waits for the log, and prints each
 physics tick plus every rendered frame where the player moved with no physics tick since the frame before (the moves

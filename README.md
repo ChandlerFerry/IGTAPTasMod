@@ -7,9 +7,10 @@
 - Presses and releases behave exactly like real button presses.
 - Keep the game's buffer timers: jump, dash, jump cut.
 - Never write `jumpBuffer`, `dashBuffer`, `jumpCutBuffer` or similar directly.
-- Inputs change only on the 50 Hz physics tick. The one exception is the dash freeze's stick (`turnX`,
-  `MacroStep.dashTurnX`): a dash pressed with no sideways stick takes the first sideways stick the game reads before
-  the next tick, as a player tilting the stick during the freeze turns it. It is legal.
+- Inputs change only on the 50 Hz physics tick. The one exception is the dash freeze's stick (`turnX`/`turnY`,
+  `MacroStep.dashTurnX`/`dashTurnY`): a dash pressed with the stick at rest takes the stick the game reads before the
+  next tick, as a player tilting the stick during the freeze turns it. Without the omnidash only its sideways part
+  counts; with it the vertical does too (a controller stick such as (0.35, 0.94), which a round gate allows). It is legal.
 - The player body's interpolation stays on, as the game ships it (the TAS keeps it on), and a route is judged on what
   a player sees with it: `Movement.FixedUpdate` reads the last rendered frame's blend of the body's last two positions,
   so its position writes (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) pull the body back by that frame's

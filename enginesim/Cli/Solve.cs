@@ -362,9 +362,10 @@ namespace IGTAP.EngineSim.Cli
                     | (t.y < 0f ? 32 : 0) | (t.y > 0f ? 64 : 0);
                 if (text.Length > 0) text.Append(';');
                 text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(j - i);
-                if (t.ArmsLock || t.turnX.HasValue)
+                if (t.ArmsLock || t.turnX.HasValue || t.turnY.HasValue)
                     text.Append(',').Append(t.springDash).Append(',').Append(Number(t.lockX)).Append(',').Append(Number(t.lockY));
-                if (t.turnX.HasValue) text.Append(',').Append(Number(t.turnX));
+                if (t.turnX.HasValue || t.turnY.HasValue) text.Append(',').Append(Number(t.turnX));
+                if (t.turnY.HasValue) text.Append(',').Append(Number(t.turnY));
                 i = j;
             }
             return text.ToString();
@@ -390,6 +391,7 @@ namespace IGTAP.EngineSim.Cli
                     lockX = f.Length > 5 && f[5].Length > 0 ? float.Parse(f[5], CultureInfo.InvariantCulture) : null,
                     lockY = f.Length > 6 && f[6].Length > 0 ? float.Parse(f[6], CultureInfo.InvariantCulture) : null,
                     turnX = f.Length > 7 && f[7].Length > 0 ? float.Parse(f[7], CultureInfo.InvariantCulture) : null,
+                    turnY = f.Length > 8 && f[8].Length > 0 ? float.Parse(f[8], CultureInfo.InvariantCulture) : null,
                 };
                 for (int n = int.Parse(f[3], CultureInfo.InvariantCulture); n > 0; n--) ticks.Add(t);
             }

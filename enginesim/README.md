@@ -401,12 +401,14 @@ trace's own start, untouched, and the inputs begin on the first tick (no wait fo
 once per start (`Simulation.Advance`) and every branch restores the state at its end, so a legal approach can go in
 `prefix` and the lab still runs thousands of branches from its end. A tick is the probe's object or a string
 `"x,y,flags[*n]"`: `H` held, `P` press (held), `R` release, `D` dash, `Jn` dashJump n, `Lx:y` the stick through the
-dash lock, `Tx` the dash turn (below); `*n` repeats it. `run`
+dash lock, `Tx` or `Tx:y` the dash turn's stick (below); `*n` repeats it. `run`
 prints the best runs by height and writes one CSV row per run (start keys, branch, `maxY` and its tick, `endY`, x range,
 the highest `Velocity.y + momentum.y` and `Velocity.x + momentum.x` on that tick, the highest body velocity up, the fastest body velocity sideways, end reason).
 
 `labs/c1-hanging-wall.json` is issue #10's lab: starts along and inside Course 1's hanging wall (right face x 2528, bottom
-y −87) against dashes with and without a turn, with and without a jump.
+y −87) against dashes with and without a turn, with and without a jump. `labs/c1-air-turn-climb.json` is the climb's
+air entry: starts facing away from Course 1's wall at x 3488, 2.5-36.5 u from it, a turned dash against a dash pressed
+toward the wall (`docs/human-input.md`, Inwall wallbounce).
 
 ## Humanize
 
@@ -516,13 +518,16 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   vertical of the input tick due next with x at rest, or on a tick in a dash or spring lock (no hook) the stick the last
   input tick held for the lock (`lockMoveX/lockMoveY`; unset: x at rest, y of the next input tick). That x is a super
   jump's direction (`CheckForSuperJump`).
-- Dash turn: a dash started with no sideways stick goes the way the player faces and waits for one
-  (`WaitingForDashInput`): every `Movement.Update` until the next FixedUpdate turns it to the stick's side
-  (Movement.cs:817-834). At 1x those are the dash freeze's frames (`TimeStop`, ~0.05 s real time); in turbo it is the one
-  Update after the dash tick. A dash tick's `turnX` (`MacroStep.dashTurnX`) is the stick x held then: `MacroEngine`
-  arms it after the FixedUpdate the dash started in and `StickFor` returns it for those reads only (`BeforeTick` of the
-  next tick disarms it). Unset, the window reads the dash tick's own stick (x at rest). It is legal (README `### Rules`);
-  the Inwall wallbounce tech demo uses it.
+- Dash turn: a dash started with no sideways stick (with the omnidash: with the stick at rest) goes the way the player
+  faces and waits for one (`WaitingForDashInput`): every `Movement.Update` until the next FixedUpdate turns it to the
+  stick (Movement.cs:817-834), the last one winning. At 1x and in turbo and offline alike those are the dash freeze's
+  frames and the tick's grid frames (`MacroEngine.FrameGrid`). A dash tick's `turnX`/`turnY`
+  (`MacroStep.dashTurnX`/`dashTurnY`) is the stick held then: `MacroEngine` arms it after the FixedUpdate the dash
+  started in and `StickFor` returns it for those reads only (`BeforeTick` of the next tick disarms it). Unset, the window
+  reads the dash tick's own stick. Without the omnidash `Update` drops the vertical; with it the stick is not snapped as a
+  pressed dash's is, so sideways 0.3-0.4 and a full vertical aim it 17-22° off vertical (the Freeze aim). It is legal
+  (README `### Rules`); the Inwall wallbounce tech demo uses `turnX`. The solver tries it as the omnidash kind `steep`
+  ((±0.35, ±0.94) on a dash pressed at rest).
 - Zip movers (`PlatformMover`, locked or not): a jump or wall jump while touching one calls `MakeIntangible` (through
   `Movement.MovingPlatformMomentumInherit`), which moves it to the Default layer and back to Ground after
   `WaitForSeconds(0.15)`; the ground and wall rays (Ground only) miss it meanwhile and the normal hitbox (it excludes

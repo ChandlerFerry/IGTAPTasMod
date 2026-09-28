@@ -84,7 +84,7 @@ namespace IGTAP.EngineSim.Cli
                                 int run = (int)sim.Engine.RunTicks - 1;
                                 InputTick k = run >= 0 && run < inputs.Count ? inputs[run] : default;
                                 string input = run + 1 == lastRun ? "(no input)" : $"in[{run}] x={k.x}{(k.y != 0f ? " y=" + k.y : "")}{(k.press ? " press" : "")}{(k.held ? " held" : "")}"
-                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue ? " turn=" + k.turnX : "") : "")
+                                    + (k.release ? " release" : "") + (k.dash ? " dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue || k.turnY.HasValue ? " turn=" + k.turnX + (k.turnY.HasValue ? "," + k.turnY : "") : "") : "")
                                     + (k.springDash > 0 ? " springdash@" + k.springDash : "")
                                     + (k.lockX.HasValue || k.lockY.HasValue ? " lock=" + k.lockX + "," + k.lockY : "");
                                 lastRun = run + 1;

@@ -157,6 +157,8 @@ namespace IGTAPTasMod
                     row.x = _overlayAxis.x;
                     row.y = _overlayAxis.y;
                     row.stickText = StickText(row.x, row.y);
+                    // A dash's freeze stick (turnX/turnY) comes between this tick and the next: the dash turns to it.
+                    if (_engine.FreezeStick is Vector2 freeze) row.stickText += " ⇒ " + StickText(freeze.x, freeze.y);
                     row.jumpPress = jumpPress;
                     row.jumpRelease = jumpRelease;
                     row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);

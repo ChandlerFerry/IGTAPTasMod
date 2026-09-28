@@ -78,7 +78,7 @@ namespace IGTAP.EngineSim.Cli
         /// inputs. A start's keys: x, y (world frame), vx, vy (the script's Velocity, and the body's with momentum), mx, my
         /// (momentum), scaleX, collider ("default" | "dash"), savestate (a studio savestate file first), anything else a
         /// Movement field. A tick is the probe's object or a string "x,y,flags[*n]" (flags H held, P press, R release, D dash,
-        /// Jn dashJump n, Lx:y the stick through the dash lock, Tx the stick x held in the dash's freeze; *n repeats it).
+        /// Jn dashJump n, Lx:y the stick through the dash lock, Tx or Tx:y the stick held in the dash's freeze; *n repeats it).
         /// </summary>
         static Lab Load(string path)
         {
@@ -136,10 +136,12 @@ namespace IGTAP.EngineSim.Cli
                         case 'D': tick.dash = true; break;
                         case 'T':
                         {
-                            // Tx — the stick x held in the dash's freeze (InputTick.turnX), e.g. T-1
+                            // Tx or Tx:y — the stick held in the dash's freeze (InputTick.turnX/turnY), e.g. T-1 or T0.35:0.94
                             int e = i + 1;
-                            while (e < flags.Length && (char.IsDigit(flags[e]) || flags[e] == '-' || flags[e] == '.')) e++;
-                            tick.turnX = F(flags.Substring(i + 1, e - i - 1));
+                            while (e < flags.Length && (char.IsDigit(flags[e]) || flags[e] == '-' || flags[e] == '.' || flags[e] == ':')) e++;
+                            string[] turn = flags.Substring(i + 1, e - i - 1).Split(':');
+                            tick.turnX = F(turn[0]);
+                            if (turn.Length > 1) tick.turnY = F(turn[1]);
                             i = e - 1;
                             break;
                         }
@@ -392,7 +394,7 @@ namespace IGTAP.EngineSim.Cli
         {
             return $"{k.x:0.##},{k.y:0.##},{(k.press ? "P" : k.held ? "H" : "")}{(k.release ? "R" : "")}{(k.dash ? "D" : "")}{(k.dashJump > 0 ? "J" + k.dashJump : "")}"
                 + (k.lockX.HasValue || k.lockY.HasValue ? $"L{k.lockX ?? 0f:0.##}:{k.lockY ?? 0f:0.##}" : "")
-                + (k.turnX.HasValue ? $"T{k.turnX:0.##}" : "");
+                + (k.turnX.HasValue || k.turnY.HasValue ? $"T{k.turnX ?? 0f:0.##}" + (k.turnY.HasValue ? $":{k.turnY:0.##}" : "") : "");
         }
 
         static float F(string s) { return float.Parse(s, CultureInfo.InvariantCulture); }

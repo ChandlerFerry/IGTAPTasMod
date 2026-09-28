@@ -68,7 +68,7 @@ a VMAN route may have.
 
 Each search window (`IGTAP.EngineSim fulltas`) presses what the run's movement allows there: a dash once the window
 starts with one or buys one, and from `buyomni` on the omnidirectional tricks too (`OfflineSolver` `Omni`: aimed dashes,
-hyper, chained hyper, ground bounce, hyper ground bounce, the up-diagonal dash into a wall; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
+the freeze aim, hyper, chained hyper, ground bounce, hyper ground bounce, the up-diagonal dash into a wall; see [`human-input.md`](human-input.md#omnidirectional-dash-vman)).
 
 `VMAN` is the first such run: `buy:buyomni`, Course 1, `buy:buywj`, the climb to Course 2 (`at:2400,1500,400,1000`),
 Course 2, `buy:buyds`, then area goals inside Course 2's box (`at:4300,2850,400,700`), the left end of the wall at

@@ -45,7 +45,7 @@ namespace IGTAPTasMod
             public float x, y; public bool held, press, release, dash; public int dashJump;
             public int springDash;
             public float? lockX, lockY;
-            public float? turnX;
+            public float? turnX, turnY;
             public bool reset;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
@@ -995,7 +995,7 @@ namespace IGTAPTasMod
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, springDash = i == 0 ? s.springDashFrame : 0,
                         lockX = i == 0 ? s.lockMoveX : null, lockY = i == 0 ? s.lockMoveY : null,
-                        turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null,
+                        turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null, turnY = i == 0 && s.rawDashPressed ? s.dashTurnY : null,
                         reset = i == 0 && s.rawQuickRestart });
             return ticks;
         }
@@ -1020,7 +1020,7 @@ namespace IGTAPTasMod
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
-                    dashTurnX = k.dash ? k.turnX : null,
+                    dashTurnX = k.dash ? k.turnX : null, dashTurnY = k.dash ? k.turnY : null,
                     rawQuickRestart = k.reset });
             }
             return steps;

@@ -23,15 +23,19 @@ dash or spring lock (no hook), the read is all there is: it is the stick the las
 reversed super jump.
 
 The dash freeze is the one place a player moves the stick between two physics ticks: a dash's `TimeStop` holds physics
-for ~0.05 s of real time while `Movement.Update` keeps running every frame. A dash pressed with no sideways stick goes
-the way the player faces and takes the first sideways stick an `Update` reads before the next tick
-(`WaitingForDashInput`, Movement.cs:817-834). A dash tick's `turnX` (`MacroStep.dashTurnX`) is that stick: the dash
-turns to it, as a player tilting the stick during the freeze turns it. It is legal (README "### Rules"): the one input
-that changes between two ticks. Nothing else reads the stick in that window. The recorder writes it when a recorded
-dash's first dash frame goes the other way from its start (`InputRecorder.DashFrame`). It stays its own field and not
-part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no sideways stick
-and hold `lockMoveX` sideways, and reading the lock stick in the freeze would turn the ones whose lock points against
-the dash.
+for ~0.05 s of real time while `Movement.Update` keeps running every frame. A dash pressed with no sideways stick (with
+the omnidash: with the stick at rest) goes the way the player faces and takes the stick every `Update` reads before the
+next tick, the last one winning (`WaitingForDashInput`, Movement.cs:817-834). A dash tick's `turnX`/`turnY`
+(`MacroStep.dashTurnX`/`dashTurnY`) is that stick: the dash turns to it, as a player tilting the stick during the freeze
+turns it. It is legal (README "### Rules"): the one input that changes between two ticks. Nothing else reads the stick
+in that window. Without the omnidash `Update` drops the vertical, so only `turnX` counts. The recorder writes them when
+a recorded dash's first dash frame goes another way than its start (`InputRecorder.DashFrame`). They stay their own
+fields and not part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no
+sideways stick and hold `lockMoveX` sideways, and reading the lock stick in the freeze would turn the ones whose lock
+points against the dash. The overlay's input list shows it on the dash's row after the tick's stick (`· ⇒ → 35% ↑`:
+stick at rest on the tick, then 0.35 sideways and up in the freeze). The freeze's frames only exist while playback runs
+on the fixed clock, so a replay starts only once it does (`TasPlugin.PacePlayback`): a replay that started inside a
+long frame (a loaded CPU) played its first ticks back to back, with no `Update` between them, and lost the turn.
 
 ## Presses, releases and the buffer timers
 
@@ -149,6 +153,14 @@ move a press or a dash a few ticks while keeping where the hold ends.
   flips away and turns back for another climb (dash, turned tick, two cling ticks), so a chain of them climbs the wall;
   the speed the dot fell at doesn't change it (the dash replaces `Velocity` and zeroes `momentum`).
 
+  The cling only sets up the facing: any turned dash that reaches a wall on its turned tick climbs. From the air, with
+  the back to a wall and no cling, a dash with no sideways stick turned toward the wall climbs the same way
+  (`enginesim/labs/c1-air-turn-climb.json`, Course 1's wall face at x 3488, facing away, y −390..−200, 120 starts a
+  distance): with the hitbox's back edge 14.5-32.5 u from the face every start lifts 56 u on the turned tick, 6.5-12.5 u
+  112 u, 2.5-4.5 u 112-225 u, then clings with the dash back. From 34.5 u out the turned dash reaches the wall a tick
+  late, with the rays already turned, and doesn't climb, nor does a dash pressed toward the wall from any of those
+  starts. A wall jump away leaves the dot too far out: its lock holds the dash until the back edge is ~88 u from the wall.
+
   How many lifts one tick gets depends on the frame rate and the body's interpolation. In the game at 1x
   (`probe.py --fps`, from a `lab/` savestate clinging at y −88): 1, 2, 3, 4 and 6 lifts at 50, 100, 150, 200 and 280
   fps with interpolation off; with it on, as the game ships it, 0, 0, 1, 1 and 2. The Course 1 demo chain at 280 fps
@@ -163,9 +175,9 @@ move a press or a dash a few ticks while keeping where the hold ends.
 
 A Vman run has three movement sets: omnidash with one dash (`buy:buyomni`), plus wall jump (`buy:buywj`), plus a
 second dash (`buy:buyds`). The omnidash aims the dash with the stick, 8 ways (`Movement.getPlayerControlledInput`: y
-±1 with `|x| < 1` drops x). Each trick's jump is pressed inside the dash (`dashJump`), buffered 0.2 s. Numbers are
-from an offline lab on a flat Ground floor from a 460 u/s run, over 40 ticks (0.8 s); a run covers 377 u and a
-ground dash 623 u, and a full jump peaks 258 u high.
+±1 with `|x| < 1` drops x; the freeze aim below is the one way past that). Each trick's jump is pressed inside the dash
+(`dashJump`), buffered 0.2 s. Numbers are from an offline lab on a flat Ground floor from a 460 u/s run, over 40 ticks
+(0.8 s); a run covers 377 u and a ground dash 623 u, and a full jump peaks 258 u high.
 
 Terms, as the Tech tab locks them in: a **super** is a flat dash on the ground then a jump, a **high super** the same
 with an up-diagonal dash, a **hyper** a down-diagonal dash then a jump, an **ultra** a hyper 4 units lower (the game's own
@@ -218,6 +230,17 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   (1670 u/s, not the diagonal's 1181), the wall touch refills the dash, and the jump is the wall bounce (507 u high).
 - **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
   one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
+- **Freeze aim** (`WJ_DS_DJ_BS_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
+  nearly straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 0.94)). The stick
+  that turns a waiting dash (`Movement.Update`, 821-833) skips the press's snap to straight up, so `dashDirection` is
+  (0.33, 0.944): 19° off vertical, 552 u/s sideways and 1576 u/s up, an angle no dash pressed on a tick gets (17-22° for
+  sideways 0.3-0.4; `NormaliseInput` takes a sideways 0.4-0.8 with a vertical to full tilt). The dash's first tick
+  still goes the way the player faces (the −20 shove and that tick's `Velocity` come before the freeze). From standing
+  on Course 1's floor it peaks 268 u up and 124 u across with the stick at rest after it (a straight-up dash: 298 u up,
+  none across). Down in the air it still lands as a wavedash (`canHyper` flattens it on the floor).
+  It needs an analog stick (a keyboard or d-pad has no 0.3-0.4); the timing is the dash turn's, any frame of the
+  freeze with the last one counting. The overlay labels it FREEZE AIM (`Tech.FreezeAim`: a dash whose direction on its
+  first dash tick is steeper than the diagonal, `0 < |x| < 0.7` with `y ≠ 0`).
 
 The studio's **Ultra map** tab (`POST /api/enginesim/ultras`, `IGTAP.EngineSim ultras`) shows where the game's ultra
 bonus can be had in the VMAN run's world. The game's check (`Sign(preDashMomentum.x) == Sign(dashDirection.x)` and the

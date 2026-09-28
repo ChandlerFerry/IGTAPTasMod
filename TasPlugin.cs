@@ -284,7 +284,9 @@ namespace IGTAPTasMod
                 Instance.BeginFullTasPlayback(__instance);
                 return true;
             }
-            if (Instance._pendingReplay != null && !Instance._engine.IsRunning)
+            // A replay starts only once playback runs on the fixed clock (PacePlayback, in Update): a request that lands in a long
+            // frame would otherwise play its first ticks back to back with no Update between them (a dash freeze's turn lost).
+            if (Instance._pendingReplay != null && !Instance._engine.IsRunning && Instance._playbackPaced)
             {
                 MacroDefinition macro = Instance._pendingReplay;
                 int startDelayTicks = Instance._pendingReplayStartDelayTicks;

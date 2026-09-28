@@ -49,9 +49,9 @@ namespace IGTAPTasMod
         private int _springTicks;
         private bool _lockArmed;
         private float? _lockX, _lockY;
-        private float? _pendingTurnX;
+        private float? _pendingTurnX, _pendingTurnY;
         private bool _turnArmed;
-        private float _turnX;
+        private float? _turnX, _turnY;
         private int _pressedStep = -1;
         private bool _tickLocked;
         private Vector2 _tickStick;
@@ -84,28 +84,41 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// The stick the game reads (Movement.NormaliseInput). Between a dash's start and the next FixedUpdate — at 1x the
-        /// dash's TimeStop frames — a dash started without a sideways stick waits for one (<c>WaitingForDashInput</c>,
-        /// Movement.Update 817-834): a step's <c>dashTurnX</c> is the stick x a player holds then, so the dash turns to it.
+        /// dash's TimeStop frames — a dash started with the stick at rest (no sideways stick without the omnidash) waits for one
+        /// (<c>WaitingForDashInput</c>, Movement.Update 817-834): a step's <c>dashTurnX</c>/<c>dashTurnY</c> is the stick a
+        /// player holds then, so the dash turns to it. The omnidash takes its vertical too, unsnapped: a sideways 0.3-0.4 aims it
+        /// 17-22° off vertical, which no dash pressed on a tick can (getPlayerControlledInput sets x to 0 there).
         /// </summary>
         public Vector2 StickFor(Movement movement)
         {
             Vector2 stick = TickStick;
-            if (_turnArmed && ReadBool(WaitingForDashInputField, movement)) stick.x = _turnX;
+            if (_turnArmed && ReadBool(WaitingForDashInputField, movement))
+            {
+                if (_turnX.HasValue) stick.x = _turnX.Value;
+                if (_turnY.HasValue) stick.y = _turnY.Value;
+            }
             return stick;
         }
 
+        /// <summary>The stick held in this tick's dash freeze (a turn armed by <see cref="AfterFixedTick"/>), else null.</summary>
+        public Vector2? FreezeStick
+        {
+            get { return _turnArmed ? new Vector2(_turnX ?? TickStick.x, _turnY ?? TickStick.y) : (Vector2?)null; }
+        }
+
         /// <summary>
-        /// After Movement.FixedUpdate: a pressed dash's turn arms once the dash has started this tick waiting for a sideways
-        /// stick, for the frames up to the next tick (<see cref="BeforeTick"/> disarms it).
+        /// After Movement.FixedUpdate: a pressed dash's turn arms once the dash has started this tick waiting for a stick, for
+        /// the frames up to the next tick (<see cref="BeforeTick"/> disarms it).
         /// </summary>
         public void AfterFixedTick(Movement movement)
         {
-            if (!IsRunning || !_pendingTurnX.HasValue) return;
+            if (!IsRunning || (!_pendingTurnX.HasValue && !_pendingTurnY.HasValue)) return;
             if (!string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase)
                 || ReadFloat(FramesSinceLastDashField, movement) != 0f) return;
             _turnArmed = ReadBool(WaitingForDashInputField, movement);
-            _turnX = _pendingTurnX.Value;
-            _pendingTurnX = null;
+            _turnX = _pendingTurnX;
+            _turnY = _pendingTurnY;
+            _pendingTurnX = _pendingTurnY = null;
         }
 
         /// <summary>
@@ -172,7 +185,7 @@ namespace IGTAPTasMod
             _springDashFrame = 0;
             _springTicks = 0;
             _lockArmed = false;
-            _pendingTurnX = null;
+            _pendingTurnX = _pendingTurnY = null;
             _turnArmed = false;
             _pressedStep = -1;
             _tickLocked = false;
@@ -272,6 +285,7 @@ namespace IGTAPTasMod
                 PressDash(movement);
                 _dashJumpFrame = step.dashJumpFrame;
                 _pendingTurnX = step.dashTurnX;
+                _pendingTurnY = step.dashTurnY;
                 _dashJumpAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
             }
             _rawJumpHeld = step.rawJumpHeld;

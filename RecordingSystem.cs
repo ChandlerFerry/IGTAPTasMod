@@ -115,11 +115,21 @@ namespace IGTAPTasMod
             if (jump && !_lastJump && dash.dashPressed && dash.dashJumpFrame == 0)
                 dash.dashJumpFrame = Math.Max(1, (int)Read<float>(FramesSinceLastDash, movement));
             // The dash's first frame after its start: facing is still the way it started, dashDirection is the way the stick
-            // held in its freeze turned it (a dash started without a sideways stick waits for one).
-            if (dash.dashPressed && !dash.dashTurnX.HasValue && Read<float>(FramesSinceLastDash, movement) == 1f)
+            // held in its freeze turned it (a dash started with the stick at rest waits for one).
+            if (dash.dashPressed && !dash.dashTurnX.HasValue && !dash.dashTurnY.HasValue && Read<float>(FramesSinceLastDash, movement) == 1f)
             {
-                float turned = Read<Vector2>(DashDirection, movement).x;
-                if (turned != 0f && Mathf.Sign(turned) != (Read<bool>(FacingRight, movement) ? 1f : -1f)) dash.dashTurnX = Mathf.Sign(turned);
+                Vector2 turned = Read<Vector2>(DashDirection, movement);
+                if (turned.y != 0f && dash.moveX == 0f && dash.moveY == 0f)
+                {
+                    // An omnidash aimed in its freeze: dashDirection is the normalized (x, ±1) NormaliseInput passed, so x is
+                    // back as x / |y|; the vertical goes to a stick a round gate allows (0.94 up for x 0.35, still 1 after
+                    // NormaliseInput).
+                    float x = turned.x / Mathf.Abs(turned.y);
+                    dash.dashTurnX = x;
+                    dash.dashTurnY = Mathf.Sign(turned.y) * (Mathf.Abs(x) >= 1f ? 1f : Mathf.Sqrt(1f - x * x));
+                }
+                else if (turned.y == 0f && turned.x != 0f && Mathf.Sign(turned.x) != (Read<bool>(FacingRight, movement) ? 1f : -1f))
+                    dash.dashTurnX = Mathf.Sign(turned.x);
             }
             _lastJump = jump;
         }
@@ -255,7 +265,8 @@ namespace IGTAPTasMod
                     rawJumpReleased = first.jumpReleased,
                     rawDashPressed = first.dashPressed, rawDashHeld = first.dashHeld,
                     dashJumpFrame = first.dashPressed ? first.dashJumpFrame : 0,
-                    dashTurnX = first.dashPressed ? first.dashTurnX : null
+                    dashTurnX = first.dashPressed ? first.dashTurnX : null,
+                    dashTurnY = first.dashPressed ? first.dashTurnY : null
                 });
                 start = end;
             }
@@ -272,7 +283,8 @@ namespace IGTAPTasMod
                 && left.dashPressed == right.dashPressed
                 && left.dashHeld == right.dashHeld
                 && left.dashJumpFrame == right.dashJumpFrame
-                && left.dashTurnX == right.dashTurnX;
+                && left.dashTurnX == right.dashTurnX
+                && left.dashTurnY == right.dashTurnY;
         }
 
         private static string Label(RawTickSample sample)

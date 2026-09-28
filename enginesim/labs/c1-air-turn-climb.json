@@ -1,0 +1,93 @@
+{
+ "base": {
+  "onGround": false,
+  "OnWall": false,
+  "wallCoyoteFrames": -1,
+  "collider": "default",
+  "airDashesLeft": 1,
+  "wallJumpsLeft": 4,
+  "dashCooldown": -1,
+  "cutsceneMode": "none",
+  "dashActive": false,
+  "jumpBuffer": false,
+  "framesSinceLastDash": 100,
+  "coyoteFrames": -1,
+  "wallJumpDirection": 0,
+  "wallJumpMovementLockRemaining": -1,
+  "vx": 0,
+  "mx": 0,
+  "my": 0,
+  "facing": -1
+ },
+ "axes": {
+  "x": [
+   3436,
+   3438,
+   3440,
+   3442,
+   3444,
+   3446,
+   3448,
+   3450,
+   3452,
+   3454,
+   3456,
+   3458,
+   3460,
+   3462,
+   3464,
+   3466,
+   3468,
+   3470
+  ],
+  "y": [
+   -390,
+   -380,
+   -370,
+   -360,
+   -350,
+   -340,
+   -330,
+   -320,
+   -310,
+   -300,
+   -290,
+   -280,
+   -270,
+   -260,
+   -250,
+   -240,
+   -230,
+   -220,
+   -210,
+   -200
+  ],
+  "vy": [
+   -600,
+   0,
+   300
+  ],
+  "mx": [
+   0,
+   600
+  ]
+ },
+ "branches": [
+  {
+   "name": "turn",
+   "ticks": [
+    "0,0,DT1",
+    "0,0*20"
+   ]
+  },
+  {
+   "name": "direct",
+   "ticks": [
+    "1,0,D",
+    "1,0*20"
+   ]
+  }
+ ],
+ "horizon": 20,
+ "top": 10
+}

@@ -28,20 +28,21 @@ namespace IGTAPTasMod
             WallDash,
             InwallWallBounce,
             FloatUltra,
+            FreezeAim,
         }
 
         static readonly string[] TechNames =
         {
             "GC WALL CLIP", "COYOTE JUMP", "WALL COYOTE JUMP", "SUPER JUMP", "REVERSED SUPER", "BACKWARDS DASH-JUMP", "HYPER", "CHAINED HYPER",
             "GROUND BOUNCE", "HYPER GROUND BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "SPRING DASH", "SPIKE GRACE", "ULTRA", "SUPER GROUND BOUNCE", "WALL DASH",
-            "INWALL WALLBOUNCE", "FLOAT ULTRA",
+            "INWALL WALLBOUNCE", "FLOAT ULTRA", "FREEZE AIM",
         };
 
         static readonly Color[] TechColors =
         {
             Hex(0xff3b3b, 1f), Hex(0xffc93c, 1f), Hex(0xa3e635, 1f), Hex(0x38bdf8, 1f), Hex(0x6366f1, 1f), Hex(0xc084fc, 1f), Hex(0xf472b6, 1f),
             Hex(0xfb923c, 1f), Hex(0xfde68a, 1f), Hex(0xe879f9, 1f), Hex(0x10b981, 1f), Hex(0x2dd4bf, 1f), Hex(0x60a5fa, 1f), Hex(0xd4a373, 1f),
-            Hex(0x86efac, 1f), Hex(0xf43f5e, 1f), Hex(0xfacc15, 1f), Hex(0x94a3b8, 1f), Hex(0x22d3ee, 1f),
+            Hex(0x86efac, 1f), Hex(0xf43f5e, 1f), Hex(0xfacc15, 1f), Hex(0x94a3b8, 1f), Hex(0x22d3ee, 1f), Hex(0xa78bfa, 1f),
         };
 
         sealed class TechSpan
@@ -294,6 +295,13 @@ namespace IGTAPTasMod
                     _techBackwardsDash = tick;
                     _techBackwardsStart = _techFlipStart;
                 }
+            }
+            // An omnidash the stick aimed in its freeze (MacroEngine.StickFor): Movement.Update doesn't snap a sideways 0.3-0.4
+            // to 0 as a dash pressed on a tick does, so it goes steeper than the 8 ways (|x| under the diagonal's 0.707).
+            if (player.dashActive && player.framesSinceLastDash == 1f && tick - _techDashStart == 1)
+            {
+                Vector2 aimed = TechRead<Vector2>(TechDashDirectionField, player);
+                if (aimed.x != 0f && aimed.y != 0f && Mathf.Abs(aimed.x) < 0.7f) AddTech(Tech.FreezeAim, _techDashStart, tick);
             }
             if (player.onGround && !player.dashActive) _techWaveAir = _techSuperAir = false;
 

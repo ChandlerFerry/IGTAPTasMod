@@ -293,7 +293,8 @@ namespace IGTAP.EngineSim.Cli
 
         static Hash HashInputs(List<InputTick> inputs)
         {
-            byte[] bytes = new byte[inputs.Count * 29];
+            // 29 bytes a tick, plus 4 for a freeze stick's vertical (turnY) so older inputs keep their hash.
+            byte[] bytes = new byte[inputs.Count * 29 + inputs.Count(t => t.turnY.HasValue) * 4];
             Span<byte> b = bytes;
             foreach (InputTick t in inputs)
             {
@@ -307,6 +308,9 @@ namespace IGTAP.EngineSim.Cli
                 BinaryPrimitives.WriteSingleLittleEndian(b[21..], t.lockY ?? 0f);
                 BinaryPrimitives.WriteSingleLittleEndian(b[25..], t.turnX ?? 0f);
                 b = b[29..];
+                if (!t.turnY.HasValue) continue;
+                BinaryPrimitives.WriteSingleLittleEndian(b, t.turnY.Value);
+                b = b[4..];
             }
             Span<byte> digest = stackalloc byte[32];
             SHA256.HashData(bytes, digest);

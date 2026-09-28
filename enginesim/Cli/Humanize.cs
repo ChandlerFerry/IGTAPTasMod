@@ -424,8 +424,8 @@ namespace IGTAP.EngineSim.Cli
                 if (j != d && (route[j].dash || route[j].ArmsLock)) return null;
             var c = new List<InputTick>(route);
             InputTick from = c[d], to = c[q];
-            to.dash = true; to.dashJump = from.dashJump; to.lockX = from.lockX; to.lockY = from.lockY; to.turnX = from.turnX;
-            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null; from.turnX = null;
+            to.dash = true; to.dashJump = from.dashJump; to.lockX = from.lockX; to.lockY = from.lockY; to.turnX = from.turnX; to.turnY = from.turnY;
+            from.dash = false; from.dashJump = 0; from.lockX = from.lockY = null; from.turnX = from.turnY = null;
             c[d] = from;
             c[q] = to;
             return c;
@@ -437,7 +437,7 @@ namespace IGTAP.EngineSim.Cli
             InputTick k = c[d];
             k.dash = false;
             k.dashJump = 0;
-            k.turnX = null;
+            k.turnX = k.turnY = null;
             c[d] = k;
             return c;
         }
@@ -453,7 +453,7 @@ namespace IGTAP.EngineSim.Cli
             if (k.press) parts.Add("press");
             if (k.release) parts.Add("release");
             parts.Add(k.held ? "held" : "up");
-            if (k.dash) parts.Add("dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue ? " turn " + Num(k.turnX.Value) : ""));
+            if (k.dash) parts.Add("dash" + (k.dashJump > 0 ? "+jump@" + k.dashJump : "") + (k.turnX.HasValue || k.turnY.HasValue ? " turn " + Num(k.turnX ?? 0f) + (k.turnY.HasValue ? "," + Num(k.turnY.Value) : "") : ""));
             return string.Join(" ", parts);
         }
 
