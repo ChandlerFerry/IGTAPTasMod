@@ -605,10 +605,8 @@ namespace IGTAPTasMod
             WallBouncePossible(movement) = false;
             movement.hitDashResetterWhileInCurrentDash = false;
 
-            Component body = movement.GetComponent("Rigidbody2D");
-            if (body == null) return;
-            Rigidbody2D rb = body as Rigidbody2D;
-            if (rb != null) { rb.linearVelocity = Vector2.zero; rb.velocity = Vector2.zero; rb.angularVelocity = 0f; }
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            if (body != null) { body.linearVelocity = Vector2.zero; body.angularVelocity = 0f; }
         }
 
         private void PinSynchronizationPosition(Movement movement)

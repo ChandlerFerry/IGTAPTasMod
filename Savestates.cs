@@ -86,8 +86,8 @@ namespace IGTAPTasMod
             "atJumpApex", "isDead", "cutsceneMode", "facingRight", "blocked", "movementMode"
         };
         private static readonly string[] BodyFieldNames = {
-            "linearVelocity", "velocity", "angularVelocity", "gravityScale", "linearDamping", "drag",
-            "angularDamping", "angularDrag", "bodyType", "constraints", "simulated"
+            "linearVelocity", "angularVelocity", "gravityScale", "linearDamping", "angularDamping", "bodyType", "constraints",
+            "simulated"
         };
 
         public static Savestate Capture(Movement movement, string name, int pluginSchemaVersion)
@@ -107,7 +107,7 @@ namespace IGTAPTasMod
             result.originX = origin.x;
             result.originY = origin.y;
             CaptureMembers(movement, MovementFieldNames, result.movementFields);
-            Component body = movement.GetComponent("Rigidbody2D");
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             if (body != null) CaptureMembers(body, BodyFieldNames, result.bodyFields);
             return result;
         }
@@ -131,8 +131,8 @@ namespace IGTAPTasMod
             }
 
             Transform transform = movement.transform;
-            Component body = movement.GetComponent("Rigidbody2D");
-            SetBodySimulation(body, false);
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            if (body != null) body.simulated = false;
             Vector3 position = new Vector3(savestate.positionX, savestate.positionY, savestate.positionZ);
             if (savestate.hasOrigin)
             {
@@ -143,8 +143,11 @@ namespace IGTAPTasMod
             transform.rotation = new Quaternion(savestate.rotationX, savestate.rotationY, savestate.rotationZ, savestate.rotationW);
             transform.localScale = new Vector3(savestate.scaleX, savestate.scaleY, savestate.scaleZ);
             RestoreMembers(movement, savestate.movementFields, TasPlugin.UnlocksLocked);
-            if (body != null) RestoreMembers(body, savestate.bodyFields, false);
-            SetBodySimulation(body, ReadBool(savestate.bodyFields, "simulated", true));
+            if (body != null)
+            {
+                RestoreMembers(body, savestate.bodyFields, false);
+                body.simulated = ReadBool(savestate.bodyFields, "simulated", true);
+            }
             Physics2D.SyncTransforms();
             SnapCamera(transform.position);
             result.Success = true;
@@ -256,14 +259,6 @@ namespace IGTAPTasMod
                 result = Convert.ChangeType(input.value, targetType, CultureInfo.InvariantCulture);
                 return true;
             } catch { return false; }
-        }
-
-        private static void SetBodySimulation(Component body, bool value)
-        {
-            if (body == null) return;
-            PropertyInfo property = AccessTools.Property(body.GetType(), "simulated");
-            try { if (property != null && property.CanWrite) property.SetValue(body, value, null); }
-            catch { }
         }
 
         private static bool ReadBool(Dictionary<string, SnapshotValue> values, string key, bool fallback)
