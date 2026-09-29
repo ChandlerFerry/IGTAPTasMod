@@ -45,7 +45,7 @@ type PullNow = { pull: number; lever: string; goal: number; label: string; budge
 type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type CourseTarget = { course: number; capabilities: string; farm: boolean };
-type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; faster?: FasterWay[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
@@ -1144,7 +1144,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
-  const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
+  const savedGoals = (run?.goals ?? []).join("\n");
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   useEffect(() => setPicked(null), [name]);

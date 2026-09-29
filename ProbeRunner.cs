@@ -84,7 +84,7 @@ namespace IGTAPTasMod
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
-                        fps = Number(body, "fps", 0), omniDash = body["omniDash"] != null && (bool)body["omniDash"] };
+                        fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash") };
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
@@ -162,7 +162,7 @@ namespace IGTAPTasMod
             }
             if (_probe.captureAt >= 0 && _probe.capturedSavestateId == null && _engine.RunTicks >= _probe.captureAt)
             {
-                Savestate savestate = SavestateService.Capture(movement, "probe/" + _probe.name + " @" + _engine.RunTicks, MacroLibrary.CurrentSchemaVersion);
+                Savestate savestate = SavestateService.Capture(movement, "probe/" + _probe.name + " @" + _engine.RunTicks);
                 _savestates.Insert(0, savestate);
                 WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
                 _probe.capturedSavestateId = savestate.id;
@@ -214,7 +214,7 @@ namespace IGTAPTasMod
         {
             Movement movement = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
             string fromId = Text(body, "from");
-            Savestate source = fromId.Length == 0 ? SavestateService.Capture(movement, "", MacroLibrary.CurrentSchemaVersion)
+            Savestate source = fromId.Length == 0 ? SavestateService.Capture(movement, "")
                 : _savestates.Find(s => s.id == fromId) ?? throw new InvalidOperationException("Savestate not found.");
             Savestate placed = JsonConvert.DeserializeObject<Savestate>(JsonConvert.SerializeObject(source));
             placed.id = Guid.NewGuid().ToString("N");

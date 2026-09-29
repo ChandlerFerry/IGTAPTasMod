@@ -111,7 +111,7 @@ namespace IGTAPTasMod
                 FailNewGame("Savestate " + state.name + " sets unlocks: " + CapabilitiesLockedError);
                 return;
             }
-            SavestateResult restored = SavestateService.Restore(player, state, MacroLibrary.CurrentSchemaVersion);
+            SavestateResult restored = SavestateService.Restore(player, state);
             if (!restored.Success) { FailNewGame(restored.Message); return; }
             // The savestate holds no checkpoint, and the plugin writes none: respawnPoint stays the new game's. A quick restart
             // before a real checkpoint moves it ends the run (FullTasTracker.RestartRefused).

@@ -211,7 +211,7 @@ export type LevelPaths = { ground: string; lines: string; spikes: string; spikeL
   tone: Record<"blue" | "orange", { ground: string; spikes: string }>; areas: string[]; spikeAreas: string[] };
 
 // An area's rings, each closed.
-export function ringPaths(s: Solid) {
+function ringPaths(s: Solid) {
   let d = "", at = 0;
   for (const n of s.rings ?? [s.p.length]) { d += polyPath(s.p.slice(at, at + n)); at += n; }
   return d;
@@ -330,7 +330,7 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
 });
 
 // A five-pointed star of outer radius `r` at (x, y), SVG coordinates.
-export function starPath(x: number, y: number, r: number) {
+function starPath(x: number, y: number, r: number) {
   let d = "";
   for (let i = 0; i < 10; i++) {
     const a = -Math.PI / 2 + i * Math.PI / 5, k = i % 2 ? r * .45 : r;

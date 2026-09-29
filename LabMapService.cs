@@ -71,7 +71,6 @@ namespace IGTAPTasMod
 
         public sealed class LabMapDef
         {
-            public int schema = 1;
             public string id;
             public string name;
             public string tech;
@@ -82,7 +81,6 @@ namespace IGTAPTasMod
             public List<LabShapeDef> shapes = new List<LabShapeDef>();
             public LabStartDef start = new LabStartDef();
             public float[] finish;
-            public int maxTicks = 90;
             /// <summary>Playing the lab by hand (Tech tab, <c>inject {place: true}</c>): extra shapes and a standing start. The solver never sees it.</summary>
             public LabHandDef hand;
             /// <summary>The input trainer shown while the lab is injected (<see cref="LabTrainer"/>): "pauselift", "final-cling-float", or none.</summary>
@@ -238,7 +236,7 @@ namespace IGTAPTasMod
                 {
                     // place: also put the player at the lab start with the lab's unlocks, to play it by hand.
                     string id = Text(body, "id");
-                    bool place = body["place"] != null && (bool)body["place"];
+                    bool place = Truthy(body, "place");
                     if (place && PlaybackActive) throw new InvalidOperationException("Stop playback first.");
                     LabMapDef lab = LoadLabMap(id);
                     if (_lab != null) RestoreLab("another lab map");
@@ -252,13 +250,6 @@ namespace IGTAPTasMod
                     return new { ok = true, injected = true };
                 case "/api/labmap/status":
                     return new { ok = true, injected = _lab != null, id = _lab?.Id, scene = _lab?.Scene, playing = PlaybackActive };
-                case "/api/labmap/demo":
-                {
-                    // The solved demo of a lab map (labmaps/<id>.demo.json): its inputs, for the studio and tech-check.
-                    string id = Text(body, "id");
-                    string path2 = LabMapFile(id + ".demo.json") ?? throw new InvalidOperationException("No solved demo for lab map \"" + id + "\".");
-                    return new { ok = true, demo = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(path2)) };
-                }
             }
             throw new InvalidOperationException("Unknown lab map command: " + path);
         }
@@ -302,7 +293,7 @@ namespace IGTAPTasMod
             JObject demo = CachedLabJson(demoFile) ?? throw new InvalidOperationException("Lab map " + tech.labmap + " has no demo " + demoFile + ".");
             LabStartDef start = demo["start"] is JObject own ? own.ToObject<LabStartDef>() : lab.start;
             ResetToLabBase(player, (string)demo["solvedIn"]);
-            SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)), MacroLibrary.CurrentSchemaVersion);
+            SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)));
             if (!placed.Success) throw new InvalidOperationException("Lab start: " + placed.Message);
             ApplyLabBlocks(player, start);
         }
@@ -490,7 +481,7 @@ namespace IGTAPTasMod
             _lab = new LabSession
             {
                 Id = lab.id, Lab = lab, Root = root, Hand = hand,
-                PlayerBefore = player != null ? SavestateService.Capture(player, "lab/" + lab.id + " before", MacroLibrary.CurrentSchemaVersion) : null,
+                PlayerBefore = player != null ? SavestateService.Capture(player, "lab/" + lab.id + " before") : null,
                 Scene = SceneManager.GetActiveScene().name,
             };
             if (player != null && (hand || playing != null)) BuildLabGhosts(lab, player, hand ? null : playing);
@@ -669,7 +660,7 @@ namespace IGTAPTasMod
             if (_lab.CourseResetPointBefore == null) _lab.CourseResetPointBefore = player.courseResetPoint;
             if (_lab.RespawnPointBefore == null) _lab.RespawnPointBefore = player.respawnPoint;
             Savestate start = PlacedSavestate(LabStartBody(lab, at));
-            SavestateResult restored = SavestateService.Restore(player, start, MacroLibrary.CurrentSchemaVersion);
+            SavestateResult restored = SavestateService.Restore(player, start);
             if (!restored.Success) throw new InvalidOperationException("Lab start: " + restored.Message);
             ApplyLabBlocks(player, at);
             LeaveCourses(player);
@@ -712,7 +703,7 @@ namespace IGTAPTasMod
                 if (lab.RespawnPointBefore != null) player.respawnPoint = lab.RespawnPointBefore.Value;
                 if (lab.PlayerBefore != null)
                 {
-                    SavestateService.Restore(player, lab.PlayerBefore, MacroLibrary.CurrentSchemaVersion);
+                    SavestateService.Restore(player, lab.PlayerBefore);
                     if (lab.SavedAbilities != null) { Physics2D.SyncTransforms(); SnapCameraAtPlaybackStart(player); }
                 }
             }

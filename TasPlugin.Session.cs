@@ -421,7 +421,7 @@ namespace IGTAPTasMod
             if (_newGameAirStart != null)
             {
                 // Held in the air where the savestate put it (gravity moved it last tick), then counted as a rest.
-                SavestateResult held = SavestateService.Restore(player, _newGameAirStart, MacroLibrary.CurrentSchemaVersion);
+                SavestateResult held = SavestateService.Restore(player, _newGameAirStart);
                 if (!held.Success) { FailNewGame(held.Message); return false; }
                 Physics2D.SyncTransforms();
                 return ++_newGameRestTicks > NewGameRestTicks;

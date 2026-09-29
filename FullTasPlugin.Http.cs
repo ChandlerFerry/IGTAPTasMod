@@ -238,7 +238,7 @@ namespace IGTAPTasMod
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
                 FullTasOffline offline = FullTasOfflineBest(r.name, labels);
                 FullTasClosest closest = FullTasClosestAttempt(r.name, labels);
-                return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
+                return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, faster = offline.faster },

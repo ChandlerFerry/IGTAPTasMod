@@ -30,8 +30,6 @@ namespace IGTAPTasMod
             /// <summary>A demo route from before every tech was its lab (a library route): kept on disk and playable from the
             /// library, never shown in the Tech tab.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string routeId;
-            /// <summary>The demo plays with the omnidirectional dash on top of its start's unlocks (Vman techs); put back after.</summary>
-            [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public bool omniDash;
             /// <summary>
             /// The demo depends on FloatingOrigin (where the world was rebased): it draws the origin overlay, and it always plays
             /// from its start, never from a savestate, which holds only the player and not the world's origin.
@@ -251,13 +249,10 @@ namespace IGTAPTasMod
             return route.id == ProbeRouteId ? _probe?.tech : _techs.Find(t => t.routeId == route.id);
         }
 
-        /// <summary>A demo's (or a probe's) own unlocks on top of its start's (the omnidirectional dash), saved with the category's so playback's end puts them back.</summary>
+        /// <summary>A probe's own unlocks on top of its start's (the omnidirectional dash), saved with the category's so playback's end puts them back.</summary>
         void ApplyTechAbilities(MacroDefinition route, Movement movement)
         {
-            if (route == null || movement == null) return;
-            TechDef tech = TechOfRoute(route);
-            bool probeOmni = route.id == ProbeRouteId && _probe != null && _probe.omniDash;
-            if (!(tech != null && tech.omniDash) && !probeOmni) return;
+            if (route == null || movement == null || route.id != ProbeRouteId || _probe == null || !_probe.omniDash) return;
             if (!_playbackSavedAbilities.ContainsKey("omniDashUnlocked")) _playbackSavedAbilities["omniDashUnlocked"] = GetMovementField(movement, "omniDashUnlocked");
             SetMovementField(movement, "omniDashUnlocked", true);
         }
@@ -367,7 +362,7 @@ namespace IGTAPTasMod
             inputs = demo["inputs"]?.ToObject<List<SolverTick>>();
             if (inputs == null || inputs.Count == 0) throw new InvalidOperationException(demoFile + " has no inputs.");
             return new TechDef { id = tech.id, name = tech.name, category = tech.category, requires = tech.requires, origin = tech.origin,
-                labmap = lab.id, labDemo = chosen.demo, start = start, omniDash = tech.omniDash, floatingOrigin = tech.floatingOrigin };
+                labmap = lab.id, labDemo = chosen.demo, start = start, floatingOrigin = tech.floatingOrigin };
         }
 
         /// <summary>Plays one of a tech's lab demos (<see cref="TechLabDemo"/>) at 1x (walk: slowed), as a route that never enters the library.</summary>
@@ -521,7 +516,7 @@ namespace IGTAPTasMod
             {
                 list = techs.Select(e => new
                 {
-                    e.tech.id, e.tech.name, e.tech.category, e.tech.requires, e.tech.origin, e.tech.omniDash, e.tech.floatingOrigin, e.tech.description,
+                    e.tech.id, e.tech.name, e.tech.category, e.tech.requires, e.tech.origin, e.tech.floatingOrigin, e.tech.description,
                     e.tech.note, e.tech.detector, e.tech.related, e.tech.labmap, e.tech.labDemo, e.tech.graft,
                     labs = e.labs.Select(l =>
                     {

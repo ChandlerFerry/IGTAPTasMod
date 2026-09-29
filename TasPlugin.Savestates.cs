@@ -49,7 +49,7 @@ namespace IGTAPTasMod
             Movement movement = FindWorldMovement();
             if (movement == null) return;
             Savestate savestate = SavestateService.Capture(movement,
-                (SelectedMacro == null ? "Section" : SelectedMacro.name) + " start", MacroLibrary.CurrentSchemaVersion);
+                (SelectedMacro == null ? "Section" : SelectedMacro.name) + " start");
             _savestates.Insert(0, savestate);
             WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
         }
@@ -57,7 +57,7 @@ namespace IGTAPTasMod
         private void RestoreSavestate(Savestate savestate)
         {
             Movement movement = FindWorldMovement();
-            SavestateResult result = SavestateService.Restore(movement, savestate, MacroLibrary.CurrentSchemaVersion);
+            SavestateResult result = SavestateService.Restore(movement, savestate);
             if (!result.Success) Logger.LogError(result.Message); else Logger.LogInfo(result.Message);
         }
 
@@ -84,7 +84,7 @@ namespace IGTAPTasMod
             Savestate savestate = string.IsNullOrEmpty(route.savestateId) ? null : _savestates.Find(c => c.id == route.savestateId);
             if (movement != null && savestate != null)
             {
-                SavestateResult restored = SavestateService.Restore(movement, savestate, MacroLibrary.CurrentSchemaVersion);
+                SavestateResult restored = SavestateService.Restore(movement, savestate);
                 if (restored.Success)
                 {
                     LeaveCourses(movement);

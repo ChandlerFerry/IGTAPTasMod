@@ -539,7 +539,7 @@ namespace IGTAPTasMod
             _solveQueue.AddRange(jobs);
             _solveMinutes = minutes;
             _solveMaxMinutes = Math.Max(minutes, FloatNumber(body, "maxMinutes", minutes));
-            _solveRepeat = body["repeat"] != null && body["repeat"].Type == JTokenType.Boolean && (bool)body["repeat"];
+            _solveRepeat = Truthy(body, "repeat");
             _solvePass = 1;
             _solverLog.Clear();
             StartSolveJob(0);
@@ -1182,11 +1182,6 @@ namespace IGTAPTasMod
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
             List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps, course);
-            if (_techStart != null && _techStart.omniDash)
-            {
-                savedAbilities.Add(("omniDashUnlocked", GetMovementField(player, "omniDashUnlocked")));
-                SetMovementField(player, "omniDashUnlocked", true);
-            }
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;

@@ -90,13 +90,13 @@ namespace IGTAPTasMod
             "simulated"
         };
 
-        public static Savestate Capture(Movement movement, string name, int pluginSchemaVersion)
+        public static Savestate Capture(Movement movement, string name)
         {
             if (movement == null) throw new ArgumentNullException(nameof(movement));
             Transform transform = movement.transform;
             Savestate result = new Savestate {
                 name = string.IsNullOrWhiteSpace(name) ? "Savestate" : name,
-                fingerprint = CreateFingerprint(movement, pluginSchemaVersion),
+                fingerprint = CreateFingerprint(movement),
                 positionX = transform.position.x, positionY = transform.position.y, positionZ = transform.position.z,
                 rotationX = transform.rotation.x, rotationY = transform.rotation.y,
                 rotationZ = transform.rotation.z, rotationW = transform.rotation.w,
@@ -112,8 +112,7 @@ namespace IGTAPTasMod
             return result;
         }
 
-        public static SavestateResult Restore(Movement movement, Savestate savestate,
-            int pluginSchemaVersion)
+        public static SavestateResult Restore(Movement movement, Savestate savestate)
         {
             SavestateResult result = new SavestateResult();
             if (movement == null || savestate == null) {
@@ -124,7 +123,7 @@ namespace IGTAPTasMod
                 result.Message = "Unsupported savestate schema " + savestate.schemaVersion;
                 return result;
             }
-            CompatibilityFingerprint current = CreateFingerprint(movement, pluginSchemaVersion);
+            CompatibilityFingerprint current = CreateFingerprint(movement);
             if (!current.Matches(savestate.fingerprint)) {
                 result.Message = "Savestate rejected: " + current.DescribeMismatch(savestate.fingerprint);
                 return result;
@@ -173,13 +172,13 @@ namespace IGTAPTasMod
             cam.orthographicSize = mover.camSize;
         }
 
-        public static CompatibilityFingerprint CreateFingerprint(Movement movement, int pluginSchemaVersion)
+        static CompatibilityFingerprint CreateFingerprint(Movement movement)
         {
             return new CompatibilityFingerprint {
                 gameVersion = Application.version ?? "",
                 assemblySha256 = HashAssembly(typeof(Movement).Assembly),
                 scene = movement.gameObject.scene.name,
-                pluginSchemaVersion = pluginSchemaVersion
+                pluginSchemaVersion = MacroLibrary.CurrentSchemaVersion
             };
         }
 

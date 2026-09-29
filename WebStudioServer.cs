@@ -32,6 +32,7 @@ namespace IGTAPTasMod
         private volatile bool _running;
         private string _staticRoot;
 
+        // A TcpListener on 127.0.0.1, not HttpListener: Mono's HttpListener needs URL-ACL reservations.
         public void Start(string staticRoot)
         {
             if (_running) return;
@@ -222,6 +223,7 @@ namespace IGTAPTasMod
             if (extension == ".json") return "application/json; charset=utf-8";
             if (extension == ".svg") return "image/svg+xml";
             if (extension == ".png") return "image/png";
+            if (extension == ".webp") return "image/webp";
             if (extension == ".ico") return "image/x-icon";
             if (extension == ".woff2") return "font/woff2";
             return "application/octet-stream";
