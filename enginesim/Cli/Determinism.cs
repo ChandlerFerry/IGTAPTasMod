@@ -54,10 +54,7 @@ namespace IGTAP.EngineSim.Cli
                 return made;
             }
             Simulation sim = Make();
-            List<InputTick> inputs;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(route), new JsonDocumentOptions { MaxDepth = 256 }))
-                inputs = doc.RootElement.TryGetProperty("ticks", out JsonElement ticks) ? ticks.EnumerateArray().Select(InputTick.FromJson).ToList()
-                    : Solve.ReadInputs(doc.RootElement);
+            List<InputTick> inputs = Plan.ReadRoute(route);
             var clock = Stopwatch.StartNew();
             SimSnapshot origin = sim.Start;
 

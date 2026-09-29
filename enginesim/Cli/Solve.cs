@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,7 +16,7 @@ namespace IGTAP.EngineSim.Cli
 {
     static class Solve
     {
-        const string Api = "http://127.0.0.1:17426";
+        internal const string Api = "http://127.0.0.1:17426";
 
         public static int Run(string[] args)
         {
@@ -33,8 +34,7 @@ namespace IGTAP.EngineSim.Cli
             int rng = Option(args, "--rng", 0);
             string logJson = Option(args, "--log-json", (string)null);
             if (logJson != null) File.WriteAllText(logJson, "");
-            var seedPaths = new List<string>();
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
+            List<string> seedPaths = Args(args, "--seed").ToList();
             OfflineSolver.ForcedPath forced = CliBoxes(args);
             string pathName = Option(args, "--path-name", "forced");
             bool customPath = !forced.IsEmpty;
@@ -47,9 +47,7 @@ namespace IGTAP.EngineSim.Cli
             guide |= forced.Guide;
             if (guide) DistanceField.Enabled = true;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
-            foreach (string path in seedPaths)
-                using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
-                    seeds.Add(ReadInputs(doc.RootElement));
+            seeds.AddRange(seedPaths.Select(Plan.ReadRoute));
 
             Func<Simulation> create = Creator(startTrace, header);
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "offline-best");
@@ -82,10 +80,7 @@ namespace IGTAP.EngineSim.Cli
                 (DistanceField.CellSize, DistanceField.Clearance) = (cell, clearance);
                 if (planned != null)
                 {
-                    var polish = new Polish(create, forced, threads, PlanLog);
-                    Polish.Result polished;
-                    try { polished = polish.Run(planned.Inputs); }
-                    finally { polish.Stop(); }
+                    Polish.Result polished = Polish.Once(create, forced, threads, PlanLog, planned.Inputs);
                     seeds.Add(polished.Inputs);
                     PlanLog($"plan seed {polished.Time:0.00}s ({polished.RunTicks} physics ticks): planner {planner.Ticks} ticks, polish {polished.Ticks} ticks");
                     if (logJson != null)
@@ -99,7 +94,7 @@ namespace IGTAP.EngineSim.Cli
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             clock.Restart();
-            var pending = new BlockingQueue();
+            var pending = new Latest<Pending>();
             TimeSpan lastBest = TimeSpan.Zero;
             Humanize.Background humanize = args.Contains("--no-humanize") ? null
                 : new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
@@ -109,7 +104,7 @@ namespace IGTAP.EngineSim.Cli
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
                 WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
-                if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
+                if (submit && how != "seed" && how != "plateau") pending.Set(new Pending(time, runTicks, inputs));
                 humanize?.Set(file, inputs);
                 // Raised one at a time, in the order the bests were found, so the appends never interleave.
                 if (logJson != null)
@@ -239,27 +234,36 @@ namespace IGTAP.EngineSim.Cli
         internal static List<OptionalBlock> OptionalBlocks(int course, string caps, OfflineSolver.ForcedPath standing)
         {
             var blocks = new List<OptionalBlock>();
-            string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
-            if (!File.Exists(file)) return blocks;
-            using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
-            var matching = rules.RootElement.GetProperty("paths").EnumerateArray()
-                .Where(r => r.TryGetProperty("course", out JsonElement c) && c.GetInt32() == course
-                    && r.GetProperty("capabilities").EnumerateArray().Any(k => k.GetString() == caps)).ToList();
-            foreach (JsonElement rule in matching)
+            foreach (PathRule rule in PathRules().Where(r => r.Course == course && r.Capabilities.Contains(caps)))
             {
-                AddBoxes(standing, rule);
-                if (rule.TryGetProperty("guide", out JsonElement guide) && guide.GetBoolean()) standing.Guide = true;
-                if (rule.TryGetProperty("optional", out JsonElement optional))
-                    foreach (JsonElement block in optional.EnumerateArray())
-                    {
-                        var boxes = new OfflineSolver.ForcedPath();
-                        AddBoxes(boxes, block);
-                        blocks.Add(new OptionalBlock(block.GetProperty("name").GetString(),
-                            block.TryGetProperty("note", out JsonElement note) ? note.GetString() : "",
-                            block.TryGetProperty("default", out JsonElement on) && on.GetBoolean(), boxes));
-                    }
+                AddBoxes(standing, rule.Via, rule.Avoid);
+                if (rule.Guide) standing.Guide = true;
+                foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
+                {
+                    var boxes = new OfflineSolver.ForcedPath();
+                    AddBoxes(boxes, block.Via, block.Avoid);
+                    blocks.Add(new OptionalBlock(block.Name, block.Note ?? "", block.Default, boxes));
+                }
             }
             return blocks;
+        }
+
+        /// <summary>forced-paths.json's rules (a course's and category's boxes, a Full-TAS run's avoid boxes). The studio edits the
+        /// file while a solve runs, so it is read again whenever it has changed.</summary>
+        sealed record PathRule(int? Course, string[] Capabilities, string[] Fulltas, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
+        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After);
+        sealed record PathsFile(PathRule[] Paths);
+        static Tuple<DateTime, PathRule[]> _pathRules;
+
+        static PathRule[] PathRules()
+        {
+            string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
+            if (!File.Exists(file)) return Array.Empty<PathRule>();
+            DateTime written = File.GetLastWriteTimeUtc(file);
+            Tuple<DateTime, PathRule[]> read = _pathRules;
+            if (read == null || read.Item1 != written)
+                _pathRules = read = Tuple.Create(written, JsonSerializer.Deserialize<PathsFile>(File.ReadAllText(file), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }).Paths);
+            return read.Item2;
         }
 
         /// <summary>
@@ -277,25 +281,20 @@ namespace IGTAP.EngineSim.Cli
                 forced.Avoid.AddRange(course.Avoid);
                 return forced;
             }
-            string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
-            if (!File.Exists(file)) return forced;
-            using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
-            foreach (JsonElement rule in rules.RootElement.GetProperty("paths").EnumerateArray())
+            foreach (PathRule rule in PathRules().Where(r => r.Fulltas != null && r.Fulltas.Contains(run)))
             {
-                if (!rule.TryGetProperty("fulltas", out JsonElement runs) || !runs.EnumerateArray().Any(r => r.GetString() == run)) continue;
-                AddAvoids(forced, rule);
-                if (!rule.TryGetProperty("optional", out JsonElement optional)) continue;
-                foreach (JsonElement block in optional.EnumerateArray())
+                AddBoxes(forced, null, rule.Avoid);
+                foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
                 {
-                    if (goals != null && block.TryGetProperty("offFor", out JsonElement off) && off.EnumerateArray().Any(g => goals.Contains(g.GetString()))) continue;
+                    if (goals != null && block.OffFor != null && block.OffFor.Any(goals.Contains)) continue;
                     int after = 0;
-                    if (block.TryGetProperty("after", out JsonElement goal))
+                    if (block.After != null)
                     {
-                        int index = labels == null ? -1 : labels.ToList().LastIndexOf(goal.GetString());
+                        int index = labels == null ? -1 : labels.ToList().LastIndexOf(block.After);
                         if (index < 0) continue;
                         after = index + 1;
                     }
-                    AddAvoids(forced, block, after);
+                    AddBoxes(forced, null, block.Avoid, after);
                 }
             }
             return forced;
@@ -306,25 +305,10 @@ namespace IGTAP.EngineSim.Cli
         internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath> CourseRuns =
             new System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath>();
 
-        static void AddAvoids(OfflineSolver.ForcedPath forced, JsonElement rule, int after = 0)
+        static void AddBoxes(OfflineSolver.ForcedPath forced, float[][] via, float[][] avoid, int after = 0)
         {
-            if (!rule.TryGetProperty("avoid", out JsonElement list)) return;
-            foreach (JsonElement b in list.EnumerateArray())
-            {
-                float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
-            }
-        }
-
-        static void AddBoxes(OfflineSolver.ForcedPath forced, JsonElement rule)
-        {
-            foreach (string kind in new[] { "via", "avoid" })
-                if (rule.TryGetProperty(kind, out JsonElement list))
-                    foreach (JsonElement b in list.EnumerateArray())
-                    {
-                        float[] c = b.EnumerateArray().Select(v => v.GetSingle()).ToArray();
-                        (kind == "via" ? forced.Via : forced.Avoid).Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3])));
-                    }
+            foreach (float[] c in via ?? Array.Empty<float[]>()) forced.Via.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
+            foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
         }
 
         /// <summary>
@@ -420,6 +404,57 @@ namespace IGTAP.EngineSim.Cli
         {
             int i = Array.IndexOf(args, name);
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>The value after every <paramref name="name"/> (a repeatable option), in order.</summary>
+        internal static IEnumerable<string> Args(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) yield return args[i + 1];
+        }
+
+        /// <summary>f on a thread of its own (64 MB stack), joined: a Simulation made there leaves the caller's thread-static game
+        /// state as it was. Its exception is rethrown wrapped.</summary>
+        internal static T OnThread<T>(Func<T> f)
+        {
+            T value = default;
+            Exception failed = null;
+            var t = new Thread(() => { try { value = f(); } catch (Exception ex) { failed = ex; } }, 64 << 20);
+            t.Start();
+            t.Join();
+            if (failed != null) throw new InvalidOperationException(failed.GetBaseException().Message, failed);
+            return value;
+        }
+
+        internal static void OnThread(Action f) { OnThread(() => { f(); return 0; }); }
+
+        /// <summary>Starts work(state, i) for every i below count on up to <paramref name="threads"/> threads of their own (64 MB
+        /// stacks), each with its state made on it by init (a Simulation: the game's statics are per thread); the returned wait
+        /// joins them and rethrows the first failure.</summary>
+        internal static Action Workers<T>(int threads, int count, Func<T> init, Action<T, int> work)
+        {
+            int next = -1;
+            Exception failed = null;
+            Thread[] pool = Enumerable.Range(0, Math.Min(threads, count)).Select(_ => new Thread(() =>
+            {
+                try
+                {
+                    T state = init();
+                    for (int i; (i = Interlocked.Increment(ref next)) < count;) work(state, i);
+                }
+                catch (Exception ex) { Interlocked.CompareExchange(ref failed, ex, null); }
+            }, 64 << 20) { IsBackground = true }).ToArray();
+            foreach (Thread t in pool) t.Start();
+            return () =>
+            {
+                foreach (Thread t in pool) t.Join();
+                if (failed != null) throw new InvalidOperationException(failed.GetBaseException().Message, failed);
+            };
+        }
+
+        /// <summary>POSTs a JSON body to the plugin's API and returns its reply.</summary>
+        internal static string Post(HttpClient http, string path, string body)
+        {
+            return http.PostAsync(Api + path, new StringContent(body, Encoding.UTF8, "application/json")).Result.Content.ReadAsStringAsync().Result;
         }
 
         internal static string EncodeTicks(List<InputTick> ticks) => EncodeRuns(Runs(ticks));
@@ -547,22 +582,7 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        sealed class BlockingQueue
-        {
-            (float time, long runTicks, List<InputTick> inputs)? _item;
-            public void Set(float time, long runTicks, List<InputTick> inputs) { lock (this) { _item = (time, runTicks, inputs); Monitor.Pulse(this); } }
-            public void SetIfEmpty(float time, long runTicks, List<InputTick> inputs) { lock (this) { if (_item == null) { _item = (time, runTicks, inputs); Monitor.Pulse(this); } } }
-            public (float time, long runTicks, List<InputTick> inputs) Take()
-            {
-                lock (this)
-                {
-                    while (_item == null) Monitor.Wait(this);
-                    var item = _item.Value;
-                    _item = null;
-                    return item;
-                }
-            }
-        }
+        sealed record Pending(float Time, long RunTicks, List<InputTick> Inputs);
 
         static void SubmitOther(HttpClient http, Target target, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
@@ -571,8 +591,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 try
                 {
-                    string reply = http.PostAsync(Api + "/api/enginesim/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result
-                        .Content.ReadAsStringAsync().Result;
+                    string reply = Post(http, "/api/enginesim/submit", body);
                     using JsonDocument r = JsonDocument.Parse(reply);
                     if (!r.RootElement.TryGetProperty("saved", out JsonElement saved))
                     {
@@ -598,26 +617,26 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        static void Confirm(Target target, BlockingQueue pending, Stopwatch clock)
+        static void Confirm(Target target, Latest<Pending> pending, Stopwatch clock)
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
             while (true)
             {
-                var (time, runTicks, inputs) = pending.Take();
+                Pending next = pending.Take();
+                var (time, runTicks, inputs) = (next.Time, next.RunTicks, next.Inputs);
                 foreach (string other in IGTAPTasMod.Categories.All.Select(d => d.Id).Where(id => id != target.Caps))
                     SubmitOther(http, target, other, time, inputs, clock);
                 string body = target.Body(target.Caps, inputs);
                 try
                 {
-                    string reply = http.PostAsync(Api + "/api/enginesim/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result
-                        .Content.ReadAsStringAsync().Result;
+                    string reply = Post(http, "/api/enginesim/submit", body);
                     using JsonDocument r = JsonDocument.Parse(reply);
                     JsonElement root = r.RootElement;
                     if (!root.TryGetProperty("finished", out JsonElement finished))
                     {
                         Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] turbo check of {time:0.00}s deferred: {reply}");
                         Thread.Sleep(2000);
-                        pending.SetIfEmpty(time, runTicks, inputs);
+                        pending.SetIfEmpty(next);
                         continue;
                     }
                     float turbo = root.GetProperty("time").GetSingle();
@@ -636,5 +655,54 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
         }
+    }
+    /// <summary>A one-item mailbox: Set replaces what is there, Take waits for an item and empties it.</summary>
+    sealed class Latest<T> where T : class
+    {
+        T _item;
+        public void Set(T item) { lock (this) { _item = item; Monitor.Pulse(this); } }
+        public void SetIfEmpty(T item) { lock (this) { if (_item == null) { _item = item; Monitor.Pulse(this); } } }
+        public T Take()
+        {
+            lock (this)
+            {
+                while (_item == null) Monitor.Wait(this);
+                T item = _item;
+                _item = null;
+                return item;
+            }
+        }
+    }
+
+    /// <summary>A thread of its own holding a state made on it (a Simulation: the game's statics are per thread), running the
+    /// jobs posted to it in order.</summary>
+    sealed class Worker<T>
+    {
+        readonly BlockingCollection<Action<T>> _jobs = new BlockingCollection<Action<T>>();
+        readonly string _name;
+
+        public Worker(Func<T> make, string name)
+        {
+            _name = name;
+            new Thread(() =>
+            {
+                T state = make();
+                foreach (Action<T> job in _jobs.GetConsumingEnumerable()) job(state);
+            }) { IsBackground = true, Name = name }.Start();
+        }
+
+        public void Post(Action<T> job) { _jobs.Add(job); }
+
+        /// <summary>Runs job on the worker and waits for it; its exception is rethrown wrapped.</summary>
+        public void Do(Action<T> job)
+        {
+            using var done = new ManualResetEventSlim();
+            Exception failure = null;
+            Post(j => { try { job(j); } catch (Exception ex) { failure = ex; } finally { done.Set(); } });
+            done.Wait();
+            if (failure != null) throw new InvalidOperationException(_name + " replay failed", failure);
+        }
+
+        public void Stop() { _jobs.CompleteAdding(); }
     }
 }

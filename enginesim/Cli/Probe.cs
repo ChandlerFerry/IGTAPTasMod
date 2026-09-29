@@ -75,24 +75,22 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        static FieldInfo F(string name) { return typeof(Movement).GetField(name, Fields); }
-
-        static readonly FieldInfo Vel = F("Velocity"), Mom = F("momentum"), Ground = F("onGround"), Wall = F("OnWall"), Mode = F("cutsceneMode"),
-            Dash = F("dashActive"), Since = F("framesSinceLastDash"), Facing = F("facingRight"), Dir = F("dashDirection");
+        static readonly FieldInfo Dir = typeof(Movement).GetField("dashDirection", Fields);
 
         /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, extra fields.</summary>
         internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
             WorldPos p = sim.PlayerWorld;
-            Vector2 v = (Vector2)Vel.GetValue(sim.Player), m = (Vector2)Mom.GetValue(sim.Player), d = (Vector2)Dir.GetValue(sim.Player);
+            Movement pl = sim.Player;
+            Vector2 v = pl.Velocity, m = pl.momentum, d = (Vector2)Dir.GetValue(pl);
             var (_, _, _, bvx, bvy, _) = sim.Physics.PlayerBody();
             var row = new Dictionary<string, object>
             {
                 ["step"] = step, ["input"] = (int)sim.Engine.RunTicks - 1,
                 ["x"] = Round(p.x), ["y"] = Round(p.y), ["vx"] = Round(v.x), ["vy"] = Round(v.y), ["mx"] = Round(m.x), ["my"] = Round(m.y),
                 ["bvx"] = Round(bvx), ["bvy"] = Round(bvy),
-                ["ground"] = Ground.GetValue(sim.Player), ["wall"] = Wall.GetValue(sim.Player), ["mode"] = Mode.GetValue(sim.Player).ToString(),
-                ["dash"] = Dash.GetValue(sim.Player), ["f"] = Since.GetValue(sim.Player), ["facingRight"] = Facing.GetValue(sim.Player),
+                ["ground"] = pl.onGround, ["wall"] = pl.OnWall, ["mode"] = pl.cutsceneMode.ToString(),
+                ["dash"] = pl.dashActive, ["f"] = pl.framesSinceLastDash, ["facingRight"] = pl.facingRight,
                 ["dashDir"] = new[] { Round(d.x), Round(d.y) },
             };
             for (int i = 0; i < extraFields.Length; i++) row[extraFields[i]] = Plain(extraInfos[i].GetValue(sim.Player));

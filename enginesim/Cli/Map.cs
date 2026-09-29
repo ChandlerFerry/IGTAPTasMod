@@ -59,7 +59,7 @@ namespace IGTAP.EngineSim.Cli
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
             string archivePath = System.IO.Path.Combine(dir, "archive", Solve.ArchiveName(label, optional) + ".json");
             string best = FastestOfflineBest(dir, label);
-            List<string> seedFiles = Enumerable.Range(1, Math.Max(0, args.Length - 2)).Where(i => args[i] == "--seed").Select(i => args[i + 1]).ToList();
+            List<string> seedFiles = Solve.Args(args, "--seed").ToList();
 
             string engine = EngineStamp();
             string simKey = engine + "|" + Stamp(trace) + "|" + Stamp(worldPath);
@@ -84,12 +84,10 @@ namespace IGTAP.EngineSim.Cli
                         "seed", Solve.ReadInputs(doc.RootElement)));
             if (best != null)
             {
-                using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(best), new JsonDocumentOptions { MaxDepth = 256 }))
-                    routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", Solve.ReadInputs(doc.RootElement)));
+                routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", global::IGTAP.EngineSim.Cli.Plan.ReadRoute(best)));
                 // Its human version (humanize), so the studio can ghost it against the best or a saved route.
                 if (human != null)
-                    using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(human), new JsonDocumentOptions { MaxDepth = 256 }))
-                        routes.Add(("human " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "human", Solve.ReadInputs(doc.RootElement)));
+                    routes.Add(("human " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "human", global::IGTAP.EngineSim.Cli.Plan.ReadRoute(human)));
             }
             OfflineSolver.Memory memory = Solve.LoadMemory(archivePath);
             if (memory != null)
@@ -107,25 +105,19 @@ namespace IGTAP.EngineSim.Cli
                 if (cached.TryGetValue(hashes[k], out SourceCells hit)) cells[k] = hit;
             });
             int[] missing = Enumerable.Range(0, sources.Count).Where(k => cells[k] == null).ToArray();
-            int next = -1;
-            var workers = Enumerable.Range(0, Math.Max(1, Math.Min(threads, missing.Length))).Select(_ => Task.Run(() =>
+            Action workers = Solve.Workers(threads, missing.Length, () => (sim: create(), local: new Dictionary<long, float>()), (w, m) =>
             {
-                if (missing.Length == 0) return;
-                Simulation sim = create();
-                var local = new Dictionary<long, float>();
-                for (int m; (m = Interlocked.Increment(ref next)) < missing.Length;)
+                var (sim, local) = w;
+                local.Clear();
+                sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                 {
-                    local.Clear();
-                    sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
-                    {
-                        WorldPos p = sim.PlayerWorld;
-                        long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
-                        float t = sim.Elapsed(sim.TimingCourse());
-                        local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
-                    });
-                    cells[missing[m]] = new SourceCells(local.Keys.ToArray(), local.Values.ToArray());
-                }
-            })).ToArray();
+                    WorldPos p = sim.PlayerWorld;
+                    long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
+                    float t = sim.Elapsed(sim.TimingCourse());
+                    local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
+                });
+                cells[missing[m]] = new SourceCells(local.Keys.ToArray(), local.Values.ToArray());
+            });
             var paths = new List<Path>();
             CapturePos origin;
             {
@@ -144,20 +136,15 @@ namespace IGTAP.EngineSim.Cli
                     paths.Add(path);
                 }
             }
-            Task.WaitAll(workers);
+            workers();
             var reached = new Dictionary<long, float>();
             foreach (SourceCells s in cells)
                 for (int i = 0; i < s.Keys.Length; i++)
                     reached[s.Keys[i]] = reached.TryGetValue(s.Keys[i], out float t) ? Earlier(t, s.Times[i]) : s.Times[i];
             if (missing.Length > 0 || cached.Count != sources.Count) WriteCells(cellsPath, simKey, hashes, cells);
 
-            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-            void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
-            foreach (Path p in paths) for (int i = 0; i < p.Points.Count; i += 2) Grow(p.Points[i], p.Points[i + 1]);
-            foreach (long key in reached.Keys) { Grow((key >> 32) * Cell, (int)key * Cell); Grow(((key >> 32) + 1) * Cell, ((int)key + 1) * Cell); }
-            if (x0 > x1) throw new InvalidOperationException("Nothing to draw: no routes and no archive for " + label);
-            const float pad = 300f;
-            x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+            var (x0, y0, x1, y1) = Bounds(paths, reached.Keys, Cell, Enumerable.Empty<float[]>())
+                ?? throw new InvalidOperationException("Nothing to draw: no routes and no archive for " + label);
             var forced = new OfflineSolver.ForcedPath();
             List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
@@ -181,21 +168,14 @@ namespace IGTAP.EngineSim.Cli
                     avoid = b.Boxes.Avoid.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
                     via = b.Boxes.Via.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
                 }),
-                routes = paths.Select(p => new
-                {
-                    name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = p.TimerStart, points = p.Points,
-                    cells = p.Cells.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
-                    state = p.State,
-                }),
+                routes = paths.Select(p => RouteJson(p, p.TimerStart)),
                 explored = new
                 {
                     cell = Cell, runs = memory?.Runs ?? 0, prefixes = sources.Count,
                     cells = reached.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
                 },
             };
-            string temp = output + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(result));
-            File.Move(temp, output, true);
+            Solve.WriteShared(output, JsonSerializer.Serialize(result));
             File.WriteAllText(keyPath, outputKey);
             Console.WriteLine($"map {label}: {paths.Count} routes, {sources.Count} explore prefixes ({missing.Length} replayed), {reached.Count} cells ({reached.Count(v => v.Value >= 0f)} timed) -> {output}");
             return 0;
@@ -257,14 +237,8 @@ namespace IGTAP.EngineSim.Cli
                 : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
 
-            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-            void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
-            foreach (Path p in paths) for (int i = 0; i < p.Points.Count; i += 2) Grow(p.Points[i], p.Points[i + 1]);
-            foreach (long key in visits.Keys) { Grow((key >> 32) * cell, (int)key * cell); Grow(((key >> 32) + 1) * cell, ((int)key + 1) * cell); }
-            foreach (var g in goals) { Grow(g.box[0], g.box[1]); Grow(g.box[2], g.box[3]); }
-            if (x0 > x1) throw new InvalidOperationException("Nothing to draw: no best, no explored cells and no at: goals for Full-TAS " + name);
-            const float pad = 300f;
-            x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+            var (x0, y0, x1, y1) = Bounds(paths, visits.Keys, cell, goals.Select(g => g.box))
+                ?? throw new InvalidOperationException("Nothing to draw: no best, no explored cells and no at: goals for Full-TAS " + name);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
 
             TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
@@ -281,23 +255,40 @@ namespace IGTAP.EngineSim.Cli
                 avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = goals.Select(g => g.box),
                 goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
-                routes = paths.Select(p => new
-                {
-                    name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart = -1, points = p.Points,
-                    cells = p.Cells.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
-                    state = p.State,
-                }),
+                routes = paths.Select(p => RouteJson(p, -1)),
                 explored = new
                 {
                     cell, runs = 0, prefixes = 0,
                     cells = visits.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, (float)Math.Round(v.Value, 2) }),
                 },
             };
-            string temp = output + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(result));
-            File.Move(temp, output, true);
+            Solve.WriteShared(output, JsonSerializer.Serialize(result));
             Console.WriteLine($"map fulltas/{name}: {paths.Count} routes, {visits.Count} explored cells, {goals.Count} at: goals, {avoid.Avoid.Count} avoid boxes -> {output}");
             return 0;
+        }
+
+        /// <summary>The box around the paths' points, the cells (cell units on a side) and the boxes, 300 units of margin
+        /// around; null when there is nothing to draw.</summary>
+        static (float x0, float y0, float x1, float y1)? Bounds(List<Path> paths, IEnumerable<long> cells, float cell, IEnumerable<float[]> boxes)
+        {
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            void Grow(float x, float y) { x0 = Math.Min(x0, x); y0 = Math.Min(y0, y); x1 = Math.Max(x1, x); y1 = Math.Max(y1, y); }
+            foreach (Path p in paths) for (int i = 0; i < p.Points.Count; i += 2) Grow(p.Points[i], p.Points[i + 1]);
+            foreach (long key in cells) { Grow((key >> 32) * cell, (int)key * cell); Grow(((key >> 32) + 1) * cell, ((int)key + 1) * cell); }
+            foreach (float[] b in boxes) { Grow(b[0], b[1]); Grow(b[2], b[3]); }
+            if (x0 > x1) return null;
+            const float pad = 300f;
+            return (x0 - pad, y0 - pad, x1 + pad, y1 + pad);
+        }
+
+        static object RouteJson(Path p, int timerStart)
+        {
+            return new
+            {
+                name = p.Name, kind = p.Kind, finished = p.Finished, time = p.Time, timerStart, points = p.Points,
+                cells = p.Cells.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
+                state = p.State,
+            };
         }
 
         readonly record struct Hash(ulong A, ulong B);

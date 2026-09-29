@@ -143,8 +143,7 @@ namespace IGTAP.EngineSim.Cli
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
             if (Part("goals")) ResumeAdoptedGoals();
             var refs = new List<(string file, Route route)>();
-            for (int i = 1; i < args.Length - 1; i++)
-                if (args[i] == "--ref") refs.Add((args[i + 1], Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(args[i + 1]))));
+            foreach (string file in Solve.Args(args, "--ref")) refs.Add((file, Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file))));
             foreach (var (file, r) in refs)
                 if (r.Progress == _goals && (_best.Progress < _goals || r.Last < _best.Last))
                 {
@@ -192,7 +191,7 @@ namespace IGTAP.EngineSim.Cli
             Route start = _best;
             ReadPastSessions();
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
-                parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = args.Where((a, i) => i > 0 && args[i - 1] == "--ref").ToArray(),
+                parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = Solve.Args(args, "--ref").ToArray(),
                 focus = new[] { _focusFrom, _focusTo } });
             if (focus != null) Log($"auto: focus goals {_focusFrom}-{_focusTo}: the scheduler and every lever pull windows starting there; combine splices anywhere");
             Log($"auto: parts {(_parts.Count == 0 ? "none" : string.Join(",", AllParts.Where(Part)))}");
@@ -974,19 +973,17 @@ namespace IGTAP.EngineSim.Cli
         {
             Route fresh = null;
             Exception failed = null;
-            var t = new Thread(() =>
+            try
             {
-                try
+                fresh = Solve.OnThread(() =>
                 {
                     Simulation sim = _create();
                     sim.Goals.Limit = _goals;
                     RunResult rr = sim.Run(r.Inputs, null, null, 1000000);
-                    fresh = new Route { Inputs = r.Inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, EndReason = rr.EndReason };
-                }
-                catch (Exception ex) { failed = ex; }
-            }, 64 << 20);
-            t.Start();
-            t.Join();
+                    return new Route { Inputs = r.Inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, EndReason = rr.EndReason };
+                });
+            }
+            catch (Exception ex) { failed = ex; }
             if (failed != null || fresh == null)
             {
                 Log($"fresh check of {Describe(r)} ({where}) failed: {failed?.GetBaseException().Message}; not kept");
@@ -1086,13 +1083,11 @@ namespace IGTAP.EngineSim.Cli
         void SaveRefs()
         {
             HashSet<AutoRef> keep = Useful();
-            string temp = _refsFile + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new
+            Solve.WriteShared(_refsFile, JsonSerializer.Serialize(new
             {
                 name = _name, goals = _labels,
                 refs = _refs.Where(keep.Contains).Select(r => new { how = r.How, progress = r.Progress, goalPhysicsTicks = r.GoalPhysics, inputs = r.Inputs.Select(t => t.ToJson()) }),
             }));
-            Solve.Replace(temp, _refsFile);
         }
 
         void LoadRefs()

@@ -40,7 +40,7 @@ namespace IGTAP.EngineSim.Cli
         readonly OfflineSolver.ForcedPath _path;
         readonly Action<string> _log;
         readonly int _radius, _slack;
-        readonly List<Worker> _workers = new List<Worker>();
+        readonly List<Worker<Judge>> _workers = new List<Worker<Judge>>();
         long _ticks;
         /// <summary>After a sweep keeps nothing: one sweep of the plateau families (<see cref="Plateau"/>) before stopping.</summary>
         public bool Wide = true;
@@ -68,11 +68,20 @@ namespace IGTAP.EngineSim.Cli
             _log = log;
             _radius = radius;
             _slack = slack;
-            for (int i = 0; i < Math.Max(1, threads); i++) _workers.Add(new Worker(this));
+            for (int i = 0; i < Math.Max(1, threads); i++) _workers.Add(new Worker<Judge>(() => new Judge(this), "polish"));
         }
         public const int DefaultSlack = 30;
 
-        public void Stop() { foreach (Worker w in _workers) w.Stop(); }
+        /// <summary>One polish of <paramref name="seed"/> (inputs from..to-1 move) on workers of its own, stopped after.</summary>
+        public static Result Once(Func<Simulation> create, OfflineSolver.ForcedPath path, int threads, Action<string> log, List<InputTick> seed,
+            int from = 0, int to = int.MaxValue)
+        {
+            var polish = new Polish(create, path, threads, log);
+            try { return polish.Run(seed, from: from, to: to); }
+            finally { polish.Stop(); }
+        }
+
+        public void Stop() { foreach (Worker<Judge> w in _workers) w.Stop(); }
 
         // The route every judge records, with its result.
         List<InputTick> _route;
@@ -365,7 +374,7 @@ namespace IGTAP.EngineSim.Cli
             long runTicks = _runTicks;
             long[] goals = _goalTicks;
             using var done = new CountdownEvent(_workers.Count);
-            foreach (Worker w in _workers)
+            foreach (Worker<Judge> w in _workers)
                 w.Post(j =>
                 {
                     try
@@ -509,33 +518,6 @@ namespace IGTAP.EngineSim.Cli
                 Interlocked.Add(ref _owner._ticks, r.Stepped);
                 return r;
             }
-        }
-
-        sealed class Worker
-        {
-            readonly BlockingCollection<Action<Judge>> _jobs = new BlockingCollection<Action<Judge>>();
-
-            public Worker(Polish owner)
-            {
-                new Thread(() =>
-                {
-                    var judge = new Judge(owner);
-                    foreach (Action<Judge> job in _jobs.GetConsumingEnumerable()) job(judge);
-                }) { IsBackground = true, Name = "polish" }.Start();
-            }
-
-            public void Post(Action<Judge> job) { _jobs.Add(job); }
-
-            public void Do(Action<Judge> job)
-            {
-                using var done = new ManualResetEventSlim();
-                Exception failure = null;
-                Post(j => { try { job(j); } catch (Exception ex) { failure = ex; } finally { done.Set(); } });
-                done.Wait();
-                if (failure != null) throw new InvalidOperationException("polish replay failed", failure);
-            }
-
-            public void Stop() { _jobs.CompleteAdding(); }
         }
 
         /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--out file] [--via/--avoid/--optional as solve];

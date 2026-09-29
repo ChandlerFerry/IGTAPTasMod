@@ -65,13 +65,13 @@ namespace IGTAP.EngineSim.Cli
             if (run.LogJson != null) File.WriteAllText(run.LogJson, "");
 
             // The category's unlocks: the start's player has them (the capture set them); a trace captured with others isn't this category.
-            string startCaps = OnThread(() => PlayerCaps.Of(run.Plain().Player).Id);
+            string startCaps = Solve.OnThread(() => PlayerCaps.Of(run.Plain().Player).Id);
             if (startCaps != caps)
                 throw new InvalidOperationException($"{Path.GetFileName(trace)} is {caps}, but its start's player has {startCaps} unlocked: capture the category's start again");
 
             // The loop starts from the fastest of the trace's route, every --seed and the last --auto best (on this timing).
             var candidates = new List<(string how, List<InputTick> inputs)> { (Path.GetFileName(trace), Solve.ReadInputs(header)) };
-            for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") candidates.Add((Path.GetFileName(args[i + 1]), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(args[i + 1])));
+            foreach (string seed in Solve.Args(args, "--seed")) candidates.Add((Path.GetFileName(seed), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed)));
             string runFile = Path.Combine(dir, "fulltas", run.Name + ".json");
             if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add(("course-auto/fulltas/" + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
@@ -166,21 +166,10 @@ namespace IGTAP.EngineSim.Cli
             return file;
         }
 
-        static T OnThread<T>(Func<T> f)
-        {
-            T value = default;
-            Exception failed = null;
-            var t = new Thread(() => { try { value = f(); } catch (Exception ex) { failed = ex; } }, 64 << 20);
-            t.Start();
-            t.Join();
-            if (failed != null) throw new InvalidOperationException(failed.GetBaseException().Message, failed);
-            return value;
-        }
-
         /// <summary>The route on a new plain course simulation (its own thread): the game's finish, timer and physics ticks.</summary>
         static CourseResult PlayCourse(CourseRun run, List<InputTick> inputs)
         {
-            return OnThread(() =>
+            return Solve.OnThread(() =>
             {
                 RunResult r = run.Plain().Run(inputs, null, null, 1000000);
                 return new CourseResult { Finished = r.Finished, Time = r.Time, RunTicks = r.PhysicsTicks, EndReason = r.EndReason };

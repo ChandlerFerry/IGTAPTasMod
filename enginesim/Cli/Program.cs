@@ -50,9 +50,7 @@ namespace IGTAP.EngineSim.Cli
                         // --canonical: the start as the searches load it (Simulation.LoadStart canonical: the category start's
                         // history and FloatingOrigin), not as captured.
                         var (sim, _, _) = Open(args[1], args.Contains("--canonical"));
-                        using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
-                        JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
-                        var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
+                        List<InputTick> inputs = Plan.ReadRoute(args[2]);
                         bool verbose = args.Contains("--verbose");
                         string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames",
                             "coyoteFrames", "canHyper", "lastHyperY", "preDashMomentum" };
@@ -64,7 +62,6 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
                         spikeScript[] spikes = sim.World.All<spikeScript>();
-                        FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
                             WorldPos pos = sim.PlayerWorld;
@@ -77,7 +74,7 @@ namespace IGTAP.EngineSim.Cli
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
                                     Console.WriteLine($"tick {st}: SPIKE {s.name} at {sim.ToWorld(ScenePos.From(s.transform.position)).x:0},{sim.ToWorld(ScenePos.From(s.transform.position)).y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
-                                        + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
+                                        + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {sim.Player.dashActive}"
                                         + $" player {pos.x:0.0},{pos.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
                             if (verbose)

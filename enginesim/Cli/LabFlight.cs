@@ -44,7 +44,7 @@ namespace IGTAP.EngineSim.Cli
         const float FootprintSlack = 0.25f;
 
         static readonly FieldInfo B2Field = typeof(PhysicsWorld).GetField("_b2", Fields);
-        static readonly Dictionary<string, FieldInfo> MovementFields = new Dictionary<string, FieldInfo>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, FieldInfo> MovementFields = new System.Collections.Concurrent.ConcurrentDictionary<string, FieldInfo>();
 
         /// <summary>Movement's pending Invokes that change no position, velocity or unlock (the buffers, the jump grace; the wall
         /// jump's collider re-enable is not among them: it ends a Ground exclusion, which a free-flight state must not have).</summary>
@@ -53,13 +53,10 @@ namespace IGTAP.EngineSim.Cli
         /// tick runs while it holds, so it moves nothing).</summary>
         static readonly string[] HarmlessRoutines = { "IE_Jump", "IE_Land", "IE_TimeStop" };
 
+        /// <summary>A private Movement field's value.</summary>
         static object Get(Movement m, string name)
         {
-            FieldInfo f;
-            lock (MovementFields)
-                if (!MovementFields.TryGetValue(name, out f))
-                    MovementFields[name] = f = typeof(Movement).GetField(name, Fields) ?? throw new MissingFieldException("Movement." + name);
-            return f.GetValue(m);
+            return MovementFields.GetOrAdd(name, n => typeof(Movement).GetField(n, Fields) ?? throw new MissingFieldException("Movement." + n)).GetValue(m);
         }
 
         static float F(Movement m, string name) => Convert.ToSingle(Get(m, name));
@@ -111,7 +108,7 @@ namespace IGTAP.EngineSim.Cli
                 Body = BodyGravity(sim, m),
                 AnyFriction = PlayerFriction(sim, m) > 0f,
             };
-            Vector2 v = V(m, "Velocity"), mom = V(m, "momentum");
+            Vector2 v = m.Velocity, mom = m.momentum;
             c.MomHi = MathF.Max(mom.y, 0f);
             c.MomLo = MathF.Min(mom.y, 0f);
             c.DashEnd = 0;
@@ -305,7 +302,7 @@ namespace IGTAP.EngineSim.Cli
 
         static string Preconditions(Simulation sim, Movement m)
         {
-            string mode = Get(m, "cutsceneMode").ToString();
+            string mode = m.cutsceneMode.ToString();
             if (mode != "none") return "cutsceneMode " + mode;
             if (B(m, "isDead")) return "dead";
             if (m.onGround) return "onGround";

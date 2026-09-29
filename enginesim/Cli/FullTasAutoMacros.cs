@@ -385,7 +385,8 @@ namespace IGTAP.EngineSim.Cli
 
         static string Sign(float v) => v > 0f ? "+" : v < 0f ? "-" : "0";
 
-        static ulong StableHash(string text)
+        /// <summary>FNV-1a over the text's UTF-16 chars (stable across processes, unlike string.GetHashCode).</summary>
+        internal static ulong StableHash(string text)
         {
             ulong h = 14695981039346656037UL;
             foreach (char c in text) h = (h ^ c) * 1099511628211UL;
@@ -429,13 +430,11 @@ namespace IGTAP.EngineSim.Cli
         /// never replays and nothing is kept in statics, so it is safe on any thread.</summary>
         public void Mine(StateLibrary library)
         {
-            var thread = new System.Threading.Thread(() =>
+            Solve.OnThread(() =>
             {
                 try { MineCore(library); }
                 catch (Exception ex) { _log("macros: mine: " + ex.GetBaseException().Message); }
-            }) { IsBackground = true, Name = "fulltas-macros" };
-            thread.Start();
-            thread.Join();
+            });
         }
 
         bool _corpusMined;
@@ -703,8 +702,8 @@ namespace IGTAP.EngineSim.Cli
             string traces = TechGrafts.ResolveTechDir(Path.Combine(RepoRoot(), "enginesim"), Solve.Option(args, "--tech-dir", (string)null));
             var corpus = DefaultCorpus(traces, Solve.Option(args, "--repo", (string)null));
             if (args.Contains("--no-default")) corpus.Clear();
-            foreach (string a in Args(args, "--mine")) corpus.Add(FileSource(a, traces, false));
-            foreach (string a in Args(args, "--measure")) corpus.Add(FileSource(a, traces, true));
+            foreach (string a in Solve.Args(args, "--mine")) corpus.Add(FileSource(a, traces, false));
+            foreach (string a in Solve.Args(args, "--measure")) corpus.Add(FileSource(a, traces, true));
             var macros = new FullTasAutoMacros(corpus: corpus) { MinUses = Solve.Option(args, "--min-uses", 2) };
             macros.Mine(null);
             Console.WriteLine($"macros: {macros.Patterns.Count} patterns from {corpus.Count(s => !s.HeldOut)} routes");
@@ -716,11 +715,6 @@ namespace IGTAP.EngineSim.Cli
             List<Sample> samples = macros.Measure(Solve.Option(args, "--samples", 120));
             Report(samples, macros.Patterns, Solve.Option(args, "--out", (string)null));
             return 0;
-        }
-
-        static IEnumerable<string> Args(string[] args, string name)
-        {
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) yield return args[i + 1];
         }
 
         static Source FileSource(string spec, string traces, bool heldOut)

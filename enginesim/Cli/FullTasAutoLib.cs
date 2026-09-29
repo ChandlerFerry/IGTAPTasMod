@@ -420,14 +420,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A part's call on a thread of its own (64 MB stack, as VerifyFresh): a part that replays routes on simulations of
         /// its own leaves the loop's simulation as it was (the engine keeps per-thread state: FullTasAutoMacros.Mine on the loop's
         /// thread left the loop's simulation replaying the best to no goal at all).</summary>
-        T Isolated<T>(Func<T> call, string what)
-        {
-            T result = default;
-            var t = new System.Threading.Thread(() => result = SafePart(call, what), 64 << 20);
-            t.Start();
-            t.Join();
-            return result;
-        }
+        T Isolated<T>(Func<T> call, string what) { return Solve.OnThread(() => SafePart(call, what)); }
 
         /// <summary>After the library changes (the start, every new best): the cost-to-go refits and the macros are mined again.</summary>
         void RefitParts()
@@ -564,12 +557,7 @@ namespace IGTAP.EngineSim.Cli
                 case Vector2 v2: return Mix(Bits(v2.x), Bits(v2.y));
                 case Vector3 v3: return Mix(Mix(Bits(v3.x), Bits(v3.y)), Bits(v3.z));
                 case UnityEngine.Object o: return (ulong)(uint)o.GetInstanceID() * 31;
-                case string s:
-                {
-                    ulong h = 14695981039346656037UL;
-                    foreach (char c in s) h = (h ^ c) * 1099511628211UL;
-                    return h;
-                }
+                case string s: return FullTasAutoMacros.StableHash(s);
                 case System.Collections.IEnumerable items:
                 {
                     ulong h = 0x77;
@@ -1096,7 +1084,7 @@ namespace IGTAP.EngineSim.Cli
                 long baseline = best.Last + c.Origin - Rest(limit);
                 // The window's start, played once here first: a prefix the engine can't play (a Movement.FixedUpdate
                 // NullReferenceException in Advance, seen on a course 4 find) would throw on every solver thread and end the process.
-                try { OnThread(() => { Simulation s = _create(); s.Goals.Limit = limit; return s.Advance(prefix) != null; }); }
+                try { Solve.OnThread(() => { Simulation s = _create(); s.Goals.Limit = limit; return s.Advance(prefix) != null; }); }
                 catch (InvalidOperationException ex)
                 {
                     string dump = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_autoLog), $"tail-start-failed-{SnapshotIndex.Hash(prefix, prefix.Count):x16}.json");
