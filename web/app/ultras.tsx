@@ -2,7 +2,34 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./techs.css";
-import { capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+import { Art, artTiles, capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+
+// Buy boxes (a marker's `box`), kept in step with level.tsx's BOX_KINDS (ultra-level.tsx is synced from that file).
+export type BoxCategory = "secret" | "bonusUnique" | "bonusBoost" | "achievement" | "movement" | "tree" | "unlock" | "course";
+export type BoxInfo = { upgrade: string; gives: string; cost: number; currency: string; cap: number; category: BoxCategory;
+  fresh: boolean; secret: boolean; tree: boolean; number?: string | null; ach?: string | null };
+type MarkerShape = "square" | "small" | "diamond" | "circle" | "star";
+export const BOX_KINDS: Record<BoxCategory, { color: string; text: string; shape: MarkerShape }> = {
+  secret: { color: "#ffd740", text: "Secret (a bonus's hidden reward box)", shape: "star" },
+  bonusUnique: { color: "#66bb6a", text: "Bonus reward — unique unlock (good)", shape: "diamond" },
+  bonusBoost: { color: "#b0bec5", text: "Bonus reward — cash/stat boost (weak)", shape: "diamond" },
+  achievement: { color: "#ce93d8", text: "Achievement box (grants an achievement)", shape: "star" },
+  movement: { color: "#29b6f6", text: "Movement/ability upgrade", shape: "diamond" },
+  tree: { color: "#c5a26b", text: "Tree upgrade", shape: "square" },
+  unlock: { color: "#ff7043", text: "One-off unlock", shape: "square" },
+  course: { color: "#90caf9", text: "Course upgrade (repeatable)", shape: "small" },
+};
+// A box's cost as its label shows it ("300 W", "free"); big numbers in exponent form.
+export const boxCost = (b: BoxInfo) => b.cost <= 0 ? "free"
+  : `${b.cost >= 1e6 ? b.cost.toExponential(2).replace(/(\.\d*?)0+e/, "$1e").replace(/\.e/, "e").replace("e+", "e") : String(b.cost)} ${b.currency}`;
+// What a box is, gives and costs, in one line (the hover readout; the tap card says the same).
+export function boxTitle(m: { name: string; box?: BoxInfo }) {
+  const b = m.box!;
+  return `${BOX_KINDS[b.category].text}: ${m.name} · gives ${b.gives} · ${b.upgrade} · ${boxCost(b)} · ${b.cap === 1 ? "one-off" : `repeatable ×${b.cap}`}`
+    + `${b.secret ? ` · secret${b.number ? ` #${b.number}` : ""}` : ""}${b.ach ? ` · ${b.ach}` : ""} · ${b.fresh ? "in the fresh world" : "only later"}${b.tree ? " · tree upgrade" : ""}`;
+}
+// The markers of the synced ultra-level carry a buy box's info; until the sync they only carry the shape here.
+export type BoxMarker = Marker & { box?: BoxInfo };
 
 export type UltraData = { world: string; bounds: number[]; player: { stand: number[]; dash: number[] }; kinds: string[];
   floors: number[][]; solids: Solid[]; boxes: number[][]; labels: { name: string; x: number; y: number }[]; launches: number;
@@ -20,7 +47,7 @@ type Ultra = { fromX: number; fromY: number; side: number; x: number; y: number;
 // One way an ultra goes: lastHyperY set on floor `from`, the ultra's hyper on floor `to`; the flight line a → b.
 // `line`: the flight line check found it; `ultra`: the engine's biggest-drop ultra on this pair.
 type Pair = { index: number; from: number; to: number; drop: number; ax: number; ay: number; bx: number; by: number; line: boolean; ultra: Ultra | null };
-type Layers = { grown: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean };
+type Layers = { art: boolean; tree: boolean; shapes: boolean; grown: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean } & Record<`box:${BoxCategory}`, boolean>;
 type Which = "all" | "engine" | "shift";
 type Direction = "both" | "out" | "in";
 type View = { x: number; y: number; w: number };
@@ -58,7 +85,13 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const [data, setData] = useState<UltraData | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<Layers>({ grown: true, markers: true, floors: true, labels: true, rebase: true, next: true });
+  const [layers, setLayers] = useState<Layers>({ art: true, tree: true, shapes: false, grown: true, markers: true, floors: true, labels: true, rebase: true, next: true,
+    // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
+    "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
+    "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
+  // The game's art (web/public/art, tools/render-art.py); without it the level is its collision shapes.
+  const [art, setArt] = useState<ArtIndex | null>(null);
+  useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
   // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
   const [world, setWorld] = useState<StatePick>({});
   // Where on the first rebase line the last rebase happened (an index into `arc`), for the next line.
@@ -67,6 +100,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const [direction, setDirection] = useState<Direction>("both");
   const [view, setView] = useState<View | null>(null);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  // The buy box tapped (what it is, gives and costs): its tooltip card where hover titles aren't a thing.
+  const [boxTip, setBoxTip] = useState<BoxMarker | null>(null);
   const [hoverFloor, setHoverFloor] = useState(-1);
   const [floor, setFloor] = useState(-1);
   const [focus, setFocus] = useState<Pair | null>(null);
@@ -144,7 +179,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const level = useMemo(() => levelPaths(data?.solids ?? [], data?.boxes ?? [], data?.grown ?? [], world), [data, world]);
   const markers = useMemo(() => (data?.markers ?? []).filter(m => inState(m.when, world)), [data, world]);
   const levelShow = useMemo<LevelShow>(() => ({ spikes: true, boxes: true, blue: true, orange: true, springs: true, grown: layers.grown }), [layers]);
-  const markerKinds = useMemo(() => Object.fromEntries(Object.keys(MARKERS).map(k => [k, layers.markers])), [layers]);
+  const markerKinds = useMemo(() => ({ ...Object.fromEntries(Object.keys(MARKERS).map(k => [k, layers.markers])),
+    ...Object.fromEntries((Object.keys(BOX_KINDS) as BoxCategory[]).map(c => [`box:${c}`, layers[`box:${c}`]])) }), [layers]);
 
   const scale = view && svg.current ? svg.current.clientWidth / view.w : 1;
   const toWorld = (e: { clientX: number; clientY: number }) => {
@@ -189,10 +225,20 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     setView({ ...view, x: view.x - dx / s, y: view.y - dy / s });
     drag.current = { ...d, x: e.clientX, y: e.clientY };
   };
-  // A click selects the floor under the pointer (a click off any floor clears the selection).
-  const onUp = () => {
+  // A tap on a buy box shows its card (what it is, gives and costs); else it selects the floor under the pointer (a
+  // tap off any floor clears the selection).
+  const onUp = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current; drag.current = null;
-    if (d && !d.moved) { setFloor(hoverFloor); setFocus(null); }
+    if (d && d.moved || !view || !svg.current) return;
+    const p = toWorld(e), reach = 10 / (svg.current.getBoundingClientRect().width / view.w);
+    let near: BoxMarker | null = null, best = reach;
+    for (const m of markers as BoxMarker[]) {
+      if (m.kind !== "box" || !layers[`box:${m.box!.category}`]) continue;
+      const gap = Math.hypot(m.x - p.x, m.y - p.y);
+      if (gap < best) { best = gap; near = m; }
+    }
+    setBoxTip(near);
+    if (!near) { setFloor(floorAt(p, reach)); setFocus(null); }
   };
 
   const download = () => {
@@ -209,6 +255,12 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
 
   const toggle = (key: keyof Layers) => setLayers(l => ({ ...l, [key]: !l[key] }));
   const px = 1 / scale;
+  const artShown = !!art && layers.art;
+  const viewH = view && svg.current ? view.w * svg.current.clientHeight / svg.current.clientWidth : 0;
+  const tiles = view && artShown ? artTiles(art, "/art/", world, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
+  // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
+  // under the tree layer.
+  const treeTiles = view && artShown && layers.tree ? artTiles(art, "/art/", { ...world, tree: "grown" }, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
   const f = data && floor >= 0 ? data.floors[floor] : null;
   const out = floor >= 0 && direction !== "in" ? byFloor.out[floor] : [];
   const into = floor >= 0 && direction !== "out" ? byFloor.into[floor] : [];
@@ -246,7 +298,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     {failure && <p className="mapFailure">{failure}</p>}
     {data && !data.pairs && <p className="mapFailure">This result predates the floor pairs: Recompute.</p>}
     <div className="mapLayers">
-      {([["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"]] as [keyof Layers, string][]).map(([key, label]) =>
+      {([["art", "Game art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"],
+        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof Layers, string])] as [keyof Layers, string][]).filter(([key]) => art || (key !== "art" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={world} onPick={setWorld} className="passLoop"/>}
       <label className="passLoop">Pairs <select value={which} onChange={e => { setWhich(e.target.value as Which); setFocus(null); }}>
@@ -267,7 +320,9 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
       <span className="hint"><span className="mapSwatch" style={{ background: GROWN_COLOR }}/>Tree ground (appears after tree upgrades)</span>
       {(["blue", "orange"] as const).map(t => <span key={t} className="hint"><span className="mapSwatch" style={{ background: TONE_COLORS[t] }}/>{t === "blue" ? "Blue" : "Orange"} blocks + spikes (dashed = spikes; only active colour is solid)</span>)}
       <span className="hint"><span className="mapSwatch" style={{ background: SPRING_COLOR }}/>Spring: trigger box; arrow shows launch direction</span>
-      {Object.values(MARKERS).map(m => <span key={m.text} className="hint">{m.shape === "star" ? <span style={{ color: m.color }}>★ </span> : <span className="mapSwatch" style={{ background: m.color, borderRadius: m.shape === "circle" ? 8 : 2 }}/>}{m.text}</span>)}
+      {[...Object.values(MARKERS), ...Object.values(BOX_KINDS)].map(m => <span key={m.text} className="hint">{m.shape === "star" ? <span style={{ color: m.color }}>★ </span> : <span className="mapSwatch" style={{ background: m.color, borderRadius: m.shape === "circle" ? 8 : 2 }}/>}{m.text}</span>)}
+      <span className="hint"><span className="mapSwatch" style={{ background: "transparent", border: `2px solid ${MARKERS.checkpoint.color}` }}/>Checkpoint spawn box (where a respawn puts the player)</span>
+      <span className="hint"><span className="mapSwatch" style={{ background: "transparent", border: `2px dashed ${MARKERS.checkpoint.color}` }}/>Checkpoint trigger area (touching it sets the spawn)</span>
       {BANDS.map(([top, color], i) => <span key={i} className="hint"><span className="mapSwatch" style={{ background: color, borderRadius: 8 }}/>Drop {i === 0 ? "4" : BANDS[i - 1][0]}{top === Infinity ? "+" : `–${top}`} u</span>)}
       <span className="hint"><span className="mapSwatch" style={{ background: SHIFT_COLOR, borderRadius: 8 }}/>Origin shift (any drop, even flat)</span>
       <span className="hint"><span className="mapSwatch" style={{ background: IN_COLOR }}/>Onto the selected floor</span>
@@ -276,7 +331,9 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     <svg ref={svg} className="mapCanvas" viewBox={view && svg.current ? `${view.x} ${view.y} ${view.w} ${view.w * svg.current.clientHeight / svg.current.clientWidth}` : "0 0 1 1"}
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { setCursor(null); setHoverFloor(-1); }}>
       <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#07111f"/>
-      <Level paths={level} show={levelShow} px={px}/>
+      <Art tiles={tiles}/>
+      <Art tiles={treeTiles}/>
+      {(!artShown || layers.shapes) && <Level paths={level} show={levelShow} px={px}/>}
       {layers.floors && data?.kinds.map((k, i) => <path key={k} d={floorPaths[i]} fill="none" stroke={KIND_COLORS[k] ?? "#fff"} strokeWidth={2} strokeOpacity={f ? .35 : 1} vectorEffect="non-scaling-stroke"/>)}
       {layers.rebase && <path d={rebaseLine} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.7} strokeWidth={1.5} strokeDasharray="10 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
       {layers.rebase && <path d={routeLines} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.4} strokeWidth={1} strokeDasharray="4 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
@@ -311,6 +368,10 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
       {layers.labels && data?.labels.map(l => <text key={l.name} x={l.x} y={fy(l.y) - 30 * px} fill="#e8eef8" fontSize={14 * px} textAnchor="middle" style={{ pointerEvents: "none" }}>{l.name}</text>)}
       <Marks markers={markers} steps={data?.treeSteps ?? []} px={px} kinds={markerKinds} areas={layers.markers} showSteps={layers.grown}/>
     </svg>
+    {boxTip?.box && <div className="mapReadout"><div><strong>{boxTip.name}</strong> · {BOX_KINDS[boxTip.box.category].text}
+      <button className="secondary" onClick={() => setBoxTip(null)}>×</button></div>
+      <div>gives {boxTip.box.gives} · {boxTip.box.upgrade} · {boxCost(boxTip.box)} · {boxTip.box.cap === 1 ? "one-off" : `repeatable ×${boxTip.box.cap}`}</div>
+      <div>{boxTip.box.secret ? `secret${boxTip.box.number ? ` #${boxTip.box.number}` : ""} · ` : ""}{boxTip.box.ach ? `${boxTip.box.ach} · ` : ""}{boxTip.box.tree ? "tree upgrade · " : ""}{boxTip.box.fresh ? "in the fresh world" : "only later"}{boxTip.when ? ` · only in ${boxTip.when}` : ""}</div></div>}
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}</> : "Point at the map for coordinates."}
       {hover && hoverFloor >= 0 && <div>floor {where(hover)}</div>}
       {hover && hoverFloor >= 0 && <div>{counts(hoverFloor)}</div>}</div>

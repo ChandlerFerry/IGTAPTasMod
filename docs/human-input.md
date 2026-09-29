@@ -56,8 +56,12 @@ input of its own, and the next input tick's presses wait for the first tick out 
 Every press and release is stamped with `MacroEngine.Clock`, which advances once per physics tick (dash ticks
 included), so each buffer can be checked against the press or release that made it. The gate's windows
 (`Solver.cs`): `JumpBufferTicks` 12 (game 0.12 s; 10 ticks mid-dash), `DashBufferTicks` 8 (game 0.12 s = 6 ticks),
-`JumpCutBufferTicks` 15 (game 0.26 s after a release = 13 ticks), each +2 slack. `tools/audit-traces.py` checks
-captured traces against the same windows.
+`JumpCutBufferTicks` 15 (game 0.26 s after a release = 13 ticks), each +2 slack. The game itself keeps a buffered dash
+alive through a wall jump's first 5 lock ticks (`getPlayerControlledInput`, Movement.cs 1596: while
+`wallJumpMovementLockRemaining >= wallJumpMovementLockFrames - 5` it re-arms `cancelDashBuffer` at 0.06 s each tick), so
+a press's dash buffer may outlive its 0.12 s; the gate lets a buffer that was a press's live `DashHoldTicks` 6 ticks
+past the last tick the game held it (0.06 s = 3 ticks, +1 for the next tick's hold, +2 slack). `tools/audit-traces.py`
+checks captured traces against the same windows.
 
 The game reads two jump actions (`Jump`, `Jump2`) and two dash actions (`Dash`, `Dash2`), and only a press or a jump
 release reaches it (`Movement.Update`); holding is never read. A jump press while one jump button is down is the other
@@ -297,7 +301,7 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   (1670 u/s, not the diagonal's 1181), the wall touch refills the dash, and the jump is the wall bounce (507 u high).
 - **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
   one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
-- **Freeze aim** (`WJ_DS_DJ_BS_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
+- **Freeze aim** (`WJ_DS_DJ_BS_ORB_ZIP_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
   nearly straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 0.94)). The stick
   that turns a waiting dash (`Movement.Update`, 821-833) skips the press's snap to straight up, so `dashDirection` is
   (0.33, 0.944): 19° off vertical, 552 u/s sideways and 1576 u/s up, an angle no dash pressed on a tick gets (17-22° for
@@ -339,7 +343,14 @@ box that grows it and the box it carries. A fresh world has none of it grown, so
 engine doesn't model growing it. Spikes are red; coloured blocks and spikes are drawn in both colours (blue and
 orange, the export's `sourceShapes`), only the active colour being solid. Springs are level too: their trigger box in
 yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
-level is always drawn. The **Area 1** picker switches the level between Area 1's world states, **Normal** and
+level is always drawn. **Game art** draws the level with the game's own tilemaps and sprites (spikes, springs, zip
+movers, moss, vines, and the grown tree on its own **Tree (grown)** layer), from WebP tiles in `web/public/art` that
+`igtap-ultra-map/tools/render-art.py` renders per world state. Only the tiles in view load, at the coarsest level that
+fits the zoom. The collision shapes are then a toggle. A checkpoint shows its spawn box (the standing player box where a
+death or quick restart puts the dot: the checkpoint's position 12 down) and, dashed, its trigger area. Each buy box says
+what it is (secret, bonus reward, achievement box, ability, tree, one-off or course upgrade), what it gives and what it
+costs, on hover or tap.
+The **Area 1** picker switches the level between Area 1's world states, **Normal** and
 **Overgrown** (`OvergrowthLoadScript`: when Area 1 is overgrown its `overgrowthEnable` objects, the moss, spikes, zip
 movers and their boxes and checkpoints under and around Courses 1–5, are on and its `overgrowthDisable` ones are off).
 It starts on the capture's state, marked "(capture)"; floors, ultras, routes and explored cells are always the

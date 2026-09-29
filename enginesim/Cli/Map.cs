@@ -33,11 +33,16 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<int> State = new List<int>();
         }
 
-        // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint.
-        // `when`: the world state it's only in (WorldStates), none: every one.
+        // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint,
+        // or an upgrade box's trigger box (touching it buys it).
+        // `spawn`: the player's box where a death or quick restart puts it at that checkpoint (x0, y0, x1, y1; x, y is
+        // its centre). `when`: the world state it's only in (WorldStates), none: every one. `box`: kind "box" only, an
+        // upgrade box's buy info.
         internal sealed record Marker(string kind, string name, float x, float y,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[][] area = null,
-            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null);
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[] spawn = null,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BoxInfo box = null);
 
         public static int Run(string[] args)
         {
@@ -465,8 +470,9 @@ namespace IGTAP.EngineSim.Cli
         // "orange" for a coloured block or spike (colouredBlockSwapper), which only collides while its colour is active.
         // `Up`: a spring's launch direction (its trigger box is the shape). `When`: the world state it's only in
         // (WorldStates, "<state>:<option>"), none: every one. An object that is off in the capture has no shapes for a
-        // composite, so its outline paths come as closed "Edges" loops.
-        internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null, string When = null);
+        // composite, so it comes as one "Area": its outline paths end to end in V, `Rings` the length of each, filled
+        // even-odd (islands and their holes).
+        internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null, string When = null, int[] Rings = null);
 
         // A world state a map switches between: `options`, the capture's (`current`) among them.
         internal sealed record WorldState(string id, string label, string[] options, string current);
@@ -625,21 +631,21 @@ namespace IGTAP.EngineSim.Cli
                     JsonElement props = c.GetProperty("props");
                     bool trigger = props.TryGetProperty("isTrigger", out JsonElement t) && t.GetBoolean();
                     (float x, float y, float cos, float sin, bool moving)? body = BodyOf(props, bodies);
-                    var loops = new List<(string type, float[] v, float r)>();
+                    var loops = new List<(string type, float[] v, float r, int[] rings)>();
                     foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
                         loops.Add((s.GetProperty("type").GetString(), s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray(),
-                            s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f));
+                            s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f, null));
+                    // An off composite has no shapes: its outline paths, all of them one even-odd area (islands and holes).
                     if (!live && loops.Count == 0 && c.TryGetProperty("paths", out JsonElement paths) && paths.ValueKind == JsonValueKind.Array)
-                        foreach (JsonElement path in paths.EnumerateArray())
-                        {
-                            float[] p = path.EnumerateArray().Select(e => e.GetSingle()).ToArray();
-                            if (p.Length >= 6) loops.Add(("Edges", p.Concat(new[] { p[0], p[1] }).ToArray(), 0f));
-                        }
-                    foreach (var (type, v, r) in loops)
+                    {
+                        float[][] rings = paths.EnumerateArray().Select(path => path.EnumerateArray().Select(e => e.GetSingle()).ToArray()).Where(p => p.Length >= 6).ToArray();
+                        if (rings.Length > 0) loops.Add(("Area", rings.SelectMany(p => p).ToArray(), 0f, rings.Select(p => p.Length).ToArray()));
+                    }
+                    foreach (var (type, v, r, rings) in loops)
                     {
                         if (v.Length < 2) continue;
                         ToWorld(v, body, origin);
-                        shapesOut.Add(new WorldShape(type, v, r, layer, tag, trigger, spike, body is { moving: true }, player, tone, up, state));
+                        shapesOut.Add(new WorldShape(type, v, r, layer, tag, trigger, spike, body is { moving: true }, player, tone, up, state, rings));
                     }
                 }
             }
@@ -674,8 +680,8 @@ namespace IGTAP.EngineSim.Cli
                 float sx0 = float.MaxValue, sy0 = float.MaxValue, sx1 = float.MinValue, sy1 = float.MinValue;
                 for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
                 if (sx1 + r < x0 || sx0 - r > x1 || sy1 + r < y0 || sy0 - r > y1) continue;
-                string k = s.Type == "Polygon" ? "poly" : s.Type == "Circle" ? "circle" : s.Type == "Capsule" ? "capsule" : "line";
-                solids.Add(new { k, spike = s.Spike, p = v.Select(Round), r, tone = s.Tone, spring = s.Up?.Select(e => (float)Math.Round(e, 3)), when = s.When });
+                string k = s.Type == "Polygon" ? "poly" : s.Type == "Area" ? "area" : s.Type == "Circle" ? "circle" : s.Type == "Capsule" ? "capsule" : "line";
+                solids.Add(new { k, spike = s.Spike, p = v.Select(Round), r, tone = s.Tone, spring = s.Up?.Select(e => (float)Math.Round(e, 3)), when = s.When, rings = s.Rings });
             }
             return solids;
         }
@@ -792,18 +798,158 @@ namespace IGTAP.EngineSim.Cli
         // Upgrade box currencies (upgradeBox.upgradeCurrency).
         static readonly string[] Currencies = { "W", "GP", "NP", "number", "CD", "RP", "BP" };
 
+        // What an upgrade box gives (upgradeBox.upgrade, then .globalUpgrade or .movementUpgrade), the enum order the
+        // game serializes: the same tables tools/upgrade-boxes.py decodes with.
+        static readonly string[] BoxLocal = { "GLOBAL", "Movement", "cloneCount", "cashPerLoop", "fastCloneChance", "bigCloneChance",
+            "prestige", "cloneMult", "DUMMY_cloneCountPlural", "GreenCloneRewardBase", "activateNextBreakerLights",
+            "enableCloneDustGeneration", "moreWatts", "baseRP" };
+        static readonly string[] BoxGlobal = { "cashPerLoop", "fastCloneChance", "maxCloneFastness", "bigCloneChance", "maxCloneBigness",
+            "cloneMult", "spawnNewAtom", "atomLevelChance", "greenCloneClance", "treeGrowth", "unlockPrestige", "openGate",
+            "increasedWatts", "increasedGreenPower", "increasedNuclearPower", "area2DoorOpen", "zipMoversUnlocked",
+            "exemptCourseFromAtomPrestige", "tripleThreatIncrease", "unlockJiggleDrops", "additionalCDdigits", "compBoostUnlocked",
+            "compBoostTime", "compBoostStrength", "IncreasedCloneDust", "moreRefreshOrbs", "unlockTeleporters", "makeCourseBuyMax",
+            "redCloneChance", "blueCloneChance", "NpCapIsSoftcap", "compBoostDoublesNP", "vmanTime", "startVmanSpeedrun", "moreWatts",
+            "moreGP", "increasedRP", "moreRP", "RPcap", "GPAtomsDontResetCourses", "NpGenerationSpeed", "VmanStartsWithOmniDash",
+            "wattPower", "MoreRpCap" };
+        static readonly string[] BoxMovement = { "dash", "wallJump", "doubleJump", "swapBlocksOnce", "unlockBlockSwap", "endDemo", "OmniDash", "freeVmanOmnidash" };
+
+        // The upgrade names that only stack cash or a stat (a count, a chance, a duration): a free box giving one of
+        // these is a weak bonus beside one that unlocks something (bonusBoost vs bonusUnique).
+        static readonly HashSet<string> BoxBoosts = new HashSet<string> { "cloneCount", "cashPerLoop", "fastCloneChance", "bigCloneChance",
+            "cloneMult", "DUMMY_cloneCountPlural", "GreenCloneRewardBase", "moreWatts", "baseRP", "maxCloneFastness", "maxCloneBigness",
+            "spawnNewAtom", "atomLevelChance", "greenCloneClance", "increasedWatts", "increasedGreenPower", "increasedNuclearPower",
+            "tripleThreatIncrease", "additionalCDdigits", "compBoostTime", "compBoostStrength", "IncreasedCloneDust", "moreRefreshOrbs",
+            "redCloneChance", "blueCloneChance", "compBoostDoublesNP", "vmanTime", "moreGP", "increasedRP", "moreRP", "RPcap",
+            "NpGenerationSpeed", "wattPower", "MoreRpCap" };
+
+        // An upgrade box's buy info (a kind "box" marker). `upgrade`: the enum names as tools/upgrade-boxes.py prints
+        // them ("GLOBAL:cashPerLoop", "Movement:doubleJump", "cashPerLoop"); `gives` the same worded. `cap`: how often
+        // it can be bought (1: one-off). `category`, first match wins: secret (isSecret, a bonus's hidden reward;
+        // `number` its achievement digits) > movement (an ability) > tree (under a TreeController) > bonusUnique/
+        // bonusBoost (free, cap 1: a bonus's finish reward; what it gives decides good from weak) > achievement (`ach`
+        // the id it triggers) > unlock (any other one-off) > course (a repeatable). `fresh`: on in the fresh world
+        // (activeInHierarchy), else only later (grown, another zone).
+        internal sealed record BoxInfo(string upgrade, string gives, double cost, string currency, int cap, string category,
+            bool fresh, bool secret, bool tree,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string number = null,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string ach = null);
+
+        static BoxInfo BuyInfo(JsonElement c, JsonElement o, bool tree)
+        {
+            var f = Fields(c);
+            int pick(string name, int fallback = 0) => f.TryGetValue(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : fallback;
+            string local = BoxLocal[Math.Clamp(pick("upgrade"), 0, BoxLocal.Length - 1)];
+            string tail = local == "GLOBAL" ? BoxGlobal[Math.Clamp(pick("globalUpgrade"), 0, BoxGlobal.Length - 1)]
+                : local == "Movement" ? BoxMovement[Math.Clamp(pick("movementUpgrade"), 0, BoxMovement.Length - 1)] : local;
+            string upgrade = (local == "GLOBAL" ? "GLOBAL:" : local == "Movement" ? "Movement:" : "") + tail;
+            string gives = Words(tail) + (local == "GLOBAL" ? " (global)" : local == "Movement" ? " (movement ability)" : " (local)");
+            double cost = f.TryGetValue("baseUpgradeCost", out JsonElement bc) && bc.ValueKind == JsonValueKind.Number ? bc.GetDouble() : 0;
+            string currency = Currencies[Math.Clamp(pick("upgradeCurrency"), 0, Currencies.Length - 1)];
+            int cap = Math.Max(1, pick("Cap", 1));
+            bool secret = f.TryGetValue("isSecret", out JsonElement s) && s.ValueKind == JsonValueKind.True;
+            string achievement = f.TryGetValue("achievement", out JsonElement a) && a.ValueKind == JsonValueKind.String ? a.GetString() : "";
+            string number = achievement.Length > 0 && achievement.All(char.IsDigit) ? achievement : null;
+            string ach = achievement.StartsWith("ACH_") ? achievement : null;
+            string category = secret ? "secret"
+                : local == "Movement" ? "movement"
+                : tree ? "tree"
+                : cost <= 0 && cap == 1 ? (BoxBoosts.Contains(tail) ? "bonusBoost" : "bonusUnique")
+                : ach != null ? "achievement"
+                : cap == 1 ? "unlock" : "course";
+            return new BoxInfo(upgrade, gives, cost, currency, cap, category,
+                o.GetProperty("activeInHierarchy").GetBoolean(), secret, tree, number, ach);
+        }
+
+        // Whether a box is a tree upgrade: it names a tree (upgradeTree) or sits under a TreeController's root or segments.
+        static bool TreeOf(JsonElement c, JsonElement o, HashSet<int> trees, Dictionary<int, int> parents)
+        {
+            if (Fields(c).TryGetValue("upgradeTree", out JsonElement t) && t.ValueKind == JsonValueKind.Object) return true;
+            for (int id = o.GetProperty("id").GetInt32(); id != 0 && parents.TryGetValue(id, out int p); id = p) if (trees.Contains(id)) return true;
+            return false;
+        }
+
+        // The in-game name a box shows: its nameDisplay TMP's m_text where an export carries text (the world exports do
+        // not serialize TMP fields today), else the object's name comes out of Markers' own `name`.
+        static string DisplayName(Dictionary<string, JsonElement> f, Dictionary<int, JsonElement> components)
+        {
+            return f.TryGetValue("upgradeNameDisplay", out JsonElement v) && v.ValueKind == JsonValueKind.Object && v.TryGetProperty("$ref", out JsonElement id)
+                && components.TryGetValue(id.GetInt32(), out JsonElement t) && Fields(t).TryGetValue("m_text", out JsonElement text)
+                && text.ValueKind == JsonValueKind.String && text.GetString().Trim() is { Length: > 0 } shown ? shown : null;
+        }
+
+        // The initialisms an upgrade name keeps ("baseRP" → "base RP", "RPcap" → "RP cap").
+        static readonly HashSet<string> Initialisms = new HashSet<string> { "W", "GP", "NP", "CD", "RP", "BP" };
+
+        // An upgrade name worded for reading ("cashPerLoop" → "cash per loop"): camel humps split, an initialism's caps
+        // run kept whole ("CDdigits" → "CD digits", else the run splits before its last letter, "GPAtoms…" → "GP atoms…").
+        static string Words(string name)
+        {
+            var words = new List<string>();
+            string token = "";
+            foreach (char ch in name + "_")
+            {
+                if (ch == '_' || ch == ' ') { if (token.Length > 0) { words.Add(token); token = ""; } continue; }
+                if (char.IsUpper(ch))
+                {
+                    if (token.Length > 0 && !char.IsUpper(token[token.Length - 1])) { words.Add(token); token = ""; }
+                    token += ch;
+                    continue;
+                }
+                if (token.Length > 1 && token.All(char.IsUpper))
+                {
+                    string prefix = Initialisms.Contains(token) ? token
+                        : Initialisms.FirstOrDefault(i => token.StartsWith(i, StringComparison.Ordinal)) ?? token.Substring(0, token.Length - 1);
+                    words.Add(prefix);
+                    token = token.Substring(prefix.Length);
+                }
+                token += ch;
+            }
+            return string.Join(" ", words.Select(w => Initialisms.Contains(w.ToUpperInvariant()) ? w.ToUpperInvariant() : w.ToLowerInvariant()));
+        }
+
         internal static List<Marker> Markers(JsonElement world, CapturePos origin)
         {
             // Refill orbs (JiggleDropScript on a trigger capsule) by what they give back: the name says which.
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint",
-                ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "secret" };
+                ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "box" };
             var markers = new List<Marker>();
             HashSet<int> on = OnObjects(world, allStates: true);
             Dictionary<int, string> when = StateOf(world);
             var bodies = Bodies(world, origin);
+            // Every component by id (with its object), every object's parent and the objects carrying an upgrade box:
+            // display names and tree lookups need the first two, boxes are emitted whatever the capture has on.
+            var components = new Dictionary<int, JsonElement>();
+            var owners = new Dictionary<int, int>();
+            var parents = new Dictionary<int, int>();
+            var boxes = new HashSet<int>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
-                if (!on.Contains(o.GetProperty("id").GetInt32())) continue;
+                int id = o.GetProperty("id").GetInt32();
+                parents[id] = o.GetProperty("parent").GetInt32();
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    components[c.GetProperty("id").GetInt32()] = c;
+                    owners[c.GetProperty("id").GetInt32()] = id;
+                    if (c.GetProperty("type").GetString() == "upgradeBox") boxes.Add(id);
+                }
+            }
+            // The root and segments a TreeController hangs its boxes under: a box below one is a tree upgrade.
+            var trees = new HashSet<int>();
+            foreach (JsonElement c in components.Values)
+            {
+                if (c.GetProperty("type").GetString() != "TreeController") continue;
+                trees.Add(owners[c.GetProperty("id").GetInt32()]);
+                if (Fields(c).TryGetValue("TreeSegments", out JsonElement list) && list.ValueKind == JsonValueKind.Array)
+                    foreach (JsonElement r in list.EnumerateArray())
+                        if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out JsonElement id) && owners.TryGetValue(id.GetInt32(), out int segment)) trees.Add(segment);
+            }
+            var box = PlayerBox(world);
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+            {
+                // A box marker comes out however the capture has the box (a tree's boxes only exist once bought): the
+                // map shows where one that is only there later will be too, `box.fresh` saying which is which.
+                int id = o.GetProperty("id").GetInt32();
+                if (!on.Contains(id) && !boxes.Contains(id)) continue;
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
                 {
                     if (!kinds.TryGetValue(c.GetProperty("type").GetString(), out string kind)) continue;
@@ -811,18 +957,24 @@ namespace IGTAP.EngineSim.Cli
                     JsonElement p = o.GetProperty("position");
                     float x = Round(p.GetProperty("x").GetSingle() - origin.x), y = Round(p.GetProperty("y").GetSingle() - origin.y);
                     float[][] area = kind == "checkpoint" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
-                    if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
-                    else if (kind == "secret")
+                    float[] spawn = null;
+                    BoxInfo info = null;
+                    if (kind == "checkpoint" && box != null)
                     {
-                        // A secret: an upgrade box with isSecret (a bonus's reward is a free one), numbered by its achievement.
-                        var f = Fields(c);
-                        if (!f.TryGetValue("isSecret", out JsonElement secret) || secret.ValueKind != JsonValueKind.True) break;
-                        string number = f.TryGetValue("achievement", out JsonElement a) && a.ValueKind == JsonValueKind.String && a.GetString().All(char.IsDigit) && a.GetString().Length > 0 ? a.GetString() : null;
-                        double cost = f.TryGetValue("baseUpgradeCost", out JsonElement bc) && bc.ValueKind == JsonValueKind.Number ? bc.GetDouble() : 0;
-                        int currency = f.TryGetValue("upgradeCurrency", out JsonElement uc) && uc.ValueKind == JsonValueKind.Number ? uc.GetInt32() : 0;
-                        name = (number != null ? "Secret " + number : "Secret") + (cost > 0 ? " · " + cost.ToString("G6", CultureInfo.InvariantCulture) + " " + Currencies[Math.Clamp(currency, 0, Currencies.Length - 1)] : " · free")
-                            + " (" + name + ")";
-                        // At its trigger box, where touching it buys it (a bonus's finish).
+                        // A respawn puts the player's standing box at the checkpoint 12 units down (Movement.respawn;
+                        // checkpointScript writes respawnPoint = its position), so x, y is the spawn's centre.
+                        float cy = Round(y - 12f);
+                        spawn = new[] { Round(x + box.Value.ox - box.Value.hx), Round(cy + box.Value.oy - box.Value.hy),
+                            Round(x + box.Value.ox + box.Value.hx), Round(cy + box.Value.oy + box.Value.hy) };
+                        y = cy;
+                    }
+                    if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
+                    else if (kind == "box")
+                    {
+                        // Every upgrade box at its trigger box, where touching it buys it (a bonus's finish): what it
+                        // gives and costs in `box`, the marker at the trigger box's middle.
+                        info = BuyInfo(c, o, TreeOf(c, o, trees, parents));
+                        name = DisplayName(Fields(c), components) ?? name;
                         area = TriggerArea(o, bodies, origin, triggersOnly: true);
                         if (area.Length > 0)
                         {
@@ -831,7 +983,7 @@ namespace IGTAP.EngineSim.Cli
                             y = Round((b.Where((_, i) => i % 2 == 1).Min() + b.Where((_, i) => i % 2 == 1).Max()) / 2f);
                         }
                     }
-                    markers.Add(new Marker(kind, name, x, y, area, when.TryGetValue(o.GetProperty("id").GetInt32(), out string state) ? state : null));
+                    markers.Add(new Marker(kind, name, x, y, area, when.TryGetValue(o.GetProperty("id").GetInt32(), out string state) ? state : null, spawn, info));
                     break;
                 }
             }
@@ -844,6 +996,22 @@ namespace IGTAP.EngineSim.Cli
             if (component.TryGetProperty("fields", out JsonElement list))
                 foreach (JsonElement f in list.EnumerateArray()) fields[f[1].GetString()] = f[2];
             return fields;
+        }
+
+        // The player's standing box (Movement.defaultColliderSize/Offset: what Movement.respawn restores) as half
+        // extents and offset, read from the export's player.
+        static (float hx, float hy, float ox, float oy)? PlayerBox(JsonElement world)
+        {
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    if (c.GetProperty("type").GetString() != "Movement") continue;
+                    var f = Fields(c);
+                    if (!f.TryGetValue("defaultColliderSize", out JsonElement size) || !f.TryGetValue("defaultColliderOffset", out JsonElement offset)) return null;
+                    return (size.GetProperty("x").GetSingle() / 2f, size.GetProperty("y").GetSingle() / 2f,
+                        offset.GetProperty("x").GetSingle(), offset.GetProperty("y").GetSingle());
+                }
+            return null;
         }
 
         // An object's enabled collider shapes (with `triggersOnly`, its trigger colliders') as game-world polygons (a box

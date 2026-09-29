@@ -8,8 +8,8 @@ import "./fulltas.css";
 import { FullTasSolvePanel, SegmentGroup, SegmentLegend, place, resetSegments, runTime, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
-import { UltraMap, type UltraData } from "./ultras";
-import { capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
+import { artTiles, capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -18,7 +18,11 @@ type Route = { id: string; name: string; actionCount: number; actions: Action[] 
 type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
-type Course = { id: number; token: string; bonus: boolean; levels: number[]; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
+// A category's unlocks (Categories.cs): the label lists them in a fixed order (WJ, DS/DSn, DJ/DJn, BS, ORB, ZIP, OM;
+// NONE when empty), and every unlock not in the label is off.
+type Caps = { wallJump: boolean; dashes: number; airJumps: number; blockSwap: boolean; orbs: boolean; zip: boolean; omni: boolean };
+type Category = { id: string; label: string; caps: Caps };
+type Course = { id: number; token: string; bonus: boolean; categories: string[]; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
@@ -26,25 +30,25 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean;
-  unlockLevel?: number | null;
-  selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
+  saveUnlocks?: Caps | null;
+  selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
   techs?: TechState;
 };
 // GET /state/static: the heavy part, fetched again only when /state/live's staticVersion changes.
-type StaticState = { staticVersion: number; routes: Route[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
+type StaticState = { staticVersion: number; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
   fullTas?: Pick<FullTasState, "runs">; techs?: Pick<TechState, "list" | "detectors" | "labs"> };
 // GET /state/live: everything else, polled.
-type LiveState = Omit<StudioState, "routes" | "courses" | "recordings" | "savestates" | "fullTas" | "techs"> & { staticVersion: number;
+type LiveState = Omit<StudioState, "routes" | "categories" | "courses" | "recordings" | "savestates" | "fullTas" | "techs"> & { staticVersion: number;
   fullTas?: Omit<FullTasState, "runs">; techs?: Pick<TechState, "injectedLab" | "seen"> };
 
-const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], savestates: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
+const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], categories: [], recordings: [], savestates: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
 
 // The next live poll goes out this long after the last one's answer.
 const LIVE_POLL_MS = 250;
 
 function mergeState(s: StaticState, l: LiveState): StudioState {
-  return { ...l, routes: s.routes, courses: s.courses, recordings: s.recordings, savestates: s.savestates,
+  return { ...l, routes: s.routes, categories: s.categories, courses: s.courses, recordings: s.recordings, savestates: s.savestates,
     fullTas: s.fullTas && l.fullTas ? { ...s.fullTas, ...l.fullTas } : undefined,
     techs: s.techs && l.techs ? { ...s.techs, ...l.techs } : undefined };
 }
@@ -65,7 +69,7 @@ export default function Studio() {
   const [tab, setTab] = useState("fulltas");
   const [error, setError] = useState("");
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
-  const unlockLevel = state.connected ? state.unlockLevel ?? null : null;
+  const saveUnlocks = state.connected ? state.saveUnlocks ?? null : null;
 
   // The static part and the refresh that fetched it; a refresh's answer is shown only if no later one was shown already.
   const staticState = useRef<{ from: number; data: StaticState } | null>(null);
@@ -110,7 +114,7 @@ export default function Studio() {
     <aside className="sidebar">
       <div className="brand"><span className="brandMark">T</span><div><strong>IGTAP</strong><small>TAS STUDIO</small></div></div>
       <div className={`connection ${state.connected ? "online" : "offline"}`}><i />{state.connected ? `Connected · v${state.version}` : "Waiting for game"}</div>
-      <RouteSidebar routes={state.routes} courses={state.courses ?? []} activeId={route?.id} unlockLevel={unlockLevel} onCommand={command} />
+      <RouteSidebar routes={state.routes} courses={state.courses ?? []} categories={state.categories} activeId={route?.id} saveUnlocks={saveUnlocks} onCommand={command} />
       <div className="sidebarFooter"><p>Game keeps running while this window is open.</p><kbd>F8</kbd><span>Emergency stop</span></div>
     </aside>
 
@@ -163,7 +167,7 @@ export default function Studio() {
 
         {tab === "ultras" && <UltraMap load={loadUltras}/>}
 
-        {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
+        {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} categories={state.categories} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} categories={state.categories} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Capture a game state, then assign it as a route start.</p><div className="savestateList">{!state.savestates.length && <div className="emptyState"><span className="orbit">●</span><h2>No savestates yet</h2><p>Capture one to start routes mid-game.</p></div>}{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
       </div>
@@ -171,8 +175,41 @@ export default function Studio() {
   </main>;
 }
 
-const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"], ["WJ_DS", "Wall jump + dash"], ["WJ_DS_DJ", "Wall jump + dash + double jump"], ["WJ_DS_DJ_BS", "Wall jump + dash + double jump + block swap"], ["WJ_DS_DJ_BS_OM", "Wall jump + dash + double jump + block swap + omnidash"]];
-const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
+// A category route's name: <course>_<label> [farm ]<time>. The label must name one of the registry's categories
+// (state.categories), checked below; names like "4_almost_completed" go to the other routes.
+const CATEGORY_ROUTE = /^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm )?([\d.]+)$/i;
+
+// Every unlock of a is in b (counts no higher): a narrower unlock set.
+function capsSubset(a: Caps, b: Caps) {
+  return (!a.wallJump || b.wallJump) && a.dashes <= b.dashes && a.airJumps <= b.airJumps
+    && (!a.blockSwap || b.blockSwap) && (!a.orbs || b.orbs) && (!a.zip || b.zip) && (!a.omni || b.omni);
+}
+
+// The label's tokens joined ("WJ + DS2 + BS + ZIP + OM"), "None" when the set is empty.
+function shortCaps(caps: Caps) {
+  const parts: string[] = [];
+  if (caps.wallJump) parts.push("WJ");
+  if (caps.dashes > 0) parts.push(`DS${caps.dashes > 1 ? caps.dashes : ""}`);
+  if (caps.airJumps > 0) parts.push(`DJ${caps.airJumps > 1 ? caps.airJumps : ""}`);
+  if (caps.blockSwap) parts.push("BS");
+  if (caps.orbs) parts.push("ORB");
+  if (caps.zip) parts.push("ZIP");
+  if (caps.omni) parts.push("OM");
+  return parts.length ? parts.join(" + ") : "None";
+}
+
+// The unlocks spelled out: "Wall jump, dash (x1), block swap".
+function describeCaps(caps: Caps) {
+  const parts: string[] = [];
+  if (caps.wallJump) parts.push("Wall jump");
+  if (caps.dashes > 0) parts.push(`dash (x${caps.dashes})`);
+  if (caps.airJumps > 0) parts.push(`double jump (x${caps.airJumps})`);
+  if (caps.blockSwap) parts.push("block swap");
+  if (caps.orbs) parts.push("refill orbs");
+  if (caps.zip) parts.push("zip movers");
+  if (caps.omni) parts.push("omnidash");
+  return parts.length ? parts.join(", ") : "Nothing";
+}
 
 const BONUS_WHERE: Record<string, string> = {
   bonus1: "Below Course 2, right of its restart. Starts right of Course 2.",
@@ -222,15 +259,15 @@ function courseLabel(c: Course | undefined, id: number) {
 
 type Bests = Map<string, {route: Route; time: number}>;
 
-function categoryBests(routes: Route[], courses: Course[]) {
+function categoryBests(routes: Route[], courses: Course[], categories: Category[]) {
   const best: Bests = new Map(), farm: Bests = new Map();
   const other: Route[] = [];
   for (const r of routes) {
     const m = CATEGORY_ROUTE.exec(r.name);
     const course = m && courses.find(c => c.token.toLowerCase() === m[1].toLowerCase());
-    const level = m ? CATEGORIES.findIndex(([cat]) => cat === m[2].toUpperCase()) : -1;
-    if (!m || !course || !course.levels.includes(level)) { other.push(r); continue; }
-    const kind = m[3] ? farm : best, key = `${course.id}:${m[2].toUpperCase()}`, time = Number(m[4]);
+    const cat = m ? categories.find(c => c.label.toLowerCase() === m[2].toLowerCase()) : undefined;
+    if (!m || !course || !cat || !course.categories.includes(cat.id)) { other.push(r); continue; }
+    const kind = m[3] ? farm : best, key = `${course.id}:${cat.id}`, time = Number(m[4]);
     const current = kind.get(key);
     if (!current || time < current.time) kind.set(key, {route: r, time});
     else other.push(r);
@@ -238,31 +275,28 @@ function categoryBests(routes: Route[], courses: Course[]) {
   return {best, farm, other};
 }
 
-const SHORT_CATEGORY: Record<string, string> = { NONE: "None", WJ: "WJ", WJ_DS: "WJ + DS", WJ_DS_DJ: "WJ + DS + DJ", WJ_DS_DJ_BS: "WJ + DS + DJ + BS", WJ_DS_DJ_BS_OM: "WJ + DS + DJ + BS + OM" };
-
 // The best route of this category or of a narrower one the course has (their unlocks are a subset).
-function soloBest(best: Bests, c: Course, level: number) {
+function soloBest(best: Bests, c: Course, cat: Category, categories: Category[]) {
   let solo: {route: Route; time: number} | undefined;
-  for (const narrower of c.levels.filter(l => l <= level).map(l => CATEGORIES[l][0])) {
-    const b = best.get(`${c.id}:${narrower}`);
+  for (const narrower of categories.filter(n => c.categories.includes(n.id) && capsSubset(n.caps, cat.caps))) {
+    const b = best.get(`${c.id}:${narrower.id}`);
     if (b && (!solo || b.time < solo.time)) solo = b;
   }
   return solo;
 }
 
-function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Route[];courses:Course[];activeId?:string;unlockLevel:number|null;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
-  const {best, farm, other} = categoryBests(routes, courses);
+function RouteSidebar({routes,courses,categories,activeId,saveUnlocks,onCommand}:{routes:Route[];courses:Course[];categories:Category[];activeId?:string;saveUnlocks:Caps|null;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
+  const {best, farm, other} = categoryBests(routes, courses, categories);
   const cell = (routeId: string | undefined, text: string, title: string) => routeId
     ? <button className={`cmpCell ${routeId === activeId ? "active" : ""}`} title={title} onClick={() => onCommand("/routes/select", { routeId })}>{text}</button>
     : <span className="cmpCell empty" title={title}>{text}</span>;
-  const rows = (c: Course) => c.levels.flatMap(level => {
-    const cat = CATEGORIES[level][0];
+  const rows = (c: Course) => categories.filter(cat => c.categories.includes(cat.id)).flatMap(cat => {
     const farms = c.bonus || c.to ? best : farm;
-    if (!best.has(`${c.id}:${cat}`) && !farms.has(`${c.id}:${cat}`)) return [];
-    const record = soloBest(best, c, level), lap = soloBest(farms, c, level);
-    const beyond = unlockLevel != null && level > unlockLevel;
-    return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat} title={beyond ? `Your unlocks only reach ${SHORT_CATEGORY[CATEGORIES[unlockLevel][0]]}` : undefined}>
-      <span>{SHORT_CATEGORY[cat]}</span>
+    if (!best.has(`${c.id}:${cat.id}`) && !farms.has(`${c.id}:${cat.id}`)) return [];
+    const record = soloBest(best, c, cat, categories), lap = soloBest(farms, c, cat, categories);
+    const beyond = !!saveUnlocks && !capsSubset(cat.caps, saveUnlocks);
+    return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat.id} title={beyond ? `Your unlocks only reach ${shortCaps(saveUnlocks)}` : undefined}>
+      <span>{shortCaps(cat.caps)}</span>
       {cell(record?.route.id, record ? record.time.toFixed(2) : "—", record?.route.name ?? "No record route")}
       {cell(lap?.route.id, lap ? lap.time.toFixed(2) : "—", lap ? `${lap.route.name}: ${Math.round(lap.time / .02)} ticks, quick restart to finish` : "No farm route yet")}
     </div>];
@@ -306,25 +340,26 @@ function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:A
   return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
 }
 function ActionCard({action,index,onSave}:{action:Action;index:number;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button onClick={()=>onSave({durationTicks:duration})}>Save</button><button className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
-function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverState;courses:Course[];routes:Route[];running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
+function Solver({solver,courses,categories,routes,running,onCommand,onMap}:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
   const [course,setCourse]=useState<number|"">("");
   const [caps,setCaps]=useState("wj");
   const chosen=course===""?(solver.courses[0]??1):course;
   const chosenCourse=courses.find(c=>c.id===chosen);
-  const capsOptions=(chosenCourse?chosenCourse.levels:CAPS.map((_,level)=>level)).map(level=>[CAPS[level],CATEGORIES[level][1]]);
-  const chosenCaps=capsOptions.some(([v])=>v===caps)?caps:capsOptions[0][0];
+  const capsOptions=chosenCourse&&chosenCourse.categories.length?categories.filter(cat=>chosenCourse.categories.includes(cat.id)):categories;
+  const chosenCat=capsOptions.find(cat=>cat.id===caps)??capsOptions[0];
+  const chosenCaps=chosenCat?.id??"";
   // Names whose checkbox was flipped from its forced-paths.json default ("default": true starts it checked).
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps));
   const chosenOptional=optionalBlocks.filter(b=>!!b.on!==optional.includes(b.name)).map(b=>b.name).sort();
   const target={course:chosen,capabilities:chosenCaps,optional:chosenOptional};
-  const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,CAPS.indexOf(chosenCaps)):undefined;
+  const solo=chosenCourse&&chosenCat?soloBest(categoryBests(routes,courses,categories).best,chosenCourse,chosenCat,categories):undefined;
   const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
     <p className="lede">Captures the start in game, then searches offline on every core.</p><details className="howTo"><summary>How it works</summary><ol><li>Only the start and stop timer gates matter.</li><li>Every offline best is replayed in game (turbo check).</li><li>Held-up bests save as record; farm if fewer ticks.</li><li>Farm time = ticks × 0.02 s, restart to finish.</li></ol></details>
     <div className="offlineControls">
       <Field label="1. Course"><select value={chosen} disabled={solver.running} title={placeTitle(chosenCourse)} onChange={e=>{ if(e.target.value==="new") { let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(()=>setCourse(id)); } else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=>{ const c=courses.find(c=>c.id===id); return <option key={id} value={id} title={placeTitle(c)}>{courseLabel(c,id)}</option>; })}<option value="new">+ New course from last recording</option></select></Field>
-      <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></Field>
+      <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(cat=><option key={cat.id} value={cat.id}>{describeCaps(cat.caps)}</option>)}</select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
     <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",target)}>3. Solve</button>}<button className="secondary" onClick={()=>onMap(target)} title="Draws the explored area, saved routes, best and forced-path boxes.">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Plays this category's newest offline best. Nothing is saved."}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Plays the humanized best for practice. Nothing is saved."}>▶ Play human version</button></div>
@@ -336,8 +371,9 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 }
 
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
-// `when`: the world state it's only in ("<state>:<option>"), none: every one; ground off in the capture is its outline.
-type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null };
+// `when`: the world state it's only in ("<state>:<option>"), none: every one. An "area" is ground off in the capture:
+// its outline rings end to end in `p`, `rings` the length of each, filled even-odd.
+type MapSolid = { k: "poly" | "line" | "circle" | "capsule" | "area"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null; rings?: number[] | null };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
 // Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
 // per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
@@ -349,25 +385,41 @@ const GHOST_A = "#4fc3f7", GHOST_B = "#ffb74d";
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
   // The trees' ground where it grows once its tree upgrades are bought (not in the world the run starts in).
   grown?: MapSolid[]; treeSteps?: TreeStep[];
-  markers: { kind: string; name: string; x: number; y: number; when?: string | null }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
+  // `area`: a checkpoint's trigger (touching it sets the spawn) or a box's trigger, polygons of x, y pairs. `spawn`:
+  // the player's box where a death or quick restart puts it at a checkpoint (x0, y0, x1, y1). `box`: kind "box" only,
+  // a buy box's info.
+  markers: { kind: string; name: string; x: number; y: number; area?: number[][]; spawn?: number[]; when?: string | null; box?: BoxInfo }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   // The world states the level can be drawn in; `current`: the capture's, which the routes and explored cells are from.
   states?: WorldState[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
-type MapLayers = { explored: boolean; boxes: boolean; markers: boolean };
+type MapLayers = { art: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
 function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true });
+  const [layers, setLayers] = useState<MapLayers>({ art: true, tree: true, shapes: false, explored: true, boxes: true, markers: true,
+    // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
+    "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
+    "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
+  // The game's art (web/public/art, tools/render-art.py; none: the level is its collision shapes). Its tiles load as
+  // they're drawn and redraw the map when they arrive.
+  const [art, setArt] = useState<ArtIndex | null>(null);
+  useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
+  const artImages = useRef(new Map<string, HTMLImageElement>());
+  const [artLoads, setArtLoads] = useState(0);
   // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
   const [worldState, setWorldState] = useState<StatePick>({});
   const markers = useMemo(() => (data?.markers ?? []).filter(m => inState(m.when, worldState)), [data, worldState]);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
+  // The buy box tapped (not dragged over): its tooltip card where hover titles aren't a thing.
+  const [boxTip, setBoxTip] = useState<BoxMarker | null>(null);
+  // The last press panned the map, so its click is no tap on a box.
+  const panned = useRef(false);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
   // Ghost compare: two routes picked from the map (saved, offline best, human version), drawn over it with their first
   // state-divergence tick and, per map cell along the paths, the time delta at first arrival (B − A).
@@ -457,19 +509,45 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     g.fillStyle = "#07111f"; g.fillRect(0, 0, w, h);
     g.setTransform(dpr * scale, 0, 0, -dpr * scale, -ox * scale * dpr, oy * scale * dpr);
     const px = 1 / scale;
+    const artShown = !!art && layers.art;
+    const drawArt = (pick: StatePick) => {
+      for (const t of artTiles(art, "/art/", pick, ox, oy - h / scale, ox + w / scale, oy, px)) {
+        let img = artImages.current.get(t.href);
+        if (!img) { img = new Image(); img.onload = () => setArtLoads(n => n + 1); img.src = t.href; artImages.current.set(t.href, img); }
+        if (!img.complete || !img.naturalWidth) continue;
+        // The canvas is y up; the image is drawn upright.
+        g.save(); g.translate(t.x, t.y + t.size); g.scale(1, -1); g.drawImage(img, 0, 0, t.size, t.size); g.restore();
+      }
+    };
+    if (artShown) drawArt(worldState);
+    // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
+    // under the tree layer.
+    if (artShown && layers.tree) drawArt({ ...worldState, tree: "grown" });
     if (layers.explored && data.explored.cells.length) {
       const size = data.explored.cell;
+      // Over the art, see-through.
+      if (artShown) g.globalAlpha = .55;
       for (const [cx, cy, t] of data.explored.cells) {
         g.fillStyle = t < 0 ? "#34383f" : `hsl(${230 - 230 * t / latest},90%,55%)`;
         g.fillRect(cx * size, cy * size, size, size);
       }
+      g.globalAlpha = 1;
     }
-    for (const s of data.solids) {
+    if (!artShown || layers.shapes) for (const s of data.solids) {
       if (!inState(s.when, worldState)) continue;
       const color = s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
       g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(px * 1.5, s.k === "capsule" ? s.r * 2 : 0); g.lineCap = "round";
       g.beginPath();
       if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); g.fill(); continue; }
+      if (s.k === "area") {
+        let at = 0;
+        for (const n of s.rings ?? [s.p.length]) {
+          g.moveTo(s.p[at], s.p[at + 1]);
+          for (let i = at + 2; i < at + n; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
+          g.closePath(); at += n;
+        }
+        g.globalAlpha = s.spike ? .9 : .75; g.fill("evenodd"); g.globalAlpha = 1; continue;
+      }
       g.moveTo(s.p[0], s.p[1]);
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
       if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
@@ -572,18 +650,54 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       }
     }
     if (layers.markers) for (const m of markers) {
-      g.fillStyle = m.kind === "goal" ? "#b9f6ca" : MARKERS[m.kind]?.color ?? "#4fc3f7";
-      const s = (m.kind === "checkpoint" ? 4 : m.kind === "secret" ? 10 : 6) * px;
-      if (MARKERS[m.kind]?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
-      else if (m.kind === "teleporter") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
-      else if (MARKERS[m.kind]?.shape === "star") {
+      // A buy box is drawn in its category's colour and shape, over its trigger box where the category is on.
+      const look = m.kind === "goal" ? { color: "#b9f6ca", shape: "square" } : m.kind === "box" ? BOX_KINDS[m.box!.category] : MARKERS[m.kind];
+      if (m.kind === "box") {
+        if (!layers[`box:${m.box!.category}`]) continue;
+        if (m.area) {
+          g.lineWidth = 1.5 * px; g.strokeStyle = look!.color; g.setLineDash([5 * px, 3 * px]);
+          for (const poly of m.area) {
+            if (poly.length < 6) continue;
+            g.beginPath(); g.moveTo(poly[0], poly[1]);
+            for (let i = 2; i + 1 < poly.length; i += 2) g.lineTo(poly[i], poly[i + 1]);
+            g.closePath();
+            g.globalAlpha = .1; g.fill();
+            g.globalAlpha = 1; g.stroke();
+          }
+          g.setLineDash([]);
+        }
+      }
+      const color = look?.color ?? "#4fc3f7";
+      g.fillStyle = color;
+      const s = (look?.shape === "small" ? 4 : look?.shape === "star" ? 10 : 6) * px;
+      // A checkpoint's two boxes at world size: its trigger (touching it sets the spawn, dashed) and the player's box
+      // where a death or quick restart respawns it (solid), as the Ultra map draws them.
+      if (m.kind === "checkpoint") {
+        g.lineWidth = 1.5 * px; g.strokeStyle = color;
+        if (m.area) {
+          g.setLineDash([5 * px, 3 * px]);
+          for (const poly of m.area) {
+            if (poly.length < 6) continue;
+            g.beginPath(); g.moveTo(poly[0], poly[1]);
+            for (let i = 2; i + 1 < poly.length; i += 2) g.lineTo(poly[i], poly[i + 1]);
+            g.closePath();
+            g.globalAlpha = .1; g.fill();
+            g.globalAlpha = 1; g.stroke();
+          }
+          g.setLineDash([]);
+        }
+        if (m.spawn) g.strokeRect(m.spawn[0], m.spawn[1], m.spawn[2] - m.spawn[0], m.spawn[3] - m.spawn[1]);
+      }
+      if (look?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
+      else if (look?.shape === "diamond") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
+      else if (look?.shape === "star") {
         g.beginPath();
         for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, k = i % 2 ? s * .45 : s; g.lineTo(m.x + k * Math.cos(a), m.y + k * Math.sin(a)); }
         g.closePath(); g.fill(); g.strokeStyle = "#07111f"; g.lineWidth = px; g.stroke();
       }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, worldState, markers, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
+  }, [data, layers, worldState, markers, art, artLoads, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -604,6 +718,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     return { x: v.ox + (e.clientX - rect.left) / v.scale, y: v.oy - (e.clientY - rect.top) / v.scale };
   };
   const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    panned.current = false;
     if (moving) {
       // The goal under the pointer: the smallest rect holding it (a goal being moved is where it was dragged to).
       const p = world(e), hit = (data?.goals ?? [])
@@ -627,7 +742,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   };
   const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const v = view.current;
-    if (drag.current) { v.ox -= (e.clientX - drag.current.x) / v.scale; v.oy += (e.clientY - drag.current.y) / v.scale; drag.current = { x: e.clientX, y: e.clientY }; draw(); }
+    if (drag.current) { v.ox -= (e.clientX - drag.current.x) / v.scale; v.oy += (e.clientY - drag.current.y) / v.scale; drag.current = { x: e.clientX, y: e.clientY }; panned.current = true; draw(); }
     const { x, y } = world(e), reach = 10 / v.scale;
     if (sketchStart.current) setSketch([sketchStart.current.x, sketchStart.current.y, x, y]);
     const held = grab.current;
@@ -635,7 +750,19 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     const near = layers.markers ? markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
     const cell = `${Math.floor(x / size)},${Math.floor(y / size)}`;
-    setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
+    setCursor({ x, y, marker: near ? (near.box ? boxTitle(near) : `${near.name} (${near.kind})`) : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
+  };
+  // A tap (not a pan) on a buy box pins its card: what it is, gives and costs.
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (panned.current) return;
+    const p = world(e), reach = 10 / view.current.scale;
+    let near: BoxMarker | null = null, best = reach;
+    for (const m of markers as BoxMarker[]) {
+      if (m.kind !== "box" || !layers[`box:${m.box!.category}`]) continue;
+      const gap = Math.hypot(m.x - p.x, m.y - p.y);
+      if (gap < best) { best = gap; near = m; }
+    }
+    if (near) { setBoxTip(near); setCursor({ x: p.x, y: p.y, marker: boxTitle(near) }); }
   };
   const editAvoid = async (box: number[], names: string[], remove: boolean) => {
     setSaving(true); setFailure("");
@@ -671,7 +798,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+      {([["art", "Game art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"],
+        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof MapLayers, string])] as [keyof MapLayers, string][]).filter(([key]) => art || (key !== "art" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={worldState} onPick={setWorldState} className="passLoop"/>}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
@@ -706,7 +834,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       </span>}
     </div>
     {ghostError && <p className="mapFailure">{ghostError}</p>}
-    <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
+    <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove} onClick={onClick}/>
+    {boxTip?.box && <div className="mapReadout"><strong>{boxTip.name}</strong> · {BOX_KINDS[boxTip.box.category].text} · gives {boxTip.box.gives} · {boxTip.box.upgrade} · {boxCost(boxTip.box)} · {boxTip.box.cap === 1 ? "one-off" : `repeatable ×${boxTip.box.cap}`} · {boxTip.box.secret ? `secret${boxTip.box.number ? ` #${boxTip.box.number}` : ""} · ` : ""}{boxTip.box.ach ? `${boxTip.box.ach} · ` : ""}{boxTip.box.tree ? "tree upgrade · " : ""}{boxTip.box.fresh ? "in the fresh world" : "only later"}
+      <button className="secondary" onClick={() => setBoxTip(null)}>×</button></div>}
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reach ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · Δ {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {sketch && !sketchStart.current && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
@@ -739,7 +869,6 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   </div>;
 }
 
-const CAPS = ["none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom"];
 type SolveTarget = { key: string; body: { course: number; capabilities: string }; time?: number; farm?: number };
 
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
@@ -769,7 +898,7 @@ function progressText(solver: SolverState) {
   return [solver.repeat ? `Pass ${solver.pass ?? 1}` : "", at >= 0 && queue.length > 1 ? `target ${at + 1} of ${queue.length}` : "", solver.minutes ? `${minutesText(solver.minutes)} each` : ""].filter(Boolean).join(" · ");
 }
 
-function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:Course[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
+function SolveMatrix({routes,courses,categories,solver,onCommand}:{routes:Route[];courses:Course[];categories:Category[];solver:SolverState;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [passes, updatePasses] = usePasses();
   useEffect(() => setSelected(new Set(JSON.parse(window.localStorage.getItem("optimizeSelection") ?? "[]"))), []);
@@ -779,13 +908,14 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     for (const k of keys) { if (on) next.add(k); else next.delete(k); }
     select(next);
   };
-  const {best, farm} = categoryBests(routes, courses);
-  const groups: [string, Course[]][] = [
+  const {best, farm} = categoryBests(routes, courses, categories);
+  const groups: [string, Course[]][] = ([
     ["COURSES", courses.filter(c => !c.bonus && !c.to).sort((a, b) => a.id - b.id)],
     ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
-    ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]];
-  const cells = (c: Course): (SolveTarget | null)[] => CATEGORIES.map(([cat], level) => !c.levels.includes(level) ? null
-    : { key: `c:${c.id}:${CAPS[level]}`, body: { course: c.id, capabilities: CAPS[level] }, time: best.get(`${c.id}:${cat}`)?.time, farm: farm.get(`${c.id}:${cat}`)?.time });
+    ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]] as [string, Course[]][])
+    .map(([label, list]): [string, Course[]] => [label, list.filter(c => c.categories.length > 0)]);
+  const cells = (c: Course): (SolveTarget | null)[] => categories.map(cat => !c.categories.includes(cat.id) ? null
+    : { key: `c:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id }, time: best.get(`${c.id}:${cat.id}`)?.time, farm: farm.get(`${c.id}:${cat.id}`)?.time });
   const open = (t: SolveTarget | null): t is SolveTarget => !!t;
   const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter(open)));
   const queue = all.filter(t => selected.has(t.key));
@@ -801,10 +931,10 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     </div>
     <PassFields passes={passes} update={updatePasses} disabled={solver.running} />
     <div className="matrixScroll"><table className="matrix">
-      <thead><tr><th />{CATEGORIES.map(([cat], level) => <th key={cat}><button title="Ticks every target in this column." onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
+      <thead><tr><th />{categories.map((cat, level) => <th key={cat.id}><button title={`${cat.label} — ${describeCaps(cat.caps)}. Ticks every target in this column.`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat.label}</button></th>)}</tr></thead>
       <tbody>
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
-          <tr className="matrixSection"><th colSpan={CATEGORIES.length + 1}>{label}</th></tr>
+          <tr className="matrixSection"><th colSpan={categories.length + 1}>{label}</th></tr>
           {list.map(c => <tr key={c.id}>
             <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).filter(open).map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
             {cells(c).map((t, level) => <td key={level} className={t ? "" : "na"}>{t && checkbox(t)}</td>)}
