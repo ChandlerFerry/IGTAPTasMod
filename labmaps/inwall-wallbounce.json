@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "id": "inwall-wallbounce",
+  "name": "Inwall wallbounce: turned dashes from a cling step the dot up the wall",
+  "tech": "inwall-wallbounce",
+  "techNote": "A wall (right face x 0, top y 600) over a floor, the finish box on its top. The start is a cling on its face at y 95 (the pauselift-wall lab's cling: stick toward the wall). Dash with the stick at rest (from a cling the dash flips away from the wall) and tilt toward the wall in the dash freeze (turnX -1): the turned dash faces the wall while wallJumpFacing still points away, so Movement.Update's step-up (806-816) lifts the dot in every rendered frame of the tick: 112 u (y 207), and it clings again. A second turned dash 3 inputs later lifts another 112 (y 318.8); the jump 2 inputs after it, clinging within the dash boost window, is the dash-into-wall wallbounce (Velocity (276, 730), momentum.y 400.8) from there: it peaks at y 705.8 and lands on the wall's top, finish on tick 38. `one-dash` (only the last turned dash and the jump) peaks at 536.8 and slides back down the face; `no-turn` (the main demo's inputs without the tilt) dashes away from the wall. Offline and turbo lift 112 a dash at the 280 fps clock (MacroEngine.FrameGrid, interpolation on).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -200.0,
+        280.0
+      ],
+      "size": [
+        400,
+        640
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        400.0,
+        -20.0
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 25.5,
+    "y": 98.5,
+    "vx": -460,
+    "vy": -177,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "finish": [
+    -150,
+    650,
+    100,
+    100
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Two turned dashes, then the wallbounce"
+    },
+    {
+      "demo": "one-dash",
+      "label": "One turned dash, then the wallbounce"
+    },
+    {
+      "demo": "no-turn",
+      "label": "The same dashes without the turn: away from the wall"
+    }
+  ]
+}

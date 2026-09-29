@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "id": "spike-super",
+  "name": "Spike super: a super off the spike strip's edge, inside its grace",
+  "tech": "spike-super",
+  "techNote": "WJ_DS. A moss floor (top y 0, tag Moss: no dash refill, so the ground dash is the only dash) runs into a 19-tall spike strip (layer 6, spikeScript; x 0-200) over a pit, and a platform starts at x 1090. The super (Movement.CheckForSuperJump): a jump during a ground dash, 805 up and 876 momentum the stick's way. spikeScript kills a dashing player on any Stay (killPlayerOnDash) but has no OnTriggerEnter2D, so a dash may enter the strip on one step and has to super on the next: the dash pressed on input 10 enters on dash step 16 (x 5.6, spike2 *0) and the jump buffered for dash step 7 (dashJump 7) supers out on step 17, whose Stay finds the hurtbox clear. The super leaves one dash step (33.4 u) further on than the last super that never touches the strip. Every dash input 2-15 with every jump step 1-10 was replayed: the best untouched super comes within the ground rays' reach of the platform's height at a front-ray x of 1071.8, the demo at 1105.2, and only supers that touched the strip finish. Ghosts: early (dashJump 6: the last super before the strip, falls short into the pit), late (dashJump 8: a dashing Stay in the strip, dies).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "start": {
+    "x": -300,
+    "y": 34,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "maxTicks": 100,
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -200,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Moss"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        9.5
+      ],
+      "size": [
+        200,
+        19
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        1290,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        400,
+        -800
+      ],
+      "size": [
+        3000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "finish": [
+    1290,
+    60,
+    400,
+    80
+  ],
+  "ghosts": [
+    {
+      "label": "Spike super: dash in, super on the step after the spike touch"
+    },
+    {
+      "demo": "early",
+      "label": "Super a dash step earlier, before the spikes: falls short"
+    },
+    {
+      "demo": "late",
+      "label": "Super a step later: a dashing Stay in the spikes, dies"
+    }
+  ]
+}

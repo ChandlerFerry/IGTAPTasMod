@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "zip-mover-intangibility",
+  "name": "Zip mover intangibility: after a jump off a zip mover it isn't a wall for 8 ticks",
+  "tech": "zip-mover-intangibility",
+  "techNote": "Anchored on Course 5 overgrown's zip mover (Course 15's world, trace start-c15-wjdsdjbszip.json; the 256x320 ZipMoverMovingPart at world (-3774.5, -664.3), the lab's (0, 0)): the lab adds only a floor right of it (x 158-560, flush with the ledge under the zip). Walk left into the zip's right face (tick 17: the touch starts its move, (-460, +300) over 0.6 s) and jump on input 18 while touching it: Movement.MovingPlatformMomentumInherit calls PlatformMover.MakeIntangible, the block is on the Default layer for 0.15 s. Dash left on input 21: the wall rays (Ground only) miss the block, so the dash isn't stopped as a wall: it runs 5 ticks against the face at y -73.6 (only the hurtbox collides) and clings on tick 26, the 8th tick after the jump, when the block is Ground again; the zip then carries the cling up-left into the finish box at its end (tick 50). `no-touch` (the same jump and dash from 40 u further right: the jump is before the touch, no intangibility) clings on the dash's first tick. At 1x the block can come back a tick later (the tech's note).",
+  "category": "WJ_DS",
+  "anchor": [
+    -3774,
+    -664
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        359.0,
+        -179.0
+      ],
+      "size": [
+        402,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 300,
+    "y": -125,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    -307,
+    207,
+    60,
+    60
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Jump touching the zip, dash into it: no cling for 8 ticks"
+    },
+    {
+      "demo": "no-touch",
+      "label": "The jump before touching it: the dash clings at once"
+    }
+  ]
+}

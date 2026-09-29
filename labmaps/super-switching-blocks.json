@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "id": "super-switching-blocks",
+  "name": "Super in switching blocks: the swap puts an orange block on the dot, the super leaves it inside the squish grace",
+  "tech": "super-switching-blocks",
+  "techNote": "Coloured blocks (colouredBlockSwapper: a dash with blockSwapUnlocked swaps which colour's colliders are enabled). Blue is active at the start: a blue wall (x 150-190) blocks the way to the finish box; an orange block (x -550-50, 400 tall) is off, and the dot stands with its hitbox's back 65.5 u inside the orange block's area. The super (dash right, jump on dash frame 1) swaps: the blue wall goes and the orange block comes on around the dot's back. More than 20 u inside a collider (normalCollider.Distance < squishDistance -20) is a squished tick, and Movement kills the dot after SquishGraceFrames (4) of them in a row; the contact holds the dot to 12 u a tick while it is inside, so it is squished on ticks 0-3 (x 13, 25, 37, 49) and out on the 5th: the wall doesn't kill it because it is in it too short, and the super carries it through where the blue wall was into the finish box on tick 41. Walking can't pass the blue wall (no dash, no swap). The 'deeper' demo starts 10 u further in (the back 75.5 u inside): the same super stays stuck and dies (Player death). A plain dash (no jump) from the lab start survives too (offline it gets out deeper than the super: it still survives from 15 u further in, where the super dies).",
+  "category": "WJ_DS_DJ_BS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -250,
+        200
+      ],
+      "size": [
+        600,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground",
+      "colour": "orange"
+    },
+    {
+      "kind": "box",
+      "at": [
+        170,
+        200
+      ],
+      "size": [
+        40,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground",
+      "colour": "blue"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "blueActive": true,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    500,
+    200,
+    100,
+    400
+  ],
+  "maxTicks": 60
+}

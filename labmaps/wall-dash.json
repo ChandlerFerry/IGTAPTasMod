@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "id": "wall-dash",
+  "name": "Wall dash: a diagonal dash from a cling keeps x at 1",
+  "tech": "wall-dash",
+  "techNote": "A wall (x -140 to -100) over a metal floor. Clinging to its right face, dash up-right: a dash from a wall cling goes away from the wall with dashDirection.x set to 1 after the normalize, so it moves at (1670, 1181) u/s instead of the diagonal's (1181, 1181): 33.4 u a tick across. It is at x 272.9 at the dash's end (tick 13) and in the finish box (x 270-330, y 460-540) on tick 14; a diagonal dash from the same point off the wall is at x 185 then.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -120,
+        400
+      ],
+      "size": [
+        40,
+        800
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -74.5,
+    "y": 300,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4
+    }
+  },
+  "finish": [
+    300,
+    500,
+    60,
+    80
+  ],
+  "maxTicks": 60
+}

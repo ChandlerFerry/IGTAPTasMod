@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "wave-bounce",
+  "name": "Hyper ground bounce: a hyper, then a down dash and a jump in it",
+  "tech": "wave-bounce",
+  "techNote": "A metal floor (top y 0). Jump, dash down-right with jump on dash frame 4: the hyper on tick 7 (547 up, 1650 momentum right). Stick at rest; 9 input ticks later (the dash cooldown) dash straight down with jump on dash frame 2: the landing ends the down dash, and endDash gives back 95 % of preDashMomentum.x (dashDirection.y == -1) and sets DashBounceFrames, so the buffered jump is the ground bounce (805 up + 600 momentum up) with the hyper's momentum: 1736.7 right after the bounce tick (tick 22), where a ground bounce alone has 0. It is in the finish box (x 821 to 921, y 250 to 350) on its way up.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    871,
+    300,
+    100,
+    100
+  ],
+  "maxTicks": 60
+}

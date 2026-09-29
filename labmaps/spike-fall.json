@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "id": "spike-fall",
+  "name": "Spike fall: walking across a flush spike patch the ground rays can't stand on",
+  "tech": "spike-fall",
+  "techNote": "A floor (top y 0) with a 96-wide spike patch (layer 6, spikeScript; x 0-96) flush with its top where the floor tiles would be. Spikes are triggers, not ground: the ground rays (x-15, x+6, x+25 facing right, reaching y-40) find nothing once the back one passes x 0 and before the front one reaches x 96. Running at 460 the dot stands (the hurtbox's bottom, y-27, is 7 u above a floor-level spike) until the rays lose the floor on tick 22; then it starts to fall (coyote keeps onGround for 6 ticks) and the hurtbox sinks into the patch on tick 28 (spike2 *0, free). On tick 29 the front ray's 5-u probe finds the far floor and Movement's step-up (+10) lifts the dot onto it (spike2 1: the Stay counted 1, inside graceFrames 1), so a flush patch up to 100 u wide is walkable at full speed; 104 u dies on the 2nd Stay. The finish box is on the far floor, no jump anywhere. Ghost: stop (stick released as the rays leave the floor: it falls into the patch and dies on the 3rd tick).",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "start": {
+    "x": -200,
+    "y": 34,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "maxTicks": 60,
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -300,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        48.0,
+        -50
+      ],
+      "size": [
+        96,
+        100
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        48.0,
+        -120
+      ],
+      "size": [
+        96,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        396,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "finish": [
+    250,
+    60,
+    200,
+    80
+  ],
+  "ghosts": [
+    {
+      "label": "Spike fall: run across, 2 ticks in the spikes, lifted onto the far floor"
+    },
+    {
+      "demo": "stop",
+      "label": "Stick released over the spikes: falls in, dies"
+    }
+  ]
+}

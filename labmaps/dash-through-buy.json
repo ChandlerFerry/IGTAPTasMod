@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "dash-through-buy",
+  "name": "Dash-through buy: bonk the first shop box, dash along the row: three buy triggers in one dash (real Course 1 shop)",
+  "tech": "dash-through-buy",
+  "techNote": "Anchored in the real Course 1 shop (world 1300,-343: the floor under the Wall jump box's left side; the lab adds only a far-away dummy box). The three boxes (Wall jump 1293-1421, Clone 1483-1611, CashPerLoop 1680-1808) hang 133.5 above the floor with a 6-tall buy trigger along each bottom (y -209.5 to -203.5); a box buys on any touch of its trigger (0.2 s cooldown per box). After a 2-tick run-up, jump right holding: the airborne hitbox (41x54) bonks the Wall jump box's bottom on tick 6 (y pinned at the box bottom, inside its trigger). Dash right on input 7: the dash holds that height at 1670 u/s, so its pass is inside the Wall jump trigger (ticks 6-9), the Clone trigger (10-14) and the CashPerLoop trigger (16 on): every box of the row bought by one dash instead of a walk and jump into each. The finish box is the CashPerLoop box's buy trigger. Ghosts: the dash pass reaches the CashPerLoop trigger on tick 17; without the dash, the jump-through (a 10-tick run-up, then a jump that buys the Wall jump and Clone boxes) and a hop into the third box reach it on tick 41 (`jump-through`), and one hop per box on tick 53 (`hops`).",
+  "category": "DS",
+  "anchor": [
+    1300,
+    -343
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -3000
+      ],
+      "size": [
+        4,
+        4
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": true,
+      "omniDashUnlocked": false,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": false,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    444.0,
+    136.5,
+    127.5,
+    6.0
+  ],
+  "maxTicks": 40,
+  "ghosts": [
+    {
+      "label": "Dash pass: three boxes in one dash (tick 17)"
+    },
+    {
+      "demo": "jump-through",
+      "label": "No dash: jump-through two boxes, hop the third (tick 41)"
+    },
+    {
+      "demo": "hops",
+      "label": "One hop per box (tick 53)"
+    }
+  ]
+}

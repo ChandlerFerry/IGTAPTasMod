@@ -1,0 +1,278 @@
+{
+  "schema": 1,
+  "id": "fast-steps-slopes-glitch",
+  "name": "Fast steps slopes glitch: step-ups into a low ceiling, kept alive by jump spam",
+  "tech": "fast-steps-slopes-glitch",
+  "techNote": "The 64x32 slope of fast-steps-slopes under a ceiling that follows it 78 u over every step (the dot's 72-tall hitbox fits). A step-up teleports the dot to the next step's top + 36, which puts the hitbox's top 28 u into the ceiling over the step it came from: past squishDistance (-20), and after SquishGraceFrames (4) squished ticks Movement kills it (onDeath). Held right alone, the first step-up dies on tick 27. Pressing jump every other tick keeps it alive: each jump sets the normal collider to the dash collider (41x54, offset 0: its top 11 u lower), so the overlap stays under the squish distance, and the dot climbs the whole slope in the ceiling to the platform past its end, where the finish box is.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        90,
+        278
+      ],
+      "size": [
+        220,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        232.0,
+        -184.0
+      ],
+      "size": [
+        64,
+        432
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        296.0,
+        -168.0
+      ],
+      "size": [
+        64,
+        464
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        360.0,
+        -152.0
+      ],
+      "size": [
+        64,
+        496
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        424.0,
+        -136.0
+      ],
+      "size": [
+        64,
+        528
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        488.0,
+        -120.0
+      ],
+      "size": [
+        64,
+        560
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        552.0,
+        -104.0
+      ],
+      "size": [
+        64,
+        592
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        616.0,
+        -88.0
+      ],
+      "size": [
+        64,
+        624
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        680.0,
+        -72.0
+      ],
+      "size": [
+        64,
+        656
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        232.0,
+        310
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        296.0,
+        342
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        360.0,
+        374
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        424.0,
+        406
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        488.0,
+        438
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        552.0,
+        470
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        616.0,
+        502
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        680.0,
+        534
+      ],
+      "size": [
+        64,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        912,
+        -72.0
+      ],
+      "size": [
+        400,
+        656
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    862,
+    316,
+    100,
+    120
+  ],
+  "maxTicks": 160
+}

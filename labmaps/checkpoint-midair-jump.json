@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "id": "checkpoint-midair-jump",
+  "name": "Checkpoint mid air jump: a ground jump from a respawn 64 u above the floor",
+  "tech": "checkpoint-midair-jump",
+  "techNote": "A floor and a ledge (x 220-800, top y 290) with the finish box on it; the respawn point is 76 u above the floor under the start (a checkpoint that respawns the dot 64 u above standing, as the one at 13402, 3159 in the Courses 6-10 world does). Stand 5 ticks and quick restart (Movement.respawn: 12 u under the checkpoint, y 97.5, onGround set, Velocity 0, coyoteFrames kept: 6 from the ground). onGround holds while it falls and coyoteFrames counts down; jump with right on input 10, the last coyote tick (coyoteFrames 1): the full 805 ground jump from y 89.9, 56 u above standing, peaks at y 347.7 and lands on the ledge (finish on tick 42). `ground` (the same inputs, no restart) peaks at 291.8 and hits the ledge's face; `late` (the jump a tick after the coyote ran out) is no jump: the dot lands on the floor and walks into the face.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        500.0,
+        -20.0
+      ],
+      "size": [
+        2000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        510.0,
+        145.0
+      ],
+      "size": [
+        580,
+        290
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "respawnPoint": "-1333,-10475",
+      "courseResetPoint": "0,0"
+    }
+  },
+  "finish": [
+    400,
+    330,
+    200,
+    60
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Quick restart, jump on the last coyote tick"
+    },
+    {
+      "demo": "ground",
+      "label": "The same jump from the floor: into the face"
+    },
+    {
+      "demo": "late",
+      "label": "A tick after the coyote ran out: no jump"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "checkpoint-midair-super",
+  "name": "Checkpoint mid air super: a super from a respawn's held onGround",
+  "tech": "checkpoint-midair-super",
+  "techNote": "The state a respawn leaves at a checkpoint 64 u above its floor (Movement.respawn: 12 u under the checkpoint, onGround set, coyoteFrames kept from before, Velocity 0): the lab starts one tick after a quick restart from the ground (onGround held, coyoteFrames 5, falling). Dash right on the fourth tick with jump on its first frame: onGround is still held (coyoteFrames 1), so the jump is the super (CheckForSuperJump: 805 up, 876 momentum right) from 58 u above the floor. It peaks at y 347.5 (hitbox top 374) and is in the finish box (x 620-820, y 330-380) on tick 30; the same super from the floor peaks at 288.8 (top 315.6) and misses it. The `restart` demo is the whole thing with the quick restart: standing on the floor, the respawn point 64 u up, a quick restart on input 5, and the same dash 4 ticks later (the super on tick 10). The main demo starts after the restart because a graft never quick-restarts (the tech-graft miner drops any window with a reset in it).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        3000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 97.5,
+    "vx": 0,
+    "vy": -27,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0,
+      "coyoteFrames": 5
+    }
+  },
+  "finish": [
+    720,
+    355,
+    200,
+    50
+  ],
+  "maxTicks": 60,
+  "ghosts": [
+    {
+      "label": "Mid-air super after the respawn"
+    },
+    {
+      "demo": "ground",
+      "label": "The same super from the floor",
+      "offset": [
+        0,
+        500
+      ]
+    }
+  ]
+}

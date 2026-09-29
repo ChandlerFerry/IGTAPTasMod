@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "dash-bounce",
+  "name": "Ground bounce: a down dash into the floor and a jump in it",
+  "tech": "dash-bounce",
+  "techNote": "A metal floor (top y 0). Jump, then 6 ticks later dash straight down with jump on dash frame 3: the landing ends the dash (DashBounceFrames 4) and the buffered jump is the ground bounce, Velocity.y 805 plus 600 momentum up (dashBounceMagnitude; 586.6 after the tick). It peaks at y 587.7 (hitbox top 614.5) and is in the finish box over the start (y 530-610) on tick 37; a jump peaks at 291.8 and a jump with an up dash at 437.7.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    0,
+    570,
+    120,
+    80
+  ],
+  "maxTicks": 90
+}

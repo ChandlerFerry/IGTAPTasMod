@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "id": "landing-jump-momentum-carry",
+  "name": "Landing jump keeps downward momentum: a jump buffered for the landing tick keeps momentum.y",
+  "tech": "landing-jump-momentum-carry",
+  "techNote": "spring-clip's ledge, ceiling and Course 5 ceiling spring pointing down (the hit: momentum.y -575), and a ledge box 200x40 under the spring (top y -200, x -40-160); the finish box is the region under y -1000 (y -1220 to -1000, on a floor). OnCollisionStay2D zeroes Velocity.y and momentum.y on a (0, 1) contact, but returns first while recentlyJumped is on (2518-2526); a ground jump turns recentlyJumped on for 0.03 s (1685-1687). A jump buffered for the landing tick (pressed up to 6 ticks before) leaves on the tick the ground rays land the dot, so the floor contact that tick finds recentlyJumped on and momentum.y is kept: -365.7 here. The jump is weak (805 against -366) but the momentum carries into the next drop. Race from the spring: the landing-tick jump (released a tick later, jump cut, stick right, then down) is below y -600 on tick 77 and in the finish box on tick 90; the same jump one tick late (momentum zeroed on the landing tick, a full jump) is below -600 on tick 85 and in the box on tick 100; landing and walking off the edge is below -600 on tick 80 and in the box on tick 95.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -20
+      ],
+      "size": [
+        120,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        360
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        300
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 180,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        60,
+        -220
+      ],
+      "size": [
+        200,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -1240
+      ],
+      "size": [
+        2400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -60,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    0,
+    -1110,
+    2400,
+    220
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Landing-tick jump: momentum kept"
+    },
+    {
+      "demo": "late-jump",
+      "label": "Jump one tick late: momentum zeroed"
+    },
+    {
+      "demo": "walk-off",
+      "label": "Land and walk off"
+    }
+  ]
+}

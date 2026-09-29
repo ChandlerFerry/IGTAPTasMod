@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "inwall-super-into-wall",
+  "name": "Inwall super into wall: clip, super into the wall, turn back, clip again",
+  "tech": "inwall-super-into-wall",
+  "techNote": "A 600-tall Ground wall (x -50-50) on a floor, the finish on its top. Jump with your back to the wall, then per loop: release with a light flick toward the wall (-0.4) at Velocity.y under 580 (the wall clip: the turned hitbox's front ground ray starts inside the wall and grounds the dot, refilling the air dash on the Ground-tagged wall), dash into the wall with jump on dash-frame 1 on the next tick (the super off the in-wall ground: 805 up, 876 momentum into the wall, which holds the dot on the wall face while it rises), hold into the wall 2 ticks, turn back (+1, 3 ticks) and rest: facing away with the hitbox's back edge on the wall face, the dot is clip-ready again (WallBehind) and the next flick clips it. Each loop climbs 150 u (clips at y 176, 327, 477) and the grounding gives the dash back every time; the dash's cooldown needs the loop's 12 ticks (a 10-tick loop's dash is refused and the press is a plain clip jump). The last super's momentum carries the dot over the wall's top onto it.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        300
+      ],
+      "size": [
+        100,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 67.5,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    0,
+    640,
+    100,
+    40
+  ],
+  "maxTicks": 90
+}

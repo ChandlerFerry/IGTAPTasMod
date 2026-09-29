@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "id": "momentum-after-quick-restart",
+  "name": "Momentum after quick restart: a wall jump's lock runs on at the checkpoint",
+  "tech": "momentum-after-quick-restart",
+  "techNote": "A wall on the left (x -700 to -600), the floor with the respawn point at x 0 (standing height) ending at x 100, a spiked pit and a far block from x 578 with the finish box on it. Jump left into the wall and cling (tick 24), wall jump right on input 25 (wallJumpMovementLockRemaining 5, wallJumpDirection right) and quick restart on input 26. Movement.respawn zeroes Velocity, momentum and movingPlatformVelocity but not the lock, so MoveLeftAndRight's locked Velocity.x is a full 460 from the respawn's own tick (x 9.2 on it), with no acceleration. Jump right away and hold right: it comes down at x 579.4 on the block's edge (finish on tick 89). `no-walljump` (restart from the cling without the wall jump) accelerates 102, 204, 307, 409 and comes down 25 u shorter, into the block's face and the pit; `late` (restart on input 32, 7 ticks after the wall jump: the lock ran out) does the same. The tech's other leftovers (a zip mover's momentum history, the omnidash ground bounce's window) aren't in this lab.",
+  "category": "WJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -450.0,
+        -20.0
+      ],
+      "size": [
+        1100,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -650.0,
+        300.0
+      ],
+      "size": [
+        100,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        339.0,
+        -90.0
+      ],
+      "size": [
+        478,
+        100
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        339.0,
+        -240.0
+      ],
+      "size": [
+        478,
+        200
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        889.0,
+        -200.0
+      ],
+      "size": [
+        622,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -560,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": false,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0,
+      "respawnPoint": "-1333,-10539",
+      "courseResetPoint": "0,0"
+    }
+  },
+  "finish": [
+    650,
+    60,
+    100,
+    80
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Wall jump, quick restart the next tick: 460 from the respawn"
+    },
+    {
+      "demo": "no-walljump",
+      "label": "Quick restart from the cling, no wall jump: accelerates from 0"
+    },
+    {
+      "demo": "late",
+      "label": "Quick restart 7 ticks after the wall jump: the lock is over"
+    }
+  ]
+}

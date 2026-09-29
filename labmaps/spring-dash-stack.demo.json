@@ -1,0 +1,2699 @@
+{
+  "schema": 1,
+  "lab": "spring-dash-stack",
+  "name": "lab/spring-dash-stack",
+  "solvedIn": "start-c1-none.json",
+  "world": "start-c1-none.world.json",
+  "requires": "DS_OM",
+  "ticks": 42,
+  "inputTicks": 72,
+  "search": {
+    "method": "hand-built and checked by lab replay: press jump with the stick full right and hold it (stick at rest from input 16); the hit on the ceiling spring on tick 18 (momentum.y -575), then a straight-down dash (stick (0, -1), omnidash) on input 19 and stick down after it. The dash stores momentum in preDashMomentum (-562.2) and zeroes it, so nothing decays while it runs and moves 33.4 u a tick on ticks 20-26; the second spring (under the ledge, x 60-140, y -80-0) hits it mid-dash on tick 27 (y -38.1): hitSpring calls endDash (95% of preDashMomentum back, the signs match) and adds -575, so momentum.y -1109.0 and Velocity.y -270 (not the dash end's +10). Fast-falling, the hurtbox is in the strip (top y -412) on ticks 39 (OnTriggerEnter2D) and 40 (Stay, counter 1) only (34.1 and 34.7 u a tick) and in the finish box on tick 42. 72 inputs so a playback shows every ghost to its end. Ghost path: its first 72 physics ticks (--path-ticks 72), as every ghost on this lab."
+  },
+  "inputs": [
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": true,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": true,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": -1,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    }
+  ],
+  "path": [
+    [
+      -60,
+      34,
+      1,
+      0,
+      1
+    ],
+    [
+      -58,
+      55.1,
+      1,
+      5,
+      1
+    ],
+    [
+      -53.9,
+      70.7,
+      1,
+      5,
+      1
+    ],
+    [
+      -47.7,
+      85.7,
+      1,
+      5,
+      1
+    ],
+    [
+      -39.6,
+      100.2,
+      1,
+      5,
+      1
+    ],
+    [
+      -30.4,
+      114.1,
+      1,
+      5,
+      1
+    ],
+    [
+      -21.2,
+      127.5,
+      1,
+      5,
+      1
+    ],
+    [
+      -12,
+      140.4,
+      1,
+      5,
+      1
+    ],
+    [
+      -2.8,
+      152.7,
+      1,
+      5,
+      1
+    ],
+    [
+      6.4,
+      164.5,
+      1,
+      5,
+      1
+    ],
+    [
+      15.6,
+      175.7,
+      1,
+      5,
+      1
+    ],
+    [
+      24.8,
+      186.4,
+      1,
+      5,
+      1
+    ],
+    [
+      34,
+      196.6,
+      1,
+      5,
+      1
+    ],
+    [
+      43.2,
+      206.2,
+      1,
+      5,
+      1
+    ],
+    [
+      52.4,
+      215.3,
+      1,
+      5,
+      1
+    ],
+    [
+      61.6,
+      223.8,
+      1,
+      5,
+      1
+    ],
+    [
+      70.8,
+      231.8,
+      1,
+      5,
+      1
+    ],
+    [
+      78,
+      239.3,
+      1,
+      5,
+      1
+    ],
+    [
+      83.1,
+      236.2,
+      1,
+      5,
+      1
+    ],
+    [
+      83.1,
+      218.8,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      236.2,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      236.2,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      205.7,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      172.3,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      138.9,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      105.5,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      72.1,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      38.7,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      5.3,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      -38.1,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      -38.1,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      -38.1,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      -38.1,
+      1,
+      6,
+      1
+    ],
+    [
+      83.1,
+      -66.1,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -94.7,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -123.8,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -153.4,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -183.5,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -214.2,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -245.4,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -277.2,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -309.5,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -342.5,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -376,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -410.1,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -444.8,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -480.2,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -516.1,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -552.7,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -590,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -627.7,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -665.8,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -704.1,
+      1,
+      2,
+      1
+    ],
+    [
+      83.1,
+      -706,
+      1,
+      0,
+      1
+    ],
+    [
+      83.1,
+      -706,
+      1,
+      0,
+      1
+    ],
+    [
+      85.2,
+      -706,
+      1,
+      1,
+      0.3
+    ],
+    [
+      89.2,
+      -706,
+      1,
+      1,
+      0.5
+    ],
+    [
+      95.4,
+      -706,
+      1,
+      1,
+      0.7
+    ],
+    [
+      103.6,
+      -706,
+      1,
+      1,
+      0.9
+    ],
+    [
+      112.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      122,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      131.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      140.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      149.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      158.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      168,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      177.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      186.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      195.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      204.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      214,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      223.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      232.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      241.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      250.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      260,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      269.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      278.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      287.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      296.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      306,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      315.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      324.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      333.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      342.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      352,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      361.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      370.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      379.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      388.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      398,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      407.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      416.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      425.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      434.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      444,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      453.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      462.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      471.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      480.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      490,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      499.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      508.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      517.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      526.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      536,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      545.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      554.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      563.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      572.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      582,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      591.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      600.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      609.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      618.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      628,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      637.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      646.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      655.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      664.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      674,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      683.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      692.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      701.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      710.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      720,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      729.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      738.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      747.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      756.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      766,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      775.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      784.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      793.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      802.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      812,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      821.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      830.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      839.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      848.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      858,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      867.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      876.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      885.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      894.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      904,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      913.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      922.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      931.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      940.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      950,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      959.2,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      968.4,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      977.6,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      986.8,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      996,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1005.1,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1014.3,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1023.5,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1032.7,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1041.9,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1051.1,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1060.3,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1069.5,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1078.7,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1087.9,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1097.1,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1106.3,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1115.5,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1124.7,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1133.9,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1143.1,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1152.3,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1161.5,
+      -706,
+      1,
+      1,
+      1
+    ],
+    [
+      1170.7,
+      -706.5,
+      1,
+      1,
+      1
+    ],
+    [
+      1179.9,
+      -707.6,
+      1,
+      1,
+      1
+    ],
+    [
+      1189.1,
+      -709.2,
+      1,
+      1,
+      1
+    ],
+    [
+      1198.3,
+      -711.4,
+      1,
+      1,
+      1
+    ],
+    [
+      1207.5,
+      -714.1,
+      1,
+      1,
+      1
+    ],
+    [
+      1216.7,
+      -717.3,
+      1,
+      1,
+      1
+    ],
+    [
+      1225.9,
+      -721.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1235.1,
+      -725.9,
+      1,
+      2,
+      1
+    ],
+    [
+      1244.3,
+      -731.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1253.5,
+      -737.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1262.7,
+      -744.1,
+      1,
+      2,
+      1
+    ],
+    [
+      1271.9,
+      -751.5,
+      1,
+      2,
+      1
+    ],
+    [
+      1281.1,
+      -759.7,
+      1,
+      2,
+      1
+    ],
+    [
+      1290.3,
+      -768.5,
+      1,
+      2,
+      1
+    ],
+    [
+      1299.5,
+      -778.1,
+      1,
+      2,
+      1
+    ],
+    [
+      1308.7,
+      -788.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1317.9,
+      -799.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1327.1,
+      -811,
+      1,
+      2,
+      1
+    ],
+    [
+      1336.3,
+      -823.3,
+      1,
+      2,
+      1
+    ],
+    [
+      1345.5,
+      -836.4,
+      1,
+      2,
+      1
+    ],
+    [
+      1354.7,
+      -850.2,
+      1,
+      2,
+      1
+    ],
+    [
+      1363.9,
+      -864.6,
+      1,
+      2,
+      1
+    ],
+    [
+      1373.1,
+      -879.8,
+      1,
+      2,
+      1
+    ],
+    [
+      1382.3,
+      -895.7,
+      1,
+      2,
+      1
+    ]
+  ]
+}

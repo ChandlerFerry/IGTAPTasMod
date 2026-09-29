@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "id": "ultra-bonus",
+  "name": "Ultra: a hyper 4 u or more below the last one gets the pre-dash momentum back",
+  "tech": "ultra-bonus",
+  "techNote": "Two metal floors: top y 0 from x -1400 to 800, then top y -50. A hyper right from x 200 (jump, dash down-right, jump on dash frame 4: its jump sets lastHyperY), then, late in its fall, a second down-right dash onto the lower floor with its jump on dash frame 7 (after the landing). The dash goes the way the dot already moves and its jump is 50 u under lastHyperY (the rule is 4 u), so CheckForSuperJump adds preDashMomentum.x (635.5) on top of the hyper's (\"Did an ultra!\"): momentum 2230.7 on tick 56, into the finish box on tick 80. `level` (the same inputs from x -1000, so the second hyper lands on the upper floor, level with the first) leaves with a plain hyper's 1609.4. The `ultra` lab is the same chain, shown as the chained hyper.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -300.0,
+        -20.0
+      ],
+      "size": [
+        2200,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        2800.0,
+        -70.0
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 200,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    2973,
+    108,
+    100,
+    100
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Ultra: the second hyper 50 u below the first"
+    },
+    {
+      "demo": "level",
+      "label": "The same hyper chain on one level: a plain hyper",
+      "offset": [
+        1200,
+        -500
+      ]
+    }
+  ]
+}

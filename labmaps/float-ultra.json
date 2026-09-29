@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "id": "float-ultra",
+  "name": "Float Ultra: the second hyper after FloatingOrigin moves the world",
+  "tech": "float-ultra",
+  "techNote": "FloatingOrigin in the start trace's world (start-c1-none: Threshold 17500, Use2DDistance off, currentOrigin (-2241, 304)) keeps the player within 17500 of scene (0, 0), the world-frame point (2241, -304). The lab is a floor at world y 17000 (x 3000-5600) that crosses that sphere at world x 4853 (scene (2612, 17304)), a 1200-u gap, a landing platform (world x 6800-7800) with the finish box on it, and a catch floor 1500 u below. The start (world (4200, 17034)) is 17448 u from scene (0, 0), inside the sphere. Walk right 26 ticks, hop, wavedash right (dash down-right, jump on dash frame 4): the first hyper at world x ~4431 writes lastHyperY in the scene frame (~17338); the dot leaves the sphere in its air and the next frame the world moves back by its scene position, so the second wavedash 14 input ticks later (jump on dash frame 6) at world x 5401, on the same floor 2 u higher, is ~17300 u 'lower' in the scene frame: Did an ultra!, momentum 1609.4 + 1130.7 = 2740.1 (the VMAN demo's own numbers), and the flight crosses the gap into the finish box on tick 103. Offline control: the same lab and inputs 2000 u lower (floor at world y 15000, all inside the sphere) get a plain second hyper (momentum 1609.4 against the ultra's 2740.1) that comes down at world x ~6700, short of the platform, and fall. The crossing depends on FloatingOrigin.currentOrigin: in game the lab ultras only when the origin is the start trace's (-2241, 304) when the demo starts.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        5633,
+        27565
+      ],
+      "size": [
+        2600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        8633,
+        27565
+      ],
+      "size": [
+        1000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        6833,
+        26085
+      ],
+      "size": [
+        8000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 5533,
+    "y": 27619,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    8783,
+    27645,
+    100,
+    80
+  ],
+  "maxTicks": 120
+}

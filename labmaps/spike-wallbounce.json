@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "id": "spike-wallbounce",
+  "name": "Spike wallbounce: a superbounce out of a window in a spiked wall face",
+  "tech": "spike-wallbounce",
+  "techNote": "WJ_DS. A wall (face x 380, top y 600) whose face carries 19-thick spike strips (layer 6, spikeScript) below y 40 and from y 110 up, leaving a plain window at y 40-110. The dot falls at it from x 300, y 74 with no jumps left (wallJumpsLeft -1, airJumpsLeft 0: the superbounce-wall lab's start) and dashes flat into the window with the jump buffered 1 frame in (dashJump 1): the airborne wall touch ends the dash and the dash boost bounces it off (SpecialWallJump(0.6, ...): Velocity (-276, 703), momentum.y 401, facing turned from the wall). The bounce's first tick lifts the hurtbox's top past y 110 while its front edge is still in the upper strip (tick 5, spike3 *0: OnTriggerEnter2D, free), and 5.5 u/tick away from the wall plus the facing flip (the hurtbox turns to x-25..x+15) clear it by the next tick: one tick brushed, inside graceFrames 1. The bounce is the only way up (no ground, no jumps) to the finish box above. Ghosts: drift (stick held to the wall once the bounce's lock ends: back into the spiked face on ticks 16-18, dies), no-jump (the same dash without the buffered jump: no bounce, the dot stays in the window).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        400,
+        250
+      ],
+      "size": [
+        40,
+        700
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        370.5,
+        -130.0
+      ],
+      "size": [
+        19,
+        340
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        370.5,
+        355.0
+      ],
+      "size": [
+        19,
+        490
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    }
+  ],
+  "start": {
+    "x": 300,
+    "y": 74,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": false,
+      "coyoteFrames": 0,
+      "wallCoyoteFrames": 0,
+      "wallJumpsLeft": -1,
+      "maxWallJumps": 0,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "finish": [
+    300,
+    420,
+    160,
+    120
+  ],
+  "maxTicks": 40,
+  "ghosts": [
+    {
+      "label": "Spike wallbounce: superbounce, brushes the spikes above for 1 tick"
+    },
+    {
+      "demo": "drift",
+      "label": "Stick back to the wall after the bounce: into the spiked face"
+    },
+    {
+      "demo": "no-jump",
+      "label": "Dash with no buffered jump: no bounce, stays in the window"
+    }
+  ]
+}

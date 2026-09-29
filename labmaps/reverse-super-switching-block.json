@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "id": "reverse-super-switching-block",
+  "name": "Reverse super on a switching block: the floor swaps away under the dash, coyote keeps the super",
+  "tech": "reverse-super-switching-block",
+  "techNote": "The dot stands on a blue platform (x -100-100, blue active at the start), the only floor over a spike bed 600 u below; the finish box is on a ledge to the left (x -1250 to -650). A dash with blockSwapUnlocked swaps the colours, so the platform goes off under the dash: on the dash's first tick the ground check already misses (lab replay's solid0) while onGround is held at coyoteFrames 6/6. The jump on dash frame 1 is still a super (CheckForSuperJump only needs onGround), and with the dash to the right and the stick held left (lockX -1) it is the reverse super: 805 up and 876 momentum to the left, over the gap onto the ledge, the finish box on tick 55. The 'jump' demo (a plain jump left, no dash: the platform stays) comes down at x ~-430 and falls into the spikes.",
+  "category": "WJ_DS_DJ_BS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        200,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground",
+      "colour": "blue"
+    },
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -600
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Spikes",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        -950,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "blueActive": true,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    -950,
+    60,
+    200,
+    120
+  ],
+  "maxTicks": 80
+}

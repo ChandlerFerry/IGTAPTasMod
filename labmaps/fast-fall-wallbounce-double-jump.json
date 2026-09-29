@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "id": "fast-fall-wallbounce-double-jump",
+  "name": "Superbounce double jump: a double jump right after the superbounce keeps half its speed",
+  "tech": "fast-fall-wallbounce-double-jump",
+  "techNote": "A floor and a tall wall (face at x 380) with the finish box high up its face (x 280-370, y 600-700). Jump right from x 230, and on input 6 dash right flat with jump on dash frame 1 (released with the dash press): the dash reaches the wall on its 3rd frame, inside the dash boost window (dashBoostMax 6), so the buffered jump is the superbounce (SpecialWallJump(0.6, 1, up*410)): Velocity (-276, 703 after the tick's gravity), momentum.y 400.8. Double jump on input 9, 2 ticks after the bounce: after a jump that wasn't a normal one the air jump only needs Velocity.y < 700, and it keeps half of it: Velocity.y 745 + 649/2 = 1069.5, while the bounce's momentum still pushes up, so the dot climbs about 29 u a tick and is in the box on tick 30 (peak y 779.7). `no-double` (the superbounce alone) peaks at 437.3; `jump-double` (a jump and a double jump 9 ticks later, no dash) at 375.",
+  "category": "WJ_DS_DJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -10.0,
+        -20.0
+      ],
+      "size": [
+        780,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        400.0,
+        1480.0
+      ],
+      "size": [
+        40,
+        3040
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 230,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    325,
+    650,
+    90,
+    100
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Superbounce, double jump 2 ticks later"
+    },
+    {
+      "demo": "no-double",
+      "label": "The superbounce alone"
+    },
+    {
+      "demo": "jump-double",
+      "label": "A jump and a double jump, no dash"
+    }
+  ]
+}

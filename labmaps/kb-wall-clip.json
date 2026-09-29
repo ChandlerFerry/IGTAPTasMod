@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "kb-wall-clip",
+  "name": "KB wall clip: a full-tilt tap toward the wall at the jump's apex",
+  "tech": "kb-wall-clip",
+  "techNote": "A 400-tall Ground wall (x -50-50) on a floor, the finish on its top; a floor jump peaks at 300. Jump with your back to the wall (back edge 2 u from it), let go of jump near the apex, and with Velocity.y under 200 press jump with the stick full toward the wall for one tick: the turn swings the hitbox 10 u into the wall, the next tick's front ground ray starts inside it and grounds the dot, and the buffered jump is a full ground jump from there. Turning back at full tilt leaves the back edge ~8.3 u out, past the 8 u a second clip needs. Hold toward the wall over its top.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        200
+      ],
+      "size": [
+        100,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 67.5,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    0,
+    440,
+    100,
+    40
+  ],
+  "maxTicks": 90
+}

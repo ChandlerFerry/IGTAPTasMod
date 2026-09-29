@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "id": "super",
+  "name": "Super: a jump in a ground dash",
+  "tech": "super",
+  "techNote": "A floor ending at x 50, a spiked pit (x 50-900) and a far floor with the finish box (x 950-1350). From standing, dash right with the jump on dash frame 1: the dash is still on the ground, so the jump is the super (Movement.CheckForSuperJump: 805 up and 876 momentum right on tick 1). It peaks at y 288.8 and lands on the far floor at x 1099 (finish on tick 57). A running jump with no dash (`no-dash`) lands in the pit at x 554 and dies; the same jump with an air dash 5 ticks later (`air-dash`: the dash's distance without the super) gets to x 680 and dies.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -150,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        475,
+        -250
+      ],
+      "size": [
+        850,
+        100
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        475,
+        -320
+      ],
+      "size": [
+        850,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        1150,
+        -20
+      ],
+      "size": [
+        500,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    1150,
+    60,
+    400,
+    80
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Super: dash, jump on its first frame"
+    },
+    {
+      "demo": "no-dash",
+      "label": "Running jump, no dash: into the pit"
+    },
+    {
+      "demo": "air-dash",
+      "label": "Jump, then air dash: into the pit"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "id": "corner-jump",
+  "name": "Corner jump: standing on the platform's end with the body over a flush spike pit, then a standing jump",
+  "tech": "corner-jump",
+  "techNote": "A platform (top y 0) ends at x 0 at a pit filled to its top with spikes (layer 6, spikeScript; x 0-300, flush with the platform, a floor under them), and a landing platform starts at x 582. Standing, the hurtbox's bottom (y-27) is 7 u above the platform, so a floor-level spike under it doesn't touch it, and the ground check needs only the back ray (x-15 facing right) on the platform: the dot can stand anywhere up to x 15, its hurtbox reaching 40 u over the spikes. The dot walks in from rest (stick right for 14 inputs; the stick at rest stops it at once) and stands at x 7.8, 33 u of it over the spikes, for 20 ticks, then jumps with the stick full right: the standing jump from there lands on the far platform. Stopping a tick short (x -1.4) the same jump falls short (the platform's edge sits between their reaches, x 579-585 for the corner, 576 at most a tick back), and a tick further (x 17.0) the back ray leaves the platform: the dot starts to fall, the hurtbox sinks into the spikes and dies on the 2nd Stay. Ghosts: short, further.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "start": {
+    "x": -120,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "maxTicks": 110,
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -300,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        150,
+        -50
+      ],
+      "size": [
+        300,
+        100
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        150,
+        -120
+      ],
+      "size": [
+        300,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        782,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "finish": [
+    782,
+    60,
+    400,
+    80
+  ],
+  "ghosts": [
+    {
+      "label": "Corner jump: stand 33 u over the spikes, standing jump"
+    },
+    {
+      "demo": "short",
+      "label": "Stop a tick short: the jump falls short"
+    },
+    {
+      "demo": "further",
+      "label": "Stop a tick further: the back ray leaves the platform, falls in"
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "id": "spring-dash-stack-side",
+  "name": "Spring dash stack, sideways: a flat spring dash carries the first spring's momentum into a second one",
+  "tech": "spring-dash-stack",
+  "techNote": "The sideways case of spring-dash-stack. A floor (top y 0, x -300-100) and two springs pointing right (the Course 5 ceiling spring's SpringScript: upForce 70, strength 300, movementLock 0.25; triggers 80x80 at x 60-140 and x 360-440, y 0-80, turned -90 so transform.up is (1, 0)); a spike strip (x 150-4450, y -32-0) and a finish platform past it (finish box x 4450-4850, y 0-800). Walking into the first spring: momentum (4800, 175), Velocity (0, 630) and the spring cutscene (0.25 s stick lock). A spring dash (the step's springDash 1, lockX 1: a dash pressed on the lock's first tick, which cancels the cutscene, 1236-1243) right moves momentum into preDashMomentum (1643-1644) and holds the dot level at 33.4 u a tick; the second spring's hit calls endDash first (hitSpring 2436-2439), which gives back 95% of preDashMomentum.x (sign matches the dash, dashDirection.y 0: 2030-2033), then adds its own 4800: momentum.x 9255 on tick 26. Without the dash the launch rises (Velocity.y 630) over the second spring's trigger, keeps one spring's momentum and comes down on the strip.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -100,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        40
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": -90,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        400,
+        40
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": -90,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        2300,
+        -16
+      ],
+      "size": [
+        4300,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        4650,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -100,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    4650,
+    400,
+    400,
+    800
+  ],
+  "maxTicks": 100,
+  "ghosts": [
+    {
+      "label": "Spring dash stack, sideways"
+    },
+    {
+      "demo": "no-dash",
+      "label": "No spring dash: one spring"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "id": "checkpoint-midair-walljump",
+  "name": "Checkpoint mid air walljump: a wall cling's wall coyote carried through a quick restart",
+  "tech": "checkpoint-midair-walljump",
+  "techNote": "A floor, a wall on the right (x 300-400) and a ledge on the left (x -900 to -200, top y 290) with the finish box on it; the respawn point is at standing height at x 0 (an ordinary checkpoint). Jump right into the wall and cling (tick 24: OnWall, wallCoyoteFrames 7), then quick restart on input 25: Movement.respawn zeroes Velocity and momentum and sets onGround, but leaves wallCoyoteFrames 7 and wallJumpsLeft; on the ground it doesn't count down. Jump straight up on input 28 (wallCoyoteFrames then counts 6, 5, ...) and press again with left on input 34 (wallCoyoteFrames 1): getPlayerControlledInput takes it as a wall jump off no wall (jumpBuffer && wallCoyoteFrames > 0, before the double jump; WJ only here): Velocity (-460, 730) away from the way the dot faces (still right, from the cling), wallJumpsLeft 4 -> 3, from y 142.9. It peaks 292 u above the floor against a plain jump's 258 and lands on the ledge, finish on tick 66. `no-cling` (the same inputs after standing instead of clinging) and `late` (the second press on input 36, the count run out) are plain jumps that hit the ledge's face.",
+  "category": "WJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -150.0,
+        -20.0
+      ],
+      "size": [
+        1500,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        350.0,
+        300.0
+      ],
+      "size": [
+        100,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -550.0,
+        145.0
+      ],
+      "size": [
+        700,
+        290
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 200,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": false,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0,
+      "respawnPoint": "-1333,-10539",
+      "courseResetPoint": "0,0"
+    }
+  },
+  "finish": [
+    -400,
+    330,
+    200,
+    60
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Cling, quick restart, jump, jump again 6 ticks later: a wall jump off no wall"
+    },
+    {
+      "demo": "no-cling",
+      "label": "No cling before the restart: the second press does nothing"
+    },
+    {
+      "demo": "late",
+      "label": "The second press 8 ticks after the jump: the wall coyote ran out"
+    }
+  ]
+}

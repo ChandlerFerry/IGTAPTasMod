@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "wallbounce",
+  "name": "Wallbounce: an up-diagonal dash into a wall and a buffered jump",
+  "tech": "wallbounce",
+  "techNote": "A metal floor and a wall (x 220-260). From standing 175 u left of the wall, dash up-right with jump on dash frame 7: the dash reaches the wall on frame 7, past the coyote frames (no super) and inside dashBoostMax * 1.4, so the wall arms wallBouncePossible and the buffered jump is the wallbounce (FixedUpdate's wall branch): endDash without the vertical cap, SpecialWallJump(1, wallBounceMovementLock, up * 220): Velocity (-460, 730), 215 momentum up and 1200 away from the wall (-1169.4 after the tick). Hold left: it peaks at y 515 and is in the finish box (x -500 to -400, y 470-530) on tick 32.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        240,
+        400
+      ],
+      "size": [
+        40,
+        800
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 20,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    -450,
+    500,
+    100,
+    60
+  ],
+  "maxTicks": 60
+}

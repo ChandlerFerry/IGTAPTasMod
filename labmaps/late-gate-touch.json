@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "late-gate-touch",
+  "name": "Late gate touch: brush Course 1's start gate from the far side",
+  "tech": "late-gate-touch",
+  "techNote": "The lab's one shape is a 40x40 Ground box buried in the floor (a lab needs a shape); it stands on Course 1's floor right of its start gate (the gate's trigger x 2468-2518, y -343 to -93 in the world frame; the anchor is its centre), facing it, the hitbox's left edge 1.5 u from it. The course timer starts on the first tick the player overlaps the gate, so a route that got to the far side untimed starts it only when it brushes the gate: rest, tap the stick toward the gate for a tick and back, and the hitbox touches the gate for a tick (the finish box is the gate).",
+  "category": "NONE",
+  "anchor": [
+    2493,
+    -218
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        57,
+        -160
+      ],
+      "size": [
+        40,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 52,
+    "y": -91,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    0,
+    0,
+    50,
+    250
+  ],
+  "maxTicks": 60
+}

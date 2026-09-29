@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "id": "fast-steps-slopes",
+  "name": "Fast steps slopes: run up the game's slope tiles on step-ups",
+  "tech": "fast-steps-slopes",
+  "techNote": "A staircase of 10 steps 64 wide and 32 tall (the game's slopes are this: Area 1's ground has 140 such 64x32 steps), 320 u up to a platform with the finish box. Hold right: Movement.Update's step-up (806-816: ground at least 230 u/s sideways, not rising, the down ray from (x+27, y+10) finds a top 13-44 u above the feet and the wall rays at y+10 and y+19 miss) teleports the dot onto every step (y = top + 36) without leaving the ground, one step every 7 ticks at the full 460 u/s: the finish on tick 102. No jump, and no jump could do it faster (the step-ups keep the full run speed); the highest NONE jump from the floor lifts the feet about 258 u, under the 320 u top.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        232.0,
+        -184.0
+      ],
+      "size": [
+        64,
+        432
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        296.0,
+        -168.0
+      ],
+      "size": [
+        64,
+        464
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        360.0,
+        -152.0
+      ],
+      "size": [
+        64,
+        496
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        424.0,
+        -136.0
+      ],
+      "size": [
+        64,
+        528
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        488.0,
+        -120.0
+      ],
+      "size": [
+        64,
+        560
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        552.0,
+        -104.0
+      ],
+      "size": [
+        64,
+        592
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        616.0,
+        -88.0
+      ],
+      "size": [
+        64,
+        624
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        680.0,
+        -72.0
+      ],
+      "size": [
+        64,
+        656
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        744.0,
+        -56.0
+      ],
+      "size": [
+        64,
+        688
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        808.0,
+        -40.0
+      ],
+      "size": [
+        64,
+        720
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        1040,
+        -40.0
+      ],
+      "size": [
+        400,
+        720
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    990,
+    380,
+    100,
+    120
+  ],
+  "maxTicks": 140
+}

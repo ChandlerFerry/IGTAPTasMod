@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "landing-tick-jump",
+  "name": "Landing tick jump: a jump on the landing tick keeps the momentum ground friction takes a tick later",
+  "tech": "landing-tick-jump",
+  "techNote": "The dot starts in the air (x -300, y 80) with momentum.x 2000 (a spring's or a dash's leftover), stick right, over a floor (top y 0, x -400-400); past it a spike pit (strip x 400-1470, y -432 to -400) and a platform (top y -300, x 1470-1900) with the finish box on it. Ground friction on momentum.x (x0.75 a tick on metal, touchedSolidGround 2193-2199) runs only on ground ticks where onGround was already on, so the landing tick (tick 12) keeps it all. A jump pressed 4 ticks early (buffered) leaves on the landing tick with momentum.x 1448.2 and lands on the platform (x 1528 at y -268). One tick later (tick 13) friction has taken it to 1058: the same jump is 130 u short at the platform's height, hits its side and falls into the spikes.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        935,
+        -416
+      ],
+      "size": [
+        1070,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        1685,
+        -320
+      ],
+      "size": [
+        430,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -300,
+    "y": 80,
+    "vx": 0,
+    "vy": 0,
+    "mx": 2000,
+    "my": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": false
+    }
+  },
+  "finish": [
+    1685,
+    -250,
+    430,
+    100
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Landing-tick jump"
+    },
+    {
+      "demo": "late-jump",
+      "label": "Jump a tick after landing"
+    }
+  ]
+}

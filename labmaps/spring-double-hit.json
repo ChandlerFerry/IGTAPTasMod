@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "id": "spring-double-hit",
+  "name": "Spring double hit: a double jump in the spring's trigger takes a second hit",
+  "tech": "spring-double-hit",
+  "techNote": "spring-clip's ledge (top y 0, x -120-0), ceiling (bottom y 340) and the Course 5 ceiling spring hanging from it pointing down (SpringScript upForce 70, strength 300, movementLock 0.25; trigger 80x80 at x 80-160, y 260-340, turned 180°), with the double jump unlocked (WJ_DS_DJ). A down spring hit sets Velocity.y -270 and adds momentum.y -575 (hitSpring 2474-2477) and refills the air jumps (2472). A double jump 2 ticks after the hit (Velocity.y set to airJumpForce, 745: 1768-1774) holds the dot against the -550 momentum: it hovers a few u a tick inside the trigger until SpringScript's 0.15 s cooldown ends (OnTriggerStay2D sets cooldown, Invoke endCooldown 0.15 s), and the spring hits again: momentum.y -1054.9. A double jump 3 or 4 ticks after the hit is too late (the dot has sunk out of the trigger), and a third hit fails (745 against about -1030 sinks out). A 32-tall spike strip (layer 6, spikeScript: x -1260-1140, y -98 to -66) under the ledge covers every way down and the finish box is under it: a spike kills on its 2nd OnTriggerStay2D (counter > graceFrames 1), so the 54-tall hurtbox has to cover 86 u in 3 ticks (28.67 a tick). One hit's fall is 25-27 u a tick at that depth and dies; the double hit's is 32 and gets through on 2 ticks.",
+  "category": "WJ_DS_DJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -20
+      ],
+      "size": [
+        120,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        360
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        300
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 180,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -82
+      ],
+      "size": [
+        2400,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -440
+      ],
+      "size": [
+        2400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -60,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    -60,
+    -307,
+    2400,
+    226
+  ],
+  "maxTicks": 60,
+  "ghosts": [
+    {
+      "label": "Spring double hit"
+    },
+    {
+      "demo": "one-hit",
+      "label": "Same jump, no double jump: one hit"
+    }
+  ]
+}

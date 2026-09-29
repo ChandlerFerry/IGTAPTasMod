@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "ground-bounce-pump",
+  "name": "Ground bounce momentum pump: chained ground bounces grow the hyper's momentum",
+  "tech": "ground-bounce-pump",
+  "techNote": "A metal floor (top y 0). A hyper (jump, dash down-right, jump on dash frame 4: 1650 momentum right), then five ground bounces in a row, each a straight-down dash 9 input ticks after the last jump (the dash cooldown) with jump on dash frame 2, the stick at rest. Each landing's endDash gives back 95 % of preDashMomentum.x and sets DashBounceFrames 4 (no ground friction), and the bounce jump adds momentum.x * 0.5: the momentum right after the bounces is 1736.7, 1927.0, 2143.5, 2390.1, 2670.8 (ticks 22, 40, 58, 76, 94; +11 % a cycle, each at the same height, 586.6 momentum up), where one bounce and a coast decays to nothing. The fifth bounce's arc is in the finish box (x 2465 to 2565, y 250 to 350); the `once` ghost (the first bounce, then no more dashes) is at x 1692 on tick 104 with 124 momentum left. Bounce ticks and momentum: tick 22 1736.7, tick 40 1927.0, tick 58 2143.5, tick 76 2390.1, tick 94 2670.8.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        4000,
+        -20
+      ],
+      "size": [
+        10000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    2515,
+    300,
+    100,
+    100
+  ],
+  "maxTicks": 140,
+  "ghosts": [
+    {
+      "label": "Hyper + five ground bounces"
+    },
+    {
+      "demo": "once",
+      "label": "Hyper + one ground bounce",
+      "offset": [
+        0,
+        900
+      ]
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "super-ground-bounce",
+  "name": "Super ground bounce: a ground bounce that keeps the super's momentum",
+  "tech": "super-ground-bounce",
+  "techNote": "A metal floor (top y 0). Dash right with the jump on dash frame 1: the super (805 up, 876 momentum right) on tick 1. Stick at rest; on input 12 (after the dash's cooldown: pressed earlier, the dash waits and goes the way the dot faces) dash straight down with jump on dash frame 2: the landing ends the down dash, endDash gives back 95 % of preDashMomentum.x (dashDirection.y == -1) and sets DashBounceFrames, so the buffered jump is the ground bounce (805 up + 600 momentum up) with the super's momentum: (868.8, 586.6) after the bounce tick (tick 20). It arcs up and right into the finish box (x 630-730, y 550-610) on tick 49. `hyper` (the wave bounce: a hyper instead of the super) leaves the same bounce with 1736.7 and passes far right of the box; `jump` (a plain jump, then the ground bounce) goes straight up with 0.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        2000.0,
+        -20.0
+      ],
+      "size": [
+        6000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    680,
+    580,
+    100,
+    60
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Super, then the ground bounce"
+    },
+    {
+      "demo": "hyper",
+      "label": "Hyper, then the ground bounce (the wave bounce)"
+    },
+    {
+      "demo": "jump",
+      "label": "Jump, then the ground bounce"
+    }
+  ]
+}

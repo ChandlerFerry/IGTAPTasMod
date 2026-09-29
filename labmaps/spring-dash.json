@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "id": "spring-dash",
+  "name": "Spring dash: a dash cancels a sideways spring's lock and holds the dot under a spike ceiling",
+  "tech": "spring-dash",
+  "techNote": "A floor (top y 0, x -300-2000), a spring pointing right (the Course 5 ceiling spring's SpringScript: upForce 70, strength 300, movementLock 0.25; trigger 80x80 at x 60-140, y 0-80, turned -90 so transform.up is (1, 0)) and a spike ceiling (x 150-1000, y 120-152) over the launch. hitSpring starts the spring cutscene (cutsceneMode spring, the stick locked, Invoke cancelSpringCutscene 0.25 s) with momentum (4800, 175) and Velocity (0, 630): the launch rises into the ceiling and dies on tick 24. A dash pressed on the lock's first tick (the input's springDash 1, lockX 1) ends the cutscene (1236-1243) and dashes right level at y 49.2, under the spikes; the dot lands past x 570 and walks to the finish box (x 1050-1250, y 0-300). The spring's cancelSpringCutscene still fires 0.25 s after the hit, mid-dash (tick 30 here), and sets cutsceneMode none, so the dash's natural end (endDash with cutsceneMode no longer dash, 2028-2038) gives none of the stored 4689 back: a spring dash keeps its momentum only if something ends it before the lock would have (a second spring, spring-dash-stack).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        850,
+        -20
+      ],
+      "size": [
+        2300,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        40
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": -90,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        575,
+        136
+      ],
+      "size": [
+        850,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    }
+  ],
+  "start": {
+    "x": -100,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1
+    }
+  },
+  "finish": [
+    1150,
+    150,
+    200,
+    300
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Spring dash"
+    },
+    {
+      "demo": "no-dash",
+      "label": "Locked spring launch"
+    }
+  ]
+}

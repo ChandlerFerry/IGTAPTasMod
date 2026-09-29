@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "slope-sliding",
+  "name": "Slope sliding: a near-vertical slope is ground: slide down it and jump off it",
+  "tech": "slope-sliding",
+  "techNote": "A Ground slope rising 400 over 60 (81.5 degrees; x 0-60) against a 400-tall plateau, the finish on the plateau. With no unlocks there is no wall cling, but the ground rays are vertical and the slope's face is under the hitbox's front corner, so touching it grounds the dot: Velocity.y is 0 plus one tick of gravity, and the dot slides down the face at ~0.5 u a tick, pressed into it. A jump from there is a full ground jump (805). A floor jump peaks at 300, short of the plateau (the hitbox bottom is y-34); jump onto the slope's face (grounded at y 274), let it slide 10 ticks, and jump again onto the plateau. Slopes up to ~81 degrees hold the dot (run 15 per 100 slides at 0.53 u a tick, run 30 at 0.49); at 85 degrees it falls.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "polygon",
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          60,
+          0
+        ],
+        [
+          60,
+          400
+        ]
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        160,
+        200
+      ],
+      "size": [
+        200,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -150,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    160,
+    440,
+    200,
+    60
+  ],
+  "maxTicks": 90
+}

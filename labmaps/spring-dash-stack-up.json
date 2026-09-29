@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "id": "spring-dash-stack-up",
+  "name": "Spring dash stack, upward: an up-right dash carries the first spring's momentum into a second up spring",
+  "tech": "spring-dash-stack",
+  "techNote": "The upward case of spring-dash-stack. A floor (top y 0, x -400-200), an up spring on it (the Course 5 ceiling spring's SpringScript: upForce 70, strength 300, movementLock 0.25; trigger 80x80 at x 60-140, y 0-80, unturned: transform.up (0, 1)) and a second one up and to the right (trigger x 190-270, y 190-270). An up spring hit has no cutscene: momentum.y 925, Velocity.y 1530 (2474-2477). A dash up-right the tick after moves momentum into preDashMomentum (1643-1644) and carries the dot 23.6 u a tick each way into the second spring, whose hit calls endDash (hitSpring 2436-2439): 95% of preDashMomentum.y back (sign matches the dash's y, 2035-2037), plus its own 925: momentum.y 1803.8, Velocity.y 1530. It peaks at y 2277 and reaches the finish box (x 350-950, y 2000-2200). The plain launch goes straight up past the second spring and peaks at y 1511.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -100,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        40
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 0,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        230,
+        230
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 0,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    }
+  ],
+  "start": {
+    "x": -100,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    650,
+    2100,
+    600,
+    200
+  ],
+  "maxTicks": 100,
+  "ghosts": [
+    {
+      "label": "Spring dash stack, upward"
+    },
+    {
+      "demo": "no-dash",
+      "label": "No dash: one spring"
+    }
+  ]
+}

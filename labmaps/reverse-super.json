@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "id": "reverse-super",
+  "name": "Reverse super: dash right, flip the stick left in the freeze and jump",
+  "tech": "reverse-super",
+  "techNote": "A plain floor, the finish 300-420 u left of the start. Stand 10 ticks, dash right with jump on the dash's first freeze frame and the stick flipped left through the freeze (lockX -1), then hold left: CheckForSuperJump sends the super's momentum the stick's way (MoveAxis.x), -876 after the tick's decay, while the dash still carries the dot forward on its tick (Velocity 1670 on the jump tick, 28.7 u right in all); the run speed turns from +460 to -460 over 7 ticks and the dot reaches the finish on tick 28.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 600,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    240,
+    200,
+    120,
+    400
+  ],
+  "maxTicks": 60
+}

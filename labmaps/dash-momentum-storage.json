@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "id": "dash-momentum-storage",
+  "name": "Dash momentum storage: a ground dash holds the momentum through friction and gives 95% back at its end",
+  "tech": "dash-momentum-storage",
+  "techNote": "The dot starts in the air (x -300, y 80) with momentum.x 2000, stick right, over a floor (top y 0, x -400-620); past it a spike pit (strip x 620-1800, y -432 to -400) and a platform (top y -300, x 1800-2200) with the finish box on it. A dash on the landing tick (tick 12) moves momentum into preDashMomentum (1643-1644): 1448.2 is kept through 11 ground ticks of dash, where friction would take x0.75 a tick. Its natural end (tick 23, 1143) gives 95% back (sign matches, dash not up, 2030-2033): momentum.x 1375.5, and a jump on that tick (the input after the dash's) is a plain 805 jump with it, onto the platform (x 1916 at y -268). A jump during the dash is a super (CheckForSuperJump, 1406, never calls endDash): the stored momentum is lost for the super's 900, at best x 1577 there; a landing-tick jump with no dash reaches x 1618. Both fall into the spikes.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        110,
+        -20
+      ],
+      "size": [
+        1020,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        1210,
+        -416
+      ],
+      "size": [
+        1180,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        2000,
+        -320
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -300,
+    "y": 80,
+    "vx": 0,
+    "vy": 0,
+    "mx": 2000,
+    "my": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1
+    }
+  },
+  "finish": [
+    2000,
+    -250,
+    400,
+    100
+  ],
+  "maxTicks": 110,
+  "ghosts": [
+    {
+      "label": "Dash end jump: stored momentum"
+    },
+    {
+      "demo": "super",
+      "label": "Super off the same dash"
+    },
+    {
+      "demo": "no-dash",
+      "label": "Landing-tick jump, no dash"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "id": "gap-stick",
+  "name": "Gap stick: turning every tick in a 45-wide shaft holds the dot up",
+  "tech": "gap-stick",
+  "techNote": "A 45-wide shaft (x 0-45) between a left wall (top 500) and a right wall with a 76-tall notch (y 380-456) to a ledge (the finish). Jump right off the left wall's top into the shaft and fall; then turn every tick (stick -1, +1, ...): each turn swings the hitbox (offset x 5, width 41) 10 u sideways, the shaft (under 49 wide) has no room for it, so the front ground ray (x-25 or x+25) starts inside a wall and grounds the dot on every tick: Velocity.y is set to 0 and only one tick of gravity (-27) moves it, 0.54 u a tick down, pushed a little into the wall it faces. Shafts 41.5-48 wide stick this way, 49 does not; holding one way just falls. Stop wiggling and hold right: the dot falls on into the notch.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -100,
+        250
+      ],
+      "size": [
+        200,
+        500
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        145,
+        190
+      ],
+      "size": [
+        200,
+        380
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        145,
+        756
+      ],
+      "size": [
+        200,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -40,
+    "y": 534,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    150,
+    420,
+    100,
+    60
+  ],
+  "maxTicks": 150
+}

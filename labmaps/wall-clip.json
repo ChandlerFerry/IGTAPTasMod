@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "wall-clip",
+  "name": "GC wall clip: two light-flick clips up a wall onto its top",
+  "tech": "gc-wall-clip",
+  "techNote": "A 520-tall Ground wall (x -50-50) on a floor, the finish on its top. With no unlocks, a floor jump peaks at 300 and one clip's jump at 442, short of the top (the hitbox bottom is y-34). Jump with your back to the wall (back edge 2 u from it); at Velocity.y under 580 release and flick the stick lightly toward the wall (-0.4): the jump cut drops Velocity.y to 50, the turn swings the hitbox's back edge 10 u into the wall and the depenetration pushes it back only part way, so the next tick's front ground ray (x-25) starts inside the wall and grounds the dot in mid air; the jump pressed with the light flick back (+0.4) is a full ground jump, and it leaves the back edge within 8 u of the wall, so the same wall clips again 10 ticks later. After the second clip's jump, hold toward the wall over its top.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        260
+      ],
+      "size": [
+        100,
+        520
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 67.5,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    0,
+    560,
+    100,
+    40
+  ],
+  "maxTicks": 90
+}

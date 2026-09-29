@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "id": "hyper-stored-superbounce",
+  "name": "Hyper stored superbounce: a hyper, then the carried wall coyote as a dash boost",
+  "tech": "hyper-stored-superbounce",
+  "techNote": "The stored-superbounce lab's post and floor with the omnidash. Hold down-left: the cling slides the dot onto the floor (wallCoyoteFrames 7 kept, it doesn't count down on the ground). Hop, dash down-right on the next tick with jump on dash frame 4: the landing turns the dash flat and the hyper fires on tick 19 (framesSinceLastDash 4: 547 up, 1650 momentum right). Press jump again on the next tick (framesSinceLastDash 5, inside dashBoostMax 6): the stored count (wallCoyoteFrames 5) makes it a wall jump off no wall with the dash boost, SpecialWallJump(0.6, 0.6, up * 410): Velocity (-276, 730) plus 401 momentum up on top of the hyper's 1570 right. It peaks at y 489 (x 1319) and is in the finish box (x 1220-1420, y 440-500) on tick 51. One tick later (the jump on dash frame 5, the press at framesSinceLastDash 6) it is a plain stored wall jump and peaks at 300; the hyper alone 200; the stored superbounce (a super) is at y 190 at x 1200.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        500,
+        20
+      ],
+      "size": [
+        1400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        80,
+        80
+      ],
+      "size": [
+        40,
+        80
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 125.5,
+    "y": 110,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4
+    }
+  },
+  "finish": [
+    1320,
+    470,
+    200,
+    60
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Hyper + stored superbounce"
+    },
+    {
+      "demo": "late",
+      "label": "One tick late: stored wall jump",
+      "offset": [
+        0,
+        700
+      ]
+    },
+    {
+      "demo": "hyper-only",
+      "label": "Hyper alone",
+      "offset": [
+        0,
+        1400
+      ]
+    }
+  ]
+}

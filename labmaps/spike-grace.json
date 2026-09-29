@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "id": "spike-grace",
+  "name": "Spike grace: the one spike jump in a shaft",
+  "tech": "spike-grace",
+  "techNote": "A 90-wide shaft (walls x -85 to -45 and 55 to 95, floor top y 0) with one spike on its floor: a 26x19 trigger (layer 6, spikeScript, the size of a single spike tile's collider in the game's Spikes composite), x -8 to 18, y 0 to 19. The hurtbox (40x54, x-15..x+25, y-27..y+27 facing right) can't miss it in a 90-wide shaft. The dot falls from y 150; spikeScript has no OnTriggerEnter2D, so the first overlapping tick (tick 17, y 44.9) is free, and it kills on the Stay that counts past graceFrames 1. The ground rays reach y-40 (22 down from y-18), so the fall is grounded on tick 19 and a buffered jump leaves on that tick, before the 2nd Stay: the hurtbox overlaps on ticks 17 (spike4 *0) and 18 (*1) only and the jump rises to the finish box over the spike. Of press ticks 0-24 only 13-19 make it (the jump buffer: up to 6 ticks before the landing tick); a press on tick 20 (late) lands and dies on the 2nd Stay.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -65,
+        200
+      ],
+      "size": [
+        40,
+        440
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        75,
+        200
+      ],
+      "size": [
+        40,
+        440
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        5,
+        9.5
+      ],
+      "size": [
+        26,
+        19
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 150,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": false
+    }
+  },
+  "finish": [
+    5,
+    300,
+    90,
+    40
+  ],
+  "maxTicks": 80,
+  "ghosts": [
+    {
+      "label": "Spike grace: buffered jump, 2 ticks in the spike"
+    },
+    {
+      "demo": "late",
+      "label": "Jump a tick after landing: 3rd tick in the spike, dies"
+    }
+  ]
+}

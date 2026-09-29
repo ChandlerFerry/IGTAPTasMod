@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "backwards-dash-jump",
+  "name": "Backwards dash-jump: turn away from a wall and dash-jump on one tick",
+  "tech": "backwards-dash-jump",
+  "techNote": "A floor (top y 0) and a wall (x 300-340) at its right. Walk right into the wall (stopped at x 274.5, the hitbox against its face), then on one tick turn left and press dash and jump together. The dash start's -20 shove puts the dot back into the wall and the buffered jump is a grounded dash jump from there: the super (805 up, 876 momentum left after the tick), out over the floor into the finish box (x -420 to -250, y 250-330) on tick 32. The overlay's BACKWARDS DASH-JUMP needs the wall behind the dash on its start tick and the turn within its flip window.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        2000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        320,
+        300
+      ],
+      "size": [
+        40,
+        600
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 250,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    -335,
+    290,
+    170,
+    80
+  ],
+  "maxTicks": 60
+}

@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "id": "inwall-super",
+  "name": "Inwall super: a wall clip's in-wall ground, then a super off it in mid air",
+  "tech": "inwall-super",
+  "techNote": "A 560-tall Ground wall (x -50-50) on a floor. Stand with your back to the wall (hitbox back edge 2 u from it) and jump, holding. On tick 10 (Velocity.y 562, under 580) release and flick the stick lightly toward the wall (-0.4): the jump cut drops Velocity.y to 50 and the turn swings the hitbox (offset x 5, width 41) 10 u into the wall, so the next tick's front ground ray (x-25) starts inside it and grounds the dot in mid air (the GC wall clip, y 176). Turn back (+0.4) on tick 11 and on tick 12 dash away from the wall with jump on the dash's first freeze frame: onGround still holds (coyoteFrames 5/6), so CheckForSuperJump gives the ground super, Velocity.y 805 and 876 momentum away from the wall, from 176 u up. The finish (x 600-800, y 400-460) is out of reach of a floor super (apex 289) and of the clip's plain jump (x 357 at its apex). The reverse demo clips (tick 10) and dashes the way the clip left it facing, into the wall, with the stick flipped away in the dash freeze (lockX): the reverse super's momentum goes the stick's way, so the same launch comes off a dash the wall stops (the dash's forward 29 u never happen).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        280
+      ],
+      "size": [
+        100,
+        560
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 67.5,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    700,
+    430,
+    200,
+    60
+  ],
+  "maxTicks": 90,
+  "ghosts": [
+    {
+      "label": "Inwall super"
+    },
+    {
+      "demo": "reverse",
+      "label": "Inwall reverse super"
+    }
+  ]
+}

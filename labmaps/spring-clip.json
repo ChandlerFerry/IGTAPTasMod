@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "spring-clip",
+  "name": "Spring clip: a downward spring's momentum falls through a spike strip a plain fall dies in",
+  "tech": "spring-clip",
+  "techNote": "A ledge (top y 0, x -120-0) under a ceiling (bottom y 340, x -80-320) with a spring hanging from it pointing down: the Course 5 ceiling spring's SpringScript (upForce 70, strength 300, movementLock 0.25), its trigger 80x80 at x 80-160, y 260-340, turned 180° so transform.up is (0, -1). Far below, a 32-tall spike strip (layer 6, spikeScript: x -1260-1140, y -414 to -382) covers every way down, and the finish box is under it. A spike kills on its 2nd OnTriggerStay2D (counter > graceFrames 1), and the first overlapping tick is OnTriggerEnter2D, so the dot may overlap it on 2 ticks and must be clear on the 3rd: the hurtbox (40x54) has to travel 32 + 54 = 86 u in 3 ticks. A plain fall can't: fast-fall gravity (49.14 a tick) with the drag toward -1120 settles at -1316.6 u/s, 26.3 u a tick, 79.0 in 3. Jump right from the ledge and hold it, then hold down: the spring's Stay on the 2nd overlapping tick is hitSpring with up (0, -1), no spring cutscene, the dot pushed 10 u down with momentum.y -575 (+175 - 750) and Velocity.y -270 (tick 18, y 236.2). The momentum decays (2.22% and 0.08 a tick) while fast-fall gravity builds Velocity.y, and the body moves at Velocity + momentum: 32.1 u a tick at the strip, 96.3 over ticks 41-44. The hurtbox overlaps the strip on ticks 42 and 43 only (Enter, then Stay with counter 1), is clear on tick 44 and in the finish box on tick 46 (cyan). The same jump mirrored away from the spring (green) falls from its peak at a plain fall's speed, 78.6 u over its last 3 ticks, and dies on its 3rd tick in the strip. The crossing needs the right phase: for this fall the strip's top must be between y -387.1 and -376.8 (a 10 u window), and down must be held by the 2nd tick after the hit (later, the fall is 3 ticks in the strip). A held jump from the ledge meets the spring at the same height wherever it leaves (offline: 0-6 ticks of walking first, full or 0.55 stick), so the hit is always at y 236.2. Nothing touches a floor, ceiling or wall between the hit and the strip (a contact with a (0, ±1) normal zeroes momentum.y).",
+  "category": "NONE",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [-60, -20], "size": [120, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [120, 360], "size": [400, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [120, 300], "size": [80, 80], "layer": "Default", "tag": "Untagged", "trigger": true, "rotation": 180,
+      "spring": { "upForce": 70, "strength": 300, "movementLock": 0.25 } },
+    { "kind": "box", "at": [-60, -398], "size": [2400, 32], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true },
+    { "kind": "box", "at": [-60, -760], "size": [2400, 40], "layer": "Ground", "tag": "Ground" }
+  ],
+  "start": {
+    "x": -60,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [-60, -627, 2400, 226],
+  "maxTicks": 60,
+  "ghosts": [
+    { "label": "Spring clip" },
+    { "demo": "no-spring", "label": "Same jump away from the spring: plain fall" }
+  ]
+}

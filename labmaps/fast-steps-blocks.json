@@ -1,0 +1,213 @@
+{
+  "schema": 1,
+  "id": "fast-steps-blocks",
+  "name": "Fast steps blocks: run up a 45-degree stair of 32x32 blocks on step-ups",
+  "tech": "fast-steps-blocks",
+  "techNote": "A stair of 12 blocks 32 wide and 32 tall (45 degrees, the game's 32x32 block stairs), 384 u up to a platform with the finish box. Hold right: Movement.Update's step-up teleports the dot onto every block (y = top + 36) at the full 460 u/s, a step every 4 ticks (the dot climbs 32 u per 32 u across: 460 u/s up as well as sideways), never leaving the ground. The highest NONE jump lifts the feet about 258 u.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        216.0,
+        -184.0
+      ],
+      "size": [
+        32,
+        432
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        248.0,
+        -168.0
+      ],
+      "size": [
+        32,
+        464
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        280.0,
+        -152.0
+      ],
+      "size": [
+        32,
+        496
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        312.0,
+        -136.0
+      ],
+      "size": [
+        32,
+        528
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        344.0,
+        -120.0
+      ],
+      "size": [
+        32,
+        560
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        376.0,
+        -104.0
+      ],
+      "size": [
+        32,
+        592
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        408.0,
+        -88.0
+      ],
+      "size": [
+        32,
+        624
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        440.0,
+        -72.0
+      ],
+      "size": [
+        32,
+        656
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        472.0,
+        -56.0
+      ],
+      "size": [
+        32,
+        688
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        504.0,
+        -40.0
+      ],
+      "size": [
+        32,
+        720
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        536.0,
+        -24.0
+      ],
+      "size": [
+        32,
+        752
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        568.0,
+        -8.0
+      ],
+      "size": [
+        32,
+        784
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        784,
+        -8.0
+      ],
+      "size": [
+        400,
+        784
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    734,
+    444,
+    100,
+    120
+  ],
+  "maxTicks": 120
+}

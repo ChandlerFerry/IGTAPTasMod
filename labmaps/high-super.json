@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "high-super",
+  "name": "High super: a super from an up-diagonal dash's coyote frames",
+  "tech": "high-super",
+  "techNote": "A metal floor (top y 0). Standing facing left, dash up-left with jump on dash frame 6: the dash has lifted the dot 145 u but onGround lasts through the coyote frames (coyoteFrames 1 on frame 5), so the jump is the super (805 up, 876 momentum left after the tick) from up there. It is in the finish box (x -300 to -200, y 200-260) on tick 11; a flat super is at y 60-110 over that stretch and reaches y 200 only past x -450.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    -250,
+    230,
+    100,
+    60
+  ],
+  "maxTicks": 60
+}

@@ -1,0 +1,2408 @@
+{
+  "schema": 1,
+  "lab": "kb-wall-clip",
+  "name": "lab/kb-wall-clip",
+  "solvedIn": "start-c1-none.json",
+  "world": "start-c1-none.world.json",
+  "ticks": 59,
+  "inputTicks": 59,
+  "search": {
+    "method": "hand-built and checked by lab replay: jump holding (ticks 0-24), release on tick 25 (Velocity.y 148: under the jump cut\u0027s 150, so no cut), rest tick 26, tick 27 press jump with the stick full left (toward the wall), tick 28 full right (the clip\u0027s ground jump), then hold left onto the wall\u0027s top"
+  },
+  "inputs": [
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": true,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": true,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": true,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    }
+  ],
+  "path": [
+    [
+      67.5,
+      34,
+      1,
+      0,
+      1
+    ],
+    [
+      67.5,
+      55.1,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      70.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      85.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      100.2,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      114.1,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      127.5,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      140.4,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      152.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      164.5,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      175.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      186.4,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      196.6,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      206.2,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      215.3,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      223.8,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      231.8,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      239.3,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      246.2,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      252.6,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      258.4,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      263.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      268.5,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      272.7,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      276.5,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      279.9,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      282.8,
+      1,
+      5,
+      1
+    ],
+    [
+      67.5,
+      285.4,
+      1,
+      5,
+      1
+    ],
+    [
+      73.4,
+      287.5,
+      -1,
+      5,
+      1
+    ],
+    [
+      74.2,
+      308.5,
+      1,
+      5,
+      1
+    ],
+    [
+      75.2,
+      324.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.4,
+      339.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      353.6,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      367.5,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      380.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      393.8,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      406.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      417.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      75.5,
+      429.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      66.3,
+      439.8,
+      -1,
+      5,
+      1
+    ],
+    [
+      57.1,
+      450,
+      -1,
+      5,
+      1
+    ],
+    [
+      47.9,
+      459.6,
+      -1,
+      5,
+      1
+    ],
+    [
+      38.7,
+      468.7,
+      -1,
+      5,
+      1
+    ],
+    [
+      29.5,
+      477.2,
+      -1,
+      5,
+      1
+    ],
+    [
+      20.3,
+      485.2,
+      -1,
+      5,
+      1
+    ],
+    [
+      11.1,
+      492.7,
+      -1,
+      5,
+      1
+    ],
+    [
+      1.9,
+      499.6,
+      -1,
+      5,
+      1
+    ],
+    [
+      -7.3,
+      506,
+      -1,
+      5,
+      1
+    ],
+    [
+      -16.5,
+      511.8,
+      -1,
+      5,
+      1
+    ],
+    [
+      -25.7,
+      517.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      -34.9,
+      521.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      -44.1,
+      526.1,
+      -1,
+      5,
+      1
+    ],
+    [
+      -53.3,
+      529.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      -62.5,
+      533.3,
+      -1,
+      5,
+      1
+    ],
+    [
+      -71.7,
+      536.3,
+      -1,
+      5,
+      1
+    ],
+    [
+      -80.9,
+      538.8,
+      -1,
+      5,
+      1
+    ],
+    [
+      -90.1,
+      540.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      -99.3,
+      542.6,
+      -1,
+      5,
+      1
+    ],
+    [
+      -108.5,
+      543.9,
+      -1,
+      5,
+      1
+    ],
+    [
+      -117.7,
+      544.8,
+      -1,
+      5,
+      1
+    ],
+    [
+      -126.9,
+      545.2,
+      -1,
+      5,
+      1
+    ],
+    [
+      -136.1,
+      545.2,
+      -1,
+      5,
+      1
+    ],
+    [
+      -145.3,
+      544.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -154.5,
+      544,
+      -1,
+      2,
+      1
+    ],
+    [
+      -163.7,
+      542.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -172.9,
+      540.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -182.1,
+      538.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -191.3,
+      534.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -200.5,
+      530.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -209.7,
+      526.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -218.9,
+      520.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -228.1,
+      514.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -237.3,
+      507.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -246.5,
+      500.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -255.7,
+      492.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -264.9,
+      483.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -274.1,
+      473.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -283.3,
+      463.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -292.5,
+      452.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -301.7,
+      440.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -310.9,
+      428,
+      -1,
+      2,
+      1
+    ],
+    [
+      -320.1,
+      414.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -329.3,
+      401,
+      -1,
+      2,
+      1
+    ],
+    [
+      -338.5,
+      386.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -347.7,
+      371.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -356.9,
+      355.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -366.1,
+      338.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -375.3,
+      321.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -384.5,
+      304.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -393.7,
+      286.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -402.9,
+      269,
+      -1,
+      2,
+      1
+    ],
+    [
+      -412.1,
+      250.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -421.3,
+      232.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -430.5,
+      214.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -439.7,
+      196,
+      -1,
+      2,
+      1
+    ],
+    [
+      -448.9,
+      177.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -458.1,
+      158.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -467.3,
+      140.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -476.5,
+      121.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -485.7,
+      103,
+      -1,
+      2,
+      1
+    ],
+    [
+      -494.9,
+      84.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -504.1,
+      65.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -513.3,
+      46.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -522.5,
+      28,
+      -1,
+      2,
+      1
+    ],
+    [
+      -531.7,
+      9.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -540.9,
+      -9.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -550.1,
+      -28.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -559.3,
+      -47.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -568.5,
+      -65.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -577.7,
+      -84.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -586.9,
+      -103.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -596.1,
+      -122.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -605.3,
+      -141,
+      -1,
+      2,
+      1
+    ],
+    [
+      -614.5,
+      -159.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -623.7,
+      -178.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -632.9,
+      -197.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -642.1,
+      -216.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -651.3,
+      -235.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -660.5,
+      -253.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -669.7,
+      -272.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -678.9,
+      -291.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -688.1,
+      -310.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -697.3,
+      -329.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -706.5,
+      -347.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -715.7,
+      -366.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -724.9,
+      -385.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -734.1,
+      -404.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -743.3,
+      -423.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -752.5,
+      -442,
+      -1,
+      2,
+      1
+    ],
+    [
+      -761.7,
+      -460.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -770.9,
+      -479.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -780.1,
+      -498.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -789.3,
+      -517.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -798.5,
+      -536,
+      -1,
+      2,
+      1
+    ],
+    [
+      -807.7,
+      -554.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -816.9,
+      -573.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -826.1,
+      -592.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -835.3,
+      -611.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -844.5,
+      -630,
+      -1,
+      2,
+      1
+    ],
+    [
+      -853.7,
+      -648.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -862.9,
+      -667.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -872.1,
+      -686.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -881.3,
+      -705.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -890.5,
+      -724.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -899.7,
+      -742.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -908.9,
+      -761.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -918.1,
+      -780.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -927.3,
+      -799.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -936.5,
+      -818.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -945.7,
+      -836.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -954.9,
+      -855.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -964.1,
+      -874.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -973.3,
+      -893.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -982.5,
+      -912.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -991.7,
+      -930.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1000.9,
+      -949.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1010.1,
+      -968.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1019.3,
+      -987.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1028.5,
+      -1006.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1037.7,
+      -1025,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1046.9,
+      -1043.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1056.1,
+      -1062.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1065.3,
+      -1081.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1074.5,
+      -1100.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1083.7,
+      -1119,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1092.9,
+      -1137.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1102.1,
+      -1156.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1111.3,
+      -1175.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1120.5,
+      -1194.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1129.7,
+      -1213.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1138.9,
+      -1231.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1148.1,
+      -1250.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1157.3,
+      -1269.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1166.5,
+      -1288.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1175.7,
+      -1307.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1184.9,
+      -1325.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1194.1,
+      -1344.7,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1203.3,
+      -1363.5,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1212.5,
+      -1382.3,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1221.7,
+      -1401.1,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1230.9,
+      -1419.9,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1240.1,
+      -1438.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1249.3,
+      -1457.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1258.5,
+      -1476.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1267.7,
+      -1495.2,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1276.9,
+      -1514,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1286.1,
+      -1532.8,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1295.3,
+      -1551.6,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1304.5,
+      -1570.4,
+      -1,
+      2,
+      1
+    ],
+    [
+      -1313.7,
+      -1589.2,
+      -1,
+      2,
+      1
+    ]
+  ]
+}

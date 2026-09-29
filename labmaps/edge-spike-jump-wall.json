@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "id": "edge-spike-jump-wall",
+  "name": "Edge spike jump next to a wall: out from under a low ceiling, off the spike strip at the wall's foot, up the wall",
+  "tech": "edge-spike-jump-wall",
+  "techNote": "A corridor under a low ceiling (bottom y 80, ending at x -30) on a floor (top y 0) leads to a wall (face x 100, top y 200, the finish box on it); the floor between the ceiling's end and the wall's foot is a 19-tall spike strip (layer 6, spikeScript; x 0-100). A jump under the ceiling bonks (the hitbox's top meets y 80 16 u up), and the hitbox's back edge (x-15.5) only clears the ceiling's end once the hurtbox's front (x+25) is 15 u into the strip. Running in at 460: Enter on tick 29 (x -24, spike3 *0, free), Stay on tick 30 (*1, counter 1 = graceFrames), jump on tick 31: it clears the ceiling's end and the spikes on the same step, and the full-height jump rises up the wall's face past its top. No jump that never touches the strip clears the ceiling at 460 (the jump tick moves 9.2 u, so its back edge ends at x -31.8 at most), whatever the run-in phase; of press ticks 0-39 only 31 finishes. Ghosts: early (tick 29, the last jump before the strip: bonks on the ceiling's end and falls into the spikes), late (tick 32: the 2nd Stay kills).",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "start": {
+    "x": -300,
+    "y": 34,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "maxTicks": 100,
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -300.0,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -365.0,
+        100
+      ],
+      "size": [
+        670,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        50.0,
+        9.5
+      ],
+      "size": [
+        100,
+        19
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        250,
+        80.0
+      ],
+      "size": [
+        300,
+        240
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "finish": [
+    250,
+    240,
+    300,
+    80
+  ],
+  "ghosts": [
+    {
+      "label": "Edge spike jump: jump on the 3rd tick, 2 in the spikes"
+    },
+    {
+      "demo": "early",
+      "label": "Jump before the spikes: bonks on the ceiling's end"
+    },
+    {
+      "demo": "late",
+      "label": "One tick later: 3rd tick in the spikes, dies"
+    }
+  ]
+}

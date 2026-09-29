@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "id": "fast-steps-blocks-clip",
+  "name": "Fast steps blocks clip: a step-up teleports the dot up through a slab",
+  "tech": "fast-steps-blocks-clip",
+  "techNote": "A floor under an 8-thick slab whose underside is 74 u up (the dot's 72-tall hitbox fits under it with 2 u to spare, so no jump gets through), and a 40-tall block on the floor under the slab. Run right: the step-up teleports the dot onto the block (y = 40 + 36), which puts the hitbox (y 42-114) across the slab (74-82); Box2D pushes it out upward, onto the slab's top, where the finish box is. The step is a teleport: nothing between the feet and the new height stops it. Offline control: the same run without the block stays under the slab.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        2000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -80.0
+      ],
+      "size": [
+        400,
+        240
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        300,
+        78
+      ],
+      "size": [
+        600,
+        8
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    520,
+    102,
+    80,
+    40
+  ],
+  "maxTicks": 90
+}

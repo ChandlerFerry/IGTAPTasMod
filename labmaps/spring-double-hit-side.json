@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "id": "spring-double-hit-side",
+  "name": "Spring double hit, sideways: a wall holds the dot in the spring's trigger until its cooldown ends",
+  "tech": "spring-double-hit",
+  "techNote": "The sideways case of spring-double-hit. A floor (top y 0, x -400-200), a spring pointing right (the Course 5 ceiling spring's SpringScript: upForce 70, strength 300, movementLock 0.25; trigger 80x80 at x 60-140, y 100-180, turned -90 so transform.up is (1, 0)) and a wall right in front of it (x 140-180, y 0-220). hitSpring pushes the dot 10 u right and adds momentum (4800, 175), Velocity (0, 630) (2474-2477); the wall stops it, so it rises 12-15 u a tick inside the trigger, and 8 ticks later (SpringScript's 0.15 s cooldown) the spring hits again: momentum.x 8781.3. Nothing in the player's hands counters a sideways push (the stick is locked in the spring cutscene, 0.25 s), so the wall does what the double jump does in the downward case. The dot clears the wall's top on the 3rd tick after the second hit and flies 100 u a tick over a spike strip (x 150-4350, y -32-0) to the finish box (x 4300-4500, y 0-800) on a platform. Entering the trigger higher (a jump from further back) rises out of it before the cooldown ends: one hit (4800), the strip at x 2693 and death.",
+  "category": "WJ_DS_DJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -100,
+        -20
+      ],
+      "size": [
+        600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        140
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": -90,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        160,
+        110
+      ],
+      "size": [
+        40,
+        220
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        2250,
+        -16
+      ],
+      "size": [
+        4200,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        4400,
+        -20
+      ],
+      "size": [
+        200,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -100,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    4400,
+    400,
+    200,
+    800
+  ],
+  "maxTicks": 100,
+  "ghosts": [
+    {
+      "label": "Spring double hit, sideways"
+    },
+    {
+      "demo": "one-hit",
+      "label": "Jump from further back: one hit"
+    }
+  ]
+}

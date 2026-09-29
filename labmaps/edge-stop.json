@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "edge-stop",
+  "name": "Edge stop: a turn into a hanging wall's bottom edge takes all the rise",
+  "tech": "edge-stop",
+  "techNote": "A hanging Ground wall (x -50-50, bottom y 120) over a floor. Jump with your back to it (hitbox back edge 2 u from its side), and on tick 4, rising at 697 with the hitbox top 7 u above the wall's bottom, turn into it (stick full toward it; the jump let go): the turn swings the hitbox (offset x 5) 10 u into the wall, and the overlap is shallower upward (7) than sideways (8), so the depenetration pushes the dot down out of the wall's bottom face. The contact is then a ceiling (normal (0, -1)) and OnCollisionStay2D zeroes Velocity.y and momentum.y: the jump stops dead 95 u up and the dot slides under the wall and lands. The same turn a tick earlier bonks the bottom face plainly from under it, and two ticks later (hitbox top 40 u past the edge) it is pushed out sideways and the jump rises on up the wall's side.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        520
+      ],
+      "size": [
+        100,
+        800
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 67.5,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    -100,
+    60,
+    100,
+    80
+  ],
+  "maxTicks": 60
+}

@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "id": "dash-midair-coyote-jump",
+  "name": "Dash mid air coyote jump: a full ground jump after a dash off the ledge",
+  "tech": "dash-midair-coyote-jump",
+  "techNote": "A floor ending at x 0, a spiked pit (x 0-670) and a far block (x 670-1300, top y 0) with the finish box on it. Walk right 8 ticks from x -300 and dash right: the dash (11 ticks, Velocity.y 0) is still on when the ground rays miss the ledge (its last 3 ticks, from x 37.7), and coyote time only counts from that first missing tick, so 3 of its 6 ticks are left when the dash ends at x 104.5. Jump on input 11 (coyoteFrames 2): onGround is still held, so it is the full 805 ground jump from mid air at x 131.9, 110 u past the ledge; it peaks at y 291.7 and lands on the block, finish on tick 81. `no-dash` (the latest running coyote jump off the same ledge, input 42 with coyoteFrames 1) comes down at x 631, short of the block, and dies in the pit; `late` (jump on input 13, a tick after the coyote ran out) is no jump at all and dies in the pit. A jump pressed inside the dash while onGround still holds is a super instead.",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -350.0,
+        -200.0
+      ],
+      "size": [
+        700,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        335.0,
+        -110.0
+      ],
+      "size": [
+        670,
+        100
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        335.0,
+        -280.0
+      ],
+      "size": [
+        670,
+        240
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        985.0,
+        -200.0
+      ],
+      "size": [
+        630,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -300,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    760,
+    60,
+    120,
+    80
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Dash coyote jump: jump 2 ticks after the dash, coyote 2 left"
+    },
+    {
+      "demo": "no-dash",
+      "label": "No dash: the last coyote tick off the ledge, into the pit"
+    },
+    {
+      "demo": "late",
+      "label": "Jump a tick after the coyote ran out: no jump, into the pit"
+    }
+  ]
+}

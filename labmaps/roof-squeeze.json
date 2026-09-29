@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "roof-squeeze",
+  "name": "Roof squeeze: jump spam carries the short hitbox through a 70-tall tunnel",
+  "tech": "roof-squeeze",
+  "techNote": "A floor and a roof block (x 300-700) whose bottom is 70 above the floor. Standing, the hitbox is 72 tall (offset y 2: y-34 to y+38), so the dot walks into the roof's face and stops (x 274.5). A jump sets the 54-tall air hitbox (dashColliderSize, y-27 to y+27) and moves the dot up 5 (y 39: top 66, under the roof), so pressing jump against the face slips the dot under the roof; inside, each landing grows the hitbox back to 72 and the next press shrinks it again, and the dot runs the tunnel at the full 9.2 u a tick, bonking the roof on every jump (OnCollisionStay2D's ceiling normal zeroes Velocity.y). A roof 67-71.9 above the floor squeezes this way; 66 or lower stops the jump's hitbox too.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        500,
+        -20
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        500,
+        170
+      ],
+      "size": [
+        400,
+        200
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 100,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    850,
+    40,
+    100,
+    80
+  ],
+  "maxTicks": 120
+}

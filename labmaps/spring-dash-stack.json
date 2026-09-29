@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "id": "spring-dash-stack",
+  "name": "Spring dash stack: a straight-down dash through a second down spring keeps both momenta",
+  "tech": "spring-dash-stack",
+  "techNote": "spring-clip's ledge, ceiling and Course 5 ceiling spring pointing down (SpringScript upForce 70, strength 300; trigger at x 80-160, y 260-340, turned 180°), a second one under the ledge's right end (trigger at x 60-140, y -80-0, turned 180°), omnidash unlocked (WJ_DS_BS_ZIP_OM: a straight-down dash needs it). A dash moves momentum into preDashMomentum and zeroes it (1643-1644), so nothing decays for its ticks, and moves 33.4 u a tick. A spring hit mid-dash calls endDash first (hitSpring 2436-2439), which gives back 95% of preDashMomentum.y when its sign matches the dash's (2035-2037), then adds the spring's -575 and sets Velocity.y -270 (2474-2477): momentum.y -1109 after the hit (a fall through the same spring without the dash: -1013.4, 3 ticks later). A dash that ends in the air instead hits the dash-end brake: endDash sets Velocity.y to 10 whenever it is under 10 for a flat or down dash (2024-2027), so the down-right ghost starts its fall from +10 with momentum.y -522. A 32-tall spike strip (x -1260-1140, y -444 to -412) covers every way down with the finish box under it; the strip needs 28.67 u a tick (86 u in 3 ticks).",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -20
+      ],
+      "size": [
+        120,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        360
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        120,
+        300
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 180,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        -40
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 180,
+      "spring": {
+        "upForce": 70,
+        "strength": 300,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -428
+      ],
+      "size": [
+        2400,
+        32
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        -760
+      ],
+      "size": [
+        2400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -60,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": false,
+      "maxAirJumps": 0,
+      "airJumpsLeft": 0
+    }
+  },
+  "finish": [
+    -60,
+    -627,
+    2400,
+    226
+  ],
+  "maxTicks": 60,
+  "ghosts": [
+    {
+      "label": "Spring dash stack"
+    },
+    {
+      "demo": "down-right",
+      "label": "Down-right dash past the spring: dash-end brake"
+    },
+    {
+      "demo": "no-dash",
+      "label": "No dash: plain fall through the spring"
+    }
+  ]
+}

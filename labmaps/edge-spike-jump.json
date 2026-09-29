@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "id": "edge-spike-jump",
+  "name": "Edge spike jump: the last jump inside a spike strip's grace",
+  "tech": "edge-spike-jump",
+  "techNote": "A floor (top y 0) runs right into a 19-tall spike strip (layer 6, spikeScript; x 0-200, the height of the game's floor spike bands), the floor going on under it to x 400 over a pit, and a landing platform from x 582. The dot runs in at full speed (460). spikeScript has no OnTriggerEnter2D and kills on the Stay that counts past graceFrames 1, so the hurtbox (x-15..x+25, y-27..y+27 facing right) may sit in the strip on 2 ticks: it enters on tick 19 (x -16, spike2 *0), counts 1 on tick 20 (*1), and the jump on tick 21 (the ground rays stand on the floor under the trigger) lifts it clear before the 2nd Stay. That takeoff is 18.4 u (2 ticks) past the last jump that never touches the strip (tick 19, from x -25.2): a tick-19 jump lands on a platform whose edge is at x 568 at most, a tick-21 one up to x 586, and the platform's edge sits between. Of press ticks 0-29 only 21 finishes. Ghosts: before (tick 19: falls short into the pit), late (tick 22: a 3rd tick in the strip, dies). The margin is phase-bound: another run-in phase moves the grace jump's takeoff by up to a tick.",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -200,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        100,
+        9.5
+      ],
+      "size": [
+        200,
+        19
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    },
+    {
+      "kind": "box",
+      "at": [
+        782,
+        -20
+      ],
+      "size": [
+        400,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        400,
+        -400
+      ],
+      "size": [
+        1600,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": -200,
+    "y": 34,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    782,
+    60,
+    400,
+    80
+  ],
+  "maxTicks": 100,
+  "ghosts": [
+    {
+      "label": "Edge spike jump: jump on the 3rd tick, 2 in the spikes"
+    },
+    {
+      "demo": "before",
+      "label": "Last jump before the spikes: falls short"
+    },
+    {
+      "demo": "late",
+      "label": "One tick later: 3rd tick in the spikes, dies"
+    }
+  ]
+}

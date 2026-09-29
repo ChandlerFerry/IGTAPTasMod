@@ -1,0 +1,120 @@
+{
+  "schema": 1,
+  "id": "overhang-slide",
+  "name": "Overhang slide: a sideways spring into a 45° overhang turns the launch into a slide down",
+  "tech": "overhang-slide",
+  "techNote": "A floor (top y 20, x -170-170) with a sideways spring past each end: the Course 5 Spring (2)'s SpringScript (upForce 50, strength 220, movementLock 0.25), its trigger 80x80 at x 170-250 turned -90° (transform.up (1, 0)) and its mirror at x -250 to -170 turned 90° ((-1, 0)). Right of the right spring a 1000x1000 Ground box turned 45° (center (950, 387)) hangs its down-left face over the launch: an overhang, a surface whose normal points down and against the motion. Walking into a sideways spring calls hitSpring with the spring cutscene: momentum (3520, 125), Velocity (0, 450) (hitSpring 2474-2477). Box2D's contact takes the into-surface part out of the body's velocity and leaves the along-surface part, which on a 45° overhang points down: (vx - vy)/2 down per second. Movement.FixedUpdate rewrites body.linearVelocity = Velocity + momentum every tick (1303), so the conversion holds on every contact tick, and momentum.x is left alone (OnCollisionStay2D zeroes momentum.y only on exact (0, ±1) normals, 2516-2531): the launch slides 24-27.6 u a tick down (1200-1380 u/s) from its first contact tick, where the same launch without the overhang rises for 21 ticks. Leaving the slope the extra speed isn't kept: Velocity.y still has the ordinary fall. A flat launch with momentum.x 3000 and Velocity.x 460 slides 33.6 u a tick (1680 u/s, over a plain fall's 26.3 terminal). The finish band (y -600 to -400) spans both sides; the ghost walks left into the mirrored spring, with no overhang. In the normal world two exposed overhangs have room for the dot under them: world (7255, 587)-(7856, 1188), 45°, facing down-right (move left into it; a lab anchored there with momentum.x -3000 slides 33.6 a tick down), and (24278, -4285)-(25274, -5667), about 54° from vertical, facing down-left (move right into it).",
+  "category": "NONE",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        0
+      ],
+      "size": [
+        340,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        210,
+        70
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": -90,
+      "spring": {
+        "upForce": 50,
+        "strength": 220,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        -210,
+        70
+      ],
+      "size": [
+        80,
+        80
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true,
+      "rotation": 90,
+      "spring": {
+        "upForce": 50,
+        "strength": 220,
+        "movementLock": 0.25
+      }
+    },
+    {
+      "kind": "box",
+      "at": [
+        950,
+        387
+      ],
+      "size": [
+        1000,
+        1000
+      ],
+      "layer": "Ground",
+      "tag": "Ground",
+      "rotation": 45
+    },
+    {
+      "kind": "box",
+      "at": [
+        -700,
+        -620
+      ],
+      "size": [
+        5000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true
+    }
+  },
+  "finish": [
+    -700,
+    -500,
+    5000,
+    200
+  ],
+  "maxTicks": 60,
+  "ghosts": [
+    {
+      "label": "Overhang slide"
+    },
+    {
+      "demo": "no-overhang",
+      "label": "Same launch the other way, no overhang"
+    }
+  ]
+}

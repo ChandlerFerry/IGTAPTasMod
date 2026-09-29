@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "super-switching-spikes",
+  "name": "Super in switching spikes: the swap turns orange spikes on around the dot, the super leaves them inside their grace",
+  "tech": "super-switching-spikes",
+  "techNote": "Blue is active at the start: a blue wall (x 150-190) blocks the way to the finish box; an orange spike bed (x -160-40, 200 tall, spikeScript) is off, and the dot stands in its area. The super (dash right, jump on dash frame 1) swaps: the wall goes and the orange spikes come on over the dot's hurtbox. The spike's grace lets the hurtbox touch it on one tick (spike2 *0 in lab replay); the super's first tick carries the dot to x 64 (the hurtbox's back at 49, past the bed's edge at 40), so it is out after that one tick and passes into the finish box on tick 18. The 'dash' demo (the same dash, no jump) moves only to x 47 on that tick (the hurtbox's back at 32): a second tick in the spikes (*1) and Player death. Walking can't pass the blue wall.",
+  "category": "WJ_DS_DJ_BS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        4000,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        -60,
+        100
+      ],
+      "size": [
+        200,
+        200
+      ],
+      "layer": "Spikes",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true,
+      "colour": "orange"
+    },
+    {
+      "kind": "box",
+      "at": [
+        170,
+        200
+      ],
+      "size": [
+        40,
+        400
+      ],
+      "layer": "Ground",
+      "tag": "Ground",
+      "colour": "blue"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "blueActive": true,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "blockSwapUnlocked": true,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    500,
+    200,
+    100,
+    400
+  ],
+  "maxTicks": 40
+}

@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "jump-through-buy",
+  "name": "Jump-through buy: one hop from under the Wall jump box into the Clone box's buy trigger (real Course 1 shop)",
+  "tech": "jump-through-buy",
+  "techNote": "Anchored in the real Course 1 shop (world 1370,-343: the floor under the Wall jump box's right end; the lab adds only a far-away dummy box). The shop boxes hang 133.5 above the floor, each a 141-wide solid with a 6-tall buy trigger along its bottom (Wall jump 1293-1421, Clone 1483-1611, CashPerLoop 1680-1808, y -209.5 to -203.5), and a box buys on any touch of that trigger (upgradeBox.OnTriggerStay2D, 0.2 s cooldown per box). After a 2-tick run-up, jump right holding for 6 ticks with the stick right: the airborne hitbox (41x54) bonks the Wall jump box's bottom on tick 6 (its trigger touched on ticks 6-7), keeps 460 u/s sideways and stays within 6 u of the box bottoms, so it is inside the Clone box's trigger on tick 11: two boxes bought in one jump instead of a walk into each. The finish box is the Clone box's buy trigger. Ghosts: the jump-through reaches the Clone trigger on tick 12; a standing hop into the Wall jump box, the fall carried right and a second hop into the Clone box reach it on tick 28 (`two-hops`).",
+  "category": "NONE",
+  "anchor": [
+    1370,
+    -343
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -3000
+      ],
+      "size": [
+        4,
+        4
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": false,
+      "dashUnlocked": false,
+      "airDashesLeft": 0,
+      "maxAirDashes": 0,
+      "doubleJumpUnlocked": false,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0
+    }
+  },
+  "finish": [
+    177.0,
+    136.5,
+    127.5,
+    6.0
+  ],
+  "maxTicks": 40,
+  "ghosts": [
+    {
+      "label": "Jump-through: both boxes in one hop (tick 12)"
+    },
+    {
+      "demo": "two-hops",
+      "label": "One hop per box (tick 28)"
+    }
+  ]
+}
