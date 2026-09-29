@@ -180,8 +180,8 @@ export const MARKERS: Record<string, { color: string; text: string; shape: Marke
 // reward gives — something unique (an ability, a mechanic unlock) or just cash or a stat.
 export const BOX_KINDS: Record<BoxCategory, { color: string; text: string; shape: MarkerShape }> = {
   secret: { color: "#ffd740", text: "Secret", shape: "star" },
-  bonusUnique: { color: "#66bb6a", text: "Bonus reward — unique unlock", shape: "diamond" },
-  bonusBoost: { color: "#b0bec5", text: "Bonus reward — cash/stat boost", shape: "diamond" },
+  bonusUnique: { color: "#66bb6a", text: "Unlock bonus", shape: "diamond" },
+  bonusBoost: { color: "#b0bec5", text: "Boost bonus", shape: "diamond" },
   achievement: { color: "#ce93d8", text: "Achievement box", shape: "star" },
   movement: { color: "#29b6f6", text: "Movement/ability upgrade", shape: "diamond" },
   tree: { color: "#c5a26b", text: "Tree upgrade", shape: "square" },

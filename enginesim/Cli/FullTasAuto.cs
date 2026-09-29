@@ -166,6 +166,7 @@ namespace IGTAP.EngineSim.Cli
             if (!_fresh) LoadRefs();
             for (int i = 1; i < args.Length - 1; i++)
                 if (args[i] == "--ref") Collect(Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(args[i + 1])), "--ref " + Path.GetFileName(args[i + 1]));
+            if (_lib != null && _lib.Runs > 1) TryStitch("the known routes at the start");
             MeasureSpeeds();
             BuildModel();
             PrintModel("start");
@@ -796,7 +797,8 @@ namespace IGTAP.EngineSim.Cli
             int n = 0;
             foreach (JsonElement r in doc.RootElement.GetProperty("refs").EnumerateArray())
             {
-                Route route = Evaluate(r.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList());
+                List<InputTick> refInputs = r.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
+                Route route = _lib != null ? TraceRun(refInputs, r.GetProperty("how").GetString() + " (earlier --auto)") : Evaluate(refInputs);
                 if (route.Progress == 0) continue;
                 Collect(route, r.GetProperty("how").GetString() + " (earlier --auto)");
                 n++;
