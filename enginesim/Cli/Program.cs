@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());
+                    case "enginebench": return EngineBench.Run(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
                     case "waypoints": return CourseWaypoints.Command(args.Skip(1).ToArray());
                     case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
