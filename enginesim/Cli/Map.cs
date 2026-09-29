@@ -544,6 +544,12 @@ namespace IGTAP.EngineSim.Cli
                         // omnidash sets both, upgradeBox): the closed ground goes, the open ground and first trunk come.
                         foreach (int id in Refs("closedObject")) roots[id] = "area1:normal";
                         foreach (int id in Refs("openObject").Concat(Refs("trunks").Take(1))) roots[id] = "area1:overgrown";
+                        // The rest under the path's root (its zone activators, checkpoints, loading area) is in the tunnel
+                        // the open path is: only there when it's open. The other trunks and the closed ground keep theirs.
+                        var keep = new HashSet<int>(Refs("closedObject").Concat(Refs("trunks")));
+                        int self = owner.TryGetValue(c.GetProperty("id").GetInt32(), out int so) ? so : o.GetProperty("id").GetInt32();
+                        if (children.TryGetValue(self, out var under))
+                            foreach (int k in under) if (!keep.Contains(k) && !roots.ContainsKey(k)) roots[k] = "area1:overgrown";
                         continue;
                     }
                     List<int> overgrown = Refs("overgrowthEnable"), normal = Refs("overgrowthDisable");

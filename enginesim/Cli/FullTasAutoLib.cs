@@ -117,10 +117,10 @@ namespace IGTAP.EngineSim.Cli
             return list;
         }
 
-        public IReadOnlyList<Segment> Continuations(int stateId)
+        public IReadOnlyList<LibSegment> Continuations(int stateId)
         {
             LibState s0 = _states[stateId];
-            var list = new List<Segment>();
+            var list = new List<LibSegment>();
             foreach (int id in _byKey[(s0.Goal, s0.Key)])
             {
                 LibRun r = _runs[_states[id].Run];
@@ -129,7 +129,7 @@ namespace IGTAP.EngineSim.Cli
                 int at = rel.IndexOf(id);
                 if (at < 0 || at + 1 >= rel.Count) continue;
                 LibState a = _states[id], b = _states[rel[at + 1]];
-                list.Add(new Segment { From = a.Id, To = b.Id, Run = r.Id, Ticks = b.Tick - a.Tick, Inputs = Slice(r.Inputs, a.Input, b.Input) });
+                list.Add(new LibSegment { From = a.Id, To = b.Id, Run = r.Id, Ticks = b.Tick - a.Tick, Inputs = Slice(r.Inputs, a.Input, b.Input) });
             }
             return list;
         }
@@ -165,7 +165,7 @@ namespace IGTAP.EngineSim.Cli
         /// any other live run's state with the same (goal, key) at no cost, unless a replay banned that switch. The end is a state
         /// filed at the last goal's touch.
         /// </summary>
-        public (IReadOnlyList<Segment> path, long end) ShortestPath()
+        public (IReadOnlyList<LibSegment> path, long end) ShortestPath()
         {
             var rel = new Dictionary<int, List<int>>();
             var next = new Dictionary<int, int>();
@@ -206,12 +206,12 @@ namespace IGTAP.EngineSim.Cli
                     Relax(v, du);
                 }
             }
-            if (end < 0) return (Array.Empty<Segment>(), long.MaxValue);
+            if (end < 0) return (Array.Empty<LibSegment>(), long.MaxValue);
             // Walk back: consecutive states on one run make a segment; a switch starts the next.
             var chain = new List<int> { end };
             for (int v = end; prev.TryGetValue(v, out int p); v = p) chain.Add(p);
             chain.Reverse();
-            var segments = new List<Segment>();
+            var segments = new List<LibSegment>();
             int from = chain[0];
             for (int i = 1; i < chain.Count; i++)
             {
@@ -219,13 +219,13 @@ namespace IGTAP.EngineSim.Cli
                 if (a.Run == b.Run) continue;
                 // A switch at a: the segment on a's run ends there.
                 LibState f = _states[from];
-                segments.Add(new Segment { From = f.Id, To = a.Id, Run = a.Run, Ticks = a.Tick - f.Tick, Inputs = Slice(_runs[a.Run].Inputs, f.Input, a.Input) });
+                segments.Add(new LibSegment { From = f.Id, To = a.Id, Run = a.Run, Ticks = a.Tick - f.Tick, Inputs = Slice(_runs[a.Run].Inputs, f.Input, a.Input) });
                 from = b.Id;
             }
             LibState last = _states[from], stop = _states[end];
             LibRun tail = _runs[stop.Run];
             // The last segment runs to the end of its run's inputs (the strict finish's ticks after the last goal).
-            segments.Add(new Segment { From = last.Id, To = stop.Id, Run = stop.Run, Ticks = stop.Tick - last.Tick, Inputs = Slice(tail.Inputs, last.Input, tail.Inputs.Count) });
+            segments.Add(new LibSegment { From = last.Id, To = stop.Id, Run = stop.Run, Ticks = stop.Tick - last.Tick, Inputs = Slice(tail.Inputs, last.Input, tail.Inputs.Count) });
             return (segments, endTick);
         }
 
@@ -271,6 +271,15 @@ namespace IGTAP.EngineSim.Cli
             int joins = _byKey.Count(k => k.Value.Select(id => _states[id].Run).Distinct().Count() > 1);
             return $"{Runs} runs, {_states.Count} states, {joins} join points";
         }
+
+        /// <summary>Join points (a (goal, key) two live runs share) under each key: the full digest joined on, the player-only key,
+        /// and with the Box2D world digest (when measured).</summary>
+        public (int full, int player, int physics) JoinCounts()
+        {
+            int Count(Func<LibState, ulong> key) => AllRuns.SelectMany(r => r.States).Select(id => _states[id])
+                .GroupBy(s => (s.Goal, key(s))).Count(g => g.Select(s => s.Run).Distinct().Count() > 1);
+            return (Count(s => s.Key), Count(s => s.PlayerKey), _states.Any(s => s.PhysicsKey != 0) ? Count(s => s.PhysicsKey) : -1);
+        }
     }
 
     sealed partial class FullTas
@@ -287,14 +296,80 @@ namespace IGTAP.EngineSim.Cli
         static readonly int KeyBoostMax = Array.FindIndex(KeyMoveFields, f => f.Name == "dashBoostMax");
         static readonly FieldInfo StepFromField = typeof(Simulation).GetField("_stepFrom", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly FieldInfo StepToField = typeof(Simulation).GetField("_stepTo", BindingFlags.Instance | BindingFlags.NonPublic);
+        int _stitchTried, _stitchExact;
         // The input engine's pending press state (a dash's jump frame, a lock or turn armed, a pause); its counters are left out.
         static readonly FieldInfo[] KeyEngineFields = new[] { "_wallJumpTriggered", "_rawJumpHeld", "_dashJumpFrame", "_dashJumpAxis", "_springDashFrame",
                 "_springTicks", "_lockArmed", "_lockX", "_lockY", "_pendingTurnX", "_pendingTurnY", "_turnArmed", "_turnX", "_turnY", "_pauseTicksLeft",
                 "_pauseFrames", "_pauseFrame", "_tickLocked", "_tickStick", "_quickRestartStep" }
-            .Select(n => typeof(MacroEngine).GetField(n, BindingFlags.Instance | BindingFlags.NonPublic)).Where(f => f != null).ToArray();
+            .Select(n => typeof(IGTAPTasMod.MacroEngine).GetField(n, BindingFlags.Instance | BindingFlags.NonPublic)).Where(f => f != null).ToArray();
         object[] _keyValues = Array.Empty<object>();
 
         static ulong Mix(ulong h, ulong v) { h ^= v + 0x9E3779B97F4A7C15UL + (h << 6) + (h >> 2); return h * 1099511628211UL; }
+
+        bool _joinPhysics;
+        static readonly FieldInfo[] NormalizedTimers = new[] { KeyDashCooldown, KeyWallCoyote, KeySinceDash }.Where(i => i >= 0).Select(i => KeyMoveFields[i]).ToArray();
+
+        /// <summary>
+        /// The whole game state but the clock, as one digest: Simulation.Fingerprint (the player; every course's fields; the economy:
+        /// Cash, box levels, clones and their timers, buy-max routines; the RNG; the goal tracker; pending invokes and coroutines;
+        /// every touched script, toggled object and layer; the rebases), taken with the three threshold timers at the values the
+        /// game can't tell apart (StateKey's normalisation), then put back.
+        /// </summary>
+        int WorldDigest(Simulation sim)
+        {
+            Movement m = sim.Player;
+            var saved = new object[NormalizedTimers.Length];
+            float boost = KeyBoostMax >= 0 && KeyMoveFields[KeyBoostMax].GetValue(m) is float bm ? bm : 0f;
+            float dashBound = Math.Max(boost * 1.4f, 4f);
+            for (int i = 0; i < NormalizedTimers.Length; i++)
+            {
+                FieldInfo f = NormalizedTimers[i];
+                saved[i] = f.GetValue(m);
+                if (saved[i] is float t)
+                {
+                    if (f.Name == "framesSinceLastDash") { if (t >= dashBound) f.SetValue(m, dashBound); }
+                    else if (t < 0f) f.SetValue(m, -1f);
+                }
+            }
+            try { return sim.Fingerprint(); }
+            finally { for (int i = 0; i < NormalizedTimers.Length; i++) NormalizedTimers[i].SetValue(m, saved[i]); }
+        }
+
+        LibState Filed(Simulation sim, int goal, LibPoint kind, long tick, int input)
+        {
+            ulong player = StateKey(sim);
+            ulong key = Mix(player, (ulong)(uint)WorldDigest(sim));
+            return new LibState
+            {
+                Goal = goal, Kind = kind, Key = key, PlayerKey = player, PhysicsKey = _joinPhysics ? Mix(key, sim.Physics.StateDigest()) : 0,
+                Tick = tick, Input = input, Features = FeaturesNow(sim),
+            };
+        }
+
+        /// <summary>
+        /// Every library state filed at a goal touch, one JSON line each (fulltas/&lt;run&gt;.auto-lib.jsonl): goal, kind, tick, run,
+        /// features, the known ticks to the end from it (null: none) and the filing run's end: the cost-to-go's data.
+        /// </summary>
+        void DumpLibrary(string file)
+        {
+            if (_lib == null) return;
+            using var w = new System.IO.StreamWriter(file, false);
+            foreach (StateLibrary.LibRun run in _lib.AllRuns)
+                foreach (int id in run.States)
+                {
+                    LibState s = _lib.State(id);
+                    if ((s.Kind & LibPoint.Goal) == 0 || s.Goal == 0) continue;
+                    long toEnd = _lib.ToEnd(id);
+                    LibFeatures f = s.Features;
+                    w.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        goal = s.Goal, kind = s.Kind.ToString(), tick = s.Tick, run = s.Run, how = run.How, runEnd = run.End == long.MaxValue ? (long?)null : run.End,
+                        toEnd = toEnd == long.MaxValue ? (long?)null : toEnd,
+                        x = f.X, y = f.Y, vx = f.VX, vy = f.VY, mx = f.MX, my = f.MY, dashes = f.DashesLeft, jumps = f.AirJumpsLeft, right = f.FacingRight,
+                        ground = f.OnGround, buys = f.BuysHash, cash = f.Cash,
+                    }));
+                }
+        }
 
         static ulong Bits(float f) => (uint)BitConverter.SingleToInt32Bits(f);
 
@@ -389,7 +464,7 @@ namespace IGTAP.EngineSim.Cli
             sim.Goals.Limit = _goals;
             var states = new List<LibState>();
             sim.Restore(_origin);
-            states.Add(new LibState { Goal = 0, Kind = LibPoint.Start, Key = StateKey(sim), Tick = 0, Input = 0, Features = FeaturesNow(sim) });
+            states.Add(Filed(sim, 0, LibPoint.Start, 0, 0));
             LibPoint pending = LibPoint.None;
             bool ground = sim.Player.onGround, wall = sim.Player.OnWall, dash = sim.Player.dashActive;
             int progress = sim.Progress;
@@ -397,7 +472,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 if (tick >= 1 && tick <= inputs.Count && inputs[tick - 1].reset) pending |= LibPoint.Reset;
                 if (pending != LibPoint.None)
-                    states.Add(new LibState { Goal = sim.Progress, Kind = pending, Key = StateKey(sim), Tick = sim.Engine.PhysicsTicks, Input = tick, Features = FeaturesNow(sim) });
+                    states.Add(Filed(sim, sim.Progress, pending, sim.Engine.PhysicsTicks, tick));
                 pending = LibPoint.None;
                 return true;
             }, 1000000, _ =>
@@ -448,14 +523,20 @@ namespace IGTAP.EngineSim.Cli
         {
             for (int attempt = 0; attempt < 6; attempt++)
             {
-                (IReadOnlyList<Segment> path, long end) = _lib.ShortestPath();
+                (IReadOnlyList<LibSegment> path, long end) = _lib.ShortestPath();
                 if (path.Count == 0 || end >= _best.Last) return false;
                 if (path.Count == 1 && _lib.Run(path[0].Run).End == end && _lib.Run(path[0].Run).Hash == SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count)) return false;
                 var inputs = new List<InputTick>();
-                foreach (Segment s in path) inputs.AddRange(s.Inputs);
+                foreach (LibSegment s in path) inputs.AddRange(s.Inputs);
                 string how = $"stitch of {path.Count} segments ({why})";
                 Route r = TraceRun(inputs, how);
-                Log($"auto stitch: library {_lib.Describe()}; shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}");
+                bool exact = r.Progress == _goals && r.Last == end;
+                _stitchTried++;
+                if (exact) _stitchExact++;
+                var (jf, jp, jx) = _lib.JoinCounts();
+                Log($"auto stitch: library {_lib.Describe()} (join points: {jf} on the full digest, {jp} on the player alone{(jx >= 0 ? $", {jx} with the Box2D digest" : "")}); "
+                    + $"shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}"
+                    + (exact ? " (exactly as predicted)" : " (NOT as predicted)") + $"; {_stitchExact} of {_stitchTried} stitches replayed exactly so far");
                 if (r.Progress == _goals && r.Last < _best.Last)
                 {
                     Commit(r, how);
@@ -465,7 +546,7 @@ namespace IGTAP.EngineSim.Cli
                 long offset = 0;
                 int goalAt = r.Progress + 1;
                 var predicted = new Dictionary<int, long>();
-                foreach (Segment s in path)
+                foreach (LibSegment s in path)
                 {
                     LibState a = _lib.State(s.From);
                     StateLibrary.LibRun run = _lib.Run(s.Run);
@@ -479,7 +560,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 for (int g = 1; g <= r.Progress; g++)
                     if (predicted.TryGetValue(g, out long p) && p != r.GoalPhysics[g - 1]) { goalAt = g; break; }
-                Segment culprit = path.Skip(1).LastOrDefault(s => _lib.State(s.From).Goal < goalAt) ?? path.Skip(1).FirstOrDefault();
+                LibSegment culprit = path.Skip(1).LastOrDefault(s => _lib.State(s.From).Goal < goalAt) ?? path.Skip(1).FirstOrDefault();
                 if (culprit == null) return false;
                 LibState join = _lib.State(culprit.From);
                 _lib.Ban(join.Goal, join.Key, culprit.Run);

@@ -43,10 +43,13 @@ namespace IGTAP.EngineSim.Cli
     }
 
     /// <summary>
-    /// An exact state some simulated run passed through. Two states with the same <see cref="Key"/> (and goal) are bit-identical
-    /// in everything that moves the player: every Movement field (the three threshold timers compared as the game reads them),
-    /// transform, body, colliders, interpolation ends, the player's invokes, the input engine's pending press state, the goal
-    /// tracker. A join is only ever made between states with equal keys, so a stitched route plays as one continuous run.
+    /// An exact state some simulated run passed through. Two states with the same <see cref="Key"/> (and goal) are identical in the
+    /// whole game state but the clock: Simulation.Fingerprint (every Movement field, the three threshold timers compared as the
+    /// game reads them; transform, body, colliders, interpolation ends; every course's fields; the economy: Cash, box levels,
+    /// clones and their timers, buy-max routines; the RNG; the goal tracker's progress and kept boxes; pending invokes and
+    /// coroutines; every touched script, toggled object and layer; the rebases) plus the input engine's pending press state. A
+    /// join is only ever made between states with equal keys, so a stitched route plays as one continuous run and its
+    /// continuation replays exactly.
     /// </summary>
     sealed class LibState
     {
@@ -54,7 +57,14 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Goals reached when the state was filed (the goal touched, for <see cref="LibPoint.Goal"/>).</summary>
         public int Goal;
         public LibPoint Kind;
+        /// <summary>The join key: the full-state digest above.</summary>
         public ulong Key;
+        /// <summary>The player-only key (movement, engine, tracker; no world): what joins would be if the world were left out
+        /// (measured, never joined on).</summary>
+        public ulong PlayerKey;
+        /// <summary>Key plus the Box2D world digest (b2World.StateDigest, absolute touch counters included), measured only with
+        /// --join-physics.</summary>
+        public ulong PhysicsKey;
         /// <summary>Physics ticks from the run's start on the run that filed it.</summary>
         public long Tick;
         /// <summary>The exact snapshot handle: the filing run and how many of its inputs had been played (replaying them from the
@@ -64,7 +74,7 @@ namespace IGTAP.EngineSim.Cli
     }
 
     /// <summary>Exact state to exact state, with its inputs (the filing run's inputs [From.Input, To.Input)).</summary>
-    sealed class Segment
+    sealed class LibSegment
     {
         public int From, To;
         public InputRuns Inputs;
@@ -78,10 +88,10 @@ namespace IGTAP.EngineSim.Cli
         int Add(IReadOnlyList<InputTick> inputs, string how);
         LibState State(int id);
         /// <summary>Known ways on from a state: every segment leaving it or any state with the same key and goal.</summary>
-        IReadOnlyList<Segment> Continuations(int stateId);
+        IReadOnlyList<LibSegment> Continuations(int stateId);
         /// <summary>The fastest known way from the start to the last goal through exact joins only: its segments in order, the
         /// predicted end tick (long.MaxValue when none reaches the end).</summary>
-        (IReadOnlyList<Segment> path, long end) ShortestPath();
+        (IReadOnlyList<LibSegment> path, long end) ShortestPath();
         /// <summary>States filed at goal touches of this goal (1-based).</summary>
         IReadOnlyList<LibState> StatesAt(int goal);
         /// <summary>Physics ticks from the state to the run's end on the fastest known way on from it (through exact joins), long.MaxValue when none reaches the end.</summary>

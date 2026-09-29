@@ -169,7 +169,7 @@ export type MarkerShape = "square" | "small" | "diamond" | "circle" | "star";
 export const MARKERS: Record<string, { color: string; text: string; shape: MarkerShape }> = {
   start: { color: "#3ddc97", text: "Start gate", shape: "square" },
   end: { color: "#ff6b6b", text: "End gate", shape: "square" },
-  exit: { color: "#90a4ae", text: "Course exit", shape: "square" },
+  exit: { color: "#90a4ae", text: "Preventative Gate", shape: "square" },
   checkpoint: { color: "#4fc3f7", text: "Checkpoint", shape: "small" },
   teleporter: { color: "#b388ff", text: "Teleporter", shape: "diamond" },
   dashRefill: { color: "#ff80ab", text: "Dash refill", shape: "circle" },

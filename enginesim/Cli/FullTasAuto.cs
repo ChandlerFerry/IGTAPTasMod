@@ -155,6 +155,7 @@ namespace IGTAP.EngineSim.Cli
             if (_stages >= 1)
             {
                 _lib = new StateLibrary(_goals, Solve.Option(args, "--library-runs", 150));
+                _joinPhysics = args.Contains("--join-physics");
                 double t0 = CpuSeconds();
                 TraceRun(_best.Inputs, "the starting best");
                 var (fast, median) = Chaining(_best.Inputs);
@@ -226,7 +227,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 var (fast, median) = Chaining(_best.Inputs);
                 Log($"auto: chaining check: {fast} of {_goals} goal touches at 600+ u/s (median {median:0} u/s) on the final best, against {_chain0.fast} (median {_chain0.median:0} u/s) on the starting best; library {_lib.Describe()}");
+                var (jf, jp, jx) = _lib.JoinCounts();
+                Log($"auto: join points: {jf} on the full-state digest (joined on), {jp} on the player alone{(jx >= 0 ? $", {jx} with the Box2D world digest" : "")}; stitches {_stitchExact} of {_stitchTried} replayed exactly as predicted");
+                AutoWrite(new { type = "joins", full = jf, player = jp, physics = jx, stitches = _stitchTried, exact = _stitchExact });
                 AutoWrite(new { type = "chaining", start = _chain0.fast, startMedian = Math.Round(_chain0.median), end = fast, endMedian = Math.Round(median), library = _lib.Describe() });
+                DumpLibrary(Path.Combine(Path.GetDirectoryName(_autoLog), _name + ".auto-lib.jsonl"));
             }
             AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = _pullNo, cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                 curve = _curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
