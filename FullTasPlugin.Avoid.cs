@@ -44,6 +44,7 @@ namespace IGTAPTasMod
                 "[" + string.Join(", ", m.Groups[1].Value.Split(',').Select(s => s.Trim())) + "]");
             text = CompactBoxLists.Replace(text, m => "[" + string.Join(", ", InnerArrays.Matches(m.Groups[1].Value).Cast<Match>().Select(i => i.Value)) + "]") + "\n";
             foreach (string file in new[] { source, built }.Where(f => Directory.Exists(Path.GetDirectoryName(f)))) File.WriteAllText(file, text);
+            _optionalBlocksCheckAt = float.NegativeInfinity;
             return changed;
         }
 

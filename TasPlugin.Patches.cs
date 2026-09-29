@@ -118,6 +118,11 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance)) Instance.OverlayRespawned(__0);
         }
 
+        private static void AfterMoveRootTransforms(Vector3 __0)
+        {
+            if (Instance != null) Instance._engine.WorldMoved(__0);
+        }
+
         private static void AfterToggleCheckpointUse(Movement __instance, ref bool __result)
         {
             if (Instance == null) return;
@@ -213,19 +218,27 @@ namespace IGTAPTasMod
             if (TurboRunner.Active) return;
             _playerFixedTime = Time.fixedTime;
             if (DeferredFixedUpdates.Count == 0) return;
+            if (_courseFixedUpdate == null)
+            {
+                _courseFixedUpdate = AccessTools.MethodDelegate<Action<courseScript>>(CourseFixedUpdateMethod);
+                _vmanFixedUpdate = AccessTools.MethodDelegate<Action<VmanScript>>(VmanFixedUpdateMethod);
+            }
             _runningDeferred = true;
             try
             {
-                var scripts = new List<MonoBehaviour>(DeferredFixedUpdates);
-                foreach (bool courses in new[] { true, false })
-                    foreach (MonoBehaviour script in scripts)
-                        if (script != null && script.isActiveAndEnabled && script is courseScript == courses)
-                            (courses ? CourseFixedUpdateMethod : VmanFixedUpdateMethod).Invoke(script, null);
+                DeferredRunning.Clear();
+                DeferredRunning.AddRange(DeferredFixedUpdates);
+                // Every course first, then Vman.
+                foreach (MonoBehaviour script in DeferredRunning)
+                    if (script != null && script.isActiveAndEnabled && script is courseScript course) _courseFixedUpdate(course);
+                foreach (MonoBehaviour script in DeferredRunning)
+                    if (script != null && script.isActiveAndEnabled && script is VmanScript vman) _vmanFixedUpdate(vman);
             }
             finally
             {
                 _runningDeferred = false;
                 DeferredFixedUpdates.Clear();
+                DeferredRunning.Clear();
             }
         }
 

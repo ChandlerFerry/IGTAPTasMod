@@ -430,20 +430,27 @@ namespace IGTAPTasMod
 
         OptionalBlock[] _optionalBlocks = new OptionalBlock[0];
         DateTime _optionalBlocksRead;
+        // forced-paths.json is looked at once a second at most (the studio's courses ask for every course); EditForcedPaths,
+        // the plugin's own writer, makes the next call look again.
+        static float _optionalBlocksCheckAt = float.NegativeInfinity;
 
         IEnumerable<OptionalBlock> OptionalBlocks(int course)
         {
-            string exe = EngineSimExe;
-            string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
-            DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
-            if (stamp != _optionalBlocksRead)
+            if (Time.unscaledTime >= _optionalBlocksCheckAt)
             {
-                _optionalBlocksRead = stamp;
-                _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
-                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
-                        .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
-                            course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
-                            caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
+                _optionalBlocksCheckAt = Time.unscaledTime + 1f;
+                string exe = EngineSimExe;
+                string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
+                DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
+                if (stamp != _optionalBlocksRead)
+                {
+                    _optionalBlocksRead = stamp;
+                    _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
+                        : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
+                            .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
+                                course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
+                                caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
+                }
             }
             return _optionalBlocks.Where(b => b.course == course);
         }

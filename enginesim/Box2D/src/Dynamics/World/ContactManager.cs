@@ -45,6 +45,8 @@ namespace Box2D
         public b2Contact m_contactList;
         public b2Contact m_contactTail;
         public b2ContactListener m_contactListener;
+        // UpdatePairs' callback, made once (a method group argument is a new delegate per call).
+        private readonly System.Action<object, object> m_addPair;
 
         public ContactManager()
         {
@@ -53,6 +55,7 @@ namespace Box2D
             m_contactFilter = new b2ContactFilter();
             m_contactListener = null;
             m_broadPhase = new b2BroadPhase();
+            m_addPair = AddPair;
         }
 
         public void Destroy(b2Contact c)
@@ -223,7 +226,7 @@ namespace Box2D
 
         public void FindNewContacts()
         {
-            m_broadPhase.UpdatePairs(AddPair);
+            m_broadPhase.UpdatePairs(m_addPair);
         }
 
         private void AddPair(object proxyUserDataA, object proxyUserDataB)

@@ -140,6 +140,19 @@ namespace IGTAP.EngineSim
 
         public void Reset() { Contacts.Clear(); _primed = false; _wasDash = _wasSlide = false; }
 
+        /// <summary>The last <see cref="Tick"/>'s <see cref="ContactRays.WallBehind"/> probe, for a caller that needs it on the
+        /// same tick (the ray is cast once).</summary>
+        public float Behind => _wasBehind;
+
+        /// <summary>Drops the contacts before <paramref name="tick"/>, keeping the rest in order.</summary>
+        public void DropBefore(int tick)
+        {
+            int kept = 0;
+            for (int i = 0; i < Contacts.Count; i++)
+                if (Contacts[i].tick >= tick) Contacts[kept++] = Contacts[i];
+            Contacts.RemoveRange(kept, Contacts.Count - kept);
+        }
+
         public void Tick(int tick, Movement player, float gate)
         {
             bool ground = player.onGround, wall = player.OnWall;

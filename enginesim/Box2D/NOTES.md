@@ -138,13 +138,17 @@ field** (Unity sets polygon radius = contact offset + edge radius).
 
 `b2Contact`: `GetFixtureA/B`, `GetChildIndexA/B`, `IsTouching`, `IsEnabled`,
 `SetEnabled`, `GetManifold() → b2Manifold` (live object; `points[i].normalImpulse/
-tangentImpulse/id`), `GetWorldManifold(out b2WorldManifold)` (`normal`, `points`,
-`separations`), `GetNext`, `Get/SetFriction`, `Get/SetRestitution`,
+tangentImpulse/id`), `GetWorldManifold(b2WorldManifold)` (fills the caller's
+`normal`, `points`, `separations`, as C++; left as it was for a manifold without
+points), `GetNext`, `Get/SetFriction`, `Get/SetRestitution`,
 `Get/SetTangentSpeed`, `Update(b2ContactListener)`.
 
 Static functions (`using static Box2D.b2Collision;` for bare names):
 `b2Distance(out b2DistanceOutput, ref b2SimplexCache, in b2DistanceInput)`,
-`b2TestOverlap(shapeA, iA, shapeB, iB, xfA, xfB)`.
+`b2TestOverlap(shapeA, iA, shapeB, iB, xfA, xfB, bufferA, bufferB)`: the two buffers are
+distinct caller-owned `b2Vec2[2]` scratch arrays for the distance proxies
+(`b2DistanceProxy.Set(shape, index, buffer)` puts a circle's, an edge's or a chain child's
+vertices there instead of allocating); the query keeps no reference to them.
 
 ### Branching API
 
@@ -158,6 +162,9 @@ at `SaveState` time. Contract:
   `UserData` preserved).
 - Contacts restore manifold (points, impulses, ids), flags and link order exactly;
   live contact objects are reused when the fixture pair is unchanged.
+- A body whose recorded values and fixture state are all unchanged since the last save
+  shares that save's `BodyRec` (compared bitwise, so `-0` and NaN payloads count as
+  changes); `LoadState` only reads body records.
 - Body creation/destruction between save/load is unsupported: `LoadState` throws
   `InvalidOperationException` if the body count differs.
 
@@ -223,8 +230,12 @@ port's `c0 + beta * (c - c0)` rounds differently).
   are the next suspect for any residual 1-ulp differences (compare against
   v2.4.1 `b2_collide_polygon.cpp` / `b2_collide_circle.cpp` literally).
 - GJK `b2Distance` and `TOI.TimeOfImpact` remain the base port's lineage (see table).
-- `Collision.ClipSegmentToLine` allocates its `out` array per call (hot-path GC
-  churn; numerics unaffected). Same for per-step `ContactVelocityConstraint`
-  allocation in `ContactSolver`. Not per-`Step`-allocating beyond these.
+- Per-step allocation: the island's `ContactSolver` (constraint arrays and objects, grow-only,
+  refilled by `Prepare`), its `SolverData`, the clip vertices (stackalloc), the solver's and
+  callers' `b2WorldManifold`, the distance proxies' vertex buffers (world-owned, one world per
+  thread), the edge-polygon collider's frame-A polygon (one per thread: the collider is a shared
+  static) and the broadphase pair sort (a span sort with a cached `Comparison`, the same
+  introsort) no longer allocate. Still allocating: each `Evaluate` makes a new `b2Manifold`
+  and `b2ManifoldPoint`s (`Update` keeps the old manifold to match ids).
 - `b2Draw`/`DebugDraw` exists for parity but is unused by the offline engine.
 - Joints ARE ported (every type `b2Joint.Create` dispatches) but unused by the offline engine so far.

@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using HarmonyLib;
 using UnityEngine;
@@ -34,7 +35,7 @@ namespace IGTAPTasMod
             if (Instance != null) Instance._timeStopLeft = Mathf.Max(Instance._timeStopLeft, duration);
         }
 
-        /// <summary>Once per rendered frame (OverlayFrame): runs the TimeStop countdown and rebuilds the section's text.</summary>
+        /// <summary>Once per rendered frame (OverlayFrame): runs the TimeStop countdown and rebuilds the rows whose values changed.</summary>
         void SampleDebug(Movement player)
         {
             bool paused = player.pauseMenu != null && player.pauseMenu.menuOpen, frozen = Time.timeScale == 0f && !paused;
@@ -43,50 +44,94 @@ namespace IGTAPTasMod
             if (frozen) _timeStopLeft = Mathf.Max(0f, _timeStopLeft - Time.unscaledDeltaTime);
         }
 
+        // The values each row's text was built from, bit for bit: SampleDebug runs every rendered frame and most rows change
+        // once a physics tick (POS every interpolated frame, TIMESTOP while it counts down), so a row is built only when
+        // one of its values changes.
+        readonly int[,] _debugInputs = new int[DebugLabels.Length, 6];
+        bool _debugBuilt;
+
+        bool DebugRowChanged(int row, float a, float b = 0f, float c = 0f, float d = 0f, float e = 0f, float f = 0f)
+        {
+            int ia = BitConverter.SingleToInt32Bits(a), ib = BitConverter.SingleToInt32Bits(b), ic = BitConverter.SingleToInt32Bits(c),
+                id = BitConverter.SingleToInt32Bits(d), ie = BitConverter.SingleToInt32Bits(e), iff = BitConverter.SingleToInt32Bits(f);
+            if (_debugBuilt && _debugInputs[row, 0] == ia && _debugInputs[row, 1] == ib && _debugInputs[row, 2] == ic
+                && _debugInputs[row, 3] == id && _debugInputs[row, 4] == ie && _debugInputs[row, 5] == iff) return false;
+            _debugInputs[row, 0] = ia; _debugInputs[row, 1] = ib; _debugInputs[row, 2] = ic;
+            _debugInputs[row, 3] = id; _debugInputs[row, 4] = ie; _debugInputs[row, 5] = iff;
+            _debugColor[row] = PanelText;
+            return true;
+        }
+
+        static float Flag(bool value) { return value ? 1f : 0f; }
+
         void BuildDebugText(Movement player, bool paused, bool frozen)
         {
-            for (int i = 0; i < _debugColor.Length; i++) { _debugY[i] = null; _debugColor[i] = PanelText; }
-            _debugX[0] = frozen ? "ON · " + D2(_timeStopLeft) + "s left" : "OFF";
-            _debugColor[0] = frozen ? JumpColor : MutedColor;
-            _debugX[1] = "×" + D2(Time.timeScale) + (paused ? " · PAUSED" : "");
+            if (DebugRowChanged(0, Flag(frozen), frozen ? _timeStopLeft : 0f))
+            {
+                _debugX[0] = frozen ? "ON · " + D2(_timeStopLeft) + "s left" : "OFF";
+                _debugColor[0] = frozen ? JumpColor : MutedColor;
+            }
+            if (DebugRowChanged(1, Time.timeScale, Flag(paused))) _debugX[1] = "×" + D2(Time.timeScale) + (paused ? " · PAUSED" : "");
 
             Vector3 scene = player.transform.position;
-            Pair(2, (Vector2)scene - CurrentOrigin());
-            _debugX[3] = player.facingRight ? "→ right" : "← left";
+            Vector2 position = (Vector2)scene - CurrentOrigin();
+            if (DebugRowChanged(2, position.x, position.y)) Pair(2, position);
+            if (DebugRowChanged(3, Flag(player.facingRight))) _debugX[3] = player.facingRight ? "→ right" : "← left";
 
             // cutsceneMode: the game drives the player (no stick) while it is not none.
             Movement.cutsceneModes mode = player.cutsceneMode;
-            _debugX[4] = mode == Movement.cutsceneModes.none ? "player" : mode == Movement.cutsceneModes.deathFreeze ? "death freeze"
-                : mode == Movement.cutsceneModes.longfall ? "long fall" : mode.ToString();
-            if (mode == Movement.cutsceneModes.none) _debugColor[4] = MutedColor;
-            else if (mode == Movement.cutsceneModes.deathFreeze) _debugColor[4] = KilledColor;
+            if (DebugRowChanged(4, (int)mode))
+            {
+                _debugX[4] = mode == Movement.cutsceneModes.none ? "player" : mode == Movement.cutsceneModes.deathFreeze ? "death freeze"
+                    : mode == Movement.cutsceneModes.longfall ? "long fall" : mode.ToString();
+                if (mode == Movement.cutsceneModes.none) _debugColor[4] = MutedColor;
+                else if (mode == Movement.cutsceneModes.deathFreeze) _debugColor[4] = KilledColor;
+            }
 
             int bounce = DebugFields.DashBounce(player);
-            _debugX[5] = (player.dashActive ? "dashing, " + F0(DebugFields.DashFrames(player)) + "f left" : player.dashCooldown > 0f ? "cooldown " + D2(player.dashCooldown) + "s" : "ready")
-                + (DebugFields.WaitingForDashInput(player) ? " · waiting for stick" : "") + (bounce > 0 ? " · bounce " + bounce + "f" : "")
-                + " · last " + F0(player.framesSinceLastDash) + "f ago";
+            bool waiting = DebugFields.WaitingForDashInput(player);
+            if (DebugRowChanged(5, Flag(player.dashActive), DebugFields.DashFrames(player), player.dashCooldown, Flag(waiting), bounce, player.framesSinceLastDash))
+                _debugX[5] = (player.dashActive ? "dashing, " + F0(DebugFields.DashFrames(player)) + "f left" : player.dashCooldown > 0f ? "cooldown " + D2(player.dashCooldown) + "s" : "ready")
+                    + (waiting ? " · waiting for stick" : "") + (bounce > 0 ? " · bounce " + bounce + "f" : "")
+                    + " · last " + F0(player.framesSinceLastDash) + "f ago";
 
             bool jump = DebugFields.JumpBuffer(player), dash = DebugFields.DashBuffer(player);
-            _debugX[6] = jump && dash ? "jump, dash" : jump ? "jump" : dash ? "dash" : "none";
-            if (!(jump || dash)) _debugColor[6] = MutedColor;
+            if (DebugRowChanged(6, Flag(jump), Flag(dash)))
+            {
+                _debugX[6] = jump && dash ? "jump, dash" : jump ? "jump" : dash ? "dash" : "none";
+                if (!(jump || dash)) _debugColor[6] = MutedColor;
+            }
 
             // The counters run on below zero; only an open window means anything.
             float ground = DebugFields.Coyote(player), wall = DebugFields.WallCoyote(player), platform = DebugFields.PlatformCoyote(player);
-            string coyote = (ground > 0f ? "ground " + F0(ground) + "f  " : "") + (wall > 0f ? "wall " + F0(wall) + "f  " : "") + (platform > 0f ? "platform " + F0(platform) + "f" : "");
-            _debugX[7] = coyote.Length > 0 ? coyote.TrimEnd() : "none";
-            if (coyote.Length == 0) _debugColor[7] = MutedColor;
+            if (DebugRowChanged(7, ground, wall, platform))
+            {
+                string coyote = (ground > 0f ? "ground " + F0(ground) + "f  " : "") + (wall > 0f ? "wall " + F0(wall) + "f  " : "") + (platform > 0f ? "platform " + F0(platform) + "f" : "");
+                _debugX[7] = coyote.Length > 0 ? coyote.TrimEnd() : "none";
+                if (coyote.Length == 0) _debugColor[7] = MutedColor;
+            }
             float wjLock = player.wallJumpMovementLockRemaining;
-            _debugX[8] = wjLock > 0f ? F0(wjLock) + "f left" : "none";
-            if (wjLock <= 0f) _debugColor[8] = MutedColor;
+            if (DebugRowChanged(8, wjLock))
+            {
+                _debugX[8] = wjLock > 0f ? F0(wjLock) + "f left" : "none";
+                if (wjLock <= 0f) _debugColor[8] = MutedColor;
+            }
 
             bool hyper = DebugFields.CanHyper(player);
-            _debugX[9] = hyper ? "ready" : "no";
-            _debugColor[9] = hyper ? GraceColor : MutedColor;
+            if (DebugRowChanged(9, Flag(hyper)))
+            {
+                _debugX[9] = hyper ? "ready" : "no";
+                _debugColor[9] = hyper ? GraceColor : MutedColor;
+            }
             // A hyper adds the pre-dash momentum when it starts over 4u below the last hyper or wall bounce (Movement.cs 1444);
             // lastHyperY starts at 1e8, before either has happened.
             float lastHyperY = DebugFields.LastHyperY(player), below = lastHyperY - 4f - scene.y;
-            _debugX[10] = lastHyperY >= 1e7f ? "yes, no hyper yet" : below > 0f ? "yes, " + D1(below) + "u under the last" : "no, " + D1(-below) + "u too high";
-            _debugColor[10] = below > 0f ? GraceColor : MutedColor;
+            if (DebugRowChanged(10, lastHyperY, scene.y))
+            {
+                _debugX[10] = lastHyperY >= 1e7f ? "yes, no hyper yet" : below > 0f ? "yes, " + D1(below) + "u under the last" : "no, " + D1(-below) + "u too high";
+                _debugColor[10] = below > 0f ? GraceColor : MutedColor;
+            }
+            _debugBuilt = true;
         }
 
         void Pair(int row, Vector2 v)

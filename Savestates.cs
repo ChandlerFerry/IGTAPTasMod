@@ -180,12 +180,25 @@ namespace IGTAPTasMod
             };
         }
 
+        // A member's FieldInfo or PropertyInfo by the target's type and its name: a tech overlay captures a state every tick.
+        private static readonly Dictionary<(Type, string), (FieldInfo field, PropertyInfo property)> Members =
+            new Dictionary<(Type, string), (FieldInfo, PropertyInfo)>();
+
+        private static (FieldInfo field, PropertyInfo property) Member(Type type, string name)
+        {
+            if (!Members.TryGetValue((type, name), out var member))
+            {
+                FieldInfo field = AccessTools.Field(type, name);
+                Members[(type, name)] = member = (field, field == null ? AccessTools.Property(type, name) : null);
+            }
+            return member;
+        }
+
         private static void CaptureMembers(object target, IEnumerable<string> names, Dictionary<string, SnapshotValue> destination)
         {
             Type type = target.GetType();
             foreach (string name in names) {
-                FieldInfo field = AccessTools.Field(type, name);
-                PropertyInfo property = field == null ? AccessTools.Property(type, name) : null;
+                (FieldInfo field, PropertyInfo property) = Member(type, name);
                 try {
                     object value = field != null ? field.GetValue(target) : property != null && property.CanRead ? property.GetValue(target, null) : null;
                     SnapshotValue encoded;
@@ -206,8 +219,7 @@ namespace IGTAPTasMod
             Type type = target.GetType();
             foreach (KeyValuePair<string, SnapshotValue> pair in values) {
                 if (skipUnlocks && IsUnlockField(pair.Key)) continue;
-                FieldInfo field = AccessTools.Field(type, pair.Key);
-                PropertyInfo property = field == null ? AccessTools.Property(type, pair.Key) : null;
+                (FieldInfo field, PropertyInfo property) = Member(type, pair.Key);
                 Type valueType = field != null ? field.FieldType : property != null && property.CanWrite ? property.PropertyType : null;
                 if (valueType == null) continue;
                 try {

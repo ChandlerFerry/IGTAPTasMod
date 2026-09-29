@@ -436,7 +436,7 @@ namespace IGTAPTasMod
                     MacroDefinition route = TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
                     if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
                     _library.selectedIndex = _library.macros.IndexOf(route);
-                    SaveLibrary();
+                    SaveSelection();
                     ReplaySelected(0, Truthy(body, "walk") ? DefaultWalkSlowdown : 0f);
                     return new { ok = true };
                 }
@@ -503,7 +503,8 @@ namespace IGTAPTasMod
             return Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
         }
 
-        object BuildTechWebState()
+        /// <summary>The techs, the lab maps and the detectors (studio static state).</summary>
+        object BuildTechStaticWebState()
         {
             return new
             {
@@ -520,9 +521,8 @@ namespace IGTAPTasMod
                     string techId = _techs.Find(t => t.labmap == id)?.id;
                     try
                     {
-                        LabMapDef lab = LoadLabMap(id);
-                        string demoFile = LabMapFile(lab.id + ".demo.json");
-                        JObject demo = demoFile == null ? null : JsonConvert.DeserializeObject<JObject>(File.ReadAllText(demoFile));
+                        LabMapDef lab = CachedLabMap(id);
+                        JObject demo = CachedLabJson(lab.id + ".demo.json");
                         return (object)new
                         {
                             lab.id, tech = techId ?? lab.tech, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
@@ -533,13 +533,27 @@ namespace IGTAPTasMod
                                 shapes = (lab.hand.shapes ?? new List<LabShapeDef>()).Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
                                 start = lab.hand.start == null ? null : new { lab.hand.start.x, lab.hand.start.y, lab.hand.start.facing },
                             },
-                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"], demoPath = demo?["path"],
+                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"],
+                            // The ghosts' paths in the lab's `ghosts` order (the in-game tints'), else the main demo's alone.
+                            ghosts = (lab.ghosts ?? new List<LabGhostDef> { new LabGhostDef() }).Select(g =>
+                            {
+                                JObject file = CachedLabJson(lab.id + (string.IsNullOrEmpty(g.demo) ? "" : "." + g.demo) + ".demo.json");
+                                return new { g.label, g.demo, path = file == null ? null : file["path"] };
+                            }),
                         };
                     }
                     catch (Exception ex) { return new { id, tech = techId, error = ex.Message } as object; }
                 }).ToList(),
-                injectedLab = InjectedLabId,
                 detectors = Enumerable.Range(0, TechNames.Length).Select(i => new { id = ((Tech)i).ToString(), label = TechNames[i] }),
+            };
+        }
+
+        /// <summary>The injected lab and the last playback's techs (studio live state).</summary>
+        object BuildTechLiveWebState()
+        {
+            return new
+            {
+                injectedLab = InjectedLabId,
                 seen = _techSeenRoute == null ? null : new
                 {
                     routeId = _techSeenRoute.id,

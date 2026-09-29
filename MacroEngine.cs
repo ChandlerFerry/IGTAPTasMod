@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
@@ -8,34 +7,20 @@ namespace IGTAPTasMod
 {
     internal sealed class MacroEngine
     {
-        private static readonly FieldInfo OnWallField = AccessTools.Field(typeof(Movement), "OnWall");
-        private static readonly FieldInfo WallCoyoteField = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
-        private static readonly FieldInfo WallJumpLockField = AccessTools.Field(typeof(Movement), "wallJumpMovementLockRemaining");
-        private static readonly FieldInfo WallJumpDirectionField = AccessTools.Field(typeof(Movement), "wallJumpDirection");
-        private static readonly FieldInfo JumpBufferField = AccessTools.Field(typeof(Movement), "jumpBuffer");
-        private static readonly FieldInfo DashBufferField = AccessTools.Field(typeof(Movement), "dashBuffer");
-        private static readonly FieldInfo JumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
-        private static readonly FieldInfo OnGroundField = AccessTools.Field(typeof(Movement), "onGround");
-        private static readonly FieldInfo IsDeadField = AccessTools.Field(typeof(Movement), "isDead");
-        private static readonly FieldInfo VelocityField = AccessTools.Field(typeof(Movement), "Velocity");
-        private static readonly FieldInfo MomentumField = AccessTools.Field(typeof(Movement), "momentum");
-        private static readonly FieldInfo MovingPlatformVelocityField = AccessTools.Field(typeof(Movement), "movingPlatformVelocity");
-        private static readonly FieldInfo LastAppliedMomentumField = AccessTools.Field(typeof(Movement), "lastAppliedMomentum");
-        private static readonly FieldInfo AtApexField = AccessTools.Field(typeof(Movement), "atJumpApex");
-        private static readonly FieldInfo CoyoteField = AccessTools.Field(typeof(Movement), "coyoteFrames");
-        private static readonly FieldInfo DashCooldownField = AccessTools.Field(typeof(Movement), "dashCooldown");
-        private static readonly FieldInfo AirDashesField = AccessTools.Field(typeof(Movement), "airDashesLeft");
-        private static readonly FieldInfo AirJumpsField = AccessTools.Field(typeof(Movement), "airJumpsLeft");
-        private static readonly FieldInfo DashActiveField = AccessTools.Field(typeof(Movement), "dashActive");
-        private static readonly FieldInfo DashFramesRemainingField = AccessTools.Field(typeof(Movement), "dashFramesRemaining");
-        private static readonly FieldInfo FacingRightField = AccessTools.Field(typeof(Movement), "facingRight");
-        private static readonly FieldInfo CutsceneModeField = AccessTools.Field(typeof(Movement), "cutsceneMode");
-        private static readonly FieldInfo FramesSinceLastDashField = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
-        private static readonly FieldInfo CanHyperField = AccessTools.Field(typeof(Movement), "canHyper");
-        private static readonly FieldInfo WallBouncePossibleField = AccessTools.Field(typeof(Movement), "wallBouncePossible");
-        private static readonly FieldInfo HitDashResetterField = AccessTools.Field(typeof(Movement), "hitDashResetterWhileInCurrentDash");
-        private static readonly FieldInfo WaitingForDashInputField = AccessTools.Field(typeof(Movement), "WaitingForDashInput");
+        // Movement's private fields the engine reads and writes every tick, as typed refs (FieldInfo.GetValue/SetValue box);
+        // its public ones it uses directly.
+        private static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer");
+        private static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
+        private static readonly AccessTools.FieldRef<Movement, bool> DashBuffer = AccessTools.FieldRefAccess<Movement, bool>("dashBuffer");
+        private static readonly AccessTools.FieldRef<Movement, bool> IsDead = AccessTools.FieldRefAccess<Movement, bool>("isDead");
+        private static readonly AccessTools.FieldRef<Movement, bool> CanHyper = AccessTools.FieldRefAccess<Movement, bool>("canHyper");
+        private static readonly AccessTools.FieldRef<Movement, bool> WallBouncePossible = AccessTools.FieldRefAccess<Movement, bool>("wallBouncePossible");
+        private static readonly AccessTools.FieldRef<Movement, bool> WaitingForDashInput = AccessTools.FieldRefAccess<Movement, bool>("WaitingForDashInput");
+        private static readonly AccessTools.FieldRef<Movement, float> WallCoyoteFrames = AccessTools.FieldRefAccess<Movement, float>("wallCoyoteFrames");
+        private static readonly AccessTools.FieldRef<Movement, float> DashFramesRemaining = AccessTools.FieldRefAccess<Movement, float>("dashFramesRemaining");
+        private static readonly AccessTools.FieldRef<Movement, float> LastAppliedMomentum = AccessTools.FieldRefAccess<Movement, float>("lastAppliedMomentum");
 
+        // Left out of CaptureState (FieldState.For): a resume always brings the steps it plays.
         private List<MacroStep> _steps;
         private string _macroName;
         private int _stepIndex = -1;
@@ -95,7 +80,7 @@ namespace IGTAPTasMod
         public Vector2 StickFor(Movement movement)
         {
             Vector2 stick = TickStick;
-            if (_turnArmed && ReadBool(WaitingForDashInputField, movement))
+            if (_turnArmed && WaitingForDashInput(movement))
             {
                 if (_turnX.HasValue) stick.x = _turnX.Value;
                 if (_turnY.HasValue) stick.y = _turnY.Value;
@@ -116,9 +101,8 @@ namespace IGTAPTasMod
         public void AfterFixedTick(Movement movement)
         {
             if (!IsRunning || (!_pendingTurnX.HasValue && !_pendingTurnY.HasValue)) return;
-            if (!string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase)
-                || ReadFloat(FramesSinceLastDashField, movement) != 0f) return;
-            _turnArmed = ReadBool(WaitingForDashInputField, movement);
+            if (movement.cutsceneMode != Movement.cutsceneModes.dash || movement.framesSinceLastDash != 0f) return;
+            _turnArmed = WaitingForDashInput(movement);
             _turnX = _pendingTurnX;
             _turnY = _pendingTurnY;
             _pendingTurnX = _pendingTurnY = null;
@@ -254,21 +238,21 @@ namespace IGTAPTasMod
         {
             _turnArmed = false;
             if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0) { _tickStick = Vector2.zero; return; }
-            string mode = ReadObject(CutsceneModeField, movement);
-            bool dash = string.Equals(mode, "dash", StringComparison.OrdinalIgnoreCase);
-            bool dashEnds = dash && ReadBool(DashActiveField, movement) && ReadFloat(DashFramesRemainingField, movement) <= 0f;
-            _tickLocked = !string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase) && !dashEnds;
+            Movement.cutsceneModes mode = movement.cutsceneMode;
+            bool dash = mode == Movement.cutsceneModes.dash;
+            bool dashEnds = dash && movement.dashActive && DashFramesRemaining(movement) <= 0f;
+            _tickLocked = mode != Movement.cutsceneModes.none && !dashEnds;
             MacroStep due = _stepIndex >= 0 && _stepIndex < _steps.Count ? _steps[_stepIndex] : null;
             float nextY = due != null && due.type == MacroStepType.RawInput ? due.rawMoveY : 0f;
             bool dashJumped = false;
-            if (dash && _dashJumpFrame > 0 && ReadFloat(FramesSinceLastDashField, movement) + 1f >= _dashJumpFrame)
+            if (dash && _dashJumpFrame > 0 && movement.framesSinceLastDash + 1f >= _dashJumpFrame)
             {
                 _dashJumpFrame = 0;
                 PressJump(movement);
                 _rawJumpHeld = true;
                 dashJumped = true;
             }
-            if (_springDashFrame > 0 && string.Equals(mode, "spring", StringComparison.OrdinalIgnoreCase) && ++_springTicks >= _springDashFrame)
+            if (_springDashFrame > 0 && mode == Movement.cutsceneModes.spring && ++_springTicks >= _springDashFrame)
             {
                 _springDashFrame = 0;
                 PressDash(movement);
@@ -282,8 +266,7 @@ namespace IGTAPTasMod
 
         public void WallTouch(Movement movement, bool touchedGround)
         {
-            if (!IsRunning || touchedGround || !_tickLocked
-                || !string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase)) return;
+            if (!IsRunning || touchedGround || !_tickLocked || movement.cutsceneMode != Movement.cutsceneModes.dash) return;
             PressStep(movement);
         }
 
@@ -376,9 +359,9 @@ namespace IGTAPTasMod
             JumpHeld = false;
             if (movement == null) return;
             SetDirection(movement, 0);
-            SetField(JumpBufferField, movement, false);
-            SetField(JumpCutBufferField, movement, false);
-            SetField(DashBufferField, movement, false);
+            JumpBuffer(movement) = false;
+            JumpCutBuffer(movement) = false;
+            DashBuffer(movement) = false;
         }
 
         internal const string RewardFinishReason = "Reward collected";
@@ -416,9 +399,7 @@ namespace IGTAPTasMod
             {
                 NormalizeQuickRestartState(movement);
                 PinSynchronizationPosition(movement);
-                bool stable = !ReadBool(IsDeadField, movement)
-                    && ReadBool(OnGroundField, movement)
-                    && string.Equals(ReadObject(CutsceneModeField, movement), "none", StringComparison.OrdinalIgnoreCase);
+                bool stable = !IsDead(movement) && movement.onGround && movement.cutsceneMode == Movement.cutsceneModes.none;
                 _stableTicks = stable ? _stableTicks + 1 : 0;
                 Status = "Synchronizing start: " + _stableTicks + "/3 stable ticks";
                 if (_stableTicks < 3) return;
@@ -582,7 +563,7 @@ namespace IGTAPTasMod
 
         private static bool IsWallJumpAvailable(Movement movement)
         {
-            return ReadBool(OnWallField, movement) || ReadFloat(WallCoyoteField, movement) > 0f;
+            return movement.OnWall || WallCoyoteFrames(movement) > 0f;
         }
 
         public int Clock;
@@ -593,15 +574,14 @@ namespace IGTAPTasMod
 
         private void PressJump(Movement movement)
         {
-            if (JumpCutBufferField == null || JumpBufferField == null) return;
             LastJumpPress = Clock;
             JumpPresses++;
             JumpHeld = true;
-            SetField(JumpBufferField, movement, true);
+            JumpBuffer(movement) = true;
             movement.CancelInvoke("cancelJumpBuffer");
             movement.CancelInvoke("cancelJumpCutBuffer");
-            SetField(JumpCutBufferField, movement, false);
-            bool dashing = string.Equals(ReadObject(CutsceneModeField, movement), "dash", StringComparison.OrdinalIgnoreCase);
+            JumpCutBuffer(movement) = false;
+            bool dashing = movement.cutsceneMode == Movement.cutsceneModes.dash;
             movement.Invoke("cancelJumpBuffer", dashing ? 0.2f : 0.12f);
         }
 
@@ -609,7 +589,7 @@ namespace IGTAPTasMod
         {
             LastJumpRelease = Clock;
             JumpHeld = false;
-            SetField(JumpCutBufferField, movement, true);
+            JumpCutBuffer(movement) = true;
             movement.CancelInvoke("cancelJumpCutBuffer");
             movement.Invoke("cancelJumpCutBuffer", 0.26f);
         }
@@ -618,7 +598,7 @@ namespace IGTAPTasMod
         {
             LastDashPress = Clock;
             DashPresses++;
-            SetField(DashBufferField, movement, true);
+            DashBuffer(movement) = true;
             movement.CancelInvoke("cancelDashBuffer");
             movement.Invoke("cancelDashBuffer", 0.12f);
         }
@@ -642,22 +622,22 @@ namespace IGTAPTasMod
         private static void NormalizeQuickRestartState(Movement movement)
         {
             SetDirection(movement, 0);
-            SetField(VelocityField, movement, Vector2.zero);
-            SetField(MomentumField, movement, Vector2.zero);
-            SetField(MovingPlatformVelocityField, movement, Vector2.zero);
-            SetField(LastAppliedMomentumField, movement, 0f);
-            SetField(OnWallField, movement, false);
-            SetField(WallCoyoteField, movement, 0f);
-            SetField(WallJumpLockField, movement, -1f);
-            SetField(WallJumpDirectionField, movement, 0f);
-            SetField(JumpBufferField, movement, false);
-            SetField(JumpCutBufferField, movement, false);
-            SetField(DashBufferField, movement, false);
-            SetField(DashActiveField, movement, false);
-            SetField(DashCooldownField, movement, -1f);
-            SetField(CanHyperField, movement, false);
-            SetField(WallBouncePossibleField, movement, false);
-            SetField(HitDashResetterField, movement, false);
+            movement.Velocity = Vector2.zero;
+            movement.momentum = Vector2.zero;
+            movement.movingPlatformVelocity = Vector2.zero;
+            LastAppliedMomentum(movement) = 0f;
+            movement.OnWall = false;
+            WallCoyoteFrames(movement) = 0f;
+            movement.wallJumpMovementLockRemaining = -1f;
+            movement.wallJumpDirection = 0f;
+            JumpBuffer(movement) = false;
+            JumpCutBuffer(movement) = false;
+            DashBuffer(movement) = false;
+            movement.dashActive = false;
+            movement.dashCooldown = -1f;
+            CanHyper(movement) = false;
+            WallBouncePossible(movement) = false;
+            movement.hitDashResetterWhileInCurrentDash = false;
 
             Component body = movement.GetComponent("Rigidbody2D");
             if (body == null) return;
@@ -674,27 +654,15 @@ namespace IGTAPTasMod
             Physics2D.SyncTransforms();
         }
 
-        private static bool ReadBool(FieldInfo field, object instance)
+        /// <summary>
+        /// FloatingOrigin moved every root object back by <paramref name="by"/> (MoveRootTransforms): the start pin is a scene
+        /// position, so it moves with the world. Left in place, a rebase during the stable-tick wait (a route whose course
+        /// start lies past Threshold from the origin the replay left) pins the player where the course was, over nothing: it
+        /// never lands, and each frame rebases again.
+        /// </summary>
+        public void WorldMoved(Vector2 by)
         {
-            return field != null && field.GetValue(instance) is bool && (bool)field.GetValue(instance);
-        }
-
-        private static float ReadFloat(FieldInfo field, object instance)
-        {
-            if (field == null) return 0f;
-            object value = field.GetValue(instance);
-            return value is float ? (float)value : 0f;
-        }
-
-        private static string ReadObject(FieldInfo field, object instance)
-        {
-            object value = field == null ? null : field.GetValue(instance);
-            return value == null ? "" : value.ToString();
-        }
-
-        private static void SetField(FieldInfo field, object instance, object value)
-        {
-            if (field != null) field.SetValue(instance, value);
+            if (_hasSynchronizationPosition) _synchronizationPosition -= by;
         }
 
         private bool ShouldEnd(Movement movement, MacroStep step)

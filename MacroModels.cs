@@ -129,5 +129,9 @@ namespace IGTAPTasMod
         public bool forceBreakerLights;
         public bool checkpointRespawns;
         public string fullTasGoalsRun = "";
+        /// <summary>The selected route's id (the library's selectedIndex, saved without rewriting routes.json).</summary>
+        public string selectedRouteId = "";
+        /// <summary>1x playback without the 280 fps cap on real frames; the game time per frame stays on the fixed grid.</summary>
+        public bool fastPlayback;
     }
 }

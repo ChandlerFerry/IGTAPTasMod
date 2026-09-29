@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using IGTAPTasMod;
 using UnityEngine;
@@ -132,7 +133,7 @@ namespace IGTAP.EngineSim
         {
             var threads = new Thread[workers];
             _workers = new Worker[workers];
-            _stateBudget = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 2 / workers;
+            _stateBudget = AvailableMemory() / 2 / workers;
             StatesPerWorker = (int)Math.Max(512, _stateBudget / Worker.StartStateBytes);
             _partitions = Enumerable.Range(0, workers).Select(i => _memory == null ? new List<Memory.Source>()
                 : _memory.Sources.Where((s, k) => k % workers == i).ToList()).ToArray();
@@ -144,7 +145,7 @@ namespace IGTAP.EngineSim
                 List<InputTick> plateau = _memory != null && _memory.Plateau.Count > 0 ? _memory.Plateau[i % _memory.Plateau.Count] : null;
                 threads[i] = new Thread(() =>
                 {
-                    var worker = new Worker(this, _createSimulation(), seed, seeds, _partitions[index], plateau);
+                    var worker = new Worker(this, index, _createSimulation(), seed, seeds, _partitions[index], plateau);
                     _workers[index] = worker;
                     worker.Loop();
                 }) { IsBackground = true, Name = "solver-" + i };
@@ -152,6 +153,40 @@ namespace IGTAP.EngineSim
             }
             return threads;
         }
+
+        /// <summary>The memory the states may take half of: the machine's physical memory, or the GC's limit when that is lower.
+        /// (The GC reports its heap hard limit alone when one is set, as the CLI's 70 GiB is, however much RAM there is.)</summary>
+        static long AvailableMemory()
+        {
+            long limit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, ram = PhysicalMemory();
+            return ram > 0 ? Math.Min(limit, ram) : limit;
+        }
+
+        /// <summary>The machine's physical memory in bytes, 0 when it can't be read.</summary>
+        static long PhysicalMemory()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var status = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
+                return GlobalMemoryStatusEx(ref status) != 0 ? (long)status.TotalPhys : 0;
+            }
+            // "MemTotal:       65756408 kB"
+            if (OperatingSystem.IsLinux() && System.IO.File.Exists("/proc/meminfo"))
+                foreach (string line in System.IO.File.ReadLines("/proc/meminfo"))
+                    if (line.StartsWith("MemTotal:", StringComparison.Ordinal))
+                        return line.Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: >= 2 } parts && long.TryParse(parts[1], out long kb) ? kb * 1024 : 0;
+            return 0;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MemoryStatusEx
+        {
+            public uint Length, MemoryLoad;
+            public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
+        }
+
+        [DllImport("kernel32.dll")]
+        static extern int GlobalMemoryStatusEx(ref MemoryStatusEx status);
 
         public Memory Export(int timeoutMs)
         {
@@ -212,6 +247,11 @@ namespace IGTAP.EngineSim
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
         }
 
+        // The bests taken, in order, waiting for Improved: queued under Shared's lock as Shared takes them, raised outside it.
+        readonly System.Collections.Concurrent.ConcurrentQueue<(float time, long runTicks, List<InputTick> inputs, string how)> _reports
+            = new System.Collections.Concurrent.ConcurrentQueue<(float, long, List<InputTick>, string)>();
+        readonly object _reporting = new object();
+
         bool Offer(float time, long runTicks, List<InputTick> inputs, string how)
         {
             lock (Shared)
@@ -221,9 +261,23 @@ namespace IGTAP.EngineSim
                 Shared.RunTicks = runTicks;
                 Shared.Inputs = inputs;
                 Shared.Version++;
-                Improved?.Invoke(time, runTicks, inputs, how);
+                _reports.Enqueue((time, runTicks, inputs, how));
             }
+            Report();
             return true;
+        }
+
+        // Improved's handlers write files and the console: they run outside Shared's lock (workers keep adopting and offering),
+        // one at a time and in the order the bests were taken. A worker that finds another reporting leaves its best to it: the
+        // reporter looks at the queue again after letting go.
+        void Report()
+        {
+            while (!_reports.IsEmpty && Monitor.TryEnter(_reporting))
+                try
+                {
+                    while (_reports.TryDequeue(out var r)) Improved?.Invoke(r.time, r.runTicks, r.inputs, r.how);
+                }
+                finally { Monitor.Exit(_reporting); }
         }
 
         sealed class Cell
@@ -234,6 +288,9 @@ namespace IGTAP.EngineSim
             public float Rank, Distance;
             /// <summary>Its map cell: what a state's eviction weighs (the draw pool's pick weight).</summary>
             public long Key;
+            /// <summary>The worker that last kept a state for it (filed it, or replayed to it): the one whose own draws it is in.
+            /// Written by any worker, read racily by the rest; a stale read only puts a draw in the other pool.</summary>
+            public int Owner;
         }
 
         static bool Earlier(float rank, int length, Cell than) { return than.Rank > rank || (than.Rank == rank && than.Length > length); }
@@ -344,11 +401,13 @@ namespace IGTAP.EngineSim
             const float SegmentSlack = .2f;
             const int StateEvery = 16;
             // Each worker keeps only the states it made (a snapshot holds its own world's objects), and a cell it lacks one
-            // for is replayed. An explore draws up to this many cells and takes the first it has a state for.
-            // ponytail: favours each worker's own cells; draw 1 if the search narrows.
+            // for is replayed. So a worker draws mostly from the cells it owns (Cell.Owner: it kept their states last), and an
+            // explore draws up to this many cells and takes the first it has a state for.
             const int CachedDraws = 3;
             const int BranchCheckEvery = 10000;
             readonly OfflineSolver _owner;
+            /// <summary>This worker's index: the Cell.Owner of the cells it keeps states for.</summary>
+            readonly int _index;
             readonly Simulation _sim;
             /// <summary>Decodes this world's copy of a stored goal state (SnapshotStore.StateOf).</summary>
             readonly SnapshotStore _store;
@@ -358,9 +417,12 @@ namespace IGTAP.EngineSim
             readonly System.Collections.Concurrent.ConcurrentDictionary<long, Cell> _archive;
             readonly Dictionary<Cell, Entry> _states = new Dictionary<Cell, Entry>();
             // Eviction is by the draw pool's pick weight first and recency second, so the frontier's hot cells stay through
-            // a wide draw's churn (plain LRU let them go). Superseded entries drop out when they surface.
+            // a wide draw's churn (plain LRU let them go). Every touch queues a record; one whose use isn't its entry's
+            // latest (touched since, or superseded) is stale and skipped, and the queue is rebuilt from the live entries once
+            // it holds four records for each.
             readonly PriorityQueue<Entry, (double weight, long use)> _evict = new PriorityQueue<Entry, (double, long)>();
             long _use;
+            int _cap;
 
             sealed class Entry
             {
@@ -368,10 +430,15 @@ namespace IGTAP.EngineSim
                 public SimSnapshot State;
                 /// <summary>When it was last touched; 0 once a newer entry for its cell replaces it.</summary>
                 public long Use;
+                /// <summary>Its pick weight when last touched: its eviction priority, with Use.</summary>
+                public double Weight;
             }
-            Cell[] _pool = Array.Empty<Cell>();
-            double[] _poolWeights = Array.Empty<double>();
-            int _poolPicks;
+            // The draw pools, rebuilt by Pool: every filed cell, and the ones this worker owns, each with its cumulative pick
+            // weights; an own draw is taken with probability _ownShare.
+            Cell[] _pool = Array.Empty<Cell>(), _ownPool = Array.Empty<Cell>();
+            double[] _poolWeights = Array.Empty<double>(), _ownWeights = Array.Empty<double>();
+            int _poolCount, _ownCount, _poolPicks;
+            double _ownShare;
             readonly bool _dash, _omni;
             float _best = float.PositiveInfinity;
             long _bestRunTicks = long.MaxValue;
@@ -446,9 +513,12 @@ namespace IGTAP.EngineSim
             public volatile Handover LastHandover;
             public volatile int Exported;
 
-            public Worker(OfflineSolver owner, Simulation sim, int seed, List<List<InputTick>> seeds, List<Memory.Source> restore, List<InputTick> plateau)
+            public Worker(OfflineSolver owner, int index, Simulation sim, int seed, List<List<InputTick>> seeds, List<Memory.Source> restore, List<InputTick> plateau)
             {
                 _owner = owner;
+                _index = index;
+                _afterTick = AfterTick;
+                _onStep = OnStep;
                 _sim = sim;
                 _store = new SnapshotStore(sim);
                 _gate = new ContactProbe(sim);
@@ -550,6 +620,8 @@ namespace IGTAP.EngineSim
                 List<InputTick> inputs;
                 float time;
                 long runTicks;
+                // Shared.Version only moves under the lock, after the rest: an unchanged one skips the lock on every loop.
+                if (Volatile.Read(ref _owner.Shared.Version) == _sharedVersion) return;
                 lock (_owner.Shared)
                 {
                     if (_owner.Shared.Version == _sharedVersion) return;
@@ -566,15 +638,15 @@ namespace IGTAP.EngineSim
 
             void Explore()
             {
-                if (_poolPicks <= 0 || _owner._cells > _pool.Length + _pool.Length / 8 + 16) Pool();
-                if (_pool.Length == 0) { Try(RandomBurst(new List<InputTick>()), "explore"); return; }
+                if (_poolPicks <= 0 || _owner._cells > _poolCount + _poolCount / 8 + 16) Pool();
+                if (_poolCount == 0) { Try(RandomBurst(new List<InputTick>()), "explore"); return; }
                 Cell chosen = Draw();
                 for (int draw = 1; draw < CachedDraws && !_states.ContainsKey(chosen); draw++) chosen = Draw();
                 _poolPicks--;
                 Interlocked.Increment(ref chosen.Picks);
                 SimSnapshot from = StateOf(chosen);
                 if (from == null) return;
-                List<InputTick> inputs = RandomBurst(chosen.Source.Take(chosen.Length).ToList());
+                List<InputTick> inputs = RandomBurst(chosen.Source.GetRange(0, Math.Min(chosen.Length, chosen.Source.Count)));
                 _splicing = _bestInputs != null;
                 _spliceAt = -1;
                 _fromCell = chosen;
@@ -584,7 +656,7 @@ namespace IGTAP.EngineSim
                 _recordContacts = false;
                 if (_died) _contacts.Add((_endTick, Contact.Died));
                 int lo = Math.Max(chosen.Length, from.Tick + 1);
-                _contacts.RemoveAll(c => c.tick < lo);
+                _log.DropBefore(lo);
                 (int tick, Contact kind)? graft = _contacts.Count > 0 && _rng.NextDouble() < GraftRate ? _contacts[_rng.Next(_contacts.Count)] : null;
                 _splicing = false;
                 // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
@@ -785,14 +857,12 @@ namespace IGTAP.EngineSim
 
             void Pool()
             {
-                int n = _owner._cells + 64;
-                var cells = new List<Cell>(n);
-                var keys = new List<long>(n);
+                int count = 0;
                 float near = float.PositiveInfinity, far = float.NegativeInfinity;
                 foreach (KeyValuePair<long, Cell> pair in _archive)
                 {
-                    keys.Add(pair.Key);
-                    cells.Add(pair.Value);
+                    if (count == _pool.Length) Array.Resize(ref _pool, Math.Max(_owner._cells + 64, count * 2));
+                    _pool[count++] = pair.Value;
                     float d = pair.Value.Distance;
                     if (float.IsFinite(d))
                     {
@@ -800,30 +870,56 @@ namespace IGTAP.EngineSim
                         if (d > far) far = d;
                     }
                 }
+                if (count < _poolCount) Array.Clear(_pool, count, _poolCount - count);
+                if (_poolWeights.Length < count)
+                {
+                    _poolWeights = new double[_pool.Length];
+                    _ownPool = new Cell[_pool.Length];
+                    _ownWeights = new double[_pool.Length];
+                }
                 // The guide's closeness to the target: 1 for the pool's closest cell to it, 0 for cells a span of distance
                 // further out (the span capped, so one cell that wandered off doesn't flatten the rest).
                 float span = float.IsFinite(near) ? Math.Clamp(far - near, CellSize, GuideSpan) : 0f;
-                var weights = new List<double>(n);
-                double total = 0;
-                for (int i = 0; i < cells.Count; i++)
+                double total = 0, own = 0;
+                int owned = 0;
+                for (int i = 0; i < count; i++)
                 {
-                    float d = cells[i].Distance;
+                    Cell cell = _pool[i];
+                    float d = cell.Distance;
                     float closeness = span <= 0f || !float.IsFinite(d) ? 0f : Math.Clamp((near + span - d) / span, 0f, 1f);
-                    total += Weight(keys[i], cells[i], closeness);
-                    weights.Add(total);
+                    double w = Weight(cell.Key, cell, closeness);
+                    total += w;
+                    _poolWeights[i] = total;
+                    if (cell.Owner != _index) continue;
+                    own += w;
+                    _ownPool[owned] = cell;
+                    _ownWeights[owned++] = own;
                 }
-                _pool = cells.ToArray();
-                _poolWeights = weights.ToArray();
-                _poolPicks = Math.Max(PoolPicks, _pool.Length / 256);
+                if (owned < _ownCount) Array.Clear(_ownPool, owned, _ownCount - owned);
+                _poolCount = count;
+                _ownCount = owned;
+                // A worker's own draws come in proportion to the pick weight it owns (OwnShare of its draws when every worker
+                // owns an even share), the rest from every cell, so summed over the workers each cell is drawn near its share
+                // of the whole pool, as one global pool drew it, while most draws land on cells this worker has states for.
+                // At most MostOwnShare, so the others' cells are drawn here too and a cell owned by a busy worker doesn't
+                // starve; none when this worker owns every cell (the own pool is the whole pool).
+                _ownShare = owned == 0 || owned == count ? 0 : Math.Min(MostOwnShare, OwnShare * _owner._workers.Length * own / total);
+                _poolPicks = Math.Max(PoolPicks, count / 256);
             }
             const int PoolPicks = 16;
+            const double OwnShare = .9, MostOwnShare = .95;
             /// <summary>The distance the guide's closeness fades out over.</summary>
             const float GuideSpan = 2000f;
 
             Cell Draw()
             {
-                int i = Array.BinarySearch(_poolWeights, _rng.NextDouble() * _poolWeights[_pool.Length - 1]);
-                return _pool[Math.Min(i < 0 ? ~i : i, _pool.Length - 1)];
+                return _ownShare > 0 && _rng.NextDouble() < _ownShare ? DrawFrom(_ownPool, _ownWeights, _ownCount) : DrawFrom(_pool, _poolWeights, _poolCount);
+            }
+
+            Cell DrawFrom(Cell[] pool, double[] weights, int count)
+            {
+                int i = Array.BinarySearch(weights, 0, count, _rng.NextDouble() * weights[count - 1]);
+                return pool[Math.Min(i < 0 ? ~i : i, count - 1)];
             }
 
             SimSnapshot StateOf(Cell cell)
@@ -860,7 +956,11 @@ namespace IGTAP.EngineSim
             void Touch(Entry entry)
             {
                 entry.Use = ++_use;
-                _evict.Enqueue(entry, (Weight(entry.Cell.Key, entry.Cell, 0f), entry.Use));
+                entry.Weight = Weight(entry.Cell.Key, entry.Cell, 0f);
+                _evict.Enqueue(entry, (entry.Weight, entry.Use));
+                if (_evict.Count <= 4 * _states.Count + 1024) return;
+                _evict.Clear();
+                _evict.EnqueueRange(_states.Values.Select(live => (live, (live.Weight, live.Use))));
             }
             List<Cell> _capturePath;
             int _captureNext;
@@ -895,14 +995,12 @@ namespace IGTAP.EngineSim
                 if (_states.TryGetValue(cell, out Entry old)) old.Use = 0;
                 var entry = new Entry { Cell = cell, State = state };
                 _states[cell] = entry;
+                cell.Owner = _index;
                 Touch(entry);
                 int cap = (int)Math.Max(512, _owner._stateBudget / Math.Max(1024.0, _stateBytes));
-                _owner.StatesPerWorker = cap;
-                while (_states.Count > cap && _evict.TryDequeue(out Entry victim, out _))
-                {
-                    if (victim.Use == 0 || !_states.TryGetValue(victim.Cell, out Entry now) || now != victim) continue;
-                    _states.Remove(victim.Cell);
-                }
+                if (cap != _cap) _owner.StatesPerWorker = _cap = cap;
+                while (_states.Count > cap && _evict.TryDequeue(out Entry victim, out var priority))
+                    if (priority.use == victim.Use) _states.Remove(victim.Cell);
             }
 
             void Splice(List<InputTick> run, int at, int bestTick, SimSnapshot from)
@@ -1478,78 +1576,15 @@ namespace IGTAP.EngineSim
                 _waypoints = from != null && from.Tick < inputs.Count ? from.Waypoints : 0;
                 _avoided = false;
                 if (_recordContacts) _log.Reset();
-                Dictionary<long, float> visits = Visits;
-                bool corners = _recordContacts && _omni;
-                Action<int> onStep = path == null && visits == null && !corners ? null : _ =>
-                {
-                    if (corners) RecordSlide();
-                    if (path == null && visits == null) return;
-                    WorldPos p = _sim.PlayerWorld;
-                    if (visits != null)
-                    {
-                        long cell = VisitKey(p, _owner.VisitCell);
-                        float t = _sim.Elapsed(null);
-                        if (!visits.TryGetValue(cell, out float seen) || t < seen) visits[cell] = t;
-                    }
-                    if (path == null) return;
-                    if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
-                        lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
-                    foreach (Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
-                };
-                RunResult result = _sim.Run(inputs, from, tick =>
-                {
-                    _endTick = tick;
-                    if (_recordContacts) RecordContact(tick);
-                    if (_clipWatch >= 0 && tick > _clipWatch && tick <= _clipWatch + 3 && !_clipLanded && _watchAir && _sim.Player.Velocity.y >= 780f)
-                    {
-                        _clipLanded = true;
-                        if (ClipLog) Console.WriteLine($"CLIPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
-                    }
-                    _watchAir = !_sim.Player.onGround;
-                    if (_setupWatch >= 0 && tick > _setupWatch && !_setupLanded && WallBehind(_sim.Player) != 0f)
-                    {
-                        _setupLanded = true;
-                        if (ClipLog) Console.WriteLine($"SETUPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
-                    }
-                    if (_avoided) return false;
-                    bool recorded = replay != null && tick < replay.Body.Length;
-                    if (recorded)
-                    {
-                        replay.Body[tick] = _sim.Physics.PlayerBody();
-                        if (tick % StateEvery == 0) replay.Fingerprint[tick] = _sim.Fingerprint();
-                        replay.Waypoints[tick] = _waypoints;
-                    }
-                    else if (tick >= converge && _bestRun != null && tick < _bestRun.Fingerprint.Length && _bestRun.Fingerprint[tick] is int best
-                        && _sim.Physics.PlayerBody() == _bestRun.Body[tick] && _sim.Fingerprint() == best && _waypoints == _bestRun.Waypoints[tick])
-                    {
-                        _converged = true;
-                        return false;
-                    }
-                    courseScript active = _sim.TimingCourse();
-                    bool timing = _sim.TimedFromRunStart || active != null;
-                    long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true), _sim.Progress)
-                        : CellKey(Place(_sim, _swapper, false) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
-                    bool losing = false;
-                    float elapsed = _sim.Elapsed(active);
-                    int filed = Math.Min(tick, inputs.Count);
-                    if (recorded) { replay.Keys[tick] = key; replay.Elapsed[tick] = elapsed; }
-                    replay?.Record(filed, key, elapsed);
-                    if (elapsed >= 0f)
-                    {
-                        if (tick > judgeAfter && elapsed > _best) losing = true;
-                        if (cut && tick > judgeAfter && _bestRun.Arrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
-                        if (_splicing && _spliceAt < 0 && from != null && tick > from.Tick && tick < inputs.Count && !_sim.Engine.InputsExhausted
-                            && _bestRun.First.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
-                        {
-                            _spliceAt = tick;
-                            _spliceBestTick = first.tick;
-                        }
-                    }
-                    if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
-                    if (_capturePath != null && CaptureOnPath(tick)) return false;
-                    FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, replay?.States);
-                    return !losing;
-                }, _goalMode ? 400 + inputs.Count : 400, onStep);
+                _runCorners = _recordContacts && _omni;
+                _runInputs = inputs;
+                _runFrom = from;
+                _runReplay = replay;
+                _runCut = cut;
+                _runJudgeAfter = judgeAfter;
+                _runConverge = converge;
+                RunResult result = _sim.Run(inputs, from, _afterTick, _goalMode ? 400 + inputs.Count : 400,
+                    path == null && Visits == null && !_runCorners ? null : _onStep);
                 if (_capturePath != null) Interlocked.Add(ref _owner.ReplayTicks, result.Stepped);
                 else
                 {
@@ -1561,6 +1596,105 @@ namespace IGTAP.EngineSim
                 finishTick = result.FinishTick;
                 runTicks = result.PhysicsTicks;
                 return result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
+            }
+
+            // The run Evaluate is on, for its step and tick callbacks: the delegates are made once, so a run allocates no
+            // closure. (Evaluate never runs inside one of its own callbacks.)
+            readonly Func<int, bool> _afterTick;
+            readonly Action<int> _onStep;
+            List<InputTick> _runInputs;
+            SimSnapshot _runFrom;
+            Replay _runReplay;
+            bool _runCut, _runCorners;
+            int _runJudgeAfter, _runConverge;
+
+            void OnStep(int step)
+            {
+                if (_runCorners) RecordSlide();
+                ForcedPath path = _owner._path;
+                Dictionary<long, float> visits = Visits;
+                if (path == null && visits == null) return;
+                WorldPos p = _sim.PlayerWorld;
+                if (visits != null)
+                {
+                    long cell = VisitKey(p, _owner.VisitCell);
+                    float t = _sim.Elapsed(null);
+                    if (!visits.TryGetValue(cell, out float seen) || t < seen) visits[cell] = t;
+                }
+                if (path == null) return;
+                if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
+                    lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
+                foreach (Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
+            }
+
+            bool AfterTick(int tick)
+            {
+                List<InputTick> inputs = _runInputs;
+                Replay replay = _runReplay;
+                _endTick = tick;
+                // The tick's WallBehind probe (NaN: not cast yet), cast once for the contacts, the set-up watch and the cell key.
+                float behind = float.NaN;
+                if (_recordContacts)
+                {
+                    RecordContact(tick);
+                    behind = _log.Behind;
+                }
+                if (_clipWatch >= 0 && tick > _clipWatch && tick <= _clipWatch + 3 && !_clipLanded && _watchAir && _sim.Player.Velocity.y >= 780f)
+                {
+                    _clipLanded = true;
+                    if (ClipLog) Console.WriteLine($"CLIPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
+                }
+                _watchAir = !_sim.Player.onGround;
+                if (_setupWatch >= 0 && tick > _setupWatch && !_setupLanded && Behind(_sim.Player, ref behind) != 0f)
+                {
+                    _setupLanded = true;
+                    if (ClipLog) Console.WriteLine($"SETUPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
+                }
+                if (_avoided) return false;
+                bool recorded = replay != null && tick < replay.Body.Length;
+                if (recorded)
+                {
+                    replay.Body[tick] = _sim.Physics.PlayerBody();
+                    if (tick % StateEvery == 0) replay.Fingerprint[tick] = _sim.Fingerprint();
+                    replay.Waypoints[tick] = _waypoints;
+                }
+                else if (tick >= _runConverge && _bestRun != null && tick < _bestRun.Fingerprint.Length && _bestRun.Fingerprint[tick] is int best
+                    && _sim.Physics.PlayerBody() == _bestRun.Body[tick] && _sim.Fingerprint() == best && _waypoints == _bestRun.Waypoints[tick])
+                {
+                    _converged = true;
+                    return false;
+                }
+                courseScript active = _sim.TimingCourse();
+                bool timing = _sim.TimedFromRunStart || active != null;
+                long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind), _sim.Progress)
+                    : CellKey(Place(_sim, _swapper, false, ref behind) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
+                bool losing = false;
+                float elapsed = _sim.Elapsed(active);
+                int filed = Math.Min(tick, inputs.Count);
+                if (recorded) { replay.Keys[tick] = key; replay.Elapsed[tick] = elapsed; }
+                replay?.Record(filed, key, elapsed);
+                if (elapsed >= 0f)
+                {
+                    if (tick > _runJudgeAfter && elapsed > _best) losing = true;
+                    if (_runCut && tick > _runJudgeAfter && _bestRun.Arrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
+                    if (_splicing && _spliceAt < 0 && _runFrom != null && tick > _runFrom.Tick && tick < inputs.Count && !_sim.Engine.InputsExhausted
+                        && _bestRun.First.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
+                    {
+                        _spliceAt = tick;
+                        _spliceBestTick = first.tick;
+                    }
+                }
+                if (_restoreKeys != null && filed < _restoreKeys.Length) _restoreKeys[filed] = key;
+                if (_capturePath != null && CaptureOnPath(tick)) return false;
+                FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, replay?.States);
+                return !losing;
+            }
+
+            /// <summary>The tick's <see cref="ContactRays.WallBehind"/>, cast on the first ask (<paramref name="behind"/> NaN).</summary>
+            static float Behind(Movement player, ref float behind)
+            {
+                if (float.IsNaN(behind)) behind = WallBehind(player);
+                return behind;
             }
             bool _splicing;
             int _spliceAt, _spliceBestTick;
@@ -1589,7 +1723,7 @@ namespace IGTAP.EngineSim
             internal const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
-            static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources)
+            static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources, ref float behind)
             {
                 Movement player = sim.Player;
                 CapturePos position = sim.PlayerAtCapture;
@@ -1598,7 +1732,7 @@ namespace IGTAP.EngineSim
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
                 // A clip-ready state (a wall at the back, in reach of a wall clip) is its own cell: the earliest arrival in a
                 // square is seldom the slow one that stopped next to the wall, and only that one clips.
-                if (!resources) key |= WallBehind(player) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
+                if (!resources) key |= Behind(player, ref behind) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
                 bool moss = GroundType(player) != 0;
                 if (!moss && !resources) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);

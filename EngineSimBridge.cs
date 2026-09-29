@@ -348,6 +348,11 @@ namespace IGTAPTasMod
         const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
+        // The files with at least one judging done (_offlineJudged's keys are "<path>|<label>").
+        readonly HashSet<string> _offlineJudgedPaths = new HashSet<string>();
+        // Each offline best's runTicks by its path and write time: the pump reads them every 5 s, and a file doesn't change
+        // once the solver wrote it.
+        readonly Dictionary<string, (DateTime written, long runTicks)> _offlineRunTicks = new Dictionary<string, (DateTime, long)>();
 
         sealed class OfflineBest
         {
@@ -368,11 +373,17 @@ namespace IGTAPTasMod
                 string caps = m.Groups[2].Value;
                 CourseDef course = _courses.Find(c => c.id == id);
                 if (course == null || !CapabilityLabels.ContainsKey(caps) || id + "_" + caps == solving) return null;
-                JObject json;
-                try { json = JObject.Parse(File.ReadAllText(path)); }
-                catch (Exception) { return null; }
+                DateTime written = File.GetLastWriteTimeUtc(path);
+                if (!_offlineRunTicks.TryGetValue(path, out var known) || known.written != written)
+                {
+                    JObject json;
+                    try { json = JObject.Parse(File.ReadAllText(path)); }
+                    catch (Exception) { return null; }
+                    known = (written, (long?)json["runTicks"] ?? long.MaxValue);
+                    _offlineRunTicks[path] = known;
+                }
                 return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
-                    runTicks = (long?)json["runTicks"] ?? long.MaxValue, farm = !course.IsBonus && !course.IsTransition,
+                    runTicks = known.runTicks, farm = !course.IsBonus && !course.IsTransition,
                     judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>()
                         : new[] { caps }.Concat(CapabilityLabels.Keys.Where(k => k != caps && course.HasCategory(k)))
                             .Select(k => (CapabilityLabels[k], new JObject { ["course"] = id, ["capabilities"] = k }, course.Token + "_" + CapabilityLabels[k])).ToList() };
@@ -401,9 +412,11 @@ namespace IGTAPTasMod
             if (CapabilitiesLocked || _solverRunning && _solveProcess == null || PlaybackActive || _recorder.IsRecording
                 || _bootstrapRequest != null || _webServer == null) return;
             Movement player = FindWorldMovement();
-            if (player == null || MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(player) is bool menu && menu) return;
+            if (player == null || IsMenuPlayer(player)) return;
             string solving = !_solverRunning ? null : _solveCourse + "_" + _solveCaps;
-            var groups = Directory.GetFiles(dir, "*.json").Select(f => ReadOfflineBest(f, solving)).Where(f => f != null).GroupBy(f => f.group);
+            string[] bestFiles = Directory.GetFiles(dir, "*.json");
+            foreach (string gone in _offlineRunTicks.Keys.Where(p => Array.IndexOf(bestFiles, p) < 0).ToList()) _offlineRunTicks.Remove(gone);
+            var groups = bestFiles.Select(f => ReadOfflineBest(f, solving)).Where(f => f != null).GroupBy(f => f.group);
             string judged = Path.Combine(dir, "judged");
             foreach (var group in groups)
             {
@@ -417,7 +430,7 @@ namespace IGTAPTasMod
                 (string label, JObject body, string category) next = default;
                 foreach (var (file, worth) in new[] { (fastest, fastest.time <= best + .0001f), (fewest, fewest.runTicks < farmBest) })
                 {
-                    if (!worth && !_offlineJudged.Any(k => k.StartsWith(file.path + "|", StringComparison.Ordinal))) continue;
+                    if (!worth && !_offlineJudgedPaths.Contains(file.path)) continue;
                     next = file.judgings.FirstOrDefault(j => !_offlineJudged.Contains(file.path + "|" + j.label));
                     if (next.body != null) { first = file; break; }
                 }
@@ -445,6 +458,7 @@ namespace IGTAPTasMod
                     }
                     catch (Exception ex) { line += "error " + ex.Message; }
                     _offlineJudged.Add(first.path + "|" + next.label);
+                    _offlineJudgedPaths.Add(first.path);
                     Logger.LogInfo(line);
                     return;
                 }

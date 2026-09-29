@@ -25,7 +25,19 @@ namespace IGTAP.EngineSim
     /// </summary>
     public sealed class SnapshotStore
     {
-        public const int Format = 1;
+        // 2: each type in the table carries its field layout (Layout), so a snapshot of a build whose types changed is dropped,
+        // not misread (a field that became a tuple array read as a bool crashed the solve after a redeploy).
+        // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
+        public const int Format = 3;
+
+        /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
+        static int Layout(Type type)
+        {
+            uint h = 2166136261;
+            void Add(string s) { foreach (char c in s) h = (h ^ c) * 16777619; h = (h ^ '|') * 16777619; }
+            foreach (FieldInfo f in FieldState.For(type)) { Add(f.Name); Add(f.FieldType.FullName ?? f.FieldType.Name); }
+            return (int)h;
+        }
 
         readonly Simulation _sim;
         readonly World _world;
@@ -184,7 +196,7 @@ namespace IGTAP.EngineSim
             readonly SnapshotStore _owner;
             readonly MemoryStream _bytes = new MemoryStream();
             readonly BinaryWriter _w;
-            readonly List<string> _types = new List<string>();
+            readonly List<Type> _typeList = new List<Type>();
             readonly Dictionary<Type, int> _typeIds = new Dictionary<Type, int>();
             readonly Dictionary<object, int> _seen = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
             readonly List<(int owner, int index, bool free, int fingerprint)> _fixtures = new List<(int, int, bool, int)>();
@@ -202,8 +214,8 @@ namespace IGTAP.EngineSim
 
             public void WriteTables(BinaryWriter w)
             {
-                w.Write(_types.Count);
-                foreach (string t in _types) w.Write(t);
+                w.Write(_typeList.Count);
+                foreach (Type t in _typeList) { w.Write(t.AssemblyQualifiedName); w.Write(Layout(t)); }
                 w.Write(_fixtures.Count);
                 foreach (var (owner, index, free, fingerprint) in _fixtures)
                 {
@@ -214,8 +226,8 @@ namespace IGTAP.EngineSim
             int TypeId(Type type)
             {
                 if (_typeIds.TryGetValue(type, out int id)) return id;
-                _types.Add(type.AssemblyQualifiedName);
-                return _typeIds[type] = _types.Count - 1;
+                _typeList.Add(type);
+                return _typeIds[type] = _typeList.Count - 1;
             }
 
             public void Field(object target, FieldInfo f) { Value(f.GetValue(target), f.FieldType); }
@@ -409,7 +421,12 @@ namespace IGTAP.EngineSim
                     throw new NotSupportedException("a snapshot file of another engine build; dropping it");
                 int types = _r.ReadInt32();
                 _types = new Type[types];
-                for (int i = 0; i < types; i++) _types[i] = Resolve(_r.ReadString());
+                for (int i = 0; i < types; i++)
+                {
+                    string name = _r.ReadString();
+                    _types[i] = Resolve(name);
+                    if (_r.ReadInt32() != Layout(_types[i])) throw new NotSupportedException("a snapshot's type changed its fields since (" + name + "); dropping it");
+                }
                 int fixtures = _r.ReadInt32();
                 _fixtures = new (int, int, bool, int)[fixtures];
                 for (int i = 0; i < fixtures; i++) _fixtures[i] = (_r.ReadInt32(), _r.ReadInt32(), _r.ReadBoolean(), _r.ReadInt32());

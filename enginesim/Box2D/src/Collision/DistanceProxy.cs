@@ -33,7 +33,8 @@ namespace Box2D
 {
     public struct b2DistanceProxy
     {
-        public b2Vec2[] _buffer; // = new b2Vec2[2];
+        // A circle's, an edge's and a chain child's vertices go into the caller's two-slot buffer (Set's last argument),
+        // which must outlive every use of this proxy and not be shared with the other proxy of the same query.
         public b2Vec2[] _vertices;
         public int _count;
         public float _radius;
@@ -45,12 +46,13 @@ namespace Box2D
             _radius = radius;
         }
 
-        public void Set(in b2Shape shape, in int index)
+        public void Set(in b2Shape shape, in int index, b2Vec2[] buffer)
         {
             switch (shape)
             {
                 case b2CircleShape circle:
-                    _vertices = new[] { circle.m_p };
+                    buffer[0] = circle.m_p;
+                    _vertices = buffer;
                     _count = 1;
                     _radius = circle.m_radius;
                     break;
@@ -60,24 +62,25 @@ namespace Box2D
                     _radius = polygon.m_radius;
                     break;
                 case b2ChainShape chain:
-                    _buffer = new b2Vec2[2];
-                    _buffer[0] = chain.m_vertices[index];
+                    buffer[0] = chain.m_vertices[index];
                     if (index + 1 < chain.m_count)
                     {
-                        _buffer[1] = chain.m_vertices[index + 1];
+                        buffer[1] = chain.m_vertices[index + 1];
                     }
                     else
                     {
-                        _buffer[1] = chain.m_vertices[0];
+                        buffer[1] = chain.m_vertices[0];
                     }
 
-                    _vertices = _buffer;
+                    _vertices = buffer;
                     _count = 2;
                     _radius = chain.m_radius;
 
                     break;
                 case b2EdgeShape edge:
-                    _vertices = new[] { edge.m_vertex1, edge.m_vertex2 };
+                    buffer[0] = edge.m_vertex1;
+                    buffer[1] = edge.m_vertex2;
+                    _vertices = buffer;
                     _count = 2;
                     _radius = edge.m_radius;
                     break;

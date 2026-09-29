@@ -25,6 +25,7 @@
 // SOFTWARE.
 */
 
+using System;
 using System.Numerics;
 
 namespace Box2D
@@ -53,16 +54,14 @@ namespace Box2D
             return true;
         }
 
-        // Sutherland-Hodgman clipping.
+        // Sutherland-Hodgman clipping. vOut (two slots, the caller's: a stackalloc) must not overlap vIn.
         public static int ClipSegmentToLine(
-            out b2ClipVertex[ /*2*/] vOut,
-            in b2ClipVertex[ /*2*/] vIn,
+            Span<b2ClipVertex> vOut,
+            ReadOnlySpan<b2ClipVertex> vIn,
             in b2Vec2 normal,
             float offset,
             int vertexIndexA)
         {
-            vOut = new b2ClipVertex[2];
-
             // Start with no output points
             var numOut = 0;
 

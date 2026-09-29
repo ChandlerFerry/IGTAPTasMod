@@ -220,9 +220,10 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown Full-TAS endpoint." };
         }
 
-        object BuildFullTasWebState()
+        /// <summary>The runs (studio static state): goals, bests, offline bests, closest attempts; they change with files and routes.</summary>
+        object[] BuildFullTasRunsWebState()
         {
-            var runs = _fullTasRuns.Select(r =>
+            return _fullTasRuns.Select(r =>
             {
                 string error = null;
                 string[] labels;
@@ -243,9 +244,13 @@ namespace IGTAPTasMod
                     playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
+        }
+
+        /// <summary>The solve, the last result and the playback (studio live state).</summary>
+        object BuildFullTasLiveWebState()
+        {
             FullTasPlay play = _fullTasPlay;
             return new {
-                runs = runs,
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
                     command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, segments = _fullTasSegments, log = _fullTasLog },
                 lastResult = _fullTasLastResult,

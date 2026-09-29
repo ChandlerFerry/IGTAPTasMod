@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Reflection;
 using UnityEngine;
 
@@ -51,24 +52,68 @@ namespace IGTAP.EngineSim
         public Action<MonoBehaviour> Stepping;
         /// <summary>A coroutine yielded something this scheduler doesn't model.</summary>
         public Action<string> Unmodeled;
-        static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), MethodInfo> Methods =
-            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), MethodInfo>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Action<MonoBehaviour>> Methods =
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Action<MonoBehaviour>>();
         static readonly Func<object, object> MemberwiseClone = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
             typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic));
+
+        // While FireDue runs, Queue[0.._kept) are the entries it has passed over (kept, in order), Queue[_kept.._next) the
+        // slots of the ones it fired (dropped when the pass ends), and Queue[_next..] the rest, in order; _kept is -1 outside
+        // a pass. _skip is how many entries the pass still steps over unfired: an index loop over a list that an Invoke'd
+        // method's CancelInvoke shrank behind the index moves past as many entries as it lost there.
+        int _kept = -1, _next, _skip;
 
         public void Invoke(MonoBehaviour target, string method, float delay, float repeatRate)
         {
             Queue.Add(new Pending { Due = Tick + Mathf.FloorToInt(delay / Time.fixedDeltaTime) + 1, Target = target, Method = method, Repeat = repeatRate });
+            if (_kept >= 0) Skip();
         }
 
         public void CancelInvoke(MonoBehaviour target, string method)
         {
-            Queue.RemoveAll(p => ReferenceEquals(p.Target, target) && (method == null || p.Method == method));
+            int end;
+            if (_kept < 0)
+            {
+                end = Drop(0, Queue.Count, target, method);
+                Queue.RemoveRange(end, Queue.Count - end);
+                return;
+            }
+            int kept = Drop(0, _kept, target, method);
+            _skip += _kept - kept;
+            _kept = kept;
+            end = Drop(_next, Queue.Count, target, method);
+            Queue.RemoveRange(end, Queue.Count - end);
+            Skip();
+        }
+
+        /// <summary>Drops the entries of Queue[from..to) a CancelInvoke matches, the others kept in order from <paramref name="from"/>; returns where they end.</summary>
+        int Drop(int from, int to, MonoBehaviour target, string method)
+        {
+            int end = from;
+            for (int i = from; i < to; i++)
+                if (!Cancels(Queue[i], target, method)) Queue[end++] = Queue[i];
+            return end;
+        }
+
+        static bool Cancels(Pending p, MonoBehaviour target, string method)
+        {
+            return ReferenceEquals(p.Target, target) && (method == null || p.Method == method);
+        }
+
+        /// <summary>Mid-pass: the entries the pass steps over unfired join the kept ones.</summary>
+        void Skip()
+        {
+            for (; _skip > 0 && _next < Queue.Count; _skip--) Queue[_kept++] = Queue[_next++];
         }
 
         public bool IsInvoking(MonoBehaviour target, string method)
         {
-            foreach (Pending p in Queue) if (ReferenceEquals(p.Target, target) && (method == null || p.Method == method)) return true;
+            int count = Queue.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (i == _kept) i = _next;
+                if (i < count && Cancels(Queue[i], target, method)) return true;
+            }
             return false;
         }
 
@@ -108,61 +153,98 @@ namespace IGTAP.EngineSim
         /// <summary>Time.deltaTime of the rendered frame that resumes WaitForSeconds and frame waits (the playback clock's crossing frame).</summary>
         public float FrameDeltaTime;
 
+        // Resume's due routines, reused call to call.
+        Routine[] _due = Array.Empty<Routine>();
+
         /// <summary>Resumes every coroutine parked on <paramref name="wait"/> that is due, each one step, in start order.</summary>
         public void Resume(Wait wait)
         {
             int count = Routines.Count;
             if (count == 0) return;
-            Routine[] due = null;
+            if (_due.Length < count) _due = new Routine[count];
             int n = 0;
             for (int i = 0; i < count; i++)
             {
                 Routine r = Routines[i];
                 if (r.Wait != wait || wait == Wait.Seconds && r.Due > Tick) continue;
-                (due ??= new Routine[count])[n++] = r;
+                _due[n++] = r;
             }
             if (n == 0) return;
             // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
             // others in a rendered frame (a zip mover's first tween step after its WaitForSeconds adds that frame's time).
             Time.resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : FrameDeltaTime;
+            int resumed = 0;
             try
             {
-                for (int i = 0; i < n; i++)
+                while (resumed < n)
                 {
-                    Routine r = due[i];
-                    Routines.Remove(r);
+                    Routine r = _due[resumed++];
                     if (r.Handle.stopped || !r.Target) continue;
                     Stepping?.Invoke(r.Target);
                     if (r.Body.MoveNext()) Park(r, r.Body.Current);
                 }
             }
-            finally { Time.resumeDeltaTime = 0f; }
+            finally
+            {
+                Time.resumeDeltaTime = 0f;
+                // Each resumed routine leaves its place in one pass (nothing reads the list while they step): the due ones sit
+                // in Routines[0..count) in _due's order, and one parked again, or a routine one of them started, past count.
+                int kept = 0, left = 0;
+                for (int i = 0; i < Routines.Count; i++)
+                {
+                    Routine r = Routines[i];
+                    if (i < count && left < resumed && ReferenceEquals(r, _due[left])) left++;
+                    else Routines[kept++] = r;
+                }
+                Routines.RemoveRange(kept, Routines.Count - kept);
+                Array.Clear(_due, 0, n);
+            }
         }
 
         /// <summary>A parked coroutine's own copy (the compiler's iterator object, fields shallow-copied), for a snapshot.</summary>
         public static IEnumerator Copy(IEnumerator body) { return (IEnumerator)MemberwiseClone(body); }
 
+        /// <summary>
+        /// Fires the due invokes in queue order; a repeating one goes back at the end. Behaves as an index loop over the list
+        /// that removes each fired entry (see <see cref="_kept"/>), in one pass.
+        /// </summary>
         public void FireDue()
         {
-            for (int i = 0; i < Queue.Count; i++)
+            _kept = _next = _skip = 0;
+            try
             {
-                Pending p = Queue[i];
-                if (p.Due > Tick) continue;
-                Queue.RemoveAt(i--);
-                if (p.Repeat >= 0f) Queue.Add(new Pending { Due = Tick + Math.Max(1, Mathf.FloorToInt(p.Repeat / Time.fixedDeltaTime)), Target = p.Target, Method = p.Method, Repeat = p.Repeat });
-                if (!p.Target) continue;
-                Resolve(p.Target.GetType(), p.Method)?.Invoke(p.Target, null);
+                while (_next < Queue.Count)
+                {
+                    Pending p = Queue[_next++];
+                    if (p.Due > Tick)
+                    {
+                        Queue[_kept++] = p;
+                        continue;
+                    }
+                    if (p.Repeat >= 0f) Queue.Add(new Pending { Due = Tick + Math.Max(1, Mathf.FloorToInt(p.Repeat / Time.fixedDeltaTime)), Target = p.Target, Method = p.Method, Repeat = p.Repeat });
+                    if (!p.Target) continue;
+                    Resolve(p.Target.GetType(), p.Method)?.Invoke(p.Target);
+                }
+            }
+            finally
+            {
+                Queue.RemoveRange(_kept, _next - _kept);
+                _kept = -1;
+                _skip = 0;
             }
         }
 
-        static MethodInfo Resolve(Type type, string name)
+        /// <summary>The parameterless instance method Invoke calls by name (the nearest declaring type's), compiled once: MethodInfo.Invoke per call is reflection.</summary>
+        static Action<MonoBehaviour> Resolve(Type type, string name)
         {
             return Methods.GetOrAdd((type, name), key =>
             {
                 MethodInfo found = null;
                 for (Type t = key.Item1; t != null && found == null; t = t.BaseType)
                     found = t.GetMethod(key.Item2, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, null, Type.EmptyTypes, null);
-                return found;
+                if (found == null) return null;
+                ParameterExpression target = Expression.Parameter(typeof(MonoBehaviour));
+                return Expression.Lambda<Action<MonoBehaviour>>(Expression.Call(Expression.Convert(target, found.DeclaringType), found), target).Compile();
             });
         }
     }

@@ -91,7 +91,9 @@ namespace IGTAPTasMod
         MacroDefinition _techSeenRoute;
         bool _techSeenFilled;
         readonly List<(Tech tech, long start)> _techPending = new List<(Tech, long)>();
-        readonly List<(long input, Savestate state)> _techStates = new List<(long, Savestate)>();
+        // The last TechStateTicks input ticks' states, oldest at _techStateHead (a ring: a new one replaces the oldest when full).
+        readonly (long input, Savestate state)[] _techStates = new (long, Savestate)[TechStateTicks];
+        int _techStateHead, _techStateCount;
         readonly int[] _techCounts = new int[TechNames.Length];
         readonly List<Tech> _techOrder = new List<Tech>();
         readonly RaycastHit2D[] _techHits = new RaycastHit2D[8];
@@ -336,13 +338,24 @@ namespace IGTAPTasMod
         void CaptureTechState(Movement player)
         {
             long input = _engine.RunTicks;
-            int last = _techStates.Count - 1;
-            if (last >= 0 && _techStates[last].input > input) _techStates.Clear();
-            else if (last >= 0 && _techStates[last].input == input) _techStates.RemoveAt(last);
+            if (_techStateCount > 0)
+            {
+                long last = TechStateAt(_techStateCount - 1).input;
+                if (last > input) _techStateHead = _techStateCount = 0;
+                else if (last == input) _techStateCount--;
+            }
             bool clean = !player.dashActive && player.cutsceneMode == Movement.cutsceneModes.none;
-            _techStates.Add((input, clean ? SavestateService.Capture(player, "tech", MacroLibrary.CurrentSchemaVersion) : null));
-            if (_techStates.Count > TechStateTicks) _techStates.RemoveAt(0);
+            var state = (input, clean ? SavestateService.Capture(player, "tech", MacroLibrary.CurrentSchemaVersion) : null);
+            if (_techStateCount < TechStateTicks) _techStates[(_techStateHead + _techStateCount++) % TechStateTicks] = state;
+            else
+            {
+                _techStates[_techStateHead] = state;
+                _techStateHead = (_techStateHead + 1) % TechStateTicks;
+            }
         }
+
+        /// <summary>The i-th oldest captured state.</summary>
+        (long input, Savestate state) TechStateAt(int i) { return _techStates[(_techStateHead + i) % TechStateTicks]; }
 
         void TechAfterTick(Movement player, long tick, bool jumpPress, bool dashPress)
         {
@@ -438,13 +451,16 @@ namespace IGTAPTasMod
             while (lane < TechLanes - 1 && used[lane]) lane++;
             long input = _engine.RunTicks, from = System.Math.Max(0, input - (end - start) - TechDemoLeadTicks);
             var span = new TechSpan { tech = tech, start = start, end = end, input = input, lane = lane };
-            for (int i = _techStates.Count - 1; i >= 0; i--)
-                if (_techStates[i].input <= from && _techStates[i].state != null)
+            for (int i = _techStateCount - 1; i >= 0; i--)
+            {
+                (long stateInput, Savestate state) = TechStateAt(i);
+                if (stateInput <= from && state != null)
                 {
-                    span.savestateInput = _techStates[i].input;
-                    span.savestate = _techStates[i].state;
+                    span.savestateInput = stateInput;
+                    span.savestate = state;
                     break;
                 }
+            }
             _techSpans.Add(span);
             if (OverlayListsRun) _techSeen.Add(span);
             if (_techCounts[(int)tech]++ == 0) _techOrder.Add(tech);

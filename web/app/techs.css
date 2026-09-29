@@ -17,6 +17,9 @@
 .techLabGrid .techLab.loaded { border-color: var(--amber); }
 .techLabHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .techLabHead .buttonRow { margin-left: auto; }
+.labGhostLegend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; }
+.labGhostLegend span { display: inline-flex; align-items: center; gap: 6px; }
+.labGhostLegend i { width: 16px; height: 3px; border-radius: 2px; }
 .seenChip { padding: 3px 9px; border: 1px solid #294563; border-radius: 999px; background: #10263d; color: var(--text); font-size: 12px; cursor: pointer; }
 .seenChip:disabled { color: var(--muted); cursor: default; }
 .muted { color: var(--muted); font-size: 13px; }

@@ -515,22 +515,27 @@ namespace IGTAP.EngineSim.Cli
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
             long windowBest = long.MaxValue;
+            // Guards found, finished, last and windowBest: the solver raises Improved from its workers (outside its own lock).
+            var window = new object();
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 // A Full-TAS sim is strict: its run ends StrictFinishTicks after its last goal, and the baseline is that goal's tick.
                 long atGoal = runTicks - Simulation.StrictFinishTicks;
-                last = _clock.Elapsed;
-                finished = true;
-                windowBest = Math.Min(windowBest, atGoal);
-                if (atGoal < baseline)
+                lock (window)
                 {
-                    found.Add(inputs);
-                    if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(atGoal) });
+                    last = _clock.Elapsed;
+                    finished = true;
+                    windowBest = Math.Min(windowBest, atGoal);
+                    if (atGoal < baseline)
+                    {
+                        found.Add(inputs);
+                        if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(atGoal) });
+                    }
                 }
             };
             object Progress()
             {
-                lock (solver.Shared)
+                lock (window)
                     return new { type = "status", id, elapsed = Math.Round((_clock.Elapsed - begin).TotalSeconds, 1), candidates = found.Count,
                         best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest), runs = solver.Runs };
             }
@@ -545,14 +550,14 @@ namespace IGTAP.EngineSim.Cli
             while (!TimeUp && (_clock.Elapsed - begin).TotalMinutes < budgetMinutes)
             {
                 Thread.Sleep(250);
-                lock (solver.Shared) if (finished && (_clock.Elapsed - last).TotalMinutes >= stallMinutes) break;
+                lock (window) if (finished && (_clock.Elapsed - last).TotalMinutes >= stallMinutes) break;
                 if ((_clock.Elapsed - shown).TotalSeconds >= 15)
                 {
                     shown = _clock.Elapsed;
                     Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates), {Interlocked.Read(ref solver.Runs)} runs, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB");
                     List<List<InputTick>> walked = walks?.Invoke(solver);
                     if (walked?.Count > 0)
-                        lock (solver.Shared)
+                        lock (window)
                         {
                             found.AddRange(walked);
                             finished = true;
@@ -582,7 +587,7 @@ namespace IGTAP.EngineSim.Cli
             if (closestPrefix != null) OfferClosest(solver.Closest(), closestPrefix);
             SaveVisits(solver.Visits());
             Status();
-            lock (solver.Shared)
+            lock (window)
             {
                 Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });
                 return found.ToList();
@@ -1050,7 +1055,7 @@ namespace IGTAP.EngineSim.Cli
             Route through = Evaluate(inputs, limit);
             if (through.Progress < limit)
             {
-                Log("a window route missed its goals when replayed from the start; dropped");
+                Log("a window route missed its goals when replayed from the start; dropped" + Diverged(head.Inputs.Take(prefixLength).ToList(), window, limit));
                 return null;
             }
             int end = (int)through.GoalInput[limit - 1];
@@ -1059,6 +1064,74 @@ namespace IGTAP.EngineSim.Cli
             if (tail.Progress >= limit) inputs.AddRange(tail.Inputs.Skip((int)tail.GoalInput[limit - 1]));
             for (int i = 1; i < inputs.Count; i++) if (inputs[i].reset && inputs[i - 1].reset) return null;
             return Evaluate(inputs);
+        }
+
+        /// <summary>
+        /// Why a window's route missed its goals from the start: the window from its start as a worker gets it (the stored or
+        /// replayed state at the prefix's end), and after a straight replay of the prefix, against the whole route played through
+        /// from the run's start as the evaluator does; the first physics tick the player differs (position or a value field of the
+        /// player or the input engine) and what differs there. Each simulation runs on a thread of its own: the game's statics and
+        /// the engine hooks are per thread, and a second simulation on a thread takes them over from the first.
+        /// </summary>
+        string Diverged(List<InputTick> prefix, List<InputTick> window, int limit)
+        {
+            try
+            {
+                static Dictionary<string, string> Fields(Simulation sim)
+                {
+                    var f = new Dictionary<string, string>();
+                    const System.Reflection.BindingFlags all = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+                    foreach (var (prefixName, target) in new (string, object)[] { ("", sim.Player), ("engine.", sim.Engine) })
+                        foreach (System.Reflection.FieldInfo x in target.GetType().GetFields(all))
+                            if (x.FieldType.IsValueType || x.FieldType == typeof(string))
+                                f[prefixName + x.Name] = Convert.ToString(x.GetValue(target), CultureInfo.InvariantCulture);
+                    return f;
+                }
+                (Dictionary<long, (WorldPos at, Dictionary<string, string> fields)> ticks, int progress, string end) Play(Func<(Simulation, SimSnapshot, List<InputTick>, long)> setup)
+                {
+                    (Dictionary<long, (WorldPos, Dictionary<string, string>)>, int, string) result = default;
+                    Exception failed = null;
+                    var thread = new Thread(() =>
+                    {
+                        try
+                        {
+                            var (sim, from, inputs, inputBase) = setup();
+                            var ticks = new Dictionary<long, (WorldPos, Dictionary<string, string>)>();
+                            sim.SetStart(from, inputBase);
+                            sim.Goals.Limit = limit;
+                            // As the solver's goal mode runs a window: 400 idle ticks past its inputs, and as many again.
+                            RunResult r = sim.Run(inputs, null, null, 400 + inputs.Count, _ => ticks[sim.Engine.PhysicsTicks] = (sim.PlayerWorld, Fields(sim)));
+                            result = (ticks, r.Progress, r.EndReason);
+                        }
+                        catch (Exception ex) { failed = ex; }
+                    }, 64 << 20);
+                    thread.Start();
+                    thread.Join();
+                    if (failed != null) throw failed;
+                    return result;
+                }
+                var worker = Play(() => { var (sim, state) = Prefixed(prefix, "diverge"); return (sim, state, window, prefix.Count); });
+                var straight = Play(() => { Simulation sim = _create(); return (sim, sim.Advance(prefix), window, prefix.Count); });
+                var through = Play(() => { Simulation sim = _create(); return (sim, sim.Start, prefix.Concat(window).ToList(), 0); });
+                string First((Dictionary<long, (WorldPos at, Dictionary<string, string> fields)> ticks, int progress, string end) a,
+                    (Dictionary<long, (WorldPos at, Dictionary<string, string> fields)> ticks, int progress, string end) b)
+                {
+                    string[] counters = { "engine._runTicks", "engine._stepIndex", "engine._pressedStep", "engine._quickRestartStep", "engine._physicsTicks", "engine._countEveryPhysicsTick" };
+                    foreach (long t in a.ticks.Keys.Where(b.ticks.ContainsKey).OrderBy(t => t))
+                    {
+                        var (aa, fa) = a.ticks[t];
+                        var (ab, fb) = b.ticks[t];
+                        var differ = fa.Where(kv => !counters.Contains(kv.Key) && fb.TryGetValue(kv.Key, out string v) && v != kv.Value).ToList();
+                        if (aa.x == ab.x && aa.y == ab.y && differ.Count == 0) continue;
+                        return $"first differs at physics tick {t}: at ({aa.x:0.00}, {aa.y:0.00}) vs ({ab.x:0.00}, {ab.y:0.00})"
+                            + (differ.Count > 0 ? "; " + string.Join(", ", differ.Take(10).Select(kv => $"{kv.Key} {kv.Value} vs {fb[kv.Key]}")) : "");
+                    }
+                    return "the same every tick";
+                }
+                return $" [diverge: goal {worker.progress} from the worker's start ({worker.end}), {straight.progress} after a straight replay of the prefix ({straight.end}),"
+                    + $" {through.progress} played through from the start ({through.end}); worker vs through: " + First(worker, through) + "; straight vs through: " + First(straight, through) + "]";
+            }
+            catch (Exception ex) { return $" [diverge check failed: {ex.GetBaseException().Message}]"; }
         }
 
         void Repair(string where, Route old, Route run)

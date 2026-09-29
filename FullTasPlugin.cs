@@ -200,6 +200,9 @@ namespace IGTAPTasMod
         Rect _fullTasPlayerBounds;
 
         readonly Dictionary<string, upgradeBox> _bonusRewardBoxes = new Dictionary<string, upgradeBox>(StringComparer.OrdinalIgnoreCase);
+        // Bonuses with no reward box near their end, for the scenes loaded then (BonusRewardBox).
+        readonly HashSet<string> _bonusRewardMisses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int _bonusRewardMissScenes;
 
         const int VmanSetupJumpTicks = 45;
         static readonly AccessTools.FieldRef<upgradeBox, double> BoxEffectMult = AccessTools.FieldRefAccess<upgradeBox, double>("effectMult");

@@ -21,6 +21,13 @@ namespace IGTAP.EngineSim.Cli
         string _whyNot;
         // The run's goal labels, and the best's stretch the plan replaces (goals from..until): its ways are borrowed (Borrowed).
         (string[] labels, int from, int until) _borrow;
+        bool _recordTried;
+        // Record laps: each saved course route's idle ticks after the quick restart (-1: none plays it).
+        readonly Dictionary<string, int> _recordPads = new Dictionary<string, int>();
+        const int MaxRecordPad = 40;
+        // Record laps searched from the restart once per course, and the ways found (tried with the saved routes after).
+        readonly HashSet<int> _recordSearched = new HashSet<int>();
+        readonly List<(int course, List<InputTick> inputs)> _recordWays = new List<(int, List<InputTick>)>();
 
         int PlanFarm(string[] args)
         {
@@ -88,7 +95,7 @@ namespace IGTAP.EngineSim.Cli
                 int walk = _pieces.Where(p => p.Target == aim).Select(p => p.Inputs.Count).DefaultIfEmpty(0).Min();
                 double cost = Cost(at, target);
                 (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta)? pick = null;
-                var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap) };
+                var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap), ("record lap", lap) };
                 options.AddRange(buys.Where(l => l != aim && !unreachable.Contains(l)).Select(l => (l, new[] { byLabel[l] })));
                 bool aimPayable = false, aimPlayed = false;
                 foreach (var (what, goals) in options)
@@ -101,11 +108,12 @@ namespace IGTAP.EngineSim.Cli
                     // A buy-max touch still buying goes on without another touch; a search for a way to touch it again found none.
                     if (goals[0].kind == FullTasGoal.Buy && what != aim && Buying(at, goals[0])) continue;
                     if (what == aim) aimPayable = affordable == true;
-                    var played = what == "lap" ? Lap(at, route, planned, lap) : Play(at, route, planned, goals, affordable == true);
+                    var played = what == "lap" ? Lap(at, route, planned, lap) : what == "record lap" ? RecordLap(at, route, planned, lap, course)
+                        : Play(at, route, planned, goals, affordable == true);
                     if (what == aim) aimPlayed = played != null;
                     if (played == null)
                     {
-                        if (affordable == true && what != "lap" && what != aim && unreachable.Add(what)) Log($"{what}: no way found from tick {now}; dropped from the plan");
+                        if (affordable == true && what != "lap" && what != "record lap" && what != aim && unreachable.Add(what)) Log($"{what}: no way found from tick {now}; dropped from the plan");
                         continue;
                     }
                     var (inputs, state, tick) = played.Value;
@@ -453,6 +461,99 @@ namespace IGTAP.EngineSim.Cli
             }
             return Play(at, route, planned, lap, true);
         }
+
+        static readonly System.Reflection.FieldInfo BestPathTime = typeof(courseScript).GetField("bestPathTime",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+
+        /// <summary>
+        /// A lap that sets the course's best time, which is the clones' path: every clone pays once per path, so a faster best pays
+        /// the whole rest of the stretch (Course 2's route crossed its laps in 2.44-2.70 s against the 2.20 s record). The gate is
+        /// crossed with the library's piece, a quick restart puts the player at the course's reset point, and each saved course
+        /// route (--seed) that runs this course from standing there is played to the finish; the one that leaves the lowest best
+        /// time wins (then the soonest). Slower than a farm lap; the planner's estimate weighs the clones' income after it.
+        /// </summary>
+        (List<InputTick> inputs, SimSnapshot state, long tick)? RecordLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap, int course)
+        {
+            var runs = _seeds.Where(s => s.Standing && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            if (runs.Count == 0) return null;
+            var gate = Play(at, route, planned, new[] { lap[0] }, false);
+            if (gate == null) return null;
+            var (inputs, state, _) = gate.Value;
+            var list = _kept.Concat(planned).Concat(lap).ToList();
+            Track(list);
+            int i = list.Count - 1;
+            SimSnapshot here = state.WithGoal(Fresh(list.Count, i));
+            var target = new Target { Goal = i, Key = lap[1].label };
+            float before = BestPath(here, course);
+            (List<InputTick> inputs, SimSnapshot state, long tick, float best)? pick = null;
+            var tried = new List<string>();
+            // A saved course route starts standing still: the game's run waits for three grounded ticks and its start alignment
+            // before the first input. Idle ticks after the quick restart stand in for that wait; each route's pad is the first that
+            // plays it to the finish, then reused (the restart lands the same).
+            var starts = new List<(string how, List<InputTick> pre, SimSnapshot state)>();
+            foreach (var (pre, restarted) in Restarts(here, inputs, i).Take(1)) starts.Add(("", pre, restarted));
+            foreach (var (how, pre, restarted) in starts)
+                foreach (Seed s in runs)
+                {
+                    Step end = null;
+                    string key = s.Name + how;
+                    bool cached = _recordPads.TryGetValue(key, out int found);
+                    if (cached && found < 0) { tried.Add($"{key} misses {lap[1].label}"); continue; }
+                    foreach (int idle in cached ? new[] { found } : Enumerable.Range(0, MaxRecordPad + 1))
+                    {
+                        end = Reaches(restarted, inputs.Count + pre.Count, Enumerable.Repeat(new InputTick(), idle).Concat(s.Inputs).ToList(), target);
+                        if (end != null) { found = idle; break; }
+                    }
+                    if (!cached) _recordPads[key] = end == null ? -1 : found;
+                    if (end == null)
+                    {
+                        Read(restarted);
+                        string pose = $"restart at {_eval.PlayerWorld.x:0.00},{_eval.PlayerWorld.y:0.00} facing {(_eval.Player.facingRight ? "right" : "left")}, grounded {_eval.Player.onGround}";
+                        tried.Add($"{key} misses {lap[1].label} ({Replayed(restarted, inputs.Count + pre.Count, s.Inputs, target)}; {pose})");
+                        continue;
+                    }
+                    float best = BestPath(end.Next, course);
+                    tried.Add($"{key} {best:0.00}s after {found} idle ticks");
+                    if (pick == null || best < pick.Value.best || best == pick.Value.best && end.Physics < pick.Value.tick)
+                        pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best);
+                }
+            // A saved route that misses from here (Course 2's 2.20 s lap takes its spikes on their last grace tick, and a restart's
+            // start differs from its recording in the last hundredths) is searched once per course from the restart: seeded with
+            // those routes, the search keeps the way that finishes soonest from standing there, which is the gate crossed at
+            // speed. Its way is then tried with the saved routes at every later record lap.
+            if (!_recordSearched.Contains(course) && starts.Count > 0 && tried.Any(t => t.Contains(" misses ")))
+            {
+                _recordSearched.Add(course);
+                var (how, pre, restarted) = starts[0];
+                var seedsFor = runs.Select(s => s.Inputs).ToList();
+                Step found = SolvePiece(restarted, inputs.Concat(pre).ToList(), i, target, _pieceMinutes * 3, BuildStall, seedsFor);
+                if (found != null)
+                {
+                    float best = BestPath(found.Next, course);
+                    Log($"record lap: searched from the restart, a lap sets the best time to {best:0.00}s (finish at tick {found.Physics})");
+                    _recordWays.Add((course, found.Inputs));
+                    if (pick == null || best < pick.Value.best || best == pick.Value.best && found.Physics < pick.Value.tick)
+                        pick = (inputs.Concat(pre).Concat(found.Inputs).ToList(), found.Next, found.Physics, best);
+                }
+            }
+            else
+                foreach (var (_, pre, restarted) in starts.Take(1))
+                    foreach (var (c, way) in _recordWays)
+                    {
+                        if (c != course) continue;
+                        Step end = Reaches(restarted, inputs.Count + pre.Count, way, target);
+                        if (end == null) continue;
+                        float best = BestPath(end.Next, course);
+                        if (pick == null || best < pick.Value.best || best == pick.Value.best && end.Physics < pick.Value.tick)
+                            pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best);
+                    }
+            if (!_recordTried) { _recordTried = true; Log("record lap seeds: " + string.Join("; ", tried)); }
+            if (pick == null || pick.Value.best >= before) return null;
+            Log($"record lap: best time {before:0.00}s -> {pick.Value.best:0.00}s, finish at tick {pick.Value.tick}");
+            return (pick.Value.inputs, pick.Value.state, pick.Value.tick);
+        }
+
+        float BestPath(SimSnapshot s, int course) { Read(s); return (float)BestPathTime.GetValue(_eval.Courses.First(c => c.courseNumber == course)); }
 
         /// <summary>The plan's goals become the run's: the builder's steps track them (strict buys: only the next one's box).</summary>
         void Track(List<FullTasGoal> goals)

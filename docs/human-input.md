@@ -32,8 +32,9 @@ in that window. Without the omnidash `Update` drops the vertical, so only `turnX
 a recorded dash's first dash frame goes another way than its start (`InputRecorder.DashFrame`). They stay their own
 fields and not part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no
 sideways stick and hold `lockMoveX` sideways, and reading the lock stick in the freeze would turn the ones whose lock
-points against the dash. The overlay's input list shows it on the dash's row after the tick's stick (`· ⇒ → 35% ↑`:
-stick at rest on the tick, then 0.35 sideways and up in the freeze). The freeze's frames only exist while playback runs
+points against the dash. The overlay's input list gives it its own row under the dash's tick, `freeze` in the dash's
+colour (`→ 35% ↑ 94%`: 0.35 sideways and 0.94 up in the freeze, after pressing dash with the tick's stick); a tech
+demo also lists the tick that lets the stick go (`·`), so its list reads press, turn, release. The freeze's frames only exist while playback runs
 on the fixed clock, so a replay starts only once it does (`TasPlugin.PacePlayback`): a replay that started inside a
 long frame (a loaded CPU) played its first ticks back to back, with no `Update` between them, and lost the turn.
 
@@ -306,7 +307,12 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   none across). Down in the air it still lands as a wavedash (`canHyper` flattens it on the floor).
   It needs an analog stick (a keyboard or d-pad has no 0.3-0.4); the timing is the dash turn's, any frame of the
   freeze with the last one counting. The overlay labels it FREEZE AIM (`Tech.FreezeAim`: a dash whose direction on its
-  first dash tick is steeper than the diagonal, `0 < |x| < 0.7` with `y ≠ 0`).
+  first dash tick is steeper than the diagonal, `0 < |x| < 0.7` with `y ≠ 0`). Tech demo `freeze-aim` plays it on the
+  `freeze-aim` lab map: from a ledge under a ceiling it leans out past the ceiling's end and over a spike bed onto a
+  spiked pillar's top. A keyboard can't: up in the freeze goes straight into the ceiling, up-right into the spikes, and
+  none of 3,556 keyboard dash tries (every direction pressed or turned in the freeze, 0-16 ticks of walking first,
+  right held after) lands; the closest (walk left 9 ticks, dash up-right) hits the spiked face 37 u below the top. The
+  lab shows three of them as ghosts beside the freeze aim.
 
 The studio's **Ultra map** tab (`POST /api/enginesim/ultras`, `IGTAP.EngineSim ultras`) shows where the game's ultra
 bonus can be had in the VMAN run's world. The game's check (`Sign(preDashMomentum.x) == Sign(dashDirection.x)` and the

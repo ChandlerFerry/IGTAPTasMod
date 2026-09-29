@@ -4,11 +4,11 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
-using System.Threading.Tasks;
 using IGTAPTasMod;
 using UnityEngine;
 
@@ -43,9 +43,10 @@ namespace IGTAP.EngineSim.Cli
                         + "                                         the minimum-tick human-legal input sequence from the lab's start to its\n"
                         + "                                         finish box; writes labmaps/<id>.demo.json. The controls: no jump press\n"
                         + "                                         off solid ground; no wall jump unless the wall rays hit\n"
-                        + "  lab replay <trace.json> <labmap.json> <demo.json> [--out <file>] [--write-path]\n"
+                        + "  lab replay <trace.json> <labmap.json> <demo.json> [--out <file>] [--write-path [--path-ticks N]]\n"
                         + "                                         one demo replayed from the lab start, tick by tick; --write-path\n"
-                        + "                                         (re)writes the demo's ghost path");
+                        + "                                         (re)writes the demo's ghost path (--path-ticks N: its own first N\n"
+                        + "                                         physics ticks, no tail, finish or not: a lab's compared ghosts)");
                     return 2;
             }
         }
@@ -253,7 +254,7 @@ namespace IGTAP.EngineSim.Cli
             LabMapDef lab = LabMapDef.Load(labPath);
             int maxTicks = Opt(args, "--max-ticks", lab.maxTicks);
             string outPath = OptS(args, "--out", DefaultDemoPath(labPath));
-            int threads = Opt(args, "--threads", Environment.ProcessorCount);
+            int threads = Math.Max(1, Opt(args, "--threads", Environment.ProcessorCount));
             // --exact: dedupe on the bit-exact state (no quantization). The default key is coarse (1 u, 10 u/s): it finds a
             // demo fast for an upper bound B; the exact pass then proves nothing shorter exists (or finds the true minimum).
             bool exact = args.Contains("--exact");
@@ -293,89 +294,143 @@ namespace IGTAP.EngineSim.Cli
             InputTick bestInput = default;
             int bound = maxTicks + 1;
             bool announced = false;
-            // One world and simulation per worker (the game's statics are per thread), each replaying node paths from the lab
-            // start. Ticks in order: the first finish is the minimum, and once one is found every state that could still reach
-            // the finish box sooner (a state at tick T finishes at T + 1 at the earliest) is explored to prove it cannot.
+            // One world and simulation per dedicated worker thread (the game's statics are per thread): --threads worlds, each
+            // expanding the nodes it takes from the tick's bucket. A node's path replays from the lab start once, in its first
+            // input's run, which captures the node's state as it reaches it; its other inputs resume from that state. Ticks in
+            // order: the first finish is the minimum, and once one is found every state that could still reach the finish box
+            // sooner (a state at tick T finishes at T + 1 at the earliest) is explored to prove it cannot.
             float boxBottom = fy + anchor.y - fh / 2f;
             float bx0 = fx + anchor.x - fw / 2f, bx1 = fx + anchor.x + fw / 2f;
             float by0 = boxBottom, by1 = fy + anchor.y + fh / 2f;
-            long prunedHeight = 0, prunedTime = 0;
-            var workers = new System.Threading.ThreadLocal<Simulation>(() =>
+            long prunedHeight = 0, prunedTime = 0, explored = 0, localDead = 0;
+            List<Node> bucket = null;
+            int bucketTicks = 0, nextNode = -1;
+            // Per node of the bucket, in its order: the children kept and the finishes found, merged in that order, so the
+            // search is the same however the nodes fell to the workers.
+            List<Node>[] children = null;
+            List<(InputTick input, int at)>[] finishes = null;
+            bool searching = true;
+            Exception failure = null;
+            var phase = new Barrier(threads + 1);
+
+            void Expand(Simulation worker, int index)
             {
-                var (worker, _, _) = Open(tracePath, lab);
-                Place(worker, lab);
-                Configure(worker, lab);
-                return worker;
-            });
-            for (int ticks = 0; ticks < buckets.Length && ticks < bound; ticks++)
-            {
-                List<Node> bucket = buckets[ticks];
-                var keep = new System.Collections.Concurrent.ConcurrentBag<Node>();
-                var found = new System.Collections.Concurrent.ConcurrentBag<(Node node, InputTick input, int at)>();
-                long explored = 0, localDead = 0;
-                Parallel.ForEach(bucket, new ParallelOptions { MaxDegreeOfParallelism = threads }, node =>
+                Node node = bucket[index];
+                int ticks = bucketTicks;
+                if (node.Ticks != ticks) return;
+                if (Volatile.Read(ref bound) <= ticks + 1) return;
+                // Reachability (admissible: only provably dead states are cut). Height: no inputs can lift the player into
+                // the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
+                // maxTranslationSpeed (100 u/physics step) is the most any input can move the player either way, so a state
+                // more than that per remaining tick from the box cannot finish before the bound.
+                if (node.MaxY < boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
+                float dx = MathF.Max(MathF.Max(bx0 - node.X, node.X - bx1), 0f), dy = MathF.Max(MathF.Max(by0 - node.Y, node.Y - by1), 0f);
+                if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * 100f) { Interlocked.Increment(ref prunedTime); return; }
+                SimSnapshot state = null;
+                List<Node> kept = null;
+                List<(InputTick, int)> done = null;
+                foreach (InputTick input in Alphabet(node.JumpHeld, node.CanDash, control && !node.SolidGround))
                 {
-                    if (node.Ticks != ticks) return;
-                    if (Volatile.Read(ref bound) <= ticks + 1) return;
-                    // Reachability (admissible: only provably dead states are cut). Height: no inputs can lift the player into
-                    // the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
-                    // maxTranslationSpeed (100 u/physics step) is the most any input can move the player either way, so a state
-                    // more than that per remaining tick from the box cannot finish before the bound.
-                    if (node.MaxY < boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
-                    float dx = MathF.Max(MathF.Max(bx0 - node.X, node.X - bx1), 0f), dy = MathF.Max(MathF.Max(by0 - node.Y, node.Y - by1), 0f);
-                    if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * 100f) { Interlocked.Increment(ref prunedTime); return; }
-                    Simulation sim2 = workers.Value;
-                    foreach (InputTick input in Alphabet(node.JumpHeld, node.CanDash, control && !node.SolidGround))
+                    if (Volatile.Read(ref bound) <= ticks + 1) break;
+                    Interlocked.Increment(ref explored);
+                    Node child = Step(worker, node, input, ref state, exact, control, wallControl, out RunResult run, out int stepped);
+                    if (child == null)
                     {
-                        if (Volatile.Read(ref bound) <= ticks + 1) break;
-                        Interlocked.Increment(ref explored);
-                        Node child = Step(sim2, node, input, exact, control, wallControl, out RunResult run);
-                        if (child == null)
+                        if (run != null && run.Finished) (done ??= new List<(InputTick, int)>()).Add((input, stepped));
+                        else Interlocked.Increment(ref localDead);
+                        continue;
+                    }
+                    (kept ??= new List<Node>()).Add(child);
+                }
+                children[index] = kept;
+                finishes[index] = done;
+            }
+
+            var pool = Enumerable.Range(0, threads).Select(_ => new Thread(() =>
+            {
+                Simulation worker = null;
+                try
+                {
+                    var (opened, _, _) = Open(tracePath, lab);
+                    Place(opened, lab);
+                    Configure(opened, lab);
+                    worker = opened;
+                }
+                catch (Exception e) { Interlocked.CompareExchange(ref failure, e, null); }
+                while (true)
+                {
+                    phase.SignalAndWait();
+                    if (!searching) return;
+                    try
+                    {
+                        int i;
+                        while (worker != null && (i = Interlocked.Increment(ref nextNode)) < bucket.Count) Expand(worker, i);
+                    }
+                    catch (Exception e) { Interlocked.CompareExchange(ref failure, e, null); }
+                    phase.SignalAndWait();
+                }
+            }, 16 << 20) { IsBackground = true, Name = "lab-solve" }).ToList();
+            pool.ForEach(t => t.Start());
+            try
+            {
+                for (int ticks = 0; ticks < buckets.Length && ticks < bound; ticks++)
+                {
+                    bucket = buckets[ticks];
+                    bucketTicks = ticks;
+                    nextNode = -1;
+                    children = new List<Node>[bucket.Count];
+                    finishes = new List<(InputTick, int)>[bucket.Count];
+                    explored = localDead = 0;
+                    phase.SignalAndWait();
+                    phase.SignalAndWait();
+                    if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+                    for (int i = 0; i < bucket.Count; i++)
+                        if (finishes[i] != null)
+                            foreach (var (input, at) in finishes[i])
+                                if (at < bound) { best = bucket[i]; bestInput = input; bound = at; }
+                    extensions += explored;
+                    dead += localDead;
+                    if (best != null && !announced)
+                    {
+                        announced = true;
+                        Console.WriteLine($"  finish at tick {bound} (input tick {best.Path.Count + 1}) after {extensions:N0} extensions; exploring every state below the bound to prove it is the minimum");
+                    }
+                    foreach (List<Node> kept in children)
+                    {
+                        if (kept == null) continue;
+                        foreach (Node child in kept)
                         {
-                            if (run != null && run.Finished) found.Add((node, input, run.Stepped));
-                            else Interlocked.Increment(ref localDead);
-                            continue;
+                            if (child.Ticks >= bound) continue;
+                            if (visited.TryGetValue(child.Key, out int seen) && seen <= child.Ticks) { dupes++; continue; }
+                            visited[child.Key] = child.Ticks;
+                            states++;
+                            buckets[child.Ticks].Add(child);
                         }
-                        keep.Add(child);
                     }
-                });
-                foreach (var (node, input, at) in found)
-                    if (at < bound) { best = node; bestInput = input; bound = at; }
-                extensions += Interlocked.Read(ref explored);
-                dead += Interlocked.Read(ref localDead);
-                if (best != null && !announced)
-                {
-                    announced = true;
-                    Console.WriteLine($"  finish at tick {bound} (input tick {best.Path.Count + 1}) after {extensions:N0} extensions; exploring every state below the bound to prove it is the minimum");
+                    bucket.Clear();
+                    if (extensions > 0 && extensions / 5000 != (extensions - explored) / 5000)
+                        Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, tick {ticks}, best {(best == null ? "-" : bound.ToString())}");
                 }
-                foreach (Node child in keep)
-                {
-                    if (child.Ticks >= bound) continue;
-                    lock (visited)
-                    {
-                        if (visited.TryGetValue(child.Key, out int seen) && seen <= child.Ticks) { dupes++; continue; }
-                        visited[child.Key] = child.Ticks;
-                        states++;
-                        buckets[child.Ticks].Add(child);
-                    }
-                }
-                bucket.Clear();
-                if (extensions > 0 && extensions / 5000 != (extensions - Interlocked.Read(ref explored)) / 5000)
-                    Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, tick {ticks}, best {(best == null ? "-" : bound.ToString())}");
+            }
+            finally
+            {
+                searching = false;
+                phase.SignalAndWait();
+                pool.ForEach(t => t.Join());
+                phase.Dispose();
             }
             if (best == null)
             {
                 Console.WriteLine($"No demo within {maxTicks} ticks: {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, prunes {prunedHeight:N0} height / {prunedTime:N0} time, {clock.Elapsed.TotalSeconds:0.0}s");
-                workers.Dispose();
                 return 1;
             }
 
             List<InputTick> inputs = new List<InputTick>(best.Path);
             inputs.Add(bestInput);
             Console.WriteLine("  inputs: " + string.Join(" | ", inputs.Select(TickText)));
-            // The search's workers set the shared input hooks on their own thread; the one created on this thread took
-            // this thread's hook, so the verification runs on that worker's simulation (its own world and lab).
-            Simulation verify = workers.Value;
+            // Each worker set the shared input hooks on its own thread; the simulation made on this thread holds this thread's,
+            // so the verification runs on it (its own world and lab).
+            Simulation verify = sim;
             int finishTick = RunToFinish(verify, inputs);
             if (finishTick != bound)
             {
@@ -413,7 +468,6 @@ namespace IGTAP.EngineSim.Cli
                 path = GhostPath(tracePath, lab, inputs, finishTick),
             };
             File.WriteAllText(outPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
-            workers.Dispose();
             Console.WriteLine("wrote " + outPath);
             return 0;
         }
@@ -424,12 +478,17 @@ namespace IGTAP.EngineSim.Cli
             return Path.Combine(dir, Path.GetFileNameWithoutExtension(labPath) + ".demo.json");
         }
 
-        /// <summary>One input tick from a node: replay its path plus the new input from the lab start in one run (the trailing
-        /// duplicate keeps the engine from ending at the input tick's end), and stop as the new input is consumed. The wall
-        /// control (<paramref name="wallControl"/>) ends a run whose jump would be a wall jump off no wall (coyote or stored).</summary>
-        static Node Step(Simulation sim, Node from, InputTick input, bool exact, bool control, bool wallControl, out RunResult run)
+        /// <summary>One input tick from a node: its path plus the new input (the trailing duplicate keeps the engine from ending
+        /// at the input tick's end), stopping as the new input is consumed. With no <paramref name="state"/> yet the run replays
+        /// the path from the lab start and captures the node's state as it reaches it (its input tick from.Path.Count); with one
+        /// it resumes there, with the same step budget, so a node's path replays once for its whole alphabet.
+        /// <paramref name="stepped"/> counts physics ticks from the lab start either way. The wall control
+        /// (<paramref name="wallControl"/>) ends a run whose jump would be a wall jump off no wall (coyote or stored).</summary>
+        static Node Step(Simulation sim, Node from, InputTick input, ref SimSnapshot state, bool exact, bool control, bool wallControl,
+            out RunResult run, out int stepped)
         {
-            var path = new List<InputTick>(from.Path.Count + 2);
+            int at = from.Path.Count;
+            var path = new List<InputTick>(at + 2);
             path.AddRange(from.Path);
             path.Add(input);
             path.Add(input);
@@ -437,32 +496,40 @@ namespace IGTAP.EngineSim.Cli
             bool canDash = from.CanDash;
             float maxY = from.MaxY, x = from.X, y = from.Y;
             bool solid = from.SolidGround, illegal = false;
+            SimSnapshot resume = state, captured = null;
             sim.BeforeInput = wallControl ? m => { if (!illegal && WallJumpOffWall(m)) { illegal = true; sim.Engine.Abort("control: a wall jump off no wall"); } } : null;
-            run = sim.Run(path, null, afterTick: tick =>
+            // A resumed run has from.Ticks physics ticks behind it: its budget is what is left of the run from the start's.
+            run = sim.Run(path, resume, afterTick: tick =>
             {
                 // tick 0 is the first scheduler tick of a run that starts inside a lock (a dash's or spring's remaining ticks:
                 // no input is consumed there). The new input tick is from.Path.Count + 1.
                 if (illegal) return false;
-                if (tick <= from.Path.Count) return true;
+                if (tick <= at)
+                {
+                    if (resume == null && tick == at && at > 0) captured = sim.Capture(tick);
+                    return true;
+                }
                 key = KeyOf(sim, exact);
                 canDash = GetMovementBool(sim, "dashUnlocked");
                 maxY = MaxReach(sim, control);
-                WorldPos at = sim.PlayerWorld;
-                x = at.x; y = at.y;
-                solid = GroundCheckGrounds(sim, at);
+                WorldPos p = sim.PlayerWorld;
+                x = p.x; y = p.y;
+                solid = GroundCheckGrounds(sim, p);
                 return false;
-            }, extraTicks: 400);
+            }, extraTicks: resume == null ? 400 : 400 + at - from.Ticks);
             sim.BeforeInput = null;
+            if (captured != null) state = captured;
+            stepped = (resume == null ? 0 : from.Ticks) + run.Stepped;
             // A run the wall control ended is dead, never a finish.
             if (illegal) run = null;
             if (key == null) return null;
-            var childPath = new List<InputTick>(from.Path.Count + 1);
+            var childPath = new List<InputTick>(at + 1);
             childPath.AddRange(from.Path);
             childPath.Add(input);
             return new Node
             {
                 Path = childPath,
-                Ticks = run.Stepped, JumpHeld = input.press || input.held && !input.release || from.JumpHeld && !input.release && !input.press,
+                Ticks = stepped, JumpHeld = input.press || input.held && !input.release || from.JumpHeld && !input.release && !input.press,
                 CanDash = canDash, Key = key, MaxY = maxY, X = x, Y = y, SolidGround = solid,
             };
         }
@@ -560,9 +627,10 @@ namespace IGTAP.EngineSim.Cli
         /// <see cref="GhostTail"/> ticks on with the stick held full the way the dot faces at the finish and the jump button let go
         /// (the run carries on, so the distance the tech buys shows), with no finish box to stop at. Frames where time stands
         /// still (a dash freeze, a pause) add a point per physics tick's worth of them (5.6 at 280 fps), so the ghost keeps 1x's
-        /// pace and a pauselift's climb shows over the time the pause takes instead of in one step.
+        /// pace and a pauselift's climb shows over the time the pause takes instead of in one step. <paramref name="tail"/> 0 (a
+        /// comparison ghost, <c>--path-ticks</c>): the demo's own first <paramref name="finishTick"/> physics ticks, nothing after.
         /// </summary>
-        static List<float[]> GhostPath(string tracePath, LabMapDef lab, List<InputTick> inputs, int finishTick)
+        static List<float[]> GhostPath(string tracePath, LabMapDef lab, List<InputTick> inputs, int finishTick, int tail = GhostTail)
         {
             var (sim, trace, _) = Open(tracePath, lab);
             using (trace)
@@ -581,7 +649,7 @@ namespace IGTAP.EngineSim.Cli
                         animator == null ? 0f : animator.GetInteger("Animation"), animator == null ? 1f : MathF.Round(animator.speed, 2) };
                 }
                 var path = new List<float[]> { Point() };
-                int keep = finishTick + GhostTail;
+                int keep = finishTick + tail;
                 // The ghost shows each jump at its fullest: from a jump press on, the button stays held until the tick before the
                 // next press (no jump cut: Movement cuts a normal jump to 50 up when it's let go while Velocity.y is 150-580), and
                 // after the last press to the end. The engine ends with its inputs, so tail ticks carry the run on past the finish,
@@ -738,13 +806,16 @@ namespace IGTAP.EngineSim.Cli
                 + (run.Finished ? "finish at tick " + steps : "no finish (" + run.EndReason + ")")
                 + "; tech: " + (signature ?? "none"));
             // --write-path: (re)write the demo's ghost path, as `lab solve` writes it, after the lab moved or the demo was solved
-            // before demos carried one.
-            if (run.Finished && args.Contains("--write-path"))
+            // before demos carried one: to the finish, then the tail. --path-ticks N: the demo's own first N physics ticks and no
+            // tail, finish or not, for a lab's `ghosts` (the ghosts compared side by side all play their own inputs over the
+            // same ticks, a comparison demo that misses the finish on purpose included).
+            int pathTicks = Opt(args, "--path-ticks", 0);
+            if (args.Contains("--write-path") && (run.Finished || pathTicks > 0))
             {
                 var file = JsonNode.Parse(File.ReadAllText(demoPath))!.AsObject();
-                file["path"] = JsonSerializer.SerializeToNode(GhostPath(tracePath, lab, inputs, steps));
+                file["path"] = JsonSerializer.SerializeToNode(pathTicks > 0 ? GhostPath(tracePath, lab, inputs, pathTicks, 0) : GhostPath(tracePath, lab, inputs, steps));
                 File.WriteAllText(demoPath, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-                Console.WriteLine("wrote the ghost path to " + demoPath);
+                Console.WriteLine("wrote the ghost path to " + demoPath + (pathTicks > 0 ? " (its first " + pathTicks + " physics ticks)" : ""));
             }
             return run.Finished ? 0 : 1;
         }

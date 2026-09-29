@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 
 namespace Box2D
@@ -55,7 +56,8 @@ namespace Box2D
                 flip = 0;
             }
 
-            FindIncidentEdge(out b2ClipVertex[] incidentEdge, poly1, xf1, edge1, poly2, xf2);
+            Span<b2ClipVertex> incidentEdge = stackalloc b2ClipVertex[2];
+            FindIncidentEdge(incidentEdge, poly1, xf1, edge1, poly2, xf2);
 
             int count1 = poly1.m_count;
             b2Vec2[] vertices1 = poly1.m_vertices;
@@ -86,7 +88,8 @@ namespace Box2D
             int np;
 
             // Clip to box side 1
-            np = Collision.ClipSegmentToLine(out b2ClipVertex[] clipPoints1, incidentEdge, -tangent, sideOffset1, iv1);
+            Span<b2ClipVertex> clipPoints1 = stackalloc b2ClipVertex[2];
+            np = Collision.ClipSegmentToLine(clipPoints1, incidentEdge, -tangent, sideOffset1, iv1);
 
             if (np < 2)
             {
@@ -94,7 +97,8 @@ namespace Box2D
             }
 
             // Clip to negative box side 1
-            np = Collision.ClipSegmentToLine(out b2ClipVertex[] clipPoints2, clipPoints1, tangent, sideOffset2, iv2);
+            Span<b2ClipVertex> clipPoints2 = stackalloc b2ClipVertex[2];
+            np = Collision.ClipSegmentToLine(clipPoints2, clipPoints1, tangent, sideOffset2, iv2);
 
             if (np < 2)
             {
@@ -174,7 +178,7 @@ namespace Box2D
         }
 
         private static void FindIncidentEdge(
-            out b2ClipVertex[] c,
+            Span<b2ClipVertex> c,
             in b2PolygonShape poly1,
             in b2Transform xf1,
             int edge1,
@@ -209,7 +213,6 @@ namespace Box2D
             // Build the clip vertices for the incident edge.
             int i1 = index;
             int i2 = i1 + 1 < count2 ? i1 + 1 : 0;
-            c = new b2ClipVertex[2];
             c[0].v = Math.Mul(xf2, vertices2[i1]);
             c[0].id.cf.indexA = (byte)edge1;
             c[0].id.cf.indexB = (byte)i1;

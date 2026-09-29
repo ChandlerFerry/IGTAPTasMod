@@ -25,14 +25,29 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; faster?: FasterWay[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean;
   unlockLevel?: number | null;
   selectedRouteId: string; routes: Route[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
   techs?: TechState;
 };
+// GET /state/static: the heavy part, fetched again only when /state/live's staticVersion changes.
+type StaticState = { staticVersion: number; routes: Route[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
+  fullTas?: Pick<FullTasState, "runs">; techs?: Pick<TechState, "list" | "detectors" | "labs"> };
+// GET /state/live: everything else, polled.
+type LiveState = Omit<StudioState, "routes" | "courses" | "recordings" | "savestates" | "fullTas" | "techs"> & { staticVersion: number;
+  fullTas?: Omit<FullTasState, "runs">; techs?: Pick<TechState, "injectedLab" | "seen"> };
 
 const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], recordings: [], savestates: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
+
+// The next live poll goes out this long after the last one's answer.
+const LIVE_POLL_MS = 250;
+
+function mergeState(s: StaticState, l: LiveState): StudioState {
+  return { ...l, routes: s.routes, courses: s.courses, recordings: s.recordings, savestates: s.savestates,
+    fullTas: s.fullTas && l.fullTas ? { ...s.fullTas, ...l.fullTas } : undefined,
+    techs: s.techs && l.techs ? { ...s.techs, ...l.techs } : undefined };
+}
 
 async function request(path: string, body?: unknown) {
   const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -52,12 +67,40 @@ export default function Studio() {
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   const unlockLevel = state.connected ? state.unlockLevel ?? null : null;
 
+  // The static part and the refresh that fetched it; a refresh's answer is shown only if no later one was shown already.
+  const staticState = useRef<{ from: number; data: StaticState } | null>(null);
+  const refreshes = useRef(0), shown = useRef(0);
   const refresh = useCallback(async () => {
-    try { setState(await request("/state")); setError(""); }
-    catch { setState(s => ({ ...s, connected: false, engineStatus: "Game plugin offline" })); }
+    const id = ++refreshes.current;
+    try {
+      const live: LiveState = await request("/state/live");
+      let data = staticState.current?.data;
+      if (!data || data.staticVersion !== live.staticVersion) {
+        const fetched: StaticState = await request("/state/static");
+        const known = staticState.current;
+        if (known && id < known.from) data = known.data;
+        else { staticState.current = { from: id, data: fetched }; data = fetched; }
+      }
+      if (id < shown.current) return;
+      shown.current = id;
+      setState(mergeState(data, live)); setError("");
+    }
+    catch {
+      // A restarted game counts its versions from the start again.
+      staticState.current = null;
+      if (id < shown.current) return;
+      shown.current = id;
+      setState(s => ({ ...s, connected: false, engineStatus: "Game plugin offline" }));
+    }
   }, []);
 
-  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 750); return () => window.clearInterval(timer); }, [refresh]);
+  // Polls one at a time: the next goes out LIVE_POLL_MS after the last one's answer.
+  useEffect(() => {
+    let alive = true, timer = 0;
+    const poll = async () => { await refresh(); if (alive) timer = window.setTimeout(poll, LIVE_POLL_MS); };
+    poll();
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [refresh]);
   const route = useMemo(() => state.routes.find(r => r.id === state.selectedRouteId) ?? state.routes[0], [state]);
   const command = async (path: string, body: unknown = {}) => {
     try { setError(""); await request(path, body); await refresh(); return true; }
@@ -94,6 +137,9 @@ export default function Studio() {
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
+          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback isn't held to 280 frames a second and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
+            <input type="checkbox" checked={!!state.fastPlayback} disabled={!state.connected} onChange={e => command("/settings/fast-playback", { on: e.target.checked })} />Fast
+          </label>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
           <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>

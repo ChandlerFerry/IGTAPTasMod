@@ -146,6 +146,22 @@ The game is the Steam install (`Directory.Build.props`, `tools/gamepaths.py`; `I
 game before building (the plugin DLL is locked), then relaunch it. `python tools/enginesim-redeploy.py` does this for a
 plugin-only build.
 
+## Studio
+
+The plugin serves the studio at `http://127.0.0.1:17426/`. The studio polls `GET /api/state/live` (playback, recording,
+settings, the Optimize solver, the Full-TAS solve and playback, the Tech tab's last playback) a quarter second after each
+answer, and fetches `GET /api/state/static` (routes, recordings, savestates, courses, Full-TAS runs, techs and lab maps)
+only when the live state's `staticVersion` changes: with every command, every file the plugin writes, and within a
+second of a file the offline solver or the lab tools write. `GET /api/state` is both in one, for tools. Selecting a
+route saves it to `settings.json` (`selectedRouteId`), not the whole `routes.json`.
+
+**Fast** next to **Run route** (`POST /api/settings/fast-playback {"on": true}`, settings `fastPlayback`, off by
+default) lifts the 280 fps cap on real frames in 1x playback (`Application.targetFrameRate`), so a route plays as fast
+as the game renders. The simulation is unchanged: each frame's game time is the fixed clock's step
+(`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock, and vsync off,
+`Time.maximumDeltaTime` and the wall-clock patches stay as they are. A walk (its slowdown is paced by the wall clock)
+and a probe (`ProbeRunner`, its frame rate is what it measures) keep the cap.
+
 ## Solving
 
 See [`enginesim/README.md`](enginesim/README.md#use).

@@ -81,7 +81,7 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
                 humanize?.Set(file, inputs);
-                // Raised under the solver's lock, so the appends never interleave.
+                // Raised one at a time, in the order the bests were found, so the appends never interleave.
                 if (logJson != null)
                     File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how }) + "\n");
             };

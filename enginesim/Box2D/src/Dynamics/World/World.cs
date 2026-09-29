@@ -58,6 +58,10 @@ namespace Box2D
         private long m_touchCount;
         public long NextTouchOrder() => ++m_touchCount;
 
+        // The two proxies' vertex buffers of this world's GJK queries (b2DistanceProxy.Set): a sensor contact's overlap
+        // test and SolveTOI's time of impact. Neither runs inside the other, and a world is stepped by one thread.
+        internal readonly b2Vec2[] m_proxyBufferA = new b2Vec2[2], m_proxyBufferB = new b2Vec2[2];
+
         private b2Body m_bodyList;
         private b2DebugDraw m_debugDraw;
 
@@ -829,9 +833,9 @@ namespace Box2D
                         // Compute the time of impact in interval [0, minTOI]
                         b2TOIInput input;
                         input.proxyA = new b2DistanceProxy();
-                        input.proxyA.Set(fA.b2Shape, c.ChildIndexA);
+                        input.proxyA.Set(fA.b2Shape, c.ChildIndexA, m_proxyBufferA);
                         input.proxyB = new b2DistanceProxy();
-                        input.proxyB.Set(fB.b2Shape, c.ChildIndexB);
+                        input.proxyB.Set(fB.b2Shape, c.ChildIndexB, m_proxyBufferB);
                         input.sweepA = bA.m_sweep;
                         input.sweepB = bB.m_sweep;
                         input.tMax = 1.0f;
@@ -911,11 +915,9 @@ namespace Box2D
                     minContact.m_flags |= b2CollisionFlags.b2Island;
 
                     // Get contacts on bodyA and bodyB.
-                    b2Body[] bodies = { bA, bB };
-
                     for (var i = 0; i < 2; ++i)
                     {
-                        b2Body body = bodies[i];
+                        b2Body body = i == 0 ? bA : bB;
                         if (body.m_type == b2BodyType.Dynamic)
                         {
                             for (b2ContactEdge ce = body.m_contactList; ce != null; ce = ce.next)

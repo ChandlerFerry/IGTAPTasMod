@@ -24,6 +24,17 @@ ordered as the sections they came from.
   (`_stepTo`, as turbo's `Place(player, _stepTo)`).
 - **Where:** `TurboRunner.Place`, `_stepTo`.
 
+## Replay start pinned past a rebase
+
+- **Symptom:** a route replay to a far course (Course 6 from a fresh game, origin (0, 0)) never started: the player hung
+  in the fall animation at the course start's scene position, `Waiting for 3 stable ticks` forever.
+- **Cause:** the stable-tick wait pins the player to the scene position it had just after the quick restart. The
+  restart put it past Threshold, `MoveOrigin` moved the world back, and the pin put the player where the course had
+  been: no ground, never `onGround`, and a rebase again every frame.
+- **Fix:** the pin moves with the world: `MacroEngine.WorldMoved` on every `FloatingOrigin.MoveRootTransforms` (1x,
+  turbo, snapshot restores) and on the offline engine's rebase.
+- **Where:** `MacroEngine.WorldMoved`, `TasPlugin.AfterMoveRootTransforms`, `Simulation.ResumeRebase`.
+
 ## Statics shared between solver threads
 
 - **Symptom:** after a rebase, a worker's quick restart or death put the player at `respawnPoint` plus another world's
@@ -181,7 +192,10 @@ ordered as the sections they came from.
 - **Cause:** each worker kept its own archive with a snapshot per cell.
 - **Fix:** one shared explore archive of input prefixes (no snapshots), per-worker snapshot pools and cached draws
   (on C4 WJ_DS_DJ with 32 threads the replays are ~23% of all ticks simulated).
-- **Where:** `OfflineSolver._archive`, `StatesPerWorker`, `CachedDraws`, `ArchiveStatus`.
+- **Later:** cells got owners (`Cell.Owner`: the worker that last kept the snapshot) and each worker draws mostly from
+  its own cells with today's weights, so more threads no longer mean fewer cached picks (C4 WJ_DS_DJ, 24 threads: 22-37%
+  cached before). A stale eviction record no longer evicts a freshly used snapshot.
+- **Where:** `OfflineSolver._archive`, `StatesPerWorker`, `CachedDraws`, `ArchiveStatus`, `Cell.Owner`.
 
 ## Persisted states across runs
 
@@ -234,3 +248,18 @@ ordered as the sections they came from.
   11); the demo holds the cling one tick longer to dash on the landing tick. The other five lab demos are unchanged
   (their first tick has no vertical stick).
 - **Where:** `Simulation.Run`, `TechGrafts.DemoStart.ApplyLabStart`, `Cli/Lab.cs` `Place`, `labmaps/stored-superbounce.demo.json`.
+
+## Trigger touch lapsed at the step's start
+
+- **Symptom:** Course 11 `WJ_DS_DJ_BS_OM` offline bests of 0.56–0.96 s (the real route is 4.56 s) all failed their turbo
+  check (no finish): offline, a landing dash into Course 1's start gate started the timer again on the far side of the
+  course, 28 ticks from the finish.
+- **Cause:** the landing tick's move reached the gate by 0.2 units (Enter), and the next tick's dash transform write
+  (interpolation pull-back) moved the player 20 units out before the step, whose move took it back in. The engine kept
+  the pair touching and sent `startGate`'s `OnTriggerStay2D`; Box2D collides a step's contacts before it moves the
+  bodies, so in turbo the touch ended there and began again: Enter, and `startGate` starts only on Stay.
+- **Fix:** before each step, a trigger pair touching after the last one whose shapes don't overlap at the step's start
+  (tested again only for teleported bodies and rebuilt shapes) sends Enter instead of Stay if it overlaps afterwards.
+  Scale-rebuilt shapes keep the facing-flip rule. `c11-bogus-0.56` now matches on every tick; the other 264 corpus
+  traces replay unchanged. Every Course 11 sub-second best now ends without a finish offline.
+- **Where:** `PhysicsWorld.FindLapsedTouches`, `DispatchCallbacks`.

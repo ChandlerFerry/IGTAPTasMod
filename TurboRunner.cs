@@ -17,6 +17,35 @@ namespace IGTAPTasMod
         static readonly MethodInfo VmanFixedUpdate = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly MethodInfo OrbFixedUpdate = AccessTools.Method(typeof(JiggleDropScript), "FixedUpdate");
         static readonly MethodInfo OrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
+        // The per-tick calls as open delegates, made on the first run (after TasPlugin's patches, which they go through as
+        // Unity's own calls do).
+        static Action<Movement> _fixedUpdate, _update;
+        static Action<courseScript> _courseFixedUpdate;
+        static Action<VmanScript> _vmanFixedUpdate;
+        static Action<JiggleDropScript> _orbFixedUpdate;
+        static Action<FloatingOrigin> _originLateUpdate;
+        // Invoke(name) targets' methods by type and name, for the pending ones turbo runs itself.
+        static readonly Dictionary<(Type, string), MethodInfo> InvokedMethods = new Dictionary<(Type, string), MethodInfo>();
+
+        static void MakeCalls()
+        {
+            if (_fixedUpdate != null) return;
+            _fixedUpdate = AccessTools.MethodDelegate<Action<Movement>>(FixedUpdateMethod);
+            _update = AccessTools.MethodDelegate<Action<Movement>>(UpdateMethod);
+            _courseFixedUpdate = AccessTools.MethodDelegate<Action<courseScript>>(CourseFixedUpdate);
+            _vmanFixedUpdate = AccessTools.MethodDelegate<Action<VmanScript>>(VmanFixedUpdate);
+            _orbFixedUpdate = AccessTools.MethodDelegate<Action<JiggleDropScript>>(OrbFixedUpdate);
+            _originLateUpdate = AccessTools.MethodDelegate<Action<FloatingOrigin>>(OriginLateUpdate);
+        }
+
+        /// <summary>What <c>MonoBehaviour.Invoke(method)</c> on the target would run: its type's method of that name, none if it has none.</summary>
+        static void CallInvoked(MonoBehaviour target, string method)
+        {
+            Type type = target.GetType();
+            if (!InvokedMethods.TryGetValue((type, method), out MethodInfo info))
+                InvokedMethods[(type, method)] = info = AccessTools.Method(type, method);
+            info?.Invoke(target, null);
+        }
         static readonly AccessTools.FieldRef<JiggleDropScript, float> OrbCooldown = AccessTools.FieldRefAccess<JiggleDropScript, float>("cooldown");
         static readonly AccessTools.FieldRef<JiggleDropScript, bool> OrbUsable = AccessTools.FieldRefAccess<JiggleDropScript, bool>("usable");
         static readonly AccessTools.FieldRef<PlatformMover, Rigidbody2D> MoverBody = AccessTools.FieldRefAccess<PlatformMover, Rigidbody2D>("body");
@@ -212,7 +241,7 @@ namespace IGTAPTasMod
         static void OriginFrame()
         {
             FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
-            if (origin != null && origin.isActiveAndEnabled && origin.ReferenceObject != null) OriginLateUpdate.Invoke(origin, null);
+            if (origin != null && origin.isActiveAndEnabled && origin.ReferenceObject != null) _originLateUpdate(origin);
         }
 
         static void ResumeRebase()
@@ -703,6 +732,7 @@ namespace IGTAPTasMod
         public static int Run(Movement movement, Func<bool> keepRunning, int maxTicks, Action afterTick = null, Snapshot resume = null)
         {
             if (movement == null) throw new InvalidOperationException("Player not found.");
+            MakeCalls();
             SimulationMode2D savedMode = Physics2D.simulationMode;
             courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -736,18 +766,18 @@ namespace IGTAPTasMod
                         if (Pending[i].due > _tick) continue;
                         var (_, target, method) = Pending[i];
                         Pending.RemoveAt(i--);
-                        if (target != null) AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
+                        if (target != null) CallInvoked(target, method);
                     }
                     Resume(Wait.Seconds);
                     // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
                     Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.LastAlpha));
                     _freezeFor = -1f;
                     _pauseFrames = _pauseAfter = 0;
-                    FixedUpdateMethod.Invoke(movement, null);
+                    _fixedUpdate(movement);
                     foreach (courseScript course in courses)
-                        if (course != null && course.isActiveAndEnabled) CourseFixedUpdate.Invoke(course, null);
+                        if (course != null && course.isActiveAndEnabled) _courseFixedUpdate(course);
                     if (VmanScript.isCurrentlyVman && VmanScript.Instance != null && VmanScript.Instance.isActiveAndEnabled)
-                        VmanFixedUpdate.Invoke(VmanScript.Instance, null);
+                        _vmanFixedUpdate(VmanScript.Instance);
                     foreach (upgradeBox box in boxes)
                     {
                         if (box == null || !box.isActiveAndEnabled) continue;
@@ -756,7 +786,7 @@ namespace IGTAPTasMod
                     }
                     // A used refill orb counts its cooldown down and grows back at its end (JiggleDropScript.FixedUpdate).
                     foreach (JiggleDropScript orb in orbs)
-                        if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) OrbFixedUpdate.Invoke(orb, null);
+                        if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) _orbFixedUpdate(orb);
                     // No write: the blend was never the body's, so the sync before the step leaves the body where it is.
                     if (player.position == lag) Place(player, _stepTo);
                     Physics2D.SyncTransforms();
@@ -789,7 +819,7 @@ namespace IGTAPTasMod
                         for (int repeat = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter); repeat >= 0; repeat--)
                         {
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));
-                            UpdateMethod.Invoke(movement, null);
+                            _update(movement);
                             if (player.position == at) continue;
                             Physics2D.SyncTransforms();
                             _stepFrom = _stepTo = player.position;
@@ -814,7 +844,7 @@ namespace IGTAPTasMod
                 {
                     if (target == null) continue;
                     if (target == movement) movement.Invoke(method, Mathf.Max(0f, (due - _tick) * Time.fixedDeltaTime));
-                    else AccessTools.Method(target.GetType(), method)?.Invoke(target, null);
+                    else CallInvoked(target, method);
                 }
                 Pending.Clear();
                 BuyMax.Clear();

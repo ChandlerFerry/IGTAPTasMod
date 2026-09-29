@@ -19,6 +19,8 @@ namespace IGTAPTasMod
     {
         private object HandleWebRequest(WebStudioRequest request)
         {
+            // Any command can change what GET /api/state/static returns.
+            if (request.Method != "GET") BumpWebState();
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
             // An avoid box drawn on a course's search map edits forced-paths.json (a new partial file, not the engine bridge).
             if (request.Path == "/api/enginesim/avoid") return HandleCourseAvoid(body);
@@ -70,6 +72,12 @@ namespace IGTAPTasMod
                 _settings.forceBreakerLights = Truthy(body, "on");
                 SaveSettings();
                 return new { ok = true, on = _settings.forceBreakerLights };
+            }
+            if (request.Path == "/api/settings/fast-playback")
+            {
+                _settings.fastPlayback = Truthy(body, "on");
+                SaveSettings();
+                return new { ok = true, on = _settings.fastPlayback };
             }
             if (request.Path == "/api/settings/checkpoint-respawns")
             {
@@ -136,6 +144,8 @@ namespace IGTAPTasMod
                 StartNewGame(request, Truthy(body, "vman"), string.IsNullOrEmpty(Text(body, "savestate")) ? null : Text(body, "savestate"));
                 return null;
             }
+            if (request.Method == "GET" && request.Path == "/api/state/live") return BuildLiveWebState();
+            if (request.Method == "GET" && request.Path == "/api/state/static") return BuildStaticWebState();
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();
             if (request.Method != "POST") throw new InvalidOperationException("Unsupported request method.");
 
@@ -144,8 +154,11 @@ namespace IGTAPTasMod
                 string id = Text(body, "routeId");
                 int index = _library.macros.FindIndex(r => r.id == id);
                 if (index < 0) throw new InvalidOperationException("Route not found.");
-                _library.selectedIndex = index;
-                SaveLibrary();
+                if (index != _library.selectedIndex)
+                {
+                    _library.selectedIndex = index;
+                    SaveSelection();
+                }
                 return new { ok = true };
             }
             if (request.Path == "/api/routes/run")
@@ -313,8 +326,93 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
-        private object BuildWebState()
+        // The studio polls GET /api/state/live (the small, fast-changing part) and fetches GET /api/state/static (routes,
+        // recordings, savestates, courses, Full-TAS runs, techs) again only when the live part's staticVersion changes
+        // (_webStateVersion). It changes with every command (any request but a GET), every write through WriteJsonAtomic,
+        // and within a second of anything else the static part reads (WebStateStamp). GET /api/state is both parts in one,
+        // for tools.
+        void BumpWebState() { _webStateVersion++; }
+
+        long WebStateVersion()
         {
+            if (Time.unscaledTime >= _webStateCheckAt)
+            {
+                _webStateCheckAt = Time.unscaledTime + 1f;
+                long stamp = WebStateStamp();
+                if (stamp != _webStateStamp)
+                {
+                    _webStateStamp = stamp;
+                    BumpWebState();
+                }
+            }
+            return _webStateVersion;
+        }
+
+        /// <summary>
+        /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
+        /// lab tools write (Full-TAS bests, closest attempts, faster ways, traces, lab maps and demos, forced-paths.json),
+        /// fulltas.json edited by hand, the lists' sizes, playback, recording and solving starting or ending, the scene, and
+        /// the bonus reward boxes' purchases (the courses' hints).
+        /// </summary>
+        long WebStateStamp()
+        {
+            long h = 17;
+            void Add(long value) { h = h * 31 + value; }
+            void AddFile(string path) { Add(File.GetLastWriteTimeUtc(path).Ticks); }
+            void AddDirectory(string dir)
+            {
+                if (!Directory.Exists(dir)) { Add(0); return; }
+                foreach (FileInfo file in new DirectoryInfo(dir).GetFiles("*.json"))
+                {
+                    Add(file.Name.GetHashCode());
+                    Add(file.LastWriteTimeUtc.Ticks);
+                    Add(file.Length);
+                }
+            }
+            Add(PlaybackActive ? 1 : 0);
+            Add(_recorder.IsRecording ? 1 : 0);
+            Add(_solverRunning ? 1 : 0);
+            Add(_fullTasProcess != null ? 1 : 0);
+            Add((int)SceneManager.GetActiveScene().handle);
+            Add(_library.macros.Count);
+            Add(_library.selectedIndex);
+            Add(_recordings.Count);
+            Add(_savestates.Count);
+            Add(_techs.Count);
+            Add(_fullTasRuns.Count);
+            Add(_fullTasSplits.Count);
+            foreach (upgradeBox box in _bonusRewardBoxes.Values) Add(box != null ? box.TimesUsed : -1);
+            AddFile(FullTasPath);
+            AddFile(FullTasSplitsPath);
+            AddDirectory(Path.Combine(EngineSimDir, "fulltas"));
+            foreach (FullTasRunDef run in _fullTasRuns) Add(File.Exists(FullTasTracePath(run.name)) ? 1 : 0);
+            AddDirectory(LabMapsDir);
+            string exe = EngineSimExe;
+            if (!string.IsNullOrEmpty(exe)) AddFile(Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json"));
+            return h;
+        }
+
+        private object BuildLiveWebState()
+        {
+            MacroDefinition selected = SelectedMacro;
+            Movement player = FindWorldMovement();
+            return new { connected = true, version = PluginVersion, staticVersion = WebStateVersion(), engineStatus = _engine.Status,
+                unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
+                paused = IsGamePaused(player),
+                capabilitiesLocked = _settings.lockCapabilities,
+                overlayShown = _settings.showOverlay,
+                breakerLightsForced = _settings.forceBreakerLights,
+                checkpointRespawns = _settings.checkpointRespawns,
+                fastPlayback = _settings.fastPlayback,
+                running = PlaybackActive,
+                humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
+                recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
+                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState() };
+        }
+
+        private object BuildStaticWebState()
+        {
+            long version = WebStateVersion();
             MacroDefinition selected = SelectedMacro;
             List<object> routes = new List<object>();
             foreach (MacroDefinition route in _library.macros)
@@ -336,6 +434,7 @@ namespace IGTAPTasMod
             foreach (Savestate savestate in _savestates)
                 savestates.Add(new { id = savestate.id, name = savestate.name, createdUtc = savestate.createdUtc,
                     assigned = selected != null && selected.savestateId == savestate.id });
+            // Every recording's actions: the Recordings tab lists each one's action summary.
             List<object> recordings = new List<object>();
             foreach (RecordingDefinition recording in _recordings)
             {
@@ -347,20 +446,15 @@ namespace IGTAPTasMod
                     sampleCount = recording.samples.Count, actionCount = recording.semanticSteps.Count,
                     courseTimeSeconds = recording.courseTimeSeconds, actions = actions });
             }
-            Movement player = FindWorldMovement();
-            return new { connected = true, version = PluginVersion, engineStatus = _engine.Status,
-                unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
-                paused = IsGamePaused(),
-                capabilitiesLocked = _settings.lockCapabilities,
-                overlayShown = _settings.showOverlay,
-                breakerLightsForced = _settings.forceBreakerLights,
-                checkpointRespawns = _settings.checkpointRespawns,
-                running = PlaybackActive,
-                humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
-                recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                routes = routes, recordings = recordings, savestates = savestates,
-                courses = BuildCourseWebState(),
-                solver = BuildSolverWebState(), fullTas = BuildFullTasWebState(), techs = BuildTechWebState() };
+            return new { staticVersion = version, routes = routes, recordings = recordings, savestates = savestates,
+                courses = BuildCourseWebState(), fullTas = new { runs = BuildFullTasRunsWebState() }, techs = BuildTechStaticWebState() };
+        }
+
+        private object BuildWebState()
+        {
+            JObject state = JObject.FromObject(BuildStaticWebState());
+            state.Merge(JObject.FromObject(BuildLiveWebState()));
+            return state;
         }
 
         private static string Text(JObject value, string name)

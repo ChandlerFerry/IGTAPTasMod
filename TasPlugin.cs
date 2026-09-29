@@ -58,7 +58,7 @@ namespace IGTAPTasMod
         private JObject _bootstrapBody;
         private readonly List<string> _bootstrapNotes = new List<string>();
 
-        private static readonly FieldInfo MovIsOnMainMenuField = AccessTools.Field(typeof(Movement), "isOnMainMenu");
+        private static readonly AccessTools.FieldRef<Movement, bool> MovIsOnMainMenu = AccessTools.FieldRefAccess<Movement, bool>("isOnMainMenu");
 
         private void Awake()
         {
@@ -115,6 +115,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchOptional(typeof(Movement), "TimeStop", nameof(BeforeOverlayTimeStop), null);
+            PatchOptional(typeof(FloatingOrigin), "MoveRootTransforms", null, nameof(AfterMoveRootTransforms));
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();
@@ -133,12 +134,22 @@ namespace IGTAPTasMod
         static readonly MethodInfo CourseFixedUpdateMethod = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly MethodInfo VmanFixedUpdateMethod = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly List<MonoBehaviour> DeferredFixedUpdates = new List<MonoBehaviour>();
+        // Their FixedUpdate as open delegates (made on first use, after the patches: a call goes through
+        // BeforeOrderedFixedUpdate as Unity's does), and a reused copy of the list to run them from.
+        static Action<courseScript> _courseFixedUpdate;
+        static Action<VmanScript> _vmanFixedUpdate;
+        static readonly List<MonoBehaviour> DeferredRunning = new List<MonoBehaviour>();
         static float _playerFixedTime = -1f;
         static bool _runningDeferred;
 
+        // The studio's static state version (TasPlugin.Http.cs WebStateVersion) and what it was last checked against.
+        long _webStateVersion;
+        long _webStateStamp;
+        float _webStateCheckAt = float.NegativeInfinity;
+
         private static bool IsMenuPlayer(Movement movement)
         {
-            return MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(movement) is bool menu && menu;
+            return MovIsOnMainMenu(movement);
         }
 
         CourseDef RunCourse { get { return _fullTas != null ? null : _silentEvaluation ? _solverTarget : _runCourse; } }
@@ -148,11 +159,14 @@ namespace IGTAPTasMod
             return TouchesBox(player, course.endX, course.endY, course.endW, course.endH);
         }
 
+        static readonly List<BoxCollider2D> TouchBoxes = new List<BoxCollider2D>();
+
         private static bool TouchesBox(Movement player, float x, float y, float w, float h)
         {
             Vector2 origin = CurrentOrigin();
             Rect zone = new Rect(x - w / 2f + origin.x, y - h / 2f + origin.y, w, h);
-            foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
+            player.GetComponents(TouchBoxes);
+            foreach (BoxCollider2D box in TouchBoxes)
             {
                 if (!box.enabled) continue;
                 Bounds bounds = box.bounds;
@@ -169,8 +183,7 @@ namespace IGTAPTasMod
             foreach (Movement m in all)
             {
                 if (m == null) continue;
-                bool onMenu = MovIsOnMainMenuField != null && MovIsOnMainMenuField.GetValue(m) is bool flag && flag;
-                if (!onMenu) return m;
+                if (!IsMenuPlayer(m)) return m;
                 if (fallback == null) fallback = m;
             }
             return fallback ?? all[0];
@@ -317,28 +330,19 @@ namespace IGTAPTasMod
 
         private static string TypeName(MacroStepType type) { return type == MacroStepType.WallJump ? "WALLJUMP" : type.ToString().ToUpperInvariant(); }
 
-        private static bool IsGamePaused()
+        private static bool IsGamePaused(Movement movement)
         {
-            Movement movement = FindWorldMovement();
             if (movement == null) return Time.timeScale == 0f;
-            FieldInfo pauseMenuField = AccessTools.Field(typeof(Movement), "pauseMenu");
-            object pauseMenu = pauseMenuField == null ? null : pauseMenuField.GetValue(movement);
-            FieldInfo menuOpen = pauseMenu == null ? null : AccessTools.Field(pauseMenu.GetType(), "menuOpen");
-            return menuOpen != null && (bool)menuOpen.GetValue(pauseMenu);
+            pauseMenuScript menu = movement.pauseMenu;
+            return (object)menu != null && menu.menuOpen;
         }
 
         private static void EnsureGameUnpaused()
         {
             Movement movement = FindWorldMovement();
             if (movement == null) return;
-            FieldInfo pauseMenuField = AccessTools.Field(typeof(Movement), "pauseMenu");
-            object pauseMenu = pauseMenuField == null ? null : pauseMenuField.GetValue(movement);
-            FieldInfo menuOpen = pauseMenu == null ? null : AccessTools.Field(pauseMenu.GetType(), "menuOpen");
-            if (menuOpen != null && (bool)menuOpen.GetValue(pauseMenu))
-            {
-                MethodInfo toggle = AccessTools.Method(pauseMenu.GetType(), "menuButtonPressed");
-                if (toggle != null) toggle.Invoke(pauseMenu, null);
-            }
+            pauseMenuScript menu = movement.pauseMenu;
+            if ((object)menu != null && menu.menuOpen) menu.menuButtonPressed();
         }
 
         private void OnDestroy()

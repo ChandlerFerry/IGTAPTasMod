@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -42,11 +43,26 @@ namespace IGTAPTasMod
             _thread.Start();
         }
 
+        /// <summary>
+        /// Runs the queued requests on the calling (main) thread. A GET without a body is answered once per pump: the same
+        /// path queued again in this pump (the studio's polls, several tabs) gets the first one's response, built and
+        /// serialised once. Any other request can change what a GET returns, so it drops the answers kept so far.
+        /// </summary>
         public void Pump(Func<WebStudioRequest, object> handler)
         {
             WebStudioRequest request;
+            Dictionary<string, WebStudioRequest> answered = null;
             while (_requests.TryDequeue(out request))
             {
+                bool reusable = request.Method == "GET" && string.IsNullOrEmpty(request.Body);
+                if (!reusable) answered?.Clear();
+                else if (answered != null && answered.TryGetValue(request.Path, out WebStudioRequest first))
+                {
+                    request.StatusCode = first.StatusCode;
+                    request.Response = first.Response;
+                    request.Completed.Set();
+                    continue;
+                }
                 try
                 {
                     object result = handler(request);
@@ -60,7 +76,11 @@ namespace IGTAPTasMod
                 }
                 finally
                 {
-                    if (!request.AsyncHandling) request.Completed.Set();
+                    if (!request.AsyncHandling)
+                    {
+                        if (reusable) (answered ?? (answered = new Dictionary<string, WebStudioRequest>(StringComparer.Ordinal)))[request.Path] = request;
+                        request.Completed.Set();
+                    }
                 }
             }
         }
@@ -85,7 +105,7 @@ namespace IGTAPTasMod
             using (NetworkStream stream = client.GetStream())
             {
                 stream.ReadTimeout = 5000;
-                string header = ReadHeader(stream);
+                string header = ReadHeader(stream, out byte[] early, out int earlyCount);
                 if (string.IsNullOrEmpty(header)) return;
                 string[] lines = header.Split(new[] { "\r\n" }, StringSplitOptions.None);
                 string[] first = lines[0].Split(' ');
@@ -96,7 +116,7 @@ namespace IGTAPTasMod
                 foreach (string line in lines)
                     if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
                         int.TryParse(line.Substring(line.IndexOf(':') + 1).Trim(), out contentLength);
-                string body = ReadBody(stream, contentLength);
+                string body = ReadBody(stream, contentLength, early, earlyCount);
 
                 if (method == "OPTIONS") { WriteResponse(stream, 204, "text/plain", ""); return; }
                 if (method == "GET" && !path.StartsWith("/api/", StringComparison.Ordinal))
@@ -109,8 +129,11 @@ namespace IGTAPTasMod
 
                 WebStudioRequest request = new WebStudioRequest { Method = method, Path = path, Body = body };
                 _requests.Enqueue(request);
+                // A request the main thread never answered may still be set later (a Full-TAS run's pending start), so only an
+                // answered one's event is disposed here.
                 if (!request.Completed.WaitOne(600000))
                 { WriteResponse(stream, 503, "application/json", "{\"error\":\"Game main thread did not respond within timeout\"}"); return; }
+                request.Completed.Dispose();
                 WriteResponse(stream, request.StatusCode, "application/json; charset=utf-8", request.Response ?? "{}");
             }
         }
@@ -126,27 +149,44 @@ namespace IGTAPTasMod
             WriteResponse(stream, 200, ContentType(full), content);
         }
 
-        private static string ReadHeader(NetworkStream stream)
+        /// <summary>
+        /// Reads up to the blank line that ends the header, in chunks. What a chunk holds past it (the body's start) comes back
+        /// in <paramref name="early"/>'s first <paramref name="earlyCount"/> bytes for <see cref="ReadBody"/>.
+        /// </summary>
+        private static string ReadHeader(NetworkStream stream, out byte[] early, out int earlyCount)
         {
-            MemoryStream buffer = new MemoryStream();
-            int matched = 0;
-            while (buffer.Length < 32768)
+            byte[] buffer = new byte[4096];
+            int length = 0, scanned = 0;
+            early = null;
+            earlyCount = 0;
+            while (length < 32768)
             {
-                int value = stream.ReadByte();
-                if (value < 0) break;
-                buffer.WriteByte((byte)value);
-                matched = (matched == 0 && value == '\r') || (matched == 2 && value == '\r') ? matched + 1
-                    : (matched == 1 && value == '\n') || (matched == 3 && value == '\n') ? matched + 1 : 0;
-                if (matched == 4) break;
+                if (length == buffer.Length) Array.Resize(ref buffer, Math.Min(buffer.Length * 2, 32768));
+                int read = stream.Read(buffer, length, buffer.Length - length);
+                if (read <= 0) break;
+                length += read;
+                for (int i = Math.Max(3, scanned); i < length; i++)
+                {
+                    if (buffer[i] != '\n' || buffer[i - 1] != '\r' || buffer[i - 2] != '\n' || buffer[i - 3] != '\r') continue;
+                    earlyCount = length - (i + 1);
+                    if (earlyCount > 0)
+                    {
+                        early = new byte[earlyCount];
+                        Buffer.BlockCopy(buffer, i + 1, early, 0, earlyCount);
+                    }
+                    return Encoding.UTF8.GetString(buffer, 0, i + 1);
+                }
+                scanned = length;
             }
-            return Encoding.UTF8.GetString(buffer.ToArray());
+            return Encoding.UTF8.GetString(buffer, 0, length);
         }
 
-        private static string ReadBody(NetworkStream stream, int length)
+        private static string ReadBody(NetworkStream stream, int length, byte[] early, int earlyCount)
         {
             if (length <= 0) return "";
             byte[] bytes = new byte[length];
-            int offset = 0;
+            int offset = Math.Min(earlyCount, length);
+            if (offset > 0) Buffer.BlockCopy(early, 0, bytes, 0, offset);
             while (offset < length)
             {
                 int read = stream.Read(bytes, offset, length - offset);

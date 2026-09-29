@@ -168,6 +168,10 @@ namespace Box2D
         public int m_contactCount;
         private int m_jointCount;
 
+        // This island's contact solver and joint solver data, reused by every Solve/SolveTOI (see ContactSolver).
+        private readonly ContactSolver m_contactSolver = new ContactSolver();
+        private readonly SolverData m_solverData = new SolverData();
+
         public b2Island(int bodyCapacity, int contactCapacity, int jointCapacity, b2ContactListener listener)
         {
             m_bodyCapacity = bodyCapacity;
@@ -181,6 +185,9 @@ namespace Box2D
 
             m_velocities = new b2Velocity[m_bodyCapacity];
             m_positions = new b2Position[m_bodyCapacity];
+
+            m_solverData.positions = m_positions;
+            m_solverData.velocities = m_velocities;
         }
 
         // Whether this island can be reused for a step that would size a new one with these arguments.
@@ -239,10 +246,8 @@ namespace Box2D
             }
 
             // Solver data
-            var solverData = new SolverData();
+            SolverData solverData = m_solverData;
             solverData.step = step;
-            solverData.positions = m_positions;
-            solverData.velocities = m_velocities;
 
             // Initialize velocity constraints.
             ContactSolverDef contactSolverDef;
@@ -252,7 +257,8 @@ namespace Box2D
             contactSolverDef.positions = m_positions;
             contactSolverDef.velocities = m_velocities;
 
-            var contactSolver = new ContactSolver(contactSolverDef);
+            ContactSolver contactSolver = m_contactSolver;
+            contactSolver.Prepare(contactSolverDef);
             contactSolver.InitializeVelocityConstraints();
 
             if (step.warmStarting)
@@ -408,8 +414,8 @@ namespace Box2D
             contactSolverDef.positions = m_positions;
             contactSolverDef.velocities = m_velocities;
 
-            //ContactSolver contactSolver = new ContactSolver(subStep, _contacts, _contactCount);
-            var contactSolver = new ContactSolver(contactSolverDef);
+            ContactSolver contactSolver = m_contactSolver;
+            contactSolver.Prepare(contactSolverDef);
 
             for (var i = 0; i < subStep.positionIterations; ++i)
             {

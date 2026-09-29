@@ -502,6 +502,7 @@ namespace IGTAP.EngineSim
             rebases[_rebases.Length] = by;
             _rebases = rebases;
             MoveWorld(by);
+            Engine.WorldMoved(by);
             Physics.WorldMoved();
         }
 
@@ -627,6 +628,13 @@ namespace IGTAP.EngineSim
         {
             foreach (courseScript c in Courses) if ((TargetCourse == 0 || c.courseNumber == TargetCourse) && Tracking(c)) return c;
             return null;
+        }
+
+        /// <summary>The active course numbered <paramref name="number"/> (a loop: Run looks one up every tick).</summary>
+        courseScript Course(int number)
+        {
+            foreach (courseScript c in Courses) if (c.courseNumber == number) return c;
+            throw new InvalidOperationException("Course " + number + " is not active in this world export.");
         }
 
         public static float CourseTime(courseScript course) { return PathTime(course); }
@@ -788,19 +796,18 @@ namespace IGTAP.EngineSim
                 Tick = tick,
                 Movement = FieldState.Capture(Player),
                 Engine = Engine.CaptureState(),
-                Courses = Courses.Select(CaptureShared).ToArray(),
+                Courses = CaptureCourses(),
                 Position = Player.transform.m_Position,
                 LocalScale = Player.transform.m_LocalScale,
                 Rotation = Player.transform.m_Rotation,
-                Colliders = _playerColliders.Select(c => (c.offset, c.size, c.excludeLayers.value, c.enabled)).ToArray(),
+                Colliders = CaptureColliders(),
                 Pending = pending,
                 Physics = Physics.Capture(),
-                Touched = _touched.Select(s => (s, CaptureShared(s))).ToArray(),
-                Active = _activeAsLoaded.Count == 0 ? Array.Empty<(GameObject, bool)>() : _activeAsLoaded.Keys.Select(g => (g, g.activeSelf)).ToArray(),
-                Enabled = _enabledAsLoaded.Count == 0 ? Array.Empty<(Behaviour, bool)>() : _enabledAsLoaded.Keys.Select(b => (b, b.enabled)).ToArray(),
-                Layers = _layerAsLoaded.Count == 0 ? Array.Empty<(GameObject, int)>() : _layerAsLoaded.Keys.Select(g => (g, g.layer)).ToArray(),
-                Routines = Scheduler.Routines.Count == 0 ? Array.Empty<(MonoBehaviour, System.Collections.IEnumerator, Coroutine, Scheduler.Wait, int)>()
-                    : Scheduler.Routines.Select(r => (r.Target, Scheduler.Copy(r.Body), r.Handle, r.Wait, r.Due - Scheduler.Tick - 1)).ToArray(),
+                Touched = CaptureTouched(),
+                Active = Now(_activeAsLoaded, g => g.activeSelf),
+                Enabled = Now(_enabledAsLoaded, b => b.enabled),
+                Layers = Now(_layerAsLoaded, g => g.layer),
+                Routines = CaptureRoutines(),
                 Economy = Shop.Capture(),
                 Goal = Goals?.Capture(),
                 Random = UnityEngine.Random.state,
@@ -813,6 +820,56 @@ namespace IGTAP.EngineSim
                 StepTo = _inRun ? _stepTo : Player.transform.m_Position,
                 Animation = Animation,
             };
+        }
+
+        object[][] CaptureCourses()
+        {
+            var courses = new object[Courses.Length][];
+            for (int i = 0; i < courses.Length; i++) courses[i] = CaptureShared(Courses[i]);
+            return courses;
+        }
+
+        (Vector2 offset, Vector2 size, int exclude, bool enabled)[] CaptureColliders()
+        {
+            var colliders = new (Vector2 offset, Vector2 size, int exclude, bool enabled)[_playerColliders.Length];
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                BoxCollider2D c = _playerColliders[i];
+                colliders[i] = (c.offset, c.size, c.excludeLayers.value, c.enabled);
+            }
+            return colliders;
+        }
+
+        (MonoBehaviour target, object[] fields)[] CaptureTouched()
+        {
+            if (_touched.Count == 0) return Array.Empty<(MonoBehaviour, object[])>();
+            var touched = new (MonoBehaviour target, object[] fields)[_touched.Count];
+            int i = 0;
+            foreach (MonoBehaviour script in _touched) touched[i++] = (script, CaptureShared(script));
+            return touched;
+        }
+
+        /// <summary>Each object tracked since load with its value now, in the tracking dictionary's order.</summary>
+        static (TKey, TValue)[] Now<TKey, TValue>(Dictionary<TKey, TValue> tracked, Func<TKey, TValue> now)
+        {
+            if (tracked.Count == 0) return Array.Empty<(TKey, TValue)>();
+            var values = new (TKey, TValue)[tracked.Count];
+            int i = 0;
+            foreach (TKey key in tracked.Keys) values[i++] = (key, now(key));
+            return values;
+        }
+
+        (MonoBehaviour target, System.Collections.IEnumerator body, Coroutine handle, Scheduler.Wait wait, int due)[] CaptureRoutines()
+        {
+            List<Scheduler.Routine> parked = Scheduler.Routines;
+            if (parked.Count == 0) return Array.Empty<(MonoBehaviour, System.Collections.IEnumerator, Coroutine, Scheduler.Wait, int)>();
+            var routines = new (MonoBehaviour target, System.Collections.IEnumerator body, Coroutine handle, Scheduler.Wait wait, int due)[parked.Count];
+            for (int i = 0; i < routines.Length; i++)
+            {
+                Scheduler.Routine r = parked[i];
+                routines[i] = (r.Target, Scheduler.Copy(r.Body), r.Handle, r.Wait, r.Due - Scheduler.Tick - 1);
+            }
+            return routines;
         }
 
         public int Fingerprint()
@@ -849,8 +906,10 @@ namespace IGTAP.EngineSim
                 h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(r.Target)); h.Add(r.Wait);
                 h.Add(r.Wait == Scheduler.Wait.Seconds ? r.Due - Scheduler.Tick : 0);
                 // The iterator's state and locals; its current yield object is a fresh instance each run.
-                foreach (FieldInfo f in FieldState.For(r.Body.GetType()))
-                    if (f.FieldType.IsValueType) AddValue(ref h, f.GetValue(r.Body));
+                FieldInfo[] fields = FieldState.For(r.Body.GetType());
+                object[] values = FieldValues(r.Body);
+                for (int i = 0; i < fields.Length; i++)
+                    if (fields[i].FieldType.IsValueType) AddValue(ref h, values[i]);
             }
             Shop.AddTo(ref h);
             UnityEngine.Random.State rng = UnityEngine.Random.state;
@@ -861,9 +920,23 @@ namespace IGTAP.EngineSim
             return h.ToHashCode();
         }
 
-        static void AddFields(ref HashCode h, object target)
+        void AddFields(ref HashCode h, object target)
         {
-            foreach (FieldInfo f in FieldState.For(target.GetType())) AddValue(ref h, f.GetValue(target));
+            object[] values = FieldValues(target);
+            int count = FieldState.For(target.GetType()).Length;
+            for (int i = 0; i < count; i++) AddValue(ref h, values[i]);
+        }
+
+        // The fingerprints' field reads (FieldState.Read), reused.
+        object[] _fieldValues = Array.Empty<object>();
+
+        /// <summary>The target's fields in <see cref="FieldState.For"/> order, in a buffer the next call overwrites.</summary>
+        object[] FieldValues(object target)
+        {
+            int count = FieldState.For(target.GetType()).Length;
+            if (_fieldValues.Length < count) _fieldValues = new object[count];
+            FieldState.Read(target, _fieldValues);
+            return _fieldValues;
         }
 
         static void AddValue(ref HashCode h, object value)
@@ -992,7 +1065,7 @@ namespace IGTAP.EngineSim
             {
                 bool nextWasTracking = _targetStartCourse != null && Tracking(_targetStartCourse);
                 FullTasGoal goal = Goals?.Current;
-                courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Courses.First(c => c.courseNumber == goal.course) : null;
+                courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Course(goal.course) : null;
                 bool startWasTracking = startGoal != null && Tracking(startGoal);
                 Scheduler.FireDue();
                 Scheduler.Resume(Scheduler.Wait.Seconds);
@@ -1070,6 +1143,9 @@ namespace IGTAP.EngineSim
                         && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
                 }
+                // A quick restart in the strict finish's ticks after an area goal takes that goal back (FullTasTracker): the run
+                // then hasn't reached its goals, and finishing anyway handed the solver windows that missed them on replay.
+                if (_finishIn >= 0 && Goals != null && !Goals.Done) _finishIn = -1;
                 if (_finishIn >= 0 && _finishIn-- == 0 && Engine.IsRunning)
                 {
                     _finishIn = -1;
@@ -1164,9 +1240,16 @@ namespace IGTAP.EngineSim
                 && previous.x == k.x && previous.y == k.y && previous.held == k.held;
         }
 
-        public static List<MacroStep> ToSteps(IReadOnlyList<InputTick> ticks, int from)
+        // ToSteps' list and steps, reused run to run: the engine plays them only inside the Run that made them (Run ends it),
+        // and a capture leaves them out (FieldState.For skips MacroEngine._steps).
+        readonly List<MacroStep> _runSteps = new List<MacroStep>();
+        readonly List<MacroStep> _stepPool = new List<MacroStep>();
+        static readonly object[] FreshStep = FieldState.Capture(new MacroStep(false));
+
+        List<MacroStep> ToSteps(IReadOnlyList<InputTick> ticks, int from)
         {
-            var steps = new List<MacroStep>();
+            List<MacroStep> steps = _runSteps;
+            steps.Clear();
             int tickMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f);
             for (int i = from; i < ticks.Count; i++)
             {
@@ -1178,25 +1261,44 @@ namespace IGTAP.EngineSim
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
                     continue;
                 }
-                steps.Add(new MacroStep(false) { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
-                    durationMs = tickMs, endCondition = ActionEndCondition.FixedTicks,
-                    direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
-                    rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
-                    dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,
-                    dashTurnX = k.dash ? k.turnX : null, dashTurnY = k.dash ? k.turnY : null,
-                    rawQuickRestart = k.reset, pauseFrames = k.pause, pauseTick = k.pause > 0 ? k.pauseTick : 0,
-                    pauseFrame = k.pause > 0 ? k.pauseFrame : 0 });
+                MacroStep step = NextStep(steps);
+                step.label = "Solver input"; step.type = MacroStepType.RawInput; step.durationTicks = 1;
+                step.durationMs = tickMs; step.endCondition = ActionEndCondition.FixedTicks;
+                step.direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0; step.rawMoveX = k.x; step.rawMoveY = k.y; step.rawJumpHeld = k.held;
+                step.rawJumpPressed = k.press; step.rawJumpReleased = k.release; step.rawDashPressed = k.dash;
+                step.dashJumpFrame = k.dash ? k.dashJump : 0; step.springDashFrame = k.springDash; step.lockMoveX = k.lockX; step.lockMoveY = k.lockY;
+                step.dashTurnX = k.dash ? k.turnX : null; step.dashTurnY = k.dash ? k.turnY : null;
+                step.rawQuickRestart = k.reset; step.pauseFrames = k.pause; step.pauseTick = k.pause > 0 ? k.pauseTick : 0;
+                step.pauseFrame = k.pause > 0 ? k.pauseFrame : 0;
+                steps.Add(step);
             }
-            if (steps.Count == 0) steps.Add(new MacroStep(false) { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,
-                endCondition = ActionEndCondition.FixedTicks });
+            if (steps.Count == 0)
+            {
+                MacroStep step = NextStep(steps);
+                step.label = "Solver input"; step.type = MacroStepType.RawInput; step.durationTicks = 1; step.durationMs = tickMs;
+                step.endCondition = ActionEndCondition.FixedTicks;
+                steps.Add(step);
+            }
             return steps;
+        }
+
+        /// <summary>The pooled step for the next slot of <paramref name="steps"/>, every field as a new MacroStep(false) has it
+        /// (the merge above and MacroEngine's NormalizeFrameTiming rewrite some).</summary>
+        MacroStep NextStep(List<MacroStep> steps)
+        {
+            if (steps.Count == _stepPool.Count) _stepPool.Add(new MacroStep(false));
+            MacroStep step = _stepPool[steps.Count];
+            FieldState.Restore(step, FreshStep);
+            return step;
         }
 
         public int MovementFingerprint()
         {
             var h = new HashCode();
-            foreach (FieldInfo f in FieldState.For(Player.GetType()))
-                if (!MovementPresentationFields.Contains(f.Name)) AddPortableValue(ref h, f.GetValue(Player));
+            FieldInfo[] fields = FieldState.For(Player.GetType());
+            object[] values = FieldValues(Player);
+            for (int i = 0; i < fields.Length; i++)
+                if (!MovementPresentationFields.Contains(fields[i].Name)) AddPortableValue(ref h, values[i]);
             Transform t = Player.transform;
             h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
             foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }

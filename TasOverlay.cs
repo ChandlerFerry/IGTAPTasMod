@@ -16,6 +16,8 @@ namespace IGTAPTasMod
             public float x, y;
             public string stickText;
             public bool jumpPress, jumpRelease, jumpCut, dash;
+            /// <summary>The stick held in a dash's freeze (turnX/turnY): its own row under the dash's tick, the input that turns the dash.</summary>
+            public bool freeze;
             public bool jump1, jump2, jump1Press, jump2Press, dash1, dash2, dash1Press, dash2Press;
             /// <summary>A respawn came between this row and the one listed before it (RowBreak).</summary>
             public RowBreak breakBefore;
@@ -28,6 +30,8 @@ namespace IGTAPTasMod
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
         Movement _overlayPlayer;
         Vector2 _overlayAxis;
+        /// <summary>The stick the last listed tick left held (its freeze stick when it had one): a tech demo lists the tick that lets it go.</summary>
+        Vector2 _overlayHeldStick;
         long _overlayLastTick;
         long _overlayTicks;
         string _overlayRoute;
@@ -176,6 +180,9 @@ namespace IGTAPTasMod
                     _padJump1 = _padJump2 = _padJump2Newer = _padDash1Last = false;
                     _overlayRoute = _engine.ActiveMacroName;
                     _overlayCourse = _runCourse != null ? _runCourse.Token : "—";
+                    _overlayHeldStick = Vector2.zero;
+                    // Run clears the last release to "never": the previous run's release isn't this run's first input.
+                    if (_engine.LastJumpRelease < 0) _overlayJumpRelease = _engine.LastJumpRelease;
                     ResetTechs(player);
                 }
                 _overlayLastTick = _engine.PhysicsTicks;
@@ -185,7 +192,9 @@ namespace IGTAPTasMod
                 bool jumpPress = _engine.JumpPresses != _overlayJumpPresses, jumpRelease = _engine.LastJumpRelease != _overlayJumpRelease,
                     dash = _engine.DashPresses != _overlayDashPresses;
                 // A tech demo lists only the ticks that hold an input: its idle tail (and the stick at rest between presses) is noise.
-                bool idle = !jumpPress && !jumpRelease && !dash && !_engine.JumpHeld && _overlayAxis == Vector2.zero;
+                // Letting go of a held stick (a freeze turn's, or the tick's) is an input, so that tick is listed.
+                Vector2? freezeStick = _engine.FreezeStick;
+                bool idle = !jumpPress && !jumpRelease && !dash && !_engine.JumpHeld && _overlayAxis == Vector2.zero && _overlayHeldStick == Vector2.zero;
                 if (!(idle && IsTechDemo(_engine.ActiveMacro)))
                 {
                     InputRow row = NextInputRow();
@@ -193,8 +202,6 @@ namespace IGTAPTasMod
                     row.x = _overlayAxis.x;
                     row.y = _overlayAxis.y;
                     row.stickText = StickText(row.x, row.y);
-                    // A dash's freeze stick (turnX/turnY) comes between this tick and the next: the dash turns to it.
-                    if (_engine.FreezeStick is Vector2 freeze) row.stickText += " ⇒ " + StickText(freeze.x, freeze.y);
                     row.jumpPress = jumpPress;
                     row.jumpRelease = jumpRelease;
                     row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
@@ -202,8 +209,25 @@ namespace IGTAPTasMod
                     AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
                     _inputRows.Add(row);
                     row.tick = _overlayTicks;
+                    // A dash's freeze stick (turnX/turnY) comes between this tick and the next and turns the dash: its own row, so
+                    // the dash's two inputs read in order (press dash with this tick's stick, then this stick in the freeze).
+                    if (freezeStick is Vector2 freeze)
+                    {
+                        InputRow turn = NextInputRow();
+                        turn.tick = _overlayTicks;
+                        turn.tickText = "freeze";
+                        turn.freeze = true;
+                        turn.x = freeze.x;
+                        turn.y = freeze.y;
+                        turn.stickText = StickText(freeze.x, freeze.y);
+                        turn.jumpPress = turn.jumpRelease = turn.jumpCut = turn.dash = false;
+                        turn.jump1 = turn.jump2 = turn.dash1 = turn.dash2 = false;
+                        turn.jump1Press = turn.jump2Press = turn.dash1Press = turn.dash2Press = false;
+                        _inputRows.Add(turn);
+                    }
                 }
                 else _padJump1 = _padJump2 = false;
+                _overlayHeldStick = freezeStick ?? _overlayAxis;
                 TechAfterTick(player, _overlayTicks, jumpPress, dash);
             }
             _overlayJumpPresses = _engine.JumpPresses;
@@ -227,6 +251,7 @@ namespace IGTAPTasMod
             }
             row.breakBefore = _inputRows.Count > 0 ? _pendingBreak : RowBreak.None;
             _pendingBreak = RowBreak.None;
+            row.freeze = false;
             return row;
         }
 
@@ -306,26 +331,60 @@ namespace IGTAPTasMod
         {
             string text = x < 0f ? "←" : x > 0f ? "→" : "";
             if (x != 0f && Mathf.Abs(x) < 1f) text += " " + Mathf.RoundToInt(Mathf.Abs(x) * 100f) + "%";
-            if (y != 0f) text += (text.Length > 0 ? " " : "") + (y > 0f ? "↑" : "↓");
+            if (y != 0f) text += (text.Length > 0 ? " " : "") + (y > 0f ? "↑" : "↓") + (Mathf.Abs(y) < 1f ? " " + Mathf.RoundToInt(Mathf.Abs(y) * 100f) + "%" : "");
             return text.Length > 0 ? text : "·";
+        }
+
+        int _menuCanvasScene = -1;
+        readonly List<Canvas> _menuCanvases = new List<Canvas>();
+
+        /// <summary>
+        /// The player has the game's pause menu (or the settings under it) open: its canvases (pauseMenuScript's, found once per
+        /// scene) are enabled. A playback's own pause (MacroStep.pauseFrames, the pauselift) doesn't count: its overlay stays.
+        /// </summary>
+        bool GameMenuOpen
+        {
+            get
+            {
+                if (PlaybackActive) return false;
+                int scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().handle;
+                if (scene != _menuCanvasScene || _menuCanvases.Exists(c => c == null))
+                {
+                    _menuCanvasScene = scene;
+                    _menuCanvases.Clear();
+                    foreach (pauseMenuScript menu in Resources.FindObjectsOfTypeAll<pauseMenuScript>())
+                        if (menu.gameObject.scene.IsValid())
+                            foreach (Canvas canvas in menu.GetComponentsInChildren<Canvas>(true))
+                                if (canvas.isRootCanvas || canvas.overrideSorting) _menuCanvases.Add(canvas);
+                }
+                return _menuCanvases.Exists(c => c.enabled && c.gameObject.activeInHierarchy);
+            }
         }
 
         private void OnGUI()
         {
-            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown;
+            // Under the game's pause menu nothing anchored in the world is drawn (it would sit on top of the menu): the lab
+            // ghosts' key and badges, spikes, checkpoints, the hitbox and the graze. The screen panels stay.
+            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown, ghosts = LabGhostOverlayShown;
             if (!origin) ResetOriginOverlay();
-            if (!(_settings.showOverlay || goals || origin || trainer) || Event.current.type != EventType.Repaint) return;
+            if (!(_settings.showOverlay || goals || origin || trainer || ghosts) || Event.current.type != EventType.Repaint) return;
+            bool menu = GameMenuOpen;
+            ghosts &= !menu;
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
+            if (ghosts) { DrawLabGhostBadges(scale); DrawLabGhostLegend(scale); }
             if (trainer) DrawLabTrainer();
             if (goals) DrawFullTasGoals(scale);
             if (origin) DrawOriginOverlay(scale);
             if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
-            DrawSpikes(scale);
-            DrawCheckpointLabels(scale);
-            DrawHitbox(scale);
-            DrawGraze(scale);
+            if (!menu)
+            {
+                DrawSpikes(scale);
+                DrawCheckpointLabels(scale);
+                DrawHitbox(scale);
+                DrawGraze(scale);
+            }
             InputRow live = OverlayListsRun ? null : LiveRow(_overlayPlayer);
             if (_inputRows.Count > 0) DrawInputPanel(scale, live);
             else if (live != null) DrawInputPad(InputPadRect(PanelScale(scale)), live, PanelScale(scale));
@@ -652,6 +711,10 @@ namespace IGTAPTasMod
             GL.Begin(GL.QUADS);
             foreach (SpikeCollider entry in _spikeColliders)
             {
+                // A static spike's shapes lie inside the bounds they were built from (padded for rounding): off screen there,
+                // none of them would be drawn, so the collider isn't asked anything.
+                if (!entry.moving && entry.shapeCount >= 0 && !view.Overlaps(Rect.MinMaxRect(entry.bounds.min.x - 1f, entry.bounds.min.y - 1f,
+                    entry.bounds.max.x + 1f, entry.bounds.max.y + 1f))) continue;
                 if (entry.collider == null || !entry.collider.enabled || !entry.collider.gameObject.activeInHierarchy) continue;
                 if (!view.Overlaps(BoundsRect(entry.collider.bounds))) continue;
                 if (entry.moving) BuildShapes(entry);
@@ -926,8 +989,10 @@ namespace IGTAPTasMod
                 Rect band = new Rect(panel.x, y, width - 1, rowHeight);
                 if (live && n == 0) Fill(band, PanelCurrent);
                 else if (n % 2 == 1) Fill(band, PanelStripe);
-                Label(new Rect(cx, y, tickWidth, rowHeight), row.tickText, _overlayTicksStyle, n == 0 ? PanelText : MutedColor);
-                Label(new Rect(stickX, y, 110 * scale, rowHeight), row.stickText, _overlayText, row.x == 0f && row.y == 0f ? MutedColor : PanelText);
+                // A freeze row (the stick held in a dash's freeze) reads in the dash's colour, its stick across the empty button columns.
+                Label(new Rect(cx, y, tickWidth, rowHeight), row.tickText, _overlayTicksStyle, row.freeze ? DashColor : n == 0 ? PanelText : MutedColor);
+                Label(new Rect(stickX, y, row.freeze ? dashX - stickX : 110 * scale, rowHeight), row.stickText, _overlayText,
+                    row.freeze ? DashColor : row.x == 0f && row.y == 0f ? MutedColor : PanelText);
                 if (row.jump1) Label(new Rect(jumpX, y, 40 * scale, rowHeight), "J1", _overlayText, row.jump1Press ? JumpColor : HeldColor);
                 if (row.jump2) Label(new Rect(jumpX + 40 * scale, y, 40 * scale, rowHeight), "J2", _overlayText, row.jump2Press ? JumpColor : HeldColor);
                 if (!row.jump1 && !row.jump2 && (row.jumpRelease || row.jumpCut))

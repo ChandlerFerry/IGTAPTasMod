@@ -25,13 +25,19 @@ namespace Box2D
         /// </summary>
         const float SeparatedMargin = 1f;
 
+        /// <summary>
+        /// C++ b2TestOverlap. <paramref name="bufferA"/> and <paramref name="bufferB"/> are two distinct two-slot scratch arrays
+        /// the caller owns (b2DistanceProxy.Set): the query keeps no reference to them after it returns.
+        /// </summary>
         public static bool b2TestOverlap(
             b2Shape shapeA,
             int indexA,
             b2Shape shapeB,
             int indexB,
             in b2Transform xfA,
-            in b2Transform xfB)
+            in b2Transform xfB,
+            b2Vec2[] bufferA,
+            b2Vec2[] bufferB)
         {
             shapeA.ComputeAABB(out b2AABB a, xfA, indexA);
             shapeB.ComputeAABB(out b2AABB b, xfB, indexB);
@@ -42,8 +48,8 @@ namespace Box2D
                 && (VertexDeepInside(pa, xfA, pb, xfB) || VertexDeepInside(pb, xfB, pa, xfA)))
                 return true;
             b2DistanceInput input = default;
-            input.proxyA.Set(shapeA, indexA);
-            input.proxyB.Set(shapeB, indexB);
+            input.proxyA.Set(shapeA, indexA, bufferA);
+            input.proxyB.Set(shapeB, indexB, bufferB);
             input.transformA = xfA;
             input.transformB = xfB;
             input.useRadii = true;

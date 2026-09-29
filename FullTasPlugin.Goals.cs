@@ -12,6 +12,7 @@ using HarmonyLib;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace IGTAPTasMod
 {
@@ -267,6 +268,15 @@ namespace IGTAPTasMod
         {
             loaded = true;
             if (_bonusRewardBoxes.TryGetValue(bonus.name, out upgradeBox known) && known != null) return known;
+            // A bonus with no box near its end stays without one until the scenes change (the studio's course hints ask again
+            // on every static state).
+            int scenes = SceneManager.GetActiveScene().handle * 31 + SceneManager.sceneCount;
+            if (scenes != _bonusRewardMissScenes)
+            {
+                _bonusRewardMissScenes = scenes;
+                _bonusRewardMisses.Clear();
+            }
+            if (_bonusRewardMisses.Contains(bonus.name)) return null;
             upgradeBox[] boxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             if (boxes.Length == 0) { loaded = false; return null; }
             Vector2 centre = new Vector2(bonus.endX, bonus.endY) + CurrentOrigin();
@@ -278,6 +288,7 @@ namespace IGTAPTasMod
                 if (d < bestDistance) { best = box; bestDistance = d; }
             }
             if (best != null) _bonusRewardBoxes[bonus.name] = best;
+            else _bonusRewardMisses.Add(bonus.name);
             return best;
         }
 

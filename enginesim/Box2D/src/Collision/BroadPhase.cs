@@ -124,8 +124,9 @@ namespace Box2D
 			// order; 2.4.1 creates them in tree query order. The order is the world's and each body's contact list
 			// order (newest first), which is the island solver's constraint order: in a corner of one composite
 			// collider (wall, ceiling and a sloped face at once) it decides the resolved velocity to the last bit
-			// (diverge-c5-13.14 tick 882). The moved-flag check above already leaves no duplicates.
-			Array.Sort(m_pairBuffer, 0, m_pairCount, PairLessThan.Instance);
+			// (diverge-c5-13.14 tick 882). The moved-flag check above already leaves no duplicates. The span sort runs
+			// the same introsort as Array.Sort with an IComparer (which wraps its Compare in a new delegate per call).
+			m_pairBuffer.AsSpan(0, m_pairCount).Sort(PairLessThan);
 
 			for (var i = 0; i < m_pairCount; ++i)
 			{
@@ -255,15 +256,10 @@ namespace Box2D
 			return true;
 		}
 
-		sealed class PairLessThan : System.Collections.Generic.IComparer<Pair>
+		static readonly Comparison<Pair> PairLessThan = (a, b) =>
 		{
-			public static readonly PairLessThan Instance = new PairLessThan();
-
-			public int Compare(Pair a, Pair b)
-			{
-				if (a.proxyIdA != b.proxyIdA) return a.proxyIdA < b.proxyIdA ? -1 : 1;
-				return a.proxyIdB < b.proxyIdB ? -1 : a.proxyIdB > b.proxyIdB ? 1 : 0;
-			}
-		}
+			if (a.proxyIdA != b.proxyIdA) return a.proxyIdA < b.proxyIdA ? -1 : 1;
+			return a.proxyIdB < b.proxyIdB ? -1 : a.proxyIdB > b.proxyIdB ? 1 : 0;
+		};
 	}
 }

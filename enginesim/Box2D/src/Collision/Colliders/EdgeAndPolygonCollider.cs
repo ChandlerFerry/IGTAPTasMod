@@ -208,8 +208,8 @@ namespace Box2D
                 }
             }
 
-            // Get polygonB in frameA
-            var m_polygonB = new TempPolygon();
+            // Get polygonB in frameA (every slot Collide reads, the first count, is written here)
+            TempPolygon m_polygonB = t_polygonB ??= new TempPolygon();
             m_polygonB.count = polygonB.m_count;
             for (var i = 0; i < polygonB.m_count; ++i)
             {
@@ -254,7 +254,7 @@ namespace Box2D
                 primaryAxis = edgeAxis;
             }
 
-            var ie = new b2ClipVertex[2];
+            Span<b2ClipVertex> ie = stackalloc b2ClipVertex[2];
 
             ReferenceFace rf;
             if (primaryAxis.type == EPAxis.AxisType.EdgeA)
@@ -338,14 +338,16 @@ namespace Box2D
             int np;
 
             // Clip to box side 1
-            np = Collision.ClipSegmentToLine(out b2ClipVertex[] clipPoints1, ie, rf.sideNormal1, rf.sideOffset1, rf.i1);
+            Span<b2ClipVertex> clipPoints1 = stackalloc b2ClipVertex[2];
+            np = Collision.ClipSegmentToLine(clipPoints1, ie, rf.sideNormal1, rf.sideOffset1, rf.i1);
             if (np < b2Settings.MaxManifoldPoints)
             {
                 return;
             }
 
             // Clip to negative box side 1
-            np = Collision.ClipSegmentToLine(out b2ClipVertex[] clipPoints2, clipPoints1, rf.sideNormal2, rf.sideOffset2,
+            Span<b2ClipVertex> clipPoints2 = stackalloc b2ClipVertex[2];
+            np = Collision.ClipSegmentToLine(clipPoints2, clipPoints1, rf.sideNormal2, rf.sideOffset2,
                                              rf.i2);
             if (np < b2Settings.MaxManifoldPoints)
             {
@@ -466,6 +468,9 @@ namespace Box2D
 
             return axis;
         }
+
+        // The collider is one static instance shared by every world and thread; its scratch polygon is one per thread.
+        [ThreadStatic] private static TempPolygon t_polygonB;
 
         private class TempPolygon
         {

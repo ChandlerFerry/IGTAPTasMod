@@ -216,15 +216,15 @@ namespace Box2D
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Manifold GetManifold() => m_manifold;
 
+        // Fills the caller's manifold (C++ b2Contact::GetWorldManifold(b2WorldManifold*)): with no points it is left as it was.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void GetWorldManifold(out b2WorldManifold worldManifold)
+        public void GetWorldManifold(b2WorldManifold worldManifold)
         {
             b2Body bodyA = m_fixtureA.b2Body;
             b2Body bodyB = m_fixtureB.b2Body;
             b2Shape shapeA = m_fixtureA.b2Shape;
             b2Shape shapeB = m_fixtureB.b2Shape;
 
-            worldManifold = new b2WorldManifold();
             worldManifold.Initialize(m_manifold, bodyA.GetTransform(), shapeA.m_radius, bodyB.GetTransform(),
                                      shapeB.m_radius);
         }
@@ -433,9 +433,10 @@ namespace Box2D
             in b2Shape shapeB, int indexB,
             in b2Transform xfA, in b2Transform xfB)
         {
+            b2World world = m_fixtureA.b2Body.GetWorld();
             var input = new b2DistanceInput();
-            input.proxyA.Set(shapeA, indexA);
-            input.proxyB.Set(shapeB, indexB);
+            input.proxyA.Set(shapeA, indexA, world.m_proxyBufferA);
+            input.proxyB.Set(shapeB, indexB, world.m_proxyBufferB);
             input.transformA = xfA;
             input.transformB = xfB;
             input.useRadii = true;

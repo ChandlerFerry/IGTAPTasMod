@@ -12,7 +12,7 @@ export type LabShape = { kind: string; at?: number[] | null; size?: number[] | n
 export type LabInfo = { id: string; tech?: string | null; name?: string; category?: string; techNote?: string | null; anchor?: number[]; region?: number[] | null; finish?: number[];
   start?: { x?: number | null; y?: number | null; vx?: number | null; vy?: number | null; facing?: number | null; fields?: Record<string, unknown> | null };
   shapes?: LabShape[]; hand?: { shapes: LabShape[]; start?: { x?: number | null; y?: number | null; facing?: number | null } | null } | null;
-  demoTicks?: number | null; demoInputTicks?: number | null; demoPath?: number[][] | null; error?: string };
+  demoTicks?: number | null; demoInputTicks?: number | null; ghosts?: { label?: string | null; demo?: string | null; path?: number[][] | null }[] | null; error?: string };
 export type TechSeen = { detector: string; label: string; start: number; end: number; input: number };
 export type TechState = { list: Tech[]; detectors: { id: string; label: string }[]; labs?: LabInfo[]; injectedLab?: string | null;
   seen: { routeId: string; route: string; running: boolean; items: TechSeen[] } | null };
@@ -192,7 +192,7 @@ function LabLoader({labs, injected, byId, running, onCommand, onFocus}: {labs: L
       <li>Load builds the lab and stands you on its floor with its unlocks.</li>
       <li>Dying, quick restart, or Load again returns you to the lab start.</li>
       <li>Unload restores you, your unlocks and your course.</li>
-      <li>Scene changes and playback ends unload the lab too.</li>
+      <li>A demo (Play or Walk) ends with you in the lab at its start; scene changes unload it.</li>
       <li>Nothing is autosaved; no route saves while a lab loads.</li>
       <li>The dashed floor appears only in hand play, not demos.</li>
     </ol></details>
@@ -208,9 +208,13 @@ function LabLoader({labs, injected, byId, running, onCommand, onFocus}: {labs: L
   </div>;
 }
 
+// The lab ghosts' colours in their `ghosts` order, as the game tints them: cyan, green, magenta, yellow, orange.
+const GHOST_COLORS = ["#59d9ff", "#4cf266", "#ff59d9", "#fff233", "#ff9926"];
+
 function LabPreview({lab}: {lab: LabInfo}) {
   // The lab drawn in its own frame: shapes relative to the anchor, the start's dot and arrow, the finish box dashed; the
-  // hand-play floor (only there when you play it) outlined, and where you stand for it in green.
+  // hand-play floor (only there when you play it) outlined, and where you stand for it in green; every ghost's path dashed
+  // in its colour, with a legend when they're labelled.
   const parts: {x: number; y: number; w: number; h: number; fill: string; hand: boolean}[] = [];
   const lines: {points: string; stroke: string}[] = [];
   const shapes = [...(lab.shapes ?? []).map(s => ({ s, hand: false })), ...(lab.hand?.shapes ?? []).map(s => ({ s, hand: true }))];
@@ -226,20 +230,24 @@ function LabPreview({lab}: {lab: LabInfo}) {
   const xs: number[] = [sx, fx - fw / 2, fx + fw / 2], ys: number[] = [sy, fy - fh / 2, fy + fh / 2];
   if (handStart) { xs.push(handStart.x ?? 0); ys.push(handStart.y ?? 0); }
   for (const b of parts) { xs.push(b.x, b.x + b.w); ys.push(b.y, b.y + b.h); }
-  for (const [x, y] of lab.demoPath ?? []) { xs.push(x); ys.push(y); }
+  const ghosts = (lab.ghosts ?? []).map((g, i) => ({ ...g, color: GHOST_COLORS[i % GHOST_COLORS.length] })).filter(g => g.path && g.path.length > 1);
+  for (const g of ghosts) for (const [x, y] of g.path ?? []) { xs.push(x); ys.push(y); }
   for (const l of lines) for (const p of l.points.split(" ")) { const [x, y] = p.split(",").map(Number); xs.push(x); ys.push(y); }
   const pad = Math.max(20, (Math.max(...xs) - Math.min(...xs)) * 0.05);
   const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
   const flip = (y: number) => y0 + y1 - y;
-  return <svg viewBox={`${x0} ${flip(y1)} ${x1 - x0} ${y1 - y0}`} style={{width: "100%", maxHeight: 180, background: "#11151c", borderRadius: 6, margin: "4px 0"}}>
-    {parts.map((b, i) => <rect key={i} x={b.x} y={flip(b.y + b.h)} width={b.w} height={b.h} fill={b.hand ? "none" : b.fill} stroke={b.hand ? "#5fd4ff" : "none"} strokeWidth={4} strokeDasharray={b.hand ? "10 8" : undefined} opacity={0.85} />)}
-    {lines.map((l, i) => <polyline key={i} points={l.points.split(" ").map(p => { const [x, y] = p.split(",").map(Number); return `${x},${flip(y)}`; }).join(" ")} fill="none" stroke={l.stroke} strokeWidth={4} />)}
-    {lab.demoPath && lab.demoPath.length > 1 && <polyline points={lab.demoPath.map(([x, y]) => `${x},${flip(y)}`).join(" ")} fill="none" stroke="#9fe3ff" strokeWidth={3} strokeDasharray="6 6" opacity={0.8} />}
-    <rect x={fx - fw / 2} y={flip(fy + fh / 2)} width={fw} height={fh} fill="none" stroke="#f1c40f" strokeWidth={6} strokeDasharray="18 12" />
-    <circle cx={sx} cy={flip(sy)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#fff" />
-    <line x1={sx} y1={flip(sy)} x2={sx + (start.vx ?? 0) * 0.12} y2={flip(sy + (start.vy ?? 0) * 0.12)} stroke="#fff" strokeWidth={5} />
-    {handStart && <circle cx={handStart.x ?? 0} cy={flip(handStart.y ?? 0)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#2ecc71" />}
-  </svg>;
+  return <>
+    <svg viewBox={`${x0} ${flip(y1)} ${x1 - x0} ${y1 - y0}`} style={{width: "100%", maxHeight: 180, background: "#11151c", borderRadius: 6, margin: "4px 0"}}>
+      {parts.map((b, i) => <rect key={i} x={b.x} y={flip(b.y + b.h)} width={b.w} height={b.h} fill={b.hand ? "none" : b.fill} stroke={b.hand ? "#5fd4ff" : "none"} strokeWidth={4} strokeDasharray={b.hand ? "10 8" : undefined} opacity={0.85} />)}
+      {lines.map((l, i) => <polyline key={i} points={l.points.split(" ").map(p => { const [x, y] = p.split(",").map(Number); return `${x},${flip(y)}`; }).join(" ")} fill="none" stroke={l.stroke} strokeWidth={4} />)}
+      {ghosts.map((g, i) => <polyline key={i} points={(g.path ?? []).map(([x, y]) => `${x},${flip(y)}`).join(" ")} fill="none" stroke={g.color} strokeWidth={2} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity={0.9} />)}
+      <rect x={fx - fw / 2} y={flip(fy + fh / 2)} width={fw} height={fh} fill="none" stroke="#f1c40f" strokeWidth={6} strokeDasharray="18 12" />
+      <circle cx={sx} cy={flip(sy)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#fff" />
+      <line x1={sx} y1={flip(sy)} x2={sx + (start.vx ?? 0) * 0.12} y2={flip(sy + (start.vy ?? 0) * 0.12)} stroke="#fff" strokeWidth={5} />
+      {handStart && <circle cx={handStart.x ?? 0} cy={flip(handStart.y ?? 0)} r={Math.max(6, (x1 - x0) * 0.012)} fill="#2ecc71" />}
+    </svg>
+    {ghosts.some(g => g.label) && <div className="labGhostLegend">{ghosts.map((g, i) => g.label && <span key={i}><i style={{background: g.color}} />{g.label}</span>)}</div>}
+  </>;
 }
 
 function TechEditor({tech, techs, running, selectedRoute, onCommand, onEditInputs, onClose}: {tech: Tech; techs: TechState; running: boolean; selectedRoute?: {id: string; name: string};

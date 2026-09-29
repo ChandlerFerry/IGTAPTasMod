@@ -33,24 +33,33 @@ using Math = System.Math;
 
 namespace Box2D
 {
+	// One solver per island, reused step after step (b2Island.Solve/SolveTOI): Prepare sets everything the C++
+	// constructor sets. The constraint arrays and their objects only grow; entries past _count are left over from a
+	// bigger step and nothing reads them, and a reused constraint gets every field a new one had.
 	public class ContactSolver
 	{
-		private readonly b2Contact[] _contacts;
+		private b2Contact[] _contacts;
 
-		private readonly ContactPositionConstraint[] _positionConstraints;
-		private readonly b2Position[] _positions;
-		private readonly b2Velocity[] _velocities;
+		private ContactPositionConstraint[] _positionConstraints = Array.Empty<ContactPositionConstraint>();
+		private b2Position[] _positions;
+		private b2Velocity[] _velocities;
 		public int _count;
 		public b2TimeStep _step;
 
-		public ContactVelocityConstraint[] _velocityConstraints;
+		public ContactVelocityConstraint[] _velocityConstraints = Array.Empty<ContactVelocityConstraint>();
 
-		public ContactSolver(ContactSolverDef def)
+		private readonly b2WorldManifold _worldManifold = new b2WorldManifold();
+
+		public void Prepare(in ContactSolverDef def)
 		{
 			_step = def.step;
 			_count = def.count;
-			_positionConstraints = new ContactPositionConstraint[_count];
-			_velocityConstraints = new ContactVelocityConstraint[_count];
+			if (_velocityConstraints.Length < _count)
+			{
+				int grown = Math.Max(_count, 2 * _velocityConstraints.Length);
+				Array.Resize(ref _positionConstraints, grown);
+				Array.Resize(ref _velocityConstraints, grown);
+			}
 			_positions = def.positions;
 			_velocities = def.velocities;
 			_contacts = def.contacts;
@@ -72,8 +81,7 @@ namespace Box2D
 				int pointCount = manifold.pointCount;
 				//Debug.Assert(pointCount > 0);
 
-				_velocityConstraints[i] = new ContactVelocityConstraint();
-				ContactVelocityConstraint vc = _velocityConstraints[i];
+				ContactVelocityConstraint vc = _velocityConstraints[i] ??= new ContactVelocityConstraint();
 				vc.friction = contact.m_friction;
 				vc.restitution = contact.m_restitution;
 				vc.tangentSpeed = contact.m_tangentSpeed;
@@ -87,9 +95,9 @@ namespace Box2D
 				vc.pointCount = pointCount;
 				vc.K = new Matrix3x2();          // .SetZero();
 				vc.normalMass = new Matrix3x2(); // .SetZero();
+				vc.normal = default;
 
-				_positionConstraints[i] = new ContactPositionConstraint();
-				ContactPositionConstraint pc = _positionConstraints[i];
+				ContactPositionConstraint pc = _positionConstraints[i] ??= new ContactPositionConstraint();
 				pc.indexA = bodyA.m_islandIndex;
 				pc.indexB = bodyB.m_islandIndex;
 				pc.invMassA = bodyA.m_invMass;
@@ -108,8 +116,7 @@ namespace Box2D
 				for (var j = 0; j < pointCount; ++j)
 				{
 					b2ManifoldPoint cp = manifold.points[j];
-					vc.points[j] = new VelocityConstraintPoint();
-					VelocityConstraintPoint vcp = vc.points[j];
+					VelocityConstraintPoint vcp = vc.points[j] ??= new VelocityConstraintPoint();
 
 					if (_step.warmStarting)
 					{
@@ -129,6 +136,11 @@ namespace Box2D
 					vcp.velocityBias = 0f;
 
 					pc.localPoints[j] = cp.localPoint;
+				}
+
+				for (int j = pointCount; j < pc.localPoints.Length; ++j)
+				{
+					pc.localPoints[j] = default;
 				}
 			}
 		}
@@ -174,7 +186,9 @@ namespace Box2D
 				xfA.p = cA - b2Vec2.Transform(localCenterA, xfA.q); // Math.Mul(xfA.q, localCenterA);
 				xfB.p = cB - b2Vec2.Transform(localCenterB, xfB.q); // Math.Mul(xfB.q, localCenterB);
 
-				var worldManifold = new b2WorldManifold();
+				// A new b2WorldManifold's normal was zero, kept by Initialize for a manifold without points.
+				b2WorldManifold worldManifold = _worldManifold;
+				worldManifold.normal = default;
 				worldManifold.Initialize(manifold, xfA, radiusA, xfB, radiusB);
 
 				vc.normal = worldManifold.normal;

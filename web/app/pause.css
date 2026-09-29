@@ -93,3 +93,27 @@
 .capabilityLock.executable.on strong {
   color: var(--cyan);
 }
+
+.transport .fastPlayback {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.transport .fastPlayback input {
+  accent-color: var(--cyan);
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.transport .fastPlayback.on {
+  background: #0f2a44;
+  color: var(--cyan);
+}

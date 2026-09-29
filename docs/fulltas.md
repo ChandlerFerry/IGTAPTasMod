@@ -46,7 +46,11 @@ In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second
 A quick restart right after an area goal (the last goal reached is an `at:`) takes that goal back: the run has to
 pass it again before the next goal counts. An area goal marks the way the run goes on, so a window can't touch it and
 restart to hand the next window a standing start. Quick restarts after any other goal (a purchase, a finish) are
-untouched.
+untouched. A strict run's finish, due 12 ticks after its last goal, is called off when such a restart takes that goal
+back: it used to fire anyway, and every window that touched an area goal and restarted counted as reaching it, then
+missed it replayed from the start (`a window route missed its goals ...`). That message now says where the window's
+replays part (from the stored state, after a straight replay, played through), each on a thread of its own. Stored goal
+states carry each type's field layout: a state of another build is dropped and replayed, not misread.
 
 An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
 the game's purchases; the plugin writes none.
@@ -589,6 +593,15 @@ Stretches can be planned in parallel: the loop pieces (`archive/fulltas-pieces.j
 name (two plans crashed on one `.tmp`). The planner plays the goals of the trace's header, not `fulltas.json`: to plan a
 stretch on top of a planned route, capture the start again with its goals first.
 
+A clone pays once per path, and its path is the course's best time, so every step also offers a **record lap**: the
+gate crossed, a quick restart to the course's reset point, and each saved course route (`--seed`) for the course played
+from standing there after 0-40 idle ticks; the one leaving the lowest best time wins, and the estimate weighs the faster
+clones. A route that misses from there is searched once per course from the restart, seeded with it. Course 2: the
+`2_WJ 2.20` route dies on its spikes from the restart (its recording takes them on the last grace tick, and the restart
+differs from its start by hundredths of a unit), and the seeded search, which scores the finish tick and not the
+course timer, finds a 2.44 s lap, the one `FalseEnding-Any%` already runs. A 2.20 s lap from the restart needs a search
+scored on the course timer (the model: `buyds` about 5 s sooner at a 2.20 s path than at 2.44 s).
+
 `--route FILE` writes the planned route too, under the planned goal list (the goals up to `--from`, the plan, the goals
 after the target). When the best Quick Restarts after the target, the old route from that Quick Restart on is joined to the
 plan's end, after the old inputs between the two or 0-24 idle ticks, and kept when the whole run then reaches every goal:
@@ -770,7 +783,9 @@ Open ideas, estimates only:
 - `reward:bonus2` (+1 global reward level, ~10% on every reward after it) costs ~8 s: break-even unless taken early.
 - Course 1's boosted boxes: no clone multiplier box, about a sixth of Course 2's income, ~9 s detour: likely a loss.
 - Reaching Course 3 without the dash and buying `buyds` with post-statue Cash would skip most of the 90 s Course 2
-  economy; unknown whether the climb goes without the dash.
+  economy. Searched (`Test-FE-NoDash`, area goals along the dash climb): without the dash the run reaches Course 2's box
+  and `at:5600,3400`, and 6 minutes found no way on to `at:6900,3600`. Reaching Course 2 before `buywj` (Course 1's 35 laps
+  for ~700 W against one Course 2 lap) found no way from the wall at x 1900 without wall jumps in 10 minutes.
 
 Since the redeploy on 2026-09-28 `FalseEnding-Any%`'s own routes (487.34 and 487.14 s) stop at `at:22200,15900`
 without entering the credits trigger; `FalseEnding2-Any%`'s solve re-found that goal 45 ticks slower (488.04 s), cause

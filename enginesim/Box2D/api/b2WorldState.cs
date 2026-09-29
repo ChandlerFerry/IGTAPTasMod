@@ -96,8 +96,25 @@ namespace Box2D
             if (body == null || body.m_type == b2BodyType.Static) m_staticValuesEpoch = ++m_staticEpoch;
         }
 
+        // Each body's last saved record. Its fixture arrays are shared with the next record while the fixtures match, and
+        // the whole record is while every value matches too: LoadState only reads a BodyRec.
         private readonly System.Collections.Generic.Dictionary<b2Body, b2WorldState.BodyRec> m_savedBodyRecs =
             new System.Collections.Generic.Dictionary<b2Body, b2WorldState.BodyRec>();
+
+        // Bitwise, not ==: a restore must bring back -0 and NaN payloads exactly as saved.
+        private static bool Same<T>(in T a, in T b) where T : unmanaged
+            => System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in a))
+                .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in b)));
+
+        private static bool ValuesMatch(b2Body b, b2WorldState.BodyRec prev)
+        {
+            return prev.type == b.m_type && prev.flags == b.m_flags && Same(prev.xf, b.m_xf) && Same(prev.sweep, b.m_sweep)
+                && Same(prev.linearVelocity, b.m_linearVelocity) && Same(prev.angularVelocity, b.m_angularVelocity)
+                && Same(prev.force, b.m_force) && Same(prev.torque, b.m_torque) && Same(prev.sleepTime, b.m_sleepTime)
+                && Same(prev.mass, b.m_mass) && Same(prev.invMass, b.m_invMass) && Same(prev.inertia, b.m_I)
+                && Same(prev.invI, b.m_invI) && Same(prev.gravityScale, b.m_gravityScale)
+                && Same(prev.linearDamping, b.m_linearDamping) && Same(prev.angularDamping, b.m_angularDamping);
+        }
 
         private static bool FixturesMatch(b2Body b, b2WorldState.BodyRec prev)
         {
@@ -145,6 +162,15 @@ namespace Box2D
             int bi = 0;
             for (b2Body b = m_bodyList; b != null; b = b.m_next)
             {
+                bool known = m_savedBodyRecs.TryGetValue(b, out b2WorldState.BodyRec prev);
+                bool fixturesMatch = known
+                    && (b.m_type == b2BodyType.Static && prev.type == b2BodyType.Static && prev.staticEpoch == m_staticValuesEpoch || FixturesMatch(b, prev));
+                if (fixturesMatch && ValuesMatch(b, prev))
+                {
+                    state.bodies[bi++] = prev;
+                    continue;
+                }
+
                 var rec = new b2WorldState.BodyRec
                 {
                     body = b,
@@ -166,8 +192,7 @@ namespace Box2D
                     angularDamping = b.m_angularDamping,
                 };
 
-                if (m_savedBodyRecs.TryGetValue(b, out b2WorldState.BodyRec prev)
-                    && (b.m_type == b2BodyType.Static && prev.type == b2BodyType.Static && prev.staticEpoch == m_staticValuesEpoch || FixturesMatch(b, prev)))
+                if (fixturesMatch)
                 {
                     rec.fixtures = prev.fixtures;
                     rec.fixtureSensor = prev.fixtureSensor;
@@ -179,6 +204,8 @@ namespace Box2D
                     rec.fixtureProxyCount = prev.fixtureProxyCount;
                     rec.fixtureProxyIds = prev.fixtureProxyIds;
                     rec.fixtureProxyAabbs = prev.fixtureProxyAabbs;
+                    // The epoch the shared arrays were recorded at (the static check above).
+                    rec.staticEpoch = prev.staticEpoch;
                 }
                 else
                 {
@@ -222,9 +249,9 @@ namespace Box2D
                         fi++;
                     }
                     rec.staticEpoch = m_staticValuesEpoch;
-                    m_savedBodyRecs[b] = rec;
                 }
 
+                m_savedBodyRecs[b] = rec;
                 state.bodies[bi++] = rec;
             }
 

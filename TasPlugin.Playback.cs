@@ -70,7 +70,11 @@ namespace IGTAPTasMod
             if (!_playbackPaced) return;
             // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
             if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
-            if (Application.targetFrameRate != _pacedFps) Application.targetFrameRate = _pacedFps;
+            // The cap only paces the wall clock: every frame's game time is the fixed step below (captureDeltaTime), so fast
+            // playback (settings fastPlayback) lifts it and plays the same frames sooner. Not for a walk (its slowdown is
+            // wall-clock pacing) or a probe (its fps is the experiment).
+            int targetFrameRate = _settings.fastPlayback && _walkSlowdown <= 0f && _probe == null ? -1 : _pacedFps;
+            if (Application.targetFrameRate != targetFrameRate) Application.targetFrameRate = targetFrameRate;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
             _clockTotal += _clockFrame;

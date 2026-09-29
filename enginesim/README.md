@@ -561,8 +561,9 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   can move the player). States are deduplicated by a key of the state; the default key is coarse (1 u position, 10 u/s velocity, 1 u counters)
   and gives a demo fast as an upper bound, and `--exact` deduplicates on the bit-exact state (position, velocity, momentum, body
   and every Movement field as their float bits), which proves the bound is the true minimum (or finds a shorter demo). One world
-  and `Simulation` per worker thread (the game's statics are per thread); each extension replays the node's input path from the
-  lab start in one run. The demo goes to `labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose
+  and `Simulation` per worker thread (the game's statics are per thread; `--threads` dedicated threads, so as many worlds);
+  a node's first extension replays its input path from the lab start and captures the node's state, and its other inputs
+  resume from that state on the same thread. The demo goes to `labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose
   world it was solved in; `search`: states, extensions, the bound, the key mode, the prune counts and the tech the demo
   performs), verified by one replay to the same tick and by the tech's own Movement state on the jump tick (a coyote jump's
   `onGround` held with `coyoteFrames` counting, the dash boost's 730 up + 410 up momentum within `dashBoostMax` of a dash, a
@@ -581,13 +582,16 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   on 150 ticks (3 s) past the finish with the stick held full the way the dot faces there). The ghost holds jump from the
   demo's first press on (no release, so no jump cut: the full-height jump), so its arc shows the most the tech's jump buys,
   not the demo's own minimum-tick inputs; `lab replay ... --write-path` rewrites it after the lab moves or for a demo solved
-  before demos had one.
+  before demos had one. `--write-path --path-ticks N` writes the demo's first N physics ticks instead, no tail, finish or
+  not: the paths of a lab's compared `ghosts` (below), all over the same ticks.
 - In game (`LabMapService.cs`): `POST /api/labmap/inject {id}` builds one root of colliders at the anchor (world frame through
   `FloatingOrigin.currentOrigin`, BoxCollider2D/PolygonCollider2D/EdgeCollider2D with the layer and tag), `POST
   /api/labmap/restore` destroys it and puts back anything the session touched (the player included), `GET /api/labmap/status`
   says what is injected. A tech with `labmap: <id>` (techs.json) plays its demo on the injected lab: inject, the player at the
   lab start (the lab savestate `place` mechanism — the demo route's `savestateId` is that `lab/labmap-<id>` savestate), the
-  demo inputs, then restore at playback end and on a scene change. While a lab map is injected the game never autosaves and
+  demo inputs; a 1x playback (Play or Walk) then leaves the player in the lab's hand play at its start (its floor, ghosts
+  and unlocks; **Unload** puts back what loading the lab or starting the demo changed), a turbo trace restores the lab,
+  and a scene change restores it too. While a lab map is injected the game never autosaves and
   `SaveSolverRoute` refuses: a lab is lab-only, never a route and never on a route's path (root `README.md` `### Rules`).
   One lab map can carry several demos: `labmaps/<id>.<name>.demo.json` is another demo on the same map, with its own `start`
   (the lab start's format) when it begins elsewhere; a tech picks it with `labDemo: <name>` next to `labmap: <id>`, and
@@ -602,7 +606,10 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   unlocks; a death or quick restart respawns there (`respawnPoint`). The placed state isn't kept as a savestate, and restore
   puts the unlocks, the course reset point and the respawn point back too. A demo re-injects its lab without the hand shapes.
   The shapes are drawn in game (ground dark with a cyan outline, spikes red, triggers purple, moss green; the finish box
-  isn't drawn), unlit, above the level. The studio's Tech tab lists every lab map (`labmaps/*.json`, the config
+  isn't drawn), unlit, above the level and under the game's pause menu (its Screen Space - Camera canvas sorts with the
+  sprites: layer Default, order 10001; the lab draws just under it). While the player has the pause menu open the TAS
+  overlay drops its world-anchored drawings (spikes, checkpoints, hitbox, graze, the ghosts' key and badges); a
+  playback's own pause keeps them. The studio's Tech tab lists every lab map (`labmaps/*.json`, the config
   folder's and the plugin's embedded ones; a config copy wins, so delete a stale one after editing the repo's) with **Load
   lab** / **Back to start** / **Unload**, and a tech card with a lab map has the same buttons. Every lab sits at anchor
   (-1333, -10585). In hand play a lab whose demo has a `path` draws it as a faint line and replays it with a see-through
@@ -611,7 +618,21 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   squash-and-stretch; one path point per physics tick, plus one per tick's worth of frames where time
   stood still, a dash freeze or a pause, so it keeps 1x's pace; interpolated, held 25 ticks at the end, then
   looped); the studio's lab preview draws the same path dashed. A path from before the animation fields isn't drawn
-  (`lab replay ... --write-path` rewrites it). A lab map with `"trainer": "pauselift"` (`pauselift-wall`) shows the input
+  (`lab replay ... --write-path` rewrites it). A lab map's `ghosts` (`[{demo, label, badge, offset}]`, `demo` a
+  `<id>.<demo>.demo.json`, none the main demo) replaces that one ghost with several on one clock (cyan, green, magenta,
+  yellow, orange in order; one loop is the longest path plus the hold), each a flat-colour silhouette with its path in
+  the same colour, `badge` a short tag drawn on its head ("KB": a keyboard's inputs) and `offset` `[dx, dy]` its own lane
+  away from the lab, where a see-through copy of the lab's shapes (no colliders) is drawn so the ghosts don't overlap;
+  a key at the bottom of the screen names each colour. The studio's preview draws every path in one frame, in the same
+  colours, with a legend. A lab with `ghosts` shows them in its demo's playback too,
+  all but the demo being played, started with the demo's first tick (a frozen frame counts as the fixed clock's step, as
+  the game's own freeze does, so they stay beside the player). `freeze-aim` (tech `freeze-aim`, `WJ_DS_DJ_BS_OM`) is a
+  ledge under a ceiling, a spike bed in the gap and a pillar with a spiked face: the freeze aim
+  (the main demo: dash at rest, `turnX`/`turnY` (0.35, 0.94)) leans out from under the ceiling's end, over the spikes, and
+  drops onto the pillar top; its three keyboard ghosts don't land (`up-right`: into the spike bed; `keyboard-steer`: up
+  in the freeze, straight up into the ceiling, then right, into the spiked face;
+  `keyboard-closest`: walk left 9 ticks, dash up-right, the spiked face 37 u below the top, the closest of 3,556 keyboard
+  dash tries). A lab map with `"trainer": "pauselift"` (`pauselift-wall`) shows the input
   trainer (`LabTrainer.cs`) while it is injected, in hand play and in playback: one chip per button in order (the game's
   own bindings, with the pause's ms after the freeze ends: the freeze's own length is rounded up to a frame, so the window is timed from its end, with the spread of the last five dashes drawn faint), grey to do, green when the game shows it
   worked, red when it didn't; one line saying what went wrong first (or the result); and a real-time timeline of the
@@ -865,12 +886,17 @@ copies the best's record before it (`OfflineSolver.Worker.Replay.CopyPrefix`): s
 The explore archive is one map shared by every worker (`OfflineSolver._archive`): a cell is its input prefix (the run's
 inputs and the tick), the arrival time, the picks and the cell it was explored from (`Parent`), never a snapshot. A
 snapshot belongs to one worker's `Simulation` (it holds that world's objects and fixtures), so each worker keeps its
-own snapshots (`StatesPerWorker`: half the GC heap limit over 32 KB per snapshot, split across the workers), evicted by
-the draw pool's pick weight first and recency second, so the frontier's hot cells stay through a wide draw's churn
-(plain LRU let them go). A worker that picks a cell it has no snapshot for replays the cell's inputs from its nearest
+own snapshots (`StatesPerWorker`: half of the GC heap limit or of physical RAM, whichever is lower, over 32 KB per
+snapshot, split across the workers), evicted by
+the draw pool's pick weight first and recency second (a queue record older than the entry's last use is skipped), so the
+frontier's hot cells stay through a wide draw's churn
+(plain LRU let them go). A cell is owned by the worker that last kept its snapshot (`Cell.Owner`); a worker draws from
+its own cells with probability min(0.95, 0.9 × workers × own weight / total weight), else from every cell, with the same
+weights, so the draws summed over workers stay close to one global draw while most picks hit a cached snapshot. A worker
+that picks a cell it has no snapshot for replays the cell's inputs from its nearest
 ancestor it has one for (from the start when none), and keeps a snapshot of every cell on that path. So an explore
 draws up to three cells and takes the first it has a snapshot for (`CachedDraws`): on C4 WJ_DS_DJ with 32 threads the
-replays were ~23% of all ticks simulated (each worker used to keep its own archive with a snapshot per cell:
+replays were ~23% of all ticks simulated before cells had owners (each worker used to keep its own archive with a snapshot per cell:
 [`docs/fidelity-log.md`](../docs/fidelity-log.md), *A snapshot per cell per worker*). `solve` and `fulltas` print the archive's size, the share of picks whose snapshot was
 cached and the ticks spent replaying (`ArchiveStatus`).
 

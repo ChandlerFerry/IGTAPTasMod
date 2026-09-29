@@ -30,6 +30,8 @@ namespace IGTAPTasMod
                 MacroLibrary loaded = JsonConvert.DeserializeObject<MacroLibrary>(File.ReadAllText(_libraryPath));
                 ValidateLibrary(loaded);
                 _library = loaded;
+                int selected = string.IsNullOrEmpty(_settings.selectedRouteId) ? -1 : _library.macros.FindIndex(r => r.id == _settings.selectedRouteId);
+                if (selected >= 0) _library.selectedIndex = selected;
                 if (NormalizeLibraryFrameTiming(_library) | PruneSlowerRoutes()) SaveLibrary();
             }
             catch (Exception ex)
@@ -189,10 +191,22 @@ namespace IGTAPTasMod
         private void SaveLibrary()
         {
             WriteJsonAtomic(_libraryPath, _library, true);
+            if (_settings.selectedRouteId != (SelectedMacro?.id ?? "")) SaveSelection();
+        }
+
+        /// <summary>
+        /// The selected route alone goes to settings.json (routes.json is the whole library, many megabytes): LoadLibrary
+        /// selects it over the library's selectedIndex, and SaveLibrary keeps the two the same.
+        /// </summary>
+        private void SaveSelection()
+        {
+            _settings.selectedRouteId = SelectedMacro?.id ?? "";
+            SaveSettings();
         }
 
         private void WriteJsonAtomic(string path, object value, bool keepBackup)
         {
+            BumpWebState();
             try
             {
                 string directory = Path.GetDirectoryName(path);

@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Reflection.Emit;
 
 namespace HarmonyLib
 {
@@ -15,6 +16,23 @@ namespace HarmonyLib
                 if (f != null) return f;
             }
             return null;
+        }
+
+        public delegate ref F FieldRef<in T, F>(T instance);
+
+        /// <summary>A reference to an instance field of <typeparamref name="T"/>, as Harmony's (ldflda in a dynamic method).</summary>
+        public static FieldRef<T, F> FieldRefAccess<T, F>(string fieldName)
+        {
+            FieldInfo field = Field(typeof(T), fieldName);
+            if (field == null || field.IsStatic || field.FieldType != typeof(F))
+                throw new MissingFieldException(typeof(T).Name, fieldName);
+            var method = new DynamicMethod("FieldRef." + typeof(T).Name + "." + fieldName, typeof(F).MakeByRefType(), new[] { typeof(T) },
+                typeof(AccessTools).Module, true);
+            ILGenerator il = method.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, field);
+            il.Emit(OpCodes.Ret);
+            return (FieldRef<T, F>)method.CreateDelegate(typeof(FieldRef<T, F>));
         }
     }
 }
