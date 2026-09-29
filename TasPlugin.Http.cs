@@ -392,8 +392,7 @@ namespace IGTAPTasMod
             AddDirectory(Path.Combine(EngineSimDir, "fulltas"));
             foreach (FullTasRunDef run in _fullTasRuns) Add(File.Exists(FullTasTracePath(run.name)) ? 1 : 0);
             AddDirectory(LabMapsDir);
-            string exe = EngineSimExe;
-            if (!string.IsNullOrEmpty(exe)) AddFile(Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json"));
+            if (ForcedPathsFile != null) AddFile(ForcedPathsFile);
             return h;
         }
 

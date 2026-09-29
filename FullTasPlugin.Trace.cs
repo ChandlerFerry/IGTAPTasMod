@@ -111,8 +111,7 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
-            if (File.Exists(path)) File.Replace(temporary, path, null);
-            else File.Move(temporary, path);
+            ReplaceAtomic(temporary, path);
             RememberBestSplits(run, inputs, finished, time, tracker);
             FullTasLog("Trace " + path + ": " + (finished ? "finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s"
                 : "reached " + tracker.Next + " of " + goals.Length + " goals"));

@@ -166,11 +166,8 @@ namespace IGTAPTasMod
             if (File.Exists(path) && File.ReadAllText(path) == seeded) return path;
             Directory.CreateDirectory(LabMapsDir);
             if (File.Exists(path)) Logger.LogInfo("labmaps/" + fileName + ": the config copy differs from the plugin's; replaced with the plugin's.");
-            // Written aside, then moved over: a crash mid-write never leaves an empty lab file.
-            string temporary = path + ".tmp";
-            File.WriteAllText(temporary, seeded);
-            if (File.Exists(path)) File.Replace(temporary, path, null);
-            else File.Move(temporary, path);
+            File.WriteAllText(path + ".tmp", seeded);
+            ReplaceAtomic(path + ".tmp", path);
             return path;
         }
 
@@ -201,8 +198,8 @@ namespace IGTAPTasMod
             .Select(r => r.Substring("IGTAPTasMod.labmaps.".Length, r.Length - "IGTAPTasMod.labmaps.".Length - ".json".Length)).ToArray();
         List<string> _labMapIds;
         float _labMapIdsAt = float.NegativeInfinity;
-        readonly Dictionary<string, (DateTime written, LabMapDef lab)> _labMapCache = new Dictionary<string, (DateTime, LabMapDef)>();
-        readonly Dictionary<string, (DateTime written, JObject json)> _labJsonCache = new Dictionary<string, (DateTime, JObject)>();
+        readonly CachedFiles<LabMapDef> _labMapCache = new CachedFiles<LabMapDef>();
+        readonly CachedFiles<JObject> _labJsonCache = new CachedFiles<JObject>();
 
         /// <summary>Every lab map's id: the config folder's files and the plugin's embedded seeds (solved demos excluded).</summary>
         internal List<string> LabMapIds()
@@ -221,24 +218,14 @@ namespace IGTAPTasMod
         LabMapDef CachedLabMap(string id)
         {
             string path = string.IsNullOrWhiteSpace(id) || id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ? null : LabMapFile(id + ".json");
-            if (path == null) return LoadLabMap(id);
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (_labMapCache.TryGetValue(path, out var cached) && cached.written == written) return cached.lab;
-            LabMapDef lab = LoadLabMap(id);
-            _labMapCache[path] = (written, lab);
-            return lab;
+            return path == null ? LoadLabMap(id) : _labMapCache.Get(path, _ => LoadLabMap(id));
         }
 
         /// <summary>A lab demo's JSON (labmaps/&lt;name&gt;), parsed once per version of its file; null: no such demo. For reading only.</summary>
         JObject CachedLabJson(string fileName)
         {
             string path = LabMapFile(fileName);
-            if (path == null) return null;
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (_labJsonCache.TryGetValue(path, out var cached) && cached.written == written) return cached.json;
-            JObject json = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(path));
-            _labJsonCache[path] = (written, json);
-            return json;
+            return path == null ? null : _labJsonCache.Get(path, p => JsonConvert.DeserializeObject<JObject>(File.ReadAllText(p)));
         }
 
         internal string InjectedLabId { get { return _lab?.Id; } }
@@ -337,8 +324,8 @@ namespace IGTAPTasMod
         /// <summary>The start trace a lab demo is solved from when its demo names none (`lab solve`'s usual one).</summary>
         const string LabBaseTrace = "start-c1-none.json";
 
-        readonly Dictionary<string, (DateTime written, List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
-            new Dictionary<string, (DateTime, List<(FieldInfo, object)>, JArray)>();
+        readonly CachedFiles<(List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
+            new CachedFiles<(List<(FieldInfo, object)>, JArray)>();
 
         /// <summary>
         /// Every value-type Movement field (and the hitbox colliders) set to a start trace's (enginesim/&lt;trace&gt;, the one the
@@ -352,8 +339,7 @@ namespace IGTAPTasMod
             if (!File.Exists(path))
                 throw new InvalidOperationException("A lab start is placed over the start trace its demo was solved from, and " + path
                     + " is missing: capture it (tools/enginesim-capture.py start 1 NONE).");
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (!_labBases.TryGetValue(path, out var based) || based.written != written)
+            var based = _labBases.Get(path, _ =>
             {
                 JObject start;
                 using (var reader = new JsonTextReader(new StreamReader(path)) { MaxDepth = 256 })
@@ -366,9 +352,8 @@ namespace IGTAPTasMod
                     if (field == null || field.IsStatic || field.IsLiteral || field.IsInitOnly) continue;
                     if (LabBaseValue(field.FieldType, entry[2], out object value)) fields.Add((field, value));
                 }
-                based = (written, fields, start["colliders"] as JArray);
-                _labBases[path] = based;
-            }
+                return (fields, start["colliders"] as JArray);
+            });
             foreach (var (field, value) in based.fields) field.SetValue(player, value);
             BoxCollider2D[] colliders = player.GetComponents<BoxCollider2D>();
             if (based.colliders != null)

@@ -354,7 +354,7 @@ namespace IGTAPTasMod
         readonly HashSet<string> _offlineJudgedPaths = new HashSet<string>();
         // Each offline best's runTicks by its path and write time: the pump reads them every 5 s, and a file doesn't change
         // once the solver wrote it.
-        readonly Dictionary<string, (DateTime written, long runTicks)> _offlineRunTicks = new Dictionary<string, (DateTime, long)>();
+        readonly CachedFiles<long> _offlineRunTicks = new CachedFiles<long>();
 
         sealed class OfflineBest
         {
@@ -375,17 +375,11 @@ namespace IGTAPTasMod
                 string caps = m.Groups[2].Value;
                 CourseDef course = _courses.Find(c => c.id == id);
                 if (course == null || !Categories.IsCategory(caps) || id + "_" + caps == solving) return null;
-                DateTime written = File.GetLastWriteTimeUtc(path);
-                if (!_offlineRunTicks.TryGetValue(path, out var known) || known.written != written)
-                {
-                    JObject json;
-                    try { json = JObject.Parse(File.ReadAllText(path)); }
-                    catch (Exception) { return null; }
-                    known = (written, (long?)json["runTicks"] ?? long.MaxValue);
-                    _offlineRunTicks[path] = known;
-                }
+                long runTicks;
+                try { runTicks = _offlineRunTicks.Get(path, p => (long?)JObject.Parse(File.ReadAllText(p))["runTicks"] ?? long.MaxValue); }
+                catch (Exception) { return null; }
                 return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
-                    runTicks = known.runTicks, farm = !course.IsBonus && !course.IsTransition,
+                    runTicks = runTicks, farm = !course.IsBonus && !course.IsTransition,
                     judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>() : CategoryJudgings(course, id, caps) };
             }
             m = OfflineFullTasBestFile.Match(file);
