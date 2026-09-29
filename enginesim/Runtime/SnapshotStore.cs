@@ -28,7 +28,8 @@ namespace IGTAP.EngineSim
         // 2: each type in the table carries its field layout (Layout), so a snapshot of a build whose types changed is dropped,
         // not misread (a field that became a tuple array read as a bool crashed the solve after a redeploy).
         // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
-        public const int Format = 3;
+        // 4: Feed hashes turnY (a steep dash turn), so prefixes differing only in it no longer share a stored state.
+        public const int Format = 4;
 
         /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)
@@ -63,6 +64,8 @@ namespace IGTAP.EngineSim
             if (t.lockY.HasValue) hash = Feed(hash, t.lockY.Value);
             hash = Feed(hash, t.turnX.HasValue);
             if (t.turnX.HasValue) hash = Feed(hash, t.turnX.Value);
+            hash = Feed(hash, t.turnY.HasValue);
+            if (t.turnY.HasValue) hash = Feed(hash, t.turnY.Value);
             hash = Feed(hash, t.reset);
             if (t.pause > 0) hash = Feed(hash, ((long)t.pauseTick << 32) | (uint)t.pause, 8);
             if (t.pause > 0 && t.pauseFrame != 0) hash = Feed(hash, t.pauseFrame, 4);
