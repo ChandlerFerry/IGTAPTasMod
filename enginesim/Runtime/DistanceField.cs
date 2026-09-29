@@ -216,10 +216,22 @@ namespace IGTAP.EngineSim
             boxes.Add(new Rect(at.x + box.offset.x * scale.x - w / 2f, at.y + box.offset.y * scale.y - h / 2f, w, h));
         }
 
-        /// <summary>What the geometry is now: every collider's live state (a zone load toggles them) and the swapper's colour.</summary>
+        /// <summary>What the geometry is now: every collider's live state (a zone load toggles them) and the swapper's colour;
+        /// hashed again only after a collider toggle or restore (<see cref="PhysicsWorld.Generation"/>).</summary>
         int Version()
         {
-            int h = _swapper != null && _swapper.isBlueActive ? 17 : 0;
+            int generation = _sim.Physics.Generation, count = _world.Colliders.Count;
+            bool blue = _swapper != null && _swapper.isBlueActive;
+            if (generation != _versionGeneration || count != _versionCount || blue != _versionBlue)
+                (_version, _versionGeneration, _versionCount, _versionBlue) = (Hash(blue), generation, count, blue);
+            return _version;
+        }
+        int _version, _versionGeneration = -1, _versionCount;
+        bool _versionBlue;
+
+        int Hash(bool blue)
+        {
+            int h = blue ? 17 : 0;
             List<ColliderData> all = _world.Colliders;
             for (int i = 0; i < all.Count; i++)
             {

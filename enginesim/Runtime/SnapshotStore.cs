@@ -154,6 +154,7 @@ namespace IGTAP.EngineSim
                 boxes[k].m_ExcludeLayers = s.Colliders[k].exclude;
                 boxes[k].m_Enabled = s.Colliders[k].enabled;
             }
+            _physics.Generation++;
         }
 
         void ApplyToggles(SimSnapshot s)

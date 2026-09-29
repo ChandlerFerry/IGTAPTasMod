@@ -442,16 +442,17 @@ namespace IGTAP.EngineSim
             s.Fixtures.Add(body.CreateFixture(def));
         }
 
+        /// <summary>Bumped by every collider toggle, layer change and restore, suspended or not (and by any other write of a
+        /// collider's enabled or active state): unchanged, every collider is live as it was (<see cref="DistanceField"/>'s version).</summary>
+        internal int Generation;
+
         public void ColliderChanged(Collider2D collider)
         {
+            Generation++;
             if (!Suspended && _colliders.TryGetValue(collider, out ColliderState s)) Changed(s);
         }
 
-        public void ActiveChanged(GameObject gameObject)
-        {
-            if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
-                foreach (ColliderState s in list) Changed(s);
-        }
+        public void ActiveChanged(GameObject gameObject) { LayerChanged(gameObject); }
 
         /// <summary>
         /// A GameObject changed layer (PlatformMover.MakeIntangible): Unity filters its contacts and queries by the new layer at
@@ -459,6 +460,7 @@ namespace IGTAP.EngineSim
         /// </summary>
         public void LayerChanged(GameObject gameObject)
         {
+            Generation++;
             if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
                 foreach (ColliderState s in list) Changed(s);
         }
@@ -1157,14 +1159,15 @@ namespace IGTAP.EngineSim
             g.CellsX = (int)((maxX - minX) / CellSize) + 1;
             g.CellsY = (int)((maxY - minY) / CellSize) + 1;
             int cells = g.CellsX * g.CellsY;
-            if (g.CellStart.Length != cells + 1)
+            // A larger layout's arrays are kept (grids laid out across a rebase alternate between two sizes).
+            if (g.CellStart.Length < cells + 1)
             {
                 g.CellStart = new int[cells + 1];
                 g.CellFill = new int[cells];
                 g.Extra = new List<int>[cells];
                 g.ExtraUsed.Clear();
             }
-            else Array.Clear(g.CellStart);
+            else Array.Clear(g.CellStart, 0, cells + 1);
             foreach (int c in g.ExtraUsed) g.Extra[c].Clear();
             g.ExtraUsed.Clear();
             // Counting sort: each cell's count, its start, then the slots in slot order.
@@ -1774,6 +1777,7 @@ namespace IGTAP.EngineSim
 
         public void Restore(object snapshot)
         {
+            Generation++;
             Settle();
             var s = (PhysicsSnapshot)snapshot;
             _b2.LoadState(s.World);
