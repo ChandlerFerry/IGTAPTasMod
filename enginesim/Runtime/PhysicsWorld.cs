@@ -1637,8 +1637,6 @@ namespace IGTAP.EngineSim
 
         public Vector2 GetPosition(Rigidbody2D body) { Settle(); b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
         public void SetPosition(Rigidbody2D body, Vector2 position) { Settle(); BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
-        public float GetRotation(Rigidbody2D body) { Settle(); return State(body).Body.GetAngle() * (180f / MathF.PI); }
-        public void SetRotation(Rigidbody2D body, float degrees) { Settle(); BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
 
         void Moving(BodyState body)
         {
@@ -1653,43 +1651,6 @@ namespace IGTAP.EngineSim
         public void SetAngularVelocity(Rigidbody2D body, float velocity) { Settle(); State(body).Body.SetAngularVelocity(velocity * (MathF.PI / 180f)); }
 
         BodyState State(Rigidbody2D body) { return (BodyState)body.BackendData; }
-
-        readonly List<b2Contact> _bodyContacts = new List<b2Contact>();
-        readonly List<ContactPoint2D> _bodyPoints = new List<ContactPoint2D>();
-
-        public int GetContacts(Rigidbody2D body, ContactPoint2D[] results)
-        {
-            Settle();
-            BodyState state = State(body);
-            List<b2Contact> mine = _bodyContacts;
-            mine.Clear();
-            for (b2Contact c = _b2.GetContactList(); c != null; c = c.GetNext())
-            {
-                if (!c.IsTouching() || !c.IsEnabled()) continue;
-                var a = (ColliderState)c.GetFixtureA().UserData;
-                var b = (ColliderState)c.GetFixtureB().UserData;
-                if (a.Body != state && b.Body != state) continue;
-                int at = mine.Count;
-                for (int i = 0; i < mine.Count; i++)
-                {
-                    var oa = (ColliderState)mine[i].GetFixtureA().UserData;
-                    var ob = (ColliderState)mine[i].GetFixtureB().UserData;
-                    if ((oa == a && ob == b || oa == b && ob == a) && mine[i].m_touchOrder > c.m_touchOrder) { at = i; break; }
-                }
-                mine.Insert(at, c);
-            }
-            int n = 0;
-            for (int i = 0; i < mine.Count && n < results.Length; i++)
-            {
-                var a = (ColliderState)mine[i].GetFixtureA().UserData;
-                var b = (ColliderState)mine[i].GetFixtureB().UserData;
-                bool selfIsB = b.Body == state;
-                _bodyPoints.Clear();
-                AddPoints(_bodyPoints, selfIsB ? b : a, selfIsB ? a : b, mine[i]);
-                foreach (ContactPoint2D p in _bodyPoints) if (n < results.Length) results[n++] = p;
-            }
-            return n;
-        }
 
         public void ResetPlayer(Vector2 position, Vector2 velocity, float rotation, float angularVelocity)
         {

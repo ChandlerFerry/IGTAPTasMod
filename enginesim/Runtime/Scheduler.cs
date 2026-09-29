@@ -106,17 +106,6 @@ namespace IGTAP.EngineSim
             for (; _skip > 0 && _next < Queue.Count; _skip--) Queue[_kept++] = Queue[_next++];
         }
 
-        public bool IsInvoking(MonoBehaviour target, string method)
-        {
-            int count = Queue.Count;
-            for (int i = 0; i < count; i++)
-            {
-                if (i == _kept) i = _next;
-                if (i < count && Cancels(Queue[i], target, method)) return true;
-            }
-            return false;
-        }
-
         public Coroutine StartCoroutine(MonoBehaviour target, IEnumerator routine)
         {
             var handle = new Coroutine { routine = routine };
@@ -179,7 +168,7 @@ namespace IGTAP.EngineSim
                 while (resumed < n)
                 {
                     Routine r = _due[resumed++];
-                    if (r.Handle.stopped || !r.Target) continue;
+                    if (!r.Target) continue;
                     Stepping?.Invoke(r.Target);
                     if (r.Body.MoveNext()) Park(r, r.Body.Current);
                 }

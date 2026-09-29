@@ -757,7 +757,7 @@ namespace IGTAP.EngineSim
             /// <summary>"todo" (not demonstrable yet, no lab): it has
             /// no demo to mine and the listing says so instead of counting it missing.</summary>
             public string graft;
-            public bool omniDash, floatingOrigin;
+            public bool floatingOrigin;
             public int fastForward;
         }
 
@@ -1208,7 +1208,7 @@ namespace IGTAP.EngineSim
                     inputs = ToInputs(source.Macro);
                     if (source.Savestate != null) DemoStart.ApplySavestate(sim, source.Savestate);
                     // A demo plays with the omnidirectional dash on top of its start's unlocks (TechCatalog.ApplyTechAbilities).
-                    if (tech.omniDash || Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
+                    if (Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
                     sim.SetStart(sim.Capture(0), 0);
                 }
                 demo.InputTicks = inputs.Count;

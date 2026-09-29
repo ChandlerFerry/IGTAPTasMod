@@ -88,7 +88,6 @@ namespace UnityEngine
 
     public sealed class Coroutine : YieldInstruction
     {
-        internal bool stopped;
         internal IEnumerator routine;
     }
 

@@ -1426,7 +1426,6 @@ namespace IGTAP.EngineSim
         {
             List<MacroStep> steps = _runSteps;
             steps.Clear();
-            int tickMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f);
             for (int i = from; i < ticks.Count; i++)
             {
                 InputTick k = ticks[i];
@@ -1434,12 +1433,10 @@ namespace IGTAP.EngineSim
                 if (last != null && Merges(ticks[i - 1], k))
                 {
                     last.durationTicks++;
-                    last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
                     continue;
                 }
                 MacroStep step = NextStep(steps);
                 step.label = "Solver input"; step.type = MacroStepType.RawInput; step.durationTicks = 1;
-                step.durationMs = tickMs; step.endCondition = ActionEndCondition.FixedTicks;
                 step.direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0; step.rawMoveX = k.x; step.rawMoveY = k.y; step.rawJumpHeld = k.held;
                 step.rawJumpPressed = k.press; step.rawJumpReleased = k.release; step.rawDashPressed = k.dash;
                 step.dashJumpFrame = k.dash ? k.dashJump : 0; step.springDashFrame = k.springDash; step.lockMoveX = k.lockX; step.lockMoveY = k.lockY;
@@ -1451,8 +1448,7 @@ namespace IGTAP.EngineSim
             if (steps.Count == 0)
             {
                 MacroStep step = NextStep(steps);
-                step.label = "Solver input"; step.type = MacroStepType.RawInput; step.durationTicks = 1; step.durationMs = tickMs;
-                step.endCondition = ActionEndCondition.FixedTicks;
+                step.label = "Solver input"; step.type = MacroStepType.RawInput; step.durationTicks = 1;
                 steps.Add(step);
             }
             return steps;
