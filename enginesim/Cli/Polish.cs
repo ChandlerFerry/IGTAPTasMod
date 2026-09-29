@@ -296,14 +296,22 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The plateau families, first change in input ticks [from, to): wider shifts (up to <see cref="WideRadius"/>), pairs
         /// of nearby inputs shifted together, stick bands (another full value for a few ticks), an added jump press held a few
         /// ticks, an added dash at each aim.</summary>
+        // The route's events for Plateau, while the route is the same list (a kept candidate is a new one).
+        List<InputTick> _eventsOf;
+        List<Humanizer.Event> _events;
+
         List<(List<InputTick> inputs, int first, string what)> Plateau(List<InputTick> route, int from, int to)
         {
             var c = new List<(List<InputTick>, int, string)>();
-            List<Humanizer.Event> events = Humanizer.Events(route, route);
-            for (int i = 0; i < events.Count; i++)
+            if (!ReferenceEquals(route, _eventsOf)) (_eventsOf, _events) = (route, Humanizer.Events(route, route));
+            List<Humanizer.Event> events = _events;
+            // Events are in tick order: start at the first one at or after from, stop at to.
+            int lo = 0, hi = events.Count;
+            while (lo < hi) { int mid = (lo + hi) / 2; if (events[mid].Tick < from) lo = mid + 1; else hi = mid; }
+            for (int i = lo; i < events.Count && events[i].Tick < to; i++)
             {
                 Humanizer.Event e = events[i];
-                if (e.Tick < from || e.Tick >= to || e.Start) continue;
+                if (e.Start) continue;
                 Shifts(route, e, _radius + 1, WideRadius, c);
                 // Pairs: this input and one of the next few (within PairSpan ticks), each shifted a little.
                 for (int j = i + 1; j < events.Count && j <= i + 3 && events[j].Tick - e.Tick <= PairSpan; j++)
@@ -313,7 +321,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         List<InputTick> s1 = Humanizer.Shift(route, e, d1, out int f1);
                         if (s1 == null) continue;
-                        Humanizer.Event moved = Humanizer.Events(s1, s1).FirstOrDefault(x => x.Kind == e2.Kind && x.Tick == e2.Tick);
+                        Humanizer.Event moved = Humanizer.EventAt(s1, e2.Kind, e2.Tick);
                         if (moved == null || moved.Start) continue;
                         foreach (int d2 in PairShifts)
                         {

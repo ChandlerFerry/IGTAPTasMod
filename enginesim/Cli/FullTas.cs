@@ -511,19 +511,20 @@ namespace IGTAP.EngineSim.Cli
             if (first >= limit) return new List<List<InputTick>>();
             var key = (_eval.MovementFingerprint(), _labels[first]);
             string caps = WindowCaps(_runGoals.Goals.Skip(first).Take(limit - first));
+            var seeded = new HashSet<List<InputTick>>(seeds, SequenceComparer.Instance);
             if (_memo.TryGetValue(key, out List<List<InputTick>> known))
                 foreach (List<InputTick> r in known)
-                    if (!seeds.Any(s => s.SequenceEqual(r))) seeds.Add(r);
+                    if (seeded.Add(r)) seeds.Add(r);
             string title = kind + " goals " + (first + 1) + "-" + limit + "/" + _goals;
             string span = first == limit - 1 ? _labels[first] : _labels[first] + ".." + _labels[limit - 1];
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, new HashSet<string>(_labels.Skip(first).Take(limit - first)),
                 CanRestartAfter(prefix, first), caps);
-            foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
+            foreach (var s in starts) if (seeded.Add(s.inputs)) seeds.Add(s.inputs);
             if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
             (List<InputTick> chain, int chained) = PieceChain(at, prefix, first, limit);
             if (chained > 0)
             {
-                if (!seeds.Any(r => r.SequenceEqual(chain))) seeds.Add(chain);
+                if (seeded.Add(chain)) seeds.Add(chain);
                 Log($"{title} {span}: library pieces play goals {first + 1}-{first + chained}");
             }
             int id = ++_windowId;

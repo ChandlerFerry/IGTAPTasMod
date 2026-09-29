@@ -309,6 +309,29 @@ namespace IGTAP.EngineSim.Cli
             return events.OrderBy(e => e.Tick).ThenBy(e => e.Kind).ToList();
         }
 
+        /// <summary>The event of this kind at this tick, as <see cref="Events"/> has it (without Best); null when there is none.</summary>
+        internal static Event EventAt(List<InputTick> route, Kind kind, int tick)
+        {
+            if (tick < 0 || tick >= route.Count) return null;
+            switch (kind)
+            {
+                case Kind.StickX:
+                case Kind.StickY:
+                {
+                    bool y = kind == Kind.StickY;
+                    float value = Axis(route[tick], y);
+                    // A run of one stick value starts here (Runs); the one at tick 0 counts only off rest.
+                    if (tick > 0 ? Axis(route[tick - 1], y) == value : value == 0f) return null;
+                    int end = tick + 1;
+                    while (end < route.Count && Axis(route[end], y) == value) end++;
+                    return new Event { Kind = kind, Tick = tick, End = end, Value = value, Start = tick == 0 };
+                }
+                case Kind.Press: return route[tick].press ? new Event { Kind = kind, Tick = tick } : null;
+                case Kind.Release: return IsRelease(route, tick) ? new Event { Kind = kind, Tick = tick } : null;
+                default: return route[tick].dash ? new Event { Kind = Kind.Dash, Tick = tick, Value = route[tick].dashJump } : null;
+            }
+        }
+
         internal static List<InputTick> Shift(List<InputTick> route, Event e, int d, out int first)
         {
             int q = e.Tick + d;

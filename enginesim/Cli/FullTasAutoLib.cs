@@ -31,6 +31,8 @@ namespace IGTAP.EngineSim.Cli
         readonly Dictionary<(int goal, ulong key), List<int>> _byKey = new Dictionary<(int, ulong), List<int>>();
         readonly Dictionary<(int goal, ulong key), List<int>> _byPlayer = new Dictionary<(int, ulong), List<int>>();
         readonly HashSet<ulong> _runHashes = new HashSet<ulong>();
+        /// <summary>The live (unpruned) runs by their inputs' hash.</summary>
+        readonly Dictionary<ulong, LibRun> _byHash = new Dictionary<ulong, LibRun>();
         /// <summary>Joins a replay showed are not exact: (goal, key, the run switched to).</summary>
         readonly HashSet<(int, ulong, int)> _banned = new HashSet<(int, ulong, int)>();
         readonly int _goals;
@@ -46,6 +48,8 @@ namespace IGTAP.EngineSim.Cli
         public LibRun Run(int id) => _runs[id];
         public IEnumerable<LibRun> AllRuns => _runs.Where(r => r != null);
         public bool Knows(ulong hash) => _runHashes.Contains(hash);
+        /// <summary>The live run of these inputs (their hash); null when never traced or pruned.</summary>
+        public LibRun RunOf(ulong hash) => _byHash.TryGetValue(hash, out LibRun run) ? run : null;
 
         /// <summary>A traced run (FullTas.TraceRun fills it); returns its id, -1 when already known.</summary>
         public int AddTraced(LibRun run, List<LibState> states)
@@ -53,6 +57,7 @@ namespace IGTAP.EngineSim.Cli
             if (!_runHashes.Add(run.Hash)) return -1;
             run.Id = _runs.Count;
             _runs.Add(run);
+            _byHash[run.Hash] = run;
             foreach (LibState s in states)
             {
                 s.Id = _states.Count;
@@ -91,6 +96,7 @@ namespace IGTAP.EngineSim.Cli
                 if (Runs <= MaxRuns) break;
                 if (keep.Contains(r.Id)) continue;
                 _runs[r.Id] = null;
+                _byHash.Remove(r.Hash);
                 foreach (int id in r.States)
                 {
                     _byKey[(_states[id].Goal, _states[id].Key)].Remove(id);
@@ -334,14 +340,14 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         Route RouteSync(Route c, int changedEnd, string how)
         {
-            ulong hash = SnapshotIndex.Hash(c.Inputs, c.Inputs.Count);
-            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun run = _lib.RunOf(SnapshotIndex.Hash(c.Inputs, c.Inputs.Count));
             if (run == null) return null;
             var tried = new HashSet<ulong>();
             int plays = 0;
             Route Try(List<InputTick> inputs, string what)
             {
-                if (!tried.Add(SnapshotIndex.Hash(inputs, inputs.Count)) || _lib.Knows(SnapshotIndex.Hash(inputs, inputs.Count))) return null;
+                ulong hash = SnapshotIndex.Hash(inputs, inputs.Count);
+                if (!tried.Add(hash) || _lib.Knows(hash)) return null;
                 plays++;
                 Route r = TraceRun(inputs, $"{how}, {what}");
                 if (r.Progress == _goals && r.Last < _best.Last)
@@ -436,8 +442,7 @@ namespace IGTAP.EngineSim.Cli
         LibState BestStateAt(int goal)
         {
             if (_lib == null) return null;
-            ulong hash = SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count);
-            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun run = _lib.RunOf(SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count));
             if (run == null) return null;
             return run.States.Select(_lib.State).FirstOrDefault(s => goal == 0 ? s.Kind == LibPoint.Start : s.Goal == goal && (s.Kind & LibPoint.Goal) != 0);
         }
@@ -469,8 +474,7 @@ namespace IGTAP.EngineSim.Cli
             if (_ctg == null || _lib == null || run.Progress == 0 || run.Progress >= _goals) return null;
             int p = run.Progress;
             TraceRun(run.Inputs, "a repair's partial run");
-            ulong hash = SnapshotIndex.Hash(run.Inputs, run.Inputs.Count);
-            StateLibrary.LibRun traced = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun traced = _lib.RunOf(SnapshotIndex.Hash(run.Inputs, run.Inputs.Count));
             LibState s = traced?.States.Select(_lib.State).FirstOrDefault(x => x.Goal == p && (x.Kind & LibPoint.Goal) != 0);
             if (s == null) return null;
             LibFeatures f = s.Features;
@@ -628,16 +632,19 @@ namespace IGTAP.EngineSim.Cli
             Simulation sim = _eval;
             sim.SetStart(_origin, 0);
             sim.Goals.Limit = _goals;
+            ulong hash = SnapshotIndex.Hash(inputs, inputs.Count);
+            // A run the library has is replayed for its route alone: its states aren't filed again.
+            bool file = !_lib.Knows(hash);
             var states = new List<LibState>();
             sim.Restore(_origin);
-            states.Add(Filed(sim, 0, LibPoint.Start, 0, 0));
+            if (file) states.Add(Filed(sim, 0, LibPoint.Start, 0, 0));
             LibPoint pending = LibPoint.None;
             bool ground = sim.Player.onGround, wall = sim.Player.OnWall, dash = sim.Player.dashActive;
             int progress = sim.Progress;
             RunResult rr = sim.Run(inputs, null, tick =>
             {
                 if (tick >= 1 && tick <= inputs.Count && inputs[tick - 1].reset) pending |= LibPoint.Reset;
-                if (pending != LibPoint.None)
+                if (pending != LibPoint.None && file)
                     states.Add(Filed(sim, sim.Progress, pending, sim.Engine.PhysicsTicks, tick));
                 pending = LibPoint.None;
                 return true;
@@ -661,9 +668,9 @@ namespace IGTAP.EngineSim.Cli
             var run = new StateLibrary.LibRun
             {
                 How = how, Inputs = InputRuns.From(inputs), Progress = route.Progress, End = route.Progress == _goals ? route.End : long.MaxValue,
-                Hash = SnapshotIndex.Hash(inputs, inputs.Count),
+                Hash = hash,
             };
-            if (!_lib.Knows(run.Hash)) _lib.AddTraced(run, states);
+            if (file) _lib.AddTraced(run, states);
             return route;
         }
 

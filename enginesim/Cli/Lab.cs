@@ -1148,23 +1148,29 @@ namespace IGTAP.EngineSim.Cli
             if (exact)
             {
                 Vector3 scene = sim.Player.transform.position, scale = sim.Player.transform.localScale;
-                foreach (float f in new[] { p.x, p.y, scene.x, scene.y, scene.z, scale.x, scale.y, body.px, body.py, body.angle, body.vx, body.vy, body.w })
-                    sb.Append(BitConverter.SingleToInt32Bits(f)).Append(',');
-                foreach (FieldInfo f in StepEnds) { Vector3 v = (Vector3)f.GetValue(sim); sb.Append(BitConverter.SingleToInt32Bits(v.x)).Append(',').Append(BitConverter.SingleToInt32Bits(v.y)).Append(','); }
+                void Bits(float f) => sb.Append(BitConverter.SingleToInt32Bits(f)).Append(',');
+                Bits(p.x); Bits(p.y); Bits(scene.x); Bits(scene.y); Bits(scene.z); Bits(scale.x); Bits(scale.y);
+                Bits(body.px); Bits(body.py); Bits(body.angle); Bits(body.vx); Bits(body.vy); Bits(body.w);
+                foreach (FieldInfo f in StepEnds) { Vector3 v = (Vector3)f.GetValue(sim); Bits(v.x); Bits(v.y); }
+                // Each collider as AddValue writes the list (offset, size, excludeLayers, enabled).
                 foreach (BoxCollider2D c in sim.Player.GetComponents<BoxCollider2D>())
-                    AddValue(sb, new object[] { c.offset, c.size, c.excludeLayers.value, c.enabled }, true);
+                {
+                    Bits(c.offset.x); Bits(c.offset.y); Bits(c.size.x); Bits(c.size.y);
+                    sb.Append(Convert.ToString(c.excludeLayers.value, CultureInfo.InvariantCulture)).Append(';').Append(c.enabled ? '1' : '0').Append('~');
+                }
                 foreach (MonoBehaviour script in (HashSet<MonoBehaviour>)TouchedField.GetValue(sim))
                 {
                     sb.Append(script.GetInstanceID()).Append(':');
-                    foreach (FieldInfo f in FieldState.For(script.GetType())) AddValue(sb, f.GetValue(script), true);
+                    var values = new object[FieldState.For(script.GetType()).Length];
+                    FieldState.Read(script, values);
+                    foreach (object v in values) AddValue(sb, v, true);
                 }
                 sb.Append('|');
             }
-            foreach (FieldInfo f in MovementFields)
-            {
-                if (Simulation.MovementPresentationFields.Contains(f.Name)) continue;
-                AddValue(sb, f.GetValue(sim.Player), exact);
-            }
+            object[] moved = _movementValues ??= new object[MovementFields.Length];
+            FieldState.Read(sim.Player, moved);
+            for (int i = 0; i < moved.Length; i++)
+                if (MovementKeyed[i]) AddValue(sb, moved[i], exact);
             foreach (FieldInfo f in EngineFields) AddValue(sb, f.GetValue(sim.Engine), exact);
             foreach (Scheduler.Pending p2 in sim.Scheduler.Queue)
             {
@@ -1222,6 +1228,9 @@ namespace IGTAP.EngineSim.Cli
         static readonly FieldInfo[] StepEnds = { typeof(Simulation).GetField("_stepFrom", Fields), typeof(Simulation).GetField("_stepTo", Fields) };
         static readonly FieldInfo TouchedField = typeof(Simulation).GetField("_touched", Fields);
         static readonly FieldInfo[] MovementFields = FieldState.For(typeof(Movement));
+        /// <summary>The Movement fields a state key holds (the presentation ones left out).</summary>
+        static readonly bool[] MovementKeyed = MovementFields.Select(f => !Simulation.MovementPresentationFields.Contains(f.Name)).ToArray();
+        [ThreadStatic] static object[] _movementValues;
         static readonly FieldInfo[] EngineFields = new[]
         {
             "_rawJumpHeld", "_dashJumpFrame", "_springDashFrame", "_springTicks", "_lockArmed", "_lockX", "_lockY",
