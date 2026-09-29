@@ -1187,13 +1187,13 @@ namespace IGTAP.EngineSim
                     }
                     case "steep":
                     {
-                        // Freeze aim: the dash pressed with the stick at rest, then the stick 0.35 sideways and near full
-                        // up (or down) in its freeze. Unsnapped, it goes 19° off vertical, which no dash pressed on a tick can
-                        // (MacroEngine.StickFor); (0.35, 0.94) is a stick a round gate allows.
+                        // Freeze aim: the dash pressed with the stick at rest, then the stick 0.35 sideways and full up (or
+                        // down) in its freeze. The sideways part isn't snapped, so it goes 19° off vertical, which no dash
+                        // pressed on a tick can (MacroEngine.StickFor).
                         int end = OmniDash(t, at, 0f, 0f, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, side);
                         InputTick d = t[at];
                         d.turnX = side * 0.35f;
-                        d.turnY = _rng.NextDouble() < .75 ? 0.94f : -0.94f;
+                        d.turnY = _rng.NextDouble() < .75 ? 1f : -1f;
                         t[at] = d;
                         return end;
                     }

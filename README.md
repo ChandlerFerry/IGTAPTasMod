@@ -103,7 +103,7 @@
 1. Relaxes rule 6. The one exception is the dash freeze's stick (`turnX`/`turnY`, `MacroStep.dashTurnX`/`dashTurnY`): a
    dash pressed with the stick at rest takes the stick the game reads before the next tick, as a player tilting the
    stick during the freeze turns it. Without the omnidash only its sideways part counts; with it the vertical does too
-   (a controller stick such as (0.35, 0.94), which a round gate allows). It is legal.
+   (such as (0.35, 1): the game snaps the vertical to full tilt). It is legal.
 2. Relaxes rule 39. The interpolation/fixed-clock patch (rules 7–9), the Vman credits' crash (below) and playback's
    wall-clock reads (the dash freeze, the camera's easing and `ObjectBobber` count the fixed clock's frame instead of
    the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) are the only places a patch changes game logic.

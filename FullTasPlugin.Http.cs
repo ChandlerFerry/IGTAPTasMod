@@ -254,7 +254,8 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             return new {
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
-                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog },
+                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog,
+                    outlook = _fullTasOutlook, pulls = _fullTasPulls },
                 lastResult = _fullTasLastResult,
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,

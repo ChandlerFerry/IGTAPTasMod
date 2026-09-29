@@ -174,6 +174,8 @@ namespace IGTAPTasMod
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
             _fullTasProgress = null;
+            _fullTasOutlook = null;
+            _fullTasPulls.Clear();
             _fullTasSolveError = null;
             _fullTasCommand = EngineSimExe + " " + args;
             _fullTasSolveStatus = what;
@@ -367,8 +369,9 @@ namespace IGTAPTasMod
                     e["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     string type = (string)e["type"];
                     if (type == "status") { _fullTasProgress = e; return; }
-                    // Improve's per-pull outlook and "searching now" lines are the Optimize tab's (Solver.cs).
-                    if (type == "outlook" || type == "pullStart") return;
+                    if (type == "outlook") { _fullTasOutlook = e; return; }
+                    if (type == "pullStart" || type == "pull") _fullTasPulls.RemoveAll(p => (long?)p["pull"] == (long?)e["pull"]);
+                    if (type == "pullStart") { _fullTasPulls.Add(e); return; }
                     if (FullTasDiskOnlyEvents.Contains(type) || type == "record" && e["lever"] != null) return;
                     _fullTasEvents.Add(e);
                     if (_fullTasEvents.Count > MaxFullTasEvents)

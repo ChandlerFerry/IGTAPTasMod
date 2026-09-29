@@ -137,7 +137,7 @@ namespace IGTAP.EngineSim.Cli
                         case 'D': tick.dash = true; break;
                         case 'T':
                         {
-                            // Tx or Tx:y — the stick held in the dash's freeze (InputTick.turnX/turnY), e.g. T-1 or T0.35:0.94
+                            // Tx or Tx:y — the stick held in the dash's freeze (InputTick.turnX/turnY), e.g. T-1 or T0.35:1
                             int e = i + 1;
                             while (e < flags.Length && (char.IsDigit(flags[e]) || flags[e] == '-' || flags[e] == '.' || flags[e] == ':')) e++;
                             string[] turn = flags.Substring(i + 1, e - i - 1).Split(':');

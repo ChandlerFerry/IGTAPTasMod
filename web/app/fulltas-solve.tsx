@@ -8,7 +8,7 @@ export type FullTasEvent = { type: string; at: number } & Record<string, unknown
 export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; error?: boolean; run?: string; finished?: boolean; time?: number | null; saved?: boolean;
   reason?: string | null; reached?: number; of?: number; expected?: number; next?: string | null; droppedFrames?: number; splits?: FullTasSplit[] };
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
-  events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[] };
+  events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[]; outlook?: unknown; pulls?: unknown[] };
 /** The saved best's route between two Quick Restarts: goals first+1..last. */
 export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number; known?: number | null; knownWhy?: string | null };
 /** A faster way the solver found for a segment but the run after it didn't take (fulltas/<run>.faster.json, for the saved best). */

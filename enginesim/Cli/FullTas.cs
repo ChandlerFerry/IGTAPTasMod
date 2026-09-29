@@ -1171,7 +1171,12 @@ namespace IGTAP.EngineSim.Cli
             }
             if (broken != null)
             {
-                Emit(new { type = "note", level = "info", text = $"Faster through goal {limit}, but the old route after it no longer works as well from there; re-finding goals {limit + 1}-{best.Progress}." });
+                double gain = Seconds(best.Clock(limit) - broken.Clock(limit));
+                string tail = broken.Progress >= best.Progress
+                    ? $"finishes {Seconds(broken.Last - best.Last):+0.00;-0.00}s against the record"
+                    : $"stops at goal {broken.Progress} of {best.Progress}";
+                Emit(new { type = "note", level = "info", gain, text = $"Faster through goal {limit} by {gain:0.00}s, but the old route after it {tail}; "
+                    + $"re-finding goals {limit + 1}-{best.Progress}. Worth up to −{gain:0.00}s if they come back as fast as before." });
                 Repair(where, best, broken);
                 return;
             }
@@ -1269,6 +1274,9 @@ namespace IGTAP.EngineSim.Cli
         void Repair(string where, Route old, Route run)
         {
             _repairBegin?.Invoke(run);
+            int from = Enumerable.Range(1, Math.Min(run.Progress, old.Progress)).OrderByDescending(k => old.Clock(k) - run.Clock(k)).FirstOrDefault();
+            string lost = from > 0 && old.Clock(from) > run.Clock(from)
+                ? $" (−{Seconds(old.Clock(from) - run.Clock(from)):0.00}s through goal {from} not kept)" : "";
             int resynced = 0;
             while (!TimeUp)
             {
@@ -1287,20 +1295,20 @@ namespace IGTAP.EngineSim.Cli
                         continue;
                     }
                     Log($"repaired run {Describe(run)} is no better; dropped");
-                    Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." });
+                    Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." + lost });
                     return;
                 }
                 if (run.Last >= _best.Last)
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
-                    Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." });
+                    Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." + lost });
                     return;
                 }
                 string hopeless = _hopeless?.Invoke(run);
                 if (hopeless != null)
                 {
                     Log("repair dropped: " + hopeless);
-                    Emit(new { type = "dropped", text = "Repair gave up: " + hopeless + "." });
+                    Emit(new { type = "dropped", text = "Repair gave up: " + hopeless + "." + lost });
                     return;
                 }
                 int reached = run.Progress, limit = Math.Min(reached + _window + _lookahead, old.Progress);
@@ -1310,14 +1318,14 @@ namespace IGTAP.EngineSim.Cli
                 if (found.Count == 0)
                 {
                     Log($"repair dropped: no route to {_labels[reached]} from the new state");
-                    Emit(new { type = "dropped", text = $"Repair gave up: no way to goal {reached + 1} from the new state." });
+                    Emit(new { type = "dropped", text = $"Repair gave up: no way to goal {reached + 1} from the new state." + lost });
                     return;
                 }
                 Route next = Splice(run, prefixLength, found[found.Count - 1], limit, old);
                 if (next == null || next.Progress <= reached)
                 {
                     Log("repair dropped: its route missed its goals when replayed from the start");
-                    Emit(new { type = "dropped", text = "Repair gave up: its route didn't reproduce when replayed from the start." });
+                    Emit(new { type = "dropped", text = "Repair gave up: its route didn't reproduce when replayed from the start." + lost });
                     return;
                 }
                 run = next;

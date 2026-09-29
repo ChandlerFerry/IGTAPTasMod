@@ -1244,6 +1244,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
       <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Improve · ${solve.name}` : "Improve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
       <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? splits[splits.length - 1].ticks * TICK_SECONDS : null, splits: splits.map(s => s.ticks * TICK_SECONDS) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}
         picked={picked} onPick={(goal, shift) => { if (complete) pick(goal, goal, shift); }}/>
+      {solve.outlook != null && <OutlookCard outlook={solve.outlook as Outlook} pulls={solve.running ? (solve.pulls ?? []) as PullNow[] : []}/>}
     </div>
   </div>;
 }

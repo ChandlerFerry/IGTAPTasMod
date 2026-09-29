@@ -652,6 +652,10 @@ namespace IGTAP.EngineSim.Cli
         readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
         readonly List<string> _order = new List<string>();
 
+        /// <summary>The biggest lead each window (goal, limit) has reported on _leadFor (the best its windows searched from).</summary>
+        readonly Dictionary<(int, int), long> _leadSeen = new Dictionary<(int, int), long>();
+        Route _leadFor;
+
         static bool Windowish(string lever) { return lever == "window" || lever == "lookahead" || lever == "span"; }
 
         int WindowLimit(Arm arm)
@@ -696,6 +700,7 @@ namespace IGTAP.EngineSim.Cli
         void RunWindows(List<(Arm arm, double budget, double score)> batch)
         {
             Route best = _best;
+            if (!ReferenceEquals(_leadFor, best)) { _leadSeen.Clear(); _leadFor = best; }
             int per = Math.Max(1, _threads / batch.Count);
             double c0 = CpuSeconds();
             TimeSpan w0 = _clock.Elapsed;
@@ -770,7 +775,13 @@ namespace IGTAP.EngineSim.Cli
                 }
                 // A window's own lead feeds the scheduler only while its finds can still win: one whose every find the cost-to-go
                 // dropped arrived in states the later goals can't use (VMAN: 35 such windows, none converted).
-                j.arm.Lead = !_findsHopeless && j.bestAt[0] < best.GoalPhysics[j.limit - 1] ? best.GoalPhysics[j.limit - 1] - j.bestAt[0] : 0;
+                long lead = !_findsHopeless && j.bestAt[0] < best.GoalPhysics[j.limit - 1] ? best.GoalPhysics[j.limit - 1] - j.bestAt[0] : 0;
+                // Only the part of the lead this window hasn't shown on this best before: its earlier finds were merged and failed, and
+                // re-found every round they kept the scheduler from retiring a region, so the bandit's other levers never got a pull
+                // (VMAN: an hour of the same windows at goals 5, 6, 16-19, the same repairs failing each round).
+                long seen = _leadSeen.TryGetValue((j.k, j.limit), out long was) ? was : 0;
+                if (lead > seen) _leadSeen[(j.k, j.limit)] = lead;
+                j.arm.Lead = Math.Max(0, lead - seen);
                 Account(j.arm, j.pull, before, search / jobs.Count + CpuSeconds() - m0, wall + (_clock.Elapsed - mw).TotalSeconds, outcome, j.budget, j.score);
             }
         }

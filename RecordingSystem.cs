@@ -122,11 +122,9 @@ namespace IGTAPTasMod
                 if (turned.y != 0f && dash.moveX == 0f && dash.moveY == 0f)
                 {
                     // An omnidash aimed in its freeze: dashDirection is the normalized (x, ±1) NormaliseInput passed, so x is
-                    // back as x / |y|; the vertical goes to a stick a round gate allows (0.94 up for x 0.35, still 1 after
-                    // NormaliseInput).
-                    float x = turned.x / Mathf.Abs(turned.y);
-                    dash.dashTurnX = x;
-                    dash.dashTurnY = Mathf.Sign(turned.y) * (Mathf.Abs(x) >= 1f ? 1f : Mathf.Sqrt(1f - x * x));
+                    // back as x / |y| and the vertical is full tilt, as NormaliseInput snaps it.
+                    dash.dashTurnX = turned.x / Mathf.Abs(turned.y);
+                    dash.dashTurnY = Mathf.Sign(turned.y);
                 }
                 else if (turned.y == 0f && turned.x != 0f && Mathf.Sign(turned.x) != (Read<bool>(FacingRight, movement) ? 1f : -1f))
                     dash.dashTurnX = Mathf.Sign(turned.x);

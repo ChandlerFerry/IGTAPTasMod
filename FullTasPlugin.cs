@@ -118,6 +118,9 @@ namespace IGTAPTasMod
         readonly List<string> _fullTasLog = new List<string>();
         readonly List<JObject> _fullTasEvents = new List<JObject>();
         JObject _fullTasProgress;
+        /// <summary>Improve's last `outlook` (the "Should it keep going?" card) and the pulls running now (`pullStart` until its `pull`).</summary>
+        JObject _fullTasOutlook;
+        readonly List<JObject> _fullTasPulls = new List<JObject>();
         string _fullTasSolveError, _fullTasCommand;
         const int MaxFullTasEvents = 400, MaxFullTasLog = 300;
         /// <summary>--auto's bookkeeping events: on disk in fulltas/&lt;run&gt;.auto.jsonl, not sent to the studio (a model is 300 rows;

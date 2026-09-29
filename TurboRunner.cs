@@ -345,6 +345,12 @@ namespace IGTAPTasMod
             public (int due, MonoBehaviour target, string method)[] pending;
             public Economy economy;
             public Vman vman;
+            /// <summary>
+            /// The cameraMover's fields: a camZoneScript's OnTriggerStay2D points the camera at its zone, and only its
+            /// OnTriggerExit2D gives it back to the player, which a restore mutes. Without this the camera stayed on the last
+            /// zone a run entered (a FalseEnding-Any% turbo left it at the far end of the map, the player back at the start).
+            /// </summary>
+            public object[] camera;
             /// <summary>FloatingOrigin.currentOrigin, and whether a MoveOrigin was waiting for the next physics step.</summary>
             public Vector3 origin;
             public bool rebasing;
@@ -601,6 +607,7 @@ namespace IGTAPTasMod
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
                 pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture(),
+                camera = movement.cam != null ? FieldState.Capture(movement.cam) : null,
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
                 stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
                 movers = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None),
@@ -685,6 +692,11 @@ namespace IGTAPTasMod
             RestoreOrbs(s);
             RestoreSpikes(s);
             s.vman?.Restore();
+            if (s.camera != null && movement.cam != null)
+            {
+                FieldState.Restore(movement.cam, s.camera);
+                SavestateService.SnapCamera(s.position);
+            }
             // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
             UnityEngine.Random.state = s.random;
             movement.transform.position = s.position;

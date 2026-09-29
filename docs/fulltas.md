@@ -721,8 +721,8 @@ The log ends with the time-to-gain curve (wall and CPU seconds to each new best,
 pulls, CPU and ticks gained, and the pull order. `fulltas/<run>.auto.jsonl` has every pull (`pull`: lever, goal, budget,
 outcome, gain, CPU, wall), `check`, `record`, `ablation`, `model` and `autoEnd` (the curve).
 
-**The outlook** (`FullTasAutoOutlook.cs`): after every pull, an `outlook` event on stdout only, which the studio's Optimize
-tab shows as "Should it keep going?". The engine also prints a `pullStart` event (lever, goal, budget, and what that
+**The outlook** (`FullTasAutoOutlook.cs`): after every pull, an `outlook` event on stdout only, which the studio shows as
+"Should it keep going?" (the Optimize tab for a course, the Full-TAS tab's Improve for a run). The engine also prints a `pullStart` event (lever, goal, budget, and what that
 lever and goal gave this session) as each pull starts. The outlook's chance of a gain comes from when gains came,
 counting every earlier session of the run in its `.auto.jsonl` as search already spent. Gains are treated as a Poisson
 process over the recent half of all search (at least 10 minutes), with a Jeffreys prior. With k gains in that window W,

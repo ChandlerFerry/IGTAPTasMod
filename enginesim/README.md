@@ -857,7 +857,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   all but the demo being played, started with the demo's first tick (a frozen frame counts as the fixed clock's step, as
   the game's own freeze does, so they stay beside the player). `freeze-aim` (tech `freeze-aim`, `WJ_DS_DJ_BS_ORB_ZIP_OM`) is a
   ledge under a ceiling, a spike bed in the gap and a pillar with a spiked face: the freeze aim
-  (the main demo: dash at rest, `turnX`/`turnY` (0.35, 0.94)) leans out from under the ceiling's end, over the spikes, and
+  (the main demo: dash at rest, `turnX`/`turnY` (0.35, 1)) leans out from under the ceiling's end, over the spikes, and
   drops onto the pillar top; its three keyboard ghosts don't land (`up-right`: into the spike bed; `keyboard-steer`: up
   in the freeze, straight up into the ceiling, then right, into the spiked face;
   `keyboard-closest`: walk left 9 ticks, dash up-right, the spiked face 37 u below the top, the closest of 3,556 keyboard
@@ -1181,7 +1181,7 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   reads the dash tick's own stick. Without the omnidash `Update` drops the vertical; with it the stick is not snapped as a
   pressed dash's is, so sideways 0.3-0.4 and a full vertical aim it 17-22° off vertical (the Freeze aim). It is legal
   (README `### Rules`); the Inwall wallbounce tech demo uses `turnX`. The solver tries it as the omnidash kind `steep`
-  ((±0.35, ±0.94) on a dash pressed at rest).
+  ((±0.35, ±1) on a dash pressed at rest).
 - Zip movers (`PlatformMover`, locked or not): a jump or wall jump while touching one calls `MakeIntangible` (through
   `Movement.MovingPlatformMomentumInherit`), which moves it to the Default layer and back to Ground after
   `WaitForSeconds(0.15)`; the ground and wall rays (Ground only) miss it meanwhile and the normal hitbox (it excludes

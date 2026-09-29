@@ -33,7 +33,7 @@ a recorded dash's first dash frame goes another way than its start (`InputRecord
 fields and not part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no
 sideways stick and hold `lockMoveX` sideways, and reading the lock stick in the freeze would turn the ones whose lock
 points against the dash. The overlay's input list gives it its own row under the dash's tick, `freeze` in the dash's
-colour (`→ 35% ↑ 94%`: 0.35 sideways and 0.94 up in the freeze, after pressing dash with the tick's stick); a tech
+colour (`→ 35% ↑ 100%`: 0.35 sideways and full up in the freeze, after pressing dash with the tick's stick); a tech
 demo also lists the tick that lets the stick go (`·`), so its list reads press, turn, release. The freeze's frames only exist while playback runs
 on the fixed clock, so a replay starts only once it does (`TasPlugin.PacePlayback`): a replay that started inside a
 long frame (a loaded CPU) played its first ticks back to back, with no `Update` between them, and lost the turn.
@@ -374,9 +374,9 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
 - **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
   one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
 - **Freeze aim** (`WJ_DS_DJ_BS_ORB_ZIP_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
-  nearly straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 0.94)). The stick
+  straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 1)). The stick
   that turns a waiting dash (`Movement.Update`, 821-833) skips the press's snap to straight up, so `dashDirection` is
-  (0.33, 0.944): 19° off vertical, 552 u/s sideways and 1576 u/s up, an angle no dash pressed on a tick gets (17-22° for
+  (0.35, 1) normalized, (0.33, 0.944): 19° off vertical, 552 u/s sideways and 1576 u/s up, an angle no dash pressed on a tick gets (17-22° for
   sideways 0.3-0.4; `NormaliseInput` takes a sideways 0.4-0.8 with a vertical to full tilt). The dash's first tick
   still goes the way the player faces (the −20 shove and that tick's `Velocity` come before the freeze). From standing
   on Course 1's floor it peaks 268 u up and 124 u across with the stick at rest after it (a straight-up dash: 298 u up,

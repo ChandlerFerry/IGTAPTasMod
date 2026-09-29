@@ -878,7 +878,7 @@ namespace IGTAP.EngineSim
                         foreach (int j in OmniJumps) yield return (OmniDash(ax, ay, j, side, down), "aim jump", false);
                     }
                 foreach (float side in new[] { -1f, 1f })
-                    foreach (float up in new[] { .94f, -.94f })
+                    foreach (float up in new[] { 1f, -1f })
                         foreach (int j in new[] { 0, 4 })
                         {
                             InputTick[] t = OmniDash(0f, 0f, j, side, down);

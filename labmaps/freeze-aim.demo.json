@@ -7,7 +7,7 @@
   "ticks": 29,
   "inputTicks": 60,
   "search": {
-    "method": "hand-built and checked by lab replay: standing on the ledge facing right, press dash with the stick at rest and push it to (0.35, 0.94) in the dash freeze (turnX/turnY); stick at rest after. The first tick still goes right (1670 u/s), then Movement.Update\u0027s turn gives dashDirection (0.33, 0.944): Velocity (551.7, 1576.2). It clears the ceiling\u0027s end (x 235) by 7 u at tick 6, the spike bed by 16 u at tick 4, peaks at (323.7, 301.7) and falls straight onto the pillar top (x 323.7, in the finish box at tick 29). 60 inputs so a playback shows every ghost to its end. Ghost path: its first 70 physics ticks (--path-ticks 70), as every ghost on this lab."
+    "method": "hand-built and checked by lab replay: standing on the ledge facing right, press dash with the stick at rest and push it to (0.35, 1) in the dash freeze (turnX/turnY); stick at rest after. The first tick still goes right (1670 u/s), then Movement.Update\u0027s turn gives dashDirection (0.33, 0.944): Velocity (551.7, 1576.2). It clears the ceiling\u0027s end (x 235) by 7 u at tick 6, the spike bed by 16 u at tick 4, peaks at (323.7, 301.7) and falls straight onto the pillar top (x 323.7, in the finish box at tick 29). 60 inputs so a playback shows every ghost to its end. Ghost path: its first 70 physics ticks (--path-ticks 70), as every ghost on this lab."
   },
   "inputs": [
     {
@@ -22,7 +22,7 @@
       "lockX": null,
       "lockY": null,
       "turnX": 0.35,
-      "turnY": 0.94,
+      "turnY": 1,
       "reset": false,
       "pause": 0,
       "pauseTick": 0,
