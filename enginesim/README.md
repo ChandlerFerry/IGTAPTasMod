@@ -233,10 +233,10 @@ hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing
 omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the wavejump), `wall-dash` (the eight aims),
 `freeze-aim` and `corner-boost` (the corner hyper, frame 4–12, and the corner ultra) `.graft` demos.
 
-A/B switches while the hand-written grafts and the mined ones are compared (issue: replace the hand-written grafts):
-`--no-hand-grafts` (mined only), `--no-graft-specs` (drop the spec'd windows) and `--mined-draws N` (mined windows per
-grafted contact, default 1). The progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose
-run showed the demo's contact after it).
+The hand-written grafts are gone: every contact is grafted from these mined windows. Two tuning switches remain:
+`--no-graft-specs` (drop the spec'd windows) and `--mined-draws N` (mined windows per grafted contact, default 1). The
+progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed the demo's contact
+after it).
 
 Besides the tick contacts above, `ContactLog.Step` files per physics step (a dash's steps consume no input tick, and a
 spring or a spike acts inside a physics callback) the contacts the game's own calls and the player's touches make, at the
