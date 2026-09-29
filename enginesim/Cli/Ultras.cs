@@ -238,6 +238,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!example.TryGetValue(p, out int e) || (float)u[5] > (float)ultras[e][5]) example[p] = k;
             }
             Map.TreeGround tree = Map.Grown(world.RootElement, origin, x0, y0, x1, y1);
+            var markers = Map.Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1).ToList();
             var result = new
             {
                 world = System.IO.Path.GetFileName(worldPath),
@@ -253,8 +254,12 @@ namespace IGTAP.EngineSim.Cli
                 // each segment's place in the tree's purchase order.
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 // Start/end gates, checkpoints, springs, teleporters, refill orbs and secrets (bonus rewards), in every zone.
-                markers = Map.Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
-                labels = labels.GroupBy(l => (l.x, l.y)).Select(g => new { name = string.Join(" · ", g.Select(l => l.name)), x = g.Key.x, y = g.Key.y }),
+                markers,
+                // Zip movers and moving platforms: where each goes (its path and the corridor its box sweeps).
+                zips = Map.Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
+                // A bonus's label is only in the world state its reward box is in (overgrowth hides some rewards).
+                labels = labels.GroupBy(l => (l.x, l.y)).Select(g => new { name = string.Join(" · ", g.Select(l => l.name)), x = g.Key.x, y = g.Key.y,
+                    when = markers.Where(m => m.kind == "box" && m.area != null && m.area.Any(p => Inside(p, g.Key.x, g.Key.y, 24f))).Select(m => m.when).FirstOrDefault() }),
                 // Ground-layer triggers (upgrade boxes): the ground rays hit them, so they are floors too.
                 boxes = shapes.Where(s => s.Layer == 7 && s.Trigger && !s.Spike && !s.Player && s.Type == "Polygon").Select(s => s.V.Select(R)),
                 launches = launches.Count,
@@ -728,6 +733,14 @@ namespace IGTAP.EngineSim.Cli
                 if (after >= 0) after++;
             }, afterTick: _ => after < 0);
             return hypers;
+        }
+
+        // Whether (x, y) is within `pad` of polygon `p`'s bounding box (x, y pairs).
+        static bool Inside(float[] p, float x, float y, float pad)
+        {
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            for (int i = 0; i + 1 < p.Length; i += 2) { x0 = Math.Min(x0, p[i]); x1 = Math.Max(x1, p[i]); y0 = Math.Min(y0, p[i + 1]); y1 = Math.Max(y1, p[i + 1]); }
+            return x >= x0 - pad && x <= x1 + pad && y >= y0 - pad && y <= y1 + pad;
         }
     }
 }

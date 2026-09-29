@@ -344,17 +344,23 @@ engine doesn't model growing it. Spikes are red; coloured blocks and spikes are 
 orange, the export's `sourceShapes`), only the active colour being solid. Springs are level too: their trigger box in
 yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
 level is always drawn. **Game art** draws the level with the game's own tilemaps and sprites (spikes, springs, zip
-movers, moss, vines, and the grown tree on its own **Tree (grown)** layer), from WebP tiles in `web/public/art` that
-`igtap-ultra-map/tools/render-art.py` renders per world state. Only the tiles in view load, at the coarsest level that
-fits the zoom. The collision shapes are then a toggle. A checkpoint shows its spawn box (the standing player box where a
-death or quick restart puts the dot: the checkpoint's position 12 down) and, dashed, its trigger area. Each buy box says
-what it is (secret, bonus reward, achievement box, ability, tree, one-off or course upgrade), what it gives and what it
-costs, on hover or tap.
+movers, refill orbs, moss, vines, and the grown tree with its purchase numbers on its own **Tree (grown)** layer), from
+WebP tiles in `web/public/art` that `igtap-ultra-map/tools/render-art.py` renders per world state. Decoration that
+neither collides nor does anything (backdrops, pillars, pistons, plants) is its own **Background art** layer, off by
+default. Every spike (overgrowth vines and the hidden spikes too) is tinted red over the art. Only the tiles in view
+load, at the coarsest level that fits the zoom, and the last loaded tiles stay until new ones arrive. The collision
+shapes are then a toggle. A checkpoint is its spawn box (the standing player box where a death or quick restart puts
+the dot: the checkpoint's position 12 down), with its trigger area dashed; a start or end gate is its trigger box; a buy
+box is its trigger box with its name and cost, and says what it is (secret, bonus reward, achievement box, ability,
+tree, one-off or course upgrade), what it gives and what it costs, on hover or tap. Hovering (or tapping) a zip mover
+or moving platform draws where it goes: the corridor its box sweeps, its path and its box at each stop
+(`PlatformMover.Positions`, run in order and back to the first).
 The **Area 1** picker switches the level between Area 1's world states, **Normal** and
 **Overgrown** (`OvergrowthLoadScript`: when Area 1 is overgrown its `overgrowthEnable` objects, the moss, spikes, zip
-movers and their boxes and checkpoints under and around Courses 1–5, are on and its `overgrowthDisable` ones are off).
-It starts on the capture's state, marked "(capture)"; floors, ultras, routes and explored cells are always the
-capture's. Ground that is off in the capture is drawn as its outline (an off composite has no shapes, only `paths`).
+movers and their boxes and checkpoints under and around Courses 1–5, are on and its `overgrowthDisable` ones are off;
+overgrowth also hides the Area 1 courses' movement, prestige and breaker-light boxes, a bonus's reward among them, and
+opens the Zone 2 path above Course 10: the omnidash box sets both). It starts on the capture's state; floors, ultras, routes and explored cells are always the
+capture's. Ground that is off in the capture is filled from its outline (an off composite has no shapes, only `paths`).
 **Gates, checkpoints, teleporters, refills,
 secrets** marks start and end gates, checkpoints, teleporters, dash, jump and full refill orbs, and every secret (a
 gold star at its box's trigger: an `upgradeBox` with `isSecret`, named by its achievement number and cost; a bonus's

@@ -96,7 +96,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (var (p, i) in memory.Plateau.Take(MaxPlateau).Select((p, i) => (p, i)))
                     routes.Add(("plateau " + (i + 1), "plateau", p));
 
-            List<List<InputTick>> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<List<InputTick>>();
+            List<InputRuns> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<InputRuns>();
             string cellsPath = System.IO.Path.ChangeExtension(archivePath, ".mapcells.bin");
             Dictionary<Hash, SourceCells> cached = ReadCells(cellsPath, simKey);
             var hashes = new Hash[sources.Count];
@@ -170,6 +170,7 @@ namespace IGTAP.EngineSim.Cli
                 // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's.
                 states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                zips = Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
                 avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
@@ -273,6 +274,7 @@ namespace IGTAP.EngineSim.Cli
                 bounds = new[] { x0, y0, x1, y1 },
                 states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
+                zips = Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
                     .Concat(goals.Select(g => new Marker("goal", "goal " + g.index + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
@@ -317,7 +319,7 @@ namespace IGTAP.EngineSim.Cli
                 .Select(f => System.IO.Path.GetFileName(f) + "=" + Stamp(f)));
         }
 
-        static Hash HashInputs(List<InputTick> inputs)
+        static Hash HashInputs(IReadOnlyList<InputTick> inputs)
         {
             // 29 bytes a tick, plus 4 for a freeze stick's vertical (turnY), 8 for a pause and 4 for its frame offset, so older
             // inputs keep their hash.
@@ -486,17 +488,61 @@ namespace IGTAP.EngineSim.Cli
             var roots = new Dictionary<int, string>();
             var active = new Dictionary<int, bool>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray()) active[o.GetProperty("id").GetInt32()] = o.GetProperty("activeSelf").GetBoolean();
+            // Component id → its object; the upgrade boxes under an object (its own and its children's, as
+            // GetComponentsInChildren).
+            var owner = new Dictionary<int, int>();
+            var components = new Dictionary<int, JsonElement>();
+            var children = new Dictionary<int, List<int>>();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+            {
+                int id = o.GetProperty("id").GetInt32();
+                int parent = o.GetProperty("parent").GetInt32();
+                if (!children.TryGetValue(parent, out var list)) children[parent] = list = new List<int>();
+                list.Add(id);
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    owner[c.GetProperty("id").GetInt32()] = id;
+                    components[c.GetProperty("id").GetInt32()] = c;
+                }
+            }
+            IEnumerable<int> BoxesUnder(int id)
+            {
+                foreach (var (cid, c) in components)
+                    if (owner[cid] == id && c.GetProperty("type").GetString() == "upgradeBox") yield return cid;
+                if (children.TryGetValue(id, out var kids))
+                    foreach (int k in kids)
+                        foreach (int b in BoxesUnder(k)) yield return b;
+            }
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
                 {
-                    if (c.GetProperty("type").GetString() != "OvergrowthLoadScript") continue;
+                    string type = c.GetProperty("type").GetString();
+                    if (type != "OvergrowthLoadScript" && type != "Zone2to1TransitionController") continue;
                     var f = Fields(c);
-                    List<int> Refs(string name) => f.TryGetValue(name, out JsonElement v) && v.ValueKind == JsonValueKind.Array
-                        ? v.EnumerateArray().Where(r => r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out _)).Select(r => r.GetProperty("$ref").GetInt32()).Where(active.ContainsKey).ToList()
-                        : new List<int>();
+                    // One reference or an array of them.
+                    List<int> Refs(string name) => !f.TryGetValue(name, out JsonElement v) ? new List<int>()
+                        : (v.ValueKind == JsonValueKind.Array ? v.EnumerateArray() : new[] { v }.AsEnumerable())
+                            .Where(r => r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out _)).Select(r => r.GetProperty("$ref").GetInt32()).Where(id => active.ContainsKey(id) || owner.ContainsKey(id)).ToList();
+                    if (type == "Zone2to1TransitionController")
+                    {
+                        // The path from Zone 2 into Area 1 above Course 10 opens with Area 1's overgrowth (buying the
+                        // omnidash sets both, upgradeBox): the closed ground goes, the open ground and first trunk come.
+                        foreach (int id in Refs("closedObject")) roots[id] = "area1:normal";
+                        foreach (int id in Refs("openObject").Concat(Refs("trunks").Take(1))) roots[id] = "area1:overgrown";
+                        continue;
+                    }
                     List<int> overgrown = Refs("overgrowthEnable"), normal = Refs("overgrowthDisable");
                     foreach (int id in overgrown) roots[id] = "area1:overgrown";
                     foreach (int id in normal) roots[id] = "area1:normal";
+                    // Overgrowth (SetA1CourseTiers) hides the Area 1 courses' movement, prestige, breaker-light and
+                    // unlock-prestige boxes (a bonus's reward among them) and shows the atom box and boxesToEnable.
+                    foreach (int course in Refs("courses"))
+                        foreach (int box in BoxesUnder(owner.TryGetValue(course, out int co) ? co : course))
+                            if (Fields(components[box]) is var bf && bf.TryGetValue("upgrade", out JsonElement up) && up.ValueKind == JsonValueKind.Number
+                                && (up.GetInt32() is 1 or 6 or 10 || up.GetInt32() == 0 && bf.TryGetValue("globalUpgrade", out JsonElement gu) && gu.ValueKind == JsonValueKind.Number && gu.GetInt32() == 14))
+                                roots[owner[box]] = "area1:normal";
+                    foreach (int box in Refs("boxesToEnable").Append(Refs("rpAtomBox").FirstOrDefault()).Where(b => b != 0))
+                        if (owner.TryGetValue(box, out int bo)) roots[bo] = "area1:overgrown";
                     states.Add(new WorldState("area1", "Area 1", new[] { "normal", "overgrown" }, overgrown.Any(id => active[id]) ? "overgrown" : "normal"));
                 }
             return (states, roots);
@@ -956,7 +1002,8 @@ namespace IGTAP.EngineSim.Cli
                     string name = o.GetProperty("name").GetString();
                     JsonElement p = o.GetProperty("position");
                     float x = Round(p.GetProperty("x").GetSingle() - origin.x), y = Round(p.GetProperty("y").GetSingle() - origin.y);
-                    float[][] area = kind == "checkpoint" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
+                    // A checkpoint's and a gate's trigger: where touching it respawns there, starts or ends the timer.
+                    float[][] area = kind is "checkpoint" or "start" or "end" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
                     float[] spawn = null;
                     BoxInfo info = null;
                     if (kind == "checkpoint" && box != null)
@@ -988,6 +1035,83 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             return markers;
+        }
+
+        // Zip movers and moving platforms (PlatformMover): the moving part runs its Positions in order (local positions,
+        // wrapping to the first), each leg a Lerp from the one before (PlatformMover.IE_AdvanceToNextState). `box`: its
+        // collider where it rests now; `path`: its box's middle at each position in travel order, starting there;
+        // `corridor`: per leg, the hull of the box at both ends (the ground it sweeps). `zip`: a zip mover (PlatformType
+        // 1), which only moves once zip movers are unlocked.
+        internal sealed record Zip(string name, bool zip, float[] box, float[][] path, float[][] corridor,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null);
+
+        internal static List<Zip> Zips(JsonElement world, CapturePos origin)
+        {
+            var zips = new List<Zip>();
+            HashSet<int> on = OnObjects(world, allStates: true);
+            Dictionary<int, string> when = StateOf(world);
+            var bodies = Bodies(world, origin);
+            var byId = world.GetProperty("objects").EnumerateArray().ToDictionary(o => o.GetProperty("id").GetInt32());
+            foreach (JsonElement o in byId.Values)
+            {
+                int oid = o.GetProperty("id").GetInt32();
+                if (!on.Contains(oid)) continue;
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    if (c.GetProperty("type").GetString() != "PlatformMover") continue;
+                    var f = Fields(c);
+                    if (!f.TryGetValue("Positions", out JsonElement positions) || positions.ValueKind != JsonValueKind.Array) break;
+                    var local = positions.EnumerateArray().Select(p => p.GetProperty("position")).Select(p => (x: p.GetProperty("x").GetSingle(), y: p.GetProperty("y").GetSingle())).ToList();
+                    if (local.Count < 2) break;
+                    int at = f.TryGetValue("indexInPositions", out JsonElement ix) && ix.ValueKind == JsonValueKind.Number ? Math.Clamp(ix.GetInt32(), 0, local.Count - 1) : 0;
+                    // The collider's world box now (its non-trigger shapes).
+                    float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                    foreach (float[] poly in TriggerArea(o, bodies, origin, triggersOnly: false))
+                        for (int i = 0; i + 1 < poly.Length; i += 2) { x0 = Math.Min(x0, poly[i]); x1 = Math.Max(x1, poly[i]); y0 = Math.Min(y0, poly[i + 1]); y1 = Math.Max(y1, poly[i + 1]); }
+                    if (x0 > x1) break;
+                    // Local to world: the parent's scale (the moving part isn't rotated), from where it is now.
+                    JsonElement lp = o.GetProperty("localPosition"), ls = o.GetProperty("localScale"), gs = o.GetProperty("lossyScale");
+                    float sx = gs.GetProperty("x").GetSingle() / Math.Max(1e-6f, ls.GetProperty("x").GetSingle()), sy = gs.GetProperty("y").GetSingle() / Math.Max(1e-6f, ls.GetProperty("y").GetSingle());
+                    float nowX = lp.GetProperty("x").GetSingle(), nowY = lp.GetProperty("y").GetSingle();
+                    var path = new List<float[]>();
+                    var corridor = new List<float[]>();
+                    float[] BoxAt((float x, float y) p) => new[] { x0 + (p.x - nowX) * sx, y0 + (p.y - nowY) * sy, x1 + (p.x - nowX) * sx, y1 + (p.y - nowY) * sy };
+                    for (int k = 0; k <= local.Count; k++)
+                    {
+                        var p = local[(at + k) % local.Count];
+                        float[] b = BoxAt(p);
+                        path.Add(new[] { Round((b[0] + b[2]) / 2), Round((b[1] + b[3]) / 2) });
+                        if (k == 0) continue;
+                        float[] a = BoxAt(local[(at + k - 1) % local.Count]);
+                        corridor.Add(Hull(new[] { (a[0], a[1]), (a[2], a[1]), (a[2], a[3]), (a[0], a[3]), (b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3]) }));
+                    }
+                    bool zip = f.TryGetValue("PlatformType", out JsonElement pt) && pt.ValueKind == JsonValueKind.Number && pt.GetInt32() == 1;
+                    zips.Add(new Zip(o.GetProperty("parent").GetInt32() is int parent && byId.TryGetValue(parent, out JsonElement po) ? po.GetProperty("name").GetString() : o.GetProperty("name").GetString(),
+                        zip, new[] { Round(x0), Round(y0), Round(x1), Round(y1) }, path.ToArray(), corridor.ToArray(), when.TryGetValue(oid, out string w) ? w : null));
+                    break;
+                }
+            }
+            return zips;
+        }
+
+        // The convex hull of points (monotone chain), as a flat x, y polygon.
+        static float[] Hull((float x, float y)[] pts)
+        {
+            var p = pts.Distinct().OrderBy(q => q.x).ThenBy(q => q.y).ToArray();
+            if (p.Length < 3) return p.SelectMany(q => new[] { Round(q.x), Round(q.y) }).ToArray();
+            static float Cross((float x, float y) o, (float x, float y) a, (float x, float y) b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+            var h = new List<(float x, float y)>();
+            for (int pass = 0; pass < 2; pass++)
+            {
+                int start = h.Count;
+                foreach (var q in pass == 0 ? p : p.Reverse())
+                {
+                    while (h.Count >= start + 2 && Cross(h[h.Count - 2], h[h.Count - 1], q) <= 0) h.RemoveAt(h.Count - 1);
+                    h.Add(q);
+                }
+                h.RemoveAt(h.Count - 1);
+            }
+            return h.SelectMany(q => new[] { Round(q.x), Round(q.y) }).ToArray();
         }
 
         static Dictionary<string, JsonElement> Fields(JsonElement component)

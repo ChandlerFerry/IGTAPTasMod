@@ -391,17 +391,19 @@ type MapData = { course: number; capabilities: string; label: string; fulltas?: 
   markers: { kind: string; name: string; x: number; y: number; area?: number[][]; spawn?: number[]; when?: string | null; box?: BoxInfo }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
   // The world states the level can be drawn in; `current`: the capture's, which the routes and explored cells are from.
   states?: WorldState[];
+  // Zip movers and moving platforms: box, path, per-leg corridor (Map.Zips).
+  zips?: { name: string; zip: boolean; box: number[]; path: number[][]; corridor: number[][]; when?: string | null }[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
-type MapLayers = { art: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
+type MapLayers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
 function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<MapLayers>({ art: true, tree: true, shapes: false, explored: true, boxes: true, markers: true,
+  const [layers, setLayers] = useState<MapLayers>({ art: true, background: false, tree: true, shapes: false, explored: true, boxes: true, markers: true,
     // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
@@ -519,10 +521,26 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         g.save(); g.translate(t.x, t.y + t.size); g.scale(1, -1); g.drawImage(img, 0, 0, t.size, t.size); g.restore();
       }
     };
+    // The decoration (backdrops, pillars, plants: nothing solid) under the level, off by default.
+    if (artShown && layers.background) drawArt({ ...worldState, bg: "on" });
     if (artShown) drawArt(worldState);
     // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
     // under the tree layer.
     if (artShown && layers.tree) drawArt({ ...worldState, tree: "grown" });
+    // Over the art, where the level hurts: every spike (overgrowth vines and the hidden spikes too) tinted red.
+    if (artShown && !layers.shapes) for (const s of data.solids) {
+      if (!s.spike || !inState(s.when, worldState) || s.k === "circle") continue;
+      g.beginPath();
+      let at = 0;
+      for (const n of s.k === "area" ? s.rings ?? [s.p.length] : [s.p.length]) {
+        g.moveTo(s.p[at], s.p[at + 1]);
+        for (let i = at + 2; i < at + n; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
+        if (s.k === "poly" || s.k === "area") g.closePath();
+        at += n;
+      }
+      g.strokeStyle = "#e5484d"; g.lineWidth = 1.5 * px; g.stroke();
+      if (s.k !== "line") { g.fillStyle = "#e5484d"; g.globalAlpha = .3; g.fill("evenodd"); g.globalAlpha = 1; }
+    }
     if (layers.explored && data.explored.cells.length) {
       const size = data.explored.cell;
       // Over the art, see-through.
@@ -649,55 +667,50 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         g.restore();
       }
     }
+    // Zips as their boxes; the one under the pointer shows where it goes (its corridor, path and stops).
+    for (const z of data.zips ?? []) {
+      if (!inState(z.when, worldState)) continue;
+      const hot = cursor && cursor.x >= z.box[0] && cursor.x <= z.box[2] && cursor.y >= z.box[1] && cursor.y <= z.box[3];
+      g.strokeStyle = "#ffb74d"; g.lineWidth = (hot ? 2.5 : 1.5) * px; g.strokeRect(z.box[0], z.box[1], z.box[2] - z.box[0], z.box[3] - z.box[1]);
+      if (!hot) continue;
+      g.fillStyle = "#ffb74d"; g.globalAlpha = .18;
+      for (const c of z.corridor) { g.beginPath(); g.moveTo(c[0], c[1]); for (let i = 2; i + 1 < c.length; i += 2) g.lineTo(c[i], c[i + 1]); g.closePath(); g.fill(); }
+      g.globalAlpha = 1;
+      const bw = z.box[2] - z.box[0], bh = z.box[3] - z.box[1];
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.beginPath(); g.moveTo(z.path[0][0], z.path[0][1]);
+      for (const [x, y] of z.path.slice(1)) g.lineTo(x, y);
+      g.stroke();
+      g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
+      for (const [x, y] of z.path.slice(1)) g.strokeRect(x - bw / 2, y - bh / 2, bw, bh);
+    }
     if (layers.markers) for (const m of markers) {
-      // A buy box is drawn in its category's colour and shape, over its trigger box where the category is on.
       const look = m.kind === "goal" ? { color: "#b9f6ca", shape: "square" } : m.kind === "box" ? BOX_KINDS[m.box!.category] : MARKERS[m.kind];
-      if (m.kind === "box") {
-        if (!layers[`box:${m.box!.category}`]) continue;
-        if (m.area) {
-          g.lineWidth = 1.5 * px; g.strokeStyle = look!.color; g.setLineDash([5 * px, 3 * px]);
-          for (const poly of m.area) {
-            if (poly.length < 6) continue;
-            g.beginPath(); g.moveTo(poly[0], poly[1]);
-            for (let i = 2; i + 1 < poly.length; i += 2) g.lineTo(poly[i], poly[i + 1]);
-            g.closePath();
-            g.globalAlpha = .1; g.fill();
-            g.globalAlpha = 1; g.stroke();
-          }
-          g.setLineDash([]);
-        }
-      }
+      if (m.kind === "box" && !layers[`box:${m.box!.category}`]) continue;
       const color = look?.color ?? "#4fc3f7";
+      const outline = (polys: number[][], dashed: boolean, fill: number) => {
+        g.lineWidth = (dashed ? 1.5 : 2) * px; g.strokeStyle = color; g.fillStyle = color; g.setLineDash(dashed ? [5 * px, 3 * px] : []);
+        for (const poly of polys) {
+          if (poly.length < 6) continue;
+          g.beginPath(); g.moveTo(poly[0], poly[1]);
+          for (let i = 2; i + 1 < poly.length; i += 2) g.lineTo(poly[i], poly[i + 1]);
+          g.closePath(); g.globalAlpha = fill; g.fill(); g.globalAlpha = 1; g.stroke();
+        }
+        g.setLineDash([]);
+      };
+      // Buy boxes and gates are their trigger boxes; a checkpoint is its spawn box (where a death or quick restart puts
+      // the player, solid) over its trigger (where touching it sets the spawn, dashed), as the Ultra map draws them.
+      if ((m.kind === "box" || m.kind === "start" || m.kind === "end") && m.area?.length) { outline(m.area, false, m.kind === "box" ? .12 : .15); continue; }
+      if (m.kind === "checkpoint") {
+        if (m.area) outline(m.area, true, .1);
+        if (m.spawn) { g.lineWidth = 2 * px; g.strokeStyle = color; g.strokeRect(m.spawn[0], m.spawn[1], m.spawn[2] - m.spawn[0], m.spawn[3] - m.spawn[1]); continue; }
+      }
       g.fillStyle = color;
       const s = (look?.shape === "small" ? 4 : look?.shape === "star" ? 10 : 6) * px;
-      // A checkpoint's two boxes at world size: its trigger (touching it sets the spawn, dashed) and the player's box
-      // where a death or quick restart respawns it (solid), as the Ultra map draws them.
-      if (m.kind === "checkpoint") {
-        g.lineWidth = 1.5 * px; g.strokeStyle = color;
-        if (m.area) {
-          g.setLineDash([5 * px, 3 * px]);
-          for (const poly of m.area) {
-            if (poly.length < 6) continue;
-            g.beginPath(); g.moveTo(poly[0], poly[1]);
-            for (let i = 2; i + 1 < poly.length; i += 2) g.lineTo(poly[i], poly[i + 1]);
-            g.closePath();
-            g.globalAlpha = .1; g.fill();
-            g.globalAlpha = 1; g.stroke();
-          }
-          g.setLineDash([]);
-        }
-        if (m.spawn) g.strokeRect(m.spawn[0], m.spawn[1], m.spawn[2] - m.spawn[0], m.spawn[3] - m.spawn[1]);
-      }
       if (look?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
       else if (look?.shape === "diamond") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
-      else if (look?.shape === "star") {
-        g.beginPath();
-        for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, k = i % 2 ? s * .45 : s; g.lineTo(m.x + k * Math.cos(a), m.y + k * Math.sin(a)); }
-        g.closePath(); g.fill(); g.strokeStyle = "#07111f"; g.lineWidth = px; g.stroke();
-      }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, worldState, markers, art, artLoads, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
+  }, [data, layers, worldState, markers, art, artLoads, cursor, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -798,8 +811,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["art", "Game art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"],
-        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof MapLayers, string])] as [keyof MapLayers, string][]).filter(([key]) => art || (key !== "art" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
+      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"],
+        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof MapLayers, string])] as [keyof MapLayers, string][]).filter(([key]) => art || (key !== "art" && key !== "background" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={worldState} onPick={setWorldState} className="passLoop"/>}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}

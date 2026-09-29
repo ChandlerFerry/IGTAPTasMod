@@ -4,7 +4,7 @@
 // The same file is the public viewer's src/level.tsx (github.com/ChandlerFerry/igtap-ultra-map) but for `fy`,
 // which that one imports from its shifts.ts; keep the two in step.
 
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 
 // Map y up (world) to SVG y down.
 const fy = (y: number) => -y;
@@ -39,11 +39,11 @@ export function inState(when: string | null | undefined, pick: StatePick) {
   return pick[id] === undefined || pick[id] === option;
 }
 
-// One picker per world state; the capture's option is marked, since the floors, ultras and routes are from it.
+// One picker per world state, its options by name ("Area 1: Normal / Overgrown").
 export function StatePicker({ states, pick, onPick, className }: { states: WorldState[]; pick: StatePick; onPick: (p: StatePick) => void; className?: string }) {
-  return <>{states.map(s => <label key={s.id} className={className} title={`The level as it is with ${s.label} in that state; floors, ultras and routes are from the capture (${s.current})`}>
+  return <>{states.map(s => <label key={s.id} className={className} title={`The level with ${s.label} in that state`}>
     {s.label} <select value={pick[s.id] ?? s.current} onChange={e => onPick({ ...pick, [s.id]: e.target.value })}>
-      {s.options.map(o => <option key={o} value={o}>{o[0].toUpperCase() + o.slice(1)}{o === s.current ? " (capture)" : ""}</option>)}
+      {s.options.map(o => <option key={o} value={o}>{o[0].toUpperCase() + o.slice(1)}</option>)}
     </select></label>)}</>;
 }
 
@@ -92,9 +92,60 @@ export function artTiles(art: ArtIndex | null, base: string, pick: StatePick, x0
   return out;
 }
 
-// The art under the level (SVG, y down).
+// The art under the level (SVG, y down). A new tile list (a zoom to another level, a pan onto new tiles) draws over
+// the last list that finished loading, which stays until the new one has: no blank frames while tiles load.
 export const Art = memo(function Art({ tiles }: { tiles: ArtTile[] }) {
-  return <g style={{ pointerEvents: "none" }}>{tiles.map(t => <image key={t.href + t.x + "," + t.y} href={t.href} x={t.x} y={fy(t.y + t.size)} width={t.size} height={t.size} preserveAspectRatio="none"/>)}</g>;
+  const [back, setBack] = useState<ArtTile[]>([]);
+  useEffect(() => {
+    let live = true;
+    Promise.all(tiles.map(t => new Promise<void>(done => { const img = new Image(); img.onload = img.onerror = () => done(); img.src = t.href; })))
+      .then(() => { if (live) setBack(tiles); });
+    return () => { live = false; };
+  }, [tiles]);
+  const key = (t: ArtTile) => t.href + t.x + "," + t.y;
+  const now = new Set(tiles.map(key));
+  const all = back === tiles ? tiles : [...back.filter(t => !now.has(key(t))), ...tiles];
+  return <g style={{ pointerEvents: "none" }}>{all.map(t => <image key={key(t)} href={t.href} x={t.x} y={fy(t.y + t.size)} width={t.size} height={t.size} preserveAspectRatio="none"/>)}</g>;
+});
+
+// A zip mover or moving platform: its box where it rests, its box's middle at each stop in travel order (from where it
+// rests, back there), and per leg the ground its box sweeps.
+export type Zip = { name: string; zip: boolean; box: number[]; path: number[][]; corridor: number[][]; when?: string | null };
+export const ZIP_COLOR = "#ffb74d";
+
+// Zips as their boxes; hovering (or tapping) one draws where it goes: the corridor it sweeps, its path with arrows and
+// its box at each stop.
+export const Zips = memo(function Zips({ zips, px }: { zips: Zip[]; px: number }) {
+  const [hot, setHot] = useState(-1);
+  const head = 14 * px;
+  return <g>
+    {zips.map((z, i) => <rect key={i} x={z.box[0]} y={fy(z.box[3])} width={z.box[2] - z.box[0]} height={z.box[3] - z.box[1]} fill={ZIP_COLOR} fillOpacity={i === hot ? .25 : .08}
+      stroke={ZIP_COLOR} strokeWidth={i === hot ? 2.5 : 1.5} vectorEffect="non-scaling-stroke" style={{ cursor: "pointer" }}
+      onPointerEnter={() => setHot(i)} onPointerLeave={() => setHot(h => h === i ? -1 : h)} onClick={e => { e.stopPropagation(); setHot(h => h === i ? -1 : i); }}>
+      <title>{`${z.zip ? "Zip mover" : "Moving platform"}: ${z.name} · ${z.path.length - 1} leg${z.path.length === 2 ? "" : "s"}`}</title></rect>)}
+    {hot >= 0 && zips[hot] && (() => {
+      const z = zips[hot], w = z.box[2] - z.box[0], h = z.box[3] - z.box[1];
+      return <g style={{ pointerEvents: "none" }}>
+        {z.corridor.map((c, k) => <path key={k} d={polyPath(c)} fill={ZIP_COLOR} fillOpacity={.18} stroke={ZIP_COLOR} strokeOpacity={.6} strokeWidth={1} strokeDasharray="4 3" vectorEffect="non-scaling-stroke"/>)}
+        {z.path.slice(1).map(([x, y], k) => <rect key={k} x={x - w / 2} y={fy(y + h / 2)} width={w} height={h} fill="none" stroke={ZIP_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke"/>)}
+        {z.path.slice(1).map(([bx, by], k) => {
+          const [ax, ay] = z.path[k], len = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / len, uy = (by - ay) / len;
+          return <path key={`a${k}`} d={`M${ax} ${fy(ay)}L${bx} ${fy(by)}M${bx - head * (ux + uy * .6)} ${fy(by - head * (uy - ux * .6))}L${bx} ${fy(by)}L${bx - head * (ux - uy * .6)} ${fy(by - head * (uy + ux * .6))}`}
+            fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>;
+        })}
+      </g>;
+    })()}
+  </g>;
+});
+
+// Where the level hurts (spikes, overgrowth spikes and vines, coloured spikes), outlined and tinted red over the art.
+export const Hazards = memo(function Hazards({ paths, show }: { paths: LevelPaths; show: LevelShow }) {
+  return <g style={{ pointerEvents: "none" }}>
+    <path d={paths.spikes} fill={SPIKE_COLOR} fillOpacity={.3} stroke={SPIKE_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke"/>
+    {paths.spikeAreas.map((d, i) => <path key={i} d={d} fill={SPIKE_COLOR} fillOpacity={.3} fillRule="evenodd" stroke={SPIKE_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke"/>)}
+    <path d={paths.spikeLines} fill="none" stroke={SPIKE_COLOR} strokeWidth={2} vectorEffect="non-scaling-stroke"/>
+    {(["blue", "orange"] as const).map(t => show[t] && <path key={t} d={paths.tone[t].spikes} fill={SPIKE_COLOR} fillOpacity={.2} stroke={TONE_COLORS[t]} strokeWidth={2} strokeDasharray="3 2" vectorEffect="non-scaling-stroke"/>)}
+  </g>;
 });
 
 // One tree segment: the fewest tree purchases that grow it (Plant Tree is 1; 0: no box grows it), the box whose
@@ -229,8 +280,8 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
   return <g>
     {triggers && markers.map((m, i) => m.kind === "checkpoint" && m.area && <path key={`trigger${i}`} d={m.area.map(polyPath).join("")} fill={MARKERS.checkpoint.color} fillOpacity={.1}
       stroke={MARKERS.checkpoint.color} strokeWidth={1.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>)}
-    {areas && markers.map((m, i) => m.kind !== "checkpoint" && m.area && kinds[m.kind === "box" ? `box:${m.box?.category}` : m.kind] && <path key={`area${i}`} d={m.area.map(polyPath).join("")} fill={(m.kind === "box" ? BOX_KINDS[m.box!.category] : MARKERS[m.kind])?.color} fillOpacity={.1}
-      stroke={(m.kind === "box" ? BOX_KINDS[m.box!.category] : MARKERS[m.kind])?.color} strokeWidth={1.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>)}
+    {areas && markers.map((m, i) => m.kind !== "checkpoint" && m.kind !== "box" && m.area && kinds[m.kind] && <path key={`area${i}`} d={m.area.map(polyPath).join("")} fill={MARKERS[m.kind]?.color} fillOpacity={.1}
+      stroke={MARKERS[m.kind]?.color} strokeWidth={1.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>)}
     {markers.map((m, i) => {
       const look = m.kind === "box" ? (m.box ? BOX_KINDS[m.box.category] : undefined) : MARKERS[m.kind];
       if (!look || !kinds[m.kind === "box" ? `box:${m.box?.category}` : m.kind]) return null;
@@ -239,11 +290,22 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
         : look.shape === "circle" ? `M${x - s} ${y}a${s} ${s} 0 1 0 ${2 * s} 0a${s} ${s} 0 1 0 ${-2 * s} 0Z`
         : look.shape === "star" ? starPath(x, y, s)
         : `M${x - s} ${y - s}h${2 * s}v${2 * s}h${-2 * s}Z`;
+      // A checkpoint with its spawn box is that box alone (hover its outline for the name).
+      if (m.spawn) return <rect key={i} x={m.spawn[0]} y={fy(m.spawn[3])} width={m.spawn[2] - m.spawn[0]} height={m.spawn[3] - m.spawn[1]} fill="none"
+        stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }}><title>{`${look.text}: ${m.name}`}</title></rect>;
+      // A gate is its trigger box (where touching it starts or ends the timer).
+      if ((m.kind === "start" || m.kind === "end") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
+        stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke"><title>{`${look.text}: ${m.name}`}</title></path>;
+      // A buy box is its trigger box (where touching it buys it) in its category's colour, with its name and cost.
+      if (m.kind === "box" && m.area) return <g key={i}>
+        <path d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.12} stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke">
+          <title>{boxTitle(m)}</title></path>
+        {px <= LABEL_PX && <text x={x} y={fy(Math.max(...m.area.flatMap(p => p.filter((_, k) => k % 2 === 1)))) - 5 * px} fill={look.color} fontSize={11 * px} textAnchor="middle"
+          stroke="#07111f" strokeWidth={3 * px} paintOrder="stroke">{`${m.name} · ${boxCost(m.box!)}`}</text>}
+      </g>;
       return <g key={i}>
-        {m.spawn && <rect x={m.spawn[0]} y={fy(m.spawn[3])} width={m.spawn[2] - m.spawn[0]} height={m.spawn[3] - m.spawn[1]} fill="none"
-          stroke={look.color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
         <path d={d} fill={look.color} fillOpacity={look.shape === "circle" ? .8 : 1} stroke="#07111f" strokeWidth={1} vectorEffect="non-scaling-stroke">
-          <title>{m.kind === "box" ? boxTitle(m) : `${look.text}: ${m.name}`}</title></path>
+          <title>{`${look.text}: ${m.name}`}</title></path>
         {m.kind === "box" && px <= LABEL_PX && <text x={x} y={y - s - 5 * px} fill={look.color} fontSize={11 * px} textAnchor="middle"
           stroke="#07111f" strokeWidth={3 * px} paintOrder="stroke">{`${m.name} · ${boxCost(m.box!)}`}</text>}
       </g>;

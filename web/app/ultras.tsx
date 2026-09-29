@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./techs.css";
-import { Art, artTiles, capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+import { Art, artTiles, Hazards, Zips, type Zip, capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 
 // Buy boxes (a marker's `box`), kept in step with level.tsx's BOX_KINDS (ultra-level.tsx is synced from that file).
 export type BoxCategory = "secret" | "bonusUnique" | "bonusBoost" | "achievement" | "movement" | "tree" | "unlock" | "course";
@@ -36,7 +36,7 @@ export type UltraData = { world: string; bounds: number[]; player: { stand: numb
   // The trees' ground where it grows once its tree upgrades are bought (none of it in the fresh world the rest is from),
   // and each segment's place in its tree's purchase order.
   grown?: Solid[]; treeSteps?: TreeStep[];
-  markers?: Marker[]; states?: WorldState[];
+  markers?: Marker[]; states?: WorldState[]; zips?: Zip[];
   ultraFields: string[]; ultras: number[][]; pairFields: string[]; pairs: number[][];
   // FloatingOrigin in a fresh VMAN world: leaving this circle (two vertical lines with use2D) rebases the world.
   rebase?: { threshold: number; use2D: boolean; center: number[];
@@ -47,7 +47,7 @@ type Ultra = { fromX: number; fromY: number; side: number; x: number; y: number;
 // One way an ultra goes: lastHyperY set on floor `from`, the ultra's hyper on floor `to`; the flight line a → b.
 // `line`: the flight line check found it; `ultra`: the engine's biggest-drop ultra on this pair.
 type Pair = { index: number; from: number; to: number; drop: number; ax: number; ay: number; bx: number; by: number; line: boolean; ultra: Ultra | null };
-type Layers = { art: boolean; tree: boolean; shapes: boolean; grown: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean } & Record<`box:${BoxCategory}`, boolean>;
+type Layers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; grown: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean } & Record<`box:${BoxCategory}`, boolean>;
 type Which = "all" | "engine" | "shift";
 type Direction = "both" | "out" | "in";
 type View = { x: number; y: number; w: number };
@@ -85,7 +85,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const [data, setData] = useState<UltraData | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<Layers>({ art: true, tree: true, shapes: false, grown: true, markers: true, floors: true, labels: true, rebase: true, next: true,
+  const [layers, setLayers] = useState<Layers>({ art: true, background: false, tree: true, shapes: false, grown: true, markers: true, floors: true, labels: true, rebase: true, next: true,
     // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
@@ -261,6 +261,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
   // under the tree layer.
   const treeTiles = view && artShown && layers.tree ? artTiles(art, "/art/", { ...world, tree: "grown" }, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
+  // The decoration (backdrops, pillars, plants: nothing solid), under the level, off by default.
+  const bgTiles = view && artShown && layers.background ? artTiles(art, "/art/", { ...world, bg: "on" }, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
   const f = data && floor >= 0 ? data.floors[floor] : null;
   const out = floor >= 0 && direction !== "in" ? byFloor.out[floor] : [];
   const into = floor >= 0 && direction !== "out" ? byFloor.into[floor] : [];
@@ -298,8 +300,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     {failure && <p className="mapFailure">{failure}</p>}
     {data && !data.pairs && <p className="mapFailure">This result predates the floor pairs: Recompute.</p>}
     <div className="mapLayers">
-      {([["art", "Game art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"],
-        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof Layers, string])] as [keyof Layers, string][]).filter(([key]) => art || (key !== "art" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
+      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"],
+        ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof Layers, string])] as [keyof Layers, string][]).filter(([key]) => art || (key !== "art" && key !== "background" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={world} onPick={setWorld} className="passLoop"/>}
       <label className="passLoop">Pairs <select value={which} onChange={e => { setWhich(e.target.value as Which); setFocus(null); }}>
@@ -331,9 +333,11 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     <svg ref={svg} className="mapCanvas" viewBox={view && svg.current ? `${view.x} ${view.y} ${view.w} ${view.w * svg.current.clientHeight / svg.current.clientWidth}` : "0 0 1 1"}
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { setCursor(null); setHoverFloor(-1); }}>
       <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#07111f"/>
+      <Art tiles={bgTiles}/>
       <Art tiles={tiles}/>
       <Art tiles={treeTiles}/>
       {(!artShown || layers.shapes) && <Level paths={level} show={levelShow} px={px}/>}
+      {artShown && !layers.shapes && <Hazards paths={level} show={levelShow}/>}
       {layers.floors && data?.kinds.map((k, i) => <path key={k} d={floorPaths[i]} fill="none" stroke={KIND_COLORS[k] ?? "#fff"} strokeWidth={2} strokeOpacity={f ? .35 : 1} vectorEffect="non-scaling-stroke"/>)}
       {layers.rebase && <path d={rebaseLine} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.7} strokeWidth={1.5} strokeDasharray="10 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
       {layers.rebase && <path d={routeLines} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.4} strokeWidth={1} strokeDasharray="4 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
@@ -366,6 +370,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
       {focus && <text x={(focus.ax + focus.bx) / 2} y={fy(Math.max(focus.ay, focus.by) + Math.max(24, Math.abs(focus.bx - focus.ax) * .25) / 2) - 8 * px} fill="#ffffff" fontSize={13 * px} textAnchor="middle"
         stroke="#07111f" strokeWidth={3 * px} paintOrder="stroke" style={{ pointerEvents: "none" }}>↓ {focus.drop.toFixed(1)} u</text>}
       {layers.labels && data?.labels.map(l => <text key={l.name} x={l.x} y={fy(l.y) - 30 * px} fill="#e8eef8" fontSize={14 * px} textAnchor="middle" style={{ pointerEvents: "none" }}>{l.name}</text>)}
+      <Zips zips={(data?.zips ?? []).filter(z => inState(z.when, world))} px={px}/>
       <Marks markers={markers} steps={data?.treeSteps ?? []} px={px} kinds={markerKinds} areas={layers.markers} showSteps={layers.grown}/>
     </svg>
     {boxTip?.box && <div className="mapReadout"><div><strong>{boxTip.name}</strong> · {BOX_KINDS[boxTip.box.category].text}
