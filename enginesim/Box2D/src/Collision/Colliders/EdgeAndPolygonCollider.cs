@@ -8,7 +8,7 @@ namespace Box2D
     public class EdgeAndPolygonCollider : Collider<b2EdgeShape, b2PolygonShape>
     {
         public override void Collide(
-            out b2Manifold manifold,
+            b2Manifold manifold,
             in b2EdgeShape edgeA,
             in b2Transform xfA,
             in b2PolygonShape polygonB,
@@ -218,8 +218,6 @@ namespace Box2D
             }
 
             float m_radius = polygonB.m_radius + edgeA.m_radius;
-            manifold = new b2Manifold();
-            manifold.pointCount = 0;
 
             EPAxis edgeAxis = ComputeEdgeSeparation(front, m_polygonB, normal, v1);
 
@@ -373,7 +371,7 @@ namespace Box2D
 
                 if (separation <= m_radius)
                 {
-                    var cp = new b2ManifoldPoint();
+                    b2ManifoldPoint cp = manifold.NewPoint(pointCount);
 
                     if (primaryAxis.type == EPAxis.AxisType.EdgeA)
                     {
@@ -389,8 +387,7 @@ namespace Box2D
                         cp.id.cf.indexB = clipPoints2[i].id.cf.indexA;
                     }
 
-                    manifold.points[pointCount] = cp;
-                    ++pointCount;
+                                        ++pointCount;
                 }
             }
 

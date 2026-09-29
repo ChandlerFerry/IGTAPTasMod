@@ -75,18 +75,6 @@ namespace Box2D
             set;
         }
 
-        public b2Filter FilterData
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => m_filter;
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set
-            {
-                m_filter = value;
-                Refilter();
-            }
-        }
-
         public b2Body b2Body
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -97,14 +85,6 @@ namespace Box2D
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => m_next;
-        }
-
-        public float Density
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => m_density;
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => m_density = value;
         }
 
         public float Restitution
@@ -208,55 +188,8 @@ namespace Box2D
             }
         }
 
-        private void SetFilterData(in b2Filter filter)
-        {
-            m_filter = filter;
-
-            Refilter();
-        }
-
-        public void Refilter()
-        {
-            if (m_body == null)
-            {
-                return;
-            }
-
-            // Flag associated contacts for filtering.
-            b2ContactEdge edge = m_body.GetContactList();
-            while (edge != null)
-            {
-                b2Contact contact = edge.contact;
-                b2Fixture fixtureA = contact.GetFixtureA();
-                b2Fixture fixtureB = contact.GetFixtureB();
-                if (fixtureA == this || fixtureB == this)
-                {
-                    contact.FlagForFiltering();
-                }
-
-                edge = edge.next;
-            }
-
-            b2World world = m_body.GetWorld();
-
-            if (world == null)
-            {
-                return;
-            }
-
-            // Touch each proxy so that new pairs may be created
-            b2BroadPhase broadPhase = world.m_contactManager.m_broadPhase;
-            for (var i = 0; i < m_proxyCount; ++i)
-            {
-                broadPhase.TouchProxy(m_proxies[i].proxyId);
-            }
-        }
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsSensor() => Sensor;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private b2Filter GetFilterData() => m_filter;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Body GetBody() => b2Body;
@@ -277,8 +210,5 @@ namespace Box2D
         {
             b2Shape.ComputeMass(out massData, m_density);
         }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2AABB GetAABB(int childIndex) => m_proxies[childIndex].aabb;
     }
 }

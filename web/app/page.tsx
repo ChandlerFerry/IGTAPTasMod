@@ -5,7 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
@@ -15,7 +15,7 @@ const API = "http://127.0.0.1:17426/api";
 
 type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
 type Route = { id: string; name: string; actionCount: number; actions: Action[] };
-type RecordedAction = { label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number };
+type RecordedAction = { label: string; durationTicks: number };
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
 // A category's unlocks (Categories.cs): the label lists them in a fixed order (WJ, DS/DSn, DJ/DJn, BS, ORB, ZIP, OM;
@@ -45,8 +45,8 @@ type PullNow = { pull: number; lever: string; goal: number; label: string; budge
 type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type CourseTarget = { course: number; capabilities: string; farm: boolean };
-type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; tokens?: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
-  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; faster?: FasterWay[] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
+type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean };
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean;
@@ -180,7 +180,7 @@ export default function Studio() {
       <div className="content">
         {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.length ? route.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />) : <div className="emptyState"><span className="orbit">●</span><h2>No inputs yet</h2><p>Record a run to fill this route.</p></div>}</div></div>}
 
-        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
+        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.label.replace(/^Exact /,"")} ${action.durationTicks}f`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
         {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
@@ -527,8 +527,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
-  // The game's art (web/public/art, tools/render-art.py; none: the level is its collision shapes). Its tiles load as
-  // they're drawn and redraw the map when they arrive.
+  // The game's art (web/public/art, untracked: igtap-ultra-map/tools/render-art.py renders it; none: the level is its
+  // collision shapes). Its tiles load as they're drawn and redraw the map when they arrive.
   const [art, setArt] = useState<ArtIndex | null>(null);
   useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
   const artImages = useRef(new Map<string, HTMLImageElement>());
@@ -645,8 +645,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     // The decoration (backdrops, pillars, plants: nothing solid) under the level, off by default.
     if (artShown && layers.background) drawArt({ ...worldState, bg: "on" });
     if (artShown) drawArt(worldState);
-    // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
-    // under the tree layer.
+    // The trees' own tile set ("tree:grown", igtap-ultra-map/tools/render-art.py) over the level: off in the fresh
+    // world, so it's drawn under the tree layer.
     if (artShown && layers.tree) drawArt({ ...worldState, tree: "grown" });
     // Over the art, where the level hurts: every spike (overgrowth vines and the hidden spikes too) tinted red.
     if (artShown && !layers.shapes) for (const s of data.solids) {
@@ -1144,7 +1144,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
-  const savedGoals = (run?.tokens ?? run?.goals ?? []).join("\n");
+  const savedGoals = (run?.goals ?? []).join("\n");
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   useEffect(() => setPicked(null), [name]);
@@ -1156,7 +1156,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const validName = /^[A-Za-z0-9%-]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
-  const segments = resetSegments(run?.offline?.segments, run?.offline?.faster);
+  const segments = resetSegments(run?.offline?.segments);
   // --auto improves a complete route only; a run that misses goals gets the reach search instead.
   const complete = labels.length > 0 && splits.length === labels.length;
   // A click picks a goal (or a segment's goals), clicking the same pick again clears it, shift-click extends the pick to cover both.

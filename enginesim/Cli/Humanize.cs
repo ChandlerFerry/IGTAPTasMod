@@ -62,7 +62,7 @@ namespace IGTAP.EngineSim.Cli
         readonly Judge _main;
         readonly Func<Simulation> _create;
         readonly OfflineSolver.ForcedPath _path;
-        readonly List<Worker> _workers = new List<Worker>();
+        readonly List<Worker<Judge>> _workers = new List<Worker<Judge>>();
         float _time;
         long _runTicks;
 
@@ -81,13 +81,13 @@ namespace IGTAP.EngineSim.Cli
         public void Grow(int threads)
         {
             lock (_workers)
-                while (_workers.Count + 1 < threads) _workers.Add(new Worker(_create, _path));
+                while (_workers.Count + 1 < threads) _workers.Add(new Worker<Judge>(() => new Judge(_create(), _path), "humanize"));
         }
 
         public void Stop()
         {
             lock (_workers)
-                foreach (Worker w in _workers) w.Stop();
+                foreach (Worker<Judge> w in _workers) w.Stop();
         }
 
         public Result Humanize(List<InputTick> best)
@@ -281,10 +281,10 @@ namespace IGTAP.EngineSim.Cli
                 }
                 catch (Exception ex) { failure = ex; }
             }
-            Worker[] workers;
+            Worker<Judge>[] workers;
             lock (_workers) workers = _workers.ToArray();
             using var done = new CountdownEvent(workers.Length + 1);
-            foreach (Worker w in workers) w.Post(judge => { Work(judge); done.Signal(); });
+            foreach (Worker<Judge> w in workers) w.Post(judge => { Work(judge); done.Signal(); });
             Work(_main);
             done.Signal();
             done.Wait();
@@ -307,6 +307,29 @@ namespace IGTAP.EngineSim.Cli
             }
             foreach (Event e in events) e.Best = e.Tick < original.Count ? Describe(original[e.Tick]) : "-";
             return events.OrderBy(e => e.Tick).ThenBy(e => e.Kind).ToList();
+        }
+
+        /// <summary>The event of this kind at this tick, as <see cref="Events"/> has it (without Best); null when there is none.</summary>
+        internal static Event EventAt(List<InputTick> route, Kind kind, int tick)
+        {
+            if (tick < 0 || tick >= route.Count) return null;
+            switch (kind)
+            {
+                case Kind.StickX:
+                case Kind.StickY:
+                {
+                    bool y = kind == Kind.StickY;
+                    float value = Axis(route[tick], y);
+                    // A run of one stick value starts here (Runs); the one at tick 0 counts only off rest.
+                    if (tick > 0 ? Axis(route[tick - 1], y) == value : value == 0f) return null;
+                    int end = tick + 1;
+                    while (end < route.Count && Axis(route[end], y) == value) end++;
+                    return new Event { Kind = kind, Tick = tick, End = end, Value = value, Start = tick == 0 };
+                }
+                case Kind.Press: return route[tick].press ? new Event { Kind = kind, Tick = tick } : null;
+                case Kind.Release: return IsRelease(route, tick) ? new Event { Kind = kind, Tick = tick } : null;
+                default: return route[tick].dash ? new Event { Kind = Kind.Dash, Tick = tick, Value = route[tick].dashJump } : null;
+            }
         }
 
         internal static List<InputTick> Shift(List<InputTick> route, Event e, int d, out int first)
@@ -542,23 +565,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        sealed class Worker
-        {
-            readonly BlockingCollection<Action<Judge>> _jobs = new BlockingCollection<Action<Judge>>();
-
-            public Worker(Func<Simulation> create, OfflineSolver.ForcedPath path)
-            {
-                new Thread(() =>
-                {
-                    var judge = new Judge(create(), path);
-                    foreach (Action<Judge> job in _jobs.GetConsumingEnumerable()) job(judge);
-                }) { IsBackground = true, Name = "humanize" }.Start();
-            }
-
-            public void Post(Action<Judge> job) { _jobs.Add(job); }
-
-            public void Stop() { _jobs.CompleteAdding(); }
-        }
     }
 
     static class Humanize
@@ -576,9 +582,7 @@ namespace IGTAP.EngineSim.Cli
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             OfflineSolver.ForcedPath forced = Solve.ForcedPaths(args, course, caps);
-            List<InputTick> best;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(bestPath), new JsonDocumentOptions { MaxDepth = 256 }))
-                best = Solve.ReadInputs(doc.RootElement);
+            List<InputTick> best = Plan.ReadRoute(bestPath);
             var humanizer = new Humanizer(Solve.Creator(trace, header), forced, threads);
             try
             {

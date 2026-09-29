@@ -10,7 +10,7 @@ export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" 
 // One of a tech's labs: the lab map's id, the demo the tech plays there (labmaps/<id>.<demo>.demo.json; none: <id>.demo.json)
 // and that demo's length (physics ticks to the finish, input ticks); no inputTicks: the demo isn't there yet.
 export type TechLabRef = { id: string; demo?: string | null; ticks?: number | null; inputTicks?: number | null };
-export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; omniDash?: boolean; floatingOrigin?: boolean;
+export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; floatingOrigin?: boolean;
   description: string; note?: string | null; detector?: string | null; related: string[]; labmap?: string | null; labDemo?: string | null; graft?: string | null;
   labs: TechLabRef[] };
 export type LabShape = { kind: string; at?: number[] | null; size?: number[] | null; points?: number[][] | null; layer: string; tag: string; trigger: boolean; spike: boolean;
@@ -19,7 +19,7 @@ export type LabInfo = { id: string; tech?: string | null; name?: string; categor
   start?: { x?: number | null; y?: number | null; vx?: number | null; vy?: number | null; facing?: number | null; fields?: Record<string, unknown> | null };
   shapes?: LabShape[]; hand?: { shapes: LabShape[]; start?: { x?: number | null; y?: number | null; facing?: number | null } | null } | null;
   ghosts?: { label?: string | null; demo?: string | null; path?: number[][] | null }[] | null; error?: string };
-export type TechSeen = { detector: string; label: string; start: number; end: number; input: number };
+type TechSeen = { detector: string; label: string; start: number; end: number; input: number };
 export type TechState = { list: Tech[]; detectors: { id: string; label: string }[]; labs?: LabInfo[]; injectedLab?: string | null;
   seen: { routeId: string; route: string; running: boolean; lab?: { tech: string; lab: string } | null; items: TechSeen[] } | null };
 
@@ -129,7 +129,6 @@ function TechCard({tech, byId, techs, running, editing, focused, onEdit, onFocus
       <strong>{tech.name}</strong>
       <span className={`originBadge ${tech.origin}`} title={ORIGINS.find(o => o[0] === tech.origin)?.[2]}>{ORIGINS.find(o => o[0] === tech.origin)?.[1].toUpperCase()}</span>
       {detectorLabel && <span className="detectorChip" title={`Detected in playback; overlay label ${tech.name.toUpperCase()}`}>detected</span>}
-      {tech.omniDash && <span className="detectorChip" title="The demo plays with the omnidirectional dash on top of its lab's unlocks">+ omnidash</span>}
       <button className="secondary techEditButton" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
     </div>
     {lead && <p className="techDescription">{lead}</p>}

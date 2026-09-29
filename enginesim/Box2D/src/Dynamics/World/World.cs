@@ -38,17 +38,11 @@ namespace Box2D
     /// </summary>
     public partial class b2World
     {
-        private bool m_clearForces;
-
         //public b2BroadPhase     _broadPhase;
         public readonly ContactManager m_contactManager;
         private bool m_continuousPhysics;
         private bool m_subStepping;
 
-        // These are for debugging the solver
-        private bool m_warmStarting;
-
-        private Action DrawDebugDataStub = () => { };
         private bool m_allowSleep;
 
         private int m_bodyCount;
@@ -63,15 +57,10 @@ namespace Box2D
         internal readonly b2Vec2[] m_proxyBufferA = new b2Vec2[2], m_proxyBufferB = new b2Vec2[2];
 
         private b2Body m_bodyList;
-        private b2DebugDraw m_debugDraw;
-
-        private b2DestructionListener m_destructionListener;
 
         private b2Vec2 m_gravity;
 
         private float m_inv_dt0;
-        private int m_jointCount;
-        private b2Joint m_jointList;
         private bool m_locked;
 
         public bool m_newContacts;
@@ -89,16 +78,10 @@ namespace Box2D
         /// <param name="doSleep">Improve performance by not simulating inactive bodies.</param>
         public b2World(b2Vec2 gravity)
         {
-            m_destructionListener = null;
-            m_debugDraw = null;
-
             m_bodyList = null;
-            m_jointList = null;
 
             m_bodyCount = 0;
-            m_jointCount = 0;
 
-            m_warmStarting = true;
             m_continuousPhysics = true;
             m_subStepping = false;
 
@@ -108,22 +91,10 @@ namespace Box2D
 
             m_newContacts = false;
             m_locked = false;
-            m_clearForces = true;
 
             m_inv_dt0 = 0.0f;
 
             m_contactManager = new ContactManager();
-        }
-
-        /// <summary>
-        ///  Get\Set global gravity vector.
-        /// </summary>
-        public b2Vec2 Gravity
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => m_gravity;
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => m_gravity = value;
         }
 
         /// <summary>
@@ -133,14 +104,6 @@ namespace Box2D
         /// <returns>The head of the world body list.</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Body GetBodyList() => m_bodyList;
-
-        /// <summary>
-        ///  Get the world joint list. With the returned joint, use b2Joint.GetNext to get
-        ///  the next joint in the world list. A null joint indicates the end of the list.
-        /// </summary>
-        /// <returns>The head of the world joint list.</returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Joint GetJointList() => m_jointList;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Contact GetContactList() => m_contactManager.m_contactList;
@@ -153,13 +116,6 @@ namespace Box2D
         public int GetBodyCount() => m_bodyCount;
 
         /// <summary>
-        ///  Get the number joints.
-        /// </summary>
-        /// <returns></returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int GetJointCount() => m_jointCount;
-
-        /// <summary>
         ///  Get the number of contacts (each may have 0 or more contact points).
         /// </summary>
         /// <returns></returns>
@@ -167,31 +123,10 @@ namespace Box2D
         public int GetContactCount() => m_contactManager.m_contactCount;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetGravity(in b2Vec2 gravity)
-        {
-            m_gravity = gravity;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Vec2 GetGravity() => m_gravity;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsLocked() => m_locked;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool GetAutoClearForces() => m_clearForces;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ContactManager GetContactManager() => m_contactManager;
-
-        /// <summary>
-        ///  Register a destruction listener.
-        /// </summary>
-        /// <param name="listener"></param>
-        public void SetDestructionListener(b2DestructionListener listener)
-        {
-            m_destructionListener = listener;
-        }
 
         /// <summary>
         ///  Register a contact filter to provide specific control over collision.
@@ -201,27 +136,6 @@ namespace Box2D
         public void SetContactFilter(b2ContactFilter filter)
         {
             m_contactManager.m_contactFilter = filter;
-        }
-
-        /// <summary>
-        ///  Register a contact event listener
-        /// </summary>
-        /// <param name="listener"></param>
-        public void SetContactListener(b2ContactListener listener)
-        {
-            m_contactManager.m_contactListener = listener;
-        }
-
-        /// <summary>
-        ///  Register a routine for debug drawing. The debug draw functions are called
-        ///  inside the b2World.Step method, so make sure your renderer is ready to
-        ///  consume draw commands when you call Step().
-        /// </summary>
-        /// <param name="debugDraw"></param>
-        public void SetDebugDraw(b2DebugDraw debugDraw)
-        {
-            m_debugDraw = debugDraw;
-            DrawDebugDataStub = DrawDebugData;
         }
 
         /// <summary>
@@ -258,295 +172,12 @@ namespace Box2D
             return b;
         }
 
-        /// <summary>
-        ///  Destroy a rigid body given a definition. No reference to the definition
-        ///  is retained. This function is locked during callbacks.
-        ///  @warning This automatically deletes all associated shapes and joints.
-        ///  @warning This function is locked during callbacks.
-        /// </summary>
-        /// <param name="b"></param>
-        public void DestroyBody(b2Body b)
-        {
-            //Debug.Assert(_bodyCount > 0);
-            //Debug.Assert(_locked    == false);
-            if (m_locked)
-            {
-                throw new
-                    Box2DException("Cannot destroy bodies in the middle of Step. Has this been spawned from an event such as a b2ContactListener callback?");
-            }
-
-            // Delete the attached joints.
-            b2JointEdge je = b.m_jointList;
-            while (je != null)
-            {
-                b2JointEdge je0 = je;
-                je = je.next;
-
-                m_destructionListener?.SayGoodbye(je0.joint);
-
-                DestroyJoint(je0.joint);
-
-                b.m_jointList = je;
-            }
-
-            b.m_jointList = null;
-
-            b2ContactEdge ce = b.m_contactList;
-            while (ce != null)
-            {
-                b2ContactEdge ce0 = ce;
-                ce = ce.next;
-                m_contactManager.Destroy(ce0.contact);
-            }
-
-            b.m_contactList = null;
-
-            // Delete the attached fixtures. This destroys broad-phase
-            // proxies.
-            b2Fixture f = b.m_fixtureList;
-            while (f != null)
-            {
-                b2Fixture f0 = f;
-                f = f.m_next;
-
-                m_destructionListener?.SayGoodbye(f0);
-
-                f0.DestroyProxies(m_contactManager.m_broadPhase);
-
-                b.m_fixtureList = f;
-                b.m_fixtureCount -= 1;
-            }
-
-            b.m_fixtureList = null;
-            b.m_fixtureCount = 0;
-
-            // Remove world body list.
-            if (b.m_prev != null)
-            {
-                b.m_prev.m_next = b.m_next;
-            }
-
-            if (b.m_next != null)
-            {
-                b.m_next.m_prev = b.m_prev;
-            }
-
-            if (b == m_bodyList)
-            {
-                m_bodyList = b.m_next;
-            }
-
-            --m_bodyCount;
-            b = null;
-        }
-
-        /// <summary>
-        ///  Create a joint to constrain bodies together. No reference to the definition
-        ///  is retained. This may cause the connected bodies to cease colliding.
-        ///  @warning This function is locked during callbacks.
-        /// </summary>
-        /// <param name="def"></param>
-        /// <returns></returns>
-        public b2Joint CreateJoint(b2JointDef def)
-        {
-            //Debug.Assert(_locked == false);
-
-            if (m_locked)
-            {
-                throw new
-                    Box2DException("Cannot create joints in the middle of Step. Has this been spawned from an event such as a b2ContactListener callback?");
-            }
-
-            var j = b2Joint.Create(def);
-
-            // Connect to the world list.
-            j.m_prev = null;
-            j.m_next = m_jointList;
-            if (m_jointList != null)
-            {
-                m_jointList.m_prev = j;
-            }
-
-            m_jointList = j;
-            ++m_jointCount;
-
-            // Connect to the bodies' doubly linked lists.
-            j.m_edgeA.joint = j;
-            j.m_edgeA.other = j.m_bodyB;
-            j.m_edgeA.Prev = null;
-            j.m_edgeA.next = j.m_bodyA.m_jointList;
-            if (j.m_bodyA.m_jointList != null)
-            {
-                j.m_bodyA.m_jointList.Prev = j.m_edgeA;
-            }
-
-            j.m_bodyA.m_jointList = j.m_edgeA;
-
-            j.m_edgeB.joint = j;
-            j.m_edgeB.other = j.m_bodyA;
-            j.m_edgeB.Prev = null;
-            j.m_edgeB.next = j.m_bodyB.m_jointList;
-            if (j.m_bodyB.m_jointList != null)
-            {
-                j.m_bodyB.m_jointList.Prev = j.m_edgeB;
-            }
-
-            j.m_bodyB.m_jointList = j.m_edgeB;
-
-            b2Body bodyA = def.bodyA;
-            b2Body bodyB = def.bodyB;
-
-            // If the joint prevents collisions, then flag any contacts for filtering.
-            if (def.collideConnected == false)
-            {
-                b2ContactEdge edge = bodyB.m_contactList;
-                while (edge != null)
-                {
-                    if (edge.other == bodyA)
-                    // Flag the contact for filtering at the next time step (where either
-                    // body is awake).
-                    {
-                        edge.contact.FlagForFiltering();
-                    }
-
-                    edge = edge.next;
-                }
-            }
-
-            // Note: creating a joint doesn't wake the bodies.
-
-            return j;
-        }
-
-        /// <summary>
-        ///  Destroy a joint. This may cause the connected bodies to begin colliding.
-        ///  @warning This function is locked during callbacks.
-        /// </summary>
-        /// <param name="j"></param>
-        public void DestroyJoint(b2Joint j)
-        {
-            //Debug.Assert(_locked == false);
-            if (m_locked)
-            {
-                throw new
-                    Box2DException("Cannot destroy joints in the middle of Step. Has this been spawned from an event such as a b2ContactListener callback?");
-            }
-
-            bool collideConnected = j.m_collideConnected;
-
-            // Remove from the doubly linked list.
-            if (j.m_prev != null)
-            {
-                j.m_prev.m_next = j.m_next;
-            }
-
-            if (j.m_next != null)
-            {
-                j.m_next.m_prev = j.m_prev;
-            }
-
-            if (j == m_jointList)
-            {
-                m_jointList = j.m_next;
-            }
-
-            // Disconnect from island graph.
-            b2Body bodyA = j.m_bodyA;
-            b2Body bodyB = j.m_bodyB;
-
-            // Wake up connected bodies.
-            bodyA.SetAwake(true);
-            bodyB.SetAwake(true);
-
-            // Remove from body 1.
-            if (j.m_edgeA.Prev != null)
-            {
-                j.m_edgeA.Prev.next = j.m_edgeA.next;
-            }
-
-            if (j.m_edgeA.next != null)
-            {
-                j.m_edgeA.next.Prev = j.m_edgeA.Prev;
-            }
-
-            if (j.m_edgeA == bodyA.m_jointList)
-            {
-                bodyA.m_jointList = j.m_edgeA.next;
-            }
-
-            j.m_edgeA.Prev = null;
-            j.m_edgeA.next = null;
-
-            // Remove from body 2
-            if (j.m_edgeB.Prev != null)
-            {
-                j.m_edgeB.Prev.next = j.m_edgeB.next;
-            }
-
-            if (j.m_edgeB.next != null)
-            {
-                j.m_edgeB.next.Prev = j.m_edgeB.Prev;
-            }
-
-            if (j.m_edgeB == bodyB.m_jointList)
-            {
-                bodyB.m_jointList = j.m_edgeB.next;
-            }
-
-            j.m_edgeB.Prev = null;
-            j.m_edgeB.next = null;
-
-            //Debug.Assert(_jointCount > 0);
-            --m_jointCount;
-
-            // If the joint prevents collisions, then flag any contacts for filtering.
-            if (collideConnected == false)
-            {
-                b2ContactEdge edge = bodyB.m_contactList;
-                while (edge != null)
-                {
-                    if (edge.other == bodyA)
-                    // Flag the contact for filtering at the next time step (where either
-                    // body is awake).
-                    {
-                        edge.contact.FlagForFiltering();
-                    }
-
-                    edge = edge.next;
-                }
-            }
-        }
-
-        public void SetWarmStarting(bool flag) => m_warmStarting = flag;
-
-        public void SetAutoClearForces(bool flag) => m_clearForces = flag;
-
-        public void SetAllowSleeping(bool flag)
-        {
-            if (flag == m_allowSleep)
-            {
-                return;
-            }
-
-            m_allowSleep = flag;
-            if (!m_allowSleep)
-            {
-                for (b2Body b = m_bodyList; b != null; b = b.m_next)
-                {
-                    b.SetAwake(true);
-                }
-            }
-        }
-
         // Find islands, integrate and solve constraints, solve position constraints
         private void Solve(b2TimeStep step)
         {
             // Size the island for the worst case (reused across steps while it is big enough; only counts are read).
-            if (m_island == null || !m_island.Fits(m_bodyCount, m_contactManager.m_contactCount, m_jointCount, m_contactManager.m_contactListener))
-                m_island = new b2Island(m_bodyCount,
-                                    m_contactManager.m_contactCount,
-                                    m_jointCount,
-                                    m_contactManager.m_contactListener);
+            if (m_island == null || !m_island.Fits(m_bodyCount, m_contactManager.m_contactCount))
+                m_island = new b2Island(m_bodyCount, m_contactManager.m_contactCount);
             b2Island island = m_island;
 
             // Clear all the island flags.
@@ -558,11 +189,6 @@ namespace Box2D
             for (b2Contact c = m_contactManager.m_contactList; c != null; c = c.m_next)
             {
                 c.m_flags &= ~b2CollisionFlags.b2Island;
-            }
-
-            for (b2Joint j = m_jointList; j != null; j = j.m_next)
-            {
-                j.m_islandFlag = false;
             }
 
             // Build and simulate all awake islands.
@@ -654,35 +280,6 @@ namespace Box2D
                         stack[stackCount++] = other;
                         other.SetFlag(b2BodyFlags.b2Island);
                     }
-
-                    // Search all joints connect to this body.
-                    for (b2JointEdge je = b.m_jointList; je != null; je = je.next)
-                    {
-                        if (je.joint.m_islandFlag)
-                        {
-                            continue;
-                        }
-
-                        b2Body other = je.other;
-
-                        // Don't simulate joints connected to disabled bodies.
-                        if (other.IsEnabled() == false)
-                        {
-                            continue;
-                        }
-
-                        island.Add(je.joint);
-                        je.joint.m_islandFlag = true;
-
-                        if (other.HasFlag(b2BodyFlags.b2Island))
-                        {
-                            continue;
-                        }
-
-                        //Debug.Assert(stackCount < stackSize);
-                        stack[stackCount++] = other;
-                        other.SetFlag(b2BodyFlags.b2Island);
-                    }
                 }
 
                 island.Solve(step, m_gravity, m_allowSleep);
@@ -734,9 +331,8 @@ namespace Box2D
         {
             // The TOI island's capacity is part of its logic (it stops adding at capacity): reuse only an exact match.
             if (m_toiIsland == null || m_toiIsland.m_bodyCapacity != 2 * b2Settings.maxTOIContacts
-                || m_toiIsland.m_contactCapacity != b2Settings.maxTOIContacts || !m_toiIsland.Fits(0, 0, 0, m_contactManager.m_contactListener))
-                m_toiIsland = new b2Island(2 * b2Settings.maxTOIContacts, b2Settings.maxTOIContacts, 0,
-                                    m_contactManager.m_contactListener);
+                || m_toiIsland.m_contactCapacity != b2Settings.maxTOIContacts)
+                m_toiIsland = new b2Island(2 * b2Settings.maxTOIContacts, b2Settings.maxTOIContacts);
             b2Island island = m_toiIsland;
 
             if (m_stepComplete)
@@ -766,7 +362,7 @@ namespace Box2D
                 for (b2Contact c = m_contactManager.m_contactList; c != null; c = c.m_next)
                 {
                     // Is this contact disabled?
-                    if (c.Enabled == false)
+                    if (c.IsEnabled() == false)
                     {
                         continue;
                     }
@@ -885,7 +481,7 @@ namespace Box2D
                     bB.Advance(minAlpha);
 
                     // The TOI contact likely has some new contact points.
-                    minContact.Update(m_contactManager.m_contactListener);
+                    minContact.Update();
                     minContact.m_flags &= ~b2CollisionFlags.Toi;
                     ++minContact.m_toiCount;
 
@@ -964,7 +560,7 @@ namespace Box2D
                                 }
 
                                 // Update the contact points
-                                contact.Update(m_contactManager.m_contactListener);
+                                contact.Update();
 
                                 // Was the contact disabled by the user?
                                 if (contact.IsEnabled() == false)
@@ -1079,7 +675,7 @@ namespace Box2D
 
             step.dtRatio = m_inv_dt0 * dt;
 
-            step.warmStarting = m_warmStarting;
+            step.warmStarting = true;
 
             // Update contacts. This is where some contacts are destroyed.
             {
@@ -1103,10 +699,7 @@ namespace Box2D
                 m_inv_dt0 = step.inv_dt;
             }
 
-            if (m_clearForces)
-            {
-                ClearForces();
-            }
+            ClearForces();
 
             m_locked = false;
         }
@@ -1189,249 +782,6 @@ namespace Box2D
             }
 
             return input.maxFraction;
-        }
-
-        private void DrawJoint(b2Joint joint)
-        {
-            b2Body b1 = joint.GetBodyA();
-            b2Body b2 = joint.GetBodyB();
-            b2Transform xf1 = b1.GetTransform();
-            b2Transform xf2 = b2.GetTransform();
-            b2Vec2 x1 = xf1.p;
-            b2Vec2 x2 = xf2.p;
-            b2Vec2 p1 = joint.GetAnchorA;
-            b2Vec2 p2 = joint.GetAnchorB;
-
-            var color = new b2Color(0.5f, 0.8f, 0.8f);
-
-            switch (joint)
-            {
-                case b2DistanceJoint j:
-                    m_debugDraw.DrawSegment(p1, p2, color);
-                    break;
-
-                case b2PulleyJoint pulley:
-                    {
-                        b2Vec2 s1 = pulley.GroundAnchorA;
-                        b2Vec2 s2 = pulley.GroundAnchorB;
-                        m_debugDraw.DrawSegment(s1, p1, color);
-                        m_debugDraw.DrawSegment(s2, p2, color);
-                        m_debugDraw.DrawSegment(s1, s2, color);
-                    }
-                    break;
-
-                case b2MouseJoint j:
-                    // don't draw this
-                    break;
-
-                default:
-                    m_debugDraw.DrawSegment(x1, p1, color);
-                    m_debugDraw.DrawSegment(p1, p2, color);
-                    m_debugDraw.DrawSegment(x2, p2, color);
-                    break;
-            }
-        }
-
-        private void DrawFixture(b2Fixture fixture, b2Transform xf, b2Color color)
-        {
-            switch (fixture.b2Shape)
-            {
-                case b2CircleShape circle:
-                    {
-                        b2Vec2 center = Math.Mul(xf, circle.m_p);
-                        float radius = circle.m_radius;
-                        var axis = new b2Vec2(xf.q.M11, xf.q.M21);
-
-                        m_debugDraw.DrawSolidCircle(center, radius, axis, color);
-                    }
-                    break;
-
-                case b2PolygonShape poly:
-                    {
-                        int vertexCount = poly.m_count;
-                        b2Vec2[] localVertices = poly.m_vertices;
-
-                        //Debug.Assert(vertexCount <= b2Settings.MaxPolygonVertices);
-                        var vertices = new b2Vec2[b2Settings.MaxPolygonVertices];
-
-                        for (var i = 0; i < vertexCount; ++i)
-                        {
-                            vertices[i] = Math.Mul(xf, localVertices[i]);
-                        }
-
-                        m_debugDraw.DrawSolidPolygon(Vec2.ConvertArray(vertices), vertexCount, color);
-                    }
-                    break;
-
-                case b2EdgeShape edge:
-                    {
-                        m_debugDraw.DrawSegment(Math.Mul(xf, edge.m_vertex1), Math.Mul(xf, edge.m_vertex2), color);
-                    }
-                    break;
-            }
-        }
-
-        public void DrawDebugData()
-        {
-            b2DrawFlags flags = m_debugDraw.Flags;
-            if ((flags & b2DrawFlags.b2Shape) == b2DrawFlags.b2Shape)
-            {
-                for (b2Body b = m_bodyList; b != null; b = b.GetNext())
-                {
-                    b2Transform xf = b.GetTransform();
-                    for (b2Fixture f = b.GetFixtureList(); f != null; f = f.GetNext())
-                    {
-                        if (b.Type() == b2BodyType.Dynamic && b.m_mass == 0.0f)
-                        // Bad body
-                        {
-                            DrawShape(f, xf, new b2Color(1.0f, 0.0f, 0.0f));
-                        }
-                        else if (b.IsEnabled() == false)
-                        {
-                            DrawShape(f, xf, new b2Color(0.5f, 0.5f, 0.3f));
-                        }
-                        else if (b.Type() == b2BodyType.Static)
-                        {
-                            DrawShape(f, xf, new b2Color(0.5f, 0.9f, 0.5f));
-                        }
-                        else if (b.Type() == b2BodyType.Kinematic)
-                        {
-                            DrawShape(f, xf, new b2Color(0.5f, 0.5f, 0.9f));
-                        }
-                        else if (b.IsAwake() == false)
-                        {
-                            DrawShape(f, xf, new b2Color(0.6f, 0.6f, 0.6f));
-                        }
-                        else
-                        {
-                            DrawShape(f, xf, new b2Color(0.9f, 0.7f, 0.7f));
-                        }
-                    }
-                }
-            }
-
-            if ((flags & b2DrawFlags.b2Joint) == b2DrawFlags.b2Joint)
-            {
-                for (b2Joint j = m_jointList; j != null; j = j.GetNext())
-                {
-                    j.Draw(m_debugDraw);
-                }
-            }
-
-            if ((flags & b2DrawFlags.Pair) == b2DrawFlags.Pair)
-            {
-                var color = new b2Color(0.3f, 0.9f, 0.9f);
-                for (b2Contact c = m_contactManager.m_contactList; c != null; c = c.GetNext())
-                {
-                    b2Fixture fixtureA = c.GetFixtureA();
-                    b2Fixture fixtureB = c.GetFixtureB();
-                    int indexA = c.GetChildIndexA();
-                    int indexB = c.GetChildIndexB();
-                    b2Vec2 cA = fixtureA.GetAABB(indexA).GetCenter();
-                    b2Vec2 cB = fixtureB.GetAABB(indexB).GetCenter();
-
-                    m_debugDraw.DrawSegment(cA, cB, color);
-                }
-            }
-
-            if ((flags & b2DrawFlags.Aabb) == b2DrawFlags.Aabb)
-            {
-                var color = new b2Color(0.9f, 0.3f, 0.9f);
-                b2BroadPhase bp = m_contactManager.m_broadPhase;
-
-                for (b2Body b = m_bodyList; b != null; b = b.GetNext())
-                {
-                    if (b.IsEnabled() == false)
-                    {
-                        continue;
-                    }
-
-                    for (b2Fixture f = b.GetFixtureList(); f != null; f = f.GetNext())
-                        for (var i = 0; i < f.m_proxyCount; ++i)
-                        {
-                            FixtureProxy proxy = f.m_proxies[i];
-                            b2AABB aabb = bp.GetFatAABB(proxy.proxyId);
-                            var vs = new Vec2[4];
-                            vs[0] = new Vec2(aabb.lowerBound.X, aabb.lowerBound.Y);
-                            vs[1] = new Vec2(aabb.upperBound.X, aabb.lowerBound.Y);
-                            vs[2] = new Vec2(aabb.upperBound.X, aabb.upperBound.Y);
-                            vs[3] = new Vec2(aabb.lowerBound.X, aabb.upperBound.Y);
-
-                            m_debugDraw.DrawPolygon(vs, 4, color);
-                        }
-                }
-            }
-
-            if ((flags & b2DrawFlags.CenterOfMass) == b2DrawFlags.CenterOfMass)
-            {
-                for (b2Body b = m_bodyList; b != null; b = b.GetNext())
-                {
-                    b2Transform xf = b.GetTransform();
-                    xf.p = b.GetWorldCenter();
-                    m_debugDraw.DrawTransform(xf);
-                }
-            }
-        }
-
-        private void DrawShape(b2Fixture fixture, in b2Transform xf, in b2Color color)
-        {
-            switch (fixture.b2Shape)
-            {
-                case b2CircleShape circle:
-                    {
-                        Vec2 center = Math.Mul(xf, circle.m_p);
-                        float radius = circle.m_radius;
-                        Vec2 axis = b2Vec2.Transform(new b2Vec2(1.0f, 0.0f), xf.q); // Math.Mul(xf.q, new b2Vec2(1.0f, 0.0f));
-
-                        m_debugDraw.DrawSolidCircle(center, radius, axis, color);
-                    }
-                    break;
-
-                case b2EdgeShape edge:
-                    {
-                        b2Vec2 v1 = Math.Mul(xf, edge.m_vertex1);
-                        b2Vec2 v2 = Math.Mul(xf, edge.m_vertex2);
-                        m_debugDraw.DrawSegment(v1, v2, color);
-
-                        if (!edge.m_oneSided)
-                        {
-                            m_debugDraw.DrawPoint(v1, 4f, color);
-                            m_debugDraw.DrawPoint(v2, 4f, color);
-                        }
-                    }
-                    break;
-
-                case b2ChainShape chain:
-                    {
-                        int count = chain.m_count;
-                        b2Vec2[] vertices = chain.m_vertices;
-
-                        b2Vec2 v1 = Math.Mul(xf, vertices[0]);
-                        m_debugDraw.DrawPoint(v1, 4.0f, color);
-
-                        for (var i = 1; i < count; ++i)
-                        {
-                            b2Vec2 v2 = Math.Mul(xf, vertices[i]);
-                            m_debugDraw.DrawSegment(v1, v2, color);
-                            v1 = v2;
-                        }
-                    }
-                    break;
-
-                case b2PolygonShape poly:
-                    {
-                        int vertexCount = poly.m_count;
-                        var vertices = new Vec2[b2Settings.MaxPolygonVertices];
-
-                        for (var i = 0; i < vertexCount; ++i)
-                        {
-                            vertices[i] = Math.Mul(xf, poly.m_vertices[i]);
-                        }
-
-                        m_debugDraw.DrawSolidPolygon(vertices, vertexCount, color);
-                    }
-                    break;
-            }
         }
     }
 }

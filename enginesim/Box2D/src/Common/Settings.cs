@@ -34,16 +34,13 @@ namespace Box2D
         public static int MaxTOIIterations = 20;
 
         public static float aabbMultiplier = 4.0f;
-        public static float aabbExtension = 0.1f;
         public static int maxTOIContacts = 32;
         public static int maxSubSteps = 8;
 
         public static float FLT_EPSILON = 1.192092896e-07f; //1.192092896e-07F;//smallest such that 1.0f+FLT_EPSILON != 1.0f
         public static float FLT_EPSILON_SQUARED => FLT_EPSILON * FLT_EPSILON;
 
-        public static float Pib2 = 3.14159265359f;        // Original code. Comes out at 3.1415927f
         public static float Pi = 3.14159265359f;                // Also 3.1415927f
-        public static float Pi2 = 3.14159265359f; // Also displayed as "3.1415927f"
         public static float Tau = 2f * Pi;
 
         // Global tuning constants based on meters-kilograms-seconds (MKS) units.
@@ -72,20 +69,6 @@ namespace Box2D
         ///  Making it larger may create artifacts for vertex collision.
         /// </summary>
         public static float polygonRadius = 2.0f * linearSlop;
-
-        /// <summary>
-        ///  This must be larger than linearSlop.
-        /// </summary>
-
-        /// <summary>
-        ///  Maximum number of contacts to be handled to solve a TOI island.
-        /// </summary>
-        public static int MaxTOIContactsPerIsland = 32;
-
-        /// <summary>
-        ///  Maximum number of joints to be handled to solve a TOI island.
-        /// </summary>
-        public static int MaxTOIJointsPerIsland = 32;
 
         /// <summary>
         ///  A velocity threshold for elastic collisions. Any collision with a relative linear
@@ -144,13 +127,7 @@ namespace Box2D
         /// </summary>
         public static float angularSleepTolerance = 2.0f / 180.0f * Pi; // 2 degrees/s
 
-        public static bool BlockSolve = true;
-        public static bool useLegacyGravityIntegration = true;
         public static float toiBaumgarte = 0.75f;
-
-        public static float FORCE_SCALE(float x) => x;
-
-        public static float FORCE_INV_SCALE(float x) => x;
 
         /// <summary>
         ///  Friction mixing law. Feel free to customize this.

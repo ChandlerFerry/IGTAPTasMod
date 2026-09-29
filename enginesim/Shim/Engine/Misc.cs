@@ -18,12 +18,9 @@ namespace UnityEngine
         public static float fixedDeltaTime { get { return _fixedDeltaTime; } set { _fixedDeltaTime = value; } }
         public static float deltaTime { get { return _resumeDeltaTime > 0f ? _resumeDeltaTime : fixedDeltaTime; } }
         public static float resumeDeltaTime { get { return _resumeDeltaTime; } set { _resumeDeltaTime = value; } }
-        public static float fixedTime { get; set; }
         public static float time { get; set; }
         public static float unscaledDeltaTime { get { return fixedDeltaTime; } }
         public static float timeScale { get { return _timeScale; } set { _timeScale = value; } }
-        public static int frameCount { get; set; }
-        public static float realtimeSinceStartup { get { return 0f; } }
     }
 
     public static class Debug
@@ -34,7 +31,6 @@ namespace UnityEngine
         public static void LogWarning(object message, Object context) { }
         public static void LogError(object message) { }
         public static void LogError(object message, Object context) { }
-        public static void LogException(Exception exception) { }
         public static void DrawRay(Vector3 start, Vector3 dir) { }
         public static void DrawRay(Vector3 start, Vector3 dir, Color color) { }
         public static void DrawRay(Vector3 start, Vector3 dir, Color color, float duration) { }
@@ -101,7 +97,6 @@ namespace UnityEngine
         public int value { get { return m_Mask; } set { m_Mask = value; } }
         public static implicit operator int(LayerMask mask) { return mask.m_Mask; }
         public static implicit operator LayerMask(int intVal) { LayerMask result = default; result.m_Mask = intVal; return result; }
-        public static string LayerToName(int layer) { return layer >= 0 && layer < 32 ? Engine.LayerNames[layer] ?? "" : ""; }
         public static int NameToLayer(string layerName) { return Array.IndexOf(Engine.LayerNames, layerName); }
 
         public static int GetMask(params string[] layerNames)
@@ -120,20 +115,12 @@ namespace UnityEngine
     public sealed class Animator : Behaviour
     {
         readonly Dictionary<string, int> _ints = new Dictionary<string, int>();
-        readonly Dictionary<string, float> _floats = new Dictionary<string, float>();
-        readonly Dictionary<string, bool> _bools = new Dictionary<string, bool>();
         public float speed { get; set; } = 1f;
         public void SetInteger(string name, int value) { _ints[name] = value; }
         public int GetInteger(string name) { return _ints.TryGetValue(name, out int v) ? v : 0; }
-        public void SetFloat(string name, float value) { _floats[name] = value; }
-        public float GetFloat(string name) { return _floats.TryGetValue(name, out float v) ? v : 0f; }
-        public void SetBool(string name, bool value) { _bools[name] = value; }
-        public bool GetBool(string name) { return _bools.TryGetValue(name, out bool v) && v; }
         public void SetTrigger(string name) { }
-        public void ResetTrigger(string name) { }
         public void Play(string stateName) { }
         public void ForceStateNormalizedTime(float normalizedTime) { }
-        public void InitIntegers(Dictionary<string, int> values) { foreach (var kv in values) _ints[kv.Key] = kv.Value; }
     }
 
     public sealed class AudioClip : Object { public float length { get; set; } }
@@ -149,8 +136,6 @@ namespace UnityEngine
         public Audio.AudioMixerGroup outputAudioMixerGroup { get; set; }
         public void Play() { }
         public void Stop() { }
-        public void PlayOneShot(AudioClip clip) { }
-        public void PlayOneShot(AudioClip clip, float volumeScale) { }
     }
 
     public sealed class ParticleSystem : Component
@@ -209,9 +194,7 @@ namespace UnityEngine
     {
         public bool enabled { get; set; } = true;
         public Material material { get; set; } = new Material();
-        public Material sharedMaterial { get; set; }
         public int sortingOrder { get; set; }
-        public bool isVisible { get { return false; } }
         public void SetPropertyBlock(MaterialPropertyBlock properties) { }
     }
 
@@ -219,7 +202,6 @@ namespace UnityEngine
     {
         public Color color { get; set; } = Color.white;
         public Sprite sprite { get; set; }
-        public bool flipX { get; set; }
     }
 
     public sealed class Sprite : Object { }
@@ -231,8 +213,6 @@ namespace UnityEngine
     public static class Application
     {
         public static string persistentDataPath { get { return ""; } }
-        public static string streamingAssetsPath { get { return ""; } }
-        public static bool isPlaying { get { return true; } }
     }
 }
 
@@ -257,7 +237,6 @@ namespace UnityEngine.UI
 {
     public class Graphic : UnityEngine.Behaviour { public UnityEngine.Color color { get; set; } }
     public class Image : Graphic { }
-    public class Text : Graphic { public string text { get; set; } }
 }
 
 namespace TMPro
@@ -297,7 +276,6 @@ namespace UnityEngine.InputSystem
         public bool WasPressedThisFrame() { return false; }
         public bool WasReleasedThisFrame() { return false; }
         public bool IsPressed() { return false; }
-        public bool triggered { get { return false; } }
     }
 
     public class PlayerInput : UnityEngine.Behaviour { }
@@ -322,13 +300,8 @@ namespace Unity.Mathematics
     public static class math
     {
         public static double ceil(double x) { return Math.Ceiling(x); }
-        public static double floor(double x) { return Math.Floor(x); }
         public static double round(double x) { return Math.Round(x); }
         public static double log10(double x) { return Math.Log10(x); }
         public static double pow(double x, double y) { return Math.Pow(x, y); }
-        public static double max(double x, double y) { return x > y ? x : y; }
-        public static double min(double x, double y) { return x < y ? x : y; }
-        public static float ceil(float x) { return MathF.Ceiling(x); }
-        public static float floor(float x) { return MathF.Floor(x); }
     }
 }

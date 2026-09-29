@@ -143,26 +143,6 @@ namespace Box2D
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Vec2 GetClosestPoint()
-        {
-            switch (m_count)
-            {
-                case 0:
-                    //Debug.Assert(false);
-                    return b2Vec2.Zero;
-                case 1:
-                    return m_v1.w;
-                case 2:
-                    return m_v1.a * m_v1.w + m_v2.a * m_v2.w;
-                case 3:
-                    return b2Vec2.Zero;
-                default:
-                    //Debug.Assert(false);
-                    return b2Vec2.Zero;
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void GetWitnessPoints(out b2Vec2 pA, out b2Vec2 pB)
         {
             switch (m_count)

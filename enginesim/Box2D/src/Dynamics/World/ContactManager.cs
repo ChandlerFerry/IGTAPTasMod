@@ -44,7 +44,6 @@ namespace Box2D
         // shapes (tick 884) match only this. Bodies' contact edge lists stay newest first (the island's order).
         public b2Contact m_contactList;
         public b2Contact m_contactTail;
-        public b2ContactListener m_contactListener;
         // UpdatePairs' callback, made once (a method group argument is a new delegate per call).
         private readonly System.Action<object, object> m_addPair;
 
@@ -53,7 +52,6 @@ namespace Box2D
             m_contactList = null;
             m_contactCount = 0;
             m_contactFilter = new b2ContactFilter();
-            m_contactListener = null;
             m_broadPhase = new b2BroadPhase();
             m_addPair = AddPair;
         }
@@ -75,11 +73,6 @@ namespace Box2D
                 // Stale pair: one of the fixtures was detached after the pair was
                 // buffered. Contacts only exist between attached fixtures.
                 return;
-            }
-
-            if (m_contactListener != null && c.Touching)
-            {
-                m_contactListener.EndContact(c);
             }
 
             if (c.Touching)
@@ -219,7 +212,7 @@ namespace Box2D
                 }
 
                 // The contact persists.
-                c.Update(m_contactListener);
+                c.Update();
                 c = c.GetNext();
             }
         }

@@ -19,6 +19,6 @@
   </ItemGroup>
 
   <Target Name="MonoFloatSemantics" AfterTargets="CoreCompile" BeforeTargets="CopyFilesToOutputDirectory">
-    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; monofloat &quot;@(IntermediateAssembly->'%(FullPath)')&quot; UnityEngine.Vector2 UnityEngine.Vector3 UnityEngine.Vector4 UnityEngine.Vector2Int UnityEngine.Vector3Int UnityEngine.Rect UnityEngine.Color UnityEngine.Color32 UnityEngine.Mathf UnityEngine.Quaternion" />
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; monofloat &quot;@(IntermediateAssembly->'%(FullPath)')&quot; UnityEngine.Vector2 UnityEngine.Vector3 UnityEngine.Rect UnityEngine.Color UnityEngine.Mathf UnityEngine.Quaternion" />
   </Target>
 </Project>

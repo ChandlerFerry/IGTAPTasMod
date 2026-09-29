@@ -40,7 +40,7 @@ namespace IGTAP.EngineSim.Cli
         readonly OfflineSolver.ForcedPath _path;
         readonly Action<string> _log;
         readonly int _radius, _slack;
-        readonly List<Worker> _workers = new List<Worker>();
+        readonly List<Worker<Judge>> _workers = new List<Worker<Judge>>();
         long _ticks;
         /// <summary>After a sweep keeps nothing: one sweep of the plateau families (<see cref="Plateau"/>) before stopping.</summary>
         public bool Wide = true;
@@ -68,11 +68,20 @@ namespace IGTAP.EngineSim.Cli
             _log = log;
             _radius = radius;
             _slack = slack;
-            for (int i = 0; i < Math.Max(1, threads); i++) _workers.Add(new Worker(this));
+            for (int i = 0; i < Math.Max(1, threads); i++) _workers.Add(new Worker<Judge>(() => new Judge(this), "polish"));
         }
         public const int DefaultSlack = 30;
 
-        public void Stop() { foreach (Worker w in _workers) w.Stop(); }
+        /// <summary>One polish of <paramref name="seed"/> (inputs from..to-1 move) on workers of its own, stopped after.</summary>
+        public static Result Once(Func<Simulation> create, OfflineSolver.ForcedPath path, int threads, Action<string> log, List<InputTick> seed,
+            int from = 0, int to = int.MaxValue)
+        {
+            var polish = new Polish(create, path, threads, log);
+            try { return polish.Run(seed, from: from, to: to); }
+            finally { polish.Stop(); }
+        }
+
+        public void Stop() { foreach (Worker<Judge> w in _workers) w.Stop(); }
 
         // The route every judge records, with its result.
         List<InputTick> _route;
@@ -287,14 +296,22 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The plateau families, first change in input ticks [from, to): wider shifts (up to <see cref="WideRadius"/>), pairs
         /// of nearby inputs shifted together, stick bands (another full value for a few ticks), an added jump press held a few
         /// ticks, an added dash at each aim.</summary>
+        // The route's events for Plateau, while the route is the same list (a kept candidate is a new one).
+        List<InputTick> _eventsOf;
+        List<Humanizer.Event> _events;
+
         List<(List<InputTick> inputs, int first, string what)> Plateau(List<InputTick> route, int from, int to)
         {
             var c = new List<(List<InputTick>, int, string)>();
-            List<Humanizer.Event> events = Humanizer.Events(route, route);
-            for (int i = 0; i < events.Count; i++)
+            if (!ReferenceEquals(route, _eventsOf)) (_eventsOf, _events) = (route, Humanizer.Events(route, route));
+            List<Humanizer.Event> events = _events;
+            // Events are in tick order: start at the first one at or after from, stop at to.
+            int lo = 0, hi = events.Count;
+            while (lo < hi) { int mid = (lo + hi) / 2; if (events[mid].Tick < from) lo = mid + 1; else hi = mid; }
+            for (int i = lo; i < events.Count && events[i].Tick < to; i++)
             {
                 Humanizer.Event e = events[i];
-                if (e.Tick < from || e.Tick >= to || e.Start) continue;
+                if (e.Start) continue;
                 Shifts(route, e, _radius + 1, WideRadius, c);
                 // Pairs: this input and one of the next few (within PairSpan ticks), each shifted a little.
                 for (int j = i + 1; j < events.Count && j <= i + 3 && events[j].Tick - e.Tick <= PairSpan; j++)
@@ -304,7 +321,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         List<InputTick> s1 = Humanizer.Shift(route, e, d1, out int f1);
                         if (s1 == null) continue;
-                        Humanizer.Event moved = Humanizer.Events(s1, s1).FirstOrDefault(x => x.Kind == e2.Kind && x.Tick == e2.Tick);
+                        Humanizer.Event moved = Humanizer.EventAt(s1, e2.Kind, e2.Tick);
                         if (moved == null || moved.Start) continue;
                         foreach (int d2 in PairShifts)
                         {
@@ -365,7 +382,7 @@ namespace IGTAP.EngineSim.Cli
             long runTicks = _runTicks;
             long[] goals = _goalTicks;
             using var done = new CountdownEvent(_workers.Count);
-            foreach (Worker w in _workers)
+            foreach (Worker<Judge> w in _workers)
                 w.Post(j =>
                 {
                     try
@@ -509,33 +526,6 @@ namespace IGTAP.EngineSim.Cli
                 Interlocked.Add(ref _owner._ticks, r.Stepped);
                 return r;
             }
-        }
-
-        sealed class Worker
-        {
-            readonly BlockingCollection<Action<Judge>> _jobs = new BlockingCollection<Action<Judge>>();
-
-            public Worker(Polish owner)
-            {
-                new Thread(() =>
-                {
-                    var judge = new Judge(owner);
-                    foreach (Action<Judge> job in _jobs.GetConsumingEnumerable()) job(judge);
-                }) { IsBackground = true, Name = "polish" }.Start();
-            }
-
-            public void Post(Action<Judge> job) { _jobs.Add(job); }
-
-            public void Do(Action<Judge> job)
-            {
-                using var done = new ManualResetEventSlim();
-                Exception failure = null;
-                Post(j => { try { job(j); } catch (Exception ex) { failure = ex; } finally { done.Set(); } });
-                done.Wait();
-                if (failure != null) throw new InvalidOperationException("polish replay failed", failure);
-            }
-
-            public void Stop() { _jobs.CompleteAdding(); }
         }
 
         /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--out file] [--via/--avoid/--optional as solve];

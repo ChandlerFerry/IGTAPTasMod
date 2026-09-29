@@ -175,9 +175,7 @@ namespace IGTAP.EngineSim.Cli
             void Save()
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath));
-                string tmp = outPath + ".tmp";
-                File.WriteAllText(tmp, table.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-                Solve.Replace(tmp, outPath);
+                Solve.WriteShared(outPath, table.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
             int measured = 0, attempts = 0;
             // The box spots first: their entries are the walk chains' links. Every place's singles (and gate walks), then

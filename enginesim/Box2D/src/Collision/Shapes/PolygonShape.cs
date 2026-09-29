@@ -468,8 +468,5 @@ namespace Box2D
             // Shift to center of mass then to original body origin.
             massData.I += massData.mass * (b2Vec2.Dot(massData.center, massData.center) - b2Vec2.Dot(center, center));
         }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Vec2[] GetVertices() => m_vertices[..m_count];
     }
 }

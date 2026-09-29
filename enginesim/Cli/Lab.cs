@@ -68,11 +68,10 @@ namespace IGTAP.EngineSim.Cli
                 : Path.ChangeExtension(source, null) + ".world.json";
             float width = args.Length > 1 && !args[1].StartsWith("--") ? F(args[1]) : 400f;
             float height = args.Length > 2 && !args[2].StartsWith("--") ? F(args[2]) : 300f;
-            int list = Opt(args, "--list", 12);
-            string labPath = OptS(args, "--lab", null);
-            int index = Opt(args, "--index", 0);
-            var routePaths = new List<string>();
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--route") routePaths.Add(args[i + 1]);
+            int list = Cli.Solve.Option(args, "--list", 12);
+            string labPath = Cli.Solve.Option(args, "--lab", (string)null);
+            int index = Cli.Solve.Option(args, "--index", 0);
+            List<string> routePaths = Cli.Solve.Args(args, "--route").ToList();
             if (!source.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase) && !routePaths.Contains(source)) routePaths.Add(source);
 
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
@@ -283,9 +282,9 @@ namespace IGTAP.EngineSim.Cli
         {
             string tracePath = args[0], labPath = args[1];
             LabMapDef lab = LabMapDef.Load(labPath);
-            int maxTicks = Opt(args, "--max-ticks", lab.maxTicks);
-            string outPath = OptS(args, "--out", DefaultDemoPath(labPath));
-            int threads = Math.Max(1, Opt(args, "--threads", Environment.ProcessorCount));
+            int maxTicks = Cli.Solve.Option(args, "--max-ticks", lab.maxTicks);
+            string outPath = Cli.Solve.Option(args, "--out", DefaultDemoPath(labPath));
+            int threads = Math.Max(1, Cli.Solve.Option(args, "--threads", Environment.ProcessorCount));
             // --exact: dedupe on the bit-exact state (no quantization). The default key is coarse (1 u, 10 u/s): it finds a
             // demo fast for an upper bound B; the exact pass then proves nothing shorter exists (or finds the true minimum).
             bool exact = args.Contains("--exact");
@@ -306,21 +305,21 @@ namespace IGTAP.EngineSim.Cli
             // nothing and checks the bound instead: no state may ever be above the bound any of its ancestors computed.
             bool checkBound = args.Contains("--check-bound");
             // --check-depth N: with --check-bound, expand states only up to tick N (the bounds still run to --max-ticks).
-            int checkDepth = checkBound ? Opt(args, "--check-depth", maxTicks) : maxTicks;
+            int checkDepth = checkBound ? Cli.Solve.Option(args, "--check-depth", maxTicks) : maxTicks;
             // --check-rollouts N [--seed S]: N random runs from the start to --max-ticks instead of the search, each state checked
             // against the bounds of every earlier state of its run (the bound's long horizons, which a breadth-first check can't reach).
-            int rollouts = Opt(args, "--check-rollouts", 0);
+            int rollouts = Cli.Solve.Option(args, "--check-rollouts", 0);
             var flight = new FlightOptions { MaxTicks = maxTicks, Boost = boostControl, Keep = checkBound || rollouts > 0 };
             // --from <demo.json> --from-inputs N: the search starts from the state a demo's first N inputs reach (replayed from
             // the lab start, so the state is the game's own, its pending Invokes included) and every run it finds or rules out
             // begins with them: a control over everything that can follow a fixed opening.
-            string fromPath = OptS(args, "--from", null);
+            string fromPath = Cli.Solve.Option(args, "--from", (string)null);
             List<InputTick> prefix = null;
             if (fromPath != null)
             {
                 using JsonDocument from = JsonDocument.Parse(File.ReadAllText(fromPath));
                 List<InputTick> demoInputs = from.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
-                int count = Opt(args, "--from-inputs", demoInputs.Count);
+                int count = Cli.Solve.Option(args, "--from-inputs", demoInputs.Count);
                 if (count < 1 || count > demoInputs.Count) throw new ArgumentException("--from-inputs takes 1 to " + demoInputs.Count + " inputs of " + fromPath + ".");
                 prefix = demoInputs.Take(count).ToList();
             }
@@ -342,7 +341,7 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine("  " + LabFlight.Describe(sim) + (checkBound ? "; --check-bound: no cut, every state checked against its ancestors' bounds" : ""));
 
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            bool startCanDash = GetMovementBool(sim, "dashUnlocked");
+            bool startCanDash = sim.Player.dashUnlocked;
             WorldPos startAt = sim.PlayerWorld;
             var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash,
                 Key = KeyOf(sim, exact), MaxY = MaxReach(sim, control), X = startAt.x, Y = startAt.y,
@@ -362,7 +361,7 @@ namespace IGTAP.EngineSim.Cli
                     + (float.IsPositiveInfinity(start.FlightTop) ? "none (" + start.FlightWhy + ")" : $"collider top at most {start.FlightTop - anchor.y:0.#} by tick {maxTicks}"));
             }
             if (rollouts > 0)
-                return CheckRollouts(sim, start, rollouts, Opt(args, "--seed", 1), maxTicks, exact, control, wallControl, boostControl, flight,
+                return CheckRollouts(sim, start, rollouts, Cli.Solve.Option(args, "--seed", 1), maxTicks, exact, control, wallControl, boostControl, flight,
                     fy + anchor.y - fh / 2f, colliderTop, anchor);
             var visited = new Dictionary<string, int> { [start.Key] = start.Ticks };
             var buckets = new List<Node>[maxTicks + 64];
@@ -592,7 +591,7 @@ namespace IGTAP.EngineSim.Cli
                 inputs = inputs.Select(t => t.ToJson()).ToList(),
                 path = GhostPath(tracePath, lab, inputs, finishTick),
             };
-            File.WriteAllText(outPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(outPath, JsonSerializer.Serialize(file));
             Console.WriteLine("wrote " + outPath);
             return 0;
         }
@@ -716,7 +715,7 @@ namespace IGTAP.EngineSim.Cli
                     return true;
                 }
                 key = KeyOf(sim, exact);
-                canDash = GetMovementBool(sim, "dashUnlocked");
+                canDash = sim.Player.dashUnlocked;
                 maxY = MaxReach(sim, control);
                 WorldPos p = sim.PlayerWorld;
                 x = p.x; y = p.y;
@@ -756,10 +755,15 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
+        // Movement's private fields the lab reads.
         static readonly FieldInfo JumpBufferField = typeof(Movement).GetField("jumpBuffer", Fields),
             WallCoyoteField = typeof(Movement).GetField("wallCoyoteFrames", Fields),
+            CoyoteField = typeof(Movement).GetField("coyoteFrames", Fields),
             DashBufferField = typeof(Movement).GetField("dashBuffer", Fields),
-            NormalJumpField = typeof(Movement).GetField("MostRecentUpwardsMoveWasNormalJump", Fields);
+            NormalJumpField = typeof(Movement).GetField("MostRecentUpwardsMoveWasNormalJump", Fields),
+            RecentlyJumpedField = typeof(Movement).GetField("recentlyJumped", Fields),
+            GroundLayerField = typeof(Movement).GetField("groundRaycastLayer", Fields),
+            BlockingLayerField = typeof(Movement).GetField("blockingGroundRaycastLayer", Fields);
 
         /// <summary>
         /// At getPlayerControlledInput's start: the buffered jump is about to be a wall jump (Movement's branch: not grounded,
@@ -788,7 +792,7 @@ namespace IGTAP.EngineSim.Cli
             float wallCoyote = (float)WallCoyoteField.GetValue(m);
             if (!(bool)JumpBufferField.GetValue(m) || m.onGround || m.OnWall || wallCoyote > 0f) return false;
             if (!m.doubleJumpUnlocked || !(wallCoyote < m.maxWallCoyoteFrames) || m.airJumpsLeft <= 0) return false;
-            float vy = ((Vector2)VelocityField.GetValue(m)).y;
+            float vy = m.Velocity.y;
             return !(bool)NormalJumpField.GetValue(m) && vy >= 200f && vy < 700f;
         }
 
@@ -837,12 +841,12 @@ namespace IGTAP.EngineSim.Cli
 
         static TickRow Row(Simulation sim, int tick)
         {
-            Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+            Vector2 v = sim.Player.Velocity, m = sim.Player.momentum;
             WorldPos p = sim.PlayerWorld;
             return new TickRow { Tick = tick, X = p.x, Y = p.y, Vx = v.x, Vy = v.y, Mx = m.x, My = m.y,
-                Ground = GetMovementBool(sim, "onGround"), Coyote = GetMovementFloat(sim, "coyoteFrames"),
-                MaxCoyote = GetMovementFloat(sim, "maxCoyoteFrames"), Dash = GetMovementBool(sim, "dashActive"),
-                SinceDash = GetMovementFloat(sim, "framesSinceLastDash"), Solid = GroundCheckGrounds(sim, p),
+                Ground = sim.Player.onGround, Coyote = (float)CoyoteField.GetValue(sim.Player),
+                MaxCoyote = sim.Player.maxCoyoteFrames, Dash = sim.Player.dashActive,
+                SinceDash = sim.Player.framesSinceLastDash, Solid = GroundCheckGrounds(sim, p),
                 WallJumps = sim.Player.wallJumpsLeft, MaxWallCoyote = sim.Player.maxWallCoyoteFrames };
         }
 
@@ -857,7 +861,7 @@ namespace IGTAP.EngineSim.Cli
                 onWall = m.OnWall;
                 wallCoyote = (float)WallCoyoteField.GetValue(m);
                 boosted = BoostedDoubleJump(m);
-                vy = ((Vector2)VelocityField.GetValue(m)).y;
+                vy = m.Velocity.y;
             };
             sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 400, onStep: s =>
             {
@@ -1047,7 +1051,7 @@ namespace IGTAP.EngineSim.Cli
             Configure(sim, lab);
             Vector2 anchor = new Vector2(lab.Anchor.x, lab.Anchor.y);
             List<InputTick> inputs = demo.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
-            string outPath = OptS(args, "--out", null);
+            string outPath = Cli.Solve.Option(args, "--out", (string)null);
             var log = new StringBuilder();
             int steps = 0;
             // The lab's spikes: after each step, every one the player's hurtbox overlaps (a collider of the player's whose
@@ -1064,8 +1068,8 @@ namespace IGTAP.EngineSim.Cli
                     + $" V {sim.Player.Velocity.x,7:0.#},{sim.Player.Velocity.y,7:0.#} m {sim.Player.momentum.x,7:0.#},{sim.Player.momentum.y,7:0.#}"
                     + $" g{(sim.Player.onGround ? 1 : 0)} solid{(GroundCheckGrounds(sim, p) ? 1 : 0)} w{(sim.Player.OnWall ? 1 : 0)} {sim.Player.cutsceneMode}"
                     + $" dash{(sim.Player.dashActive ? 1 : 0)} f{sim.Player.framesSinceLastDash:0} R{(sim.Player.facingRight ? 1 : 0)}"
-                    + $" cf{GetMovementFloat(sim, "coyoteFrames"):0}/{GetMovementFloat(sim, "maxCoyoteFrames"):0}"
-                    + $" wc{GetMovementFloat(sim, "wallCoyoteFrames"):0}/{GetMovementFloat(sim, "maxWallCoyoteFrames"):0} wj{sim.Player.wallJumpsLeft}");
+                    + $" cf{(float)CoyoteField.GetValue(sim.Player):0}/{sim.Player.maxCoyoteFrames:0}"
+                    + $" wc{(float)WallCoyoteField.GetValue(sim.Player):0}/{sim.Player.maxWallCoyoteFrames:0} wj{sim.Player.wallJumpsLeft}");
                 foreach (var (name, script, collider) in spikes)
                 {
                     int counter = (int)spikeCounter.GetValue(script);
@@ -1084,12 +1088,12 @@ namespace IGTAP.EngineSim.Cli
             // before demos carried one: to the finish, then the tail. --path-ticks N: the demo's own first N physics ticks and no
             // tail, finish or not, for a lab's `ghosts` (the ghosts compared side by side all play their own inputs over the
             // same ticks, a comparison demo that misses the finish on purpose included).
-            int pathTicks = Opt(args, "--path-ticks", 0);
+            int pathTicks = Cli.Solve.Option(args, "--path-ticks", 0);
             if (args.Contains("--write-path") && (run.Finished || pathTicks > 0))
             {
                 var file = JsonNode.Parse(File.ReadAllText(demoPath))!.AsObject();
                 file["path"] = JsonSerializer.SerializeToNode(pathTicks > 0 ? GhostPath(tracePath, lab, inputs, pathTicks, 0) : GhostPath(tracePath, lab, inputs, steps));
-                File.WriteAllText(demoPath, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(demoPath, file.ToJsonString());
                 Console.WriteLine("wrote the ghost path to " + demoPath + (pathTicks > 0 ? " (its first " + pathTicks + " physics ticks)" : ""));
             }
             return run.Finished ? 0 : 1;
@@ -1144,23 +1148,29 @@ namespace IGTAP.EngineSim.Cli
             if (exact)
             {
                 Vector3 scene = sim.Player.transform.position, scale = sim.Player.transform.localScale;
-                foreach (float f in new[] { p.x, p.y, scene.x, scene.y, scene.z, scale.x, scale.y, body.px, body.py, body.angle, body.vx, body.vy, body.w })
-                    sb.Append(BitConverter.SingleToInt32Bits(f)).Append(',');
-                foreach (FieldInfo f in StepEnds) { Vector3 v = (Vector3)f.GetValue(sim); sb.Append(BitConverter.SingleToInt32Bits(v.x)).Append(',').Append(BitConverter.SingleToInt32Bits(v.y)).Append(','); }
+                void Bits(float f) => sb.Append(BitConverter.SingleToInt32Bits(f)).Append(',');
+                Bits(p.x); Bits(p.y); Bits(scene.x); Bits(scene.y); Bits(scene.z); Bits(scale.x); Bits(scale.y);
+                Bits(body.px); Bits(body.py); Bits(body.angle); Bits(body.vx); Bits(body.vy); Bits(body.w);
+                foreach (FieldInfo f in StepEnds) { Vector3 v = (Vector3)f.GetValue(sim); Bits(v.x); Bits(v.y); }
+                // Each collider as AddValue writes the list (offset, size, excludeLayers, enabled).
                 foreach (BoxCollider2D c in sim.Player.GetComponents<BoxCollider2D>())
-                    AddValue(sb, new object[] { c.offset, c.size, c.excludeLayers.value, c.enabled }, true);
+                {
+                    Bits(c.offset.x); Bits(c.offset.y); Bits(c.size.x); Bits(c.size.y);
+                    sb.Append(Convert.ToString(c.excludeLayers.value, CultureInfo.InvariantCulture)).Append(';').Append(c.enabled ? '1' : '0').Append('~');
+                }
                 foreach (MonoBehaviour script in (HashSet<MonoBehaviour>)TouchedField.GetValue(sim))
                 {
                     sb.Append(script.GetInstanceID()).Append(':');
-                    foreach (FieldInfo f in FieldState.For(script.GetType())) AddValue(sb, f.GetValue(script), true);
+                    var values = new object[FieldState.For(script.GetType()).Length];
+                    FieldState.Read(script, values);
+                    foreach (object v in values) AddValue(sb, v, true);
                 }
                 sb.Append('|');
             }
-            foreach (FieldInfo f in MovementFields)
-            {
-                if (Simulation.MovementPresentationFields.Contains(f.Name)) continue;
-                AddValue(sb, f.GetValue(sim.Player), exact);
-            }
+            object[] moved = _movementValues ??= new object[MovementFields.Length];
+            FieldState.Read(sim.Player, moved);
+            for (int i = 0; i < moved.Length; i++)
+                if (MovementKeyed[i]) AddValue(sb, moved[i], exact);
             foreach (FieldInfo f in EngineFields) AddValue(sb, f.GetValue(sim.Engine), exact);
             foreach (Scheduler.Pending p2 in sim.Scheduler.Queue)
             {
@@ -1168,12 +1178,6 @@ namespace IGTAP.EngineSim.Cli
                     .Append(p2.Target == null ? 0 : p2.Target.GetInstanceID()).Append('|');
             }
             return sb.ToString();
-        }
-
-        static bool GetMovementBool(Simulation sim, string name)
-        {
-            FieldInfo f = typeof(Movement).GetField(name, Fields);
-            return f != null && f.GetValue(sim.Player) is bool b && b;
         }
 
         /// <summary>
@@ -1184,32 +1188,18 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         static bool GroundCheckGrounds(Simulation sim, WorldPos at)
         {
-            if (GetMovementBool(sim, "recentlyJumped")) return false;
+            if ((bool)RecentlyJumpedField.GetValue(sim.Player)) return false;
             ScenePos s = sim.ToScene(at);
             float x = s.x, y = s.y;
             float f = sim.Player.transform.localScale.x >= 0f ? 1f : -1f;
-            int ground = GetMovementInt(sim, "groundRaycastLayer"), blocking = GetMovementInt(sim, "blockingGroundRaycastLayer");
+            int ground = ((LayerMask)GroundLayerField.GetValue(sim.Player)).value, blocking = ((LayerMask)BlockingLayerField.GetValue(sim.Player)).value;
             bool h1 = Physics2D.Raycast(new Vector2(x - 15f * f, y - 18f), Vector2.down, 22f, ground);
             bool h2 = Physics2D.Raycast(new Vector2(x - 9f * f, y - 18f), Vector2.down, 22f, blocking);
             bool h3 = Physics2D.Raycast(new Vector2(x + 25f * f, y - 18f), Vector2.down, 22f, ground);
             bool h4 = Physics2D.Raycast(new Vector2(x + 21f * f, y - 18f), Vector2.down, 22f, blocking);
             bool h5 = Physics2D.Raycast(new Vector2(x + 6f * f, y - 18f), Vector2.down, 22f, ground);
-            float vy = ((Vector2)VelocityField.GetValue(sim.Player)).y;
+            float vy = sim.Player.Velocity.y;
             return (h5 && !h2 && !h4) || (h1 && !h2) || (h3 && !h4 && vy < 200f);
-        }
-
-        static int GetMovementInt(Simulation sim, string name)
-        {
-            FieldInfo f = typeof(Movement).GetField(name, Fields);
-            object v = f == null ? null : f.GetValue(sim.Player);
-            return v is LayerMask m ? m.value : v is int i ? i : v is float x ? (int)x : 0;
-        }
-
-        static float GetMovementFloat(Simulation sim, string name)
-        {
-            FieldInfo f = typeof(Movement).GetField(name, Fields);
-            object v = f == null ? null : f.GetValue(sim.Player);
-            return v is float x ? x : v is int i ? i : 0f;
         }
 
         /// <summary>
@@ -1223,22 +1213,24 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         static float MaxReach(Simulation sim, bool control = false)
         {
-            Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+            Movement p = sim.Player;
+            Vector2 v = p.Velocity, m = p.momentum;
             float up = MathF.Max(0f, v.y + m.y);
             float gain = up * up / 2700f + 50f + 400f;
-            float Most(string left, string max) => MathF.Max(0f, MathF.Max(GetMovementFloat(sim, left), GetMovementFloat(sim, max)));
-            if (GetMovementBool(sim, "dashUnlocked") && Most("airDashesLeft", "maxAirDashes") > 0f) gain += 900f;
+            static float Most(float left, float max) => MathF.Max(0f, MathF.Max(left, max));
+            if (p.dashUnlocked && Most(p.airDashesLeft, p.maxAirDashes) > 0f) gain += 900f;
             if (control) return sim.PlayerWorld.y + gain;
-            if (GetMovementBool(sim, "doubleJumpUnlocked")) gain += 400f * Most("airJumpsLeft", "maxAirJumps");
-            if (GetMovementBool(sim, "wallJumpUnlocked")) gain += 400f * MathF.Min(4f, Most("wallJumpsLeft", "maxWallJumps"));
+            if (p.doubleJumpUnlocked) gain += 400f * Most(p.airJumpsLeft, p.maxAirJumps);
+            if (p.wallJumpUnlocked) gain += 400f * MathF.Min(4f, Most(p.wallJumpsLeft, p.maxWallJumps));
             return sim.PlayerWorld.y + gain;
         }
 
         static readonly FieldInfo[] StepEnds = { typeof(Simulation).GetField("_stepFrom", Fields), typeof(Simulation).GetField("_stepTo", Fields) };
         static readonly FieldInfo TouchedField = typeof(Simulation).GetField("_touched", Fields);
-        static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", Fields),
-            MomentumField = typeof(Movement).GetField("momentum", Fields);
         static readonly FieldInfo[] MovementFields = FieldState.For(typeof(Movement));
+        /// <summary>The Movement fields a state key holds (the presentation ones left out).</summary>
+        static readonly bool[] MovementKeyed = MovementFields.Select(f => !Simulation.MovementPresentationFields.Contains(f.Name)).ToArray();
+        [ThreadStatic] static object[] _movementValues;
         static readonly FieldInfo[] EngineFields = new[]
         {
             "_rawJumpHeld", "_dashJumpFrame", "_springDashFrame", "_springTicks", "_lockArmed", "_lockX", "_lockY",
@@ -1281,7 +1273,5 @@ namespace IGTAP.EngineSim.Cli
 
         static float F(string s) { return float.Parse(s, CultureInfo.InvariantCulture); }
         static JsonNode Trim(float f) { return (JsonValue)(double)Math.Round(f, 3); }
-        static int Opt(string[] args, string name, int fallback) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? int.Parse(args[i + 1], CultureInfo.InvariantCulture) : fallback; }
-        static string OptS(string[] args, string name, string fallback) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback; }
     }
 }

@@ -14,44 +14,19 @@ C is a course id or name from courses.json ("4", "bonus1"); CAT is a category id
 lowercased without underscores, e.g. WJ_DS2_BS_ZIP_OM -> wjds2bszipom); the registry is the plugin's GET /api/state
 "categories". A route whose category it doesn't know is skipped.
 """
-import json
 import random
 import re
 import sys
-import time
-import urllib.request
 
-from gamepaths import CONFIG, TRACES
+from gamepaths import ROUTE_NAME, TRACES, call, call_retry, category_id, course_ids
 
-API = "http://127.0.0.1:17426"
-ROUTE_NAME = re.compile(r"^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm )?([\d.]+)$")
-COURSES = CONFIG / "courses.json"
-COURSE_IDS = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
-COURSE_IDS.update({str(c): c for c in COURSE_IDS.values()})
+COURSE_IDS = course_ids()
 CATEGORIES = [(1, "wjdsdj"), (1, "wjds"), (1, "wj"), (1, "none"), (2, "wjdsdj"), (2, "wjds"), (2, "wj"),
               (3, "wjdsdj"), (3, "wjds"), (3, "wj"), (4, "wjdsdj"), (4, "wjds"), (5, "wjdsdj"), (COURSE_IDS["bonus1"], "wj"),
               (11, "wjdsdjbs"), (12, "wjdsdjbs"), (13, "wjdsdjbs"), (14, "wjdsdjbs"), (15, "wjdsdjbs")]
 
-def category_id(label):
-    return label.replace("_", "").lower()
-
-def call(path, body=None, method="POST"):
-    data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(API + path, data=data, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=600) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        return json.loads(error.read())
-
 def trace(body):
-    body = dict(body, world=True, freshStart=True)
-    for _ in range(20):
-        result = call("/api/enginesim/trace", body)
-        if "loading" not in str(result.get("error", "")):
-            return result
-        time.sleep(3)
-    return result
+    return call_retry("/api/enginesim/trace", dict(body, world=True, freshStart=True), 20, 3)
 
 def random_inputs(rng, n, dash):
     ticks, x = [], 1.0
@@ -77,7 +52,7 @@ def random_inputs(rng, n, dash):
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "routes"
     if mode == "routes":
-        state = call("/api/state", method="GET")
+        state = call("/api/state")
         known = {c["id"] for c in state["categories"]}
         for route in state["routes"]:
             m = ROUTE_NAME.match(route["name"])
@@ -113,7 +88,7 @@ def main():
             print(path.stem, {k: v for k, v in r.items() if k != "path"})
     elif mode == "route":
         name, course, caps = sys.argv[2], COURSE_IDS[sys.argv[3]], category_id(sys.argv[4])
-        route = next((r for r in call("/api/state", method="GET")["routes"] if r["name"] == name), None)
+        route = next((r for r in call("/api/state")["routes"] if r["name"] == name), None)
         if route is None:
             sys.exit(f"no studio route named {name!r}")
         slug = re.sub(r"[^A-Za-z0-9.]+", "-", name).strip("-")

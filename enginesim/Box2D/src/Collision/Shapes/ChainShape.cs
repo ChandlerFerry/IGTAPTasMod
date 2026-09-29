@@ -30,26 +30,6 @@ namespace Box2D
         public override byte ContactMatch => contactMatch;
 
         /// <summary>
-        ///  Create a loop. This automatically adjusts connectivity.
-        /// </summary>
-        /// <param name="vertices">An array of vertices. These are copied</param>
-        public void CreateLoop(in b2Vec2[] vertices)
-        {
-            int count = vertices.Length;
-            if (count < 3)
-            {
-                return;
-            }
-
-            m_count = count + 1;
-            m_vertices = new b2Vec2[m_count];
-            Array.Copy(vertices, m_vertices, count);
-            m_vertices[count] = m_vertices[0];
-            m_prevVertex = m_vertices[m_count - 2];
-            m_nextVertex = m_vertices[1];
-        }
-
-        /// <summary>
         ///  Create a chain with ghost vertices to connect multiple chains together.
         /// </summary>
         /// <param name="vertices">An array of vertices. These are copied</param>

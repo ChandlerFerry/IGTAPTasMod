@@ -25,19 +25,5 @@ namespace Box2D
             bool collide = (filterA.maskBits & filterB.categoryBits) != 0 && (filterA.categoryBits & filterB.maskBits) != 0;
             return collide;
         }
-
-        /// <summary>
-        ///  Return true if the given shape should be considered for ray intersection.
-        /// </summary>
-        public bool RayCollide(object userData, b2Fixture fixture)
-        {
-            //By default, cast userData as a shape, and then collide if the shapes would collide
-            if (userData == null)
-            {
-                return true;
-            }
-
-            return ShouldCollide((b2Fixture)userData, fixture);
-        }
     }
 }

@@ -55,10 +55,24 @@ namespace Box2D
 
         public b2ManifoldType type;
 
-        public b2Manifold()
+        /// <summary>Back to a new manifold's values (b2Contact.Update reuses two per contact instead of allocating).</summary>
+        internal void Reset()
         {
-            // for (int i = 0; i < b2Settings.MaxManifoldPoints; i++)
-            //   points[i] = new b2ManifoldPoint();
+            localNormal = default;
+            localPoint = default;
+            pointCount = 0;
+            type = default;
+        }
+
+        /// <summary>Point i as a new b2ManifoldPoint: the slot's own object, zeroed.</summary>
+        internal b2ManifoldPoint NewPoint(int i)
+        {
+            b2ManifoldPoint p = points[i] ??= new b2ManifoldPoint();
+            p.id.key = 0;
+            p.localPoint = default;
+            p.normalImpulse = 0f;
+            p.tangentImpulse = 0f;
+            return p;
         }
     }
 }

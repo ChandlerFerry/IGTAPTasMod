@@ -6,14 +6,12 @@ namespace Box2D
     public class PolygonAndPolygonCollider : Collider<b2PolygonShape, b2PolygonShape>
     {
         public override void Collide(
-            out b2Manifold manifold,
+            b2Manifold manifold,
             in b2PolygonShape polyA,
             in b2Transform xfA,
             in b2PolygonShape polyB,
             in b2Transform xfB)
         {
-            manifold = new b2Manifold();
-            //manifold.pointCount = 0;
             float totalRadius = polyA.m_radius + polyB.m_radius;
 
             float separationA = FindMaxSeparation(out int edgeA, polyA, xfA, polyB, xfB);
@@ -116,7 +114,7 @@ namespace Box2D
 
                 if (separation <= totalRadius)
                 {
-                    var cp = new b2ManifoldPoint();
+                    b2ManifoldPoint cp = manifold.NewPoint(pointCount);
                     cp.localPoint = Math.MulT(xf2, clipPoints2[i].v);
                     cp.id = clipPoints2[i].id;
                     if (flip != 0)
@@ -129,8 +127,7 @@ namespace Box2D
                         cp.id.cf.typeB = cf.typeA;
                     }
 
-                    manifold.points[pointCount] = cp;
-                    ++pointCount;
+                                        ++pointCount;
                 }
             }
 

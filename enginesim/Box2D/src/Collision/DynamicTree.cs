@@ -97,60 +97,6 @@ namespace Box2D
 
 		public int NodeCount => _nodeCount;
 
-		public int MaxBalance
-		{
-			[MethodImpl(MethodImplOptions.NoInlining)]
-			get {
-				var maxBal = 0;
-
-				for (var i = 0; i < Capacity; ++i)
-				{
-					ref var node = ref _nodes[i];
-					if (node.Height <= 1)
-					{
-						continue;
-					}
-
-					ref var child1Node = ref _nodes[node.Child1];
-					ref var child2Node = ref _nodes[node.Child2];
-
-					var bal = Math.Abs(child2Node.Height - child1Node.Height);
-					maxBal = Math.Max(maxBal, bal);
-				}
-
-				return maxBal;
-			}
-		}
-
-		public float AreaRatio
-		{
-			[MethodImpl(MethodImplOptions.NoInlining)]
-			get {
-				if (_root == ProxyFree)
-				{
-					return 0;
-				}
-
-				ref var rootNode = ref _nodes[_root];
-				var rootPeri = rootNode.Aabb.GetPerimeter();
-
-				var totalPeri = 0f;
-
-				for (var i = 0; i < Capacity; ++i)
-				{
-					ref var node = ref _nodes[i];
-					if (node.Height < 0)
-					{
-						continue;
-					}
-
-					totalPeri += node.Aabb.GetPerimeter();
-				}
-
-				return totalPeri / rootPeri;
-			}
-		}
-
 		private static int GrowthFunc(int x) => x + 256;
 
 		private const float AABBExtendSize = 1f / 32;
@@ -786,102 +732,6 @@ namespace Box2D
 			               ) + 1;
 		}
 
-		[MethodImpl(MethodImplOptions.NoInlining)]
-		public void RebuildBottomUp(int free = 0)
-		{
-			_synced = null;
-			var proxies = new Proxy[NodeCount + free];
-			var count = 0;
-
-			// Build array of leaves. Free the rest.
-			for (var i = 0; i < Capacity; ++i)
-			{
-				ref var node = ref _nodes[i];
-				if (node.Height < 0)
-				{
-					// free node in pool
-					continue;
-				}
-
-				var proxy = (Proxy) i;
-				if (node.IsLeaf)
-				{
-					node.Parent = ProxyFree;
-					proxies[count++] = proxy;
-				}
-				else
-				{
-					FreeNode(proxy);
-				}
-			}
-
-			while (count > 1)
-			{
-				var minCost = float.MaxValue;
-
-				var iMin = -1;
-				var jMin = -1;
-
-				for (var i = 0; i < count; ++i)
-				{
-					ref var aabbI = ref _nodes[proxies[i]].Aabb;
-
-					for (var j = i + 1; j < count; ++j)
-					{
-						ref var aabbJ = ref _nodes[proxies[j]].Aabb;
-
-						var cost = b2AABB.Combine(aabbI, aabbJ).GetPerimeter();
-
-						if (cost >= minCost)
-						{
-							continue;
-						}
-
-						iMin = i;
-						jMin = j;
-						minCost = cost;
-					}
-				}
-
-				var child1 = proxies[iMin];
-				var child2 = proxies[jMin];
-
-				ref var parentNode = ref AllocateNode(out var parent);
-				ref var child1Node = ref _nodes[child1];
-				ref var child2Node = ref _nodes[child2];
-
-				parentNode.Child1 = child1;
-				parentNode.Child2 = child2;
-				parentNode.Height = Math.Max(child1Node.Height, child2Node.Height) + 1;
-				parentNode.Aabb = b2AABB.Combine(child1Node.Aabb, child2Node.Aabb);
-				parentNode.Parent = ProxyFree;
-
-				child1Node.Parent = parent;
-				child2Node.Parent = parent;
-
-				proxies[jMin] = proxies[count - 1];
-				proxies[iMin] = parent;
-				--count;
-			}
-
-			_root = proxies[0];
-
-			Validate();
-		}
-
-		public void ShiftOrigin(in b2Vec2 newOrigin)
-		{
-			_synced = null;
-			for (var i = 0; i < Capacity; i++)
-			{
-				ref var node = ref _nodes[i];
-				var lb = node.Aabb.lowerBound;
-				var tr = node.Aabb.upperBound;
-
-				node.Aabb = new b2AABB(lb - newOrigin, tr - newOrigin);
-			}
-		}
-
 		/// <summary>The leaves (proxies) whose user data <paramref name="keep"/> accepts, in pool order.</summary>
 		internal void CollectLeaves(Func<object, bool> keep, List<int> into)
 		{
@@ -1077,35 +927,6 @@ namespace Box2D
 			Validate(child2);
 		}
 
-		[Conditional("DEBUG_DYNAMIC_TREE")]
-		private void ValidateHeight(Proxy proxy)
-		{
-			if (proxy == ProxyFree)
-			{
-				return;
-			}
-
-			ref var node = ref _nodes[proxy];
-
-			if (node.IsLeaf)
-			{
-				Assert(node.Height == 0);
-				return;
-			}
-
-			var child1 = node.Child1;
-			var child2 = node.Child2;
-			ref var child1Node = ref _nodes[child1];
-			ref var child2Node = ref _nodes[child2];
-
-			var height1 = child1Node.Height;
-			var height2 = child2Node.Height;
-
-			var height = 1 + Math.Max(height1, height2);
-
-			Assert(node.Height == height);
-		}
-		
 		[Conditional("DEBUG")]
 		[DebuggerNonUserCode]
 		[DebuggerHidden]
@@ -1123,36 +944,6 @@ namespace Box2D
 			Debug.Print(msg);
 			Debugger.Break();
 			throw new InvalidOperationException(msg);
-		}
-
-
-		private IEnumerable<(Proxy, Node)> DebugAllocatedNodesEnumerable
-		{
-			get {
-				for (var i = 0; i < Capacity; i++)
-				{
-					var node = _nodes[i];
-					if (!node.IsFree)
-					{
-						yield return ((Proxy) i, node);
-					}
-				}
-			}
-		}
-
-		[DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-		private (Proxy, Node)[] DebugAllocatedNodes
-		{
-			get {
-				var data = new (Proxy, Node)[NodeCount];
-				var i = 0;
-				foreach (var x in DebugAllocatedNodesEnumerable)
-				{
-					data[i++] = x;
-				}
-
-				return data;
-			}
 		}
 	}
 }

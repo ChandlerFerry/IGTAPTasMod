@@ -46,18 +46,6 @@ namespace Box2D
         /// </summary>
         public b2Vec2 upperBound;
 
-        public b2Vec2 LowerBound
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => lowerBound;
-        }
-
-        public b2Vec2 UpperBound
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => upperBound;
-        }
-
         public b2Vec2 Size
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]

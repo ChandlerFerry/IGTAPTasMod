@@ -53,34 +53,7 @@ namespace Box2D
             SetTwoSided(v1, v2);
         }
 
-        public b2Vec2 Vertex1
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => m_vertex1;
-        }
-
-        public b2Vec2 Vertex2
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => m_vertex2;
-        }
-
         public override byte ContactMatch => contactMatch;
-
-        /// <summary>
-        ///  Set this as a part of a sequence. Vertex v0 precedes the edge and vertex v3
-        ///  follows. These extra vertices are used to provide smooth movement
-        ///  across junctions. This also makes the collision one-sided. The edge
-        ///  normal points to the right looking from v1 to v2.
-        /// </summary>
-        public void SetOneSided(in b2Vec2 v0, in b2Vec2 v1, in b2Vec2 v2, in b2Vec2 v3)
-        {
-            m_vertex0 = v0;
-            m_vertex1 = v1;
-            m_vertex2 = v2;
-            m_vertex3 = v3;
-            m_oneSided = true;
-        }
 
         public void SetTwoSided(in b2Vec2 v1, in b2Vec2 v2)
         {

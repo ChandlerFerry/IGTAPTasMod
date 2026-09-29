@@ -291,20 +291,25 @@ namespace IGTAP.EngineSim
             }
             if (c.V.Count <= 0) return true;
             if ((object)c.Course == null) return Unmodeled("clones without a course");
-            double boost = 1.0;
-            if (c.Course.compBoostTimeLeft > 0.0) boost = c.Course.compBoostBonus;
-            double pay = c.Course.reward * (double)(j * 2 + 1);
-            double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
-            pay *= mult;
-            pay *= boost;
-            pay /= (double)c.V.OffscreenDivisor;
-            Earned += Math.Ceiling(pay);
+            Earned += Math.Ceiling(Pay(c, j) / (double)c.V.OffscreenDivisor);
             if (!ColourCheck(c)) return false;
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
             c.V.SinceLast = 0f;
             c.V.OffscreenDivisor = c.V.NextDue;
             c.V.NextDue = 1f;
             return true;
+        }
+
+        /// <summary>A clone's payout before the offscreen divisor: the course reward × (2 bigness + 1) × the clone multiplier × the
+        /// competition boost, in the game's order.</summary>
+        double Pay(Clones c, int bigness)
+        {
+            double boost = 1.0;
+            if (c.Course.compBoostTimeLeft > 0.0) boost = c.Course.compBoostBonus;
+            double pay = c.Course.reward * (double)(bigness * 2 + 1);
+            double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
+            pay *= mult;
+            return pay * boost;
         }
 
         bool ColourCheck(Clones c)
@@ -319,13 +324,7 @@ namespace IGTAP.EngineSim
             Clone clone = c.Active[index];
             if (clone.Coloured) return Unmodeled("colour clone");
             if ((object)c.Course == null || c.Local < 0) return Unmodeled("clones without a course");
-            double boost = 1.0;
-            if (c.Course.compBoostTimeLeft > 0.0) boost = c.Course.compBoostBonus;
-            double pay = c.Course.reward * (double)(clone.Bigness * 2 + 1);
-            double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
-            pay *= mult;
-            pay *= boost;
-            Earned += Math.Ceiling(pay);
+            Earned += Math.Ceiling(Pay(c, clone.Bigness));
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
             c.V.Pooled++;
             c.Active.RemoveAt(index);

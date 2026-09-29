@@ -72,6 +72,8 @@ namespace Box2D
         public float m_friction;
 
         public b2Manifold m_manifold = new b2Manifold();
+        // The other manifold: Update evaluates into it and swaps, so a step allocates none (the old one matches ids).
+        b2Manifold m_spareManifold;
         public b2Contact m_next;
 
         // b2World pool and list pointers.
@@ -145,24 +147,10 @@ namespace Box2D
             get => m_manifold;
         }
 
-        public bool Enabled
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => IsEnabled();
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => SetEnabled(value);
-        }
-
         public bool Touching
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => IsTouching();
-        }
-
-        public b2Contact Next
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => GetNext();
         }
 
         /// <summary>
@@ -181,30 +169,6 @@ namespace Box2D
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => m_fixtureB;
-        }
-
-        public float Friction
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => GetFriction();
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => SetFriction(value);
-        }
-
-        public float Restitution
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => GetRestitution();
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => SetRestitution(value);
-        }
-
-        public float TangentSpeed
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => GetTangentSpeed();
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            set => SetTangentSpeed(value);
         }
 
         public int ChildIndexA
@@ -264,57 +228,12 @@ namespace Box2D
         public b2Fixture GetFixtureB() => FixtureB;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void FlagForFiltering()
-        {
-            m_flags |= b2CollisionFlags.b2Filter;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public float GetFriction() => m_friction;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetFriction(float friction)
-        {
-            m_friction = friction;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void ResetFriction()
-        {
-            m_friction = b2Settings.MixFriction(m_fixtureA.m_friction, m_fixtureB.m_friction);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetRestitution(float restitution)
-        {
-            m_restitution = restitution;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public float GetRestitution() => m_restitution;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void ResetRestitution()
-        {
-            m_restitution = b2Settings.MixRestitution(m_fixtureA.m_restitution, m_fixtureB.m_restitution);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetTangentSpeed(float speed)
-        {
-            m_tangentSpeed = speed;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public float GetTangentSpeed() => m_tangentSpeed;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int GetChildIndexA() => m_indexA;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int GetChildIndexB() => m_indexB;
 
-        public abstract void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB);
+        public abstract void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Contact Create(b2Fixture fixtureA, int indexA, b2Fixture fixtureB, int indexB)
@@ -342,7 +261,7 @@ namespace Box2D
             })!;
         }
 
-        public void Update(b2ContactListener listener)
+        public void Update()
         {
             b2Manifold oldManifold = m_manifold;
 
@@ -373,7 +292,10 @@ namespace Box2D
             }
             else
             {
-                Evaluate(out m_manifold, xfA, xfB);
+                m_manifold = m_spareManifold ?? new b2Manifold();
+                m_spareManifold = oldManifold;
+                m_manifold.Reset();
+                Evaluate(m_manifold, xfA, xfB);
                 touching = m_manifold.pointCount > 0;
 
                 // Match old contact ids to new contact ids and copy the
@@ -414,24 +336,6 @@ namespace Box2D
             {
                 m_flags &= ~b2CollisionFlags.Touching;
                 if (wasTouching) LeaveTouchOrder();
-            }
-
-            if (listener != null)
-            {
-                if (touching && !wasTouching)
-                {
-                    listener.BeginContact(this);
-                }
-
-                if (!touching && wasTouching)
-                {
-                    listener.EndContact(this);
-                }
-
-                if (touching && !sensor)
-                {
-                    listener.PreSolve(this, oldManifold);
-                }
             }
         }
 

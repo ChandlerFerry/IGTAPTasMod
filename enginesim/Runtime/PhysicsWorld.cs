@@ -53,6 +53,8 @@ namespace IGTAP.EngineSim
             public bool TransformDirty, ScaleDirty;
             /// <summary>Teleported (SetTransform) since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Shifted;
+            /// <summary>In _movedStatic.</summary>
+            public bool MovedStatic;
             /// <summary>Its place in _bodyList (a snapshot names bodies by it).</summary>
             public int Index;
             public readonly List<ColliderState> Colliders = new List<ColliderState>();
@@ -288,7 +290,9 @@ namespace IGTAP.EngineSim
                 float cx = box.m_Offset.x * scale.x, cy = box.m_Offset.y * scale.y;
                 float hx = box.m_Size.x * MathF.Abs(scale.x) * 0.5f, hy = box.m_Size.y * MathF.Abs(scale.y) * 0.5f;
                 var shape = new b2PolygonShape();
-                shape.Set(new[] { new b2Vec2(cx + hx, cy - hy), new b2Vec2(cx + hx, cy + hy), new b2Vec2(cx - hx, cy + hy), new b2Vec2(cx - hx, cy - hy) }, 4);
+                _box[0] = new b2Vec2(cx + hx, cy - hy); _box[1] = new b2Vec2(cx + hx, cy + hy);
+                _box[2] = new b2Vec2(cx - hx, cy + hy); _box[3] = new b2Vec2(cx - hx, cy - hy);
+                shape.Set(_box, 4);
                 shape.m_radius = _contactOffset + box.edgeRadius;
                 AddFixture(s, body, shape, friction, restitution);
                 return;
@@ -336,6 +340,9 @@ namespace IGTAP.EngineSim
             }
         }
 
+        // A dynamic box's corners (b2PolygonShape.Set copies them).
+        readonly b2Vec2[] _box = new b2Vec2[4];
+
         ShapeData[] Shapes(ColliderState s)
         {
             if (s.Body == null && _sim.Rebased) return MovedShapes(s);
@@ -366,10 +373,7 @@ namespace IGTAP.EngineSim
             ShapeData[] captured = s.Data.Shapes;
             if (captured.Length == 0) return captured;
             Transform t = s.Collider.transform;
-            Quaternion q = t.m_Rotation;
-            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
-            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
-            float m00 = 1f - (yy + zz), m01 = xy - wz, m10 = xy + wz, m11 = 1f - (xx + zz);
+            (float m00, float m01, float m10, float m11) = Rotation2D(t.m_Rotation);
             Vector3 p = t.m_Position, scale = t.m_LossyScale;
             Vector2 Point(float lx, float ly)
             {
@@ -403,6 +407,14 @@ namespace IGTAP.EngineSim
             return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
         }
 
+        /// <summary>The rotation's xy block (Unity's Quaternion-to-matrix, float math).</summary>
+        internal static (float m00, float m01, float m10, float m11) Rotation2D(Quaternion q)
+        {
+            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
+            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
+            return (1f - (yy + zz), xy - wz, xy + wz, 1f - (xx + zz));
+        }
+
         static ShapeData Moved(ShapeData shape, params Vector2[] vertices)
         {
             return new ShapeData { Type = shape.Type, Radius = shape.Radius, Vertices = vertices, UseAdjacentStart = shape.UseAdjacentStart,
@@ -423,6 +435,11 @@ namespace IGTAP.EngineSim
         {
             if (!_worldMoved || _staticsMoved) return;
             _staticsMoved = true;
+            RebuildBodyless();
+        }
+
+        void RebuildBodyless()
+        {
             for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
         }
 
@@ -442,16 +459,17 @@ namespace IGTAP.EngineSim
             s.Fixtures.Add(body.CreateFixture(def));
         }
 
+        /// <summary>Bumped by every collider toggle, layer change and restore, suspended or not (and by any other write of a
+        /// collider's enabled or active state): unchanged, every collider is live as it was (<see cref="DistanceField"/>'s version).</summary>
+        internal int Generation;
+
         public void ColliderChanged(Collider2D collider)
         {
+            Generation++;
             if (!Suspended && _colliders.TryGetValue(collider, out ColliderState s)) Changed(s);
         }
 
-        public void ActiveChanged(GameObject gameObject)
-        {
-            if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
-                foreach (ColliderState s in list) Changed(s);
-        }
+        public void ActiveChanged(GameObject gameObject) { LayerChanged(gameObject); }
 
         /// <summary>
         /// A GameObject changed layer (PlatformMover.MakeIntangible): Unity filters its contacts and queries by the new layer at
@@ -459,6 +477,7 @@ namespace IGTAP.EngineSim
         /// </summary>
         public void LayerChanged(GameObject gameObject)
         {
+            Generation++;
             if (!Suspended && _byObject.TryGetValue(gameObject, out var list))
                 foreach (ColliderState s in list) Changed(s);
         }
@@ -529,8 +548,7 @@ namespace IGTAP.EngineSim
             {
                 _worldMoved = false;
                 for (int i = 0; i < _bodyList.Length; i++) _bodyList[i].TransformDirty = true;
-                if (!_staticsMoved)
-                    for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
+                if (!_staticsMoved) RebuildBodyless();
                 _staticsMoved = false;
             }
             for (int bi = 0; bi < _bodyList.Length; bi++)
@@ -717,8 +735,8 @@ namespace IGTAP.EngineSim
             return overlap;
         }
 
-        static bool SameBits(in b2Transform a, in b2Transform b)
-            => MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in b)));
+        static bool SameBits<T>(in T a, in T b) where T : unmanaged
+            => MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in b)));
 
         // A contact's touch order and its place in the contact list walk: CollectTouching's sort key.
         readonly struct TouchOrdered
@@ -1062,8 +1080,15 @@ namespace IGTAP.EngineSim
             }
             Grid g = _grid;
             int stale = 0;
-            foreach (ColliderState s in _regrid) if (!Holds(g, s)) stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
-            if (stale > LayOutAbove)
+            bool outside = false;
+            foreach (ColliderState s in _regrid)
+                if (!Holds(g, s))
+                {
+                    stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
+                    outside = outside || !InBounds(g, s);
+                }
+            // A shape leaving the grid (a rebase's first rebuilds) lays out a grid too: the current one is kept whole as a spare.
+            if (stale > LayOutAbove || outside)
             {
                 foreach (ColliderState s in _regrid) s.Regrid = false;
                 _regrid.Clear();
@@ -1078,15 +1103,14 @@ namespace IGTAP.EngineSim
                 _grid = back;
                 return;
             }
-            bool inBounds = true;
             foreach (ColliderState s in _regrid)
             {
                 s.Regrid = false;
-                if (inBounds) inBounds = Regrid(g, s);
+                Regrid(g, s);
             }
             _regrid.Clear();
             // Freed slots cost every query that walks their cells: past half the slots, lay the grid out again.
-            if (!inBounds || g.Dead > g.StaticCount / 2) LayOut(g);
+            if (g.Dead > g.StaticCount / 2) LayOut(g);
         }
 
         /// <summary>The grid holds the collider as it is now: the same fixtures (a fixture's shape never changes) at the same
@@ -1157,34 +1181,34 @@ namespace IGTAP.EngineSim
             g.CellsX = (int)((maxX - minX) / CellSize) + 1;
             g.CellsY = (int)((maxY - minY) / CellSize) + 1;
             int cells = g.CellsX * g.CellsY;
-            if (g.CellStart.Length != cells + 1)
+            // A larger layout's arrays are kept (grids laid out across a rebase alternate between two sizes).
+            if (g.CellStart.Length < cells + 1)
             {
                 g.CellStart = new int[cells + 1];
                 g.CellFill = new int[cells];
                 g.Extra = new List<int>[cells];
                 g.ExtraUsed.Clear();
             }
-            else Array.Clear(g.CellStart);
+            else Array.Clear(g.CellStart, 0, cells + 1);
             foreach (int c in g.ExtraUsed) g.Extra[c].Clear();
             g.ExtraUsed.Clear();
             // Counting sort: each cell's count, its start, then the slots in slot order.
-            int[] start = g.CellStart;
+            int[] start = g.CellStart, fill = g.CellFill;
+            int cellsX = g.CellsX;
             for (int i = 0; i < g.StaticCount; i++)
             {
                 CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
-                    for (int x = x0; x <= x1; x++)
-                        start[y * g.CellsX + x + 1]++;
+                    for (int x = y * cellsX + x0 + 1, end = y * cellsX + x1 + 1; x <= end; x++) start[x]++;
             }
-            for (int c = 0; c < cells; c++) start[c + 1] += start[c];
+            for (int c = 0; c < cells; c++) { fill[c] = start[c]; start[c + 1] += start[c]; }
             if (g.CellSlots.Length < start[cells]) g.CellSlots = new int[System.Math.Max(start[cells], 2 * g.CellSlots.Length)];
-            Array.Copy(start, g.CellFill, cells);
+            int[] slots = g.CellSlots;
             for (int i = 0; i < g.StaticCount; i++)
             {
                 CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
-                    for (int x = x0; x <= x1; x++)
-                        g.CellSlots[g.CellFill[y * g.CellsX + x]++] = i;
+                    for (int x = y * cellsX + x0, end = y * cellsX + x1; x <= end; x++) slots[fill[x]++] = i;
             }
             foreach (ColliderState s in _colliderList)
                 if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) NoteGrid(g, s);
@@ -1198,10 +1222,11 @@ namespace IGTAP.EngineSim
             return g.StaticCount++;
         }
 
-        bool Regrid(Grid g, ColliderState s)
+        /// <summary>The collider's slots as it is now; its boxes lie inside the grid (UpdateGrid checked <see cref="InBounds"/>).</summary>
+        void Regrid(Grid g, ColliderState s)
         {
             bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
-            if (isStatic && Gridded(g, s)) return true;
+            if (isStatic && Gridded(g, s)) return;
             List<int> slots = g.Slots[s.Id];
             foreach (int i in slots)
             {
@@ -1209,16 +1234,23 @@ namespace IGTAP.EngineSim
                 g.Dead++;
             }
             slots.Clear();
-            if (!isStatic) { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); return true; }
+            if (!isStatic) { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); return; }
+            foreach (b2Fixture f in s.Fixtures)
+                for (int c = 0; c < f.m_proxyCount; c++) AddShape(g, f, c, s, GridBox(f, c));
+            NoteGrid(g, s);
+        }
+
+        /// <summary>Every box of the collider's fixtures lies inside the grid.</summary>
+        bool InBounds(Grid g, ColliderState s)
+        {
+            if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return true;
             float right = g.X + g.CellsX * CellSize, top = g.Y + g.CellsY * CellSize;
             foreach (b2Fixture f in s.Fixtures)
                 for (int c = 0; c < f.m_proxyCount; c++)
                 {
                     b2AABB box = GridBox(f, c);
                     if (box.lowerBound.x < g.X || box.lowerBound.y < g.Y || box.upperBound.x >= right || box.upperBound.y >= top) return false;
-                    AddShape(g, f, c, s, box);
                 }
-            NoteGrid(g, s);
             return true;
         }
 
@@ -1245,11 +1277,63 @@ namespace IGTAP.EngineSim
         {
             b2Fixture[] held = g.Fixtures[s.Id];
             if (s.Fixtures.Count != held.Length || Children(s) != g.Children[s.Id]) return false;
+            bool same = true;
             for (int k = 0; k < held.Length; k++)
-                if (!ReferenceEquals(s.Fixtures[k], held[k])) return false;
+                if (!ReferenceEquals(s.Fixtures[k], held[k]))
+                {
+                    if (!SameShape(s.Fixtures[k].b2Shape, held[k].b2Shape)) return false;
+                    same = false;
+                }
             b2Transform now = (s.Body?.Body ?? _ground).GetTransform(), pose = g.Poses[s.Id];
-            return now.p.x == pose.p.x && now.p.y == pose.p.y && now.q == pose.q;
+            if (!(now.p.x == pose.p.x && now.p.y == pose.p.y && now.q == pose.q)) return false;
+            if (!same) Retarget(g, s, held);
+            return true;
         }
+
+        /// <summary>A rebuild of the same geometry (a rebase's rebuild on a run that crossed it before, a toggle off and back): the
+        /// slots take the new fixtures in place of the held ones, whose shapes and pose, so every query's answer, are the same.</summary>
+        static void Retarget(Grid g, ColliderState s, b2Fixture[] held)
+        {
+            foreach (int i in g.Slots[s.Id])
+                g.Static[i].Fixture = s.Fixtures[Array.IndexOf(held, g.Static[i].Fixture)];
+            g.Fixtures[s.Id] = s.Fixtures.ToArray();
+        }
+
+        /// <summary>The two shapes are the same, bit for bit (the fields every query and AABB of theirs reads).</summary>
+        static bool SameShape(b2Shape a, b2Shape b)
+        {
+            if (a.GetType() != b.GetType() || !Same(a.m_radius, b.m_radius)) return false;
+            switch (a)
+            {
+                case b2PolygonShape p:
+                {
+                    var q = (b2PolygonShape)b;
+                    if (p.m_count != q.m_count || !Same(p.m_centroid, q.m_centroid)) return false;
+                    for (int i = 0; i < p.m_count; i++)
+                        if (!Same(p.m_vertices[i], q.m_vertices[i]) || !Same(p.m_normals[i], q.m_normals[i])) return false;
+                    return true;
+                }
+                case b2ChainShape c:
+                {
+                    var d = (b2ChainShape)b;
+                    if (c.m_count != d.m_count || !Same(c.m_prevVertex, d.m_prevVertex) || !Same(c.m_nextVertex, d.m_nextVertex)) return false;
+                    for (int i = 0; i < c.m_count; i++) if (!Same(c.m_vertices[i], d.m_vertices[i])) return false;
+                    return true;
+                }
+                case b2CircleShape c: return Same(c.m_p, ((b2CircleShape)b).m_p);
+                case b2EdgeShape e:
+                {
+                    var f = (b2EdgeShape)b;
+                    return e.m_oneSided == f.m_oneSided && Same(e.m_vertex1, f.m_vertex1) && Same(e.m_vertex2, f.m_vertex2)
+                        && e.m_vertex0.HasValue == f.m_vertex0.HasValue && (!e.m_vertex0.HasValue || Same(e.m_vertex0.Value, f.m_vertex0.Value))
+                        && e.m_vertex3.HasValue == f.m_vertex3.HasValue && (!e.m_vertex3.HasValue || Same(e.m_vertex3.Value, f.m_vertex3.Value));
+                }
+                default: return false;
+            }
+        }
+
+        static bool Same(float a, float b) => BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b);
+        static bool Same(b2Vec2 a, b2Vec2 b) => Same(a.x, b.x) && Same(a.y, b.y);
 
         void AddShape(Grid g, b2Fixture f, int child, ColliderState s, in b2AABB box)
         {
@@ -1306,8 +1390,8 @@ namespace IGTAP.EngineSim
                 foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
                 {
                     if (!Hittable(s)) continue;
-                    for (int c = 0; c < f.m_proxyCount; c++)
-                        if (f.TestPoint(p)) { found = s; count++; }
+                    // A shape of several children (a chain) never holds a point: one test per fixture.
+                    if (f.m_proxyCount > 0 && f.TestPoint(p)) { found = s; count++; }
                 }
             if (count <= 1) return found;
             _inside.Reset(p, layerMask);
@@ -1553,14 +1637,12 @@ namespace IGTAP.EngineSim
 
         public Vector2 GetPosition(Rigidbody2D body) { Settle(); b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
         public void SetPosition(Rigidbody2D body, Vector2 position) { Settle(); BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(new b2Vec2(position.x, position.y), b.GetAngle()); }
-        public float GetRotation(Rigidbody2D body) { Settle(); return State(body).Body.GetAngle() * (180f / MathF.PI); }
-        public void SetRotation(Rigidbody2D body, float degrees) { Settle(); BodyState s = State(body); Moving(s); b2Body b = s.Body; b.SetTransform(b.GetPosition(), degrees * (MathF.PI / 180f)); }
 
         void Moving(BodyState body)
         {
             Shift(body);
             if (body.Body.Type() != b2BodyType.Static) return;
-            if (!_movedStatic.Contains(body)) _movedStatic.Add(body);
+            if (!body.MovedStatic) { body.MovedStatic = true; _movedStatic.Add(body); }
             foreach (ColliderState s in body.Colliders) RegridLater(s);
         }
         public Vector2 GetVelocity(Rigidbody2D body) { Settle(); b2Vec2 v = State(body).Body.GetLinearVelocity(); return new Vector2(v.x, v.y); }
@@ -1569,43 +1651,6 @@ namespace IGTAP.EngineSim
         public void SetAngularVelocity(Rigidbody2D body, float velocity) { Settle(); State(body).Body.SetAngularVelocity(velocity * (MathF.PI / 180f)); }
 
         BodyState State(Rigidbody2D body) { return (BodyState)body.BackendData; }
-
-        readonly List<b2Contact> _bodyContacts = new List<b2Contact>();
-        readonly List<ContactPoint2D> _bodyPoints = new List<ContactPoint2D>();
-
-        public int GetContacts(Rigidbody2D body, ContactPoint2D[] results)
-        {
-            Settle();
-            BodyState state = State(body);
-            List<b2Contact> mine = _bodyContacts;
-            mine.Clear();
-            for (b2Contact c = _b2.GetContactList(); c != null; c = c.GetNext())
-            {
-                if (!c.IsTouching() || !c.IsEnabled()) continue;
-                var a = (ColliderState)c.GetFixtureA().UserData;
-                var b = (ColliderState)c.GetFixtureB().UserData;
-                if (a.Body != state && b.Body != state) continue;
-                int at = mine.Count;
-                for (int i = 0; i < mine.Count; i++)
-                {
-                    var oa = (ColliderState)mine[i].GetFixtureA().UserData;
-                    var ob = (ColliderState)mine[i].GetFixtureB().UserData;
-                    if ((oa == a && ob == b || oa == b && ob == a) && mine[i].m_touchOrder > c.m_touchOrder) { at = i; break; }
-                }
-                mine.Insert(at, c);
-            }
-            int n = 0;
-            for (int i = 0; i < mine.Count && n < results.Length; i++)
-            {
-                var a = (ColliderState)mine[i].GetFixtureA().UserData;
-                var b = (ColliderState)mine[i].GetFixtureB().UserData;
-                bool selfIsB = b.Body == state;
-                _bodyPoints.Clear();
-                AddPoints(_bodyPoints, selfIsB ? b : a, selfIsB ? a : b, mine[i]);
-                foreach (ContactPoint2D p in _bodyPoints) if (n < results.Length) results[n++] = p;
-            }
-            return n;
-        }
 
         public void ResetPlayer(Vector2 position, Vector2 velocity, float rotation, float angularVelocity)
         {
@@ -1671,8 +1716,8 @@ namespace IGTAP.EngineSim
             /// <summary>Bit for bit: a -0 is another value to the digest, and a NaN never matches (the capture makes a new list).</summary>
             public bool Is(Transform t)
             {
-                return Same(Position, t.m_Position) && Same(LocalPosition, t.m_LocalPosition) && Same(LocalScale, t.m_LocalScale)
-                    && Same(LossyScale, t.m_LossyScale) && Same(Rotation, t.m_Rotation) && Same(LocalRotation, t.m_LocalRotation);
+                return SameBits(Position, t.m_Position) && SameBits(LocalPosition, t.m_LocalPosition) && SameBits(LocalScale, t.m_LocalScale)
+                    && SameBits(LossyScale, t.m_LossyScale) && SameBits(Rotation, t.m_Rotation) && SameBits(LocalRotation, t.m_LocalRotation);
             }
 
             public void WriteTo(Transform t)
@@ -1681,9 +1726,6 @@ namespace IGTAP.EngineSim
                 t.m_Rotation = Rotation; t.m_LocalRotation = LocalRotation;
             }
 
-            static bool Same(float a, float b) { return BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b); }
-            static bool Same(Vector3 a, Vector3 b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z); }
-            static bool Same(Quaternion a, Quaternion b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z) && Same(a.w, b.w); }
         }
 
         /// <summary>A rebuilt collider as a snapshot holds it: its fixtures and what they were built with.</summary>
@@ -1774,6 +1816,7 @@ namespace IGTAP.EngineSim
 
         public void Restore(object snapshot)
         {
+            Generation++;
             Settle();
             var s = (PhysicsSnapshot)snapshot;
             _b2.LoadState(s.World);
@@ -1877,7 +1920,7 @@ namespace IGTAP.EngineSim
         internal int RigidbodyIdOf(b2Body body)
         {
             if (ReferenceEquals(body, _ground)) return -1;
-            foreach (var pair in _bodies) if (ReferenceEquals(pair.Value.Body, body)) return pair.Key.GetInstanceID();
+            if (body.UserData is BodyState s && ReferenceEquals(s.Body, body)) return s.Rigidbody.GetInstanceID();
             throw new NotSupportedException("a snapshot holds a physics body this world doesn't; not saved");
         }
 
@@ -1899,7 +1942,7 @@ namespace IGTAP.EngineSim
             foreach (Built saved in ((PhysicsSnapshot)snapshot).Changed)
             {
                 ColliderState state = saved.State;
-                if (_changed.Contains(state)) continue;
+                if (state.Tracked) continue;
                 // It changed first in the snapshot's world; what this world loaded takes the pristine fixtures' place.
                 state.Tracked = true;
                 _changed.Add(state);
@@ -1969,9 +2012,9 @@ namespace IGTAP.EngineSim
         /// (a plain mix): a state file outlives the process that wrote it.</summary>
         public static int FingerprintOf(b2Fixture fixture)
         {
-            ulong h = 14695981039346656037UL;
+            ulong h = SnapshotStore.HashSeed;
             void MixF(float v) { MixL(BitConverter.SingleToInt32Bits(v)); }
-            void MixL(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (8 * i)); h *= 1099511628211UL; } }
+            void MixL(long v) { h = SnapshotStore.Feed(h, v, 8); }
             void Shape(b2Vec2 v) { MixF(v.x); MixF(v.y); }
             switch (fixture.b2Shape)
             {
@@ -1998,19 +2041,16 @@ namespace IGTAP.EngineSim
 
     static class Messages
     {
-        static readonly Dictionary<(Type, string), System.Reflection.MethodInfo> Cache = new Dictionary<(Type, string), System.Reflection.MethodInfo>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), System.Reflection.MethodInfo> Cache =
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), System.Reflection.MethodInfo>();
 
-        public static System.Reflection.MethodInfo Find(Type type, string name)
+        public static System.Reflection.MethodInfo Find(Type type, string name) => Cache.GetOrAdd((type, name), key =>
         {
-            lock (Cache)
-            {
-                if (Cache.TryGetValue((type, name), out var m)) return m;
-                System.Reflection.MethodInfo found = null;
-                for (Type t = type; t != null && found == null; t = t.BaseType)
-                    found = t.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
-                        | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly);
-                return Cache[(type, name)] = found;
-            }
-        }
+            System.Reflection.MethodInfo found = null;
+            for (Type t = key.Item1; t != null && found == null; t = t.BaseType)
+                found = t.GetMethod(key.Item2, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly);
+            return found;
+        });
     }
 }

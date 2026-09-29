@@ -109,15 +109,6 @@ namespace Box2D
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public int GetVertexCount() => _count;
-
-        public int VertexCount
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => _count;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Vec2 GetVertex(int index) => _vertices[index];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -137,25 +128,6 @@ namespace Box2D
             }
 
             return bestIndex;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Vec2 GetSupportVertex(in b2Vec2 d)
-        {
-            var bestIndex = 0;
-            float bestValue = b2Vec2.Dot(_vertices[0], d);
-
-            for (var i = 1; i < _count; ++i)
-            {
-                float value = b2Vec2.Dot(_vertices[i], d);
-                if (value > bestValue)
-                {
-                    bestIndex = i;
-                    bestValue = value;
-                }
-            }
-
-            return _vertices[bestIndex];
         }
     }
 }

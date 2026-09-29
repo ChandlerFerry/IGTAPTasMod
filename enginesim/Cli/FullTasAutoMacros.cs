@@ -9,7 +9,7 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim.Cli
 {
     /// <summary>
-    /// Stage 4's macro edges (docs/fulltas.md "Auto", the contracts' <see cref="IMacroSource"/>): recurring input patterns
+    /// Stage 4's macro edges (docs/fulltas.md "Auto"): recurring input patterns
     /// mined around the contact events (<see cref="ContactLog"/>) of the good routes — VMAN 34.28 and 34.88, the FalseEnding
     /// and TrueEnding bests, the course records — plus the runs the library files. A pattern is the input window played from
     /// the anchor contact on (its <see cref="Macro.Anchor"/> state: Land, Wall, DashEnd, Reset or Goal), with the preconditions
@@ -18,7 +18,7 @@ namespace IGTAP.EngineSim.Cli
     /// the down-dash landing chain every landing), so a window with one use is travel noise and is dropped.
     /// Loaded by reflection (FullTasAuto): a constructor filled by name (goals, labels, threads, name, library, log).
     /// </summary>
-    sealed class FullTasAutoMacros : IMacroSource
+    sealed class FullTasAutoMacros
     {
         /// <summary>The window after a Land/Wall/DashEnd anchor, in input ticks (TechGrafts' WindowAfter).</summary>
         public const int ContactWindow = 30;
@@ -76,10 +76,8 @@ namespace IGTAP.EngineSim.Cli
         readonly Action<string> _log;
         List<Pattern> _ranked = new List<Pattern>();
 
-        /// <summary>The reflection loader's constructor (FullTasAuto fills what it has by name); <paramref name="corpus"/> is
-        /// for tests and tools (null: the built-in corpus).</summary>
-        public FullTasAutoMacros(int goals = 0, string[] labels = null, int threads = 1, string name = null,
-            IStateLibrary library = null, Action<string> log = null, IEnumerable<Source> corpus = null)
+        /// <summary><paramref name="corpus"/> is for tests and tools (null: the built-in corpus).</summary>
+        public FullTasAutoMacros(Action<string> log = null, IEnumerable<Source> corpus = null)
         {
             _log = log ?? Console.Error.WriteLine;
             if (corpus != null) _corpus.AddRange(corpus);
@@ -387,7 +385,8 @@ namespace IGTAP.EngineSim.Cli
 
         static string Sign(float v) => v > 0f ? "+" : v < 0f ? "-" : "0";
 
-        static ulong StableHash(string text)
+        /// <summary>FNV-1a over the text's UTF-16 chars (stable across processes, unlike string.GetHashCode).</summary>
+        internal static ulong StableHash(string text)
         {
             ulong h = 14695981039346656037UL;
             foreach (char c in text) h = (h ^ c) * 1099511628211UL;
@@ -429,21 +428,19 @@ namespace IGTAP.EngineSim.Cli
         /// its own thread: building a Simulation and replaying on the caller's thread clobbers the engine's thread-static
         /// state, and the loop's own Simulation plays on that thread (VerifyFresh isolates the same way). <see cref="For"/>
         /// never replays and nothing is kept in statics, so it is safe on any thread.</summary>
-        public void Mine(IStateLibrary library)
+        public void Mine(StateLibrary library)
         {
-            var thread = new System.Threading.Thread(() =>
+            Solve.OnThread(() =>
             {
                 try { MineCore(library); }
                 catch (Exception ex) { _log("macros: mine: " + ex.GetBaseException().Message); }
-            }) { IsBackground = true, Name = "fulltas-macros" };
-            thread.Start();
-            thread.Join();
+            });
         }
 
         bool _corpusMined;
         readonly HashSet<ulong> _minedRuns = new HashSet<ulong>();
 
-        void MineCore(IStateLibrary library)
+        void MineCore(StateLibrary library)
         {
             if (!_corpusMined)
             {
@@ -705,8 +702,8 @@ namespace IGTAP.EngineSim.Cli
             string traces = TechGrafts.ResolveTechDir(Path.Combine(RepoRoot(), "enginesim"), Solve.Option(args, "--tech-dir", (string)null));
             var corpus = DefaultCorpus(traces, Solve.Option(args, "--repo", (string)null));
             if (args.Contains("--no-default")) corpus.Clear();
-            foreach (string a in Args(args, "--mine")) corpus.Add(FileSource(a, traces, false));
-            foreach (string a in Args(args, "--measure")) corpus.Add(FileSource(a, traces, true));
+            foreach (string a in Solve.Args(args, "--mine")) corpus.Add(FileSource(a, traces, false));
+            foreach (string a in Solve.Args(args, "--measure")) corpus.Add(FileSource(a, traces, true));
             var macros = new FullTasAutoMacros(corpus: corpus) { MinUses = Solve.Option(args, "--min-uses", 2) };
             macros.Mine(null);
             Console.WriteLine($"macros: {macros.Patterns.Count} patterns from {corpus.Count(s => !s.HeldOut)} routes");
@@ -718,11 +715,6 @@ namespace IGTAP.EngineSim.Cli
             List<Sample> samples = macros.Measure(Solve.Option(args, "--samples", 120));
             Report(samples, macros.Patterns, Solve.Option(args, "--out", (string)null));
             return 0;
-        }
-
-        static IEnumerable<string> Args(string[] args, string name)
-        {
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) yield return args[i + 1];
         }
 
         static Source FileSource(string spec, string traces, bool heldOut)

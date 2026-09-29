@@ -140,7 +140,7 @@ namespace IGTAPTasMod
             if (recording == null) throw new InvalidDataException("File contains no recording.");
             if (recording.schemaVersion != RecordingDefinition.CurrentSchemaVersion)
                 throw new InvalidDataException("Unsupported schema " + recording.schemaVersion + "; expected " + RecordingDefinition.CurrentSchemaVersion + ".");
-            if (string.IsNullOrEmpty(recording.id) || recording.samples == null || recording.semanticSteps == null)
+            if (string.IsNullOrEmpty(recording.id) || recording.samples == null)
                 throw new InvalidDataException("Recording is incomplete.");
         }
 
@@ -153,6 +153,8 @@ namespace IGTAPTasMod
             return changed;
         }
 
+        /// <summary>Old routes timed a step in milliseconds (<see cref="ActionEndCondition.Duration"/>, durationMs, timeoutMs):
+        /// MacroEngine counts physics ticks only, so they become ticks once, at load.</summary>
         private static bool NormalizeStepFrameTiming(MacroStep step, int tickMs)
         {
             if (step == null) return false;
@@ -163,20 +165,12 @@ namespace IGTAPTasMod
                 step.endCondition = ActionEndCondition.FixedTicks;
                 changed = true;
             }
-            else if (step.endCondition == ActionEndCondition.FixedTicks && step.durationTicks < 1)
-            {
-                step.durationTicks = 1;
-                changed = true;
-            }
-            int durationMs = Mathf.Max(1, step.durationTicks) * tickMs;
-            if (step.durationMs != durationMs) { step.durationMs = durationMs; changed = true; }
+            else if (step.durationTicks < 1) { step.durationTicks = 1; changed = true; }
             if (step.timeoutTicks < 1)
             {
                 step.timeoutTicks = Mathf.Max(1, Mathf.RoundToInt(step.timeoutMs / (float)tickMs));
                 changed = true;
             }
-            int timeoutMs = step.timeoutTicks * tickMs;
-            if (step.timeoutMs != timeoutMs) { step.timeoutMs = timeoutMs; changed = true; }
             return changed;
         }
 
@@ -213,14 +207,17 @@ namespace IGTAPTasMod
                 Directory.CreateDirectory(directory);
                 string temporary = path + ".tmp";
                 File.WriteAllText(temporary, JsonConvert.SerializeObject(value, Formatting.Indented));
-                if (File.Exists(path))
-                {
-                    string backup = keepBackup ? path + ".bak" : null;
-                    File.Replace(temporary, path, backup);
-                }
-                else File.Move(temporary, path);
+                ReplaceAtomic(temporary, path, keepBackup ? path + ".bak" : null);
             }
             catch (Exception ex) { Logger.LogError("Could not save " + path + ": " + ex); }
+        }
+
+        /// <summary>A file written aside (<paramref name="temporary"/>) moved over <paramref name="path"/>: a crash mid-write
+        /// never leaves it half written.</summary>
+        static void ReplaceAtomic(string temporary, string path, string backup = null)
+        {
+            if (File.Exists(path)) File.Replace(temporary, path, backup);
+            else File.Move(temporary, path);
         }
 
         private static string SafeId(string id)
@@ -228,6 +225,23 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(id)) throw new InvalidDataException("A stable ID is required.");
             foreach (char invalid in Path.GetInvalidFileNameChars()) id = id.Replace(invalid, '_');
             return id;
+        }
+    }
+
+    /// <summary>Files parsed once per version, by path: <see cref="Get"/> parses a file again only when its write time
+    /// changed. What it returns is shared, for reading only.</summary>
+    internal sealed class CachedFiles<T> : Dictionary<string, (DateTime written, T value)>
+    {
+        public CachedFiles() { }
+        public CachedFiles(IEqualityComparer<string> comparer) : base(comparer) { }
+
+        public T Get(string path, Func<string, T> parse)
+        {
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            if (TryGetValue(path, out var cached) && cached.written == written) return cached.value;
+            T value = parse(path);
+            this[path] = (written, value);
+            return value;
         }
     }
 }

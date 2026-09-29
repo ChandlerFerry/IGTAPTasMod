@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using HarmonyLib;
 using IGTAPTasMod;
 using UnityEngine;
 
@@ -13,13 +13,9 @@ namespace IGTAP.EngineSim
     {
         const int CurrencyCount = 7;
         const int Cash = (int)globalStats.Currencies.Cash;
-        static readonly FieldInfo CooldownField = typeof(upgradeBox).GetField("boxCooldown", BindingFlags.Instance | BindingFlags.NonPublic);
-        static readonly Func<upgradeBox, float> GetCooldown = Getter<float>(CooldownField);
-        static readonly Action<upgradeBox, float> SetCooldown = Setter<float>(CooldownField);
-        static readonly Func<upgradeBox, globalStats.Currencies> GetCurrency =
-            Getter<globalStats.Currencies>(typeof(upgradeBox).GetField("upgradeCurrency", BindingFlags.Instance | BindingFlags.NonPublic));
-
-        static readonly FieldInfo ClearedThisVmanField = typeof(courseScript).GetField("clearedThisVman", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly AccessTools.FieldRef<upgradeBox, float> Cooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
+        static readonly AccessTools.FieldRef<upgradeBox, globalStats.Currencies> Currency = AccessTools.FieldRefAccess<upgradeBox, globalStats.Currencies>("upgradeCurrency");
+        static readonly AccessTools.FieldRef<courseScript, bool> ClearedThisVman = AccessTools.FieldRefAccess<courseScript, bool>("clearedThisVman");
 
         readonly Simulation _sim;
         readonly upgradeBox[] _boxes;
@@ -85,10 +81,10 @@ namespace IGTAP.EngineSim
             foreach (upgradeBox box in _boxes)
             {
                 if (!box.isActiveAndEnabled) continue;
-                float cooldown = GetCooldown(box);
+                float cooldown = Cooldown(box);
                 if (!(cooldown >= 0f)) continue;
                 _sim.Touch(box);
-                SetCooldown(box, cooldown - dt);
+                Cooldown(box) = cooldown - dt;
             }
         }
 
@@ -97,10 +93,10 @@ namespace IGTAP.EngineSim
             return _start[currency] - _spent[currency] + _awarded[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
         }
 
-        public double CashNow
-        {
-            get { return _start[Cash] - _spent[Cash] + _awarded[Cash] + (Economy?.Earned ?? 0.0); }
-        }
+        public double CashNow => Available(Cash);
+
+        /// <summary>The box is one of these (by id or hierarchy path).</summary>
+        bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
 
         /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
         internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
@@ -114,9 +110,9 @@ namespace IGTAP.EngineSim
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
-                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
+                if (!Named(boxes, b)) continue;
                 if (!b.isActive || !b.gameObject.activeInHierarchy) return null;
-                int currency = (int)GetCurrency(b);
+                int currency = (int)Currency(b);
                 if (currency >= 0 && currency < CurrencyCount) need[currency] += b.upgradeCost;
             }
             for (int c = 0; c < CurrencyCount; c++)
@@ -128,7 +124,7 @@ namespace IGTAP.EngineSim
         internal bool Buying(string[] boxes)
         {
             foreach (BuyMaxRoutine r in _buyMax)
-                if (Array.IndexOf(boxes, _ids[r.Box]) >= 0 || Array.IndexOf(boxes, _paths[r.Box]) >= 0) return true;
+                if (Named(boxes, r.Box)) return true;
             return false;
         }
 
@@ -138,8 +134,8 @@ namespace IGTAP.EngineSim
             var parts = new List<string>();
             foreach (upgradeBox b in _boxes)
             {
-                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
-                int currency = (int)GetCurrency(b);
+                if (!Named(boxes, b)) continue;
+                int currency = (int)Currency(b);
                 double held = currency >= 0 && currency < CurrencyCount ? Available(currency) : double.NaN;
                 parts.Add(_paths[b] + ": " + b.TimesUsed + "/" + b.Cap + (b.isActive ? "" : ", inactive") + (b.gameObject.activeInHierarchy ? "" : ", hidden")
                     + ", costs " + b.upgradeCost.ToString("G4") + " " + (globalStats.Currencies)currency + ", holds " + held.ToString("G4"));
@@ -169,18 +165,18 @@ namespace IGTAP.EngineSim
 
         void VmanCourseCompleted(courseScript course)
         {
-            if ((bool)ClearedThisVmanField.GetValue(course)) return;
+            if (ClearedThisVman(course)) return;
             int currency = (int)course.completionCurrency;
             if (course.completionReward != 0.0 && currency >= 0 && currency < CurrencyCount) _awarded[currency] += course.completionReward;
-            ClearedThisVmanField.SetValue(course, true);
+            ClearedThisVman(course) = true;
         }
 
         internal void Stay(object boxObject, Collider2D collision)
         {
             var box = (upgradeBox)boxObject;
-            if (!(GetCooldown(box) <= 0f)) return;
-            SetCooldown(box, 0.2f);
-            int currency = (int)GetCurrency(box);
+            if (!(Cooldown(box) <= 0f)) return;
+            Cooldown(box) = 0.2f;
+            int currency = (int)Currency(box);
             if (!(Available(currency) >= box.upgradeCost && box.isActive)) return;
             if (!(box.buyMax && !box.neverBuyMax))
             {
@@ -197,26 +193,27 @@ namespace IGTAP.EngineSim
             UnityEngine.Random.Draw();
         }
 
-        static readonly FieldInfo UpgradeTreeField = typeof(upgradeBox).GetField("upgradeTree", BindingFlags.Instance | BindingFlags.NonPublic);
-        static readonly FieldInfo SegmentsToTriggerField = typeof(upgradeBox).GetField("SegmentsToTrigger", BindingFlags.Instance | BindingFlags.NonPublic);
-        static readonly FieldInfo TreeSegmentsField = typeof(TreeController).GetField("TreeSegments", BindingFlags.Instance | BindingFlags.NonPublic);
-        static readonly FieldInfo AudioCooldownField = typeof(TreeController).GetField("audioCooldown", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly AccessTools.FieldRef<upgradeBox, TreeController> UpgradeTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
+        static readonly AccessTools.FieldRef<upgradeBox, int[]> SegmentsToTrigger = AccessTools.FieldRefAccess<upgradeBox, int[]>("SegmentsToTrigger");
+        static readonly AccessTools.FieldRef<TreeController, TreeSegmentActivationComponent[]> TreeSegments =
+            AccessTools.FieldRefAccess<TreeController, TreeSegmentActivationComponent[]>("TreeSegments");
+        static readonly AccessTools.FieldRef<TreeController, bool> AudioCooldown = AccessTools.FieldRefAccess<TreeController, bool>("audioCooldown");
 
         void GrowTree(upgradeBox box)
         {
-            var tree = UpgradeTreeField.GetValue(box) as TreeController;
-            int[] segments = SegmentsToTriggerField.GetValue(box) as int[];
+            TreeController tree = UpgradeTree(box);
+            int[] segments = SegmentsToTrigger(box);
             if (tree == null || segments == null || segments.Length == 0 || tree.GrownSegments.Contains(segments[0])) return;
-            Array lengths = TreeSegmentsField.GetValue(tree) as Array;
+            TreeSegmentActivationComponent[] lengths = TreeSegments(tree);
             _sim.Touch(tree);
             foreach (int segment in segments)
             {
                 if (lengths == null || segment >= lengths.Length) continue;
-                if (!(bool)AudioCooldownField.GetValue(tree))
+                if (!AudioCooldown(tree))
                 {
                     UnityEngine.Random.Draw();
                     UnityEngine.Random.Draw();
-                    AudioCooldownField.SetValue(tree, true);
+                    AudioCooldown(tree) = true;
                     tree.Invoke("EndAudioCooldown", 0.3f);
                 }
                 tree.GrownSegments.Add(segment);
@@ -386,18 +383,6 @@ namespace IGTAP.EngineSim
             string path = t.name;
             for (Transform p = t.parent; p != null; p = p.parent) path = p.name + "/" + path;
             return path;
-        }
-
-        static Func<upgradeBox, T> Getter<T>(FieldInfo field)
-        {
-            ParameterExpression box = Expression.Parameter(typeof(upgradeBox));
-            return Expression.Lambda<Func<upgradeBox, T>>(Expression.Field(box, field), box).Compile();
-        }
-
-        static Action<upgradeBox, T> Setter<T>(FieldInfo field)
-        {
-            ParameterExpression box = Expression.Parameter(typeof(upgradeBox)), value = Expression.Parameter(typeof(T));
-            return Expression.Lambda<Action<upgradeBox, T>>(Expression.Assign(Expression.Field(box, field), value), box, value).Compile();
         }
     }
 }

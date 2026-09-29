@@ -387,10 +387,7 @@ namespace Box2D
                 {
                     b2Fixture next = f.m_next;
                     f.m_next = null;
-                    if (Array.IndexOf(rec.fixtures, f) < 0)
-                    {
-                        f.m_body = null;
-                    }
+                    f.m_body = null; // the record's own fixtures get it back below
 
                     f = next;
                 }
@@ -598,7 +595,7 @@ namespace Box2D
             && ReferenceEquals(a.UserData, b.UserData) && a.Height == b.Height && a.Moved == b.Moved;
 
         // The tree equals _synced (the snapshot last loaded or saved) except at the _dirty indices written since; null means
-        // unknown (a pool growth, rebuild or origin shift), so the next load copies the whole base. Every node write in
+        // unknown (a pool growth), so the next load copies the whole base. Every node write in
         // DynamicTree.cs calls Touch. IGTAP_TREE_CHECK=1 checks each load and save against the full copy/compare.
         private TreeSnapshot _synced;
         private bool[] _dirtyFlag = new bool[256];

@@ -41,11 +41,8 @@ namespace Box2D
             circleA = (b2CircleShape)m_fixtureA.b2Shape;
         }
 
-        public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
+        public override void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            manifold = new b2Manifold();
-            //manifold.pointCount = 0;
-
             b2Vec2 pA = Math.Mul(xfA, circleA.m_p);
             b2Vec2 pB = Math.Mul(xfB, circleB.m_p);
 
@@ -63,7 +60,7 @@ namespace Box2D
             manifold.localNormal = b2Vec2.Zero;
             manifold.pointCount = 1;
 
-            manifold.points[0] = new b2ManifoldPoint();
+            manifold.NewPoint(0);
             manifold.points[0].localPoint = circleB.m_p;
             manifold.points[0].id.key = 0;
         }

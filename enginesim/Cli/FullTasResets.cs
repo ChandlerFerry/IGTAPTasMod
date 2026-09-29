@@ -85,7 +85,7 @@ namespace IGTAP.EngineSim.Cli
         {
             Route r = Evaluate(inputs, limit);
             if (r.Progress < limit) return (new long[0], 0f);
-            Vector2 v = (Vector2)VelocityOf.GetValue(_eval.Player) + (Vector2)MomentumOf.GetValue(_eval.Player);
+            Vector2 v = _eval.Player.Velocity + _eval.Player.momentum;
             return (Enumerable.Range(reached, limit - reached).Select(g => r.GoalPhysics[g]).ToArray(), v.magnitude);
         }
     }

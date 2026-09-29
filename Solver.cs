@@ -506,28 +506,19 @@ namespace IGTAPTasMod
         }
 
         OptionalBlock[] _optionalBlocks = new OptionalBlock[0];
-        DateTime _optionalBlocksRead;
-        // forced-paths.json is looked at once a second at most (the studio's courses ask for every course); EditForcedPaths,
-        // the plugin's own writer, makes the next call look again.
-        static float _optionalBlocksCheckAt = float.NegativeInfinity;
+        JObject _optionalBlocksOf;
 
         IEnumerable<OptionalBlock> OptionalBlocks(int course)
         {
-            if (Time.unscaledTime >= _optionalBlocksCheckAt)
+            JObject root = ForcedPaths();
+            if (root != _optionalBlocksOf)
             {
-                _optionalBlocksCheckAt = Time.unscaledTime + 1f;
-                string exe = EngineSimExe;
-                string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
-                DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
-                if (stamp != _optionalBlocksRead)
-                {
-                    _optionalBlocksRead = stamp;
-                    _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
-                        : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
-                            .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
-                                course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
-                                caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
-                }
+                _optionalBlocksOf = root;
+                _optionalBlocks = root == null ? new OptionalBlock[0]
+                    : ((JArray)root["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
+                        .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
+                            course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
+                            caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
             }
             return _optionalBlocks.Where(b => b.course == course);
         }
@@ -548,7 +539,7 @@ namespace IGTAPTasMod
             _solveQueue.AddRange(jobs);
             _solveMinutes = minutes;
             _solveMaxMinutes = Math.Max(minutes, FloatNumber(body, "maxMinutes", minutes));
-            _solveRepeat = body["repeat"] != null && body["repeat"].Type == JTokenType.Boolean && (bool)body["repeat"];
+            _solveRepeat = Truthy(body, "repeat");
             _solvePass = 1;
             _solverLog.Clear();
             StartSolveJob(0);
@@ -576,13 +567,41 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
         }
 
-        void KillSolveProcess()
+        void KillSolveProcess() { KillEngineSim(ref _solveProcess, "offline solver"); }
+
+        /// <summary>
+        /// The offline engine run with <paramref name="args"/>, below the game: a solve takes nearly every core, and at normal
+        /// priority 1x playback (280 rendered frames a second, each a fixed game-time step) lost frames to it; its children
+        /// (humanize, confirm) inherit it. With <paramref name="output"/> its stdout and stderr lines go there as they come,
+        /// else the caller reads them; <paramref name="stdin"/> keeps its stdin open for a "stop".
+        /// </summary>
+        static Process StartEngineSim(string args, ConcurrentQueue<string> output = null, bool stdin = false)
         {
-            if (_solveProcess == null) return;
-            try { if (!_solveProcess.HasExited) _solveProcess.Kill(); }
-            catch (Exception ex) { Logger.LogWarning("Could not stop the offline solver: " + ex.Message); }
-            _solveProcess.Dispose();
-            _solveProcess = null;
+            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                RedirectStandardInput = stdin, WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
+            if (output != null)
+            {
+                process.OutputDataReceived += (sender, e) => { if (e.Data != null) output.Enqueue(e.Data); };
+                process.ErrorDataReceived += (sender, e) => { if (e.Data != null) output.Enqueue(e.Data); };
+            }
+            process.Start();
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
+            if (output != null)
+            {
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
+            return process;
+        }
+
+        void KillEngineSim(ref Process process, string what)
+        {
+            if (process == null) return;
+            try { if (!process.HasExited) process.Kill(); }
+            catch (Exception ex) { Logger.LogWarning("Could not stop the " + what + ": " + ex.Message); }
+            process.Dispose();
+            process = null;
         }
 
         void EndSolveJob(string outcome)
@@ -799,18 +818,7 @@ namespace IGTAPTasMod
             }
             SolveJob job = _solveQueue[_solveIndex];
             string args = CourseSolveArgs(job, course, (string)captured["path"], name, _solveMinutes, out string what, out _solveAuto);
-            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
-            process.OutputDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
-            process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
-            process.Start();
-            // Below the game: the solve takes nearly every core, and at normal priority 1x playback (280 rendered frames a
-            // second, each a fixed game-time step) lost frames to it. Its children (humanize, confirm) inherit it.
-            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            _solveProcess = process;
+            _solveProcess = StartEngineSim(args, _solveOutput);
             _solverStatus = what + "; turbo checks every new best";
             Logger.LogInfo("Optimize: " + EngineSimExe + " " + args);
         }
@@ -1016,12 +1024,8 @@ namespace IGTAPTasMod
         {
             try
             {
-                using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
-                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                    WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
+                using (Process process = StartEngineSim(args))
                 {
-                    process.Start();
-                    try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
                     var errors = process.StandardError.ReadToEndAsync();
                     process.StandardOutput.ReadToEnd();
                     process.WaitForExit();
@@ -1178,11 +1182,6 @@ namespace IGTAPTasMod
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
             List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps, course);
-            if (_techStart != null && _techStart.omniDash)
-            {
-                savedAbilities.Add(("omniDashUnlocked", GetMovementField(player, "omniDashUnlocked")));
-                SetMovementField(player, "omniDashUnlocked", true);
-            }
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -1339,11 +1338,9 @@ namespace IGTAPTasMod
                     && last.rawMoveX == k.x && last.rawMoveY == k.y && last.rawJumpHeld == k.held)
                 {
                     last.durationTicks++;
-                    last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
                     continue;
                 }
                 steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
-                    durationMs = Mathf.RoundToInt(Time.fixedDeltaTime * 1000f), endCondition = ActionEndCondition.FixedTicks,
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
                     dashJumpFrame = k.dash ? k.dashJump : 0, springDashFrame = k.springDash, lockMoveX = k.lockX, lockMoveY = k.lockY,

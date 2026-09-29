@@ -409,10 +409,9 @@ namespace IGTAP.EngineSim.Cli
             string[] runLabels = _labels;
             int count = _goals;
             Route best = _best;
-            Exception failed = null;
-            var thread = new Thread(() =>
+            try
             {
-                try
+                Solve.OnThread(() =>
                 {
                     Simulation sim = Solve.Creator(trace, header)();
                     sim.StrictBuys = true;
@@ -427,13 +426,7 @@ namespace IGTAP.EngineSim.Cli
                     _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
                     Log($"harvest run {run}: its best plays {r.Progress} of its {labels.Length} goals");
                     Harvest(start, new List<InputTick>(), 0, r.Progress);
-                }
-                catch (Exception ex) { failed = ex; }
-            }, 64 << 20);
-            try
-            {
-                thread.Start();
-                thread.Join();
+                });
             }
             finally
             {
@@ -443,7 +436,6 @@ namespace IGTAP.EngineSim.Cli
                 _goals = count;
                 _best = best;
             }
-            if (failed != null) throw failed;
         }
 
         /// <summary>A goal given as its 1-based number or its label (first occurrence); fallback when empty.</summary>

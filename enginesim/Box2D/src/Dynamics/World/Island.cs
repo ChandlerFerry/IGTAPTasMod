@@ -156,8 +156,6 @@ namespace Box2D
         public readonly int m_bodyCapacity;
         public readonly int m_contactCapacity;
         private readonly b2Contact[] m_contacts;
-        private readonly b2Joint[] m_joints;
-        private readonly b2ContactListener m_listener;
 
         private readonly b2Position[] m_positions;
         private readonly b2Velocity[] m_velocities;
@@ -166,41 +164,31 @@ namespace Box2D
 
         public int m_bodyCount;
         public int m_contactCount;
-        private int m_jointCount;
 
-        // This island's contact solver and joint solver data, reused by every Solve/SolveTOI (see ContactSolver).
+        // This island's contact solver, reused by every Solve/SolveTOI (see ContactSolver).
         private readonly ContactSolver m_contactSolver = new ContactSolver();
-        private readonly SolverData m_solverData = new SolverData();
 
-        public b2Island(int bodyCapacity, int contactCapacity, int jointCapacity, b2ContactListener listener)
+        public b2Island(int bodyCapacity, int contactCapacity)
         {
             m_bodyCapacity = bodyCapacity;
             m_contactCapacity = contactCapacity;
 
-            m_listener = listener;
-
             m_bodies = new b2Body[bodyCapacity];
             m_contacts = new b2Contact[contactCapacity];
-            m_joints = new b2Joint[jointCapacity];
 
             m_velocities = new b2Velocity[m_bodyCapacity];
             m_positions = new b2Position[m_bodyCapacity];
-
-            m_solverData.positions = m_positions;
-            m_solverData.velocities = m_velocities;
         }
 
         // Whether this island can be reused for a step that would size a new one with these arguments.
-        public bool Fits(int bodyCapacity, int contactCapacity, int jointCapacity, b2ContactListener listener)
-            => m_bodyCapacity >= bodyCapacity && m_contactCapacity >= contactCapacity && m_joints.Length >= jointCapacity
-            && m_listener == listener;
+        public bool Fits(int bodyCapacity, int contactCapacity)
+            => m_bodyCapacity >= bodyCapacity && m_contactCapacity >= contactCapacity;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Clear()
         {
             m_bodyCount = 0;
             m_contactCount = 0;
-            m_jointCount = 0;
         }
 
         public void Solve(in b2TimeStep step, in b2Vec2 gravity, bool allowSleep)
@@ -222,9 +210,8 @@ namespace Box2D
                 if (b.m_type == b2BodyType.Dynamic)
                 {
                     // Integrate velocities.
-                    v += b2Settings.useLegacyGravityIntegration
-                        ? h * (b.m_gravityScale * gravity + b.m_invMass * b.m_force)
-                        : h * b.m_invMass * (b.m_gravityScale * b.m_mass * gravity + b.m_force);
+                    // 2.3.x (Unity); 2.4.1 is h * invMass * (gravityScale * mass * gravity + force), rounding differently.
+                    v += h * (b.m_gravityScale * gravity + b.m_invMass * b.m_force);
                     w += h * b.m_invI * b.m_torque;
 
                     // Apply damping.
@@ -245,10 +232,6 @@ namespace Box2D
                 m_velocities[i].w = w;
             }
 
-            // Solver data
-            SolverData solverData = m_solverData;
-            solverData.step = step;
-
             // Initialize velocity constraints.
             ContactSolverDef contactSolverDef;
             contactSolverDef.step = step;
@@ -266,19 +249,9 @@ namespace Box2D
                 contactSolver.WarmStart();
             }
 
-            for (var i = 0; i < m_jointCount; ++i)
-            {
-                m_joints[i].InitVelocityConstraints(solverData);
-            }
-
             // Solve velocity constraints
             for (var i = 0; i < step.velocityIterations; ++i)
             {
-                for (var j = 0; j < m_jointCount; ++j)
-                {
-                    m_joints[j].SolveVelocityConstraints(solverData);
-                }
-
                 contactSolver.SolveVelocityConstraints();
             }
 
@@ -324,14 +297,7 @@ namespace Box2D
             {
                 bool contactsOkay = contactSolver.SolvePositionConstraints();
 
-                var jointsOkay = true;
-                for (var j = 0; j < m_jointCount; ++j)
-                {
-                    bool jointOkay = m_joints[j].SolvePositionConstraints(solverData);
-                    jointsOkay = jointsOkay && jointOkay;
-                }
-
-                if (contactsOkay && jointsOkay)
+                if (contactsOkay)
                 {
                     // Exit early if the position errors are small.
                     positionSolved = true;
@@ -349,8 +315,6 @@ namespace Box2D
                 body.m_angularVelocity = m_velocities[i].w;
                 body.SynchronizeTransform();
             }
-
-            Report(contactSolver._velocityConstraints);
 
             if (allowSleep)
             {
@@ -486,8 +450,6 @@ namespace Box2D
                 body.m_angularVelocity = w;
                 body.SynchronizeTransform();
             }
-
-            Report(contactSolver._velocityConstraints);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -503,35 +465,6 @@ namespace Box2D
         {
             //Debug.Assert(_contactCount < _contactCapacity);
             m_contacts[m_contactCount++] = contact;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void Add(b2Joint joint)
-        {
-            //Debug.Assert(_jointCount < _jointCapacity);
-            m_joints[m_jointCount++] = joint;
-        }
-
-        public void Report(ContactVelocityConstraint[] constraints)
-        {
-            if (m_listener == null)
-            {
-                return;
-            }
-
-            for (var i = 0; i < m_contactCount; ++i)
-            {
-                b2Contact c = m_contacts[i];
-                ContactVelocityConstraint cc = constraints[i];
-                var impulse = new b2ContactImpulse();
-                for (var j = 0; j < cc.pointCount; ++j)
-                {
-                    impulse.normalImpulses[j] = cc.points[j].normalImpulse;
-                    impulse.tangentImpulses[j] = cc.points[j].tangentImpulse;
-                }
-
-                m_listener.PostSolve(c, impulse);
-            }
         }
     }
 }

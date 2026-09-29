@@ -12,7 +12,7 @@ namespace IGTAP.EngineSim.Cli
     // are bit-identical in everything that moves the player (StateKey); a stitched route is the first run's inputs up to the join
     // and the second run's after it, so it plays as one continuous run. The best known route is the shortest path through those
     // joins, recomputed whenever a run is filed; it is kept only after a replay from the start reproduces it.
-    sealed class StateLibrary : IStateLibrary
+    sealed class StateLibrary
     {
         public sealed class LibRun
         {
@@ -31,6 +31,8 @@ namespace IGTAP.EngineSim.Cli
         readonly Dictionary<(int goal, ulong key), List<int>> _byKey = new Dictionary<(int, ulong), List<int>>();
         readonly Dictionary<(int goal, ulong key), List<int>> _byPlayer = new Dictionary<(int, ulong), List<int>>();
         readonly HashSet<ulong> _runHashes = new HashSet<ulong>();
+        /// <summary>The live (unpruned) runs by their inputs' hash.</summary>
+        readonly Dictionary<ulong, LibRun> _byHash = new Dictionary<ulong, LibRun>();
         /// <summary>Joins a replay showed are not exact: (goal, key, the run switched to).</summary>
         readonly HashSet<(int, ulong, int)> _banned = new HashSet<(int, ulong, int)>();
         readonly int _goals;
@@ -46,6 +48,8 @@ namespace IGTAP.EngineSim.Cli
         public LibRun Run(int id) => _runs[id];
         public IEnumerable<LibRun> AllRuns => _runs.Where(r => r != null);
         public bool Knows(ulong hash) => _runHashes.Contains(hash);
+        /// <summary>The live run of these inputs (their hash); null when never traced or pruned.</summary>
+        public LibRun RunOf(ulong hash) => _byHash.TryGetValue(hash, out LibRun run) ? run : null;
 
         /// <summary>A traced run (FullTas.TraceRun fills it); returns its id, -1 when already known.</summary>
         public int AddTraced(LibRun run, List<LibState> states)
@@ -53,6 +57,7 @@ namespace IGTAP.EngineSim.Cli
             if (!_runHashes.Add(run.Hash)) return -1;
             run.Id = _runs.Count;
             _runs.Add(run);
+            _byHash[run.Hash] = run;
             foreach (LibState s in states)
             {
                 s.Id = _states.Count;
@@ -69,8 +74,6 @@ namespace IGTAP.EngineSim.Cli
             if (Runs > MaxRuns) Prune();
             return run.Id;
         }
-
-        int IStateLibrary.Add(IReadOnlyList<InputTick> inputs, string how) => throw new NotSupportedException("the library is filled by FullTas.TraceRun (it replays on the loop's simulation)");
 
         /// <summary>
         /// The capped Pareto set: a run is dropped when none of its states is among the 3 soonest at its (goal, kind) or among the
@@ -93,6 +96,7 @@ namespace IGTAP.EngineSim.Cli
                 if (Runs <= MaxRuns) break;
                 if (keep.Contains(r.Id)) continue;
                 _runs[r.Id] = null;
+                _byHash.Remove(r.Hash);
                 foreach (int id in r.States)
                 {
                     _byKey[(_states[id].Goal, _states[id].Key)].Remove(id);
@@ -288,14 +292,6 @@ namespace IGTAP.EngineSim.Cli
             return $"{Runs} runs, {_states.Count} states, {joins} join points";
         }
 
-        /// <summary>Join points (a (goal, key) two live runs share) under each key: the full digest joined on, the player-only key,
-        /// and with the Box2D world digest (when measured).</summary>
-        public (int full, int player, int physics) JoinCounts()
-        {
-            int Count(Func<LibState, ulong> key) => AllRuns.SelectMany(r => r.States).Select(id => _states[id])
-                .GroupBy(s => (s.Goal, key(s))).Count(g => g.Select(s => s.Run).Distinct().Count() > 1);
-            return (Count(s => s.Key), Count(s => s.PlayerKey), _states.Any(s => s.PhysicsKey != 0) ? Count(s => s.PhysicsKey) : -1);
-        }
     }
 
     sealed partial class FullTas
@@ -307,9 +303,9 @@ namespace IGTAP.EngineSim.Cli
         /// scheduler; ctg: the cost-to-go (needs lib); macros: macro seeds (needs lib); stray: a run that dies on a stray buy is
         /// re-timed as a whole (Retime) and its tail windows avoid the stray box (StrayAvoid) (needs lib); goals: the economy
         /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs).</summary>
-        HashSet<string> _parts = new HashSet<string>(DefaultParts);
+        /// <summary>Every part, all on by default.</summary>
         static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals" };
-        static readonly string[] DefaultParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals" };
+        HashSet<string> _parts = new HashSet<string>(AllParts);
         /// <summary>--parts stray's two halves (the stray study switches them one at a time).</summary>
         bool _strayRetime, _strayAvoid;
         bool Part(string p) => _parts.Contains(p);
@@ -344,14 +340,14 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         Route RouteSync(Route c, int changedEnd, string how)
         {
-            ulong hash = SnapshotIndex.Hash(c.Inputs, c.Inputs.Count);
-            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun run = _lib.RunOf(SnapshotIndex.Hash(c.Inputs, c.Inputs.Count));
             if (run == null) return null;
             var tried = new HashSet<ulong>();
             int plays = 0;
             Route Try(List<InputTick> inputs, string what)
             {
-                if (!tried.Add(SnapshotIndex.Hash(inputs, inputs.Count)) || _lib.Knows(SnapshotIndex.Hash(inputs, inputs.Count))) return null;
+                ulong hash = SnapshotIndex.Hash(inputs, inputs.Count);
+                if (!tried.Add(hash) || _lib.Knows(hash)) return null;
                 plays++;
                 Route r = TraceRun(inputs, $"{how}, {what}");
                 if (r.Progress == _goals && r.Last < _best.Last)
@@ -420,23 +416,6 @@ namespace IGTAP.EngineSim.Cli
             }));
         }
 
-        /// <summary>Reports a pull to the scheduler, with the window's own lead as the extra DAG gain when its implementation takes one
-        /// (Report(pull, ticks, cpu, dagGain)); else the contract's Report.</summary>
-        void ReportPull(Pull pull, long gain, double cpu, long dagGain)
-        {
-            MethodInfo four = _sched.GetType().GetMethods().FirstOrDefault(m => m.Name == "Report" && m.GetParameters().Length == 4);
-            SafePart(() =>
-            {
-                if (four != null)
-                {
-                    ParameterInfo[] ps = four.GetParameters();
-                    four.Invoke(_sched, new object[] { pull, Convert.ChangeType(gain, ps[1].ParameterType), Convert.ChangeType(cpu, ps[2].ParameterType), Convert.ChangeType(dagGain, ps[3].ParameterType) });
-                }
-                else _sched.Report(pull, gain, cpu);
-                return 0;
-            }, "scheduler Report");
-        }
-
         /// <summary>A stage part's call; a part that throws is logged and treated as having nothing to say.</summary>
         T SafePart<T>(Func<T> call, string what)
         {
@@ -447,14 +426,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A part's call on a thread of its own (64 MB stack, as VerifyFresh): a part that replays routes on simulations of
         /// its own leaves the loop's simulation as it was (the engine keeps per-thread state: FullTasAutoMacros.Mine on the loop's
         /// thread left the loop's simulation replaying the best to no goal at all).</summary>
-        T Isolated<T>(Func<T> call, string what)
-        {
-            T result = default;
-            var t = new System.Threading.Thread(() => result = SafePart(call, what), 64 << 20);
-            t.Start();
-            t.Join();
-            return result;
-        }
+        T Isolated<T>(Func<T> call, string what) { return Solve.OnThread(() => SafePart(call, what)); }
 
         /// <summary>After the library changes (the start, every new best): the cost-to-go refits and the macros are mined again.</summary>
         void RefitParts()
@@ -470,8 +442,7 @@ namespace IGTAP.EngineSim.Cli
         LibState BestStateAt(int goal)
         {
             if (_lib == null) return null;
-            ulong hash = SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count);
-            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun run = _lib.RunOf(SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count));
             if (run == null) return null;
             return run.States.Select(_lib.State).FirstOrDefault(s => goal == 0 ? s.Kind == LibPoint.Start : s.Goal == goal && (s.Kind & LibPoint.Goal) != 0);
         }
@@ -503,8 +474,7 @@ namespace IGTAP.EngineSim.Cli
             if (_ctg == null || _lib == null || run.Progress == 0 || run.Progress >= _goals) return null;
             int p = run.Progress;
             TraceRun(run.Inputs, "a repair's partial run");
-            ulong hash = SnapshotIndex.Hash(run.Inputs, run.Inputs.Count);
-            StateLibrary.LibRun traced = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            StateLibrary.LibRun traced = _lib.RunOf(SnapshotIndex.Hash(run.Inputs, run.Inputs.Count));
             LibState s = traced?.States.Select(_lib.State).FirstOrDefault(x => x.Goal == p && (x.Kind & LibPoint.Goal) != 0);
             if (s == null) return null;
             LibFeatures f = s.Features;
@@ -514,47 +484,17 @@ namespace IGTAP.EngineSim.Cli
             return end > _best.Last + 10 ? $"at goal {p} (tick {run.GoalPhysics[p - 1]}) the cost-to-go ({ctg:0} ticks) puts its end at {end:0}, after the best's {_best.Last}" : null;
         }
 
-        ICostToGo _ctg;
-        IPullScheduler _sched;
-        IMacroSource _macros;
+        FullTasAutoCostToGo _ctg;
+        PullScheduler _sched;
+        FullTasAutoMacros _macros;
 
-        /// <summary>
-        /// The stage's implementation in this build (a class implementing T, from its own FullTasAuto&lt;Part&gt;.cs), constructed with
-        /// the parameters it asks for by name (goals, labels, threads, cpu seconds, the run's goal list, dt, the run's name); null when
-        /// the build has none.
-        /// </summary>
-        T MakePart<T>() where T : class
+        /// <summary>The parts --parts turns on (the scheduler's regions cover the --focus goals only; the loop adds the focus's
+        /// first goal back to its pulls).</summary>
+        void MakeParts()
         {
-            Type type = typeof(FullTas).Assembly.GetTypes().FirstOrDefault(t => typeof(T).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
-            if (type == null) return null;
-            object Arg(ParameterInfo p)
-            {
-                string n = p.Name.ToLowerInvariant();
-                // The scheduler's regions cover the --focus goals only (the loop adds the focus's first goal back to its pulls).
-                bool focused = typeof(T) == typeof(IPullScheduler);
-                if (p.ParameterType == typeof(string[])) return focused ? _labels[(_focusFrom - 1).._focusTo] : _labels;
-                if (p.ParameterType == typeof(double[])) return _model?.Where(r => !focused || InFocus(r.K)).Select(r => r.Expected).ToArray();
-                if (p.ParameterType == typeof(string)) return _name;
-                if (p.ParameterType == typeof(float)) return _dt;
-                if (p.ParameterType == typeof(double)) return n.Contains("cpu") || n.Contains("budget") ? _minutes * 60 * _threads : n.Contains("dt") ? (double)_dt : _minutes * 60;
-                if (p.ParameterType == typeof(int)) return n.Contains("thread") ? _threads : n.Contains("parallel") ? _parallel : _goals;
-                if (p.ParameterType == typeof(IStateLibrary) || p.ParameterType == typeof(StateLibrary)) return _lib;
-                if (p.ParameterType == typeof(Action<string>)) return (Action<string>)(line => Log(line));
-                if (p.ParameterType.IsAssignableFrom(typeof(List<IGTAPTasMod.FullTasGoal>))) return _runGoals.Goals.ToList();
-                if (p.HasDefaultValue) return p.DefaultValue;
-                throw new InvalidOperationException($"{type.Name}: no value for constructor parameter {p.ParameterType.Name} {p.Name}");
-            }
-            foreach (ConstructorInfo c in type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).OrderByDescending(c => c.GetParameters().Length))
-            {
-                try
-                {
-                    object made = c.Invoke(c.GetParameters().Select(Arg).ToArray());
-                    Log($"auto: {typeof(T).Name} is {type.Name}");
-                    return (T)made;
-                }
-                catch (InvalidOperationException ex) { Log("auto: " + ex.Message); }
-            }
-            return null;
+            if (Part("ctg")) _ctg = new FullTasAutoCostToGo(_goals);
+            if (Part("sched")) _sched = new PullScheduler(_labels[(_focusFrom - 1).._focusTo], _minutes * 60 * _threads, _model?.Where(r => InFocus(r.K)).Select(r => r.Expected).ToArray());
+            if (Part("macros")) _macros = new FullTasAutoMacros(log: line => Log(line));
         }
 
         int _stitchTried, _stitchExact;
@@ -567,7 +507,6 @@ namespace IGTAP.EngineSim.Cli
 
         static ulong Mix(ulong h, ulong v) { h ^= v + 0x9E3779B97F4A7C15UL + (h << 6) + (h >> 2); return h * 1099511628211UL; }
 
-        bool _joinPhysics;
         static readonly FieldInfo[] NormalizedTimers = new[] { KeyDashCooldown, KeyWallCoyote, KeySinceDash }.Where(i => i >= 0).Select(i => KeyMoveFields[i]).ToArray();
 
         /// <summary>
@@ -602,34 +541,9 @@ namespace IGTAP.EngineSim.Cli
             ulong key = Mix(player, (ulong)(uint)WorldDigest(sim));
             return new LibState
             {
-                Goal = goal, Kind = kind, Key = key, PlayerKey = player, PhysicsKey = _joinPhysics ? Mix(key, sim.Physics.StateDigest()) : 0,
+                Goal = goal, Kind = kind, Key = key, PlayerKey = player,
                 Tick = tick, Input = input, Features = FeaturesNow(sim),
             };
-        }
-
-        /// <summary>
-        /// Every library state filed at a goal touch, one JSON line each (fulltas/&lt;run&gt;.auto-lib.jsonl): goal, kind, tick, run,
-        /// features, the known ticks to the end from it (null: none) and the filing run's end: the cost-to-go's data.
-        /// </summary>
-        void DumpLibrary(string file)
-        {
-            if (_lib == null) return;
-            using var w = new System.IO.StreamWriter(file, false);
-            foreach (StateLibrary.LibRun run in _lib.AllRuns)
-                foreach (int id in run.States)
-                {
-                    LibState s = _lib.State(id);
-                    if ((s.Kind & LibPoint.Goal) == 0 || s.Goal == 0) continue;
-                    long toEnd = _lib.ToEnd(id);
-                    LibFeatures f = s.Features;
-                    w.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        goal = s.Goal, kind = s.Kind.ToString(), tick = s.Tick, run = s.Run, how = run.How, runEnd = run.End == long.MaxValue ? (long?)null : run.End,
-                        toEnd = toEnd == long.MaxValue ? (long?)null : toEnd,
-                        x = f.X, y = f.Y, vx = f.VX, vy = f.VY, mx = f.MX, my = f.MY, dashes = f.DashesLeft, jumps = f.AirJumpsLeft, right = f.FacingRight,
-                        ground = f.OnGround, buys = f.BuysHash, cash = f.Cash,
-                    }));
-                }
         }
 
         static ulong Bits(float f) => (uint)BitConverter.SingleToInt32Bits(f);
@@ -647,12 +561,7 @@ namespace IGTAP.EngineSim.Cli
                 case Vector2 v2: return Mix(Bits(v2.x), Bits(v2.y));
                 case Vector3 v3: return Mix(Mix(Bits(v3.x), Bits(v3.y)), Bits(v3.z));
                 case UnityEngine.Object o: return (ulong)(uint)o.GetInstanceID() * 31;
-                case string s:
-                {
-                    ulong h = 14695981039346656037UL;
-                    foreach (char c in s) h = (h ^ c) * 1099511628211UL;
-                    return h;
-                }
+                case string s: return FullTasAutoMacros.StableHash(s);
                 case System.Collections.IEnumerable items:
                 {
                     ulong h = 0x77;
@@ -723,16 +632,19 @@ namespace IGTAP.EngineSim.Cli
             Simulation sim = _eval;
             sim.SetStart(_origin, 0);
             sim.Goals.Limit = _goals;
+            ulong hash = SnapshotIndex.Hash(inputs, inputs.Count);
+            // A run the library has is replayed for its route alone: its states aren't filed again.
+            bool file = !_lib.Knows(hash);
             var states = new List<LibState>();
             sim.Restore(_origin);
-            states.Add(Filed(sim, 0, LibPoint.Start, 0, 0));
+            if (file) states.Add(Filed(sim, 0, LibPoint.Start, 0, 0));
             LibPoint pending = LibPoint.None;
             bool ground = sim.Player.onGround, wall = sim.Player.OnWall, dash = sim.Player.dashActive;
             int progress = sim.Progress;
             RunResult rr = sim.Run(inputs, null, tick =>
             {
                 if (tick >= 1 && tick <= inputs.Count && inputs[tick - 1].reset) pending |= LibPoint.Reset;
-                if (pending != LibPoint.None)
+                if (pending != LibPoint.None && file)
                     states.Add(Filed(sim, sim.Progress, pending, sim.Engine.PhysicsTicks, tick));
                 pending = LibPoint.None;
                 return true;
@@ -756,9 +668,9 @@ namespace IGTAP.EngineSim.Cli
             var run = new StateLibrary.LibRun
             {
                 How = how, Inputs = InputRuns.From(inputs), Progress = route.Progress, End = route.Progress == _goals ? route.End : long.MaxValue,
-                Hash = SnapshotIndex.Hash(inputs, inputs.Count),
+                Hash = hash,
             };
-            if (!_lib.Knows(run.Hash)) _lib.AddTraced(run, states);
+            if (file) _lib.AddTraced(run, states);
             return route;
         }
 
@@ -819,8 +731,7 @@ namespace IGTAP.EngineSim.Cli
                 bool exact = r.Progress == _goals && r.End == end;
                 _stitchTried++;
                 if (exact) _stitchExact++;
-                var (jf, jp, jx) = _lib.JoinCounts();
-                Log($"auto stitch: library {_lib.Describe()} (join points: {jf} on the full digest, {jp} on the player alone{(jx >= 0 ? $", {jx} with the Box2D digest" : "")}); "
+                Log($"auto stitch: library {_lib.Describe()}; "
                     + $"shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}"
                     + (exact ? " (exactly as predicted)" : " (NOT as predicted)") + $"; {_stitchExact} of {_stitchTried} stitches replayed exactly so far");
                 if (r.Progress == _goals && r.Last < _best.Last)
@@ -1180,7 +1091,7 @@ namespace IGTAP.EngineSim.Cli
                 long baseline = best.Last + c.Origin - Rest(limit);
                 // The window's start, played once here first: a prefix the engine can't play (a Movement.FixedUpdate
                 // NullReferenceException in Advance, seen on a course 4 find) would throw on every solver thread and end the process.
-                try { OnThread(() => { Simulation s = _create(); s.Goals.Limit = limit; return s.Advance(prefix) != null; }); }
+                try { Solve.OnThread(() => { Simulation s = _create(); s.Goals.Limit = limit; return s.Advance(prefix) != null; }); }
                 catch (InvalidOperationException ex)
                 {
                     string dump = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_autoLog), $"tail-start-failed-{SnapshotIndex.Hash(prefix, prefix.Count):x16}.json");

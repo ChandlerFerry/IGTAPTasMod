@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -28,7 +29,8 @@ namespace IGTAP.EngineSim
         // 2: each type in the table carries its field layout (Layout), so a snapshot of a build whose types changed is dropped,
         // not misread (a field that became a tuple array read as a bool crashed the solve after a redeploy).
         // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
-        public const int Format = 3;
+        // 4: Feed hashes turnY (a steep dash turn), so prefixes differing only in it no longer share a stored state.
+        public const int Format = 4;
 
         /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)
@@ -63,6 +65,8 @@ namespace IGTAP.EngineSim
             if (t.lockY.HasValue) hash = Feed(hash, t.lockY.Value);
             hash = Feed(hash, t.turnX.HasValue);
             if (t.turnX.HasValue) hash = Feed(hash, t.turnX.Value);
+            hash = Feed(hash, t.turnY.HasValue);
+            if (t.turnY.HasValue) hash = Feed(hash, t.turnY.Value);
             hash = Feed(hash, t.reset);
             if (t.pause > 0) hash = Feed(hash, ((long)t.pauseTick << 32) | (uint)t.pause, 8);
             if (t.pause > 0 && t.pauseFrame != 0) hash = Feed(hash, t.pauseFrame, 4);
@@ -82,7 +86,7 @@ namespace IGTAP.EngineSim
         public byte[] Save(SimSnapshot s)
         {
             var o = new Out(this, new HashSet<int>(_physics.ChangedIdsOf(s.Physics)));
-            foreach (string name in RootOrder) o.Field(s, RootField(name));
+            foreach (FieldInfo f in RootFields) o.Field(s, f);
             var bytes = new MemoryStream();
             using (var w = new BinaryWriter(bytes, Encoding.UTF8, true))
             {
@@ -98,35 +102,20 @@ namespace IGTAP.EngineSim
         {
             var i = new In(this, data);
             var s = new SimSnapshot();
-            foreach (string name in RootOrder)
+            foreach (FieldInfo f in RootFields)
             {
-                FieldInfo f = RootField(name);
                 f.SetValue(s, i.Value(f.FieldType));
-                switch (name)
+                switch (f.Name)
                 {
                     // The pre-apply mirrors what Simulation.Restore does (it runs it again, unchanged): the physics
                     // restore's rebuilds below read the rebase state, the player's collider geometry and the toggles.
                     case "Rebases": _sim.PutRebases(s.Rebases); break;
-                    case "Colliders": ApplyPose(s); break;
-                    case "Layers": _sim.TrackToggles(s); ApplyToggles(s); break;
+                    case "Colliders": _sim.RestorePose(s); break;
+                    case "Layers": _sim.TrackToggles(s); _sim.RestoreToggles(s); break;
                 }
             }
             i.Adopt(s.Physics);
             return s;
-        }
-
-        static readonly Dictionary<string, FieldInfo> RootFields = new Dictionary<string, FieldInfo>();
-
-        static FieldInfo RootField(string name)
-        {
-            // Solver workers load snapshots on their own threads.
-            lock (RootFields)
-            {
-                if (RootFields.TryGetValue(name, out FieldInfo cached)) return cached;
-                FieldInfo f = typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?? throw new MissingFieldException(nameof(SimSnapshot), name);
-                return RootFields[name] = f;
-            }
         }
 
         /// <summary>Written and read in this order: the fields <see cref="Load"/> pre-applies come before <c>Physics</c>.</summary>
@@ -137,57 +126,16 @@ namespace IGTAP.EngineSim
             "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation",
         };
 
-        void ApplyPose(SimSnapshot s)
-        {
-            Transform t = _sim.Player.transform;
-            t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
-            t.m_LocalScale = s.LocalScale; t.m_LossyScale = s.LocalScale;
-            t.m_Rotation = s.Rotation; t.m_LocalRotation = s.Rotation;
-            BoxCollider2D[] boxes = _sim.Player.GetComponents<BoxCollider2D>();
-            for (int k = 0; k < boxes.Length && k < s.Colliders.Length; k++)
-            {
-                boxes[k].m_Offset = s.Colliders[k].offset;
-                boxes[k].m_Size = s.Colliders[k].size;
-                boxes[k].m_ExcludeLayers = s.Colliders[k].exclude;
-                boxes[k].m_Enabled = s.Colliders[k].enabled;
-            }
-        }
-
-        void ApplyToggles(SimSnapshot s)
-        {
-            _physics.Suspended = true;
-            int k = 0;
-            foreach (var (g, loaded) in _sim.ActiveAsLoaded)
-            {
-                bool active = Saved(s.Active, k++, g, loaded);
-                if (g.activeSelf != active) g.SetActive(active);
-            }
-            k = 0;
-            foreach (var (b, loaded) in _sim.EnabledAsLoaded)
-            {
-                bool enabled = Saved(s.Enabled, k++, b, loaded);
-                if (b.enabled != enabled) b.enabled = enabled;
-            }
-            k = 0;
-            foreach (var (g, loaded) in _sim.LayerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
-            _physics.Suspended = false;
-        }
-
-        /// <summary>The value a saved list holds for the index-th object tracked since load, or its loaded value (Simulation.Saved).</summary>
-        static TValue Saved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, TValue loaded) where TKey : class
-        {
-            if (index >= saved.Length) return loaded;
-            if (ReferenceEquals(saved[index].target, key)) return saved[index].value;
-            foreach (var (target, value) in saved) if (ReferenceEquals(target, key)) return value;
-            return loaded;
-        }
+        static readonly FieldInfo[] RootFields = Array.ConvertAll(RootOrder, name =>
+            typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(nameof(SimSnapshot), name));
 
         #region value codec
 
         enum Tag : byte
         {
             Null = 0, Back = 1, Bool = 2, I32 = 3, I64 = 4, F32 = 5, F64 = 6, Char = 7, Str = 8, Enum = 9,
-            Struct = 10, Class = 11, Array = 12, Multi = 13, List = 14, HashSet = 15, Queue = 16, Stack = 17,
+            Struct = 10, Class = 11, Array = 12, List = 14, HashSet = 15, Queue = 16, Stack = 17,
             Dictionary = 18, Handle = 19, Decimal = 20, TypedScalar = 21,
         }
 
@@ -346,19 +294,12 @@ namespace IGTAP.EngineSim
 
             void ArrayValue(Array array, Type type)
             {
+                // No snapshotted type (game, shim, Box2D, engine) has a multi-dimensional array field.
+                if (array.Rank != 1) throw new NotSupportedException("a " + type.Name + " value can't be stored in a snapshot");
                 Type element = type.GetElementType();
-                if (array.Rank == 1)
-                {
-                    _w.Write((byte)Tag.Array);
-                    _w.Write(TypeId(type));
-                    _w.Write(array.Length);
-                    foreach (object item in array) Value(item, element);
-                    return;
-                }
-                _w.Write((byte)Tag.Multi);
+                _w.Write((byte)Tag.Array);
                 _w.Write(TypeId(type));
-                _w.Write(array.Rank);
-                for (int d = 0; d < array.Rank; d++) _w.Write(array.GetLength(d));
+                _w.Write(array.Length);
                 foreach (object item in array) Value(item, element);
             }
 
@@ -378,14 +319,9 @@ namespace IGTAP.EngineSim
                 _w.Write((byte)Tag.Dictionary);
                 _w.Write(TypeId(type));
                 Type[] args = type.GetGenericArguments();
-                var pairs = new List<object[]>();
-                foreach (object pair in (IEnumerable)value)
-                {
-                    PropertyInfo key = pair.GetType().GetProperty("Key"), val = pair.GetType().GetProperty("Value");
-                    pairs.Add(new[] { key.GetValue(pair), val.GetValue(pair) });
-                }
-                _w.Write(pairs.Count);
-                foreach (object[] pair in pairs) { Value(pair[0], args[0]); Value(pair[1], args[1]); }
+                var dictionary = (IDictionary)value;
+                _w.Write(dictionary.Count);
+                foreach (DictionaryEntry pair in dictionary) { Value(pair.Key, args[0]); Value(pair.Value, args[1]); }
             }
 
             int FixtureId(b2Fixture fixture)
@@ -564,25 +500,14 @@ namespace IGTAP.EngineSim
                         return value;
                     }
                     case Tag.Array:
-                    case Tag.Multi:
                     {
                         Type type = _types[_r.ReadInt32()];
                         Type element = type.GetElementType();
-                        if (tag == Tag.Array)
-                        {
-                            int length = _r.ReadInt32();
-                            Array array = Array.CreateInstance(element, length);
-                            _objects.Add(array);
-                            for (int i = 0; i < length; i++) array.SetValue(Value(element), i);
-                            return array;
-                        }
-                        int rank = _r.ReadInt32();
-                        var lengths = new int[rank];
-                        for (int d = 0; d < rank; d++) lengths[d] = _r.ReadInt32();
-                        Array multi = Array.CreateInstance(element, lengths);
-                        _objects.Add(multi);
-                        foreach (int[] index in Indices(lengths)) multi.SetValue(Value(element), index);
-                        return multi;
+                        int length = _r.ReadInt32();
+                        Array array = Array.CreateInstance(element, length);
+                        _objects.Add(array);
+                        for (int i = 0; i < length; i++) array.SetValue(Value(element), i);
+                        return array;
                     }
                     case Tag.List:
                     case Tag.HashSet:
@@ -624,24 +549,11 @@ namespace IGTAP.EngineSim
                         _objects.Add(dictionary);
                         var pairs = new object[count][];
                         for (int i = 0; i < count; i++) pairs[i] = new[] { Value(args[0]), Value(args[1]) };
-                        MethodInfo add = type.GetMethod("Add");
-                        foreach (object[] pair in pairs) add.Invoke(dictionary, pair);
+                        foreach (object[] pair in pairs) ((IDictionary)dictionary).Add(pair[0], pair[1]);
                         return dictionary;
                     }
                     case Tag.Handle: return Handle();
                     default: throw new NotSupportedException("a snapshot byte stream of another engine build; dropping it");
-                }
-            }
-
-            static IEnumerable<int[]> Indices(int[] lengths)
-            {
-                var index = new int[lengths.Length];
-                while (true)
-                {
-                    yield return (int[])index.Clone();
-                    int d = index.Length - 1;
-                    for (; d >= 0 && ++index[d] == lengths[d]; d--) index[d] = 0;
-                    if (d < 0) yield break;
                 }
             }
 
@@ -676,25 +588,22 @@ namespace IGTAP.EngineSim
         int WorldId(Object o) => !o.m_Destroyed && _world.Objects.ContainsKey(o.GetInstanceID()) ? o.GetInstanceID()
             : throw new NotSupportedException("a snapshot holds a world object the export doesn't; not saved");
 
-        static readonly Dictionary<FieldInfo, Action<object, object>> Setters = new Dictionary<FieldInfo, Action<object, object>>();
+        // Solver workers load snapshots on their own threads.
+        static readonly ConcurrentDictionary<FieldInfo, Action<object, object>> Setters = new ConcurrentDictionary<FieldInfo, Action<object, object>>();
 
         /// <summary>A field setter that also works on initonly fields (WaitForSeconds.m_Seconds, Pair.A) and boxed structs.</summary>
-        static Action<object, object> Setter(FieldInfo f)
+        static Action<object, object> Setter(FieldInfo f) => Setters.GetOrAdd(f, field =>
         {
-            lock (Setters)
-            {
-                if (Setters.TryGetValue(f, out Action<object, object> setter)) return setter;
-                var dm = new DynamicMethod("snapset_" + f.Name, typeof(void), new[] { typeof(object), typeof(object) }, f.DeclaringType.Module, true);
-                ILGenerator il = dm.GetILGenerator();
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(f.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, f.DeclaringType);
-                il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Unbox_Any, f.FieldType);
-                il.Emit(OpCodes.Stfld, f);
-                il.Emit(OpCodes.Ret);
-                return Setters[f] = (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
-            }
-        }
+            var dm = new DynamicMethod("snapset_" + field.Name, typeof(void), new[] { typeof(object), typeof(object) }, field.DeclaringType.Module, true);
+            ILGenerator il = dm.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(field.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, field.DeclaringType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Unbox_Any, field.FieldType);
+            il.Emit(OpCodes.Stfld, field);
+            il.Emit(OpCodes.Ret);
+            return (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
+        });
 
         #endregion
 
@@ -743,7 +652,8 @@ namespace IGTAP.EngineSim
         }
 
         readonly Dictionary<ulong, Entry> _byHash = new Dictionary<ulong, Entry>();
-        List<Entry> _byTick = new List<Entry>();
+        // By tick, replaced whole on each add (a Find walks the array it read).
+        Entry[] _byTick = Array.Empty<Entry>();
         /// <summary>Workers look states up while a worker's first prefix replay files them.</summary>
         readonly object _gate = new object();
 
@@ -759,8 +669,14 @@ namespace IGTAP.EngineSim
             {
                 if (_byHash.TryGetValue(entry.Hash, out Entry old)) { old.Data = entry.Data; old.Goal = entry.Goal; return; }
                 _byHash[entry.Hash] = entry;
-                _byTick.Add(entry);
-                _byTick.Sort((a, b) => a.Tick.CompareTo(b.Tick));
+                // After the entries of its tick: Find takes at most one per tick (their hashes differ).
+                int at = 0;
+                while (at < _byTick.Length && _byTick[at].Tick <= entry.Tick) at++;
+                var byTick = new Entry[_byTick.Length + 1];
+                Array.Copy(_byTick, byTick, at);
+                byTick[at] = entry;
+                Array.Copy(_byTick, at, byTick, at + 1, _byTick.Length - at);
+                _byTick = byTick;
             }
         }
 
@@ -781,7 +697,7 @@ namespace IGTAP.EngineSim
         public Entry Find(List<InputTick> source, int through, int after)
         {
             Entry[] byTick;
-            lock (_gate) byTick = _byTick.ToArray();
+            lock (_gate) byTick = _byTick;
             Entry best = null;
             ulong hash = BaseHash;
             int next = 0;
