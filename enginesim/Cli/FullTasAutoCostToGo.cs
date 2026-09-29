@@ -6,11 +6,11 @@ namespace IGTAP.EngineSim.Cli
     // Stage 2 of --auto (docs/fulltas.md, "Auto"): the cost-to-go. Every arrival at a goal gets an estimate of the physics ticks
     // from it to the run's end, so a window can be scored "arrival tick + ticks-to-finish" and prefer an arrival that reaches its
     // goal later but heads for the end faster. It is learned, per goal, from the library's own arrivals that have a known way on
-    // to the end (ICostToGo.Fit): a k-nearest-neighbour regression over the arrival features (place, velocity, momentum, dashes
+    // to the end (Fit): a k-nearest-neighbour regression over the arrival features (place, velocity, momentum, dashes
     // and air jumps, facing and ground, the run's purchases and cash), with the median split times between goals as the fallback
     // where no arrival is known yet. Neighbours come from the goal's own arrivals; one with a different purchase set is kept in
     // but pays a penalty, so an arrival after a changed buy still gets an estimate.
-    sealed class FullTasAutoCostToGo : ICostToGo
+    sealed class FullTasAutoCostToGo
     {
         /// <summary>One arrival with a known way on to the end: its features and the true ticks to the run's end from it.</summary>
         public struct Sample
@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>Refits from every library state with a known way on to the end (call after each new best or segment).</summary>
-        public void Fit(IStateLibrary library)
+        public void Fit(StateLibrary library)
         {
             var samples = new List<Sample>();
             var ticks = new List<(int run, int goal, long tick)>();

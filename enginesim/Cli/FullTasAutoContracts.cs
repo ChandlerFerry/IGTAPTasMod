@@ -3,10 +3,9 @@ using System.Collections.Generic;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // The Full-TAS search's shared contracts (docs/fulltas.md, "Auto"): stage 1's goal-state library and exact stitching
-    // (FullTasAutoLib.cs), stage 2's learned cost-to-go, stage 3's pull scheduler, stage 4's macro edges. Each stage implements
-    // its interface in its own file; FullTasAuto.cs wires them into --auto. Physics ticks everywhere; goal k is 1-based (goal 0:
-    // the run's start).
+    // The Full-TAS search's shared types (docs/fulltas.md, "Auto"): stage 1's goal-state library and exact stitching
+    // (FullTasAutoLib.cs), stage 2's learned cost-to-go, stage 3's pull scheduler, stage 4's macro edges, each in its own file;
+    // FullTasAuto.cs wires them into --auto. Physics ticks everywhere; goal k is 1-based (goal 0: the run's start).
 
     /// <summary>Where a library state was filed on its run.</summary>
     [Flags]
@@ -79,31 +78,6 @@ namespace IGTAP.EngineSim.Cli
         public int Run;
     }
 
-    interface IStateLibrary
-    {
-        /// <summary>Files a run replayed from the start (every goal touch and chain point on it); returns its run id.</summary>
-        int Add(IReadOnlyList<InputTick> inputs, string how);
-        LibState State(int id);
-        /// <summary>Known ways on from a state: every segment leaving it or any state with the same key and goal.</summary>
-        IReadOnlyList<LibSegment> Continuations(int stateId);
-        /// <summary>The fastest known way from the start to the last goal through exact joins only: its segments in order, the
-        /// predicted end tick (long.MaxValue when none reaches the end).</summary>
-        (IReadOnlyList<LibSegment> path, long end) ShortestPath();
-        /// <summary>States filed at goal touches of this goal (1-based).</summary>
-        IReadOnlyList<LibState> StatesAt(int goal);
-        /// <summary>Physics ticks from the state to the run's end on the fastest known way on from it (through exact joins), long.MaxValue when none reaches the end.</summary>
-        long ToEnd(int stateId);
-        int Runs { get; }
-    }
-
-    /// <summary>Stage 2: estimated physics ticks from an arrival at a goal to the run's end.</summary>
-    interface ICostToGo
-    {
-        double Ticks(int goal, in LibFeatures features);
-        /// <summary>Refits from every library state with a known way to the end (after each new segment or best).</summary>
-        void Fit(IStateLibrary library);
-    }
-
     /// <summary>One pull the scheduler hands out: a lever over goals [First, Limit], its CPU slice (CPU seconds) and threads.</summary>
     sealed class Pull
     {
@@ -112,15 +86,6 @@ namespace IGTAP.EngineSim.Cli
         public int First, Limit;
         public double CpuSeconds;
         public int Threads;
-    }
-
-    /// <summary>Stage 3: successive halving across every goal region.</summary>
-    interface IPullScheduler
-    {
-        /// <summary>The next pull (null: nothing left worth pulling).</summary>
-        Pull Next();
-        /// <summary>What the pull gave: ticks the whole best gained (the library's shortest path) and the CPU seconds it used.</summary>
-        void Report(Pull pull, long ticksGained, double cpuSeconds);
     }
 
     /// <summary>A recurring input pattern played as one step, from a state that touches the anchor contact.</summary>
@@ -137,12 +102,4 @@ namespace IGTAP.EngineSim.Cli
         public long Ticks;
     }
 
-    /// <summary>Stage 4: primitives mined from the good routes, handed to windows as seeds or one-step edges.</summary>
-    interface IMacroSource
-    {
-        /// <summary>Re-mines from the library's good routes (after a new best).</summary>
-        void Mine(IStateLibrary library);
-        /// <summary>Macros playable from this state (its anchor kind and unlocks match).</summary>
-        IReadOnlyList<Macro> For(LibState state, string caps);
-    }
 }

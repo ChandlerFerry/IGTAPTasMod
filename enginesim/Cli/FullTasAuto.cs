@@ -218,10 +218,7 @@ namespace IGTAP.EngineSim.Cli
             BuildModel();
             PrintModel("start");
             Log($"auto: model built in {CpuSeconds() - m0:0.0} CPU s; the loop starts at {_clock.Elapsed.TotalSeconds:0} s");
-            // The parts, each from its own file (FullTasAuto<Part>.cs), found by the interface it implements.
-            if (Part("ctg") && (_ctg = MakePart<ICostToGo>()) == null) Log("auto: no ICostToGo in this build; windows and repairs go without a cost-to-go");
-            if (Part("sched") && (_sched = MakePart<IPullScheduler>()) == null) Log("auto: no IPullScheduler in this build; the bandit picks the pulls");
-            if (Part("macros") && (_macros = MakePart<IMacroSource>()) == null) Log("auto: no IMacroSource in this build; windows get no macro seeds");
+            MakeParts();
             RefitParts();
             Outlook();
 
@@ -276,7 +273,7 @@ namespace IGTAP.EngineSim.Cli
                         int per = Math.Max(1, _threads / wave.Count);
                         foreach (Pull p in wave)
                         {
-                            // The scheduler's regions are of the focus's goals only (MakePart), numbered from its first goal.
+                            // The scheduler's regions are of the focus's goals only (MakeParts), numbered from its first goal.
                             int first = Math.Clamp(p.First + _focusFrom - 1, 1, _goals), limit = Math.Clamp(Math.Max(p.Limit, p.First) + _focusFrom - 1, first, _goals);
                             int k = RegionGoal(first, limit);
                             batch.Add((new Arm { Lever = p.Lever ?? "window", Goal = k, Limit = Math.Min(_goals, k + 1), Pull = p }, Math.Max(0.05, p.CpuSeconds / (60.0 * per)), double.NaN));
@@ -704,7 +701,7 @@ namespace IGTAP.EngineSim.Cli
             CountSpot(arm.Lever, arm.Goal, cpu, gain);
             var lc = _leverCost.TryGetValue(arm.Lever, out var was) ? was : (0, 0.0);
             _leverCost[arm.Lever] = (lc.Item1 + 1, lc.Item2 + cpu);
-            if (arm.Pull != null) ReportPull(arm.Pull, gain, cpu, gain > 0 ? 0 : arm.Lead);
+            if (arm.Pull != null) SafePart(() => { _sched.Report(arm.Pull, gain, cpu, gain > 0 ? 0 : arm.Lead); return 0; }, "scheduler Report");
             _order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
             Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
             AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),

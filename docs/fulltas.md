@@ -791,7 +791,7 @@ baseline). The default is set by the measurements below, and has every part.
    against the starting record, and which goals changed (a diagnostic, not a gate; `--check ROUTE --chain-vs OLD` prints it
    for any two routes). The speed probes are kept in `fulltas/<run>.auto-speeds.json` per start state and goals, so a restart
    skips them (a minute and a half on `FalseEnding-Any%`).
-2. **Cost-to-go** (`ctg`, `FullTasAutoCostToGo.cs`, `ICostToGo`): estimated ticks from a goal arrival to the end, k nearest
+2. **Cost-to-go** (`ctg`, `FullTasAutoCostToGo.cs`): estimated ticks from a goal arrival to the end, k nearest
    library states with a known way to the end. Refit at the start and after each new best; a repair whose partial run's
    arrival plus cost-to-go ends more than 10 ticks after the best is dropped, and so is a window's broken find before its
    wait fix, tail windows and repair (`auto: cost-to-go dropped N of M broken finds`; a window whose finds all drop feeds
@@ -799,12 +799,12 @@ baseline). The default is set by the measurements below, and has every part.
    664, where the repair it replaced spent 55 s. A resumed window's finds already merged onto the same best aren't merged
    again, and a goal polished on the current best isn't polished again until the best changes (VMAN: 444 identical
    polish pulls, 3,400 CPU s).
-3. **Scheduler** (`sched`, `FullTasAutoScheduler.cs`, `IPullScheduler`): successive halving over label regions (one per
+3. **Scheduler** (`sched`, `FullTasAutoScheduler.cs`): successive halving over label regions (one per
    distinct goal label: the lap phases of a repeated run). A region's pull searches one of its goals (most expected first,
    the next one each pull) as a window of it and the goal after; its waves replace the first-round probes and the bandit
    while it has pulls; each pull is reported with the whole run's gain and, when that is 0, the window's own lead at its
    last goal.
-4. **Macros** (`macros`, `FullTasAutoMacros.cs`, `IMacroSource`): patterns mined from the library's good routes, played
+4. **Macros** (`macros`, `FullTasAutoMacros.cs`): patterns mined from the library's good routes, played
    from a window's start state (its anchor contact and unlocks) as up to 5 extra seeds. Mining runs on its own thread: on
    the loop's thread it left the loop's simulation replaying the best to no goal at all.
 5. **Goals** (`goals`, `FullTasAutoGoals.cs`): edits of the run's goal list. Every stretch of a Full-TAS economy is

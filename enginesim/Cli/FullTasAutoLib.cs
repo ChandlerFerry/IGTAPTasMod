@@ -12,7 +12,7 @@ namespace IGTAP.EngineSim.Cli
     // are bit-identical in everything that moves the player (StateKey); a stitched route is the first run's inputs up to the join
     // and the second run's after it, so it plays as one continuous run. The best known route is the shortest path through those
     // joins, recomputed whenever a run is filed; it is kept only after a replay from the start reproduces it.
-    sealed class StateLibrary : IStateLibrary
+    sealed class StateLibrary
     {
         public sealed class LibRun
         {
@@ -69,8 +69,6 @@ namespace IGTAP.EngineSim.Cli
             if (Runs > MaxRuns) Prune();
             return run.Id;
         }
-
-        int IStateLibrary.Add(IReadOnlyList<InputTick> inputs, string how) => throw new NotSupportedException("the library is filled by FullTas.TraceRun (it replays on the loop's simulation)");
 
         /// <summary>
         /// The capped Pareto set: a run is dropped when none of its states is among the 3 soonest at its (goal, kind) or among the
@@ -412,23 +410,6 @@ namespace IGTAP.EngineSim.Cli
             }));
         }
 
-        /// <summary>Reports a pull to the scheduler, with the window's own lead as the extra DAG gain when its implementation takes one
-        /// (Report(pull, ticks, cpu, dagGain)); else the contract's Report.</summary>
-        void ReportPull(Pull pull, long gain, double cpu, long dagGain)
-        {
-            MethodInfo four = _sched.GetType().GetMethods().FirstOrDefault(m => m.Name == "Report" && m.GetParameters().Length == 4);
-            SafePart(() =>
-            {
-                if (four != null)
-                {
-                    ParameterInfo[] ps = four.GetParameters();
-                    four.Invoke(_sched, new object[] { pull, Convert.ChangeType(gain, ps[1].ParameterType), Convert.ChangeType(cpu, ps[2].ParameterType), Convert.ChangeType(dagGain, ps[3].ParameterType) });
-                }
-                else _sched.Report(pull, gain, cpu);
-                return 0;
-            }, "scheduler Report");
-        }
-
         /// <summary>A stage part's call; a part that throws is logged and treated as having nothing to say.</summary>
         T SafePart<T>(Func<T> call, string what)
         {
@@ -506,47 +487,17 @@ namespace IGTAP.EngineSim.Cli
             return end > _best.Last + 10 ? $"at goal {p} (tick {run.GoalPhysics[p - 1]}) the cost-to-go ({ctg:0} ticks) puts its end at {end:0}, after the best's {_best.Last}" : null;
         }
 
-        ICostToGo _ctg;
-        IPullScheduler _sched;
-        IMacroSource _macros;
+        FullTasAutoCostToGo _ctg;
+        PullScheduler _sched;
+        FullTasAutoMacros _macros;
 
-        /// <summary>
-        /// The stage's implementation in this build (a class implementing T, from its own FullTasAuto&lt;Part&gt;.cs), constructed with
-        /// the parameters it asks for by name (goals, labels, threads, cpu seconds, the run's goal list, dt, the run's name); null when
-        /// the build has none.
-        /// </summary>
-        T MakePart<T>() where T : class
+        /// <summary>The parts --parts turns on (the scheduler's regions cover the --focus goals only; the loop adds the focus's
+        /// first goal back to its pulls).</summary>
+        void MakeParts()
         {
-            Type type = typeof(FullTas).Assembly.GetTypes().FirstOrDefault(t => typeof(T).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
-            if (type == null) return null;
-            object Arg(ParameterInfo p)
-            {
-                string n = p.Name.ToLowerInvariant();
-                // The scheduler's regions cover the --focus goals only (the loop adds the focus's first goal back to its pulls).
-                bool focused = typeof(T) == typeof(IPullScheduler);
-                if (p.ParameterType == typeof(string[])) return focused ? _labels[(_focusFrom - 1).._focusTo] : _labels;
-                if (p.ParameterType == typeof(double[])) return _model?.Where(r => !focused || InFocus(r.K)).Select(r => r.Expected).ToArray();
-                if (p.ParameterType == typeof(string)) return _name;
-                if (p.ParameterType == typeof(float)) return _dt;
-                if (p.ParameterType == typeof(double)) return n.Contains("cpu") || n.Contains("budget") ? _minutes * 60 * _threads : n.Contains("dt") ? (double)_dt : _minutes * 60;
-                if (p.ParameterType == typeof(int)) return n.Contains("thread") ? _threads : n.Contains("parallel") ? _parallel : _goals;
-                if (p.ParameterType == typeof(IStateLibrary) || p.ParameterType == typeof(StateLibrary)) return _lib;
-                if (p.ParameterType == typeof(Action<string>)) return (Action<string>)(line => Log(line));
-                if (p.ParameterType.IsAssignableFrom(typeof(List<IGTAPTasMod.FullTasGoal>))) return _runGoals.Goals.ToList();
-                if (p.HasDefaultValue) return p.DefaultValue;
-                throw new InvalidOperationException($"{type.Name}: no value for constructor parameter {p.ParameterType.Name} {p.Name}");
-            }
-            foreach (ConstructorInfo c in type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).OrderByDescending(c => c.GetParameters().Length))
-            {
-                try
-                {
-                    object made = c.Invoke(c.GetParameters().Select(Arg).ToArray());
-                    Log($"auto: {typeof(T).Name} is {type.Name}");
-                    return (T)made;
-                }
-                catch (InvalidOperationException ex) { Log("auto: " + ex.Message); }
-            }
-            return null;
+            if (Part("ctg")) _ctg = new FullTasAutoCostToGo(_goals);
+            if (Part("sched")) _sched = new PullScheduler(_labels[(_focusFrom - 1).._focusTo], _minutes * 60 * _threads, _model?.Where(r => InFocus(r.K)).Select(r => r.Expected).ToArray());
+            if (Part("macros")) _macros = new FullTasAutoMacros(log: line => Log(line));
         }
 
         int _stitchTried, _stitchExact;

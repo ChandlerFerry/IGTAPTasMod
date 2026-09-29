@@ -681,9 +681,7 @@ namespace IGTAP.EngineSim.Cli
             Collect(_best, "the best after a goals edit");
             BuildModel();
             PrintModel("goals edit");
-            if (Part("ctg")) _ctg = MakePart<ICostToGo>();
-            if (Part("sched")) _sched = MakePart<IPullScheduler>();
-            if (Part("macros")) _macros = MakePart<IMacroSource>();
+            MakeParts();
             RefitParts();
             SaveRefs();
         }

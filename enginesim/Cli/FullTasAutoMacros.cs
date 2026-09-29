@@ -9,7 +9,7 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim.Cli
 {
     /// <summary>
-    /// Stage 4's macro edges (docs/fulltas.md "Auto", the contracts' <see cref="IMacroSource"/>): recurring input patterns
+    /// Stage 4's macro edges (docs/fulltas.md "Auto"): recurring input patterns
     /// mined around the contact events (<see cref="ContactLog"/>) of the good routes — VMAN 34.28 and 34.88, the FalseEnding
     /// and TrueEnding bests, the course records — plus the runs the library files. A pattern is the input window played from
     /// the anchor contact on (its <see cref="Macro.Anchor"/> state: Land, Wall, DashEnd, Reset or Goal), with the preconditions
@@ -18,7 +18,7 @@ namespace IGTAP.EngineSim.Cli
     /// the down-dash landing chain every landing), so a window with one use is travel noise and is dropped.
     /// Loaded by reflection (FullTasAuto): a constructor filled by name (goals, labels, threads, name, library, log).
     /// </summary>
-    sealed class FullTasAutoMacros : IMacroSource
+    sealed class FullTasAutoMacros
     {
         /// <summary>The window after a Land/Wall/DashEnd anchor, in input ticks (TechGrafts' WindowAfter).</summary>
         public const int ContactWindow = 30;
@@ -427,7 +427,7 @@ namespace IGTAP.EngineSim.Cli
         /// its own thread: building a Simulation and replaying on the caller's thread clobbers the engine's thread-static
         /// state, and the loop's own Simulation plays on that thread (VerifyFresh isolates the same way). <see cref="For"/>
         /// never replays and nothing is kept in statics, so it is safe on any thread.</summary>
-        public void Mine(IStateLibrary library)
+        public void Mine(StateLibrary library)
         {
             var thread = new System.Threading.Thread(() =>
             {
@@ -441,7 +441,7 @@ namespace IGTAP.EngineSim.Cli
         bool _corpusMined;
         readonly HashSet<ulong> _minedRuns = new HashSet<ulong>();
 
-        void MineCore(IStateLibrary library)
+        void MineCore(StateLibrary library)
         {
             if (!_corpusMined)
             {
