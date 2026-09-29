@@ -591,7 +591,7 @@ namespace IGTAP.EngineSim.Cli
                 inputs = inputs.Select(t => t.ToJson()).ToList(),
                 path = GhostPath(tracePath, lab, inputs, finishTick),
             };
-            File.WriteAllText(outPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(outPath, JsonSerializer.Serialize(file));
             Console.WriteLine("wrote " + outPath);
             return 0;
         }
@@ -1093,7 +1093,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 var file = JsonNode.Parse(File.ReadAllText(demoPath))!.AsObject();
                 file["path"] = JsonSerializer.SerializeToNode(pathTicks > 0 ? GhostPath(tracePath, lab, inputs, pathTicks, 0) : GhostPath(tracePath, lab, inputs, steps));
-                File.WriteAllText(demoPath, file.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(demoPath, file.ToJsonString());
                 Console.WriteLine("wrote the ghost path to " + demoPath + (pathTicks > 0 ? " (its first " + pathTicks + " physics ticks)" : ""));
             }
             return run.Finished ? 0 : 1;
