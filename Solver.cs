@@ -567,13 +567,41 @@ namespace IGTAPTasMod
             EnsureGameUnpaused();
         }
 
-        void KillSolveProcess()
+        void KillSolveProcess() { KillEngineSim(ref _solveProcess, "offline solver"); }
+
+        /// <summary>
+        /// The offline engine run with <paramref name="args"/>, below the game: a solve takes nearly every core, and at normal
+        /// priority 1x playback (280 rendered frames a second, each a fixed game-time step) lost frames to it; its children
+        /// (humanize, confirm) inherit it. With <paramref name="output"/> its stdout and stderr lines go there as they come,
+        /// else the caller reads them; <paramref name="stdin"/> keeps its stdin open for a "stop".
+        /// </summary>
+        static Process StartEngineSim(string args, ConcurrentQueue<string> output = null, bool stdin = false)
         {
-            if (_solveProcess == null) return;
-            try { if (!_solveProcess.HasExited) _solveProcess.Kill(); }
-            catch (Exception ex) { Logger.LogWarning("Could not stop the offline solver: " + ex.Message); }
-            _solveProcess.Dispose();
-            _solveProcess = null;
+            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                RedirectStandardInput = stdin, WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
+            if (output != null)
+            {
+                process.OutputDataReceived += (sender, e) => { if (e.Data != null) output.Enqueue(e.Data); };
+                process.ErrorDataReceived += (sender, e) => { if (e.Data != null) output.Enqueue(e.Data); };
+            }
+            process.Start();
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
+            if (output != null)
+            {
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+            }
+            return process;
+        }
+
+        void KillEngineSim(ref Process process, string what)
+        {
+            if (process == null) return;
+            try { if (!process.HasExited) process.Kill(); }
+            catch (Exception ex) { Logger.LogWarning("Could not stop the " + what + ": " + ex.Message); }
+            process.Dispose();
+            process = null;
         }
 
         void EndSolveJob(string outcome)
@@ -790,18 +818,7 @@ namespace IGTAPTasMod
             }
             SolveJob job = _solveQueue[_solveIndex];
             string args = CourseSolveArgs(job, course, (string)captured["path"], name, _solveMinutes, out string what, out _solveAuto);
-            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
-            process.OutputDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
-            process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
-            process.Start();
-            // Below the game: the solve takes nearly every core, and at normal priority 1x playback (280 rendered frames a
-            // second, each a fixed game-time step) lost frames to it. Its children (humanize, confirm) inherit it.
-            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            _solveProcess = process;
+            _solveProcess = StartEngineSim(args, _solveOutput);
             _solverStatus = what + "; turbo checks every new best";
             Logger.LogInfo("Optimize: " + EngineSimExe + " " + args);
         }
@@ -1007,12 +1024,8 @@ namespace IGTAPTasMod
         {
             try
             {
-                using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
-                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                    WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
+                using (Process process = StartEngineSim(args))
                 {
-                    process.Start();
-                    try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
                     var errors = process.StandardError.ReadToEndAsync();
                     process.StandardOutput.ReadToEnd();
                     process.WaitForExit();

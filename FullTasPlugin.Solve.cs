@@ -151,17 +151,7 @@ namespace IGTAPTasMod
                 what = "Improving " + run.name + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
             }
             while (_fullTasOutput.TryDequeue(out _)) { }
-            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                RedirectStandardInput = true, WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
-            process.OutputDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
-            process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
-            process.Start();
-            // Below the game, as the course solve (Solver.LaunchSolve): 1x playback beside an Improve keeps its frames.
-            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            _fullTasProcess = process;
+            _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
             _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
@@ -337,10 +327,7 @@ namespace IGTAPTasMod
         void KillFullTasSolve(string status, string error = null)
         {
             if (_fullTasProcess == null) return;
-            try { if (!_fullTasProcess.HasExited) _fullTasProcess.Kill(); }
-            catch (Exception ex) { Logger.LogWarning("Could not stop the Full-TAS solve: " + ex.Message); }
-            _fullTasProcess.Dispose();
-            _fullTasProcess = null;
+            KillEngineSim(ref _fullTasProcess, "Full-TAS solve");
             while (_fullTasOutput.TryDequeue(out string line)) FullTasSolveLine(line);
             _fullTasSolveStatus = status;
             if (error != null) _fullTasSolveError = error;
