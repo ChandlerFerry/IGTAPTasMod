@@ -140,7 +140,7 @@ namespace IGTAPTasMod
             if (recording == null) throw new InvalidDataException("File contains no recording.");
             if (recording.schemaVersion != RecordingDefinition.CurrentSchemaVersion)
                 throw new InvalidDataException("Unsupported schema " + recording.schemaVersion + "; expected " + RecordingDefinition.CurrentSchemaVersion + ".");
-            if (string.IsNullOrEmpty(recording.id) || recording.samples == null || recording.semanticSteps == null)
+            if (string.IsNullOrEmpty(recording.id) || recording.samples == null)
                 throw new InvalidDataException("Recording is incomplete.");
         }
 
@@ -153,6 +153,8 @@ namespace IGTAPTasMod
             return changed;
         }
 
+        /// <summary>Old routes timed a step in milliseconds (<see cref="ActionEndCondition.Duration"/>, durationMs, timeoutMs):
+        /// MacroEngine counts physics ticks only, so they become ticks once, at load.</summary>
         private static bool NormalizeStepFrameTiming(MacroStep step, int tickMs)
         {
             if (step == null) return false;
@@ -163,20 +165,12 @@ namespace IGTAPTasMod
                 step.endCondition = ActionEndCondition.FixedTicks;
                 changed = true;
             }
-            else if (step.endCondition == ActionEndCondition.FixedTicks && step.durationTicks < 1)
-            {
-                step.durationTicks = 1;
-                changed = true;
-            }
-            int durationMs = Mathf.Max(1, step.durationTicks) * tickMs;
-            if (step.durationMs != durationMs) { step.durationMs = durationMs; changed = true; }
+            else if (step.durationTicks < 1) { step.durationTicks = 1; changed = true; }
             if (step.timeoutTicks < 1)
             {
                 step.timeoutTicks = Mathf.Max(1, Mathf.RoundToInt(step.timeoutMs / (float)tickMs));
                 changed = true;
             }
-            int timeoutMs = step.timeoutTicks * tickMs;
-            if (step.timeoutMs != timeoutMs) { step.timeoutMs = timeoutMs; changed = true; }
             return changed;
         }
 

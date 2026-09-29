@@ -62,7 +62,6 @@ namespace IGTAPTasMod
             if (recording == null) return;
             int removed = TrimLeadingIdle(recording.samples);
             if (recording.courseStartTick >= 0) recording.courseStartTick = Math.Max(0, recording.courseStartTick - removed);
-            recording.semanticSteps = SemanticCompressor.Compress(recording.samples, recording.fixedDeltaMs);
         }
 
         private static int TrimLeadingIdle(List<RawTickSample> samples)
@@ -142,111 +141,12 @@ namespace IGTAPTasMod
         }
     }
 
-    internal static class SemanticCompressor
-    {
-        public static List<MacroStep> Compress(List<RawTickSample> samples, float fixedDeltaMs)
-        {
-            List<MacroStep> result = new List<MacroStep>();
-            if (samples == null || samples.Count == 0) return result;
-            float tickMs = fixedDeltaMs > 0f ? fixedDeltaMs : 20f;
-            int i = 0;
-            while (i < samples.Count)
-            {
-                RawTickSample sample = samples[i];
-                int direction = Direction(sample.moveX);
-                if (sample.jumpPressed)
-                {
-                    int end = FindJumpEndExclusive(samples, i);
-                    bool directWall = sample.onWall || sample.wallCoyoteFrames > 0f;
-                    bool wall = directWall || HasNearbyWall(samples, i);
-                    int outputDirection = direction;
-                    if (wall)
-                    {
-                        int wallDirection = Direction(sample.wallSide);
-                        if (wallDirection != 0) outputDirection = -wallDirection;
-                    }
-                    result.Add(new MacroStep {
-                        label = wall ? "Recorded walljump" : "Recorded jump",
-                        type = wall ? MacroStepType.WallJump : MacroStepType.Jump,
-                        direction = outputDirection, wallJumpHoldDirection = direction,
-                        durationTicks = Math.Max(1, end - i),
-                        durationMs = TicksToMs(Math.Max(1, end - i), tickMs),
-                        timeoutTicks = Math.Max(1, Mathf.RoundToInt(1200f / tickMs)), timeoutMs = 1200,
-                        endCondition = ActionEndCondition.FixedTicks
-                    });
-                    i = end;
-                    continue;
-                }
-                if (sample.dashPressed)
-                {
-                    result.Add(new MacroStep { label = "Recorded dash", type = MacroStepType.Dash,
-                        direction = direction, durationTicks = 1, durationMs = TicksToMs(1, tickMs),
-                        endCondition = ActionEndCondition.FixedTicks });
-                    i++;
-                    continue;
-                }
-                int next = i + 1;
-                while (next < samples.Count && !samples[next].jumpPressed && !samples[next].dashPressed
-                    && Direction(samples[next].moveX) == direction) next++;
-                result.Add(new MacroStep { label = direction == 0 ? "Recorded wait" : "Recorded move",
-                    type = direction == 0 ? MacroStepType.Wait : MacroStepType.Move,
-                    direction = direction, durationTicks = Math.Max(1, next - i),
-                    durationMs = TicksToMs(next - i, tickMs), endCondition = ActionEndCondition.FixedTicks });
-                i = next;
-            }
-            return MergeAdjacent(result);
-        }
-
-        private static int FindJumpEndExclusive(List<RawTickSample> samples, int start)
-        {
-            int initialDirection = Direction(samples[start].moveX);
-            int limit = Math.Min(samples.Count, start + 21);
-            for (int i = start + 1; i < limit; i++)
-            {
-                RawTickSample sample = samples[i];
-                if (sample.jumpPressed || sample.dashPressed || sample.jumpReleased
-                    || Direction(sample.moveX) != initialDirection)
-                    return i;
-            }
-            return limit;
-        }
-
-        private static bool HasNearbyWall(List<RawTickSample> samples, int start)
-        {
-            int end = Math.Min(samples.Count - 1, start + 3);
-            for (int i = start; i <= end; i++)
-                if (samples[i].onWall || samples[i].wallCoyoteFrames > 0f) return true;
-            return false;
-        }
-
-        private static List<MacroStep> MergeAdjacent(List<MacroStep> source)
-        {
-            List<MacroStep> result = new List<MacroStep>();
-            foreach (MacroStep step in source)
-            {
-                MacroStep previous = result.Count == 0 ? null : result[result.Count - 1];
-                if (previous != null && previous.type == step.type && previous.direction == step.direction
-                    && (step.type == MacroStepType.Move || step.type == MacroStepType.Wait))
-                {
-                    previous.durationTicks += step.durationTicks;
-                    previous.durationMs += step.durationMs;
-                }
-                else result.Add(step);
-            }
-            return result;
-        }
-
-        private static int Direction(float value) { return value < -0.25f ? -1 : value > 0.25f ? 1 : 0; }
-        private static int TicksToMs(int ticks, float tickMs) { return Math.Max(1, Mathf.RoundToInt(ticks * tickMs)); }
-    }
-
     internal static class ExactInputCompressor
     {
-        public static List<MacroStep> Compress(List<RawTickSample> samples, float fixedDeltaMs)
+        public static List<MacroStep> Compress(List<RawTickSample> samples)
         {
             List<MacroStep> result = new List<MacroStep>();
             if (samples == null || samples.Count == 0) return result;
-            float tickMs = fixedDeltaMs > 0f ? fixedDeltaMs : 20f;
             int start = 0;
             while (start < samples.Count)
             {
@@ -258,8 +158,6 @@ namespace IGTAPTasMod
                     label = Label(first), type = MacroStepType.RawInput,
                     direction = Direction(first.moveX),
                     durationTicks = frames,
-                    durationMs = Math.Max(1, Mathf.RoundToInt(frames * tickMs)),
-                    endCondition = ActionEndCondition.FixedTicks,
                     rawMoveX = first.moveX, rawMoveY = first.moveY,
                     rawJumpPressed = first.jumpPressed, rawJumpHeld = first.jumpHeld,
                     rawJumpReleased = first.jumpReleased,

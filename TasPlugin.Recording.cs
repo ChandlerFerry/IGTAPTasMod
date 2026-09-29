@@ -38,13 +38,13 @@ namespace IGTAPTasMod
             if (recording == null) return;
             _recordings.Insert(0, recording);
             SaveRecording(recording);
-            Logger.LogInfo("Recording saved: " + recording.samples.Count + " physics frames, " + recording.semanticSteps.Count + " actions");
+            Logger.LogInfo("Recording saved: " + recording.samples.Count + " physics frames");
         }
 
         private void CreateRouteFromRecording(RecordingDefinition recording, List<RawTickSample> samples = null)
         {
             MacroDefinition macro = new MacroDefinition { name = recording.name };
-            foreach (MacroStep step in ExactInputCompressor.Compress(samples ?? recording.samples, recording.fixedDeltaMs))
+            foreach (MacroStep step in ExactInputCompressor.Compress(samples ?? recording.samples))
                 macro.steps.Add(step);
             _library.macros.Add(macro);
             _library.selectedIndex = _library.macros.Count - 1;

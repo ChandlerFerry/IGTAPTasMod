@@ -279,8 +279,6 @@ namespace IGTAPTasMod
                 if (body["durationTicks"] != null)
                 {
                     action.durationTicks = Math.Max(1, Number(body, "durationTicks", action.durationTicks));
-                    action.durationMs = Mathf.RoundToInt(action.durationTicks * Time.fixedDeltaTime * 1000f);
-                    action.endCondition = ActionEndCondition.FixedTicks;
                 }
                 if (body["direction"] != null) action.direction = Mathf.Clamp(Number(body, "direction", action.direction), -1, 1);
                 if (body["rawMoveX"] != null) action.rawMoveX = Mathf.Clamp(FloatNumber(body, "rawMoveX", action.rawMoveX), -1f, 1f);
@@ -448,16 +446,15 @@ namespace IGTAPTasMod
             foreach (Savestate savestate in _savestates)
                 savestates.Add(new { id = savestate.id, name = savestate.name, createdUtc = savestate.createdUtc,
                     assigned = selected != null && selected.savestateId == savestate.id });
-            // Every recording's actions: the Recordings tab lists each one's action summary.
+            // Every recording's exact inputs (the steps Create route makes): the Recordings tab lists them as its summary.
             List<object> recordings = new List<object>();
             foreach (RecordingDefinition recording in _recordings)
             {
                 List<object> actions = new List<object>();
-                foreach (MacroStep action in recording.semanticSteps)
-                    actions.Add(new { label = action.label, type = TypeName(action.type), direction = action.direction,
-                        wallJumpHoldDirection = action.wallJumpHoldDirection, durationTicks = action.durationTicks });
+                foreach (MacroStep action in ExactInputCompressor.Compress(recording.samples))
+                    actions.Add(new { label = action.label, durationTicks = action.durationTicks });
                 recordings.Add(new { id = recording.id, name = recording.name, createdUtc = recording.createdUtc,
-                    sampleCount = recording.samples.Count, actionCount = recording.semanticSteps.Count,
+                    sampleCount = recording.samples.Count, actionCount = actions.Count,
                     courseTimeSeconds = recording.courseTimeSeconds, actions = actions });
             }
             return new { staticVersion = version, categories = Categories.All.Select(c => new { id = c.Id, label = c.Label, caps = CapsWebState(c.Caps) }).ToArray(),

@@ -52,8 +52,8 @@ namespace IGTAPTasMod
             _vmanSetupQuiet = _engine.Quiet;
             _engine.Quiet = true;
             _engine.Run(new MacroDefinition { name = "Vman start box", steps = {
-                new MacroStep { type = MacroStepType.RawInput, durationTicks = 1, endCondition = ActionEndCondition.FixedTicks, rawJumpPressed = true, rawJumpHeld = true },
-                new MacroStep { type = MacroStepType.RawInput, durationTicks = VmanSetupJumpTicks, endCondition = ActionEndCondition.FixedTicks, rawJumpHeld = true } } });
+                new MacroStep { type = MacroStepType.RawInput, durationTicks = 1, rawJumpPressed = true, rawJumpHeld = true },
+                new MacroStep { type = MacroStepType.RawInput, durationTicks = VmanSetupJumpTicks, rawJumpHeld = true } } });
             _vmanSetupPlayer = player;
             _newGamePhase = 4;
             _newGameFrame = Time.frameCount;
