@@ -568,7 +568,5 @@ namespace Box2D
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool HasFlag(b2BodyFlags flag) => (m_flags & flag) == flag;
-
-
     }
 }

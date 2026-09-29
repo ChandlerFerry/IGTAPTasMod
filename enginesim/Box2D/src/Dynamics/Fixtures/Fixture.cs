@@ -210,6 +210,5 @@ namespace Box2D
         {
             b2Shape.ComputeMass(out massData, m_density);
         }
-
     }
 }

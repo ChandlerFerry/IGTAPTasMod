@@ -63,11 +63,4 @@ tripBreakerScript/<>c::<>9__14_0  # the lazily assigned light-lerp getter; every
 IGTAP.EngineSim.Engine::LayerNames  # the game's fixed 32-name layer database; World.Load fills the shared array in place with the same names every export carries
 IGTAP.EngineSim.Engine::NextInstanceId  # a shared counter keeps shim instance ids unique across solver threads; Object's ctor only decrements it and no run compares ids across worlds
 UnityEngine.Camera::<main>k__BackingField  # no writer anywhere: Camera.main reads null in every world and thread (FloatingOrigin and cameraMover already handle that)
-UnityEngine.Physics2D::<autoSyncTransforms>k__BackingField  # dead setting: the shim forwards to the physics backend, which keeps the world's settings; no reader or writer
-UnityEngine.Physics2D::<gravity>k__BackingField  # dead setting: the shim forwards to the physics backend, which keeps the world's settings; no reader or writer
-UnityEngine.Physics2D::<queriesHitTriggers>k__BackingField  # dead setting: the shim forwards to the physics backend, which keeps the world's settings; no reader or writer
-UnityEngine.Physics2D::<queriesStartInColliders>k__BackingField  # dead setting: the shim forwards to the physics backend, which keeps the world's settings; no reader or writer
-UnityEngine.Physics2D::<simulationMode>k__BackingField  # dead setting: the shim forwards to the physics backend, which keeps the world's settings; no reader or writer
-UnityEngine.Time::<fixedTime>k__BackingField  # no writer or reader in the engine: the clock is the tick; 0 in every thread
-UnityEngine.Time::<frameCount>k__BackingField  # no writer or reader in the engine: the clock is the tick; 0 in every thread
 UnityEngine.Time::<time>k__BackingField  # no writer: the clock is the tick; the only readers (AtomColliderSystem, light flicker) already see 0

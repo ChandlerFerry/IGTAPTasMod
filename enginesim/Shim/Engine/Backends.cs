@@ -7,7 +7,6 @@ namespace IGTAP.EngineSim
     public interface IPhysicsBackend
     {
         RaycastHit2D Raycast(Vector2 origin, Vector2 direction, float distance, int layerMask);
-        void Simulate(float deltaTime);
         void SyncTransforms();
         ColliderDistance2D Distance(Collider2D a, Collider2D b);
         void ColliderChanged(Collider2D collider);
@@ -16,20 +15,16 @@ namespace IGTAP.EngineSim
         void LayerChanged(GameObject gameObject);
         Vector2 GetPosition(Rigidbody2D body);
         void SetPosition(Rigidbody2D body, Vector2 position);
-        float GetRotation(Rigidbody2D body);
-        void SetRotation(Rigidbody2D body, float degrees);
         Vector2 GetVelocity(Rigidbody2D body);
         void SetVelocity(Rigidbody2D body, Vector2 velocity);
         float GetAngularVelocity(Rigidbody2D body);
         void SetAngularVelocity(Rigidbody2D body, float velocity);
-        int GetContacts(Rigidbody2D body, ContactPoint2D[] results);
     }
 
     public interface IScheduler
     {
         void Invoke(MonoBehaviour target, string method, float delay, float repeatRate);
         void CancelInvoke(MonoBehaviour target, string method);
-        bool IsInvoking(MonoBehaviour target, string method);
         Coroutine StartCoroutine(MonoBehaviour target, IEnumerator routine);
     }
 

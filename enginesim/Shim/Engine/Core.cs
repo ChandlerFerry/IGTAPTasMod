@@ -12,7 +12,6 @@ namespace UnityEngine
         string m_Name = "";
 
         public string name { get { return m_Name; } set { m_Name = value; } }
-        public HideFlags hideFlags { get; set; }
         public int GetInstanceID() { return m_InstanceID; }
         public void SetInstanceID(int id) { m_InstanceID = id; }
         public override int GetHashCode() { return m_InstanceID; }
@@ -34,12 +33,9 @@ namespace UnityEngine
 
         public static void Destroy(Object obj) { if ((object)obj != null) obj.m_Destroyed = true; }
         public static void Destroy(Object obj, float t) { Destroy(obj); }
-        public static void DestroyImmediate(Object obj) { Destroy(obj); }
         public static void DontDestroyOnLoad(Object target) { }
         public static T Instantiate<T>(T original) where T : Object { throw new NotSupportedException("Instantiate is not supported offline."); }
     }
-
-    public enum HideFlags { None = 0 }
 
     public class Component : Object
     {
@@ -52,7 +48,6 @@ namespace UnityEngine
         public T GetComponent<T>() { return m_GameObject.GetComponent<T>(); }
         public Component GetComponent(Type type) { return m_GameObject.GetComponent(type); }
         public Component GetComponent(string type) { return m_GameObject.GetComponent(type); }
-        public bool TryGetComponent<T>(out T component) { component = GetComponent<T>(); return component != null; }
         public T[] GetComponents<T>() { return m_GameObject.GetComponents<T>(); }
         public T GetComponentInParent<T>() { return m_GameObject.GetComponentInParent<T>(false); }
         public T GetComponentInParent<T>(bool includeInactive) { return m_GameObject.GetComponentInParent<T>(includeInactive); }
@@ -60,7 +55,6 @@ namespace UnityEngine
         public T GetComponentInChildren<T>(bool includeInactive) { return m_GameObject.GetComponentInChildren<T>(includeInactive); }
         public T[] GetComponentsInChildren<T>() { return m_GameObject.GetComponentsInChildren<T>(false); }
         public T[] GetComponentsInChildren<T>(bool includeInactive) { return m_GameObject.GetComponentsInChildren<T>(includeInactive); }
-        public void SendMessage(string methodName) { }
     }
 
     public class Behaviour : Component
@@ -85,19 +79,11 @@ namespace UnityEngine
 
     public class MonoBehaviour : Behaviour
     {
-        public bool useGUILayout { get; set; }
-
         public void Invoke(string methodName, float time) { Engine.Scheduler.Invoke(this, methodName, time, -1f); }
         public void InvokeRepeating(string methodName, float time, float repeatRate) { Engine.Scheduler.Invoke(this, methodName, time, repeatRate); }
         public void CancelInvoke(string methodName) { Engine.Scheduler.CancelInvoke(this, methodName); }
         public void CancelInvoke() { Engine.Scheduler.CancelInvoke(this, null); }
-        public bool IsInvoking(string methodName) { return Engine.Scheduler.IsInvoking(this, methodName); }
-        public bool IsInvoking() { return Engine.Scheduler.IsInvoking(this, null); }
         public Coroutine StartCoroutine(IEnumerator routine) { return Engine.Scheduler.StartCoroutine(this, routine); }
-        public void StopCoroutine(Coroutine routine) { if (routine != null) routine.stopped = true; }
-        public void StopCoroutine(IEnumerator routine) { }
-        public void StopAllCoroutines() { }
-        public static void print(object message) { }
     }
 
     public sealed class Coroutine : YieldInstruction
@@ -108,16 +94,8 @@ namespace UnityEngine
 
     public class YieldInstruction { }
     public sealed class WaitForSeconds : YieldInstruction { internal readonly float m_Seconds; public WaitForSeconds(float seconds) { m_Seconds = seconds; } }
-    public sealed class WaitForSecondsRealtime : CustomYieldInstruction { public WaitForSecondsRealtime(float time) { } public override bool keepWaiting { get { return false; } } }
     public sealed class WaitForFixedUpdate : YieldInstruction { }
     public sealed class WaitForEndOfFrame : YieldInstruction { }
-    public abstract class CustomYieldInstruction : IEnumerator
-    {
-        public abstract bool keepWaiting { get; }
-        public object Current { get { return null; } }
-        public bool MoveNext() { return keepWaiting; }
-        public virtual void Reset() { }
-    }
 
     public sealed class GameObject : Object
     {
@@ -191,8 +169,6 @@ namespace UnityEngine
             return null;
         }
 
-        public bool TryGetComponent<T>(out T component) { component = GetComponent<T>(); return component != null; }
-
         public T[] GetComponents<T>()
         {
             var result = new List<T>();
@@ -244,8 +220,6 @@ namespace UnityEngine
             AttachInternal(component);
             return component;
         }
-
-        public static GameObject Find(string name) { return null; }
     }
 
     public class Transform : Component, IEnumerable
@@ -259,7 +233,6 @@ namespace UnityEngine
         public int childCount { get { return m_Children.Count; } }
         public Transform GetChild(int index) { return m_Children[index]; }
         public IEnumerator GetEnumerator() { return m_Children.GetEnumerator(); }
-        public Transform root { get { Transform t = this; while (t.m_Parent != null) t = t.m_Parent; return t; } }
 
         public void SetParent(Transform newParent) { SetParent(newParent, true); }
         public void SetParent(Transform newParent, bool worldPositionStays)
@@ -312,7 +285,6 @@ namespace UnityEngine
         }
 
         public Vector3 eulerAngles { get { return m_Rotation.eulerAngles; } set { rotation = Quaternion.Euler(value); } }
-        public Vector3 localEulerAngles { get { return m_LocalRotation.eulerAngles; } set { localRotation = Quaternion.Euler(value); } }
 
         public Vector3 localScale
         {
@@ -327,17 +299,8 @@ namespace UnityEngine
 
         public Vector3 lossyScale { get { return m_LossyScale; } }
         public Vector3 up { get { return m_Rotation * Vector3.up; } }
-        public Vector3 right { get { return m_Rotation * Vector3.right; } }
-        public Vector3 forward { get { return m_Rotation * Vector3.forward; } }
-        public bool hasChanged { get; set; }
 
-        public Vector3 TransformPoint(Vector3 p) { return m_Position + m_Rotation * Vector3.Scale(m_LossyScale, p); }
-
-        void Changed(bool pose)
-        {
-            hasChanged = true;
-            Engine.Physics?.TransformChanged(this, pose);
-        }
+        void Changed(bool pose) { Engine.Physics?.TransformChanged(this, pose); }
 
         public void InitPose(Vector3 position, Quaternion rotation, Vector3 lossyScale, Vector3 localPosition, Quaternion localRotation, Vector3 localScale)
         {
@@ -345,6 +308,4 @@ namespace UnityEngine
             m_LocalPosition = localPosition; m_LocalRotation = localRotation; m_LocalScale = localScale;
         }
     }
-
-    public sealed class RectTransform : Transform { }
 }

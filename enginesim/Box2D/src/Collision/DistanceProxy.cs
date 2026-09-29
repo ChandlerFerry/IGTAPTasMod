@@ -129,6 +129,5 @@ namespace Box2D
 
             return bestIndex;
         }
-
     }
 }

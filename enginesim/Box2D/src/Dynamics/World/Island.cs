@@ -466,6 +466,5 @@ namespace Box2D
             //Debug.Assert(_contactCount < _contactCapacity);
             m_contacts[m_contactCount++] = contact;
         }
-
     }
 }

@@ -121,6 +121,5 @@ namespace Box2D
             C.p = MulT(A.q, B.p - A.p);
             return C;
         }
-
     }
 }

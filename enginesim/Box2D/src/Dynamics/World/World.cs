@@ -783,6 +783,5 @@ namespace Box2D
 
             return input.maxFraction;
         }
-
     }
 }
