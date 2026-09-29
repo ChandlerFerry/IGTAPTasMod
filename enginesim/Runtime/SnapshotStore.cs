@@ -110,8 +110,8 @@ namespace IGTAP.EngineSim
                     // The pre-apply mirrors what Simulation.Restore does (it runs it again, unchanged): the physics
                     // restore's rebuilds below read the rebase state, the player's collider geometry and the toggles.
                     case "Rebases": _sim.PutRebases(s.Rebases); break;
-                    case "Colliders": ApplyPose(s); break;
-                    case "Layers": _sim.TrackToggles(s); ApplyToggles(s); break;
+                    case "Colliders": _sim.RestorePose(s); break;
+                    case "Layers": _sim.TrackToggles(s); _sim.RestoreToggles(s); break;
                 }
             }
             i.Adopt(s.Physics);
@@ -139,52 +139,6 @@ namespace IGTAP.EngineSim
             "Active", "Enabled", "Layers", "Physics", "Movement", "Engine", "Courses", "Pending", "Touched",
             "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation",
         };
-
-        void ApplyPose(SimSnapshot s)
-        {
-            Transform t = _sim.Player.transform;
-            t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
-            t.m_LocalScale = s.LocalScale; t.m_LossyScale = s.LocalScale;
-            t.m_Rotation = s.Rotation; t.m_LocalRotation = s.Rotation;
-            BoxCollider2D[] boxes = _sim.Player.GetComponents<BoxCollider2D>();
-            for (int k = 0; k < boxes.Length && k < s.Colliders.Length; k++)
-            {
-                boxes[k].m_Offset = s.Colliders[k].offset;
-                boxes[k].m_Size = s.Colliders[k].size;
-                boxes[k].m_ExcludeLayers = s.Colliders[k].exclude;
-                boxes[k].m_Enabled = s.Colliders[k].enabled;
-            }
-            _physics.Generation++;
-        }
-
-        void ApplyToggles(SimSnapshot s)
-        {
-            _physics.Suspended = true;
-            int k = 0;
-            foreach (var (g, loaded) in _sim.ActiveAsLoaded)
-            {
-                bool active = Saved(s.Active, k++, g, loaded);
-                if (g.activeSelf != active) g.SetActive(active);
-            }
-            k = 0;
-            foreach (var (b, loaded) in _sim.EnabledAsLoaded)
-            {
-                bool enabled = Saved(s.Enabled, k++, b, loaded);
-                if (b.enabled != enabled) b.enabled = enabled;
-            }
-            k = 0;
-            foreach (var (g, loaded) in _sim.LayerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
-            _physics.Suspended = false;
-        }
-
-        /// <summary>The value a saved list holds for the index-th object tracked since load, or its loaded value (Simulation.Saved).</summary>
-        static TValue Saved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, TValue loaded) where TKey : class
-        {
-            if (index >= saved.Length) return loaded;
-            if (ReferenceEquals(saved[index].target, key)) return saved[index].value;
-            foreach (var (target, value) in saved) if (ReferenceEquals(target, key)) return value;
-            return loaded;
-        }
 
         #region value codec
 

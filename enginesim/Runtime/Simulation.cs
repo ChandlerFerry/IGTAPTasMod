@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using HarmonyLib;
 using IGTAPTasMod;
 using UnityEngine;
 
@@ -131,33 +131,18 @@ namespace IGTAP.EngineSim
 
     public sealed class Simulation
     {
-        static readonly FieldInfo TrackingField = typeof(courseScript).GetField("tracking", BindingFlags.Instance | BindingFlags.NonPublic);
-        static readonly FieldInfo PathTimeField = typeof(courseScript).GetField("currentPathTime", BindingFlags.Instance | BindingFlags.NonPublic);
-        // Read every tick: compiled, as FieldInfo.GetValue boxes each read.
-        static readonly Func<courseScript, bool> Tracking = CourseGetter<bool>(TrackingField);
-        static readonly Func<courseScript, float> PathTime = CourseGetter<float>(PathTimeField);
-
-        static Func<courseScript, T> CourseGetter<T>(FieldInfo field)
-        {
-            System.Linq.Expressions.ParameterExpression course = System.Linq.Expressions.Expression.Parameter(typeof(courseScript));
-            return System.Linq.Expressions.Expression.Lambda<Func<courseScript, T>>(System.Linq.Expressions.Expression.Field(course, field), course).Compile();
-        }
+        // Read every tick: field references, as FieldInfo.GetValue boxes each read.
+        static readonly AccessTools.FieldRef<courseScript, bool> Tracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
+        static readonly AccessTools.FieldRef<courseScript, float> PathTime = AccessTools.FieldRefAccess<courseScript, float>("currentPathTime");
         static readonly MethodInfo FixedUpdateMethod = typeof(Movement).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo RespawnMethod = typeof(Movement).GetMethod("respawn", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         static readonly MethodInfo UpdateMethod = typeof(Movement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo CourseFixedUpdateMethod = typeof(courseScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly string[] CoursePathLists = { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
-        const BindingFlags OrbFields = BindingFlags.Instance | BindingFlags.NonPublic;
-        static readonly MethodInfo OrbFixedUpdateMethod = typeof(JiggleDropScript).GetMethod("FixedUpdate", OrbFields);
-        static readonly Func<JiggleDropScript, float> OrbCooldown = OrbGetter<float>("cooldown");
-        static readonly Func<JiggleDropScript, int> OrbSequence = OrbGetter<int>("ActivationSequence");
-        static readonly FieldInfo OrbUsableField = typeof(JiggleDropScript).GetField("usable", OrbFields);
-
-        static Func<JiggleDropScript, T> OrbGetter<T>(string name)
-        {
-            ParameterExpression orb = Expression.Parameter(typeof(JiggleDropScript));
-            return Expression.Lambda<Func<JiggleDropScript, T>>(Expression.Field(orb, typeof(JiggleDropScript).GetField(name, OrbFields)), orb).Compile();
-        }
+        static readonly MethodInfo OrbFixedUpdateMethod = typeof(JiggleDropScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly AccessTools.FieldRef<JiggleDropScript, float> OrbCooldown = AccessTools.FieldRefAccess<JiggleDropScript, float>("cooldown");
+        static readonly AccessTools.FieldRef<JiggleDropScript, int> OrbSequence = AccessTools.FieldRefAccess<JiggleDropScript, int>("ActivationSequence");
+        static readonly AccessTools.FieldRef<JiggleDropScript, bool> OrbUsable = AccessTools.FieldRefAccess<JiggleDropScript, bool>("usable");
 
         public readonly World World;
         public readonly Movement Player;
@@ -369,14 +354,14 @@ namespace IGTAP.EngineSim
             var course = (courseScript)courseObject;
             if (!Tracking(course)) return;
             float time = PathTime(course);
-            TrackingField.SetValue(course, false);
+            Tracking(course) = false;
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
             if (savePositionData) Shop.CourseFinished(course, time);
             if (!(savePositionData && VmanScript.isCurrentlyVman))
             {
                 foreach (string list in CoursePathLists)
                     (typeof(courseScript).GetField(list, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(course) as System.Collections.IList)?.Clear();
-                PathTimeField.SetValue(course, 0f);
+                PathTime(course) = 0f;
             }
             if (Goals != null)
             {
@@ -616,10 +601,6 @@ namespace IGTAP.EngineSim
             foreach (var (g, _) in s.Layers) _layerAsLoaded.TryAdd(g, g.layer);
         }
 
-        internal IReadOnlyDictionary<GameObject, bool> ActiveAsLoaded { get { return _activeAsLoaded; } }
-        internal IReadOnlyDictionary<Behaviour, bool> EnabledAsLoaded { get { return _enabledAsLoaded; } }
-        internal IReadOnlyDictionary<GameObject, int> LayerAsLoaded { get { return _layerAsLoaded; } }
-
         public float Elapsed(courseScript active)
         {
             if (TimedFromRunStart) return Engine.PhysicsTicks * World.FixedDeltaTime;
@@ -804,8 +785,8 @@ namespace IGTAP.EngineSim
             _start = Capture(start.TryGetProperty("tick", out JsonElement startTick) ? startTick.GetInt32() : 0);
         }
 
-        static readonly FieldInfo LastHyperYField = typeof(Movement).GetField("lastHyperY", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
-            JumpStartHeightField = typeof(Movement).GetField("heightOfLastJumpStart", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        static readonly AccessTools.FieldRef<Movement, float> LastHyperY = AccessTools.FieldRefAccess<Movement, float>("lastHyperY"),
+            JumpStartHeight = AccessTools.FieldRefAccess<Movement, float>("heightOfLastJumpStart");
 
         /// <summary>
         /// A category start at the FloatingOrigin the plugin judges it at (TurboRunner.PutCanonicalOrigin): as the game's rebase
@@ -832,8 +813,8 @@ namespace IGTAP.EngineSim
             if (Player.courseResetPoint != Vector2.zero) Player.courseResetPoint -= new Vector2(by.x, by.y);
             // Standing, the game writes both every tick; in the air CourseStart set the jump height from the player's y and
             // lastHyperY to its no-hyper value.
-            JumpStartHeightField.SetValue(Player, (float)JumpStartHeightField.GetValue(Player) - by.y);
-            if (Player.onGround) LastHyperYField.SetValue(Player, (float)LastHyperYField.GetValue(Player) - by.y);
+            JumpStartHeight(Player) -= by.y;
+            if (Player.onGround) LastHyperY(Player) -= by.y;
             if (!float.IsNaN(_loadedStepAt.x))
             {
                 _loadedStepFrom -= by;
@@ -877,7 +858,7 @@ namespace IGTAP.EngineSim
         public StepEvents Events;
         public Vector2 SpringUp;
         public float WallBoostSide, StepUpSide;
-        static readonly Func<Movement, int> DashBounceFrames = ContactRays.FieldGetter<int>("DashBounceFrames");
+        static readonly AccessTools.FieldRef<Movement, int> DashBounceFrames = AccessTools.FieldRefAccess<Movement, int>("DashBounceFrames");
         bool _inRun;
         /// <summary>The trace start's interpolation ends (its last physics step's start and end, turbo's _stepFrom/_stepTo) and
         /// where it put the player; a start moved from there (a lab or probe placement) is at rest instead.</summary>
@@ -1118,22 +1099,7 @@ namespace IGTAP.EngineSim
         public void Restore(SimSnapshot s)
         {
             MaterializeRebases(s.Rebases);
-            Physics.Suspended = true;
-            int k = 0;
-            foreach (var (g, loaded) in _activeAsLoaded)
-            {
-                bool active = Saved(s.Active, k++, g, loaded);
-                if (g.activeSelf != active) g.SetActive(active);
-            }
-            k = 0;
-            foreach (var (b, loaded) in _enabledAsLoaded)
-            {
-                bool enabled = Saved(s.Enabled, k++, b, loaded);
-                if (b.enabled != enabled) b.enabled = enabled;
-            }
-            k = 0;
-            foreach (var (g, loaded) in _layerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
-            Physics.Suspended = false;
+            RestoreToggles(s);
             // A script the snapshot lists is written whole below: its pristine write would be overwritten field for field.
             foreach (var (target, _) in s.Touched) _restoring.Add(target);
             foreach (MonoBehaviour script in _touched)
@@ -1160,18 +1126,7 @@ namespace IGTAP.EngineSim
                 foreach (System.Collections.IList list in _coursePathLists[i]) list.Clear();
                 _captured[Courses[i]] = s.Courses[i];
             }
-            Transform t = Player.transform;
-            t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
-            t.m_LocalScale = s.LocalScale; t.m_LossyScale = s.LocalScale;
-            t.m_Rotation = s.Rotation; t.m_LocalRotation = s.Rotation;
-            for (int i = 0; i < _playerColliders.Length; i++)
-            {
-                BoxCollider2D c = _playerColliders[i];
-                c.m_Offset = s.Colliders[i].offset;
-                c.m_Size = s.Colliders[i].size;
-                c.m_ExcludeLayers = s.Colliders[i].exclude;
-                c.m_Enabled = s.Colliders[i].enabled;
-            }
+            RestorePose(s);
             Scheduler.Queue.Clear();
             Scheduler.Tick = 0;
             foreach (var (due, target, method, repeat) in s.Pending)
@@ -1189,6 +1144,47 @@ namespace IGTAP.EngineSim
             _stepFrom = s.StepFrom;
             _stepTo = s.StepTo;
             Player.animator?.SetInteger("Animation", s.Animation);
+        }
+
+        /// <summary>The objects toggled since load (active, enabled, layer) as the snapshot has them, the physics suspended meanwhile
+        /// (a persisted snapshot's load pre-applies them too: SnapshotStore).</summary>
+        internal void RestoreToggles(SimSnapshot s)
+        {
+            Physics.Suspended = true;
+            int k = 0;
+            foreach (var (g, loaded) in _activeAsLoaded)
+            {
+                bool active = Saved(s.Active, k++, g, loaded);
+                if (g.activeSelf != active) g.SetActive(active);
+            }
+            k = 0;
+            foreach (var (b, loaded) in _enabledAsLoaded)
+            {
+                bool enabled = Saved(s.Enabled, k++, b, loaded);
+                if (b.enabled != enabled) b.enabled = enabled;
+            }
+            k = 0;
+            foreach (var (g, loaded) in _layerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
+            Physics.Suspended = false;
+        }
+
+        /// <summary>The player's transform and box colliders as the snapshot has them (the colliders' enabled written directly:
+        /// <see cref="PhysicsWorld.Generation"/> counts it).</summary>
+        internal void RestorePose(SimSnapshot s)
+        {
+            Transform t = Player.transform;
+            t.m_Position = s.Position; t.m_LocalPosition = t.m_Parent == null ? s.Position : s.Position - t.m_Parent.m_Position;
+            t.m_LocalScale = s.LocalScale; t.m_LossyScale = s.LocalScale;
+            t.m_Rotation = s.Rotation; t.m_LocalRotation = s.Rotation;
+            for (int i = 0; i < _playerColliders.Length && i < s.Colliders.Length; i++)
+            {
+                BoxCollider2D c = _playerColliders[i];
+                c.m_Offset = s.Colliders[i].offset;
+                c.m_Size = s.Colliders[i].size;
+                c.m_ExcludeLayers = s.Colliders[i].exclude;
+                c.m_Enabled = s.Colliders[i].enabled;
+            }
+            Physics.Generation++;
         }
 
         /// <summary>
@@ -1376,7 +1372,7 @@ namespace IGTAP.EngineSim
             Touch(orb);
             Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
             double orbs = upgrades[globalStats.globalUpgradeSet.unlockJiggleDrops] + upgrades[globalStats.globalUpgradeSet.moreRefreshOrbs];
-            OrbUsableField.SetValue(orb, OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb));
+            OrbUsable(orb) = OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb);
         }
 
         void VmanClock()
@@ -1387,9 +1383,6 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Unmodeled: the Vman speedrun's time ran out (ExitVmanSpeedrun loads the Overworld)");
         }
 
-        static readonly FieldInfo OnGroundField = typeof(Movement).GetField("onGround", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        static readonly FieldInfo MomentumField = typeof(Movement).GetField("momentum", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         const int StillTicks = 3;
 
         public int Still(List<InputTick> walk, int limit)
@@ -1399,8 +1392,7 @@ namespace IGTAP.EngineSim
             Run(inputs, afterTick: tick =>
             {
                 if (tick < walk.Count) return true;
-                bool rest = (bool)OnGroundField.GetValue(Player) && ((Vector2)VelocityField.GetValue(Player)).sqrMagnitude < 1e-4f
-                    && ((Vector2)MomentumField.GetValue(Player)).sqrMagnitude < 1e-4f;
+                bool rest = Player.onGround && Player.Velocity.sqrMagnitude < 1e-4f && Player.momentum.sqrMagnitude < 1e-4f;
                 still = rest ? still + 1 : 0;
                 if (still < StillTicks) return true;
                 found = tick + 1;

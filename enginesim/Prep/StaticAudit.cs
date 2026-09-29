@@ -11,27 +11,15 @@ using Mono.Cecil.Cil;
 // thread from the export, which is what makes the per-thread copy correct.
 static class StaticAudit
 {
-    public sealed class Offense
+    public sealed record Offense(FieldDefinition Field)
     {
-        public Offense(FieldDefinition field) { Field = field; }
-
-        public FieldDefinition Field { get; }
         public List<string> Sites { get; } = new(); // "Type::Method" of each write or mutation site
         public bool Written { get; set; }   // stsfld outside any .cctor
         public bool Mutated { get; set; }   // contents mutated (stelem, stfld, stobj, a call through it)
     }
 
-    public sealed class Report
-    {
-        public Report(Dictionary<string, FieldDefinition> fields, List<Offense> offenses)
-        {
-            Fields = fields;
-            Offenses = offenses;
-        }
-
-        public Dictionary<string, FieldDefinition> Fields { get; }   // every static field of the audited modules
-        public List<Offense> Offenses { get; }
-    }
+    /// <param name="Fields">Every static field of the audited modules.</param>
+    public sealed record Report(Dictionary<string, FieldDefinition> Fields, List<Offense> Offenses);
 
     public static string Key(FieldDefinition f) => f.DeclaringType.FullName + "::" + f.Name;
 
@@ -192,6 +180,32 @@ static class StaticAudit
             }
         }
 
+        // Whole families by name: every stelem.*, stind.*, ldind.* and ldelem.* (ldelema too).
+        string name = ins.OpCode.Name;
+        if (name.StartsWith("stelem", StringComparison.Ordinal))
+        {
+            state.Pop(); // value
+            state.Pop(); // index
+            Record(state.Pop()); // array
+            return;
+        }
+        if (name.StartsWith("stind.", StringComparison.Ordinal))
+        {
+            state.Pop(); // value
+            Record(state.Pop()); // address
+            return;
+        }
+        if (name.StartsWith("ldind.", StringComparison.Ordinal))
+        {
+            state.Push(state.Pop()); // the object reached is still the field's contents
+            return;
+        }
+        if (name.StartsWith("ldelem", StringComparison.Ordinal))
+        {
+            state.Pop(); // index
+            state.Push(state.Pop()); // the element is still the array's contents
+            return;
+        }
         switch (ins.OpCode.Code)
         {
             case Code.Ldsfld:
@@ -239,67 +253,16 @@ static class StaticAudit
                 state.Pop(); // value
                 Record(state.Pop()); // object: its field is written
                 return;
-            case Code.Stelem_Any:
-            case Code.Stelem_I:
-            case Code.Stelem_I1:
-            case Code.Stelem_I2:
-            case Code.Stelem_I4:
-            case Code.Stelem_I8:
-            case Code.Stelem_R4:
-            case Code.Stelem_R8:
-            case Code.Stelem_Ref:
-                state.Pop(); // value
-                state.Pop(); // index
-                Record(state.Pop()); // array
-                return;
             case Code.Stobj:
             case Code.Cpobj:
             case Code.Initobj:
                 state.Pop();
                 Record(state.Pop());
                 return;
-            case Code.Stind_I:
-            case Code.Stind_I1:
-            case Code.Stind_I2:
-            case Code.Stind_I4:
-            case Code.Stind_I8:
-            case Code.Stind_R4:
-            case Code.Stind_R8:
-            case Code.Stind_Ref:
-                state.Pop(); // value
-                Record(state.Pop()); // address
-                return;
             case Code.Ldfld:
             case Code.Ldflda:
-            case Code.Ldind_I:
-            case Code.Ldind_I1:
-            case Code.Ldind_U1:
-            case Code.Ldind_I2:
-            case Code.Ldind_U2:
-            case Code.Ldind_I4:
-            case Code.Ldind_U4:
-            case Code.Ldind_I8:
-            case Code.Ldind_R4:
-            case Code.Ldind_R8:
-            case Code.Ldind_Ref:
             case Code.Ldobj:
                 state.Push(state.Pop()); // the object reached is still the field's contents
-                return;
-            case Code.Ldelem_Any:
-            case Code.Ldelem_I:
-            case Code.Ldelem_I1:
-            case Code.Ldelem_U1:
-            case Code.Ldelem_I2:
-            case Code.Ldelem_U2:
-            case Code.Ldelem_I4:
-            case Code.Ldelem_U4:
-            case Code.Ldelem_I8:
-            case Code.Ldelem_R4:
-            case Code.Ldelem_R8:
-            case Code.Ldelem_Ref:
-            case Code.Ldelema:
-                state.Pop(); // index
-                state.Push(state.Pop()); // the element is still the array's contents
                 return;
             case Code.Castclass:
             case Code.Isinst:

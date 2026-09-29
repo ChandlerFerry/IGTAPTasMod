@@ -429,8 +429,7 @@ namespace IGTAP.EngineSim
             if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
             CapturePos p = sim.PlayerAtCapture;
             if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
-            CaptureRect r = goal.AtRect();
-            float dx = Math.Max(0f, Math.Abs(p.x - r.At.x) - r.W / 2f), dy = Math.Max(0f, Math.Abs(p.y - r.At.y) - r.H / 2f);
+            float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
             return MathF.Sqrt(dx * dx + dy * dy);
         }
 

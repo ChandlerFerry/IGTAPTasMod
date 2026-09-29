@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HarmonyLib;
 using IGTAPTasMod;
 using UnityEngine;
 
@@ -57,17 +58,9 @@ namespace IGTAP.EngineSim
     /// grafts and the demo miner share.</summary>
     public static class ContactRays
     {
-        public static readonly Func<Movement, LayerMask> GroundLayer = FieldGetter<LayerMask>("groundRaycastLayer");
-        public static readonly Func<Movement, bool> CanHyper = FieldGetter<bool>("canHyper");
-        public static readonly Func<Movement, float> CoyoteFrames = FieldGetter<float>("coyoteFrames");
-
-        public static Func<Movement, T> FieldGetter<T>(string name)
-        {
-            FieldInfo field = typeof(Movement).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
-                ?? throw new MissingFieldException(nameof(Movement), name);
-            ParameterExpression player = Expression.Parameter(typeof(Movement));
-            return Expression.Lambda<Func<Movement, T>>(Expression.Field(player, field), player).Compile();
-        }
+        internal static readonly AccessTools.FieldRef<Movement, LayerMask> GroundLayer = AccessTools.FieldRefAccess<Movement, LayerMask>("groundRaycastLayer");
+        internal static readonly AccessTools.FieldRef<Movement, bool> CanHyper = AccessTools.FieldRefAccess<Movement, bool>("canHyper");
+        internal static readonly AccessTools.FieldRef<Movement, float> CoyoteFrames = AccessTools.FieldRefAccess<Movement, float>("coyoteFrames");
 
         /// <summary>The side of a wall at the player's back that isn't clip-ready yet because its bottom is still above the ground
         /// rays (the back ray at y + 19 or y + 45 hits it within 12 u, the one at y - 18 doesn't), 0 for none: rising up
