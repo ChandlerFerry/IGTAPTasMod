@@ -1016,10 +1016,11 @@ namespace IGTAPTasMod
                     _captureFailure = "engine '" + _engine.Status + "', dead " + GetMovementField(player, "isDead") + ", onGround " + GetMovementField(player, "onGround")
                         + ", coyote " + GetMovementField(player, "coyoteFrames") + ", cutscene " + GetMovementField(player, "cutsceneMode")
                         + ", at " + ((Vector2)player.transform.position - CurrentOrigin());
-                if (_engine.IsRunning) _engine.Abort("Solver run ended");
             }
             finally
             {
+                // Also when the run throws: a resumed engine left running would play the inputs on in real time.
+                if (_engine.IsRunning) _engine.Abort("Solver run ended");
                 _pendingSilentMacro = null;
                 _silentEvaluation = false;
                 _engine.Quiet = false;

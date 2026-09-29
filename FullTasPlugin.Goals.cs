@@ -357,10 +357,11 @@ namespace IGTAPTasMod
                     if (_audit != null) AuditTick(player, tick);
                     lastTick = tick;
                 }, from);
-                if (_engine.IsRunning) _engine.Abort("Full-TAS run ended");
             }
             finally
             {
+                // Also when the run throws: a resumed engine left running would play the route's inputs on in real time.
+                if (_engine.IsRunning) _engine.Abort("Full-TAS run ended");
                 _fullTas = null;
                 _silentEvaluation = false;
                 _engine.Quiet = false;

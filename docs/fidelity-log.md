@@ -426,3 +426,18 @@ ordered as the sections they came from.
   category's start, so the start traces would have to be recaptured and the saved routes judged again. A Full-TAS run
   starts from a fresh new game, so VMAN is not affected. Deferred for now.
 - **Where:** `EngineSimBridge.PrepareEngineSimRun` (start capture), `TasPlugin.RestoreRouteStart`.
+
+## Turbo ran the afterimages on the real frame's deltaTime
+
+- **Symptom:** right after a fresh game launch, a `VMAN` 34.28 trace failed with "Stack empty." in 4 of 5 launches, and a
+  1x "New game start" playback of the route's inputs kept running until it timed out.
+- **Cause:** `Movement.Update` calls `HandleAfterimages` (presentation only; the offline engine cuts it), which ran in
+  turbo on the real frame's `Time.deltaTime`, held for the whole run. On a fast stretch it could make all 21 pooled
+  afterimage sprites active (the failing trace went from 20 pooled to 0 by tick 1314; a good one never dropped below 5),
+  and `inactiveAfterimages.Pop()` threw out of `TurboRunner.Run`. `EvaluateFullTas` and `Solver.Evaluate` aborted the
+  resumed engine only on a normal return, so after the throw it played the inputs on at 1x.
+- **Fix:** turbo skips `HandleAfterimages` (a Harmony prefix while `TurboRunner.Active`), and both evaluators abort a
+  running engine in `finally`. A failed Full-TAS request logs the whole exception. 5 of 5 fresh launches then traced
+  34.28 (23/23), with no playback left running.
+- **Where:** `TurboRunner.BeforeHandleAfterimages`, `TasPlugin.EvaluateFullTas`, `TasPlugin.Evaluate`,
+  `TasPlugin.PumpFullTasPending`.

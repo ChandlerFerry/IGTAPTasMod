@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -36,6 +37,27 @@ namespace IGTAPTasMod
             _vmanFixedUpdate = AccessTools.MethodDelegate<Action<VmanScript>>(VmanFixedUpdate);
             _orbFixedUpdate = AccessTools.MethodDelegate<Action<JiggleDropScript>>(OrbFixedUpdate);
             _originLateUpdate = AccessTools.MethodDelegate<Action<FloatingOrigin>>(OriginLateUpdate);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct NativeMessage { public IntPtr hwnd; public uint message; public UIntPtr wParam; public IntPtr lParam; public uint time; public int x, y; }
+
+        [DllImport("user32.dll")]
+        static extern bool PeekMessage(out NativeMessage message, IntPtr window, uint filterMin, uint filterMax, uint remove);
+
+        const uint PeekNoRemove = 0x0000, PeekNoYield = 0x0002;
+        const long KeepAliveMs = 250;
+
+        /// <summary>
+        /// A long run (a Full-TAS judge is tens of seconds of one frame) holds the main thread, and Windows calls a window
+        /// that hasn't looked at its message queue for 5 s "Not Responding". Looking without taking a message (PM_NOREMOVE)
+        /// keeps it responsive and runs no frame, Update, FixedUpdate or coroutine, so nothing of the run moves.
+        /// </summary>
+        static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
+        {
+            if (clock.ElapsedMilliseconds < next) return;
+            next = clock.ElapsedMilliseconds + KeepAliveMs;
+            if (Application.platform == RuntimePlatform.WindowsPlayer) PeekMessage(out _, IntPtr.Zero, 0, 0, PeekNoRemove | PeekNoYield);
         }
 
         /// <summary>What <c>MonoBehaviour.Invoke(method)</c> on the target would run: its type's method of that name, none if it has none.</summary>
@@ -94,7 +116,16 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
             harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")),
                 transpiler: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseCoroutineDeltaTime))));
+            harmony.Patch(AccessTools.Method(typeof(Movement), "HandleAfterimages"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
         }
+
+        /// <summary>
+        /// Movement.Update's afterimages are presentation only (the offline engine cuts them, enginesim/cuts.txt), but in turbo
+        /// they ran on the real frame's Time.deltaTime, held for the whole run: a fast stretch could take all 21 pooled
+        /// sprites, and the next <c>inactiveAfterimages.Pop()</c> threw "Stack empty." out of the run. Turbo skips them.
+        /// </summary>
+        static bool BeforeHandleAfterimages() { return !Active; }
 
         /// <summary>
         /// Two freezes the same tick run side by side and the shorter ends it (its end puts timeScale back), so the tick's
@@ -791,10 +822,13 @@ namespace IGTAPTasMod
             if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
             Physics2D.simulationMode = SimulationMode2D.Script;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            long keepAliveAt = KeepAliveMs;
             try
             {
                 for (_tick = 0; _tick < maxTicks && keepRunning(); _tick++)
                 {
+                    KeepWindowAlive(clock, ref keepAliveAt);
                     for (int i = 0; i < Pending.Count; i++)
                     {
                         if (Pending[i].due > _tick) continue;

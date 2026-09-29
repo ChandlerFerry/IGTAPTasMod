@@ -91,7 +91,7 @@ namespace IGTAPTasMod
             try { result = pending.action(); }
             catch (Exception ex)
             {
-                Logger.LogWarning("Full-TAS: " + pending.what + ": " + ex.Message);
+                Logger.LogWarning("Full-TAS: " + pending.what + ": " + ex);
                 CompleteFullTasPending(500, new { error = ex.Message });
                 return;
             }
