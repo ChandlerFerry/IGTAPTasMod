@@ -12,7 +12,7 @@ namespace IGTAP.EngineSim.Cli
     /// <summary>
     /// coverage &lt;trace&gt; &lt;route-human.json&gt; [--out file.md] [--no-tech-grafts]: issue #19's step 0. Replays the route
     /// with the solver's contact detection (<see cref="ContactLog"/>) and maps each of its inputs (<see cref="Humanizer.Events"/>,
-    /// with the human file's class) onto the primitive library: the contact whose <see cref="OfflineSolver.GraftsAt"/> window
+    /// with the human file's class) onto the primitive library: the contact whose <see cref="Planner.Primitives"/> window
     /// reaches it and the graft kind that makes that input there (its tick relative to the graft's start and its value), or
     /// a mined tech demo window (<see cref="TechGrafts"/>) with the same input at that offset (±<see cref="TechGrafts.Jitter"/>);
     /// else none. Prints a markdown table and the coverage count.
@@ -38,14 +38,17 @@ namespace IGTAP.EngineSim.Cli
             }
             TechGrafts mined = args.Contains("--no-tech-grafts") ? null : TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(trace)),
                 techDir: Solve.Option(args, "--tech-dir", (string)null));
-            TechPattern[] patterns = mined?.Patterns.Where(p => p.Requires.IsSubsetOf(unlocks)).ToArray() ?? Array.Empty<TechPattern>();
+            TechPattern[] patterns = mined?.Patterns.Where(p => p.Requires.IsSubsetOf(unlocks) && !p.Resets).ToArray() ?? Array.Empty<TechPattern>();
 
             Simulation sim = Solve.Creator(trace, header)();
             var log = new ContactLog();
             var gate = new ContactProbe(sim);
             int last = -1;
-            RunResult r = sim.Run(route, null, tick => { last = tick; log.Tick(tick, sim.Player, gate.NearGate()); return true; }, 400,
-                unlocks.Omni ? _ => log.Slide((int)sim.Engine.RunTicks, sim.Player) : null);
+            RunResult r = sim.Run(route, null, tick => { last = tick; log.Tick(tick, sim.Player, gate.NearGate()); return true; }, 400, _ =>
+            {
+                if (unlocks.Omni) log.Slide((int)sim.Engine.RunTicks, sim.Player);
+                log.Step(sim);
+            });
             bool died = r.EndReason != null && r.EndReason.StartsWith("Player death", StringComparison.Ordinal);
             if (died) log.Contacts.Add((last + 1, Contact.Died));
             List<(int tick, Contact kind)> contacts = log.Contacts;
@@ -93,7 +96,7 @@ namespace IGTAP.EngineSim.Cli
             s.AppendLine($"Replay: {(r.Finished ? $"finishes, {r.Time.ToString("0.00", CultureInfo.InvariantCulture)}s" : r.EndReason)} (last input tick {last}); "
                 + $"{contacts.Count} contacts; {list.Count} inputs, {replayed} replayed. {patterns.Length} mined patterns for these unlocks.");
             s.AppendLine();
-            s.AppendLine($"Covered: {covered}/{list.Count} ({graftHits} by a GraftsAt kind, {minedHits} by a mined window). By class: "
+            s.AppendLine($"Covered: {covered}/{list.Count} ({graftHits} by a planner primitive, {minedHits} by a mined window). By class: "
                 + string.Join(", ", byClass.OrderBy(k => k.Key).Select(k => $"{k.Key} {k.Value.hit}/{k.Value.all}")) + ".");
             s.AppendLine();
             s.AppendLine($"Planner grid: {gridHits}/{list.Count} inputs have a value the planner's decisions make at any node (Planner.Decisions: "
@@ -101,7 +104,7 @@ namespace IGTAP.EngineSim.Cli
                 + "its nodes come at every contact and at most Cap ticks apart, an air node also makes its jump cut, double jump, stick change, "
                 + "dash and dash jump 2, 4 or 6 ticks later, and the polish moves each input up to 6 ticks.");
             s.AppendLine();
-            s.AppendLine("| Tick | Input | Class | Contact (offset) | GraftsAt kind | Mined window | Planner grid |");
+            s.AppendLine("| Tick | Input | Class | Contact (offset) | Primitive | Mined window | Planner grid |");
             s.AppendLine("|---|---|---|---|---|---|---|");
             foreach (string row in rows) s.AppendLine(row);
             string text = s.ToString();
@@ -150,15 +153,14 @@ namespace IGTAP.EngineSim.Cli
         static readonly float[] ClipFlicks = { .3f, .35f, .4f, .45f, .5f, .55f }, ClipBacks = { .3f, .4f, .5f, .65f, 1f }, TurnAways = { .3f, .5f, .7f, 1f };
 
         /// <summary>
-        /// The GraftsAt kind at this contact that makes the input: its start `at` anywhere in the contact's window, the input at
-        /// the kind's own offset from `at` with a value it makes (OfflineSolver.Graft's builders: Hop's holds, the dash jump's
-        /// frames 1-4, the primed dash 1-6 after its jump, the superbounce's jump 0-5 after its dash, the wall clip's flick,
-        /// jump and hold, the turn away, the gate tap, the omnidash kinds' aims and frames). The graft's coast (the stick full
-        /// one way from `at`) makes a full x there.
+        /// The planner primitive at this contact that makes the input: its start `at` anywhere in the contact's window, the input at
+        /// the kind's own offset from `at` with a value it makes (the jump's holds, the dash jump's frames 1-4, the primed dash 1-6
+        /// after its jump, the superbounce's jump 0-5 after its dash, the wall clip's flick, jump and hold, the turn away, the gate
+        /// tap, the omnidash kinds' aims and frames). The primitive's coast (the stick full one way from `at`) makes a full x there.
         /// </summary>
         static string Graft(Humanizer.Event e, List<InputTick> route, (int tick, Contact kind) c, Caps caps)
         {
-            if (!OfflineSolver.GraftsAt.TryGetValue(c.kind, out var w)) return null;
+            if (!Planner.Primitives.TryGetValue(c.kind, out var w)) return null;
             IEnumerable<string> kinds = !caps.Dash ? new[] { "jump" } : caps.Omni ? w.plain.Concat(w.omni ?? OmniKinds) : w.plain;
             if (c.kind is Contact.WallBehindLeft or Contact.WallBehindRight) kinds = new[] { "wallclip" };
             else if (c.kind is Contact.WallAheadLeft or Contact.WallAheadRight or Contact.WallAboveLeft or Contact.WallAboveRight) kinds = w.plain;

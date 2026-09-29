@@ -15,6 +15,7 @@ namespace IGTAP.EngineSim.Cli
     /// [--keep]: runs `solve --rng s --no-submit --fresh --no-humanize` per course, arm and seed (s = 1..N) as a child process, each
     /// on its own temp copy of the start trace (so its archive and offline bests stay there) with its own tech-graft cache copy, and
     /// reports per arm the median/min/max of the wall time to the first finish, to the course's target time, and the final best.
+    /// An arm's `--exe path` (taken out of its solve args) runs that build instead of this one: two builds benched on the same seeds.
     /// </summary>
     static class SearchBench
     {
@@ -43,11 +44,20 @@ namespace IGTAP.EngineSim.Cli
                 string name = (string)course["name"], trace = Path.Combine(traces, (string)course["trace"]);
                 double target = (double)course["target"];
                 string[] courseArgs = course["args"]?.AsArray().Select(a => (string)a).ToArray() ?? Array.Empty<string>();
-                foreach (var (arm, armArgs) in arms)
+                // The arms take turns seed by seed (seed 1 of each arm, then seed 2 ...), so a load that comes and goes on the
+                // machine falls on every arm alike.
+                var runsByArm = arms.Keys.ToDictionary(a => a, a => new List<(double? first, double? toTarget, double? best, JsonArray bests)>());
+                for (int s = 1; s <= seeds; s++)
                 {
-                    var runs = new List<(double? first, double? toTarget, double? best, JsonArray bests)>();
-                    for (int s = 1; s <= seeds; s++)
+                    foreach (var (arm, armSpec) in arms)
                     {
+                        var runs = runsByArm[arm];
+                        int exeAt = Array.IndexOf(armSpec, "--exe");
+                        string exe = exeAt >= 0 ? Path.GetFullPath(armSpec[exeAt + 1]) : Environment.ProcessPath;
+                        string[] armArgs = exeAt >= 0 ? armSpec.Where((_, i) => i != exeAt && i != exeAt + 1).ToArray() : armSpec;
+                        // Another build mines under another cache key: its own copy, so the builds don't re-mine over each other.
+                        string cache = exeAt >= 0 ? Path.Combine(root, "tech-grafts." + arm + ".cache.json") : techCache;
+                        if (exeAt >= 0 && !File.Exists(cache) && File.Exists(realCache)) File.Copy(realCache, cache);
                         string dir = Path.Combine(root, name, arm, "seed" + s);
                         Directory.CreateDirectory(dir);
                         string copy = Path.Combine(dir, Path.GetFileName(trace));
@@ -56,11 +66,11 @@ namespace IGTAP.EngineSim.Cli
                         string log = Path.Combine(dir, "bests.jsonl");
                         var solveArgs = new List<string> { "solve", copy, "--rng", s.ToString(CultureInfo.InvariantCulture), "--no-submit", "--fresh", "--no-humanize",
                             "--minutes", minutes.ToString(CultureInfo.InvariantCulture), "--threads", threads.ToString(CultureInfo.InvariantCulture),
-                            "--log-json", log, "--tech-cache", techCache };
+                            "--log-json", log, "--tech-cache", cache };
                         solveArgs.AddRange(courseArgs);
                         solveArgs.AddRange(armArgs);
-                        Console.WriteLine($"{name} / {arm} / seed {s}: {string.Join(" ", solveArgs.Skip(2))}");
-                        var start = new ProcessStartInfo(Environment.ProcessPath) { RedirectStandardOutput = true, WorkingDirectory = dir };
+                        Console.WriteLine($"{name} / {arm} / seed {s}: {(exeAt >= 0 ? exe + " " : "")}{string.Join(" ", solveArgs.Skip(2))}");
+                        var start = new ProcessStartInfo(exe) { RedirectStandardOutput = true, WorkingDirectory = dir };
                         foreach (string a in solveArgs) start.ArgumentList.Add(a);
                         using (Process p = Process.Start(start))
                         using (FileStream output = File.Create(Path.Combine(dir, "solve.log")))
@@ -79,6 +89,9 @@ namespace IGTAP.EngineSim.Cli
                         runs.Add((first, toTarget, best, bests));
                         if (!keep) Directory.Delete(dir, true);
                     }
+                }
+                foreach (var (arm, runs) in runsByArm)
+                {
                     results.Add(new JsonObject
                     {
                         ["course"] = name, ["arm"] = arm, ["target"] = target,
@@ -105,7 +118,7 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine("-: not reached in that run (counts as never, so a median of - means half the runs or more missed it). -> " + outFile);
             if (!keep)
             {
-                File.Delete(techCache);
+                foreach (string cache in Directory.GetFiles(root, "tech-grafts*.cache.json")) File.Delete(cache);
                 foreach (string d in Directory.GetDirectories(root)) Directory.Delete(d, true);
             }
             return 0;

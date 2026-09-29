@@ -95,8 +95,15 @@
     {
       "course": 6,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
-      "note": "x 25507 to 25621, y -396 to 220, is cut.",
-      "avoid": [[27244.4, -664.8, 28079.5, 870.1], [22378.9, -512.5, 22584.0, 1346.5], [22533.2, 406.1, 25855.5, 629.9], [26061.6, 5.5, 26291.4, 40.9], [22506.8, 258.3, 25004.8, 484.2], [24231.5, -734.0, 24744.7, -679.3]],
+      "note": "Right third of the room (x 27244.4 to 28079.5): the floor below y -80 and the strip over y 600 under the ceiling are cut in every category; the band between, the 6_WJ_DS_DJ_BS record's run up the right wall and back left under the ceiling (y -59 to 577 there), is open here and cut in the other categories by the next rule.",
+      "avoid": [[27244.4, -664.8, 28079.5, -80], [27244.4, 600, 28079.5, 870.1], [22378.9, -512.5, 22584.0, 1346.5], [22533.2, 406.1, 25855.5, 629.9], [26061.6, 5.5, 26291.4, 40.9], [22506.8, 258.3, 25004.8, 484.2], [24231.5, -734.0, 24744.7, -679.3]],
+      "via": []
+    },
+    {
+      "course": 6,
+      "capabilities": ["wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
+      "note": "The band of the room's right third left open in WJ_DS_DJ_BS (the rule above): cut here, so with it the whole right third is.",
+      "avoid": [[27244.4, -80, 28079.5, 600]],
       "via": []
     },
     {
@@ -218,9 +225,9 @@
     {
       "course": 3,
       "capabilities": ["wj", "wjds", "wjdsdj", "wjdsdjbsorbzipom", "wjdsbszipom", "wjds2bszipom"],
-      "note": "Drawn on the course map.",
+      "note": "Drawn on the course map. The box left of the spawn (x 9095.7 to 9403.4) starts at y 7015: the floor lane under it (the records' run-up left to the buy machines and back, y 6956 to 6993) stays open.",
       "drawn": true,
-      "avoid": [[10312.5, 7217.9, 10431.1, 7504.4], [8976.4, 6873.5, 9111.8, 7818.1], [10171.2, 7858.9, 10267.1, 8271.1], [9431.2, 7473.8, 9602.6, 7506.6], [9095.7, 6895.4, 9403.4, 7527.3]],
+      "avoid": [[10312.5, 7217.9, 10431.1, 7504.4], [8976.4, 6873.5, 9111.8, 7818.1], [10171.2, 7858.9, 10267.1, 8271.1], [9431.2, 7473.8, 9602.6, 7506.6], [9095.7, 7015, 9403.4, 7527.3]],
       "via": []
     },
     {

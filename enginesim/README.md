@@ -34,6 +34,19 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   (`farmSaved`). The reply has both times. Runs are judged from the category's cached start state, but a run that would
   be saved never is from the cache: the cached start is dropped and the reply is a 409 ("loading; retry"), and the retry
   captures the start from a quick restart and judges the run again from it before `SaveSolverRoute` replays it.
+  A start is captured only with the player parked at the course's reset point in the course's zone, the zone settled
+  (its root and its `ZoneDisableLoadList.toLoad` on: a course's `DisableBits`, its start gate and zip movers) for 10
+  frames. Its history is fixed (`CourseStart`, shared with the engine): the Movement fields a quick restart keeps
+  (`facingRight` true, `wallJumpFacing` (1, 0), `dashDirection` (0, 0), `wallCoyoteDir` 0, `framesSinceLastDash` 1000,
+  `MostRecentUpwardsMoveWasNormalJump` false, afterimage and wall-slide flags, `preDashMomentum`, `finalWallClingTimeLeft`;
+  in the air `lastHyperY` 1e8), the RNG and every `clonesScript.timeSinceLastClone` (10000), set after the quick restart
+  and again at the capture. Its FloatingOrigin is fixed too: the quick restart puts the world where the game's own
+  rebase on the player standing at the start leaves it (each scene root at its loaded position minus the reset point
+  12 down, `currentOrigin` minus that point, the player at scene (0, 0); `TurboRunner.PutCanonicalOrigin`). The start
+  snapshot's restores put it there exactly again, whatever ran before. The searches (`Solve.Creator`) load a category
+  trace's start the same way (`Simulation.LoadStart(start, canonical: true)`: the history, and a trace captured at
+  another origin rebased to that one), so a trace captured before this searches from the start the game judges;
+  `replay`/`path` load a trace as captured (`path --canonical` as the searches do).
 - `POST /api/enginesim/raycast {rays: [[ox, oy, dx, dy, distance, mask]...]}` — Unity raycast probes.
 - `POST /api/enginesim/ghost {course, capabilities | fulltas, a, b}` and `POST /api/enginesim/slack {name}` —
   read-only, for the studio's ghost compare and humanize slack: two routes' per-tick positions from the `map` JSON on
@@ -114,78 +127,154 @@ picks, never a run. The field builds once per world and target, over the region 
 (`DistanceField`), and is rebuilt when the static geometry changes (a block swap or a zone load bumps its version).
 
 Tech lives on the ticks where the player's contact changes, and a random burst puts its jump and dash anywhere in its
-chunks. So each explore run records its contacts (it leaves the ground at a ledge, lands, touches or leaves a wall,
-dies), and half the time one of them gets a graft (`grafts` in the progress line): the run is cut a few ticks around
-it, one input made for that contact goes there, then 40 ticks of stick (`OfflineSolver.GraftsAt`):
+chunks. So each explore run records its contacts (`ContactLog`), and half the time one of them gets a graft (`tech
+grafts` in the progress line): the run is cut around it and a mined tech demo's input window for that contact kind goes
+there, then 40 ticks of stick. The Tech tab's demos (below) are the graft library; there are no hand-written grafts. The
+contacts, and the demos whose key windows graft there (`techgrafts` ends with this list; `xN` is a pick weight):
 
-| Contact | Ticks | Inputs | With the omnidash |
-|---|---|---|---|
-| leaves the ground (a ledge) | −4..+3 | coyote jump, super off the edge (dash, jump on frame 1–4), backwards dash-jump, jump held into a dash | hyper, ultra, super ground bounce, wavejump, aimed dash |
-| lands | −4..+1 | buffered jump, the buffered dash's superjump, jump held into a dash, dash | ground bounce, wave bounce, super ground bounce, hyper |
-| touches a wall | −3..+3 | wall jump, superbounce, wall dash, jump held into a dash | aimed dash, ground bounce |
-| leaves a wall | 0..+4 | wall coyote jump, dash-jump | aimed dash, wavejump |
-| dies (mostly spikes past their grace) | −7..−1 | all the plain ones: spike grace jump, a dash buffered onto a corner's ground gap, a super off a spike wall | any |
-| a hyper's flat dash slides off a floor's edge (omnidash only) | −3..+3 around that dash's press | — | corner hyper, corner ultra |
-| a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | 0..+24 | wall clip, then more clips | wall clip |
-| a wall ahead (in the air, not dashing, a wall within 12 u of the front edge at y − 18, y + 19 or y + 45) | −2..+10 | turn away, then clips | turn away |
-| the target course's start gate within 16 u of the hitbox while the timer is off | 0 | 8 gate taps, then clips | gate taps |
+| Contact | Grafted from |
+|---|---|
+| leaves the ground (a ledge) | coyote jump (`coyote-ledge.graft`, −4..+3, x6), super (`coyote-ledge.super`/`.primed`, x3), backwards dash-jump; omnidash: hyper, ultra, wavejump (`high-super`), aimed dash (`wall-dash`), freeze aim |
+| lands | buffered jump (`landing-tick-jump.graft`, −4..+1, x6), super; omnidash: ground bounce, wave bounce, hyper |
+| touches a wall | wall jump (`wall-coyote-window.graft`, −3..+3, x6), superbounce, wall dash, ground bounce |
+| leaves a wall | wall coyote jump (0..+4, x6), super, wavejump, wall dash |
+| dies (mostly spikes past their grace) | spike grace jump (`spike-grace.graft`, 1–7 ticks before, x6), super, superbounce, the omnidash `.graft` demos |
+| a hyper's flat dash slides off a floor's edge (`CornerHyper`, omnidash only) | corner hyper and corner ultra (`corner-boost.graft`) |
+| a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | the GC wall clip (`wall-clip.graft`, 0..+24, x12), chained |
+| a wall ahead (in the air, not dashing, a wall within 12 u of the front edge at y − 18, y + 19 or y + 45) | the turn away that sets a clip up (`wall-clip.graft`, −2..+10, x12), then clips |
+| a wall above the back (the back ray at y + 19 or y + 45 hits it, the one at y − 18 not yet) | the rest that rises to it clip-ready (`wall-clip.graft`, x12), then clips |
+| the target course's start gate within 16 u of the hitbox while the timer is off | the late gate touch (`late-gate-touch`, 8 taps a contact, x12), then clips |
+| a spring, an air jump, a dash jump, a wall boost, a pause, a step-up, a spike, a slant (per physics step, below) | the demos that show them |
 
 The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
-(`OfflineSolver.RecordSlide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
-`onGround` held up by coyote frames only. Its graft presses that dash again a few ticks either way with a late jump (dash
-frame 4–12), so the landing moves along the corner and the hyper jumps in coyote time past the edge. The corner ultra
-also puts a wavedash 8–16 ticks before it, so the corner hyper carries a hyper's momentum as `preDashMomentum`.
+(`ContactLog.Slide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
+`onGround` held up by coyote frames only. `corner-boost.graft` presses that dash again a few ticks either way with a late
+jump (dash frame 4–12), so the landing moves along the corner and the hyper jumps in coyote time past the edge; its corner
+ultra also puts a wavedash 8–16 ticks before it, so the corner hyper carries a hyper's momentum as `preDashMomentum`.
 
 Why corners: a dash lands as soon as a ground ray touches the floor. The rays start 18 below the player and reach 22
 further, so past an outer corner (the body beyond the edge, a rear ray still over the floor) nothing stops the body. The
 landing can sit up to ~12 u below standing height; a floor stops it at ~7. The hyper that follows can then be under
-`lastHyperY − 4`: the game's ultra, which adds `preDashMomentum.x`. Only an offline lab shows this so far (issue #12);
-the progress line counts these grafts (`grafts (N corner hypers, M wall clips)`).
+`lastHyperY − 4`: the game's ultra, which adds `preDashMomentum.x`. Only an offline lab shows this so far (issue #12).
 
 The wall-behind contact is the GC wall clip (the studio's Tech tab): turn toward a wall at your back and the turned
-hitbox's front ground ray (x ∓ 25) starts inside it, which grounds you in mid air while `Velocity.y` is under 200. Its
-graft flicks the stick toward the wall (0.3–0.55) with the jump released on that tick (a held jump between 150 and 580 up
-is cut to 50), presses the jump with a light flick back (0.3–1) the next tick, then holds the jump with the stick at rest
-for 0–26 ticks (`OfflineSolver.WallClip`). A clip is a ground touch: on a Ground-tagged wall it refills air dashes,
-double jumps and wall jumps.
+hitbox's front ground ray (x ∓ 25) starts inside it, which grounds you in mid air while `Velocity.y` is under 200.
+`wall-clip.graft` flicks the stick toward the wall (0.3–0.55) with the jump released on that tick (a held jump between 150
+and 580 up is cut to 50), presses the jump with a light flick back (0.3–1) the next tick, then holds the jump with the
+stick at rest for 0–26 ticks. A clip is a ground touch: on a Ground-tagged wall it refills air dashes, double jumps and
+wall jumps.
 
 Clips come in chains, and the states between them don't survive as cells: a square keeps its earliest arrival, which is
 seldom the slow one that stopped with a wall at its back. So a clip graft's run records its own contacts, and the next
 wall behind after it gets the next clip, up to four deep, with the stick drifting left, right or at rest after each hold
-(`OfflineSolver.ClipChain`). A clip-ready state (a wall behind, as above) is also its own cell (key bits 45–46 in a
-course), and an explore that starts in one counts the wall behind as a contact on its first tick.
+(the demo's `chain`, `expect`ing the clip's landing). A clip-ready state (a wall behind, as above) is also its own cell
+(key bits 45–46 in a course), and an explore that starts in one counts the wall behind as a contact on its first tick.
 
 The wall-ahead contact sets a clip up: the stick turns away from the wall for 1–4 ticks (0.3–1) and rests for 3–30, so
 the player drifts to a stop with the wall at its back (under an overhang's corner, as Course 1 NONE does at the pillar's
-left face); the chain then clips off it. A wall above the back (the back ray at y + 19 or y + 45 hits it, the one at
-y − 18 not yet) gets the same rest with no turn, so the player rises up to it clip-ready.
+left face); the chain then clips off it. A wall above the back gets the same rest with no turn, so the player rises up to
+it clip-ready.
 
 The start-gate contact is the late gate touch (Tech tab): the timer starts on the first tick the player overlaps the
-start gate, so a route can reach the far side of it untimed and brush it at the last moment. Its graft rests from the
-contact for 0–20 ticks (a jump pressed at the contact half the time, for a player standing by the gate), taps toward the
-gate for 1–2 ticks (0.3–1) and back for 1–2, then rests with the jump as it was; one contact tries 8 of these, each
-followed by the clip chain (`OfflineSolver.GateTap`). The progress line counts `clips landed/wall clips`, `set-ups that
-reached a wall behind/clip setups` and `gate taps`.
+start gate, so a route can reach the far side of it untimed and brush it at the last moment. Its demos rest from the
+contact for 0–20 ticks (the `.jump` demo presses the jump at the contact, for a player standing by the gate), tap toward
+the gate for 1–2 ticks (0.3–1) and back for 1–2, then rest with the jump as it was; one contact tries 8 of these, each
+chaining clips. The progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed
+the demo's contact after it: a clip that landed), and `at step contacts` (grafts at a per-step kind).
 
-The hand-written grafts aren't the only input: the Tech tab's demos (techs.json) are mined into graft patterns
+The graft library is the Tech tab's demos (techs.json), mined into graft patterns
 (`Runtime\TechGrafts.cs`). Each demo replays offline from its start (its category's start trace, its own savestate, a
 captured `tech-<id>.json` trace, or a lab map's solved `labmaps\<id>.demo.json` over the trace it was solved in), the
 contacts along it are detected with the same detection as above (the shared
 `ContactLog`), and the input window around its contacts (10 ticks before to 30 after: stick values, presses/holds/releases,
 dash, dash jump, dash turn (`turnX`/`turnY`) and pause) becomes a pattern tagged by contact type and the unlocks it needs (its
-`requires` and omnidash; a window that presses dash needs the dash). The window nearest the demo's last press, release or
-dash is its key pattern; up to 8 contacts make patterns, and each side-tagged one is also offered mirrored for the other
-side. `IGTAP.EngineSim techgrafts <traces dir>` lists them per tech. A `solve` grafts them at the same contact kinds
-alongside the hand-written ones, jittered ±3 ticks and filtered by the run's category unlocks (`tech grafts` in the progress
-line): a graft draws a tech first (so a demo with many contacts doesn't crowd out a short one), then its key window 60% of
-the time, and a new best it finds says so (`via tech graft <id>`). The hand-written grafts stay. `--no-tech-grafts` turns the
-mined ones off. Whatever trace is solved, the catalog, the demo traces, savestates and the cache resolve from the configured
-traces dir (`tools/gamepaths.py`'s TRACES: the game's config folder's `enginesim`, when it exists), so a copied trace mines
-or reads the same patterns as the real folder; `--tech-dir <dir>` overrides it. The mining is cached in
+`requires` and omnidash; for a lab demo the demo file's `requires`, else the tech's narrowed to the unlocks both it and the
+lab's `category` hold; a window that presses dash needs the dash, one the demo double jumps in the double jump). The window
+nearest the demo's last press, release or dash is its key
+pattern (a tech's `graftKey` in techs.json, `{"contact": "<Contact>", "tick": <demo input tick>}`, centres it on that
+contact instead, for a demo with trailing inputs); up to 8 contacts make patterns, and each side-tagged one is also offered
+mirrored for the other side. A window with no button in it is travel and is dropped, except at a contact the player ran into
+(a spring, a spike, an overhang or slope, a step-up), where the stick that meets it is the tech.
+A tech with a lab demo that resolves (its `labmap`/`labDemo`, the repo's, or a lab map whose `tech` names it) is mined from
+its lab demos alone; its captured `tech-<id>.json` trace or demo macro (recorded from a course start, with the travel and
+noise around the tech) is mined only when it has none. Besides its studio default, a tech mines its lab's `graftDemos`
+(techs.json: `["from-floor"]` mines `labmaps\<labmap>.from-floor.demo.json`; never the comparison ghosts, which fail on
+purpose), and every lab variant demo (`labmaps\<lab>.<name>.demo.json`) that carries a graft spec, for the tech the demo
+file names (`"tech"`) or else its lab's. A tech marked `"graft": "todo"` (not demonstrable yet: no lab) mines nothing, and
+the listing says `todo` instead of counting it missing. A window with a quick restart is mined too, flagged: only a run
+that may restart (a Full-TAS window with resets allowed; the game's `RestartRefused` still
+aborts a refused one) grafts it, never a course solve, `plan` or `coverage`.
+
+A lab demo's graft spec (`"grafts": [...]` in the demo file; `TechGrafts.GraftSpec`) replaces that demo's automatic windows
+with exactly the ones it names, each a key window: `contact` (+ `tick`: the demo's contact of that kind nearest the tick),
+`window` `[first, last]` around it, `as` `[{"kind", "shift", "weight"}]` (the contact kinds it grafts at, default its own),
+`shift` `[lo, hi]` (where the window's contact lands relative to the run's; default ±3), `vary` (runs of equal ticks
+sampled at graft time: `{"at": offset, "ticks": length choices, "x": stick magnitudes, "stick": [x, y] pairs, "dashJump":
+frames, "button": "run"}`; a choice list or an `"a..b"` integer range; `"button": "run"` keeps the grafted run's own hold,
+no new edge), `coast` `{"x": choices, "held"}` (the 40 coast ticks after it), `dir` (the way the run was going for a window
+whose stick is against it: a backwards dash), `tries` (grafts per contact, each sampled anew), `weight` (how often a pick
+draws it: a tech is drawn by its largest weight at that kind) and `chain` `{"depth", "on": kinds, "with": tech, "expect":
+kind, "shift"}` (the graft's run records its contacts; the first contact of an `on` kind 2+ ticks after the placement gets
+a key window of `with` placed `shift` after it, up to `depth` deep, 85% of the time, and with `expect` only when the run
+shows that contact where the demo did: the clip grounded the player). A window at a contact with no side is turned to the
+run's direction (its last stick before the placement), the other way 30% of the time; a stick choice is relative to the
+window's direction. `techgrafts --contacts` lists each demo's contacts; the listing shows each spec'd pattern's spread and
+ends with the techs per contact kind.
+
+The spec'd demos that carry the old hand-written grafts' spread (labmaps, all hand-built and checked by `lab replay`):
+`wall-clip.graft` (the clip at `WallBehind*`: flick 0.3–0.55, flick back 0.3–1, hold 0–26, 0–24 after the contact, chain 4
+deep expecting its `Landed`; the rest at `WallAbove*`, 3–30 ticks; the turn away at `WallAhead*`, 1–4 ticks 0.3–1 then
+3–30 at rest, each chaining clips), `late-gate-touch` (new lab by Course 1's start gate; its default and `.jump` demos: rest
+0–20, tap 1–2 ticks 0.3–1, back 1–2, rest 5–30, 8 tries, chaining clips), `coyote-ledge.graft` (the jump at a ledge −4..+3,
+hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing), `wall-coyote-window.graft` (the wall jump:
+0..+4 after leaving a wall, −3..+3 of a touch), `spike-grace.graft` (the jump 1–7 ticks before a death), `coyote-ledge.super`
+(tech `super`: the dash with its jump on frame 1–4, or none, at a ledge, landing, wall or death), `coyote-ledge.primed`
+(`super`: the jump held into a dash 1–6 ticks later), `backwards-dash-jump.graft`, `superbounce-wall.graft`, and for the
+omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the wavejump), `wall-dash` (the eight aims),
+`freeze-aim` and `corner-boost` (the corner hyper, frame 4–12, and the corner ultra) `.graft` demos.
+
+A/B switches while the hand-written grafts and the mined ones are compared (issue: replace the hand-written grafts):
+`--no-hand-grafts` (mined only), `--no-graft-specs` (drop the spec'd windows) and `--mined-draws N` (mined windows per
+grafted contact, default 1). The progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose
+run showed the demo's contact after it).
+
+Besides the tick contacts above, `ContactLog.Step` files per physics step (a dash's steps consume no input tick, and a
+spring or a spike acts inside a physics callback) the contacts the game's own calls and the player's touches make, at the
+input tick that step belongs to: `SpringHitLeft`/`Right` (a spring whose up has an x, named by the side it launches toward)
+and `SpringHitUp`/`Down` (`Movement.hitSpring`), `DoubleJump` (an air jump spent), `DashJump` (a super or hyper out of a
+dash, or a ground bounce's jump), `WallBoostLeft`/`Right` (`Movement.SpecialWallJump`: a wallbounce, a dash into a wall with
+the jump buffered, a dash-boosted wall jump; the wall's side), `Landed` for a landing the same tick jumps out of (the ground
+rays touched ground, onGround already off again), `Paused` (a route's pause), `SteppedUpLeft`/`Right` (a step-up after a step
+without one), `SpikeTouched`/`SpikeCleared` (a spikeScript trigger touched, or left alive), and `OverhangLeft`/`Right` and
+`SlopeLeft`/`Right` (a solid surface newly touched whose normal is neither axis-aligned, facing down or up; the surface's side).
+They come from observer hooks the retarget adds (`hooks.txt`: `hitSpring`, `SpecialWallJump`, `StepUpAnimationScript.onSteppedUp`,
+and the existing `playSFX`/`touchedSolidGround`) into `Simulation.Events`, and from the player's touching pairs after each
+step (`PhysicsWorld.PlayerTouch`); a run's first step only primes the touches (a spike it starts in isn't a touch). The solver
+records them on every explore step and grafts the mined windows there with the same jitter and unlock filter; a contact is
+drawn only among the kinds the mined windows offer at the run's unlocks. `plan` makes them nodes when a mined window grafts
+at one of their kinds, and `coverage` records
+them too.
+
+`IGTAP.EngineSim techgrafts <traces dir>` lists the patterns per tech. A `solve` grafts them at their contact kinds,
+jittered ±3 ticks (or as the graft spec shifts them) and filtered by the run's category unlocks (`tech grafts` in the
+progress line): a graft draws a tech first (so a demo with many contacts doesn't crowd out a short one), then its key window
+60% of the time, and a new best it finds says so (`via tech graft <id>`). `--no-tech-grafts` turns grafting off.
+Whatever trace is solved, the demo traces, savestates and the cache resolve from the configured traces dir
+(`tools/gamepaths.py`'s TRACES: the game's config folder's `enginesim`, when it exists), so a copied trace mines or reads the
+same patterns as the real folder; `--tech-dir <dir>` overrides it. The catalog is the plugin's merge (`TechCatalog.MergeSeedTechs`)
+done on every load, so a tech or demo added to the repo mines before the game has run: the config folder's `techs.json`
+keeps its own entries, and the repo's `techs.json` adds the techs it lacks (not one the Tech tab deleted: listed in
+`techs.seeded.json`). The repo is the source of truth for the demo wiring: a repo entry's `labmap`/`labDemo` and `graftKey`
+replace a live entry's (a live `labmap` that differs is mined too), and the live ones fill in only where the repo has none.
+The repo is the source tree the engine was built from (walked up from the binary, else the path the build recorded:
+`IgtapRepo` in `IGTAP.EngineSim.Runtime.csproj`, for a solver copied out of the tree; else the copies beside the binary).
+Lab maps resolve from the repo's `labmaps\` first, then the config folder's (the studio's copies fill in only the labs the
+repo lacks: a copy there goes stale when the repo's lab is edited), then the build's; a lab map whose `tech` names a tech is
+mined for it with its default demo. The mining is cached in
 `<traces>\tech-grafts.cache.json`, keyed by what the miner reads (each tech's demo fields, where its demo resolved, its demo
-macro, the files it replays over) and the engine build, so a note edit or a newly saved route doesn't re-mine
-(`techgrafts --refresh` re-mines); a grafted window keeps real button edges at the cut (a press or release as a controller
-makes them).
+macro, the files it replays over), the miner's version and the engine build, so a note edit or a newly saved route doesn't
+re-mine (`techgrafts --refresh` re-mines); a grafted window keeps real button edges at the cut (a press or release as a
+controller makes them).
 
 Before the timer, a course cell also keeps where the player is going (`OfflineSolver.Motion`, key bits 47–49: vertical
 speed below −200, under 200, under 580 or above, and the facing). An untimed set-up is slow on purpose, and without
@@ -195,9 +284,7 @@ How far this gets on Course 1 NONE (seeded with the old 1.62 and a prefix of the
 the first left-face clip (tick 32) on, the late-gate route comes back in under a minute (1.44); from the second
 left-face clip's jump (tick 48), the shelf clip (tick 66) or the drop down the right face (tick 100), at 1.44–1.48
 within 6 minutes. From the approach alone (tick 23: jump, turn under the pillar's corner) and from the 1.62 alone, not
-in 7 minutes: the first left-face clip is the step the search doesn't find by itself yet. `IGTAP_CLIPLOG=1` prints
-where clips land (`CLIPLOG x y timed`), where set-ups
-reach a wall behind (`SETUPLOG`) and every new cell (`NEWCELL x y timed grafted`).
+in 7 minutes: the first left-face clip is the step the search doesn't find by itself yet.
 
 On `Test-No-Omni-Skip` from nothing (`--fresh --unsolved`), death grafts alone reached goal 3 in 1:30 on 16 threads,
 where the build before them hadn't in 10 minutes; with every contact, 2:34 on 8 threads (one run each).
@@ -292,6 +379,10 @@ everything below the start floor. Courses 1–5's rules cover WJ_DS_DJ_BS_ORB_ZI
 and WJ_DS_DJ_BS_ORB_ZIP_OM. For 5to4 it cuts Course 5's ceiling hole and everything left of its start gate, Courses 1 and 2
 right of the pillar over each start gate (runs pass their end gates without entering), and, above Course 3's approach
 shaft, everything left of the shaft's left wall.
+A box drawn on a course map never cuts a saved record's line: a box that one crosses (the audit replays every record
+through its rules) is cut back around that line. Course 6's right third leaves open, in `WJ_DS_DJ_BS` only, the band
+(y -80 to 600) that the 5.94 record climbs up the right wall and comes back through under the ceiling. Course 3's box left of
+the spawn starts at y 7015, over the floor lane (y 6956 to 6993) that the records' run-up takes.
 
 A rule's `optional` list holds named blocks (`name`, `note`, `avoid`, `via`) that apply only when picked:
 `--optional <name>` on `solve` or `map`, or the Optimize panel's "Optional avoid blocks" checkboxes. A block with
@@ -363,6 +454,49 @@ that course's reset point, so a long transition can be seeded as "reach the gate
 transition" (5to4: the 5 → 3 explore prefix, a restart, then the 3to4 best). `path` prints why a run that didn't
 finish ended.
 
+### Course --auto
+
+```powershell
+& $exe solve $traces\route-c4-wjdsdj-13.28.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
+```
+
+`--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
+included) on a course. The course becomes a Full-TAS run: its goals are waypoints along the best's path
+(`CourseWaypoints.For`: area goals, the course's checkpoints and springs, forced-path `via` boxes; in record timing the
+start-gate crossing `start:<course>`) and the finish (`finish:<course>`; a bonus's reward rect, a transition's next
+`start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
+momentum carries through them, and a window is scored on its arrival.
+
+- **Timing.** Record (the default on a gated course): the game timer, the finish's tick less the start-gate goal's
+  (`FullTas.TimerGoal`; `Route.Last` compares that, `Route.End` is the finish's tick from the quick restart). A window is
+  scored on its arrival's physics tick, which is the timer's only once the gate crossing is in its prefix, so in record
+  timing the loop's windows start after the gate (`--focus` defaults to the goals after `start:`; combine still splices
+  the run-up). `--farm`: physics ticks from the quick restart to the finish. A bonus or transition is timed from its
+  start either way.
+- **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
+  and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
+  else it stops.
+- **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed` and the last `--auto` best;
+  the others are the loop's `--ref` routes (combine splices their goal runs in).
+- **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
+  archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept best is played
+  again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve` writes it
+  (the game timer's time, `runTicks`), so the plugin judges it for the record and the farm as any solve's; the log line
+  is solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation
+  doesn't confirm.
+- **Waypoints.** `waypoints {json}` on stdout at every kept best (goals, rects, splits, `timerGoal`, record and farm
+  ticks); `--waypoints-out FILE` writes it and exits without searching (the studio's list). `--focus a-b` numbers goals
+  in that list.
+- **Studio.** The Optimize tab's **Improve** runs this (`Solver.cs` `CourseSolveArgs`): the Improve a course panel
+  improves one target, record or farm (**Timing**), and the Improve many matrix queues ticked record and farm times.
+  Clicking a time opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
+  capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
+  while that target improves) with each one's split, and **Show map** draws them numbered. Click a waypoint
+  (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its
+  category or a narrower one runs the plain `solve` first (**Solve**). The plugin launches `solve <start> --seed
+  <each library route of the course> [--optional/--no-optional] --threads <cores - 4> --minutes M --auto [--farm]
+  [--focus a-b]`; `POST /api/solver/preview` (the start body) returns each job's command without starting anything.
+
 ## Search bench
 
 Search changes are judged on a suite, over several seeds, not on one run: a single `solve` is mostly seed noise (issue
@@ -379,11 +513,13 @@ Search changes are judged on a suite, over several seeds, not on one run: a sing
   grafts' mining cache there instead of the traces dir.
 - `searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--traces dir]
   [--out file] [--keep]` runs `solve <copy> --rng s --no-submit --fresh --no-humanize` for every suite course, arm and
-  seed `s` = 1..N, one after the other, each as a child process on its own temp copy of the start trace and world
+  seed `s` = 1..N, one after the other (the arms take turns seed by seed, so a load that comes and goes falls on each alike), each as a child process on its own temp copy of the start trace and world
   (`%TEMP%\igtap-searchbench-<time>\<course>\<arm>\seed<s>`), so its `archive\`, `offline-best\` and everything else it
   writes stay there. The bench copies the traces dir's `tech-grafts.cache.json` once into its own folder and every run
   uses that copy (a build change re-mines it there), so nothing is written to the traces dir. `--arms` is JSON or a
-  file holding it (default `{"default": []}`); a suite course's `args` go before the arm's. It prints and writes
+  file holding it (default `{"default": []}`); a suite course's `args` go before the arm's. An arm's `--exe <path>` runs
+  that build's `solve` instead of this one (with its own cache copy), so two builds bench on the same seeds, interleaved
+  (`{"old": ["--exe", "old\\IGTAP.EngineSim.exe"], "new": []}`). It prints and writes
   (`--out`, default `searchbench.json` in the bench folder) per course and arm the median, min and max over the seeds
   of: wall seconds to the first finish, wall seconds to the course's `target` time (at or under), and the final best;
   a run that never got there counts as never (`-`, above every number), so a `-` median means half the runs or more
@@ -403,6 +539,45 @@ Baseline (25cc4b3, 2026-09-28, other searches sharing the CPU, so wall times are
 | Course 4 `WJ_DS_DJ` | 6.7, 4.2–6.8 | 16.86, 15.74–16.88 |
 | Course 1 `NONE` | 17.4, 2.7–20.6 | 1.62, 1.62–1.66 |
 | bonus1 `WJ` | 28.7, 2.6–55.7 | 6.92, 6.90–6.94 |
+
+### Course head-to-head: plain `solve` against `solve --auto` (2026-09-29, stopped early)
+
+Each target starts from its saved record route (a copy of the trace and world), `--rng 1` and `2`, `--no-submit --fresh
+--no-humanize --threads 4 --minutes 30`, and is stopped at 1500 CPU s of its own process CPU time (user + system), so a
+loaded machine changes the wall time, not the budget. Two runs at a time, the arms interleaved target by target and seed
+by seed; 12 GB heap cap (`DOTNET_GCHeapHardLimit`, and a kill at 12 GB RSS). **old** is plain `solve` from a 04:30 tree
+snapshot (before `--auto`); **auto** is `solve --auto` on a 06:22 tree build (before the canonical-origin start rebase).
+**auto (bin3)** is the one earlier `--auto` run, on the 04:57 CourseAuto build. First gain counts CPU s from launch,
+setup included (under 25 s). Farm is the physics ticks from the quick restart, against the farm record.
+
+| Target (record, farm) | Arm | rng | Best | First gain (CPU s) | Min farm | Peak MB |
+|---|---|---|---|---|---|---|
+| Course 4 `WJ_DS_DJ` (13.28, 13.74) | old | 1 | **13.24** | 1235 | 13.82 | 1612 |
+| | old | 2 | 13.28 | - | 14.02 | 1477 |
+| | auto | 1 | 13.28 | - | - | 8498 |
+| | auto | 2 | 13.28 | - | - | 9338 |
+| | auto (bin3) | 1 | 13.28 | - | - | 8379 |
+| Course 5 `WJ_DS_DJ` (12.14, 12.60) | old | 1 | 12.14 | - | 12.60 | 3647 |
+| | auto | 1 | 12.14 | - | - | 7591 |
+| | auto | 2 | 12.14 | - | - | 10499 |
+
+- The one gain: old, Course 4 rng 1, 13.28 → 13.24 by `splice` (runTicks 691), judged in the game and saved (the
+  game's FloatingOrigin at the judge: (-20200.4, -10542.5)). That is 2 ticks in 3000 CPU s for old on Course 4, 0 in
+  1500 on Course 5.
+- `--auto` gained nothing in 5 runs (7500 CPU s). On Course 4 its window over goals 5-6 reaches goal 6 at tick 505-507
+  against the best's 517 in both seeds (one pull, 417-437 CPU s), but every such run dies before goal 7 (Player death),
+  and re-finding goals 7-8 from the broken run's state finishes at tick 726-750 against 701; the other windows found
+  nothing faster.
+- Memory: `--auto` peaks at 7.6-10.5 GB (the RSS saw-tooths with the collections instead of growing steadily), old at
+  1.5-3.6 GB. In the earlier wall-clock round (10 minutes wall, 130-870 CPU s per run on a full machine) old's RSS
+  grew on average 1-2 MB/s on Courses 4 and 5 and bonus1, 4-5 MB/s on Course 7 `WJ_DS_DJ_BS_ZIP` and 9-18 MB/s on
+  Course 6 `WJ_DS_DJ_BS_ORB_ZIP_OM` (rng 1 hit the 12 GB cap in 668 s, rng 2 reached 8958 MB in 1011 s); that round's
+  only gain was Course 7's farm, 9.18 → 9.16 (458 ticks, judged and saved).
+- Not run (the user stopped all searches at 06:59): old Course 5 rng 2 (killed mid-run), bonus1 `WJ`, Course 7
+  `WJ_DS_DJ_BS_ZIP` and Course 6 `WJ_DS_DJ_BS_ORB_ZIP_OM` in both arms; the waypoint arms (`--waypoint-stride 2`,
+  `--waypoints 1 --no-checkpoint-waypoints`, `--waypoints 10`, one seed each, auto rng 1 standing for the default 6) and
+  `--auto --farm`. With two seeds on two targets the comparison is not settled beyond: in this budget plain `solve`
+  found the only record, and `--auto` needs a repair that survives the goal after a faster window.
 
 ## Probe
 
@@ -482,10 +657,10 @@ is saved as `lab/<name>` and returns its `id` for `savestateId`. A lab start is 
 
 ## Tech check
 
-`python tools/tech-check.py [id ...] [--exe path]` checks every tech demo (the studio's Tech tab) in turbo against the
-engine. For each, `POST /api/enginesim/trace {tech: <id>}` runs the demo in turbo from the start its playback uses (its
-category's quick restart, its savestate or its lab start, the category's unlocks plus the demo's omnidash; a `fulltas/<run>_NONE` demo
-from that run's new game, which must be loaded) and writes `tech-<id>.json` and its world; then `replay` reports the first
+`python tools/tech-check.py [id ...] [--exe path]` checks every tech's lab demo (the studio's Tech tab) in turbo against the
+engine. For each, `POST /api/enginesim/trace {tech: <id>, lab?}` runs the demo in turbo from its lab start (the lab's
+category's unlocks plus the demo's omnidash; `lab`: which of the tech's labs, else its first) and writes `tech-<id>.json`
+and its world; then `replay` reports the first
 tick that differs. A demo starts inside a tick, as its playback does, so the trace's start is the state after its first
 input tick (the start's `tick`). A savestate or lab start is off every course (`course` -1): no course finish ends it offline,
 as none does in turbo.
@@ -544,9 +719,13 @@ toward the wall (`docs/human-input.md`, Inwall wallbounce).
 `labmaps/<id>.json` is a lab map: a custom level piece injected additively into a world's empty space to demonstrate one tech
 exactly — a coyote jump off a plain ledge where no course has a clean one. Shapes (box, polygon, edge) sit relative to an
 anchor in the world frame, with a Unity layer and tag (`Ground` refills jumps and dashes on touch, `Moss` refills nothing,
-`"spike": true` adds the game's `spikeScript`), then the player's start (position, velocity, facing, Movement fields), a
-finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (the tech it demonstrates). The repo's
-`labmaps/` seeds the config folder's like techs.json.
+`"spike": true` adds the game's `spikeScript`, `"spring": {upForce, strength, movementLock}` on a trigger adds the game's
+`SpringScript` with those serialized fields, no Animator, and a box's `rotation` (degrees about z) turns its collider
+and its `transform.up`, a spring's launch: 180 points it down), then the player's start (position, velocity, facing,
+Movement fields), a finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (the tech it
+demonstrates). The game (`LabMapService`) and the engine (`LabMap.Inject`) build the same float rotation, and a world
+captured with the lab in it exports the spring like a scene one (`Map.cs` reads its launch from the object's rotation).
+The repo's `labmaps/` seeds the config folder's like techs.json.
 
 - `lab space <trace | trace.world.json> [w h] [--route <trace>]... [--list N] [--lab <labmap.json>] [--index N]` lists the
   empty rectangles at least `w x h` in the world frame: no collider, trigger or zone geometry at all (the world export, off
@@ -578,8 +757,9 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   `dashActive`: its end tick is fixed by `dashFramesRemaining`), and no trigger but a spike, moving body or non-box collider
   in reach at all; every threshold is widened by 2 u. A state whose collider top stays at or under the box's bottom on every
   tick is cut. The height prune: its highest reachable y (the ballistic arc plus every jump and boost it has or a landing
-  refills) is below the finish box; the time prune: too far from the box to reach it in the ticks left (the game's own
-  100 u/step max translation is the most any input can move the player). `--check-bound` cuts nothing with the free-flight
+  refills) is below the finish box (a lab with a spring has none: a spring's launch isn't in it); the time prune: too far
+  from the box to reach it in the ticks left (the game's own 100 u/step max translation is the most any input can move
+  the player, 110 on a lab with a spring for its 10 u push). `--check-bound` cuts nothing with the free-flight
   bound and instead checks it: each state against the lowest bound any of its ancestors gave for its tick (and each finish
   against the box), reported as `BOUND VIOLATED` lines; `--check-depth N` expands only to tick N (the bounds still run to
   `--max-ticks`). `--check-rollouts N [--seed S]` runs N random runs from the start to `--max-ticks` instead of the search
@@ -609,7 +789,9 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   lets it through) ends there, every other jump stays legal. `--from <demo.json> --from-inputs N` starts the search from the
   state the demo's first N inputs reach (replayed from the lab start), so every run it finds or rules out begins with that
   opening. `lab replay <trace> <labmap.json> <demo.json>` plays
-  one demo from the lab start, tick by tick (with the ground check's verdict `solid`, `wallCoyoteFrames` and `wallJumpsLeft`). The demo
+  one demo from the lab start, tick by tick (with the ground check's verdict `solid`, `wallCoyoteFrames` and `wallJumpsLeft`,
+  and each lab spike the hurtbox overlaps after the step or whose counter is up: `spike<n> *0` on its OnTriggerEnter2D tick,
+  `*1` on the Stay that counts 1, no `*` once clear). The demo
   also carries its ghost path (`path`: `[x, y, facing, animation, animator speed]` relative to the anchor at the lab start and
   after every physics tick — the sprite's facing is the sign of `localScale.x`, and the animation is Movement's Animator
   `Animation` state with its speed, as the game set them that tick —
@@ -647,13 +829,14 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   main demo's start trace) with the lab's `category`
   unlocks; a death or quick restart respawns there (`respawnPoint`). The placed state isn't kept as a savestate, and restore
   puts the unlocks, the course reset point and the respawn point back too. A demo re-injects its lab without the hand shapes.
-  The shapes are drawn in game (ground dark with a cyan outline, spikes red, triggers purple, moss green; the finish box
+  The shapes are drawn in game (ground dark with a cyan outline, spikes red, springs yellow with an arrow out of the side
+  they launch toward, other triggers purple, moss green; the finish box
   isn't drawn), unlit, above the level and under the game's pause menu (its Screen Space - Camera canvas sorts with the
   sprites: layer Default, order 10001; the lab draws just under it). While the player has the pause menu open the TAS
   overlay drops its world-anchored drawings (spikes, checkpoints, hitbox, graze, the ghosts' key and badges); a
-  playback's own pause keeps them. The studio's Tech tab lists every lab map (`labmaps/*.json`, the config
-  folder's and the plugin's embedded ones; a config copy wins, so delete a stale one after editing the repo's) with **Load
-  lab** / **Back to start** / **Unload**, and a tech card with a lab map has the same buttons. Every lab sits at anchor
+  playback's own pause keeps them. The studio's Tech tab shows each tech's labs on its card (its `labmap` and every lab
+  file naming it; `labmaps/*.json`, the plugin's embedded ones written over a config copy that differs, the config
+  folder's own kept) with **▶ Play** / **⏵ Walk** its demo and **Load lab** / **Back to start** / **Unload**. Every lab sits at anchor
   (-1333, -10585). In hand play a lab whose demo has a `path` draws it as a faint line and replays it with a see-through
   copy of the player's own animated sprite (the ghost, `LabGhost.cs`: the player's Sprite child with its Animator, every
   script stripped, driven by the path's animation state and speed, with Movement's jump, landing and fall
@@ -685,7 +868,32 @@ finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (t
   double jump under 200 can't come before tick 20, so the collider's top reaches 190.7 at most, under the box's 210.
   `--check-bound` (8,646,330 states to tick 11, none above an ancestor's bound) and `--check-rollouts` (13,000 random runs
   from the hyper, the super and the lab start: 147,380 states checked, none above, the tightest exactly the 2 u margin)
-  check the bound. A lab map with `"trainer": "pauselift"` (`pauselift-wall`) shows the input
+  check the bound. `spring-clip` (tech `spring-clip`, `NONE`) is a ledge under a ceiling with a spring hanging from it
+  pointing down (the Course 5 ceiling spring's `SpringScript`: upForce 70, strength 300, rotation 180), a 32-tall spike
+  strip 618 u under the hit across the whole lab, and the finish box under the strip: the jump into the spring (the hit
+  on tick 18: `Velocity.y` -270, `momentum.y` -575) and a held fast fall cover 96.3 u over ticks 41-44, so the hurtbox is
+  in the strip on ticks 42 and 43 only (`lab replay`'s `spike4 *0`, `*1`), inside the spike's grace; `no-spring` (the
+  same jump mirrored away from the spring) falls at a plain fall's 26.2 u a tick, 3 ticks in the strip, and dies. A plain
+  fall's terminal is 79.0 u over 3 ticks against the 86 a 32-tall strip and the 54-tall hurtbox need.
+  `spring-double-hit` (tech `spring-double-hit`, `WJ_DS_DJ`) is spring-clip's ledge and ceiling spring with the strip
+  302 u under the hit: a double jump 2 ticks after the hit hovers in the trigger until `SpringScript`'s 0.15 s cooldown
+  ends and the spring hits again on tick 26 (`momentum.y` -1054.9), so the fall is 32.1 and 32.7 u a tick at the strip
+  (`spike4 *0`, `*1` on ticks 36 and 37) and the finish box is reached on tick 40; `one-hit` (no double jump) crosses at
+  25.3-26.9 and dies on tick 34. `spring-dash-stack` (tech `spring-dash-stack`, `WJ_DS_BS_ZIP_OM`) adds a second down
+  spring under the ledge: a straight-down dash on input 19 hits it mid-dash on tick 27 (`endDash` gives back 95 % of
+  `preDashMomentum`, then the spring's -575: `momentum.y` -1109.0, `Velocity.y` -270), 34.1 and 34.7 u a tick through
+  the strip 374 u under the second hit (`spike5 *0`, `*1`), the finish box on tick 42; `down-right` misses the spring, ends the dash
+  with `Velocity.y` +10 (the dash-end brake) and -522.1, and dies on tick 53; `no-dash` falls through the spring
+  (-1013.4 on tick 30) and finishes on tick 46. `overhang-slide` (tech `overhang-slide`, `NONE`) is a floor with a
+  sideways spring past each end (the Course 5 Spring (2)'s `SpringScript`: upForce 50, strength 220, rotation -90 and
+  90) and a 1000x1000 box turned 45° over the right launch: the launch (momentum (3520, 125)) meets its down-left face
+  on tick 25 and slides 24.1-27.6 u a tick down for 18 ticks, into the finish band (y -600 to -400) on tick 50;
+  `no-overhang` (the same walk left into the mirrored spring) rises for 21 ticks and reaches the band on tick 85.
+  `landing-jump-momentum-carry` (tech `landing-jump-momentum-carry`, `NONE`) is spring-clip's ledge and ceiling spring
+  with a ledge 200 u under the start and the finish box under y -1000: a jump buffered for the landing tick (tick 38)
+  keeps `momentum.y` -365.7, and the hop and the drop off the ledge reach the box on tick 90; `late-jump` (one tick
+  later, the momentum zeroed) on tick 100, `walk-off` on tick 95. A lab map with
+  `"trainer": "pauselift"` (`pauselift-wall`) shows the input
   trainer (`LabTrainer.cs`) while it is injected, in hand play and in playback: one chip per button in order (the game's
   own bindings, with the pause's ms after the freeze ends: the freeze's own length is rounded up to a frame, so the window is timed from its end, with the spread of the last five dashes drawn faint), grey to do, green when the game shows it
   worked, red when it didn't; one line saying what went wrong first (or the result); and a real-time timeline of the
@@ -714,7 +922,7 @@ section.
   changed (`ContactLog`, saved per node with `ContactLog.Mark`), or `--cap` ticks (8) after the last decision. Its
   edges: every stick (x −1/0/1, y down in the air, up on a wall), the jump pressed, kept or released, a dash each way
   with jump frame 3/5/7/9 and the lock stick either way (a super or a reversed super; the omnidash: eight aims, frames
-  4/8, the freeze's steep aim), the `OfflineSolver.GraftsAt` inputs at the node's own contact window (its later ticks)
+  4/8, the freeze's steep aim), the planner's primitive inputs (`Planner.Primitives`) at the node's own contact window (its later ticks)
   and at the window before the contact each coast runs into (a buffered jump or dash before a landing, a wall, a
   death), and the mined tech windows (`TechGrafts`) at both. Mid-air (the Step 0 gaps, `--no-midair` drops them): an air
   node also plays a jump cut or double jump, a stick change, a dash and a dash jump (frames 3/7, lock either way) 2, 4 or
@@ -755,21 +963,24 @@ section.
 - Bounce chain edge (`--no-chains` drops it): an omnidash node plays 2 or 4 dashes straight down (jump frame 3 or 6, the
   stick sideways after), each jump held 3 ticks, then 3 or 7 ticks of air — the old route's down-dash landing chain as one
   edge, since one node per bounce ranks each link too late to keep.
-- `polish <trace> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--out file]`
+- `polish <trace> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--farm] [--out file]`
   (`Cli\Polish.cs`; Full-TAS: the whole run, or `--from-goal N [--to-goal M]`): every press, release, dash and stick change
   in order, each shifted up to 6 ticks alone and with the whole route after it, at every other controller stick value, a
   dash at every jump frame 0–10, dropped; every quick restart dropped or moved up to 3 ticks. Candidates replay from the
-  recorded state before their first change and stop once slower than the route (a course: its timer; a run timed by
-  physics ticks: the route's physics ticks), once `--slack` (30) ticks behind the route at a Full-TAS goal, or — the
-  route sync (`--no-sync` off) — once, 12 input ticks after their last change with the route's own inputs to come, their
-  player's fingerprint matches the route's at the aligned input tick: they end as the route does, shifted by the physics
-  ticks between. The strictly best of an input whose replay from the start still beats the route is kept (time, then
-  physics ticks; up to 4 tried), sweeps repeat until one keeps nothing, then one plateau sweep (`--no-wide` skips) tries,
+  recorded state before their first change and stop once slower than the route (a course: its timer, `--farm`: its
+  physics ticks; a run timed by physics ticks: the route's physics ticks), once `--slack` (30) ticks behind the route at a
+  Full-TAS goal, or — the route sync (`--no-sync` off) — once, 12 input ticks after their last change with the route's own
+  inputs to come, their player's fingerprint matches the route's at the aligned input tick: they end as the route does,
+  shifted by the physics ticks between, their course timer by their own against the route's there (a sync before the
+  start gate keeps the route's time). The strictly best of an input whose replay from the start still beats the route is
+  kept (time, then physics ticks; `--farm`: a course's farm time, physics ticks from the quick restart to the finish, then
+  the timer, which may get slower; up to 4 tried), sweeps repeat until one keeps nothing, then one plateau sweep (`--no-wide` skips) tries,
   8 input ticks at a time: shifts of 7–16 ticks, pairs of inputs within 8 ticks shifted ±1–2 together, stick bands (another
   full value for 2 or 6 ticks), an added jump press held 2/5/10 ticks, an added dash at each of 8 aims; after a plateau
   sweep that keeps something the plain sweeps run again. It first replays the seed from its own recorded states and, if
   that doesn't end as from the start, replays every candidate from the start. Without `--out`, every sweep that kept
-  something writes `<route>-polished-<time>.json`. `plan` runs it on its best (`--no-polish` skips).
+  something writes `<route>-polished-<time>.json` (`--farm`: `-polished-farm-<farm time>.json`). `plan` runs it on its
+  best (`--no-polish` skips).
 - `solve --plan [--plan-minutes M]`: the planner and polish first (a third of `--minutes` by default, inside it; the
   solve's seeds that finish guide it), its route a seed and a `how: "plan"` line in `--log-json`.
 - `fulltas <trace> --auto` (`Cli\FullTasAuto.cs`, [docs/fulltas.md](../docs/fulltas.md#auto)): the levers above and the
@@ -779,10 +990,19 @@ section.
   the best's path and speed probes including the bounce chain), the best's slow stretches and the routes the loop itself
   found rank the goals; every window gain has its tail re-found (`Repair`, dropped once the lower bounds say it can't
   win); every new best is replayed on a fresh simulation before it is kept. `--minutes 0` prints the lower-bound table.
+  `--parts` (default `lib,tail,combine,sched,ctg,macros,stray,goals`; `none` is the loop above alone) adds the goal-state
+  library (the wait fix, route-sync, tail windows after a broken splice, `combine`: known routes' faster goal runs spliced
+  into each new best), the pull scheduler in place of the bandit while it has pulls, the cost-to-go repair bound, mined
+  macro seeds and goal-list edits (`goals`: lap drops and adds, buy regroups, record laps, adopted when the whole run is
+  faster; the game takes the list with the record it judges)
+  ([docs/fulltas.md](../docs/fulltas.md#parts-goal-state-library-tail-windows-combine-scheduler-cost-to-go-macros-goals)).
+  `--focus a-b` keeps every pull's window starting in goals a..b (combine still splices anywhere); a complete `--ref`
+  faster than the best is the loop's start. The studio's **Improve** runs this with the saved record as `--ref` and the
+  picked goals as `--focus`. Over several 10-minute `--auto` sessions `FalseEnding-Any%` went from 390.38 s to the judged 379.40 s.
 - `coverage <trace> <route-human.json>` (`Cli\Coverage.cs`): each input of a human version mapped onto the contact whose
-  GraftsAt window reaches it and the kind that makes it, a mined window with it, and whether the planner's decisions make
+  `Planner.Primitives` window reaches it and the kind that makes it, a mined window with it, and whether the planner's decisions make
   its value. Tables: [`docs/planner-coverage.md`](../docs/planner-coverage.md). Course 4 `WJ_DS_DJ` 11.24 (the old
-  orange-active start): 15 of 95 inputs by a GraftsAt kind, 33 by a mined window, 35 either; 86 in the planner's grid.
+  orange-active start): 15 of 95 inputs by a primitive kind, 33 by a mined window, 35 either; 86 in the planner's grid.
   13.28 (today's start): 32 / 77 / 81 of 108; 91 in the grid. The gaps are mid-air inputs far from any contact (dashes
   with a jump frame and a lock or turn stick, double jumps, jump cuts, stick changes): the mid-air edges above are the
   primitive for them (the grid column counts values only, not timing).
@@ -1050,6 +1270,41 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
     Area 2 → 1 transition (`Zone2to1TransitionController.doStateVisuals`). The tree's own growth sound draws are kept
     (Shop.GrowTree) but its collider changes are not modeled.
 
+## Course 9 WJ_DS_DJ_BS: no finish found
+
+Measured offline on the recaptured door-open start (`start-c9-wjdsdjbs.json`, 2026-09-29; `_scratch/Course9b`,
+`_scratch/Course9c`). The loop and the atom door are fine: a guided solve reaches the tree room floor in 33.06 s. The
+finish (RealEnd, entered from the right) needs the shelf top (y 2990, end face at x 22664) and then the pillar, and
+nothing found gets from the tree room onto the shelf with one dash, one double jump and four wall jumps.
+
+- Wall 1, the tree room's left wall (right face x ≈ 21818, cling x 21843.5), is `Mossy` from y ≈ 300 to its top under
+  the shelf (a cling every 40 u from y 300 to 2860: `airDashesLeft` stays 0). Nothing on it refills. A pauselift up it
+  spends the dash and stops at y 2905: the shelf's underside blocks the step-up's head ray.
+- The shelf's end face (x 22664, y 2920–2990) is `Ground`. A cling there refills everything (from y ≈ 2905 up: cling
+  x 22681.5), so the target is (x ≥ 22682, y ≥ 2905) with `Velocity.y` ≤ 200, moving left.
+- With the dash spent on the lift, the best found is y 2849 at x > 22600 (216 lift/jump/double-jump variants).
+  Horizontal speed is 460 (9.2 u a tick): 836 u under a ceiling at y 2894 takes ~91 ticks, far too long to stay up.
+- A clip super from wall 1 works (`clip` lab: facing the wall at x ≤ 21842, dash right and jump → 805 up, 2546
+  across). From (21836, ~2600) with the dash and double jump still there, a clip super, double jump and stick left
+  lands on the shelf in 54 of 144 variants. But reaching that height needs the lift's dash. After a lift the dot sits at
+  x 21846.36 (the dash collider against the wall): its front ground ray is outside the wall, the dash ends in a cling,
+  and a jump there is only the dash-boost superbounce (vy 1104, vx 276, no momentum). Across 216 flush and cling lab
+  variants and 48 probe variants, no super came off a lift. Clip chains (moss ground jumps) drift out of clip range
+  after ~3 clips.
+- The right side climbs to the tree zip mover (x 25999–26159, top y 5719; its face is `Ground`). From its top, a super
+  plus a held late double jump lands on the shelf (glide sweep: `h40k90d160` and more, landing at (22607, 3020)). But
+  the climb up is mossy faces (x 26980: y 1484–1868; x 26724: 1916–4028; x 26340: 4076–5132; x 26020: 5180–5420).
+  Each face overhangs the one below it, and the block top at y 1060 is the only surface on the way that refills. Each
+  face needs a dash for its lift, and each overhang needs another dash to get out and around it.
+- The hub's `FullResetter` orbs don't refill in this category (flew through (22885, 1585): no refill), the coloured
+  blocks aren't near the shelf (blue at x 18592–18656 on the shelf top, orange in Course 7's maze), and the teleporters
+  need `unlockTeleporters`.
+- A free solve (no via boxes, `--guide`, tree-room seed, 1 thread, 4–6 GiB) ran 5.5 min, then 6.3 min resuming its
+  archive, and was stopped: no finish, guide distance 979–983 the whole time.
+- Not ruled out: `WJ_DS2_BS_ZIP_OM` (two dashes: in a first 900-branch lab, a lift then a wallbounce off wall 1 reached
+  x 22867 but peaked at y 2658, no landing), and an ORB route using orbs 4/5/8 from the zip mover side. Two guided
+  `WJ_DS_DJ_BS_ORB` solves of ~7 min each were stopped without a finish (the second reached the tree room floor: 6/8 via boxes).
+
 ## Memory
 
 A snapshot (for branching) is ~25 KB on the VMAN route: the broadphase tree stores only nodes that
@@ -1094,6 +1349,25 @@ committed engine did the same, so no engine change caused it). Run-length, the s
 over the states' budget (inputs ~1.3 GB at 200k cells, still growing with the archive) and every export succeeds; a
 heap dump puts the rest mostly in the states' broadphase trees.
 
+The archive has a budget too: a quarter of the same memory (`OfflineSolver._archiveBudget`; the states keep their half,
+the rest is the worlds, the replays, exports and the GC's room). Its bytes are counted as cells are filed, replaced and
+evicted (`Count`): each cell (the `Cell`, its dictionary node, its slots in every worker's draw pool arrays:
+`CellBytes`) and a run's inputs while one of its cells is in the archive (`InputRuns.Cells`, `InputRuns.Bytes`). Over
+budget, the filing worker evicts the cells with the lowest pick weight (its `Weight`, as its state eviction uses) down
+to 7/8 of it, then takes every removed cell (evicted, or replaced since) out of the live cells' `Parent` chains; the
+workers rebuild their draw pools and drop their states for removed cells. Under budget none of this changes a
+decision, so a search that stays under it is the search it was. The progress line shows the archive's MB (and the
+cells evicted). A loaded archive's sources are dropped once each worker has restored its share (the solver keeps only
+its runs count and plateau routes). The budget follows the heap limit: under the CLI's default 70 GiB the states alone
+may take 35 GiB (Course 6 WJ_DS_DJ_BS_ORB_ZIP_OM with 4 threads grew ~20 MB/s into a 12 GB kill that way, filling its
+state cache as designed), so a solve that has to stay under a cap sets `DOTNET_GCHeapHardLimit` to it. Below ~2 GB
+the fixed part (tech-graft patterns, worlds) doesn't fit: a 1 GiB C6 solve runs out of memory before its first explore,
+on the old build as on this one. Measured on C6 WJ_DS_DJ_BS_ORB_ZIP_OM (2 threads, 3 GiB heap): a state is ~55 KB, two
+thirds of it the broadphase tree's delta (~670 of 12,000 nodes differ from the shared base; 25% of 32-node chunks do,
+so chunked sharing would be larger); live heap after a full GC stays 1.65-1.76 GB for 7 minutes while the archive grows
+~13 MB a minute (81 MB of inputs at 71k cells); with the archive's budget forced to 40 MB the count holds 35-39 MB (a
+heap walk agrees: 34 MB of inputs plus 24.6k cells) through 131k evictions in 6.5 minutes.
+
 A Full-TAS run's goal-boundary states also persist to disk (`SnapshotStore`, `SnapshotIndex`): when the run first
 reaches goal k, or a better arrival does, its state goes to `archive\fulltas-<run>\states\`, keyed by the hash of the
 run's inputs up to it and dropped with the archive (the run's `start.key`). A solve's windows start from the stored
@@ -1110,26 +1384,38 @@ rebuilds that join `_changed`), so a restore puts a collider its snapshot doesn'
 (fixtures, scale, layer, contact mask). Storing states across runs needed both
 ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Persisted states across runs*). The static bodies' fixture state
 is numbered from a random base per world (`b2World.m_staticEpoch`, which lets a load skip them), so a state another
-process saved can't match the number by chance.
+process saved can't match the number by chance. A simulation restores only the active/enabled/layer toggles it has
+tracked since load. A stored state's toggles can name objects the loading simulation never changed (a block swap's
+tilemap collider under the `blueSpikes` composite), so the load tracks those first, from their loaded values
+(`Simulation.TrackToggles`), before it applies them and rebuilds the colliders the state lists. `Simulation.Fingerprint`
+hashes only toggles that differ from the load, so a state hashes the same whatever toggled before it. Before, 5 of
+Course 7's 10 route snapshots couldn't be stored, and the other block-swap courses lost some too
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *A stored state lost the toggles its simulation never made*).
 
 A restore gives back exactly the physics state its capture saw, whatever the simulation ran before: Box2D's (bodies,
 fixtures and proxy ids, the contact list in order with each contact's flags, manifold and touch order, the touch
 counter, the move and pair buffers, every broadphase tree node) and the host's (each collider's fixtures, scale, layer
-and contact mask, the player's colliders' too, the touching pairs, and the syncs, teleports, rebuilds and rescales
-pending for the next step: `PhysicsSnapshot`). Before, the player's box kept the last run's contact mask and a restore
-kept the last run's pending flags, so an edge could end differently after other edges
-([`docs/fidelity-log.md`](../docs/fidelity-log.md), *A restored run depended on the runs before it*). `determinism
+and contact mask, the player's colliders' too, the touching pairs, the syncs, teleports, rebuilds and rescales
+pending for the next step, and every other body's transform: `PhysicsSnapshot`). Before, the player's box kept the last
+run's contact mask and a restore kept the last run's pending flags, so an edge could end differently after other edges
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *A restored run depended on the runs before it*); and a zip mover
+kept the last run's transform, which its pending sync then moved the body to (*A restore left the other run's body
+transforms*). `determinism
 <trace> <route> [--edges N] [--seed S] [--passes P]` checks it (`Cli/Determinism.cs`): 10 snapshots along the route
 (both sides of its rebases), a fixed set of N edges from them (default 300; 17-150 ticks of the route's inputs, near
 the snapshot or from anywhere later), every third capturing a state halfway that a child edge runs from later in the
 pass, run in order, then in P-1 shuffled orders, then in a second process with another shuffle. Every restore's
 physics digest (`PhysicsWorld.StateDigest`, `b2World.StateDigest`: all of the above, bit for bit, the same in every
-process) must equal its capture's, every run's end state must be the same in every order and process, and the route
-snapshots stored as bytes (`SnapshotStore`) and loaded into a fresh simulation must restore the same state and end
-their edges the same. It prints `DETERMINISTIC` (exit 0) or the first differences; `IGTAP_DETERMINISM_DUMP=<edge>`
-writes that edge's halfway capture and its restore as text to diff. VMAN 45.20, 44.92 and 48.18 with 600 edges:
-every restore equal to its capture (2,256-2,286 each), 800 of 800 runs identical across orders and processes (the
-build before: 21 restores off and 5 runs different on 45.20).
+process) must equal its capture's, every run's end state must be the same in every order and process, each pass-0
+halfway capture, restored after other runs and continued on its edge's own inputs, must end in the edge's end state,
+and the route snapshots stored as bytes (`SnapshotStore`, all saved before the fresh simulation is made) and loaded
+into a fresh simulation must restore the same state and end their edges the same. It prints `DETERMINISTIC` (exit 0)
+or the first differences; `IGTAP_DETERMINISM_DUMP=<edge>` writes that edge's halfway capture and its restore as text
+to diff. VMAN 45.20, 44.92 and 48.18 with 600 edges: every restore equal to its capture (2,256-2,286 each), 800 of 800
+runs identical across orders and processes (the build before: 21 restores off and 5 runs different on 45.20). Course 7
+`WJ_DS_DJ_BS_ZIP` (`7_wjdsdjbszip-7.96`): 1,137 of 1,137 restores, 79 of 79 continuations (the build before: 467
+and 78) and 10 of 10 stored snapshots (the build before: 5). Courses 8, 10, 14 and 15, zip and orb, are DETERMINISTIC
+with every route snapshot stored.
 
 A capture after a restore shares the restored snapshot's changed-collider list until a collider is rebuilt
 (`PhysicsWorld._changedCapture`), and each body's record until the body changes (a load seeds `b2World.m_savedBodyRecs`).

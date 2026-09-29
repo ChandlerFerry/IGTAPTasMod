@@ -333,6 +333,7 @@ namespace IGTAP.EngineSim.Cli
             if (TouchesAtStart(sim)) throw new InvalidOperationException("The lab's start is inside its finish box.");
             // The player's collider around the transform over every collider config: the finish is a touch of the box by it.
             var (colliderTop, colliderBottom, colliderReach) = LabFlight.Extents(sim.Player);
+            bool springs = lab.shapes.Any(s => s.spring != null);
 
             int alphabet = Alphabet(false, true, false).Count;
             Console.WriteLine($"lab {lab.id} at {anchor.x:0.#},{anchor.y:0.#} (world frame) in {Path.GetFileName(tracePath)}: "
@@ -403,9 +404,10 @@ namespace IGTAP.EngineSim.Cli
                 // Reachability (admissible: only provably dead states are cut; the finish is a touch of the box by the player's
                 // collider, so each test allows for its extents). Free flight: the dash spent, off ground and wall, the highest
                 // the collider's top can be by the last tick is under the box (LabFlight). Height: no inputs can lift the player
-                // into the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
-                // maxTranslationSpeed (100 u/physics step) is the most any input can move the player either way, so a state
-                // more than that per remaining tick from the box cannot finish before the bound.
+                // into the finish box (MaxReach over-estimates every rise the game can give but a spring's, so a lab with a
+                // spring has no height prune). Time: the game's own maxTranslationSpeed (100 u/physics step) is the most any
+                // input can move the player either way, and a spring's push (hitSpring's 10 u position write) on top of it,
+                // so a state more than that per remaining tick from the box cannot finish before the bound.
                 if (float.IsPositiveInfinity(node.FlightTop)) unbounded.AddOrUpdate(Reason(node.FlightWhy), 1, (_, n) => n + 1);
                 else if (!checkBound && node.FlightTop <= boxBottom)
                 {
@@ -413,10 +415,10 @@ namespace IGTAP.EngineSim.Cli
                     lock (violations) highestCut = MathF.Max(highestCut, node.FlightTop);
                     return;
                 }
-                if (node.MaxY + colliderTop <= boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
+                if (!springs && node.MaxY + colliderTop <= boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
                 float dx = MathF.Max(MathF.Max(bx0 - (node.X + colliderReach), node.X - colliderReach - bx1), 0f);
                 float dy = MathF.Max(MathF.Max(by0 - (node.Y + colliderTop), node.Y + colliderBottom - by1), 0f);
-                if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * 100f) { Interlocked.Increment(ref prunedTime); return; }
+                if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * (springs ? 110f : 100f)) { Interlocked.Increment(ref prunedTime); return; }
                 SimSnapshot state = null;
                 List<Node> kept = null;
                 List<(InputTick, int)> done = null;
@@ -1048,15 +1050,29 @@ namespace IGTAP.EngineSim.Cli
             string outPath = OptS(args, "--out", null);
             var log = new StringBuilder();
             int steps = 0;
+            // The lab's spikes: after each step, every one the player's hurtbox overlaps (a collider of the player's whose
+            // includeLayers takes the spike's layer) or whose spikeScript counter is still up, as "spike<n> <counter>", "*" on
+            // an overlap: a touch is OnTriggerEnter2D on its first tick and OnTriggerStay2D (counter + 1) after, so a spike
+            // crossed inside its grace shows "*0", "*1", then nothing.
+            FieldInfo spikeCounter = typeof(spikeScript).GetField("counter", Fields);
+            var spikes = sim.World.All<spikeScript>().Where(k => k.name.StartsWith(lab.id + " ", StringComparison.Ordinal))
+                .Select(k => (name: k.name.Substring(lab.id.Length + 1).Split(' ')[0], script: k, collider: k.GetComponent<Collider2D>())).ToArray();
             RunResult run = sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 400, onStep: s =>
             {
                 WorldPos p = sim.PlayerWorld;
-                log.AppendLine($"{steps,3} in{(int)sim.Engine.RunTicks - 1,3} pos {p.x - anchor.x,9:0.#},{p.y - anchor.y,9:0.#}"
+                log.Append($"{steps,3} in{(int)sim.Engine.RunTicks - 1,3} pos {p.x - anchor.x,9:0.#},{p.y - anchor.y,9:0.#}"
                     + $" V {sim.Player.Velocity.x,7:0.#},{sim.Player.Velocity.y,7:0.#} m {sim.Player.momentum.x,7:0.#},{sim.Player.momentum.y,7:0.#}"
                     + $" g{(sim.Player.onGround ? 1 : 0)} solid{(GroundCheckGrounds(sim, p) ? 1 : 0)} w{(sim.Player.OnWall ? 1 : 0)} {sim.Player.cutsceneMode}"
                     + $" dash{(sim.Player.dashActive ? 1 : 0)} f{sim.Player.framesSinceLastDash:0} R{(sim.Player.facingRight ? 1 : 0)}"
                     + $" cf{GetMovementFloat(sim, "coyoteFrames"):0}/{GetMovementFloat(sim, "maxCoyoteFrames"):0}"
                     + $" wc{GetMovementFloat(sim, "wallCoyoteFrames"):0}/{GetMovementFloat(sim, "maxWallCoyoteFrames"):0} wj{sim.Player.wallJumpsLeft}");
+                foreach (var (name, script, collider) in spikes)
+                {
+                    int counter = (int)spikeCounter.GetValue(script);
+                    bool overlap = sim.Player.GetComponents<BoxCollider2D>().Any(c => c.enabled && (c.includeLayers.value & (1 << collider.gameObject.layer)) != 0 && c.IsTouching(collider));
+                    if (overlap || counter > 0) log.Append($" spike{name} {(overlap ? "*" : "")}{counter}");
+                }
+                log.AppendLine();
                 steps++;
             });
             if (outPath != null) File.WriteAllText(outPath, log.ToString()); else Console.Write(log);
@@ -1198,12 +1214,12 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// The highest world y the player can still reach with any future inputs: the ballistic arc of Velocity + momentum
-        /// (momentum assumed not to decay) plus every jump and boost it has or a landing gives back. A lab map has no springs
-        /// or moving geometry, so one ground or coyote jump (jumpForce 805 + the apex's anti-grav under 400 u: any state may
-        /// still land under its arc and jump), the air jumps (745), each wall jump (730 + a bounce's 220 momentum under
-        /// 400 u, a stored wall coyote jump among them) and one dash (a super's 805 or an omnidash's ground bounce 1405 under
-        /// 900 u) cover everything the game can give; a landing refills to the max counts. The negative control only presses
-        /// jump on solid ground: one ground jump and the dash.
+        /// (momentum assumed not to decay) plus every jump and boost it has or a landing gives back. A lab map has no moving
+        /// geometry, and a lab with a spring skips this prune (a spring's launch isn't in it), so one ground or coyote jump
+        /// (jumpForce 805 + the apex's anti-grav under 400 u: any state may still land under its arc and jump), the air jumps
+        /// (745), each wall jump (730 + a bounce's 220 momentum under 400 u, a stored wall coyote jump among them) and one
+        /// dash (a super's 805 or an omnidash's ground bounce 1405 under 900 u) cover everything the game can give; a landing
+        /// refills to the max counts. The negative control only presses jump on solid ground: one ground jump and the dash.
         /// </summary>
         static float MaxReach(Simulation sim, bool control = false)
         {

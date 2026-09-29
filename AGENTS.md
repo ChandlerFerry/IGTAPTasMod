@@ -5,8 +5,9 @@ a route that breaks any of them doesn't count, however fast it is.
 
 Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`WJ_DS_DJ`), the `VMAN` Full-TAS run (a
 Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)), and the
-`FalseEnding2-Any%` Full-TAS run (the statue's boosted Course 2 boxes; notes and open ideas in
-[`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28)). How to search:
+`FalseEnding-Any%` Full-TAS run (and its copy `FalseEnding2-Any%`, where the economy work was tried first; notes and
+open ideas in [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28); unattended improvement:
+`fulltas --auto`, [`docs/fulltas.md`](docs/fulltas.md#auto)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
 
 ## Route names
@@ -37,7 +38,8 @@ Start the game only to:
 - submit an offline best that beats the saved route (`solve` does this on its own),
 - run `tools/validate.py`.
 
-Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/solver/start`.
+Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/solver/start`: `POST /api/solver/preview`
+(the same body) returns the engine command a studio Improve would run, which you can run offline yourself.
 
 - Change the live game, never its save files: `POST /api/session/setup {"abilities": {...}}` sets `Movement` fields on
   the live player, `{"currencies": {"Cash": 1e22}}` sets `globalStats.currencyLookup`. Abilities are refused while

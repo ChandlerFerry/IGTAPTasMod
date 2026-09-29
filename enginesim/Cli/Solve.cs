@@ -19,6 +19,8 @@ namespace IGTAP.EngineSim.Cli
 
         public static int Run(string[] args)
         {
+            // --auto: the Full-TAS --auto loop over the course's waypoints (CourseAuto.cs).
+            if (args.Contains("--auto")) return FullTas.CourseAuto(args);
             string startTrace = args[0];
             int threads = Option(args, "--threads", Environment.ProcessorCount);
             double minutes = Option(args, "--minutes", 60.0);
@@ -62,6 +64,7 @@ namespace IGTAP.EngineSim.Cli
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
             TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null),
                 cacheFile: Option(args, "--tech-cache", (string)null)) : null;
+            if (mined != null && args.Contains("--no-graft-specs")) mined.Patterns.RemoveAll(p => p.Spec);
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
@@ -91,7 +94,8 @@ namespace IGTAP.EngineSim.Cli
                 }
                 else PlanLog($"plan: no finish ({planner.Ticks} ticks)");
             }
-            var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0), rng: rng);
+            var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0), rng: rng)
+                { MinedDraws = Option(args, "--mined-draws", 1) };
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             clock.Restart();
@@ -126,7 +130,7 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.Grafts)} grafts ({Interlocked.Read(ref solver.CornerGrafts)} corner hypers, {Interlocked.Read(ref solver.ClipsLanded)}/{Interlocked.Read(ref solver.ClipGrafts)} wall clips, {Interlocked.Read(ref solver.SetupsLanded)}/{Interlocked.Read(ref solver.SetupGrafts)} clip setups, {Interlocked.Read(ref solver.GateTaps)} gate taps, {Interlocked.Read(ref solver.TechGrafted)} tech grafts), best {solver.Shared.Time:0.00}s"
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.TechGrafted)} tech grafts ({Interlocked.Read(ref solver.ChainGrafts)} chained, {Interlocked.Read(ref solver.ExpectsMet)}/{Interlocked.Read(ref solver.ExpectChecks)} expected contacts, {Interlocked.Read(ref solver.TechGraftedAtStep)} at step contacts), best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)")
                     + ", " + solver.GuideStatus() + ", branch replays matching "
@@ -267,6 +271,12 @@ namespace IGTAP.EngineSim.Cli
         internal static OfflineSolver.ForcedPath FullTasPaths(string run, ICollection<string> goals = null, IReadOnlyList<string> labels = null)
         {
             var forced = new OfflineSolver.ForcedPath();
+            // A course searched as a Full-TAS run (solve --auto): its course and category's rules, set when the run started.
+            if (CourseRuns.TryGetValue(run, out OfflineSolver.ForcedPath course))
+            {
+                forced.Avoid.AddRange(course.Avoid);
+                return forced;
+            }
             string file = Path.Combine(AppContext.BaseDirectory, "forced-paths.json");
             if (!File.Exists(file)) return forced;
             using JsonDocument rules = JsonDocument.Parse(File.ReadAllText(file));
@@ -290,6 +300,11 @@ namespace IGTAP.EngineSim.Cli
             }
             return forced;
         }
+
+        /// <summary>The course runs searched as Full-TAS runs in this process (solve --auto, CourseAuto.cs), by run name: their
+        /// course rules' avoid boxes (forced-paths.json's rules for the course and category, with the picked optional blocks).</summary>
+        internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath> CourseRuns =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath>();
 
         static void AddAvoids(OfflineSolver.ForcedPath forced, JsonElement rule, int after = 0)
         {
@@ -390,7 +405,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 var sim = new Simulation(World.Load(worldPath));
                 sim.SetTarget(header);
-                sim.LoadStart(start);
+                sim.LoadStart(start, canonical: true);
                 return sim;
             };
         }

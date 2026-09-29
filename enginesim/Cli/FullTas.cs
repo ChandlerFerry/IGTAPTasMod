@@ -25,8 +25,21 @@ namespace IGTAP.EngineSim.Cli
             public long[] GoalInput, GoalPhysics;
             /// <summary>How its replay from the start ended (Evaluate's), for the log.</summary>
             public string EndReason;
-            public long Last { get { return Progress == 0 ? long.MaxValue : GoalPhysics[Progress - 1]; } }
+            /// <summary>The last goal's physics tick from the run's start (tick arithmetic: splits, rests, the library).</summary>
+            public long End { get { return Progress == 0 ? long.MaxValue : GoalPhysics[Progress - 1]; } }
+            /// <summary>The tick the run's time counts from: the start-gate goal's in a course record run (<see cref="TimerGoal"/>), else 0.</summary>
+            public long Origin { get { return TimerGoal > 0 && Progress >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0; } }
+            /// <summary>The run's time in ticks, what better and worse compare: <see cref="End"/> less <see cref="Origin"/>.</summary>
+            public long Last { get { return Progress == 0 ? long.MaxValue : End - Origin; } }
+            /// <summary>Goal k's arrival on the run's own clock (its tick less the start-gate goal's once that is behind it).</summary>
+            public long Clock(int k) { return GoalPhysics[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0); }
         }
+
+        /// <summary>
+        /// A course record run (`solve --auto`, CourseAuto.cs) is timed by the game timer, from its start-gate crossing: that goal's
+        /// number (1-based). 0: the run is timed from its start (every Full-TAS run, a course's farm).
+        /// </summary>
+        internal static int TimerGoal;
 
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal, _onlySegment;
@@ -1264,7 +1277,7 @@ namespace IGTAP.EngineSim.Cli
                     if (Better(run, _best)) { Commit(run, where + ", then re-found the later goals"); return; }
                     // Complete but slower: it gets ahead and the old inputs after that lose it again, played from a state they weren't
                     // made for. Search on from the goal where it first falls behind the best, while that moves forward.
-                    int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => run.GoalPhysics[g] > _best.GoalPhysics[g], -1);
+                    int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => run.Clock(g + 1) > _best.Clock(g + 1), -1);
                     if (behind > resynced)
                     {
                         Log($"repaired run {Describe(run)} is no better: it falls behind the best at goal {behind + 1}; re-finding from there");
@@ -1341,13 +1354,22 @@ namespace IGTAP.EngineSim.Cli
                 float time = r.Last * _dt;
                 Directory.CreateDirectory(_outDir);
                 file = Path.Combine(_outDir, "fulltas-" + _name + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                Solve.WriteShared(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, ticks = r.Inputs.Select(t => t.ToJson()) }));
-                _pending?.Set(r.Inputs);
+                // A route of goals the loop adopted (--parts goals) carries them and the lists they came from: the game judges it
+                // under them and takes them as the run's when it saves the record.
+                string[] goals = _goalLineage.Count == 0 ? null : _labels;
+                List<string[]> goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage.ToList();
+                Solve.WriteShared(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, goals, goalsFrom, ticks = r.Inputs.Select(t => t.ToJson()) }));
+                _pending?.Set(new Submission { Inputs = r.Inputs, Goals = goals, GoalsFrom = goalsFrom });
             }
             Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
             Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = Path.GetFileName(file),
-                complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals });
+                complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals, goalsEdit = _goalsEdit,
+                goals = _goalsEdit == null ? null : _labels });
+            _committed?.Invoke(r, where);
         }
+
+        /// <summary>After a new best is kept (a course run: CourseAuto writes the course's offline best); null for a Full-TAS run.</summary>
+        Action<Route, string> _committed;
 
         /// <summary>The run file (fulltas/&lt;run&gt;.json): the route's inputs with the goal ticks it reaches them at.</summary>
         void WriteRunFile(Route r)
@@ -1363,21 +1385,30 @@ namespace IGTAP.EngineSim.Cli
                 goalPhysicsTicks = r.GoalPhysics,
                 total = r.Progress == _goals ? r.Last : -1,
                 startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
+                goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage,
             }));
             Solve.Replace(temp, _runFile);
         }
 
+        /// <summary>A complete route for the gate, with its goals when they are the loop's adopted ones (null: the run's).</summary>
+        sealed class Submission
+        {
+            public List<InputTick> Inputs;
+            public string[] Goals;
+            public List<string[]> GoalsFrom;
+        }
+
         sealed class Latest
         {
-            List<InputTick> _item;
-            public void Set(List<InputTick> inputs) { lock (this) { _item = inputs; Monitor.Pulse(this); } }
-            public void SetIfEmpty(List<InputTick> inputs) { lock (this) { if (_item == null) { _item = inputs; Monitor.Pulse(this); } } }
-            public List<InputTick> Take()
+            Submission _item;
+            public void Set(Submission s) { lock (this) { _item = s; Monitor.Pulse(this); } }
+            public void SetIfEmpty(Submission s) { lock (this) { if (_item == null) { _item = s; Monitor.Pulse(this); } } }
+            public Submission Take()
             {
                 lock (this)
                 {
                     while (_item == null) Monitor.Wait(this);
-                    List<InputTick> item = _item;
+                    Submission item = _item;
                     _item = null;
                     return item;
                 }
@@ -1390,8 +1421,8 @@ namespace IGTAP.EngineSim.Cli
             int deferred = 0;
             while (true)
             {
-                List<InputTick> inputs = _pending.Take();
-                string body = JsonSerializer.Serialize(new { name = _name, ticks = inputs.Select(t => t.ToJson()) });
+                Submission inputs = _pending.Take();
+                string body = JsonSerializer.Serialize(new { name = _name, ticks = inputs.Inputs.Select(t => t.ToJson()), goals = inputs.Goals, goalsFrom = inputs.GoalsFrom });
                 try
                 {
                     string reply = http.PostAsync(Api + "/api/fulltas/submit", new StringContent(body, Encoding.UTF8, "application/json")).Result

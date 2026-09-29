@@ -222,7 +222,7 @@ namespace IGTAP.EngineSim.Cli
                         }
                         Log($"route: the old route after {targetLabel} doesn't play on to the end from the plan's end"
                             + (running != null ? $" (Course {running.courseNumber} is still running there, so its Quick Restart goes to the course's reset point, not the old route's Checkpoint)" : "")
-                            + stops + "; re-plan the stretch it stops in, or solve the goals after it (Solve unsolved)");
+                            + stops + "; re-plan the stretch it stops in, or solve the goals after it (the studio's Reach missing goals)");
                     }
                 }
                 // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.

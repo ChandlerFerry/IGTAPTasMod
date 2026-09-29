@@ -14,9 +14,10 @@ namespace IGTAP.EngineSim.Cli
     /// <see cref="Humanizer.Events"/>), each tried shifted up to <see cref="Humanizer.Radius"/> ticks either way alone and with
     /// the whole route after it (ticks cut or held before it), at the other stick values a controller gives, a dash at every
     /// jump frame, and dropped; each candidate replays from the recorded state before its first change, and stops where its
-    /// player matches the route's with the route's own inputs to come (it ends as the route does, shifted by the ticks between)
-    /// or, on a Full-TAS run, once it is <see cref="DefaultSlack"/> ticks behind the route at a goal. The strictly best candidate
-    /// of an input whose replay from the start still beats the route is kept (course time, then physics ticks) and the sweep
+    /// player matches the route's with the route's own inputs to come (it ends as the route does, shifted by the ticks between,
+    /// its timer by its own against the route's there) or, on a Full-TAS run, once it is <see cref="DefaultSlack"/> ticks behind
+    /// the route at a goal. The strictly best candidate of an input whose replay from the start still beats the route is kept
+    /// (course time, then physics ticks; <see cref="Farm"/>: physics ticks, then course time) and the sweep
     /// goes on from there; sweeps repeat until one keeps nothing, then one sweep of the plateau families (<see cref="Plateau"/>)
     /// runs, and the plain sweeps again after one that keeps something. So its result ties the seed or beats it.
     /// </summary>
@@ -46,6 +47,17 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A candidate whose player matches the route's after its last change (its inputs from there the route's) ends as
         /// the route does, shifted by the ticks between them: its replay stops there.</summary>
         public bool Sync = true;
+        /// <summary>A course's farm time: physics ticks from the route's start (the quick restart) to the finish come first, the
+        /// course timer breaks ties; candidates stop once past the route's physics ticks (the timer may get slower).</summary>
+        public bool Farm;
+
+        /// <summary>Strictly better by this polish's objective: the timer then physics ticks, or (<see cref="Farm"/>) physics
+        /// ticks then the timer.</summary>
+        bool Better(float time, long runTicks, float bestTime, long bestRunTicks)
+        {
+            if (!Farm) return OfflineSolver.Beats(time, runTicks, bestTime, bestRunTicks);
+            return runTicks < bestRunTicks || (runTicks == bestRunTicks && time < bestTime - Tie);
+        }
 
         /// <param name="slack">A Full-TAS candidate stops once it is this many physics ticks behind the route at its next goal
         /// (negative: never).</param>
@@ -95,7 +107,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 result.Sweeps = sweep;
                 int kept = 0, tried = 0, finished = 0;
-                // One slot's candidates tested; the strictly best (time, then physics ticks) whose replay from the start still beats
+                // One slot's candidates tested; the strictly best (by the objective) whose replay from the start still beats
                 // the route is kept (a candidate decided by its sync with the route is checked that way before it counts).
                 bool Keep(List<(List<InputTick> inputs, int first, string what)> cands)
                 {
@@ -104,12 +116,12 @@ namespace IGTAP.EngineSim.Cli
                     tried += cands.Count;
                     finished += outcomes.Count(o => o != null);
                     var better = Enumerable.Range(0, cands.Count)
-                        .Where(k => outcomes[k] is var (t, rt, _) && OfflineSolver.Beats(t, rt, _time, _runTicks))
-                        .OrderBy(k => outcomes[k].Value.time).ThenBy(k => outcomes[k].Value.runTicks).Take(4);
+                        .Where(k => outcomes[k] is var (t, rt, _) && Better(t, rt, _time, _runTicks))
+                        .OrderBy(k => Farm ? outcomes[k].Value.runTicks : 0L).ThenBy(k => outcomes[k].Value.time).ThenBy(k => outcomes[k].Value.runTicks).Take(4);
                     foreach (int best in better)
                     {
                         RunResult check = Check(cands[best].inputs);
-                        if (!check.Finished || !OfflineSolver.Beats(check.Time, check.PhysicsTicks, _time, _runTicks))
+                        if (!check.Finished || !Better(check.Time, check.PhysicsTicks, _time, _runTicks))
                         {
                             _log?.Invoke($"polish: {cands[best].what} replays from the start as {(check.Finished ? check.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s/" + check.PhysicsTicks : check.EndReason)}: not kept");
                             continue;
@@ -379,6 +391,9 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> _recorded = new List<InputTick>();
             int[] _fp = Array.Empty<int>(), _progress = Array.Empty<int>(), _via = Array.Empty<int>();
             long[] _phys = Array.Empty<long>();
+            // The route's course timer per input tick (negative: not timing yet): a candidate that syncs before the start gate
+            // keeps the route's time, one that syncs after it gains what its own timer shows against the route's there.
+            float[] _clock = Array.Empty<float>();
             int _version = -1;
             int _waypoints;
             bool _avoided;
@@ -386,6 +401,7 @@ namespace IGTAP.EngineSim.Cli
             // to the route's, and where it happened (physics ticks ahead of the route, or null).
             int _syncFrom = int.MaxValue, _syncShift;
             long? _synced;
+            float _syncedClock;
 
             public Judge(Polish owner)
             {
@@ -400,7 +416,7 @@ namespace IGTAP.EngineSim.Cli
                 if (version == _version) return;
                 var states = new SimSnapshot[route.Count];
                 int n = route.Count + 1;
-                _fp = new int[n]; _progress = new int[n]; _via = new int[n]; _phys = Enumerable.Repeat(-1L, n).ToArray();
+                _fp = new int[n]; _progress = new int[n]; _via = new int[n]; _phys = Enumerable.Repeat(-1L, n).ToArray(); _clock = new float[n];
                 _recorded = route;
                 _syncFrom = int.MaxValue;
                 Replay(route, null, float.PositiveInfinity, long.MaxValue, states, null);
@@ -425,9 +441,11 @@ namespace IGTAP.EngineSim.Cli
                 _syncFrom = int.MaxValue;
                 if (_synced is long ahead)
                 {
-                    // The route's own end from here: its time and physics ticks moved by the ticks the candidate is ahead or behind.
+                    // The route's own end from here: its physics ticks moved by the ticks the candidate is ahead or behind, its
+                    // time by what the candidate's timer shows against the route's at the sync.
                     long ticks = runTicks + ahead;
-                    return ticks <= runTicks ? (time + ahead * _sim.World.FixedDeltaTime, ticks, _recorded.Count - 1 + shift) : null;
+                    float end = time + _syncedClock;
+                    return _owner.Better(end, ticks, time, runTicks) ? (end, ticks, _recorded.Count - 1 + shift) : null;
                 }
                 bool valid = r.Finished && _waypoints == _owner._path.Via.Count && !_avoided;
                 return valid ? (r.Time, r.PhysicsTicks, r.FinishTick) : null;
@@ -463,6 +481,7 @@ namespace IGTAP.EngineSim.Cli
                         _phys[tick] = _sim.Engine.PhysicsTicks;
                         _progress[tick] = _sim.Progress;
                         _via[tick] = _waypoints;
+                        _clock[tick] = _sim.Elapsed(_sim.TimingCourse());
                     }
                     else if (tick >= _syncFrom)
                     {
@@ -470,15 +489,21 @@ namespace IGTAP.EngineSim.Cli
                         if (u >= 0 && u < _fp.Length && _phys[u] >= 0 && _progress[u] == _sim.Progress && _via[u] == _waypoints
                             && _fp[u] == _sim.MovementFingerprint())
                         {
-                            _synced = _sim.Engine.PhysicsTicks - _phys[u];
-                            return false;
+                            float clock = _sim.Elapsed(_sim.TimingCourse());
+                            if ((clock < 0f) == (_clock[u] < 0f))
+                            {
+                                _synced = _sim.Engine.PhysicsTicks - _phys[u];
+                                _syncedClock = clock < 0f ? 0f : clock - _clock[u];
+                                return false;
+                            }
                         }
                     }
-                    // A run timed by physics ticks (Full-TAS goals, a bonus or transition) stops past the route's ticks; its time
-                    // is its last goal's, 12 ticks before a strict run ends, so the timer limit would cut every candidate short.
+                    // A run timed by physics ticks (Full-TAS goals, a bonus or transition; a course's farm) stops past the route's
+                    // ticks; a Full-TAS run's time is its last goal's, 12 ticks before a strict run ends, so the timer limit would cut
+                    // every candidate short.
                     if (goals != null && _owner._slack >= 0 && _sim.Progress < goals.Length && goals[_sim.Progress] >= 0
                         && _sim.Engine.PhysicsTicks > goals[_sim.Progress] + _owner._slack) return false;
-                    if (_sim.Goals != null || _sim.TimedFromRunStart) return _sim.Engine.PhysicsTicks <= limitTicks;
+                    if (_sim.Goals != null || _sim.TimedFromRunStart || _owner.Farm) return _sim.Engine.PhysicsTicks <= limitTicks;
                     return !(_sim.Elapsed(_sim.TimingCourse()) > limit);
                 }, extraTicks: 1000000, onStep: onStep);   // a dash's freeze ticks take no input: a long run needs more than 400
                 Interlocked.Add(ref _owner._ticks, r.Stepped);
@@ -513,9 +538,9 @@ namespace IGTAP.EngineSim.Cli
             public void Stop() { _jobs.CompleteAdding(); }
         }
 
-        /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--out file] [--via/--avoid/--optional as solve];
+        /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--out file] [--via/--avoid/--optional as solve];
         /// a Full-TAS trace polishes the whole run (its goals, as the run judges it), or with --from-goal N [--to-goal M] only the
-        /// inputs between those goals.</summary>
+        /// inputs between those goals; --farm polishes a course route's farm time (restart to finish physics ticks).</summary>
         public static int Command(string[] args)
         {
             string trace = args[0], routePath = args[1];
@@ -546,15 +571,17 @@ namespace IGTAP.EngineSim.Cli
             }
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var polish = new Polish(create, forced, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"),
-                Solve.Option(args, "--radius", Humanizer.Radius), Solve.Option(args, "--slack", DefaultSlack)) { Wide = !args.Contains("--no-wide"), Sync = !args.Contains("--no-sync") };
-            // Each sweep's route (checked from the start) goes to <route>-polished-<time>.json as it's found, so a long polish's
-            // gains can be judged before it ends; the final one also carries the changes.
-            string Named(float time) => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(routePath)),
-                Path.GetFileNameWithoutExtension(routePath) + "-polished-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
+                Solve.Option(args, "--radius", Humanizer.Radius), Solve.Option(args, "--slack", DefaultSlack))
+            { Wide = !args.Contains("--no-wide"), Sync = !args.Contains("--no-sync"), Farm = args.Contains("--farm") };
+            // Each sweep's route (checked from the start) goes to <route>-polished-<time>.json (--farm: -polished-farm-<farm
+            // time>.json) as it's found, so a long polish's gains can be judged before it ends; the final one also carries the changes.
+            string Named(float time, long runTicks) => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(routePath)),
+                Path.GetFileNameWithoutExtension(routePath) + "-polished-" + (polish.Farm ? "farm-" + (runTicks * .02).ToString("0.00", CultureInfo.InvariantCulture)
+                    : time.ToString("0.00", CultureInfo.InvariantCulture)) + ".json");
             if (!args.Contains("--out"))
                 polish.Swept = (inputs, time, runTicks) =>
                 {
-                    string file = Named(time);
+                    string file = Named(time, runTicks);
                     Solve.WriteShared(file, JsonSerializer.Serialize(new
                     {
                         course, capabilities = caps, fulltas, time, runTicks, source = Path.GetFileName(routePath),
@@ -565,14 +592,14 @@ namespace IGTAP.EngineSim.Cli
             try
             {
                 Result r = polish.Run(seed, from: from, to: to);
-                string outFile = Solve.Option(args, "--out", Named(r.Time));
+                string outFile = Solve.Option(args, "--out", Named(r.Time, r.RunTicks));
                 Solve.WriteShared(outFile, JsonSerializer.Serialize(new
                 {
                     course, capabilities = caps, fulltas, time = r.Time, runTicks = r.RunTicks, source = Path.GetFileName(routePath),
                     polish = new { ticks = r.Ticks, sweeps = r.Sweeps, kept = r.Kept, changes = r.Changes },
                     ticks = r.Inputs.Select(t => t.ToJson()),
                 }));
-                Console.WriteLine($"polished {label}: {r.Time:0.00}s ({r.RunTicks} physics ticks) after {r.Sweeps} sweeps, {r.Kept} kept, "
+                Console.WriteLine($"polished {label}{(polish.Farm ? " (farm)" : "")}: {r.Time:0.00}s ({r.RunTicks} physics ticks, farm {r.RunTicks * .02:0.00}s) after {r.Sweeps} sweeps, {r.Kept} kept, "
                     + $"{r.Ticks} ticks, {clock.Elapsed.TotalSeconds:0.0}s -> {outFile}");
             }
             finally { polish.Stop(); }

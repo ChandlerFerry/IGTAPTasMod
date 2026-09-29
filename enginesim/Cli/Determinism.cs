@@ -18,8 +18,10 @@ namespace IGTAP.EngineSim.Cli
     /// draws a fixed set of edges from them (a stretch of the route's inputs, 17 to 150 ticks, as a search's edge), and runs
     /// the set in order and then in shuffled orders. Each restore must give back the physics state the capture saw
     /// (<see cref="PhysicsWorld.StateDigest"/>), and each edge must end in the same state (physics, player, RNG, goals) in
-    /// every pass. Then it runs itself again in a new process with another shuffle and compares every edge's digest.
-    /// Exit 0 when everything is identical.
+    /// every pass. A mid-edge capture, restored after other runs and continued on its edge's own inputs, must end where the
+    /// uninterrupted edge did. Snapshots stored as bytes (<see cref="SnapshotStore"/>) must load into a fresh simulation
+    /// and end their edges the same. Then it runs itself again in a new process with another shuffle and compares every
+    /// edge's digest. Exit 0 when everything is identical.
     /// </summary>
     static class Determinism
     {
@@ -67,7 +69,18 @@ namespace IGTAP.EngineSim.Cli
                 int at = Math.Max(1, (int)((long)(inputs.Count - 30) * (k + 1) / (points + 1)));
                 sim.SetStart(origin, 0);
                 SimSnapshot s = sim.Advance(inputs.Take(at).ToList());
+                if (s == null)
+                {
+                    // The run ended first (a death, a finish): no state there to branch from.
+                    Console.WriteLine($"the route's run ends before input {at}: no snapshot there");
+                    continue;
+                }
                 snaps.Add((at, s, sim.Physics.StateDigest()));
+            }
+            if (snaps.Count == 0)
+            {
+                Console.Error.WriteLine("the route's run ends before its first snapshot point");
+                return 2;
             }
             sim.SetStart(origin, 0);
 
@@ -111,6 +124,9 @@ namespace IGTAP.EngineSim.Cli
             var player = new ulong[passes, 2 * edgeCount];
             var ends = new string[passes, 2 * edgeCount];
             int crossing = 0, sideSwitches = 0;
+            // Pass 0's mid-edge captures and each such edge's end state (no run counters): the continuation check below.
+            var firstCaptures = new (SimSnapshot state, long physics)[edgeCount];
+            var edgeEnds = new (ulong state, int local, long physics)[edgeCount];
             void Restored(SimSnapshot snap, ulong digest, string what)
             {
                 restores++;
@@ -151,6 +167,7 @@ namespace IGTAP.EngineSim.Cli
                             {
                                 captures++;
                                 captured[e] = (sim.Capture(t), sim.Physics.StateDigest(e == dumpEdge ? captureLog = new System.Text.StringBuilder() : null));
+                                if (p == 0) firstCaptures[e] = (captured[e].state, sim.Engine.PhysicsTicks);
                                 // Later in the pass: in order right after its edge, shuffled anywhere after it.
                                 order.Insert(shuffler == null ? n + 1 : shuffler.Next(n + 1, order.Count + 1), edgeCount + e);
                             }
@@ -162,6 +179,7 @@ namespace IGTAP.EngineSim.Cli
                     var body = sim.Physics.PlayerBody();
                     ends[p, task] = $"player at {body.px:R},{body.py:R} moving {body.vx:R},{body.vy:R} after {r.Stepped} ticks{(r.EndReason != null ? " (" + r.EndReason + ")" : "")}";
                     local[p, task] = sim.Fingerprint();
+                    if (p == 0 && task < edgeCount) edgeEnds[e] = (StateDigest(sim), local[p, task], r.PhysicsTicks);
                 }
             }
 
@@ -194,19 +212,49 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"restores equal to their capture: {restores - restoreMismatches}/{restores}");
             Console.WriteLine($"runs identical in every pass: {runs - differ}/{runs} (the player's end state: {runs - playerDiffer}/{runs}), digest {all:x16}");
 
+            // A restored state must continue as the run it was captured on: each mid-edge capture of pass 0, restored after
+            // other runs, plays the rest of its edge's own inputs and must end in the state the edge ended in (a restore that
+            // left another run's state in place, say a body's transform waiting for its sync, shows here).
+            int continued = 0, continuedSame = 0;
+            for (int e = 0; e < edgeCount; e++)
+            {
+                if (firstCaptures[e].state == null) continue;
+                continued++;
+                // As many loop steps as the edge had left (a freeze's physics ticks spend the loop's budget without an input).
+                var (capture, atPhysics) = firstCaptures[e];
+                sim.Run(edges[e].inputs, capture, extraTicks: (int)(edgeEnds[e].physics - atPhysics) - (edges[e].inputs.Count - edges[e].captureAt));
+                if (StateDigest(sim) == edgeEnds[e].state && sim.Fingerprint() == edgeEnds[e].local) continuedSame++;
+                else if (continued - continuedSame <= 10)
+                    Console.WriteLine($"edge {e} continued from its capture at input {edges[e].captureAt} ended differently from the edge's own run");
+            }
+            Console.WriteLine($"captures continued with their edge's own inputs: {continuedSame}/{continued} end as the uninterrupted edge");
+
             // A snapshot stored as bytes and loaded into a fresh simulation (a Full-TAS solve's goal states, SnapshotStore) must
-            // restore the captured state, and its edges must end as they did here.
-            int stored = 0, storedSame = 0, storedRuns = 0, storedRunsSame = 0;
-            Simulation fresh = Make();
+            // restore the captured state, and its edges must end as they did here. Every save comes first: a simulation takes
+            // its thread's hooks (the input hook, the physics backend) when it is made, so this one's restores once the fresh one
+            // exists would run through the fresh one's.
+            int stored = 0, storedSame = 0, storedRuns = 0, storedRunsSame = 0, unstorable = 0;
             var store = new SnapshotStore(sim);
-            var freshStore = new SnapshotStore(fresh);
+            var saved = new byte[snaps.Count][];
             for (int j = 0; j < snaps.Count; j++)
             {
                 sim.Restore(snaps[j].snap);
-                byte[] bytes;
-                try { bytes = store.Save(snaps[j].snap); }
-                catch (NotSupportedException) { continue; }
-                SimSnapshot loaded = freshStore.Load(bytes);
+                try { saved[j] = store.Save(snaps[j].snap); }
+                catch (NotSupportedException) { unstorable++; }
+            }
+            Simulation fresh = Make();
+            var freshStore = new SnapshotStore(fresh);
+            for (int j = 0; j < snaps.Count; j++)
+            {
+                if (saved[j] == null) continue;
+                SimSnapshot loaded;
+                try { loaded = freshStore.Load(saved[j]); }
+                catch (NotSupportedException ex)
+                {
+                    unstorable++;
+                    Console.WriteLine($"the snapshot at input {snaps[j].at} can't be loaded into a fresh simulation: {ex.Message}");
+                    continue;
+                }
                 fresh.Restore(loaded);
                 stored++;
                 ulong digest = fresh.Physics.StateDigest();
@@ -223,7 +271,8 @@ namespace IGTAP.EngineSim.Cli
                     else Console.WriteLine($"edge {e} from the stored snapshot at input {snaps[j].at} ended differently in the fresh simulation");
                 }
             }
-            Console.WriteLine($"stored snapshots loaded into a fresh simulation: {storedSame}/{stored} restore the captured state, {storedRunsSame}/{storedRuns} of their edges end the same");
+            Console.WriteLine($"stored snapshots loaded into a fresh simulation: {storedSame}/{stored} restore the captured state, {storedRunsSame}/{storedRuns} of their edges end the same"
+                + (unstorable > 0 ? $" ({unstorable} not storable)" : ""));
 
             int crossDiffer = -1;
             if (!args.Contains("--no-child"))
@@ -250,7 +299,7 @@ namespace IGTAP.EngineSim.Cli
                     }
                 Console.WriteLine($"runs identical across processes: {runs - crossDiffer}/{runs}");
             }
-            bool ok = restoreMismatches == 0 && differ == 0 && crossDiffer <= 0 && storedSame == stored && storedRunsSame == storedRuns;
+            bool ok = restoreMismatches == 0 && differ == 0 && continuedSame == continued && crossDiffer <= 0 && storedSame == stored && storedRunsSame == storedRuns;
             Console.WriteLine(ok ? "DETERMINISTIC" : "NOT DETERMINISTIC");
             return ok ? 0 : 1;
         }
@@ -270,6 +319,23 @@ namespace IGTAP.EngineSim.Cli
             h.Add(r.Stepped); h.Add(r.PhysicsTicks); h.Add(r.Progress); h.Add(r.Finished); h.Add(r.Time); h.Add(r.FinishTick);
             if (r.EndReason != null) foreach (char c in r.EndReason) h.Add(c);
             if (r.GoalPhysicsTicks != null) foreach (long t in r.GoalPhysicsTicks) h.Add(t);
+            AddPlayer(ref h, sim);
+            player = h.Value;
+            h.Add((long)sim.Physics.StateDigest());
+            return h.Value;
+        }
+
+        /// <summary><see cref="EndDigest"/> without the run's result (its tick counters count from where the run started).</summary>
+        static ulong StateDigest(Simulation sim)
+        {
+            var h = b2Digest.Start();
+            AddPlayer(ref h, sim);
+            h.Add((long)sim.Physics.StateDigest());
+            return h.Value;
+        }
+
+        static void AddPlayer(ref b2Digest h, Simulation sim)
+        {
             Transform t0 = sim.Player.transform;
             Add(ref h, t0.position, 0); Add(ref h, t0.localScale, 0); Add(ref h, t0.rotation, 0);
             Add(ref h, sim.Player, 0);
@@ -278,9 +344,6 @@ namespace IGTAP.EngineSim.Cli
             h.Add(rng.s0); h.Add(rng.s1); h.Add(rng.s2); h.Add(rng.s3);
             var (px, py, angle, vx, vy, w) = sim.Physics.PlayerBody();
             h.Add(px); h.Add(py); h.Add(angle); h.Add(vx); h.Add(vy); h.Add(w);
-            player = h.Value;
-            h.Add((long)sim.Physics.StateDigest());
-            return h.Value;
         }
 
         /// <summary>A value's content, not its identity: world objects by instance id (the same in every load of an export).</summary>

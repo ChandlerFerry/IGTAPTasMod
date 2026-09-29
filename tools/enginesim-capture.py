@@ -7,6 +7,7 @@ that run saw it).
   enginesim-capture.py routes             every "<course>_<CAT> <time>" and "<course>_<CAT> farm <time>" route in the studio library
   enginesim-capture.py random [N]         N random-input runs per course/category (fidelity corpus)
   enginesim-capture.py start C CAT        just the start state (empty inputs) for course C, category CAT
+  enginesim-capture.py starts [C ...]     every start trace already captured (start-c<C>-<CAT>.json) again, or just course C's
   enginesim-capture.py route NAME C CAT   any studio route by name (e.g. a partial one), as a `solve --seed` trace
 
 C is a course id or name from courses.json ("4", "bonus1"); CAT is a category id or label (a label's id is the label
@@ -20,7 +21,7 @@ import sys
 import time
 import urllib.request
 
-from gamepaths import CONFIG
+from gamepaths import CONFIG, TRACES
 
 API = "http://127.0.0.1:17426"
 ROUTE_NAME = re.compile(r"^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm )?([\d.]+)$")
@@ -102,6 +103,14 @@ def main():
         course, caps = COURSE_IDS[sys.argv[2]], category_id(sys.argv[3])
         r = trace({"course": course, "capabilities": caps, "ticks": [], "name": f"start-c{sys.argv[2]}-{caps}"})
         print({k: v for k, v in r.items()})
+    elif mode == "starts":
+        only = set(sys.argv[2:])
+        for path in sorted(TRACES.glob("start-c*.json")):
+            m = re.fullmatch(r"start-c(.+)-([a-z0-9]+)\.json", path.name)
+            if not m or m.group(1) not in COURSE_IDS or (only and m.group(1) not in only):
+                continue
+            r = trace({"course": COURSE_IDS[m.group(1)], "capabilities": m.group(2), "ticks": [], "name": path.stem})
+            print(path.stem, {k: v for k, v in r.items() if k != "path"})
     elif mode == "route":
         name, course, caps = sys.argv[2], COURSE_IDS[sys.argv[3]], category_id(sys.argv[4])
         route = next((r for r in call("/api/state", method="GET")["routes"] if r["name"] == name), None)

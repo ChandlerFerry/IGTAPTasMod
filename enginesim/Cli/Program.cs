@@ -27,6 +27,7 @@ namespace IGTAP.EngineSim.Cli
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
+                    case "waypoints": return CourseWaypoints.Command(args.Skip(1).ToArray());
                     case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
                     case "plan": return Plan.Run(args.Skip(1).ToArray());
                     case "polish": return Polish.Command(args.Skip(1).ToArray());
@@ -35,7 +36,9 @@ namespace IGTAP.EngineSim.Cli
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
+                    case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
                     case "fulltas-plan": return FullTas.Plan(args.Skip(1).ToArray());
+                    case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "archive-check":
@@ -57,7 +60,9 @@ namespace IGTAP.EngineSim.Cli
                     case "climb": return SpikeClimb.Run(args.Skip(1).ToArray());
                     case "path":
                     {
-                        var (sim, _, _) = Open(args[1]);
+                        // --canonical: the start as the searches load it (Simulation.LoadStart canonical: the category start's
+                        // history and FloatingOrigin), not as captured.
+                        var (sim, _, _) = Open(args[1], args.Contains("--canonical"));
                         using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
                         JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
                         var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
@@ -147,19 +152,22 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         goals N+1..M of --route and splices its rest (--guide-probe: an old run's\n"
                             + "                                         1x probe as a trail; --chain K: plan up to K more goals where the rest\n"
                             + "                                         doesn't follow on); writes <traces>/plan/<label>-<time>.json\n"
-                            + "  polish <trace.json> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--from-goal N [--to-goal M]] [--out file]\n"
+                            + "  polish <trace.json> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--farm] [--from-goal N [--to-goal M]] [--out file]\n"
                             + "                                         every input shifted, re-valued, re-framed or dropped in order, strict gains\n"
                             + "                                         kept until a sweep keeps none, then the plateau families (wider shifts, pairs,\n"
-                            + "                                         stick bands, added presses and dashes); reports the ticks spent\n"
+                            + "                                         stick bands, added presses and dashes); reports the ticks spent;\n"
+                            + "                                         --farm: a course's farm time (quick restart to finish physics ticks) first\n"
                             + "  coverage <trace.json> <route-human.json>\n"
-                            + "                                         each input's contact, GraftsAt kind, mined window and planner grid value\n"
+                            + "                                         each input's contact, planner primitive, mined window and planner grid value\n"
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
-                            + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json>\n"
+                            + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
+                            + "                   [--parts LIST] [--library-runs R] [--join-physics] [--focus a-b] [--tail-minutes t]\n"
+                            + "                   [--combine-repair-minutes m] [--stray-study [--study-from TEXT]]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
@@ -174,12 +182,27 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         after it, the route after it kept; --segment N: only segment N, over and over\n"
                             + "                                         --auto: the unattended loop (docs/fulltas.md \"Auto\"): per-goal lower\n"
                             + "                                         bounds and slow stretches rank the goals, a bandit over (lever, goal)\n"
-                            + "                                         spends the CPU where ticks per CPU second are; --minutes 0 prints the table\n"
+                            + "                                         spends the CPU where ticks per CPU second are; --minutes 0 prints the table;\n"
+                            + "                                         --parts lib,tail,combine,sched,ctg,macros,stray (default) or none: the goal-state library\n"
+                            + "                                         with the wait fix, route-sync and tail windows, the pull scheduler, the\n"
+                            + "                                         cost-to-go, macro seeds, stray-buy re-timing, avoid and revive (docs/fulltas.md\n"
+                            + "                                         \"Parts\"); --focus a-b: the scheduler and levers pull windows starting in goals\n"
+                            + "                                         a..b only (combine still splices anywhere); --stray-study: measures the stray\n"
+                            + "                                         levers on the known routes' dropped finds, then exits\n"
+                            + "  macros [--tech-dir D] [--no-default] [--mine route.json]... [--measure route.json]... [--min-uses N] [--dump N]\n"
+                            + "         [--samples N] [--out file]    mines --auto's macro seeds from the saved and judged records (--mine: more\n"
+                            + "                                         routes) and measures how often one beats a held-out route's own next ticks\n"
                             + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
                             + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
                             + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
                             + "                                         economy; a,b: a first; --group-buys: also two boxes on one walk);\n"
                             + "                                         prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
+                            + "  fulltas-buytable <trace.json> --from <goal> [--until <goal>] [--out file] [--max-set N] [--entry-minutes m] [--techniques walk,jump,dash]\n"
+                            + "                                         the measured time-to-buy table: per place the run stands at in the goal span\n"
+                            + "                                         (its start, the course's start/restart/finish spots, each box), the ticks to buy\n"
+                            + "                                         each box and each ordered 2-3-box set in one go per technique (walk,\n"
+                            + "                                         jump-through, dash-through), each engine-confirmed; cached in\n"
+                            + "                                         fulltas/<run>.buytable.json (the planner reads it)\n"
                             + "  zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--minutes M] [--out plan.json]\n"
                             + "                                         the buy order from the trace's start (or the route replayed to input N)\n"
                             + "                                         to the zip movers (buytree16), on a model of Area 2's economy; laps from\n"
@@ -215,7 +238,7 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        internal static (Simulation sim, JsonDocument trace, List<InputTick> inputs) Open(string tracePath)
+        internal static (Simulation sim, JsonDocument trace, List<InputTick> inputs) Open(string tracePath, bool canonical = false)
         {
             string worldPath = Path.ChangeExtension(tracePath, null) + ".world.json";
             World world = World.Load(worldPath);
@@ -223,7 +246,7 @@ namespace IGTAP.EngineSim.Cli
             JsonDocument trace;
             using (FileStream file = File.OpenRead(tracePath)) trace = JsonDocument.Parse(file, new JsonDocumentOptions { MaxDepth = 256 });
             sim.SetTarget(trace.RootElement);
-            sim.LoadStart(trace.RootElement.GetProperty("start"));
+            sim.LoadStart(trace.RootElement.GetProperty("start"), canonical);
             var inputs = trace.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
             return (sim, trace, inputs);
         }

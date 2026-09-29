@@ -75,6 +75,11 @@ namespace IGTAP.EngineSim.Cli
         bool _holdPieces;
         /// <summary>Saves the build so far (the frontier build's; null otherwise): called before each piece search, which can take minutes.</summary>
         Action _beforeSearch;
+        /// <summary>
+        /// The buy table's start for a piece search (null otherwise): a worker's replayed state at the prefix's end made the
+        /// state the search starts from, as the evaluator has it (the entry's goal list and topped-up Cash, which no replay reaches).
+        /// </summary>
+        Func<SimSnapshot, SimSnapshot> _pieceState;
 
         static bool IsLoop(FullTasGoal g) { return g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish; }
 
@@ -172,7 +177,7 @@ namespace IGTAP.EngineSim.Cli
                 r = _eval.Run(inputs);
                 _eval.Goals.Limit = _goals;
                 if (r.Progress <= target.Goal || !r.Finished) return null;
-                return Cut(at, length, inputs, (int)(r.GoalInputTicks[target.Goal] - length), r.GoalPhysicsTicks[target.Goal], reached + 1, null);
+                return Cut(at, length, inputs, (int)(r.GoalInputTicks[target.Goal] - length), r.GoalPhysicsTicks[target.Goal], target.Goal + 1, null);
             }
             FullTasTracker lap = _runGoals.For(target.Extra);
             _eval.UseGoals(lap);
@@ -364,7 +369,9 @@ namespace IGTAP.EngineSim.Cli
                 Seed(p.Inputs);
                 if (rank < 3) foreach (var (pre, _) in restarts) Seed(pre.Concat(p.Inputs).ToList());
             }
-            FullTasGoal[] goals = target.Extra ?? (then == null ? new[] { _runGoals.Goals[target.Goal] } : new[] { _runGoals.Goals[target.Goal], _runGoals.Goals[then.Goal] });
+            // The search's goals: every goal from reached through the scored one (a buy table set is several).
+            int last = (then ?? target).Goal, first = Math.Min(reached, target.Goal);
+            FullTasGoal[] goals = target.Extra ?? _runGoals.Goals.Skip(first).Take(last + 1 - first).ToArray();
             _eval.Restore(at);
             string caps = WindowCaps(goals);
             foreach (var s in SeedStarts(at, prefix, new HashSet<string>(goals.Select(g => g.label)), restarts.Count > 0, caps)) Seed(s.inputs);
@@ -383,7 +390,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 else
                 {
-                    sim.SetStart(state, prefix.Count);
+                    sim.SetStart(_pieceState == null ? state : _pieceState(state), prefix.Count);
                     sim.Goals.Limit = (then ?? target).Goal + 1;
                 }
                 return sim;
