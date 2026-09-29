@@ -126,9 +126,14 @@ namespace IGTAP.EngineSim.Cli
         {
             if (_best.Progress < _goals)
                 throw new InvalidOperationException($"--auto improves a complete route; the best reaches {_best.Progress} of {_goals} goals (run the solve with --unsolved first)");
-            _repairSlack = Solve.Option(args, "--repair-slack", 40);
-            // A tail re-found after a gain crosses many goals: its windows get more than a probe's budget.
-            _repairMinutes = Solve.Option(args, "--repair-minutes", Math.Max(1.0, 2 * _windowMinutes));
+            // A repair chases the lead its window found: it gets --repair-cpu-per-tick CPU seconds per tick of that lead and is dropped
+            // once it falls behind the best at a goal (--repair-slack ticks, default none).
+            _repairSlack = Solve.Option(args, "--repair-slack", 0);
+            _repairCpuPerTick = Solve.Option(args, "--repair-cpu-per-tick", 15.0);
+            _repairMax = Solve.Option(args, "--repair-minutes", Math.Max(0.25, _windowMinutes));
+            _repairMinutes = _repairMax;
+            // Windows run side by side, each on a few threads, rather than one window on every thread.
+            _parallel = Math.Max(1, Solve.Option(args, "--parallel", Math.Max(1, _threads / 4)));
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _autoLog = Path.Combine(dir, "fulltas", _name + ".auto.jsonl");
             _refsFile = Path.Combine(dir, "fulltas", _name + ".auto-refs.json");
@@ -137,11 +142,12 @@ namespace IGTAP.EngineSim.Cli
             DistanceField.CellSize = 8f;
             _verify = VerifyFresh;
             _hopeless = Hopeless;
+            _repairBegin = RepairBegin;
             _collect = (r, how) => Collect(r, $"{how} #{_pullNo}");
-            double cpu0 = CpuSeconds();
-            TimeSpan wall0 = _clock.Elapsed;
+            _autoCpu0 = CpuSeconds();
+            _autoWall0 = _clock.Elapsed;
             Route start = _best;
-            AutoWrite(new { type = "autoStart", run = _name, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
+            AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 refs = args.Where((a, i) => i > 0 && args[i - 1] == "--ref").ToArray() });
             Collect(_best, "the starting best");
             if (!_fresh) LoadRefs();
@@ -151,73 +157,42 @@ namespace IGTAP.EngineSim.Cli
             BuildModel();
             PrintModel("start");
 
-            var curve = new List<(double wall, double cpu, long ticks, string lever, int goal)> { (0, 0, _best.Last, "start", 0) };
-            var order = new List<string>();
+            _curve.Add((0, 0, _best.Last, "start", 0));
             bool ablated = false;
-            int pull = 0;
             // Measured headroom first: every goal gets one short window probe (most expected first), so the bandit starts from what
             // each goal gave, not from the model alone.
             var probes = new Queue<int>(_model.OrderByDescending(r => r.Expected).Select(r => r.K));
             double probeMinutes = Solve.Option(args, "--probe-minutes", _windowMinutes / 2);
             while (!TimeUp)
             {
-                Arm arm;
-                double score = double.NaN, budget;
+                var batch = new List<(Arm arm, double budget, double score)>();
                 if (probes.Count > 0)
-                {
-                    int k = probes.Dequeue();
-                    if (!_arms.TryGetValue(("window", k), out arm)) _arms[("window", k)] = arm = new Arm { Lever = "window", Goal = k };
-                    budget = probeMinutes;
-                }
+                    while (probes.Count > 0 && batch.Count < _parallel)
+                    {
+                        int k = probes.Dequeue();
+                        if (!_arms.TryGetValue(("window", k), out Arm arm)) _arms[("window", k)] = arm = new Arm { Lever = "window", Goal = k };
+                        batch.Add((arm, probeMinutes, double.NaN));
+                    }
                 else
                 {
-                    (arm, score) = PickArm();
-                    if (arm == null) { Log("auto: no arm left to pull"); break; }
-                    budget = Budget(arm);
+                    List<(Arm arm, double score)> ranked = RankArms();
+                    if (ranked.Count == 0) { Log("auto: no arm left to pull"); break; }
+                    // The best arm alone when it isn't a window (polish, graft, reset study and plan use every thread); else the best
+                    // windows whose goals don't overlap, side by side.
+                    if (!Windowish(ranked[0].arm.Lever)) batch.Add((ranked[0].arm, Budget(ranked[0].arm), ranked[0].score));
+                    else
+                        foreach (var (arm, score) in ranked)
+                        {
+                            if (!Windowish(arm.Lever)) continue;
+                            (int a, int b) span = (arm.Goal, WindowLimit(arm));
+                            if (batch.Any(x => { int xa = x.arm.Goal, xb = WindowLimit(x.arm); return span.a <= xb && xa <= span.b; })) continue;
+                            batch.Add((arm, Budget(arm), score));
+                            if (batch.Count == _parallel) break;
+                        }
                 }
-                pull++;
-                _pullNo = pull;
-                Route before = _best;
-                double c0 = CpuSeconds();
-                TimeSpan w0 = _clock.Elapsed;
-                Log($"auto: pull {pull}: {arm.Lever} at goal {arm.Goal} ({_labels[arm.Goal - 1]}), {(double.IsNaN(score) ? "first-round probe" : $"score {score:0.0000} ticks/CPU s")}, expected {_model[arm.Goal - 1].Expected:0.0} ticks, "
-                    + $"arm {arm.Pulls} pulls {arm.Cpu:0} CPU s {arm.Gain:0} gained, budget {budget:0.00} min");
-                string outcome;
-                try { outcome = Pull(arm, budget); }
-                catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException || ex is NullReferenceException || ex is IndexOutOfRangeException)
-                {
-                    outcome = "failed: " + ex.GetBaseException().Message;
-                }
-                double cpu = CpuSeconds() - c0;
-                long gain = Math.Max(0, before.Last - _best.Last);
-                arm.Pulls++;
-                arm.Cpu += cpu;
-                arm.Gain += gain;
-                if (gain > 0) arm.Wins++;
-                var lc = _leverCost.TryGetValue(arm.Lever, out var was) ? was : (0, 0.0);
-                _leverCost[arm.Lever] = (lc.Item1 + 1, lc.Item2 + cpu);
-                order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
-                Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, "
-                    + $"{(_clock.Elapsed - w0).TotalSeconds:0} s; best {Describe(_best)}");
-                AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
-                    wall = Math.Round((_clock.Elapsed - wall0).TotalSeconds, 1), best = Seconds(_best.Last), score });
-                if (gain > 0)
-                {
-                    curve.Add(((_clock.Elapsed - wall0).TotalSeconds, CpuSeconds() - cpu0, _best.Last, arm.Lever, arm.Goal));
-                    var changed = Enumerable.Range(1, _goals).Where(k => Split(before.GoalPhysics, k) != Split(_best.GoalPhysics, k))
-                        .Select(k => $"{k}:{Split(before.GoalPhysics, k)}->{Split(_best.GoalPhysics, k)}");
-                    Log($"auto: record {Describe(before)} -> {Describe(_best)} by {arm.Lever} at goal {arm.Goal} (-{gain} ticks); splits changed: {string.Join(" ", changed)}");
-                    AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = Seconds(_best.Last), ticks = _best.Last,
-                        wall = Math.Round((_clock.Elapsed - wall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - cpu0, 1),
-                        splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray() });
-                }
-                if (gain > 0 || _refsChanged)
-                {
-                    if (gain > 0) BuildModel(); else Refresh();
-                    if (_refsChanged) SaveRefs();
-                    _refsChanged = false;
-                }
-                if (pull % 8 == 0) PrintArms();
+                if (batch.Count == 1 && !Windowish(batch[0].arm.Lever)) RunSingle(batch[0].arm, batch[0].budget, batch[0].score);
+                else RunWindows(batch);
+                if (_pullNo % 8 < batch.Count) PrintArms();
                 // The waypoint study, once, after a quarter of the budget: report-only (the run's goals are never edited).
                 if (!ablated && _clock.Elapsed.TotalMinutes >= _minutes / 4)
                 {
@@ -228,16 +203,166 @@ namespace IGTAP.EngineSim.Cli
             BuildModel();
             PrintModel("end");
             PrintArms();
-            Log($"auto: {Describe(start)} -> {Describe(_best)} in {(_clock.Elapsed - wall0).TotalMinutes:0.0} min, {CpuSeconds() - cpu0:0} CPU s, {pull} pulls");
+            Log($"auto: {Describe(start)} -> {Describe(_best)} in {(_clock.Elapsed - _autoWall0).TotalMinutes:0.0} min, {CpuSeconds() - _autoCpu0:0} CPU s, {_pullNo} pulls");
             Log("auto: time-to-gain (wall s, CPU s, ticks, time, lever@goal): " + string.Join("; ",
-                curve.Select(c => $"{c.wall:0} s/{c.cpu:0} CPU s -> {c.ticks} ({c.ticks * _dt:0.00} s) {c.lever}@{c.goal}")));
+                _curve.Select(c => $"{c.wall:0} s/{c.cpu:0} CPU s -> {c.ticks} ({c.ticks * _dt:0.00} s) {c.lever}@{c.goal}")));
             foreach (var g in _arms.Values.GroupBy(a => a.Lever).OrderByDescending(g => g.Sum(a => a.Gain)))
                 Log($"auto: lever {g.Key}: {g.Sum(a => a.Pulls)} pulls, {g.Sum(a => a.Cpu):0} CPU s, {g.Sum(a => a.Gain):0} ticks gained"
                     + (g.Any(a => a.Gain > 0) ? " at goals " + string.Join(",", g.Where(a => a.Gain > 0).Select(a => $"{a.Goal}(-{a.Gain:0})")) : ""));
-            Log("auto: pull order: " + string.Join(" ", order));
-            AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = pull, cpu = Math.Round(CpuSeconds() - cpu0, 1),
-                curve = curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
+            Log("auto: pull order: " + string.Join(" ", _order));
+            AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = _pullNo, cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
+                curve = _curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
             SaveRefs();
+        }
+
+        int _parallel;
+        double _repairCpuPerTick, _repairMax, _autoCpu0;
+        TimeSpan _autoWall0;
+        readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
+        readonly List<string> _order = new List<string>();
+
+        static bool Windowish(string lever) { return lever == "window" || lever == "lookahead" || lever == "span"; }
+
+        int WindowLimit(Arm arm)
+        {
+            return arm.Lever == "lookahead" ? Math.Min(_goals, arm.Goal + 2) : arm.Lever == "span" ? SpanEnd(arm.Goal) : Math.Min(_goals, arm.Goal + 1);
+        }
+
+        void StartPull(Arm arm, double budget, double score)
+        {
+            _pullNo++;
+            Log($"auto: pull {_pullNo}: {arm.Lever} at goal {arm.Goal} ({_labels[arm.Goal - 1]}), {(double.IsNaN(score) ? "first-round probe" : $"score {score:0.0000} ticks/CPU s")}, "
+                + $"expected {_model[arm.Goal - 1].Expected:0.0} ticks, arm {arm.Pulls} pulls {arm.Cpu:0} CPU s {arm.Gain:0} gained, budget {budget:0.00} min");
+        }
+
+        /// <summary>One arm on every thread (a polish, graft, reset study or plan pull).</summary>
+        void RunSingle(Arm arm, double budget, double score)
+        {
+            StartPull(arm, budget, score);
+            int pull = _pullNo;
+            Route before = _best;
+            double c0 = CpuSeconds();
+            TimeSpan w0 = _clock.Elapsed;
+            string outcome;
+            try { outcome = Pull(arm, budget); }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException || ex is NullReferenceException || ex is IndexOutOfRangeException)
+            {
+                outcome = "failed: " + ex.GetBaseException().Message;
+            }
+            Account(arm, pull, before, CpuSeconds() - c0, (_clock.Elapsed - w0).TotalSeconds, outcome, budget, score);
+        }
+
+        /// <summary>
+        /// Window arms side by side from the same best, each an OfflineSolver on its share of the threads (no archive: a short search
+        /// from the goal state), then merged one at a time, the latest window first so each later gain lands on an unchanged prefix;
+        /// an earlier window's merge replays the tail with those gains in it, and re-finds it (Repair) where it no longer follows.
+        /// </summary>
+        void RunWindows(List<(Arm arm, double budget, double score)> batch)
+        {
+            Route best = _best;
+            int per = Math.Max(1, _threads / batch.Count);
+            double c0 = CpuSeconds();
+            TimeSpan w0 = _clock.Elapsed;
+            var jobs = new List<(Arm arm, int pull, double budget, double score, int k, int limit, int prefixLength, OfflineSolver solver, Thread[] threads, List<List<InputTick>> found, long[] bestAt)>();
+            foreach (var (arm, budget, score) in batch)
+            {
+                StartPull(arm, budget, score);
+                int k = arm.Goal, limit = WindowLimit(arm), prefixLength = PrefixAt(best, k);
+                List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+                long baseline = best.GoalPhysics[limit - 1];
+                Func<Simulation> create = () =>
+                {
+                    Simulation s = _create();
+                    s.Goals.Limit = limit;
+                    if (prefix.Count == 0) return s;
+                    SimSnapshot at = s.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
+                    s.SetStart(at, prefix.Count);
+                    return s;
+                };
+                var labels = _labels.Skip(k - 1).Take(limit - k + 1).ToList();
+                var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() },
+                    null, Solve.FullTasPaths(_name, labels, _labels), VisitCell);
+                var found = new List<List<InputTick>>();
+                long[] bestAt = { long.MaxValue };
+                solver.Improved += (time, runTicks, inputs, how) =>
+                {
+                    long atGoal = runTicks - Simulation.StrictFinishTicks;
+                    lock (found)
+                    {
+                        bestAt[0] = Math.Min(bestAt[0], atGoal);
+                        if (atGoal < baseline) found.Add(inputs);
+                    }
+                };
+                jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, solver, solver.Start(per), found, bestAt));
+            }
+            var stopped = new bool[jobs.Count];
+            while (stopped.Any(x => !x))
+            {
+                Thread.Sleep(250);
+                for (int i = 0; i < jobs.Count; i++)
+                    if (!stopped[i] && (TimeUp || (_clock.Elapsed - w0).TotalMinutes >= jobs[i].budget)) { jobs[i].solver.Stop(); stopped[i] = true; }
+            }
+            foreach (var j in jobs) foreach (Thread t in j.threads) t.Join(60000);
+            double search = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
+            Log($"auto: {jobs.Count} windows side by side on {per} threads each: {search:0} CPU s, {wall:0} s; "
+                + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})" : "nothing faster")}")));
+            foreach (var j in jobs.OrderByDescending(j => j.k))
+            {
+                _pullNo = j.pull;
+                Route before = _best;
+                double m0 = CpuSeconds();
+                TimeSpan mw = _clock.Elapsed;
+                string outcome = $"goals {j.k}-{j.limit}: nothing faster";
+                List<List<InputTick>> found;
+                lock (j.found) found = j.found.ToList();
+                if (found.Count > 0)
+                {
+                    string how = $"{j.arm.Lever} {j.k}-{j.limit} #{j.pull}";
+                    List<InputTick> prefix = best.Inputs.Take(j.prefixLength).ToList();
+                    foreach (List<InputTick> f in Enumerable.Reverse(found).Take(5)) Collect(Evaluate(prefix.Concat(f).ToList()), how);
+                    // The merge re-finds the goals after goal limit from these finds itself: a graft bridge from there would repeat it.
+                    _grafted.Add((how, j.limit));
+                    try { Merge($"faster through goals {j.k}-{j.limit} ({j.arm.Lever}, auto)", _best, PrefixAt(_best, j.k), j.limit, found); }
+                    catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException || ex is NullReferenceException || ex is IndexOutOfRangeException)
+                    {
+                        Log($"auto: merge of goals {j.k}-{j.limit} failed: {ex.GetBaseException().Message}");
+                    }
+                    outcome = $"goals {j.k}-{j.limit}: {found.Count} faster through goal {j.limit} (at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})";
+                }
+                Account(j.arm, j.pull, before, search / jobs.Count + CpuSeconds() - m0, wall + (_clock.Elapsed - mw).TotalSeconds, outcome, j.budget, j.score);
+            }
+        }
+
+        /// <summary>A pull's bookkeeping: the arm's and the lever's CPU and gain, the log, the jsonl, and the model after a gain.</summary>
+        void Account(Arm arm, int pull, Route before, double cpu, double wall, string outcome, double budget, double score)
+        {
+            long gain = Math.Max(0, before.Last - _best.Last);
+            arm.Pulls++;
+            arm.Cpu += cpu;
+            arm.Gain += gain;
+            if (gain > 0) arm.Wins++;
+            var lc = _leverCost.TryGetValue(arm.Lever, out var was) ? was : (0, 0.0);
+            _leverCost[arm.Lever] = (lc.Item1 + 1, lc.Item2 + cpu);
+            _order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
+            Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
+            AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
+                wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = Seconds(_best.Last), score });
+            if (gain > 0)
+            {
+                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, arm.Lever, arm.Goal));
+                var changed = Enumerable.Range(1, _goals).Where(k => Split(before.GoalPhysics, k) != Split(_best.GoalPhysics, k))
+                    .Select(k => $"{k}:{Split(before.GoalPhysics, k)}->{Split(_best.GoalPhysics, k)}");
+                Log($"auto: record {Describe(before)} -> {Describe(_best)} at {(_clock.Elapsed - _autoWall0).TotalSeconds:0} s by {arm.Lever} at goal {arm.Goal} (-{gain} ticks); splits changed: {string.Join(" ", changed)}");
+                AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = Seconds(_best.Last), ticks = _best.Last,
+                    wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
+                    splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray() });
+            }
+            if (gain > 0 || _refsChanged)
+            {
+                if (gain > 0) BuildModel(); else Refresh();
+                if (_refsChanged) SaveRefs();
+                _refsChanged = false;
+            }
         }
 
         // ---------------------------------------------------------------- the bandit
@@ -258,20 +383,19 @@ namespace IGTAP.EngineSim.Cli
             return LeverPrior[lever] * row.Expected;
         }
 
-        /// <summary>The arm with the most expected ticks per CPU second: (prior + gained) / (a pull's cost + CPU spent).</summary>
-        (Arm, double) PickArm()
+        /// <summary>Every eligible arm by expected ticks per CPU second, (prior + gained) / (a pull's cost + CPU spent), best first.</summary>
+        List<(Arm arm, double score)> RankArms()
         {
-            Arm best = null;
-            double top = 0;
+            var ranked = new List<(Arm, double)>();
             foreach (GoalRow row in _model)
                 foreach (string lever in AutoLevers)
                 {
                     if (!Eligible(lever, row.K)) continue;
                     if (!_arms.TryGetValue((lever, row.K), out Arm arm)) _arms[(lever, row.K)] = arm = new Arm { Lever = lever, Goal = row.K };
                     double score = (Prior(lever, row) + arm.Gain) / (LeverCost(lever) + arm.Cpu);
-                    if (score > top) { top = score; best = arm; }
+                    if (score > 0) ranked.Add((arm, score));
                 }
-            return (best, top);
+            return ranked.OrderByDescending(r => r.Item2).ToList();
         }
 
         bool Eligible(string lever, int k)
