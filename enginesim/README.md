@@ -1439,9 +1439,10 @@ grid used to rebuild on each change, with the LOH garbage stalling every worker:
 [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Grid rebuilt on every change*). The cells sit in one flat array
 (a counting sort over the shapes, `PhysicsWorld.Grid`); a regridded shape goes to a per-cell side list and its old slot
 is skipped until the next layout. A change of more than 1024 shapes (a FloatingOrigin rebase rebuilds every body-less
-collider; a restore across one moves them all back) lays the grid out again, and the two grids laid out before are kept:
-when every collider is back where one of them holds it (checked collider by collider), that one is taken back instead
-(`_spareGrids`). A layout also covers where a static body's pending sync will move it, so a rebase's body move regrids
+collider; a restore across one moves them all back), or a shape leaving the grid, lays out another grid, and the two
+grids laid out before are kept (with their arrays, reused by the next layout): when every collider is back where one of
+them holds it (checked collider by collider; a rebuilt collider whose new shapes are the held ones bit for bit counts,
+and the slots take its new fixtures), that one is taken back instead (`_spareGrids`). A layout also covers where a static body's pending sync will move it, so a rebase's body move regrids
 in place. The broadphase pairs a moved proxy of a non-dynamic body only with the dynamic bodies' proxies when more than
 64 moved (`b2BroadPhase.UpdatePairs`): Box2D drops every pair without a dynamic body anyway (`b2Body.ShouldCollide`),
 and the kept pairs are the same and sorted the same. On VMAN (5811 static shapes, ~480k cells, rebase near goal 16)
