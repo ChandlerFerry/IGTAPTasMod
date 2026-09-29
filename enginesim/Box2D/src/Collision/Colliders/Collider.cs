@@ -5,7 +5,7 @@ namespace Box2D
         where TShapeA : b2Shape where TShapeB : b2Shape
     {
         public abstract void Collide(
-            out b2Manifold manifold,
+            b2Manifold manifold,
             in TShapeA shapeA,
             in b2Transform xfA,
             in TShapeB shapeB,

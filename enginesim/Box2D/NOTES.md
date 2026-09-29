@@ -235,7 +235,8 @@ port's `c0 + beta * (c - c0)` rounds differently).
   callers' `b2WorldManifold`, the distance proxies' vertex buffers (world-owned, one world per
   thread), the edge-polygon collider's frame-A polygon (one per thread: the collider is a shared
   static) and the broadphase pair sort (a span sort with a cached `Comparison`, the same
-  introsort) no longer allocate. Still allocating: each `Evaluate` makes a new `b2Manifold`
-  and `b2ManifoldPoint`s (`Update` keeps the old manifold to match ids).
+  introsort) no longer allocate, nor do the manifolds: each contact keeps two, `Update` evaluates
+  into the spare (`b2Manifold.Reset`/`NewPoint` give a new one's values) and keeps the old one to
+  match ids.
 - `b2Draw`/`DebugDraw` exists for parity but is unused by the offline engine.
 - Joints ARE ported (every type `b2Joint.Create` dispatches) but unused by the offline engine so far.

@@ -72,6 +72,8 @@ namespace Box2D
         public float m_friction;
 
         public b2Manifold m_manifold = new b2Manifold();
+        // The other manifold: Update evaluates into it and swaps, so a step allocates none (the old one matches ids).
+        b2Manifold m_spareManifold;
         public b2Contact m_next;
 
         // b2World pool and list pointers.
@@ -314,7 +316,7 @@ namespace Box2D
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public int GetChildIndexB() => m_indexB;
 
-        public abstract void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB);
+        public abstract void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Contact Create(b2Fixture fixtureA, int indexA, b2Fixture fixtureB, int indexB)
@@ -373,7 +375,10 @@ namespace Box2D
             }
             else
             {
-                Evaluate(out m_manifold, xfA, xfB);
+                m_manifold = m_spareManifold ?? new b2Manifold();
+                m_spareManifold = oldManifold;
+                m_manifold.Reset();
+                Evaluate(m_manifold, xfA, xfB);
                 touching = m_manifold.pointCount > 0;
 
                 // Match old contact ids to new contact ids and copy the

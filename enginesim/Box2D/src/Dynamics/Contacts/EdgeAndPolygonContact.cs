@@ -41,9 +41,9 @@ namespace Box2D
             polygonB = (b2PolygonShape)m_fixtureB.b2Shape;
         }
 
-        public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
+        public override void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            collider.Collide(out manifold, edgeA, in xfA, polygonB, in xfB);
+            collider.Collide(manifold, edgeA, in xfA, polygonB, in xfB);
         }
     }
 }

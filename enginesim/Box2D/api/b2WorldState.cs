@@ -387,10 +387,7 @@ namespace Box2D
                 {
                     b2Fixture next = f.m_next;
                     f.m_next = null;
-                    if (Array.IndexOf(rec.fixtures, f) < 0)
-                    {
-                        f.m_body = null;
-                    }
+                    f.m_body = null; // the record's own fixtures get it back below
 
                     f = next;
                 }

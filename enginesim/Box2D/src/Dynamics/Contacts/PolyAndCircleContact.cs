@@ -40,12 +40,8 @@ namespace Box2D
             circleB = (b2CircleShape)m_fixtureB.b2Shape;
         }
 
-        public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
+        public override void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            manifold = new b2Manifold();
-
-            //manifold.pointCount = 0;
-
             // Compute circle position in the frame of the polygon.
             b2Vec2 c = Math.Mul(xfB, circleB.m_p);
             b2Vec2 cLocal = Math.MulT(xfA, c);
@@ -79,7 +75,7 @@ namespace Box2D
             int vertIndex2 = vertIndex1 + 1 < vertexCount ? vertIndex1 + 1 : 0;
             b2Vec2 v1 = vertices[vertIndex1];
             b2Vec2 v2 = vertices[vertIndex2];
-            manifold.points[0] = new b2ManifoldPoint();
+            manifold.NewPoint(0);
 
             // If the center is inside the polygon ...
             if (separation < b2Settings.FLT_EPSILON)

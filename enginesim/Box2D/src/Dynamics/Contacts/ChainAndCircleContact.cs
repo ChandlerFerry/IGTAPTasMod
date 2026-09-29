@@ -8,9 +8,9 @@ namespace Box2D
             ((b2ChainShape)FixtureA.b2Shape).GetChildEdge(out edgeA, indexA);
         }
 
-        public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
+        public override void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            base.Evaluate(out manifold, xfA, xfB);
+            base.Evaluate(manifold, xfA, xfB);
         }
     }
 }

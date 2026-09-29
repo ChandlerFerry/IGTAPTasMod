@@ -13,9 +13,9 @@ namespace Box2D
             chain.GetChildEdge(out edge, indexA);
         }
 
-        public override void Evaluate(out b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
+        public override void Evaluate(b2Manifold manifold, in b2Transform xfA, in b2Transform xfB)
         {
-            collider.Collide(out manifold, edge, xfA, (b2PolygonShape)FixtureB.b2Shape, xfB);
+            collider.Collide(manifold, edge, xfA, (b2PolygonShape)FixtureB.b2Shape, xfB);
         }
     }
 }
