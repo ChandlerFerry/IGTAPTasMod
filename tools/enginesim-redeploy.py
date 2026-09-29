@@ -6,20 +6,13 @@ import time
 import urllib.request
 from pathlib import Path
 
-from gamepaths import GAME
+from gamepaths import API, GAME, call
 
 ROOT = Path(__file__).resolve().parent.parent
 DLL = ROOT / "bin" / "Release" / "netstandard2.1" / "IGTAPTasMod.dll"
 WEB = ROOT / "web" / "out"
 TARGET = GAME / "BepInEx" / "plugins" / "IGTAPTasMod.dll"
 TARGET_WEB = GAME / "BepInEx" / "plugins" / "IGTAPTasWeb"
-API = "http://127.0.0.1:17426"
-
-def post(path, body=None, timeout=120):
-    request = urllib.request.Request(API + path, data=json.dumps(body or {}).encode(), method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read())
-
 def main():
     subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
                     "-nologo", "-v:q"], check=True)
@@ -49,7 +42,7 @@ def main():
             break
         except OSError:
             continue
-    print(json.dumps(post("/api/oracle/bootstrap"))[:300])
+    print(json.dumps(call("/api/oracle/bootstrap", {}, timeout=120))[:300])
 
 if __name__ == "__main__":
     main()

@@ -19,20 +19,8 @@ import argparse
 import json
 import sys
 import time
-import urllib.request
 
-from gamepaths import CONFIG
-
-API = "http://127.0.0.1:17426"
-
-def call(path, body=None):
-    data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(API + path, data=data, method="GET" if body is None else "POST")
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        return json.loads(error.read())
+from gamepaths import CONFIG, call
 
 def show(name):
     log = json.load(open(CONFIG / "probes" / (name + ".json"), encoding="utf-8"))
@@ -86,10 +74,10 @@ def main():
         body["pauseAt"] = args.pause_at
         body["pauseFrames"] = args.pause_frames
         body["pauseOffset"] = args.pause_offset
-    started = call("/api/probe/run", body)
+    started = call("/api/probe/run", body, timeout=30)
     if not started.get("ok"):
         raise SystemExit(started)
-    while call("/api/probe/status").get("running"):
+    while call("/api/probe/status", timeout=30).get("running"):
         time.sleep(0.5)
     show(args.name)
 

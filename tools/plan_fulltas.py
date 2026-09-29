@@ -12,8 +12,8 @@ import struct
 
 import gamepaths
 
-CONFIG = os.environ.get("IGTAP_CONFIG", str(gamepaths.CONFIG))
-FULLTAS = os.path.join(CONFIG, "fulltas.json")
+CONFIG = gamepaths.CONFIG
+FULLTAS = CONFIG / "fulltas.json"
 
 C1_BUYS = 20
 C1_CLONES = 9
@@ -756,7 +756,7 @@ def invalid_goals(goals):
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "..", "FullTas.cs"), encoding="utf-8") as f:
         boxes = set(re.findall(r'\("(buy\w+)", "', f.read()))
-    bonuses = {c["name"] for c in json.load(open(os.path.join(CONFIG, "courses.json"), encoding="utf-8-sig")) if c.get("name")}
+    bonuses = {c["name"] for c in json.load(open(CONFIG / "courses.json", encoding="utf-8-sig")) if c.get("name")}
     bad = []
     for g in goals:
         kind, _, arg = g.partition(":")
@@ -991,10 +991,6 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="print every step after dash, not only each phase's end")
     ap.add_argument("--any-pct", action="store_true", help="plan ANY%%: --run's goals through buy:buydj, then its own")
     ap.add_argument("--out", help="--any-pct: write the whole goal list (JSON) here")
-    ap.add_argument("--detour", action="append", default=[], metavar="GOAL=TICKS",
-                    help="--any-pct: ticks from the course's restart to an optional box (DETOUR), e.g. reward:bonus4=150")
-    ap.add_argument("--transit", action="append", default=[], metavar="A-B=TICKS",
-                    help="ticks from course A to course B's start gate (TRANSIT), e.g. 5-4=2400")
     ap.add_argument("--dj-farm", metavar="GOAL",
                     help="plan Course 3 farmed to buy:buydj right after GOAL (a goal of --run's after buy:buyds), replacing"
                          " the Course 3 goals already there")
@@ -1006,17 +1002,6 @@ def main():
         m = measure(a.run)
         a.cash, ARRIVE, LAP, LEAD, CLONE_PATH = m["cash"], m["arrive"], m["lap"], m["lead"], m["clone_path"]
         REPEAT, ROW_STEP, BONUS1_TICK = m["repeat"], m["row_step"], m["bonus1_tick"]
-    for d in a.detour:
-        goal, _, ticks = d.rpartition("=")
-        if goal not in DETOUR:
-            raise SystemExit(f"--detour {d}: goals are {', '.join(DETOUR)}")
-        DETOUR[goal] = int(ticks)
-    for d in a.transit:
-        pair, _, ticks = d.partition("=")
-        x, _, y = pair.partition("-")
-        if (int(x), int(y)) not in TRANSIT:
-            raise SystemExit(f"--transit {d}: transits are {', '.join(f'{p}-{q}' for p, q in TRANSIT)}")
-        TRANSIT[(int(x), int(y))] = int(ticks)
     if a.dj_farm:
         if a.any_pct:
             raise SystemExit("--dj-farm and --any-pct plan different things: pick one")

@@ -367,7 +367,7 @@ laps: an ordering planned for slower laps asks for a clone before the clones hav
 that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are planned from its own best:
 
 ```
-python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --write
+python tools/plan_fulltas.py --run TrueEnding-ANY% --measure --write
 ```
 
 `--measure` reads the run's offline best (`enginesim/fulltas/<run>.json`) and its trace (`fulltas-<run>.json`, of that
@@ -385,7 +385,7 @@ planned against 3533 after `reward:bonus1`).
 Its Course 3 (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
 
 ```
-python tools/plan-fulltas.py --run TrueEnding-ANY% --measure --dj-farm at:7645,6050,230,1500 --write
+python tools/plan_fulltas.py --run TrueEnding-ANY% --measure --dj-farm at:7645,6050,230,1500 --write
 ```
 
 `--dj-farm GOAL` replays the run's goals from `reward:bonus1` through `buy:buyds` in the model, then plans Course 3
@@ -1077,7 +1077,7 @@ them together from pieces instead:
 & $exe fulltas-plan $traces\fulltas-TrueEnding-ANY%.json --from reward:bonus3 --target buy:buydj --out plan.json --piece-minutes 0.3 --threads 6
 ```
 
-`fulltas-plan` plans a run's buys and laps with the game's own economy instead of `plan-fulltas.py`'s model of it (whose
+`fulltas-plan` plans a run's buys and laps with the game's own economy instead of `plan_fulltas.py`'s model of it (whose
 walk and restart guesses put junk buys before `buydj` and cost extra laps). It replays the saved best (strict buys) to
 `--from` (a goal number or label; the goals up to it stay), then chooses one step at a time until it buys `--target`:
 a lap of the stretch's course, each box the stretch buys (when the run can pay for it on arrival), or the target. Each
@@ -1098,7 +1098,7 @@ a few seconds a step.
 for together now, x then y from where x left the player, scored the same way (its end tick, then the target's wait over
 the income after both). "x and y in Z ticks" then competes with "x alone in B ticks" (and a lap): the step from x to y
 is often far shorter than a lap and a second walk. It is off by default because each pair with no library piece between
-its two boxes costs a piece search (`--piece-minutes`) once; a pair with no way is dropped. `plan-fulltas.py` already
+its two boxes costs a piece search (`--piece-minutes`) once; a pair with no way is dropped. `plan_fulltas.py` already
 prices walking along a row to the next box (`buy(b, walk_row)`), so it needs no change for this.
 
 Before a piece search the planner replays cheaper ways to the goal (`Borrowed`): the library's pieces for it from any
@@ -1197,7 +1197,7 @@ python tools/plan-buytable.py --table $traces\fulltas\FalseEnding-Any%.buytable.
 `plan-buytable.py` chooses a buy phase's buy order and grouping from the measured time-to-buy table
 ([Buy table](#buy-table)): the engine's ticks from each place the run stands at (the phase's start, the start gate,
 the finish, each box's spot, the quick restart's landing) to buy each box and each ordered set of 2-3 boxes in one pass.
-On top of it runs `plan-fulltas.py`'s Course 2 economy (clone pool and spawn gate, box costs, lap rewards, Course 1's
+On top of it runs `plan_fulltas.py`'s Course 2 economy (clone pool and spawn gate, box costs, lap rewards, Course 1's
 clones off screen), and a Dijkstra search over its states (tick first, the model's dominance on box levels, place and
 Cash) finds the goal list that buys the target soonest. Each step is a lap (`start:2 finish:2`, or `finish:2` from the
 gate), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
@@ -1443,14 +1443,14 @@ route over only when they beat the record.
 
 ## Status (2026-09-25)
 
-- `main` has 609 goals, all from `python tools/plan-fulltas.py --write` after `reward:bonus1`: Course 2's economy up
+- `main` has 609 goals, all from `python tools/plan_fulltas.py --write` after `reward:bonus1`: Course 2's economy up
   to dash (~236 s), the dash bonuses, then Course 3 to `buyclonespeed` and `buystatue`, Courses 1 and 2 bought to
   their boosted caps with a lap each, Course 3 to `buydj`, and Course 4 lapped, `buyprestige4`, then `buyswap`, with
   clone speed/size chance buys on Courses 3 and 4 (the plan counts their rolls at their average; ~15.8 min in the
   plan; its 3 -> 1 and 3 -> 4 transitions are guesses, no route exists yet).
 - Not in the goals: the free global boxes with no known route (`buyfree3`, `buyfree4a/b/c`) and Course 4's 3e12 W
   `buyglobalreward4`.
-- `ANY%` has 789 goals from `python tools/plan-fulltas.py --any-pct --out FILE`: `main`'s goals through `buy:buydj`,
+- `ANY%` has 789 goals from `python tools/plan_fulltas.py --any-pct --out FILE`: `main`'s goals through `buy:buydj`,
   `reward:bonus5`, Course 5 farmed (with `reward:bonus4`, `reward:bonus15`, `buyfree5`, two `buyglobalreward5`) to
   `buy:buyprestige5`, then Course 4 farmed (its reward tier is 29.5 after the breaker; Course 5's 16.5 would take
   ~1e15 ticks to 9.49e34 W) to `buy:buyblockswap5` (~19.7 min in the plan). Its 3 -> 5 and 5 -> 4 transitions and the
