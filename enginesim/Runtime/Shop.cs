@@ -93,10 +93,10 @@ namespace IGTAP.EngineSim
             return _start[currency] - _spent[currency] + _awarded[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
         }
 
-        public double CashNow
-        {
-            get { return _start[Cash] - _spent[Cash] + _awarded[Cash] + (Economy?.Earned ?? 0.0); }
-        }
+        public double CashNow => Available(Cash);
+
+        /// <summary>The box is one of these (by id or hierarchy path).</summary>
+        bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
 
         /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
         internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
@@ -110,7 +110,7 @@ namespace IGTAP.EngineSim
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
-                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
+                if (!Named(boxes, b)) continue;
                 if (!b.isActive || !b.gameObject.activeInHierarchy) return null;
                 int currency = (int)Currency(b);
                 if (currency >= 0 && currency < CurrencyCount) need[currency] += b.upgradeCost;
@@ -124,7 +124,7 @@ namespace IGTAP.EngineSim
         internal bool Buying(string[] boxes)
         {
             foreach (BuyMaxRoutine r in _buyMax)
-                if (Array.IndexOf(boxes, _ids[r.Box]) >= 0 || Array.IndexOf(boxes, _paths[r.Box]) >= 0) return true;
+                if (Named(boxes, r.Box)) return true;
             return false;
         }
 
@@ -134,7 +134,7 @@ namespace IGTAP.EngineSim
             var parts = new List<string>();
             foreach (upgradeBox b in _boxes)
             {
-                if (Array.IndexOf(boxes, _ids[b]) < 0 && Array.IndexOf(boxes, _paths[b]) < 0) continue;
+                if (!Named(boxes, b)) continue;
                 int currency = (int)Currency(b);
                 double held = currency >= 0 && currency < CurrencyCount ? Available(currency) : double.NaN;
                 parts.Add(_paths[b] + ": " + b.TimesUsed + "/" + b.Cap + (b.isActive ? "" : ", inactive") + (b.gameObject.activeInHierarchy ? "" : ", hidden")

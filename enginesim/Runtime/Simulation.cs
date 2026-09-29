@@ -49,6 +49,9 @@ namespace IGTAP.EngineSim
 
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
+        /// <summary>The tick after this one with the same stick and button, no new edge.</summary>
+        public InputTick Coast() { return new InputTick { x = x, y = y, held = held && !release }; }
+
         public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && turnY == o.turnY && reset == o.reset && pause == o.pause && pauseTick == o.pauseTick && pauseFrame == o.pauseFrame; }
         public override bool Equals(object o) { return o is InputTick t && Equals(t); }
         public override int GetHashCode() { return HashCode.Combine(x, y, held, press, release, dash, dashJump, HashCode.Combine(springDash, lockX, lockY, turnX, turnY, reset, pause, HashCode.Combine(pauseTick, pauseFrame))); }
@@ -382,32 +385,33 @@ namespace IGTAP.EngineSim
             float x0 = x - w / 2f, x1 = x + w / 2f;
             float y0 = y - h / 2f, y1 = y + h / 2f;
             foreach (BoxCollider2D box in _playerColliders)
-            {
-                if (!box.enabled) continue;
-                Vector3 scale = box.transform.m_LossyScale;
-                Vector3 center = Player.transform.m_Position;
-                center.x += box.offset.x * scale.x;
-                center.y += box.offset.y * scale.y;
-                float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
-                if (center.x + hx > x0 && center.x - hx < x1 && center.y + hy > y0 && center.y - hy < y1) return true;
-            }
+                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1) && bx1 > x0 && bx0 < x1 && by1 > y0 && by0 < y1) return true;
             return false;
+        }
+
+        /// <summary>An enabled player box's extents in the scene frame; false for a disabled one.</summary>
+        bool Extents(BoxCollider2D box, out float x0, out float x1, out float y0, out float y1)
+        {
+            x0 = x1 = y0 = y1 = 0f;
+            if (!box.enabled) return false;
+            Vector3 scale = box.transform.m_LossyScale;
+            Vector3 center = Player.transform.m_Position;
+            center.x += box.offset.x * scale.x;
+            center.y += box.offset.y * scale.y;
+            float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
+            x0 = center.x - hx; x1 = center.x + hx; y0 = center.y - hy; y1 = center.y + hy;
+            return true;
         }
 
         (float, float, float, float) PlayerBounds()
         {
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
             foreach (BoxCollider2D box in _playerColliders)
-            {
-                if (!box.enabled) continue;
-                Vector3 scale = box.transform.m_LossyScale;
-                Vector3 center = Player.transform.m_Position;
-                center.x += box.offset.x * scale.x;
-                center.y += box.offset.y * scale.y;
-                float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
-                x0 = MathF.Min(x0, center.x - hx); x1 = MathF.Max(x1, center.x + hx);
-                y0 = MathF.Min(y0, center.y - hy); y1 = MathF.Max(y1, center.y + hy);
-            }
+                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1))
+                {
+                    x0 = MathF.Min(x0, bx0); x1 = MathF.Max(x1, bx1);
+                    y0 = MathF.Min(y0, by0); y1 = MathF.Max(y1, by1);
+                }
             return (x0, x1, y0, y1);
         }
 
@@ -534,11 +538,7 @@ namespace IGTAP.EngineSim
             if (!_rebaseDue) return;
             _rebaseDue = false;
             Vector3 by = _rebasePending;
-            var rebases = new Vector3[_rebases.Length + 1];
-            _rebases.CopyTo(rebases, 0);
-            rebases[_rebases.Length] = by;
-            _rebases = rebases;
-            MoveWorld(by);
+            AddRebase(by);
             Engine.WorldMoved(by);
             Physics.WorldMoved();
         }
@@ -548,6 +548,13 @@ namespace IGTAP.EngineSim
         /// local position and its world position moves by the same offset. Camera, background, particles and trails are
         /// presentation (cut).
         /// </summary>
+        /// <summary>One more rebase: the world moved back by <paramref name="by"/>.</summary>
+        void AddRebase(Vector3 by)
+        {
+            _rebases = [.. _rebases, by];
+            MoveWorld(by);
+        }
+
         void MoveWorld(Vector3 by)
         {
             foreach (Transform t in _moved)
@@ -564,12 +571,7 @@ namespace IGTAP.EngineSim
         /// </summary>
         public void LabRebase(WorldPos world)
         {
-            Vector3 by = new Vector3(world.x + CurrentOrigin.x, world.y + CurrentOrigin.y, 0f);
-            var rebases = new Vector3[_rebases.Length + 1];
-            _rebases.CopyTo(rebases, 0);
-            rebases[_rebases.Length] = by;
-            _rebases = rebases;
-            MoveWorld(by);
+            AddRebase(new Vector3(world.x + CurrentOrigin.x, world.y + CurrentOrigin.y, 0f));
             Physics.WorldMoved();
             Physics.SyncTransforms();
         }
@@ -804,8 +806,7 @@ namespace IGTAP.EngineSim
             var reference = new Vector3(reset.x, reset.y - 12f, 0f);
             if (Origin.x == -reference.x && Origin.y == -reference.y) return;
             var by = new Vector3(reference.x + Origin.x, reference.y + Origin.y, 0f);
-            _rebases = new[] { by };
-            MoveWorld(by);
+            AddRebase(by);
             Engine.WorldMoved(by);
             Physics.WorldMoved();
             _rebasePending = Vector3.zero;
@@ -1016,11 +1017,7 @@ namespace IGTAP.EngineSim
             var h = new HashCode();
             AddFields(ref h, Player);
             foreach (courseScript c in Courses) AddFields(ref h, c);
-            Transform t = Player.transform;
-            h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
-            foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
-            h.Add(Physics.PlayerBody());
-            h.Add(_stepFrom); h.Add(_stepTo);
+            AddPlayer(ref h);
             h.Add(Animation);
             foreach (Scheduler.Pending p in Scheduler.Queue)
             {
@@ -1049,7 +1046,7 @@ namespace IGTAP.EngineSim
                 FieldInfo[] fields = FieldState.For(r.Body.GetType());
                 object[] values = FieldValues(r.Body);
                 for (int i = 0; i < fields.Length; i++)
-                    if (fields[i].FieldType.IsValueType) AddValue(ref h, values[i]);
+                    if (fields[i].FieldType.IsValueType) AddValue(ref h, values[i], false);
             }
             Shop.AddTo(ref h);
             UnityEngine.Random.State rng = UnityEngine.Random.state;
@@ -1064,7 +1061,7 @@ namespace IGTAP.EngineSim
         {
             object[] values = FieldValues(target);
             int count = FieldState.For(target.GetType()).Length;
-            for (int i = 0; i < count; i++) AddValue(ref h, values[i]);
+            for (int i = 0; i < count; i++) AddValue(ref h, values[i], false);
         }
 
         // The fingerprints' field reads (FieldState.Read), reused.
@@ -1079,19 +1076,31 @@ namespace IGTAP.EngineSim
             return _fieldValues;
         }
 
-        static void AddValue(ref HashCode h, object value)
+        /// <summary>The player's transform, box colliders, body and interpolation ends.</summary>
+        void AddPlayer(ref HashCode h)
+        {
+            Transform t = Player.transform;
+            h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
+            foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
+            h.Add(Physics.PlayerBody());
+            h.Add(_stepFrom); h.Add(_stepTo);
+        }
+
+        /// <param name="portable">The same in every process: objects by instance id and type name, not identity.</param>
+        static void AddValue(ref HashCode h, object value, bool portable)
         {
             switch (value)
             {
                 case null: h.Add(0); break;
-                case UnityEngine.Object o: h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o)); break;
+                case UnityEngine.Object o: h.Add(portable ? o.GetInstanceID() : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o)); break;
                 case string s: h.Add(s); break;
                 case System.Collections.IEnumerable items:
-                    foreach (object item in items) AddValue(ref h, item);
+                    foreach (object item in items) AddValue(ref h, item, portable);
                     h.Add(-1);
                     break;
                 default:
-                    h.Add(value.GetType().IsValueType ? value.GetHashCode() : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value));
+                    h.Add(value.GetType().IsValueType ? value.GetHashCode()
+                        : portable ? value.GetType().FullName.GetHashCode() : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value));
                     break;
             }
         }
@@ -1464,12 +1473,8 @@ namespace IGTAP.EngineSim
             var h = new HashCode();
             object[] values = FieldValues(Player);
             for (int i = 0; i < Presentation.Length; i++)
-                if (!Presentation[i]) AddPortableValue(ref h, values[i]);
-            Transform t = Player.transform;
-            h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
-            foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
-            h.Add(Physics.PlayerBody());
-            h.Add(_stepFrom); h.Add(_stepTo);
+                if (!Presentation[i]) AddValue(ref h, values[i], true);
+            AddPlayer(ref h);
             return h.ToHashCode();
         }
 
@@ -1477,22 +1482,5 @@ namespace IGTAP.EngineSim
         /// <summary>Per player field (<see cref="FieldState.For"/> order): one of <see cref="MovementPresentationFields"/>.</summary>
         bool[] Presentation => _presentation ??= FieldState.For(Player.GetType()).Select(f => MovementPresentationFields.Contains(f.Name)).ToArray();
         bool[] _presentation;
-
-        static void AddPortableValue(ref HashCode h, object value)
-        {
-            switch (value)
-            {
-                case null: h.Add(0); break;
-                case UnityEngine.Object o: h.Add(o.GetInstanceID()); break;
-                case string s: h.Add(s); break;
-                case System.Collections.IEnumerable items:
-                    foreach (object item in items) AddPortableValue(ref h, item);
-                    h.Add(-1);
-                    break;
-                default:
-                    h.Add(value.GetType().IsValueType ? value.GetHashCode() : value.GetType().FullName.GetHashCode());
-                    break;
-            }
-        }
     }
 }

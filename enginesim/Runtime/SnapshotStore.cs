@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -85,7 +86,7 @@ namespace IGTAP.EngineSim
         public byte[] Save(SimSnapshot s)
         {
             var o = new Out(this, new HashSet<int>(_physics.ChangedIdsOf(s.Physics)));
-            foreach (string name in RootOrder) o.Field(s, RootField(name));
+            foreach (FieldInfo f in RootFields) o.Field(s, f);
             var bytes = new MemoryStream();
             using (var w = new BinaryWriter(bytes, Encoding.UTF8, true))
             {
@@ -101,11 +102,10 @@ namespace IGTAP.EngineSim
         {
             var i = new In(this, data);
             var s = new SimSnapshot();
-            foreach (string name in RootOrder)
+            foreach (FieldInfo f in RootFields)
             {
-                FieldInfo f = RootField(name);
                 f.SetValue(s, i.Value(f.FieldType));
-                switch (name)
+                switch (f.Name)
                 {
                     // The pre-apply mirrors what Simulation.Restore does (it runs it again, unchanged): the physics
                     // restore's rebuilds below read the rebase state, the player's collider geometry and the toggles.
@@ -118,20 +118,6 @@ namespace IGTAP.EngineSim
             return s;
         }
 
-        static readonly Dictionary<string, FieldInfo> RootFields = new Dictionary<string, FieldInfo>();
-
-        static FieldInfo RootField(string name)
-        {
-            // Solver workers load snapshots on their own threads.
-            lock (RootFields)
-            {
-                if (RootFields.TryGetValue(name, out FieldInfo cached)) return cached;
-                FieldInfo f = typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?? throw new MissingFieldException(nameof(SimSnapshot), name);
-                return RootFields[name] = f;
-            }
-        }
-
         /// <summary>Written and read in this order: the fields <see cref="Load"/> pre-applies come before <c>Physics</c>.</summary>
         static readonly string[] RootOrder =
         {
@@ -140,12 +126,16 @@ namespace IGTAP.EngineSim
             "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation",
         };
 
+        static readonly FieldInfo[] RootFields = Array.ConvertAll(RootOrder, name =>
+            typeof(SimSnapshot).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(nameof(SimSnapshot), name));
+
         #region value codec
 
         enum Tag : byte
         {
             Null = 0, Back = 1, Bool = 2, I32 = 3, I64 = 4, F32 = 5, F64 = 6, Char = 7, Str = 8, Enum = 9,
-            Struct = 10, Class = 11, Array = 12, Multi = 13, List = 14, HashSet = 15, Queue = 16, Stack = 17,
+            Struct = 10, Class = 11, Array = 12, List = 14, HashSet = 15, Queue = 16, Stack = 17,
             Dictionary = 18, Handle = 19, Decimal = 20, TypedScalar = 21,
         }
 
@@ -304,19 +294,12 @@ namespace IGTAP.EngineSim
 
             void ArrayValue(Array array, Type type)
             {
+                // No snapshotted type (game, shim, Box2D, engine) has a multi-dimensional array field.
+                if (array.Rank != 1) throw new NotSupportedException("a " + type.Name + " value can't be stored in a snapshot");
                 Type element = type.GetElementType();
-                if (array.Rank == 1)
-                {
-                    _w.Write((byte)Tag.Array);
-                    _w.Write(TypeId(type));
-                    _w.Write(array.Length);
-                    foreach (object item in array) Value(item, element);
-                    return;
-                }
-                _w.Write((byte)Tag.Multi);
+                _w.Write((byte)Tag.Array);
                 _w.Write(TypeId(type));
-                _w.Write(array.Rank);
-                for (int d = 0; d < array.Rank; d++) _w.Write(array.GetLength(d));
+                _w.Write(array.Length);
                 foreach (object item in array) Value(item, element);
             }
 
@@ -336,14 +319,9 @@ namespace IGTAP.EngineSim
                 _w.Write((byte)Tag.Dictionary);
                 _w.Write(TypeId(type));
                 Type[] args = type.GetGenericArguments();
-                var pairs = new List<object[]>();
-                foreach (object pair in (IEnumerable)value)
-                {
-                    PropertyInfo key = pair.GetType().GetProperty("Key"), val = pair.GetType().GetProperty("Value");
-                    pairs.Add(new[] { key.GetValue(pair), val.GetValue(pair) });
-                }
-                _w.Write(pairs.Count);
-                foreach (object[] pair in pairs) { Value(pair[0], args[0]); Value(pair[1], args[1]); }
+                var dictionary = (IDictionary)value;
+                _w.Write(dictionary.Count);
+                foreach (DictionaryEntry pair in dictionary) { Value(pair.Key, args[0]); Value(pair.Value, args[1]); }
             }
 
             int FixtureId(b2Fixture fixture)
@@ -522,25 +500,14 @@ namespace IGTAP.EngineSim
                         return value;
                     }
                     case Tag.Array:
-                    case Tag.Multi:
                     {
                         Type type = _types[_r.ReadInt32()];
                         Type element = type.GetElementType();
-                        if (tag == Tag.Array)
-                        {
-                            int length = _r.ReadInt32();
-                            Array array = Array.CreateInstance(element, length);
-                            _objects.Add(array);
-                            for (int i = 0; i < length; i++) array.SetValue(Value(element), i);
-                            return array;
-                        }
-                        int rank = _r.ReadInt32();
-                        var lengths = new int[rank];
-                        for (int d = 0; d < rank; d++) lengths[d] = _r.ReadInt32();
-                        Array multi = Array.CreateInstance(element, lengths);
-                        _objects.Add(multi);
-                        foreach (int[] index in Indices(lengths)) multi.SetValue(Value(element), index);
-                        return multi;
+                        int length = _r.ReadInt32();
+                        Array array = Array.CreateInstance(element, length);
+                        _objects.Add(array);
+                        for (int i = 0; i < length; i++) array.SetValue(Value(element), i);
+                        return array;
                     }
                     case Tag.List:
                     case Tag.HashSet:
@@ -582,24 +549,11 @@ namespace IGTAP.EngineSim
                         _objects.Add(dictionary);
                         var pairs = new object[count][];
                         for (int i = 0; i < count; i++) pairs[i] = new[] { Value(args[0]), Value(args[1]) };
-                        MethodInfo add = type.GetMethod("Add");
-                        foreach (object[] pair in pairs) add.Invoke(dictionary, pair);
+                        foreach (object[] pair in pairs) ((IDictionary)dictionary).Add(pair[0], pair[1]);
                         return dictionary;
                     }
                     case Tag.Handle: return Handle();
                     default: throw new NotSupportedException("a snapshot byte stream of another engine build; dropping it");
-                }
-            }
-
-            static IEnumerable<int[]> Indices(int[] lengths)
-            {
-                var index = new int[lengths.Length];
-                while (true)
-                {
-                    yield return (int[])index.Clone();
-                    int d = index.Length - 1;
-                    for (; d >= 0 && ++index[d] == lengths[d]; d--) index[d] = 0;
-                    if (d < 0) yield break;
                 }
             }
 
@@ -634,25 +588,22 @@ namespace IGTAP.EngineSim
         int WorldId(Object o) => !o.m_Destroyed && _world.Objects.ContainsKey(o.GetInstanceID()) ? o.GetInstanceID()
             : throw new NotSupportedException("a snapshot holds a world object the export doesn't; not saved");
 
-        static readonly Dictionary<FieldInfo, Action<object, object>> Setters = new Dictionary<FieldInfo, Action<object, object>>();
+        // Solver workers load snapshots on their own threads.
+        static readonly ConcurrentDictionary<FieldInfo, Action<object, object>> Setters = new ConcurrentDictionary<FieldInfo, Action<object, object>>();
 
         /// <summary>A field setter that also works on initonly fields (WaitForSeconds.m_Seconds, Pair.A) and boxed structs.</summary>
-        static Action<object, object> Setter(FieldInfo f)
+        static Action<object, object> Setter(FieldInfo f) => Setters.GetOrAdd(f, field =>
         {
-            lock (Setters)
-            {
-                if (Setters.TryGetValue(f, out Action<object, object> setter)) return setter;
-                var dm = new DynamicMethod("snapset_" + f.Name, typeof(void), new[] { typeof(object), typeof(object) }, f.DeclaringType.Module, true);
-                ILGenerator il = dm.GetILGenerator();
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(f.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, f.DeclaringType);
-                il.Emit(OpCodes.Ldarg_1);
-                il.Emit(OpCodes.Unbox_Any, f.FieldType);
-                il.Emit(OpCodes.Stfld, f);
-                il.Emit(OpCodes.Ret);
-                return Setters[f] = (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
-            }
-        }
+            var dm = new DynamicMethod("snapset_" + field.Name, typeof(void), new[] { typeof(object), typeof(object) }, field.DeclaringType.Module, true);
+            ILGenerator il = dm.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(field.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, field.DeclaringType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Unbox_Any, field.FieldType);
+            il.Emit(OpCodes.Stfld, field);
+            il.Emit(OpCodes.Ret);
+            return (Action<object, object>)dm.CreateDelegate(typeof(Action<object, object>));
+        });
 
         #endregion
 

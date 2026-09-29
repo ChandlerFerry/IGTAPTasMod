@@ -373,10 +373,7 @@ namespace IGTAP.EngineSim
             ShapeData[] captured = s.Data.Shapes;
             if (captured.Length == 0) return captured;
             Transform t = s.Collider.transform;
-            Quaternion q = t.m_Rotation;
-            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
-            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
-            float m00 = 1f - (yy + zz), m01 = xy - wz, m10 = xy + wz, m11 = 1f - (xx + zz);
+            (float m00, float m01, float m10, float m11) = Rotation2D(t.m_Rotation);
             Vector3 p = t.m_Position, scale = t.m_LossyScale;
             Vector2 Point(float lx, float ly)
             {
@@ -410,6 +407,14 @@ namespace IGTAP.EngineSim
             return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
         }
 
+        /// <summary>The rotation's xy block (Unity's Quaternion-to-matrix, float math).</summary>
+        internal static (float m00, float m01, float m10, float m11) Rotation2D(Quaternion q)
+        {
+            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
+            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
+            return (1f - (yy + zz), xy - wz, xy + wz, 1f - (xx + zz));
+        }
+
         static ShapeData Moved(ShapeData shape, params Vector2[] vertices)
         {
             return new ShapeData { Type = shape.Type, Radius = shape.Radius, Vertices = vertices, UseAdjacentStart = shape.UseAdjacentStart,
@@ -430,6 +435,11 @@ namespace IGTAP.EngineSim
         {
             if (!_worldMoved || _staticsMoved) return;
             _staticsMoved = true;
+            RebuildBodyless();
+        }
+
+        void RebuildBodyless()
+        {
             for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
         }
 
@@ -538,8 +548,7 @@ namespace IGTAP.EngineSim
             {
                 _worldMoved = false;
                 for (int i = 0; i < _bodyList.Length; i++) _bodyList[i].TransformDirty = true;
-                if (!_staticsMoved)
-                    for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
+                if (!_staticsMoved) RebuildBodyless();
                 _staticsMoved = false;
             }
             for (int bi = 0; bi < _bodyList.Length; bi++)
@@ -2042,9 +2051,9 @@ namespace IGTAP.EngineSim
         /// (a plain mix): a state file outlives the process that wrote it.</summary>
         public static int FingerprintOf(b2Fixture fixture)
         {
-            ulong h = 14695981039346656037UL;
+            ulong h = SnapshotStore.HashSeed;
             void MixF(float v) { MixL(BitConverter.SingleToInt32Bits(v)); }
-            void MixL(long v) { for (int i = 0; i < 8; i++) { h ^= (byte)(v >> (8 * i)); h *= 1099511628211UL; } }
+            void MixL(long v) { h = SnapshotStore.Feed(h, v, 8); }
             void Shape(b2Vec2 v) { MixF(v.x); MixF(v.y); }
             switch (fixture.b2Shape)
             {
@@ -2071,19 +2080,16 @@ namespace IGTAP.EngineSim
 
     static class Messages
     {
-        static readonly Dictionary<(Type, string), System.Reflection.MethodInfo> Cache = new Dictionary<(Type, string), System.Reflection.MethodInfo>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), System.Reflection.MethodInfo> Cache =
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), System.Reflection.MethodInfo>();
 
-        public static System.Reflection.MethodInfo Find(Type type, string name)
+        public static System.Reflection.MethodInfo Find(Type type, string name) => Cache.GetOrAdd((type, name), key =>
         {
-            lock (Cache)
-            {
-                if (Cache.TryGetValue((type, name), out var m)) return m;
-                System.Reflection.MethodInfo found = null;
-                for (Type t = type; t != null && found == null; t = t.BaseType)
-                    found = t.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
-                        | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly);
-                return Cache[(type, name)] = found;
-            }
-        }
+            System.Reflection.MethodInfo found = null;
+            for (Type t = key.Item1; t != null && found == null; t = t.BaseType)
+                found = t.GetMethod(key.Item2, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly);
+            return found;
+        });
     }
 }

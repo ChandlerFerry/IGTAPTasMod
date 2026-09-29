@@ -49,6 +49,15 @@ namespace IGTAP.EngineSim
             /// <summary>A standing rule's "guide": true turns the guide on for every solve it covers, as --guide does.</summary>
             public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
+
+            /// <summary>A run's step at <paramref name="p"/>: past the next via box it counts it; true when an avoid box cuts it
+            /// (one cutting only after a goal once <paramref name="progress"/> has reached it).</summary>
+            public bool Step(WorldPos p, int progress, ref int waypoints)
+            {
+                if (waypoints < Via.Count && Via[waypoints].Contains(p)) waypoints++;
+                foreach (Box box in Avoid) if (box.Contains(p) && (box.After == 0 || progress >= box.After)) return true;
+                return false;
+            }
         }
 
         public readonly struct Box
@@ -1117,8 +1126,7 @@ namespace IGTAP.EngineSim
                 }
                 if (_owner._path != null && inputs.Count > 0)
                 {
-                    InputTick last = inputs[inputs.Count - 1];
-                    var coast = new InputTick { x = last.x, y = last.y, held = last.held && !last.release };
+                    InputTick coast = inputs[inputs.Count - 1].Coast();
                     for (int i = 0; i < 25; i++) inputs.Add(coast);
                 }
                 return inputs;
@@ -1265,8 +1273,7 @@ namespace IGTAP.EngineSim
             static void Pad(List<InputTick> t, int count)
             {
                 if (t.Count == 0) return;
-                InputTick last = t[t.Count - 1];
-                var coast = new InputTick { x = last.x, y = last.y, held = last.held && !last.release };
+                InputTick coast = t[t.Count - 1].Coast();
                 while (t.Count < count) t.Add(coast);
             }
 
@@ -1586,9 +1593,10 @@ namespace IGTAP.EngineSim
                     if (!visits.TryGetValue(cell, out float seen) || t < seen) visits[cell] = t;
                 }
                 if (path == null) return;
-                if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p) && ++_waypoints > _owner.MostWaypoints)
+                int before = _waypoints;
+                if (path.Step(p, _sim.Progress, ref _waypoints)) _avoided = true;
+                if (_waypoints > before && _waypoints > _owner.MostWaypoints)
                     lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
-                foreach (Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
             }
 
             bool AfterTick(int tick)

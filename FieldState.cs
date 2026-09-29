@@ -12,14 +12,15 @@ namespace IGTAPTasMod
             new System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]>();
         static readonly HashSet<string> Skipped = new HashSet<string> { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
 
-        internal static FieldInfo[] For(Type type)
+        internal static FieldInfo[] For(Type type) { return Fields.GetOrAdd(type, Declared); }
+
+        static FieldInfo[] Declared(Type type)
         {
-            if (Fields.TryGetValue(type, out FieldInfo[] cached)) return cached;
             var list = new List<FieldInfo>();
             for (Type t = type; t != null && t != typeof(MonoBehaviour) && t != typeof(object); t = t.BaseType)
                 foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                     if (!typeof(Delegate).IsAssignableFrom(f.FieldType) && !Skipped.Contains(f.Name) && !IsEngineSteps(f)) list.Add(f);
-            return Fields[type] = list.ToArray();
+            return list.ToArray();
         }
 
         // MacroEngine's step list is the whole route being played: every resume hands the engine the steps to play
@@ -93,10 +94,11 @@ namespace IGTAPTasMod
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Collection> Collections =
             new System.Collections.Concurrent.ConcurrentDictionary<Type, Collection>();
 
-        static Collection CollectionOf(Type type)
+        static Collection CollectionOf(Type type) { return Collections.GetOrAdd(type, NewCollection); }
+
+        static Collection NewCollection(Type type)
         {
-            Collection kind;
-            if (Collections.TryGetValue(type, out kind)) return kind;
+            var kind = new Collection();
             string method = null;
             if (type.IsGenericType)
             {
@@ -110,7 +112,7 @@ namespace IGTAPTasMod
                     .MakeGenericMethod(type.GetGenericArguments()).CreateDelegate(typeof(Func<object, object>));
                 kind.HashSet = method == nameof(CopyHashSet);
             }
-            return Collections[type] = kind;
+            return kind;
         }
 
         static object CopyList<T>(object value) { return new List<T>((List<T>)value); }
@@ -146,11 +148,7 @@ namespace IGTAPTasMod
         static readonly MethodInfo TypeOfMethod = typeof(Type).GetMethod(nameof(Type.GetTypeFromHandle), new[] { typeof(RuntimeTypeHandle) });
         static readonly MethodInfo TypeEqualsMethod = typeof(Type).GetMethod("op_Equality", new[] { typeof(Type), typeof(Type) });
 
-        static Accessor AccessorFor(Type type)
-        {
-            if (Accessors.TryGetValue(type, out Accessor cached)) return cached;
-            return Accessors[type] = Build(type);
-        }
+        static Accessor AccessorFor(Type type) { return Accessors.GetOrAdd(type, Build); }
 
         static bool CopyCanReplace(Type slot)
         {

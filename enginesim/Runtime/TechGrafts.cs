@@ -143,9 +143,8 @@ namespace IGTAP.EngineSim
                 if (course == null || _sim.TargetCourse > 0 && course.courseNumber != _sim.TargetCourse) continue;
                 BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
                 if (box == null) continue;
-                Vector3 s = gate.transform.lossyScale, at = gate.transform.position;
-                float w = Math.Abs(box.size.x * s.x), h = Math.Abs(box.size.y * s.y);
-                _gates.Add(new Rect(at.x + box.offset.x * s.x - w / 2f, at.y + box.offset.y * s.y - h / 2f, w, h));
+                Vector3 at = gate.transform.position;
+                _gates.Add(DistanceField.GateRect(box, at.x, at.y, gate.transform.lossyScale));
             }
             return _gates;
         }
@@ -482,6 +481,8 @@ namespace IGTAP.EngineSim
         string _mode;
 
         public override string ToString() => Tech + " " + Kind + " " + First + ".." + Last;
+
+        internal TechPattern Copy() => (TechPattern)MemberwiseClone();
     }
 
     /// <summary>One run of equal ticks in a pattern's window (from <see cref="Index"/>, <see cref="Run"/> ticks), sampled at graft
@@ -510,6 +511,8 @@ namespace IGTAP.EngineSim
         public Contact? Expect;
         public int ExpectAt;
         public int ShiftLo, ShiftHi;
+
+        internal PatternChain Copy() => (PatternChain)MemberwiseClone();
     }
 
     /// <summary>What the miner saw in one tech's demo: where it replayed, the contacts along it and the patterns cut out.</summary>
@@ -1325,21 +1328,18 @@ namespace IGTAP.EngineSim
             demo.Patterns.Add(pattern);
             Contact other = Mirror(pattern.Kind);
             if (other == pattern.Kind) return;
-            PatternChain chain = pattern.Chain;
-            demo.Patterns.Add(new TechPattern
+            TechPattern twin = pattern.Copy();
+            twin.Kind = other;
+            twin.Mirrored = true;
+            twin.Ticks = pattern.Ticks.Select(Mirror).ToArray();
+            twin.Dir = -pattern.Dir;
+            if (pattern.Chain != null)
             {
-                Tech = pattern.Tech, Name = pattern.Name, Category = pattern.Category, Requires = pattern.Requires,
-                Kind = other, First = pattern.First, Last = pattern.Last, DemoContact = pattern.DemoContact,
-                DemoStart = pattern.DemoStart, Key = pattern.Key, Mirrored = true,
-                Ticks = pattern.Ticks.Select(Mirror).ToArray(), Dir = -pattern.Dir,
-                ShiftLo = pattern.ShiftLo, ShiftHi = pattern.ShiftHi, Vary = pattern.Vary, CoastX = pattern.CoastX, CoastHeld = pattern.CoastHeld,
-                Tries = pattern.Tries, Weight = pattern.Weight, Spec = pattern.Spec, Resets = pattern.Resets,
-                Chain = chain == null ? null : new PatternChain
-                {
-                    Depth = chain.Depth, On = chain.On.Select(Mirror).Distinct().ToArray(), With = chain.With,
-                    Expect = chain.Expect is Contact e ? Mirror(e) : null, ExpectAt = chain.ExpectAt, ShiftLo = chain.ShiftLo, ShiftHi = chain.ShiftHi,
-                },
-            });
+                twin.Chain = pattern.Chain.Copy();
+                twin.Chain.On = pattern.Chain.On.Select(Mirror).Distinct().ToArray();
+                twin.Chain.Expect = pattern.Chain.Expect is Contact e ? Mirror(e) : null;
+            }
+            demo.Patterns.Add(twin);
         }
 
         /// <summary>A pattern's direction: a sided contact's side, else the sign of the window's first stick x at or after the
@@ -1548,30 +1548,12 @@ namespace IGTAP.EngineSim
             pattern.Requires = caps;
         }
 
+        /// <summary>A sided contact's other side (its name's Left and Right swapped); any other kind is its own.</summary>
         static Contact Mirror(Contact kind)
         {
-            switch (kind)
-            {
-                case Contact.WallBehindLeft: return Contact.WallBehindRight;
-                case Contact.WallBehindRight: return Contact.WallBehindLeft;
-                case Contact.WallAheadLeft: return Contact.WallAheadRight;
-                case Contact.WallAheadRight: return Contact.WallAheadLeft;
-                case Contact.WallAboveLeft: return Contact.WallAboveRight;
-                case Contact.WallAboveRight: return Contact.WallAboveLeft;
-                case Contact.NearGateLeft: return Contact.NearGateRight;
-                case Contact.NearGateRight: return Contact.NearGateLeft;
-                case Contact.SpringHitLeft: return Contact.SpringHitRight;
-                case Contact.SpringHitRight: return Contact.SpringHitLeft;
-                case Contact.OverhangLeft: return Contact.OverhangRight;
-                case Contact.OverhangRight: return Contact.OverhangLeft;
-                case Contact.SlopeLeft: return Contact.SlopeRight;
-                case Contact.SlopeRight: return Contact.SlopeLeft;
-                case Contact.WallBoostLeft: return Contact.WallBoostRight;
-                case Contact.WallBoostRight: return Contact.WallBoostLeft;
-                case Contact.SteppedUpLeft: return Contact.SteppedUpRight;
-                case Contact.SteppedUpRight: return Contact.SteppedUpLeft;
-                default: return kind;
-            }
+            string name = kind.ToString();
+            return name.EndsWith("Left", StringComparison.Ordinal) ? Enum.Parse<Contact>(name[..^4] + "Right")
+                : name.EndsWith("Right", StringComparison.Ordinal) ? Enum.Parse<Contact>(name[..^5] + "Left") : kind;
         }
 
         static InputTick Mirror(InputTick t)
