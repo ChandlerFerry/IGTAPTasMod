@@ -161,15 +161,21 @@ namespace IGTAP.EngineSim.Cli
                 var (fast, median) = Chaining(_best.Inputs);
                 Log($"auto: goal-state library: the starting best traced in {CpuSeconds() - t0:0.0} CPU s ({_lib.Describe()}); chaining: {fast} of {_goals} goal touches at 600+ u/s, median {median:0} u/s");
                 _chain0 = (fast, median);
+                _chainStart = _best.Inputs;
             }
             Collect(_best, "the starting best");
             if (!_fresh) LoadRefs();
             for (int i = 1; i < args.Length - 1; i++)
                 if (args[i] == "--ref") Collect(Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(args[i + 1])), "--ref " + Path.GetFileName(args[i + 1]));
             if (_lib != null && _lib.Runs > 1) TryStitch("the known routes at the start");
-            MeasureSpeeds();
+            // The speed probes (a minute and a half on FalseEnding's 300 goals) are kept per run and start state: a restart reads
+            // them back and only adds the best's own path (docs/fulltas.md, "Auto").
+            if (_fresh || !LoadSpeeds()) { MeasureSpeeds(); SaveSpeeds(); }
+            else Sustained(Profile(_best.Inputs, false), "the best's path");
+            double m0 = CpuSeconds();
             BuildModel();
             PrintModel("start");
+            Log($"auto: model built in {CpuSeconds() - m0:0.0} CPU s; the loop starts at {_clock.Elapsed.TotalSeconds:0} s");
 
             _curve.Add((0, 0, _best.Last, "start", 0));
             bool ablated = false;
@@ -241,6 +247,7 @@ namespace IGTAP.EngineSim.Cli
 
         int _parallel;
         (int fast, float median) _chain0;
+        List<InputTick> _chainStart;
         double _repairCpuPerTick, _repairMax, _autoCpu0;
         TimeSpan _autoWall0;
         readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
@@ -704,7 +711,15 @@ namespace IGTAP.EngineSim.Cli
                 AutoWrite(new { type = "check", where, kept = false, time = fresh.Progress == _goals ? Seconds(fresh.Last) : (double?)null, progress = fresh.Progress });
                 return null;
             }
-            Log($"fresh check ({where}): {Describe(fresh)} from a new simulation, {same}; per goal {Splits(fresh)}");
+            // The chaining check is a diagnostic: every kept best logs how many goal touches it crosses at speed against the record
+            // the loop started from, and which goals changed.
+            string chain = "";
+            if (_lib != null && fresh.Progress == _goals)
+            {
+                var (fast, median) = Chaining(fresh.Inputs);
+                chain = $"; chaining {fast} of {_goals} at speed (start {_chain0.fast})" + (fast != _chain0.fast ? $": {ChainingDiff(_chainStart, fresh.Inputs)}" : "");
+            }
+            Log($"fresh check ({where}): {Describe(fresh)} from a new simulation, {same}{chain}; per goal {Splits(fresh)}");
             AutoWrite(new { type = "check", where, kept = true, time = Seconds(fresh.Last), progress = fresh.Progress });
             Collect(fresh, where);
             return fresh;

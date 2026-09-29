@@ -684,7 +684,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         if (!img) { img = new Image(); img.onload = () => setArtLoads(n => n + 1); img.src = href; artImages.current.set(href, img); }
         if (img.complete && img.naturalWidth) { g.save(); g.translate(m.x + icon.dx - icon.w / 2, m.y + icon.dy + icon.h / 2); g.scale(1, -1); g.drawImage(img, 0, 0, icon.w, icon.h); g.restore(); continue; }
       }
-      if ((m.kind === "box" || m.kind === "start" || m.kind === "end" || m.kind === "exit") && m.area?.length) { outline(m.area, false, m.kind === "box" ? .12 : .15); continue; }
+      if ((m.kind === "box" || m.kind === "start" || m.kind === "end" || m.kind === "exit" || m.kind === "falseEnding" || m.kind === "trueEnding") && m.area?.length) { outline(m.area, false, m.kind === "box" ? .12 : .15); continue; }
       if (m.kind === "checkpoint") {
         if (m.area) outline(m.area, true, .1);
         if (m.spawn) { g.lineWidth = 2 * px; g.strokeStyle = color; g.strokeRect(m.spawn[0], m.spawn[1], m.spawn[2] - m.spawn[0], m.spawn[3] - m.spawn[1]); continue; }

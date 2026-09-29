@@ -542,7 +542,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         // The path from Zone 2 into Area 1 above Course 10 opens with Area 1's overgrowth (buying the
                         // omnidash sets both, upgradeBox): the closed ground goes, the open ground and first trunk come.
-                        foreach (int id in Refs("closedObject")) roots[id] = "area1:normal";
+                        foreach (int id in Refs("closedObject")) roots[id] = "area1:normal|vman";
                         foreach (int id in Refs("openObject").Concat(Refs("trunks").Take(1))) roots[id] = "area1:overgrown";
                         // The rest under the path's root (its zone activators, checkpoints, loading area) is in the tunnel
                         // the open path is: only there when it's open. The other trunks and the closed ground keep theirs.
@@ -554,17 +554,24 @@ namespace IGTAP.EngineSim.Cli
                     }
                     List<int> overgrown = Refs("overgrowthEnable"), normal = Refs("overgrowthDisable");
                     foreach (int id in overgrown) roots[id] = "area1:overgrown";
-                    foreach (int id in normal) roots[id] = "area1:normal";
+                    foreach (int id in normal) roots[id] = "area1:normal|vman";
                     // Overgrowth (SetA1CourseTiers) hides the Area 1 courses' movement, prestige, breaker-light and
                     // unlock-prestige boxes (a bonus's reward among them) and shows the atom box and boxesToEnable.
                     foreach (int course in Refs("courses"))
                         foreach (int box in BoxesUnder(owner.TryGetValue(course, out int co) ? co : course))
                             if (Fields(components[box]) is var bf && bf.TryGetValue("upgrade", out JsonElement up) && up.ValueKind == JsonValueKind.Number
                                 && (up.GetInt32() is 1 or 6 or 10 || up.GetInt32() == 0 && bf.TryGetValue("globalUpgrade", out JsonElement gu) && gu.ValueKind == JsonValueKind.Number && gu.GetInt32() == 14))
-                                roots[owner[box]] = "area1:normal";
+                                roots[owner[box]] = "area1:normal|vman";
                     foreach (int box in Refs("boxesToEnable").Append(Refs("rpAtomBox").FirstOrDefault()).Where(b => b != 0))
                         if (owner.TryGetValue(box, out int bo)) roots[bo] = "area1:overgrown";
-                    states.Add(new WorldState("area1", "Area 1", new[] { "normal", "overgrown" }, overgrown.Any(id => active[id]) ? "overgrown" : "normal"));
+                    // A Vman speedrun is Area 1 as normal plus the boxes only a Vman run shows (the free omnidash:
+                    // upgradeBox.freeVmanOmnidash, on only while VmanScript.isCurrentlyVman).
+                    var vmanBoxes = components.Where(kv => kv.Value.GetProperty("type").GetString() == "upgradeBox" && Fields(kv.Value) is var vf
+                        && vf.TryGetValue("upgrade", out JsonElement vu) && vu.ValueKind == JsonValueKind.Number && vu.GetInt32() == 1
+                        && vf.TryGetValue("movementUpgrade", out JsonElement vm) && vm.ValueKind == JsonValueKind.Number && vm.GetInt32() == 7).Select(kv => owner[kv.Key]).ToList();
+                    foreach (int id in vmanBoxes) roots[id] = "area1:vman";
+                    states.Add(new WorldState("area1", "Area 1", new[] { "normal", "overgrown", "vman" },
+                        overgrown.Any(id => active[id]) ? "overgrown" : vmanBoxes.Any(id => active.TryGetValue(id, out bool on) && on) ? "vman" : "normal"));
                 }
             return (states, roots);
         }
@@ -983,7 +990,7 @@ namespace IGTAP.EngineSim.Cli
         {
             // Refill orbs (JiggleDropScript on a trigger capsule) by what they give back: the name says which.
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint",
-                ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "box" };
+                ["TeleporterScript"] = "teleporter", ["FakeCreditsControlScript"] = "falseEnding", ["EndCreditsTrigger"] = "trueEnding", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "box" };
             var markers = new List<Marker>();
             HashSet<int> on = OnObjects(world, allStates: true);
             Dictionary<int, string> when = StateOf(world);
@@ -1029,7 +1036,7 @@ namespace IGTAP.EngineSim.Cli
                     JsonElement p = o.GetProperty("position");
                     float x = Round(p.GetProperty("x").GetSingle() - origin.x), y = Round(p.GetProperty("y").GetSingle() - origin.y);
                     // A checkpoint's and a gate's trigger: where touching it respawns there, starts or ends the timer.
-                    float[][] area = kind is "checkpoint" or "start" or "end" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
+                    float[][] area = kind is "checkpoint" or "start" or "end" or "falseEnding" or "trueEnding" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
                     float[] spawn = null;
                     BoxInfo info = null;
                     if (kind == "checkpoint" && box != null)

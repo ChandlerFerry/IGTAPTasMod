@@ -35,15 +35,16 @@ export const capturedStates = (states: WorldState[] | undefined): StatePick => O
 // Whether something only in `when` is in the picked world.
 export function inState(when: string | null | undefined, pick: StatePick) {
   if (!when) return true;
-  const [id, option] = when.split(":");
-  return pick[id] === undefined || pick[id] === option;
+  // "<state>:<option>|<option>...": in each option listed (Area 1 normal is a Vman run's too).
+  const [id, options] = when.split(":");
+  return pick[id] === undefined || options.split("|").includes(pick[id]);
 }
 
 // One picker per world state, its options by name ("Area 1: Normal / Overgrown").
 export function StatePicker({ states, pick, onPick, className }: { states: WorldState[]; pick: StatePick; onPick: (p: StatePick) => void; className?: string }) {
   return <>{states.map(s => <label key={s.id} className={className} title={`The level with ${s.label} in that state`}>
-    {s.label} <select value={pick[s.id] ?? s.current} onChange={e => onPick({ ...pick, [s.id]: e.target.value })}>
-      {s.options.map(o => <option key={o} value={o}>{o[0].toUpperCase() + o.slice(1)}</option>)}
+    <select aria-label={s.label} value={pick[s.id] ?? s.current} onChange={e => onPick({ ...pick, [s.id]: e.target.value })}>
+      {s.options.map(o => <option key={o} value={o}>{o === "vman" ? "VMAN" : o[0].toUpperCase() + o.slice(1)}</option>)}
     </select></label>)}</>;
 }
 
@@ -170,6 +171,8 @@ export const MARKERS: Record<string, { color: string; text: string; shape: Marke
   start: { color: "#3ddc97", text: "Start gate", shape: "square" },
   end: { color: "#ff6b6b", text: "End gate", shape: "square" },
   exit: { color: "#90a4ae", text: "Preventative Gate", shape: "square" },
+  falseEnding: { color: "#f48fb1", text: "False ending", shape: "square" },
+  trueEnding: { color: "#ffe082", text: "True ending", shape: "square" },
   checkpoint: { color: "#4fc3f7", text: "Checkpoint", shape: "small" },
   teleporter: { color: "#b388ff", text: "Teleporter", shape: "diamond" },
   dashRefill: { color: "#ff80ab", text: "Dash refill", shape: "circle" },
@@ -304,7 +307,7 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
       const icon = icons?.[m.kind];
       if (icon) return <image key={i} href={icon.href} x={m.x + icon.dx - icon.w / 2} y={fy(m.y + icon.dy + icon.h / 2)} width={icon.w} height={icon.h}>
         <title>{`${look.text}: ${m.name}`}</title></image>;
-      if ((m.kind === "start" || m.kind === "end" || m.kind === "exit") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
+      if ((m.kind === "start" || m.kind === "end" || m.kind === "exit" || m.kind === "falseEnding" || m.kind === "trueEnding") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
         stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke"><title>{`${look.text}: ${m.name}`}</title></path>;
       // A buy box is its trigger box (where touching it buys it) in its category's colour, with its name and cost.
       if (m.kind === "box" && m.area) return <g key={i}>

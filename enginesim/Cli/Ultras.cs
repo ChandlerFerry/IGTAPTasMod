@@ -238,7 +238,9 @@ namespace IGTAP.EngineSim.Cli
                 if (!example.TryGetValue(p, out int e) || (float)u[5] > (float)ultras[e][5]) example[p] = k;
             }
             Map.TreeGround tree = Map.Grown(world.RootElement, origin, x0, y0, x1, y1);
-            var markers = Map.Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1).ToList();
+            // Every marker, the map grown to take them in (the true ending's trigger is above the level's ground).
+            var markers = Map.Markers(world.RootElement, origin).ToList();
+            foreach (var m in markers) { x0 = Math.Min(x0, m.x - 300f); x1 = Math.Max(x1, m.x + 300f); y0 = Math.Min(y0, m.y - 300f); y1 = Math.Max(y1, m.y + 300f); }
             var result = new
             {
                 world = System.IO.Path.GetFileName(worldPath),

@@ -29,6 +29,7 @@ namespace IGTAP.EngineSim.Cli
         readonly List<LibState> _states = new List<LibState>();
         readonly List<LibRun> _runs = new List<LibRun>();
         readonly Dictionary<(int goal, ulong key), List<int>> _byKey = new Dictionary<(int, ulong), List<int>>();
+        readonly Dictionary<(int goal, ulong key), List<int>> _byPlayer = new Dictionary<(int, ulong), List<int>>();
         readonly HashSet<ulong> _runHashes = new HashSet<ulong>();
         /// <summary>Joins a replay showed are not exact: (goal, key, the run switched to).</summary>
         readonly HashSet<(int, ulong, int)> _banned = new HashSet<(int, ulong, int)>();
@@ -58,6 +59,8 @@ namespace IGTAP.EngineSim.Cli
                 s.Run = run.Id;
                 _states.Add(s);
                 run.States.Add(s.Id);
+                if (!_byPlayer.TryGetValue((s.Goal, s.PlayerKey), out List<int> same)) _byPlayer[(s.Goal, s.PlayerKey)] = same = new List<int>();
+                same.Add(s.Id);
                 var k = (s.Goal, s.Key);
                 if (!_byKey.TryGetValue(k, out List<int> list)) _byKey[k] = list = new List<int>();
                 list.Add(s.Id);
@@ -90,7 +93,11 @@ namespace IGTAP.EngineSim.Cli
                 if (Runs <= MaxRuns) break;
                 if (keep.Contains(r.Id)) continue;
                 _runs[r.Id] = null;
-                foreach (int id in r.States) _byKey[(_states[id].Goal, _states[id].Key)].Remove(id);
+                foreach (int id in r.States)
+                {
+                    _byKey[(_states[id].Goal, _states[id].Key)].Remove(id);
+                    _byPlayer[(_states[id].Goal, _states[id].PlayerKey)].Remove(id);
+                }
             }
             _version++;
         }
@@ -266,6 +273,15 @@ namespace IGTAP.EngineSim.Cli
             _toEndVersion = _version;
         }
 
+        /// <summary>Live states of other runs where the player is exactly as in this one (the player key: movement, engine,
+        /// tracker; the world may differ), soonest first.</summary>
+        public IEnumerable<LibState> SamePlayer(LibState s)
+        {
+            if (!_byPlayer.TryGetValue((s.Goal, s.PlayerKey), out List<int> same)) yield break;
+            foreach (int id in same.OrderBy(id => _states[id].Tick))
+                if (_states[id].Run != s.Run && _runs[_states[id].Run] != null) yield return _states[id];
+        }
+
         public string Describe()
         {
             int joins = _byKey.Count(k => k.Value.Select(id => _states[id].Run).Distinct().Count() > 1);
@@ -296,6 +312,131 @@ namespace IGTAP.EngineSim.Cli
         static readonly int KeyBoostMax = Array.FindIndex(KeyMoveFields, f => f.Name == "dashBoostMax");
         static readonly FieldInfo StepFromField = typeof(Simulation).GetField("_stepFrom", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly FieldInfo StepToField = typeof(Simulation).GetField("_stepTo", BindingFlags.Instance | BindingFlags.NonPublic);
+        /// <summary>
+        /// Route-sync against every library run, for a spliced run whose old tail breaks (it dies or misses a goal after the
+        /// window): (1) wherever after the change the player is exactly as on another run (the player key), that run's inputs from
+        /// there; (2) at each of the first goal boundaries after the change, the tails other complete runs play from that goal,
+        /// fastest known first. Every try is replayed from the start; the first that reaches every goal sooner than the best is
+        /// returned. At most 16 replays.
+        /// </summary>
+        Route RouteSync(Route c, int changedEnd, string how)
+        {
+            ulong hash = SnapshotIndex.Hash(c.Inputs, c.Inputs.Count);
+            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
+            if (run == null) return null;
+            var tried = new HashSet<ulong>();
+            int plays = 0;
+            Route Try(List<InputTick> inputs, string what)
+            {
+                if (!tried.Add(SnapshotIndex.Hash(inputs, inputs.Count)) || _lib.Knows(SnapshotIndex.Hash(inputs, inputs.Count))) return null;
+                plays++;
+                Route r = TraceRun(inputs, $"{how}, {what}");
+                if (r.Progress == _goals && r.Last < _best.Last)
+                {
+                    Log($"auto sync: {how}: {what} -> {Describe(r)}");
+                    return r;
+                }
+                return null;
+            }
+            foreach (int id in run.States)
+            {
+                LibState s = _lib.State(id);
+                if (s.Input <= changedEnd || s.Kind == LibPoint.Start) continue;
+                foreach (LibState t in _lib.SamePlayer(s).Take(2))
+                {
+                    StateLibrary.LibRun other = _lib.Run(t.Run);
+                    Route r = Try(c.Inputs.Take(s.Input).Concat(other.Inputs.Skip(t.Input)).ToList(), $"re-synced at goal {s.Goal} ({s.Kind}) onto run {t.Run}");
+                    if (r != null) return r;
+                    if (plays >= 8) goto tails;
+                }
+            }
+        tails:
+            int first = Enumerable.Range(1, c.Progress).FirstOrDefault(g => c.GoalInput[g - 1] > changedEnd);
+            if (first == 0) return null;
+            for (int g = first; g <= Math.Min(c.Progress, first + 3); g++)
+            {
+                int cut = (int)Math.Min(c.GoalInput[g - 1], c.Inputs.Count);
+                var tails = _lib.AllRuns.Where(r => r.Progress == _goals && r.Id != run.Id)
+                    .Select(r => (r, s: r.States.Select(_lib.State).FirstOrDefault(x => x.Goal == g && (x.Kind & LibPoint.Goal) != 0)))
+                    .Where(x => x.s != null).OrderBy(x => x.r.End - x.s.Tick).Take(4);
+                foreach (var (r, s) in tails)
+                {
+                    Route got = Try(c.Inputs.Take(cut).Concat(r.Inputs.Skip(s.Input)).ToList(), $"run {r.Id}'s way on from goal {g}");
+                    if (got != null) return got;
+                    if (plays >= 16) return null;
+                }
+            }
+            return null;
+        }
+
+        string SpeedsFile() => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_trace)), "fulltas", _name + ".auto-speeds.json");
+
+        /// <summary>The speed probes' top path speeds, kept for the trace's start state and goals (StartKey + labels).</summary>
+        string SpeedsKey() => StartKey(Solve.ReadHeader(_trace)).ToString("x16") + ":" + ValueHash(string.Join("|", _labels)).ToString("x16");
+
+        bool LoadSpeeds()
+        {
+            string file = SpeedsFile();
+            if (!System.IO.File.Exists(file)) return false;
+            using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(file));
+            if (doc.RootElement.GetProperty("key").GetString() != SpeedsKey()) return false;
+            foreach (var v in doc.RootElement.GetProperty("speeds").EnumerateArray())
+                _vtop[v.GetProperty("caps").GetString()] = (v.GetProperty("speed").GetSingle(), v.GetProperty("how").GetString() + " (cached)");
+            Log($"auto: top path speeds read from {System.IO.Path.GetFileName(file)} (speed probes skipped): "
+                + string.Join("; ", _vtop.OrderBy(v => v.Key).Select(v => $"{v.Key} {v.Value.speed:0.0}")));
+            return true;
+        }
+
+        void SaveSpeeds()
+        {
+            string file = SpeedsFile();
+            System.IO.File.WriteAllText(file, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                key = SpeedsKey(),
+                speeds = _vtop.Select(v => new { caps = v.Key, speed = v.Value.speed, how = v.Value.how }),
+            }));
+        }
+
+        ICostToGo _ctg;
+        IPullScheduler _sched;
+        IMacroSource _macros;
+
+        /// <summary>
+        /// The stage's implementation in this build (a class implementing T, from its own FullTasAuto&lt;Part&gt;.cs), constructed with
+        /// the parameters it asks for by name (goals, labels, threads, cpu seconds, the run's goal list, dt, the run's name); null when
+        /// the build has none.
+        /// </summary>
+        T MakePart<T>() where T : class
+        {
+            Type type = typeof(FullTas).Assembly.GetTypes().FirstOrDefault(t => typeof(T).IsAssignableFrom(t) && !t.IsInterface && !t.IsAbstract);
+            if (type == null) return null;
+            object Arg(ParameterInfo p)
+            {
+                string n = p.Name.ToLowerInvariant();
+                if (p.ParameterType == typeof(string[])) return _labels;
+                if (p.ParameterType == typeof(string)) return _name;
+                if (p.ParameterType == typeof(float)) return _dt;
+                if (p.ParameterType == typeof(double)) return n.Contains("cpu") || n.Contains("budget") ? _minutes * 60 * _threads : n.Contains("dt") ? (double)_dt : _minutes * 60;
+                if (p.ParameterType == typeof(int)) return n.Contains("thread") ? _threads : n.Contains("parallel") ? _parallel : _goals;
+                if (p.ParameterType == typeof(IStateLibrary) || p.ParameterType == typeof(StateLibrary)) return _lib;
+                if (p.ParameterType == typeof(Action<string>)) return (Action<string>)(line => Log(line));
+                if (p.ParameterType.IsAssignableFrom(typeof(List<IGTAPTasMod.FullTasGoal>))) return _runGoals.Goals.ToList();
+                if (p.HasDefaultValue) return p.DefaultValue;
+                throw new InvalidOperationException($"{type.Name}: no value for constructor parameter {p.ParameterType.Name} {p.Name}");
+            }
+            foreach (ConstructorInfo c in type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).OrderByDescending(c => c.GetParameters().Length))
+            {
+                try
+                {
+                    object made = c.Invoke(c.GetParameters().Select(Arg).ToArray());
+                    Log($"auto: {typeof(T).Name} is {type.Name}");
+                    return (T)made;
+                }
+                catch (InvalidOperationException ex) { Log("auto: " + ex.Message); }
+            }
+            return null;
+        }
+
         int _stitchTried, _stitchExact;
         // The input engine's pending press state (a dash's jump frame, a lock or turn armed, a pause); its counters are left out.
         static readonly FieldInfo[] KeyEngineFields = new[] { "_wallJumpTriggered", "_rawJumpHeld", "_dashJumpFrame", "_dashJumpAxis", "_springDashFrame",
@@ -684,6 +825,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 Route fixedRun = WaitFix(c, best, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where);
                 if (fixedRun != null && fixedRun.Last < _best.Last) { Commit(fixedRun, where + ", waiting for the Cash"); return; }
+            }
+            foreach (Route c in broken.Where(c => c.Progress < _goals || c.Last >= _best.Last).OrderByDescending(c => c.Progress).Take(3))
+            {
+                Route synced = RouteSync(c, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where);
+                if (synced != null) { Commit(synced, where + ", route-synced"); return; }
             }
             if (TryStitch(where)) return;
             // As before: re-find the goals after the window from the new state.
