@@ -157,6 +157,15 @@ namespace IGTAP.EngineSim.Cli
                 + (r.Progress == _goals ? $", {(r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture)} s ({r.Last} ticks)" : "")
                 + $"; ended after input {_eval.Engine.RunTicks} at {at.x.ToString("0.0", CultureInfo.InvariantCulture)},{at.y.ToString("0.0", CultureInfo.InvariantCulture)}: {r.EndReason}");
             Console.WriteLine($"purchases ({(_eval.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
+            // --chain-vs OLD: the chaining check (FullTasAutoLib.cs) of this route against an older one.
+            int vs = Array.IndexOf(_args, "--chain-vs");
+            if (vs > 0 && vs + 1 < _args.Length)
+            {
+                List<InputTick> old = global::IGTAP.EngineSim.Cli.Plan.ReadRoute(_args[vs + 1]);
+                var (a, am) = Chaining(old);
+                var (b, bm) = Chaining(inputs);
+                Console.WriteLine($"chaining: {b} of {_goals} goal touches at {ChainSpeed:0}+ u/s (median {bm:0}) against {a} (median {am:0}) on {Path.GetFileName(_args[vs + 1])}; {ChainingDiff(old, inputs)}");
+            }
             return 0;
         }
 

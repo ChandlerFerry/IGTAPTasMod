@@ -505,13 +505,38 @@ namespace IGTAP.EngineSim.Cli
         /// third of the top path speed), and the median speed at a goal touch.</summary>
         (int atSpeed, float median) Chaining(List<InputTick> inputs)
         {
-            _lib ??= new StateLibrary(_goals, 150);
-            ulong hash = SnapshotIndex.Hash(inputs, inputs.Count);
-            StateLibrary.LibRun run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash);
-            if (run == null) { TraceRun(inputs, "chaining check"); run = _lib.AllRuns.FirstOrDefault(r => r.Hash == hash); }
-            if (run == null) return (0, 0f);
-            var speeds = run.States.Select(_lib.State).Where(s => (s.Kind & LibPoint.Goal) != 0 && s.Goal > 0).Select(s => s.Features.Speed).OrderBy(v => v).ToList();
-            return (speeds.Count(v => v >= 600f), speeds.Count == 0 ? 0f : speeds[speeds.Count / 2]);
+            float[] v = GoalSpeeds(inputs);
+            var speeds = v.Where(x => !float.IsNaN(x)).OrderBy(x => x).ToList();
+            return (speeds.Count(x => x >= ChainSpeed), speeds.Count == 0 ? 0f : speeds[speeds.Count / 2]);
+        }
+
+        const float ChainSpeed = 600f;
+
+        /// <summary>|Velocity + momentum| on each goal's touch tick (NaN: not reached), from a replay on the loop's simulation.</summary>
+        float[] GoalSpeeds(List<InputTick> inputs)
+        {
+            var speeds = Enumerable.Repeat(float.NaN, _goals).ToArray();
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            int progress = 0;
+            _eval.Run(inputs, null, null, 1000000, _ =>
+            {
+                int p = _eval.Progress;
+                if (p == progress) return;
+                float s = (_eval.Player.Velocity + _eval.Player.momentum).magnitude;
+                for (int g = progress; g < p && g < _goals; g++) speeds[g] = s;
+                progress = p;
+            });
+            return speeds;
+        }
+
+        /// <summary>The goals a route crosses at speed (the chaining check) that another doesn't, both ways.</summary>
+        string ChainingDiff(List<InputTick> before, List<InputTick> after)
+        {
+            float[] a = GoalSpeeds(before), b = GoalSpeeds(after);
+            var lost = Enumerable.Range(0, _goals).Where(g => a[g] >= ChainSpeed && !(b[g] >= ChainSpeed)).Select(g => $"{g + 1} {_labels[g]} {a[g]:0}->{b[g]:0}");
+            var won = Enumerable.Range(0, _goals).Where(g => !(a[g] >= ChainSpeed) && b[g] >= ChainSpeed).Select(g => $"{g + 1} {_labels[g]} {a[g]:0}->{b[g]:0}");
+            return $"lost at speed: {string.Join("; ", lost)}; gained: {string.Join("; ", won)}";
         }
 
         /// <summary>
