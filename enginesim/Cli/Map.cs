@@ -34,8 +34,10 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint.
+        // `when`: the world state it's only in (WorldStates), none: every one.
         internal sealed record Marker(string kind, string name, float x, float y,
-            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[][] area = null);
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[][] area = null,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null);
 
         public static int Run(string[] args)
         {
@@ -160,6 +162,8 @@ namespace IGTAP.EngineSim.Cli
             {
                 course, capabilities = caps, label,
                 bounds = new[] { x0, y0, x1, y1 },
+                // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's.
+                states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
@@ -262,6 +266,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name, fulltas = name,
                 bounds = new[] { x0, y0, x1, y1 },
+                states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
@@ -458,14 +463,42 @@ namespace IGTAP.EngineSim.Cli
 
         // One collider shape of an enabled collider on an object that is on, in game-world coordinates. `Tone`: "blue" or
         // "orange" for a coloured block or spike (colouredBlockSwapper), which only collides while its colour is active.
-        // `Up`: a spring's launch direction (its trigger box is the shape). `Off`: the object is off even with every
-        // zone loaded (another world state: Area 1 overgrown's moss, spikes and zip movers, a locked upgrade box); an off
-        // composite has no shapes, so its outline paths come as closed "Edges" loops.
-        internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null, bool Off = false);
+        // `Up`: a spring's launch direction (its trigger box is the shape). `When`: the world state it's only in
+        // (WorldStates, "<state>:<option>"), none: every one. An object that is off in the capture has no shapes for a
+        // composite, so its outline paths come as closed "Edges" loops.
+        internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null, string When = null);
 
-        // The objects that are on. With `allStates` (a map of the whole world): as if every zone were loaded. The export
-        // holds the world with only the player's zone loaded, and a run loads each zone it enters (ZoneLoader._LoadZone:
-        // the zone's root and its ZoneDisableLoadList.toLoad on).
+        // A world state a map switches between: `options`, the capture's (`current`) among them.
+        internal sealed record WorldState(string id, string label, string[] options, string current);
+
+        // The world states and, per state root object, the "<state>:<option>" it and everything under it are only in.
+        // Area 1: normal or overgrown (OvergrowthLoadScript turns overgrowthEnable on and overgrowthDisable off when
+        // Area 1 is overgrown, the reverse otherwise).
+        internal static (List<WorldState> states, Dictionary<int, string> roots) WorldStates(JsonElement world)
+        {
+            var states = new List<WorldState>();
+            var roots = new Dictionary<int, string>();
+            var active = new Dictionary<int, bool>();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray()) active[o.GetProperty("id").GetInt32()] = o.GetProperty("activeSelf").GetBoolean();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
+                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
+                {
+                    if (c.GetProperty("type").GetString() != "OvergrowthLoadScript") continue;
+                    var f = Fields(c);
+                    List<int> Refs(string name) => f.TryGetValue(name, out JsonElement v) && v.ValueKind == JsonValueKind.Array
+                        ? v.EnumerateArray().Where(r => r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out _)).Select(r => r.GetProperty("$ref").GetInt32()).Where(active.ContainsKey).ToList()
+                        : new List<int>();
+                    List<int> overgrown = Refs("overgrowthEnable"), normal = Refs("overgrowthDisable");
+                    foreach (int id in overgrown) roots[id] = "area1:overgrown";
+                    foreach (int id in normal) roots[id] = "area1:normal";
+                    states.Add(new WorldState("area1", "Area 1", new[] { "normal", "overgrown" }, overgrown.Any(id => active[id]) ? "overgrown" : "normal"));
+                }
+            return (states, roots);
+        }
+
+        // The objects that are on. With `allStates` (a map of the whole world): as if every zone were loaded (the export
+        // holds the world with only the player's zone loaded, and a run loads each zone it enters: ZoneLoader._LoadZone,
+        // the zone's root and its ZoneDisableLoadList.toLoad on), in every world state (WorldStates' roots on).
         internal static HashSet<int> OnObjects(JsonElement world, bool allStates)
         {
             var on = new HashSet<int>();
@@ -475,7 +508,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (JsonElement o in objects) if (o.GetProperty("activeInHierarchy").GetBoolean()) on.Add(o.GetProperty("id").GetInt32());
                 return on;
             }
-            var zoned = new HashSet<int>();
+            var zoned = new HashSet<int>(WorldStates(world).roots.Keys);
             foreach (JsonElement o in objects)
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
                 {
@@ -497,6 +530,19 @@ namespace IGTAP.EngineSim.Cli
             }
             foreach (int id in nodes.Keys) if (On(id)) on.Add(id);
             return on;
+        }
+
+        // Per object, the world state it's only in (its nearest WorldStates root's); objects in every state are absent.
+        static Dictionary<int, string> StateOf(JsonElement world)
+        {
+            Dictionary<int, string> roots = WorldStates(world).roots;
+            var parent = new Dictionary<int, int>();
+            foreach (JsonElement o in world.GetProperty("objects").EnumerateArray()) parent[o.GetProperty("id").GetInt32()] = o.GetProperty("parent").GetInt32();
+            var when = new Dictionary<int, string>();
+            foreach (int start in parent.Keys)
+                for (int id = start; id != 0 && parent.ContainsKey(id); id = parent[id])
+                    if (roots.TryGetValue(id, out string state)) { when[start] = state; break; }
+            return when;
         }
 
         static Dictionary<int, (float x, float y, float cos, float sin, bool moving)> Bodies(JsonElement world, CapturePos origin)
@@ -535,14 +581,13 @@ namespace IGTAP.EngineSim.Cli
                 && rb.TryGetProperty("$ref", out JsonElement id) && bodies.TryGetValue(id.GetInt32(), out var found) ? found : null;
         }
 
-        // With `allStates`, both colours of coloured blocks too: each coloured composite's geometry with its tilemap on
-        // (`sourceShapes`), whichever colour is active. With `offStates` as well, the objects that are off in every zone
-        // (WorldShape.Off), but not the trees' ground (Grown draws it).
-        internal static List<WorldShape> Shapes(JsonElement world, CapturePos origin, bool allStates, bool offStates = false)
+        // With `allStates`, every zone and world state (OnObjects), and both colours of coloured blocks: each coloured
+        // composite's geometry with its tilemap on (`sourceShapes`), whichever colour is active.
+        internal static List<WorldShape> Shapes(JsonElement world, CapturePos origin, bool allStates)
         {
             var bodies = Bodies(world, origin);
             HashSet<int> on = OnObjects(world, allStates);
-            HashSet<int> tree = offStates ? TreeSegmentObjects(world) : null;
+            Dictionary<int, string> when = allStates ? StateOf(world) : new Dictionary<int, string>();
             var tones = new Dictionary<int, string>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
@@ -555,8 +600,9 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
                 int oid = o.GetProperty("id").GetInt32();
-                bool off = !on.Contains(oid);
-                if (off && (!offStates || tree.Contains(oid))) continue;
+                if (!on.Contains(oid)) continue;
+                bool live = o.GetProperty("activeInHierarchy").GetBoolean();
+                string state = when.TryGetValue(oid, out string w) ? w : null;
                 string tone = tones.TryGetValue(oid, out string t0) ? t0 : null;
                 var components = o.GetProperty("components").EnumerateArray().ToList();
                 bool spike = components.Any(c => c.GetProperty("type").GetString() == "spikeScript");
@@ -573,7 +619,7 @@ namespace IGTAP.EngineSim.Cli
                 string tag = o.GetProperty("tag").GetString();
                 foreach (JsonElement c in components)
                 {
-                    bool both = allStates && !off && tone != null && c.GetProperty("type").GetString() == "UnityEngine.CompositeCollider2D";
+                    bool both = allStates && tone != null && c.GetProperty("type").GetString() == "UnityEngine.CompositeCollider2D";
                     if (!c.TryGetProperty(both ? "sourceShapes" : "shapes", out JsonElement shapes) || shapes.ValueKind != JsonValueKind.Object) continue;
                     if (!both && c.TryGetProperty("enabled", out JsonElement enabled) && !enabled.GetBoolean()) continue;
                     JsonElement props = c.GetProperty("props");
@@ -583,7 +629,7 @@ namespace IGTAP.EngineSim.Cli
                     foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
                         loops.Add((s.GetProperty("type").GetString(), s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray(),
                             s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f));
-                    if (off && loops.Count == 0 && c.TryGetProperty("paths", out JsonElement paths) && paths.ValueKind == JsonValueKind.Array)
+                    if (!live && loops.Count == 0 && c.TryGetProperty("paths", out JsonElement paths) && paths.ValueKind == JsonValueKind.Array)
                         foreach (JsonElement path in paths.EnumerateArray())
                         {
                             float[] p = path.EnumerateArray().Select(e => e.GetSingle()).ToArray();
@@ -593,41 +639,18 @@ namespace IGTAP.EngineSim.Cli
                     {
                         if (v.Length < 2) continue;
                         ToWorld(v, body, origin);
-                        shapesOut.Add(new WorldShape(type, v, r, layer, tag, trigger, spike, body is { moving: true }, player, tone, up, off));
+                        shapesOut.Add(new WorldShape(type, v, r, layer, tag, trigger, spike, body is { moving: true }, player, tone, up, state));
                     }
                 }
             }
             return shapesOut;
         }
 
-        // The trees' segment objects and everything under them: Grown draws their ground.
-        static HashSet<int> TreeSegmentObjects(JsonElement world)
-        {
-            var objects = world.GetProperty("objects").EnumerateArray().ToList();
-            var owner = new Dictionary<int, int>();
-            foreach (JsonElement o in objects)
-                foreach (JsonElement c in o.GetProperty("components").EnumerateArray()) owner[c.GetProperty("id").GetInt32()] = o.GetProperty("id").GetInt32();
-            var roots = new HashSet<int>();
-            foreach (JsonElement o in objects)
-                foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
-                    if (c.GetProperty("type").GetString() == "TreeController" && c.TryGetProperty("fields", out JsonElement fields))
-                        foreach (JsonElement f in fields.EnumerateArray())
-                            if (f[1].GetString() == "TreeSegments" && f[2].ValueKind == JsonValueKind.Array)
-                                foreach (JsonElement r in f[2].EnumerateArray())
-                                    if (r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out JsonElement id) && owner.TryGetValue(id.GetInt32(), out int seg)) roots.Add(seg);
-            var parent = objects.ToDictionary(o => o.GetProperty("id").GetInt32(), o => o.GetProperty("parent").GetInt32());
-            var under = new HashSet<int>();
-            foreach (int start in parent.Keys)
-                for (int id = start; id != 0 && parent.ContainsKey(id); id = parent[id])
-                    if (roots.Contains(id)) { under.Add(start); break; }
-            return under;
-        }
-
         // Where the drawn level (Solids, every zone and world state) lies: the extent of a map of the whole world.
         internal static (float x0, float y0, float x1, float y1) LevelBounds(JsonElement world, CapturePos origin)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-            foreach (WorldShape s in Shapes(world, origin, allStates: true, offStates: true))
+            foreach (WorldShape s in Shapes(world, origin, allStates: true))
             {
                 if (s.Player || s.Trigger && !s.Spike && s.Up == null) continue;
                 for (int i = 0; i + 1 < s.V.Length; i += 2)
@@ -639,12 +662,11 @@ namespace IGTAP.EngineSim.Cli
             return (x0, y0, x1, y1);
         }
 
-        // `off`: in another world state than every zone of this one (WorldShape.Off); drawn apart, off by default in a
-        // course's map.
+        // `when`: the world state it's only in (WorldShape.When); the viewers draw the state picked.
         internal static List<object> Solids(JsonElement world, CapturePos origin, float x0, float y0, float x1, float y1)
         {
             var solids = new List<object>();
-            foreach (WorldShape s in Shapes(world, origin, allStates: true, offStates: true))
+            foreach (WorldShape s in Shapes(world, origin, allStates: true))
             {
                 if (s.Trigger && !s.Spike && s.Up == null) continue;
                 float[] v = s.V;
@@ -653,7 +675,7 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = 0; i + 1 < v.Length; i += 2) { sx0 = Math.Min(sx0, v[i]); sx1 = Math.Max(sx1, v[i]); sy0 = Math.Min(sy0, v[i + 1]); sy1 = Math.Max(sy1, v[i + 1]); }
                 if (sx1 + r < x0 || sx0 - r > x1 || sy1 + r < y0 || sy0 - r > y1) continue;
                 string k = s.Type == "Polygon" ? "poly" : s.Type == "Circle" ? "circle" : s.Type == "Capsule" ? "capsule" : "line";
-                solids.Add(new { k, spike = s.Spike, p = v.Select(Round), r, tone = s.Tone, spring = s.Up?.Select(e => (float)Math.Round(e, 3)), off = s.Off ? true : (bool?)null });
+                solids.Add(new { k, spike = s.Spike, p = v.Select(Round), r, tone = s.Tone, spring = s.Up?.Select(e => (float)Math.Round(e, 3)), when = s.When });
             }
             return solids;
         }
@@ -777,6 +799,7 @@ namespace IGTAP.EngineSim.Cli
                 ["TeleporterScript"] = "teleporter", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "secret" };
             var markers = new List<Marker>();
             HashSet<int> on = OnObjects(world, allStates: true);
+            Dictionary<int, string> when = StateOf(world);
             var bodies = Bodies(world, origin);
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
@@ -808,7 +831,7 @@ namespace IGTAP.EngineSim.Cli
                             y = Round((b.Where((_, i) => i % 2 == 1).Min() + b.Where((_, i) => i % 2 == 1).Max()) / 2f);
                         }
                     }
-                    markers.Add(new Marker(kind, name, x, y, area));
+                    markers.Add(new Marker(kind, name, x, y, area, when.TryGetValue(o.GetProperty("id").GetInt32(), out string state) ? state : null));
                     break;
                 }
             }

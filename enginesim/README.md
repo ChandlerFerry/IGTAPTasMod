@@ -331,9 +331,10 @@ velocity, ground/wall, dash state, jumps/dashes left — no input or buffer fiel
 map view's route pickers) overlays any two of them via `POST /api/enginesim/ghost`, which reads that file from disk —
 both paths, the first tick their bodies part, and per cell how much later one first arrives than the other.
 
-The level a map draws (`solids`, `markers`) is the capture's whole world, every zone, with the objects that are off in
-every zone of it (Area 1 overgrown's moss and spikes, locked boxes) marked `off: true`, and every secret upgrade box as
-a `secret` marker at its trigger. The studio runs one `map` at a time: a **Show map** for a map already being drawn waits
+The level a map draws (`solids`, `markers`) is the capture's whole world, every zone and both of Area 1's world states:
+`states` lists them with the capture's as `current`, and a solid or marker only in one carries `when`
+(`"area1:normal"` or `"area1:overgrown"`, from `OvergrowthLoadScript`); the viewers draw the state picked. Every secret
+upgrade box is a `secret` marker at its trigger. The studio runs one `map` at a time: a **Show map** for a map already being drawn waits
 for that run's result, and a different map waits its turn, instead of failing with "A map is already being drawn".
 
 A new course (bonus1, Course 4): with the game running (`python tools/enginesim-redeploy.py`), capture once, then close

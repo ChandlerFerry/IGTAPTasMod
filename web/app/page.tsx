@@ -9,7 +9,7 @@ import { FullTasSolvePanel, SegmentGroup, SegmentLegend, place, resetSegments, r
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { UltraMap, type UltraData } from "./ultras";
-import { GROWN_COLOR, MARKERS, OFF_COLOR, SPRING_COLOR, TONE_COLORS, type TreeStep } from "./ultra-level";
+import { capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -290,9 +290,8 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 }
 
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
-// `off`: another world state's ground (off in every zone of the capture: Area 1 overgrown's moss and spikes), not in
-// the run's world; outlines only.
-type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; off?: boolean | null };
+// `when`: the world state it's only in ("<state>:<option>"), none: every one; ground off in the capture is its outline.
+type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
 // Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
 // per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
@@ -304,18 +303,23 @@ const GHOST_A = "#4fc3f7", GHOST_B = "#ffb74d";
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
   // The trees' ground where it grows once its tree upgrades are bought (not in the world the run starts in).
   grown?: MapSolid[]; treeSteps?: TreeStep[];
-  markers: { kind: string; name: string; x: number; y: number }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
+  markers: { kind: string; name: string; x: number; y: number; when?: string | null }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
+  // The world states the level can be drawn in; `current`: the capture's, which the routes and explored cells are from.
+  states?: WorldState[];
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
-type MapLayers = { explored: boolean; boxes: boolean; markers: boolean; off: boolean };
+type MapLayers = { explored: boolean; boxes: boolean; markers: boolean };
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
 function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true, off: false });
+  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true });
+  // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
+  const [worldState, setWorldState] = useState<StatePick>({});
+  const markers = useMemo(() => (data?.markers ?? []).filter(m => inState(m.when, worldState)), [data, worldState]);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
@@ -383,7 +387,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     try {
       const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas }) : await request("/enginesim/map", target);
       if (id !== loads.current) return;
-      setData(d); setFailure(""); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0)));
+      setData(d); setFailure(""); setWorldState(w => ({ ...capturedStates(d.states), ...w })); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0)));
       if (!fitted.current) { fit(d); fitted.current = true; }
     }
     catch (e) { if (id === loads.current) setFailure(e instanceof Error ? e.message : String(e)); }
@@ -415,17 +419,14 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       }
     }
     for (const s of data.solids) {
-      if (s.off && !layers.off) continue;
-      const color = s.off ? (s.spike ? "#e5484d" : OFF_COLOR) : s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
+      if (!inState(s.when, worldState)) continue;
+      const color = s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
       g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(px * 1.5, s.k === "capsule" ? s.r * 2 : 0); g.lineCap = "round";
       g.beginPath();
-      if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); if (s.off) { g.setLineDash([5 * px, 3 * px]); g.stroke(); g.setLineDash([]); } else g.fill(); continue; }
+      if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); g.fill(); continue; }
       g.moveTo(s.p[0], s.p[1]);
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
-      if (s.k === "poly") g.closePath();
-      // Another world state's ground: dashed outlines, never filled (the run can't touch it).
-      if (s.off) { g.lineWidth = 1.5 * px; g.setLineDash([5 * px, 3 * px]); g.stroke(); g.setLineDash([]); continue; }
-      if (s.k === "poly") { g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
+      if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
       if (s.spring) {
         // Launch direction: from the box's middle out past its far side.
         const [ux, uy] = s.spring, n = s.p.length / 2;
@@ -524,7 +525,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         g.restore();
       }
     }
-    if (layers.markers) for (const m of data.markers) {
+    if (layers.markers) for (const m of markers) {
       g.fillStyle = m.kind === "goal" ? "#b9f6ca" : MARKERS[m.kind]?.color ?? "#4fc3f7";
       const s = (m.kind === "checkpoint" ? 4 : m.kind === "secret" ? 10 : 6) * px;
       if (MARKERS[m.kind]?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
@@ -536,7 +537,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
+  }, [data, layers, worldState, markers, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -585,7 +586,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     if (sketchStart.current) setSketch([sketchStart.current.x, sketchStart.current.y, x, y]);
     const held = grab.current;
     if (held) { const dx = x - held.x, dy = y - held.y; setMoved({ goal: held.goal, box: [held.box[0] + dx, held.box[1] + dy, held.box[2] + dx, held.box[3] + dy] }); }
-    const near = layers.markers ? data?.markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
+    const near = layers.markers ? markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
     const cell = `${Math.floor(x / size)},${Math.floor(y / size)}`;
     setCursor({ x, y, marker: near ? `${near.name} (${near.kind})` : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
@@ -624,8 +625,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"], ["off", "Other world states (Area 1 overgrown; not in this run)"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"]] as [keyof MapLayers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
+      {data?.states && <StatePicker states={data.states} pick={worldState} onPick={setWorldState} className="passLoop"/>}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
       {data && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box: search runs entering it are cut." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}

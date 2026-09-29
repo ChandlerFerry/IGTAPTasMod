@@ -333,10 +333,12 @@ box that grows it and the box it carries. A fresh world has none of it grown, so
 engine doesn't model growing it. Spikes are red; coloured blocks and spikes are drawn in both colours (blue and
 orange, the export's `sourceShapes`), only the active colour being solid. Springs are level too: their trigger box in
 yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
-level is always drawn. **Other world states** draws, as dashed outlines, the ground and spikes of objects that are off
-even with every zone loaded: Area 1 overgrown's moss, spikes and zip movers under and around Courses 1–5, and locked
-upgrade boxes (an off composite has no shapes, so its outline `paths`); nothing of it collides in the run's world. It is
-on in the Ultra map and off by default on a course's **Show map**. **Gates, checkpoints, teleporters, refills,
+level is always drawn. The **Area 1** picker switches the level between Area 1's world states, **Normal** and
+**Overgrown** (`OvergrowthLoadScript`: when Area 1 is overgrown its `overgrowthEnable` objects, the moss, spikes, zip
+movers and their boxes and checkpoints under and around Courses 1–5, are on and its `overgrowthDisable` ones are off).
+It starts on the capture's state, marked "(capture)"; floors, ultras, routes and explored cells are always the
+capture's. Ground that is off in the capture is drawn as its outline (an off composite has no shapes, only `paths`).
+**Gates, checkpoints, teleporters, refills,
 secrets** marks start and end gates, checkpoints, teleporters, dash, jump and full refill orbs, and every secret (a
 gold star at its box's trigger: an `upgradeBox` with `isSecret`, named by its achievement number and cost; a bonus's
 finish is one) in every zone. Course labels sit at each course's start and bonus labels at the bonus's finish (its

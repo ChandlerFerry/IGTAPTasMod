@@ -1,19 +1,42 @@
-// The level under the Ultra map: solids (springs among them), both colours of coloured blocks, other world states'
-// ground (Area 1 overgrown), the trees' ground with its purchase order, and markers (gates, checkpoints, teleporters,
-// refill orbs, secrets). The same file is the public viewer's src/level.tsx (github.com/ChandlerFerry/igtap-ultra-map)
-// but for `fy`, which that one imports from its shifts.ts; keep the two in step.
+// The level under the Ultra map: solids (springs among them), both colours of coloured blocks, the trees' ground with
+// its purchase order, and markers (gates, checkpoints, teleporters, refill orbs, secrets), in the world state picked
+// (Area 1 normal or overgrown). The same file is the public
+// viewer's src/level.tsx (github.com/ChandlerFerry/igtap-ultra-map) but for `fy`, which that one imports from its
+// shifts.ts; keep the two in step.
 
 import { memo } from "react";
 
 // Map y up (world) to SVG y down.
 const fy = (y: number) => -y;
 
-// `spring`: a spring's trigger box, launching along this unit vector (its transform.up). `off`: in another world state
-// than the export's (off in every zone of it: Area 1 overgrown's moss, spikes and zip movers), outlines only.
-export type Solid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; off?: boolean | null };
+// `spring`: a spring's trigger box, launching along this unit vector (its transform.up). `when`: the world state it's
+// only in ("<state>:<option>", WorldState), none: every one. Ground off in the capture's state is its outline ("line").
+export type Solid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null };
 // `area`: a checkpoint's trigger (touching it sets where a death or quick restart respawns) or a secret's box (touching
 // it buys it; a bonus's finish), polygons of x, y pairs.
-export type Marker = { kind: string; name: string; x: number; y: number; area?: number[][] };
+export type Marker = { kind: string; name: string; x: number; y: number; area?: number[][]; when?: string | null };
+// A world state the map switches between (Area 1: normal or overgrown); `current`: the capture's, the one its floors,
+// ultras and routes are from.
+export type WorldState = { id: string; label: string; options: string[]; current: string };
+// The option picked per world state.
+export type StatePick = Record<string, string>;
+
+export const capturedStates = (states: WorldState[] | undefined): StatePick => Object.fromEntries((states ?? []).map(s => [s.id, s.current]));
+// Whether something only in `when` is in the picked world.
+export function inState(when: string | null | undefined, pick: StatePick) {
+  if (!when) return true;
+  const [id, option] = when.split(":");
+  return pick[id] === undefined || pick[id] === option;
+}
+
+// One picker per world state; the capture's option is marked, since the floors, ultras and routes are from it.
+export function StatePicker({ states, pick, onPick, className }: { states: WorldState[]; pick: StatePick; onPick: (p: StatePick) => void; className?: string }) {
+  return <>{states.map(s => <label key={s.id} className={className} title={`The level as it is with ${s.label} in that state; floors, ultras and routes are from the capture (${s.current})`}>
+    {s.label} <select value={pick[s.id] ?? s.current} onChange={e => onPick({ ...pick, [s.id]: e.target.value })}>
+      {s.options.map(o => <option key={o} value={o}>{o[0].toUpperCase() + o.slice(1)}{o === s.current ? " (capture)" : ""}</option>)}
+    </select></label>)}</>;
+}
+
 // One tree segment: the fewest tree purchases that grow it (Plant Tree is 1; 0: no box grows it), the box whose
 // purchase does, and the box it carries.
 export type TreeStep = { tree: number; step: number; via: string | null; box: string | null; x: number; y: number };
@@ -26,8 +49,6 @@ export const SPIKE_COLOR = "#e5484d";
 export const LEVEL_COLOR = "#8193ab";
 // Upgrade boxes (ground-layer triggers: the ground rays land on them).
 export const BOX_COLOR = "#bcaaa4";
-// Ground and spikes of another world state (off: Area 1 overgrown).
-export const OFF_COLOR = "#9ccc65";
 export const MARKERS: Record<string, { color: string; text: string; shape: "square" | "small" | "diamond" | "circle" | "star" }> = {
   start: { color: "#3ddc97", text: "Start gate", shape: "square" },
   end: { color: "#ff6b6b", text: "End gate", shape: "square" },
@@ -44,13 +65,15 @@ const polyPath = (p: number[]) => p.reduce((d, v, i) => i % 2 ? `${d} ${fy(v)}` 
 // `springDirs`: each spring's middle, launch direction and how far its box reaches that way, for its arrow.
 export type LevelPaths = { ground: string; lines: string; spikes: string; spikeLines: string; boxes: string; grown: string; springs: string;
   springDirs: { cx: number; cy: number; ux: number; uy: number; reach: number }[];
-  tone: Record<"blue" | "orange", { ground: string; spikes: string }>; off: { ground: string; spikes: string } };
+  tone: Record<"blue" | "orange", { ground: string; spikes: string }> };
 
-export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[]): LevelPaths {
+// The level in the world state `pick`.
+export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[], pick: StatePick): LevelPaths {
   const out: LevelPaths = { ground: "", lines: "", spikes: "", spikeLines: "", boxes: boxes.map(polyPath).join(""), grown: grown.map(s => polyPath(s.p)).join(""),
-    springs: "", springDirs: [], tone: { blue: { ground: "", spikes: "" }, orange: { ground: "", spikes: "" } }, off: { ground: "", spikes: "" } };
+    springs: "", springDirs: [], tone: { blue: { ground: "", spikes: "" }, orange: { ground: "", spikes: "" } } };
   for (const s of solids) {
-    if (s.spring && !s.off) {
+    if (!inState(s.when, pick)) continue;
+    if (s.spring) {
       const [ux, uy] = s.spring, n = s.p.length / 2;
       let cx = 0, cy = 0, reach = 0;
       for (let i = 0; i < n; i++) { cx += s.p[2 * i] / n; cy += s.p[2 * i + 1] / n; }
@@ -64,8 +87,7 @@ export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[]): 
     else { d = `M${s.p[0]} ${fy(s.p[1])}`; for (let i = 2; i < s.p.length; i += 2) d += `L${s.p[i]} ${fy(s.p[i + 1])}`; }
     const closed = s.k === "poly" || s.k === "circle";
     if (s.k === "poly") d += "Z";
-    if (s.off) { if (s.spike) out.off.spikes += d; else out.off.ground += d; }
-    else if (s.tone) { if (s.spike) out.tone[s.tone].spikes += d; else out.tone[s.tone].ground += d; }
+    if (s.tone) { if (s.spike) out.tone[s.tone].spikes += d; else out.tone[s.tone].ground += d; }
     else if (s.spike) { if (closed) out.spikes += d; else out.spikeLines += d; }
     else if (closed) out.ground += d;
     else out.lines += d;
@@ -74,7 +96,7 @@ export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[]): 
 }
 
 // Which level layers draw; the level's own ground and walls always do.
-export type LevelShow = { spikes: boolean; boxes: boolean; blue: boolean; orange: boolean; grown: boolean; springs: boolean; off: boolean };
+export type LevelShow = { spikes: boolean; boxes: boolean; blue: boolean; orange: boolean; grown: boolean; springs: boolean };
 
 // Memoized: a pan changes no prop, so the level isn't rebuilt on every pointer move; a zoom (`px`: world units per
 // screen pixel) redraws only for the spring arrows. A spring's arrow (from its box's middle out past its far side, the
@@ -97,10 +119,6 @@ export const Level = memo(function Level({ paths, show, px }: { paths: LevelPath
       <path d={paths.tone[t].spikes} fill="none" stroke={TONE_COLORS[t]} strokeWidth={2.5} strokeDasharray="3 2" vectorEffect="non-scaling-stroke"/>
     </g>)}
     {show.boxes && <path d={paths.boxes} fill={BOX_COLOR} fillOpacity={.12} stroke={BOX_COLOR} strokeWidth={1} vectorEffect="non-scaling-stroke"/>}
-    {show.off && <>
-      <path d={paths.off.ground} fill="none" stroke={OFF_COLOR} strokeWidth={1.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke"/>
-      <path d={paths.off.spikes} fill="none" stroke={SPIKE_COLOR} strokeWidth={1.5} strokeDasharray="2 3" vectorEffect="non-scaling-stroke"/>
-    </>}
     {show.grown && <path d={paths.grown} fill={GROWN_COLOR} fillOpacity={.3} stroke={GROWN_COLOR} strokeWidth={1.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke"/>}
     {show.springs && <path d={paths.springs} fill={SPRING_COLOR} fillOpacity={.8} stroke={SPRING_COLOR} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>}
     <path d={arrows} fill="none" stroke={SPRING_COLOR} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>

@@ -242,6 +242,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 world = System.IO.Path.GetFileName(worldPath),
                 bounds = new[] { x0, y0, x1, y1 },
+                // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's, which the
+                // floors and ultras are from.
+                states = Map.WorldStates(world.RootElement).states,
                 player = new { stand = new[] { stand.x, stand.y }, dash = new[] { dash.x, dash.y } },
                 kinds = Kinds,
                 floors = floors.Select(f => new object[] { R(f.X0), R(f.Y0), R(f.X1), R(f.Y1), f.Kind, f.Stand ? 1 : 0 }),
