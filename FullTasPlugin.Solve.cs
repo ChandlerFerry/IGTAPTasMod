@@ -117,27 +117,47 @@ namespace IGTAPTasMod
             return closest.inputs.Count > 0 && closest.goals.SequenceEqual(labels) ? closest : null;
         }
 
+        /// <summary>
+        /// Improve (the default): `fulltas --auto` from the run's best, with the saved record as a --ref (the engine's run file can
+        /// trail it) and `--focus a-b` when goals are picked. `unsolved: true`: the old reach search (`--unsolved`, with the seed
+        /// routes) for a run whose best misses goals, which --auto can't start from. Either leaves the game 4 cores by default.
+        /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
             var args = new StringBuilder("fulltas ").Append(Quote(trace));
             int threads = Number(body, "threads", 0);
-            if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 2);
+            if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 4);
             args.Append(" --threads ").Append(threads);
-            float minutes = FloatNumber(body, "minutes", 0f), windowMinutes = FloatNumber(body, "windowMinutes", 0f), stallMinutes = FloatNumber(body, "stallMinutes", 0f);
-            int window = Number(body, "window", 0);
-            if (minutes > 0f) args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
-            if (windowMinutes > 0f) args.Append(" --window-minutes ").Append(windowMinutes.ToString(CultureInfo.InvariantCulture));
-            if (stallMinutes > 0f) args.Append(" --stall-minutes ").Append(stallMinutes.ToString(CultureInfo.InvariantCulture));
-            if (window > 0) args.Append(" --window ").Append(window);
-            int goal = Number(body, "goal", 0), segment = Number(body, "segment", 0);
-            bool resets = Truthy(body, "resets") && !Truthy(body, "unsolved");
-            if (goal > 0 && !resets && !Truthy(body, "unsolved")) args.Append(" --goal ").Append(goal);
-            if (resets) args.Append(" --resets");
-            if (resets && segment > 0) args.Append(" --segment ").Append(segment);
-            if (Truthy(body, "fresh")) args.Append(" --fresh");
-            if (Truthy(body, "unsolved")) args.Append(" --unsolved");
-            if (Truthy(body, "noSubmit")) args.Append(" --no-submit");
-            int seeds = WriteFullTasSeeds(run, args);
+            bool unsolved = Truthy(body, "unsolved");
+            // Improve runs until Stop (a day's worth of minutes); the reach search keeps its hour.
+            float minutes = FloatNumber(body, "minutes", unsolved ? 60f : 24 * 60f);
+            args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
+            string what;
+            if (unsolved)
+            {
+                args.Append(" --unsolved");
+                int seeds = WriteFullTasSeeds(run, args);
+                what = "Reaching the missing goals of " + run.name + " on " + threads + " threads from " + seeds + " seed routes";
+            }
+            else
+            {
+                args.Append(" --auto --window-minutes 0.5");
+                int[] focus = body["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
+                if (focus != null)
+                {
+                    if (focus[0] < 1 || focus[1] < focus[0] || focus[1] > run.goals.Count)
+                        throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
+                    args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
+                }
+                MacroDefinition record = FullTasBestRoute(run.name);
+                if (record != null)
+                {
+                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + "-record.json");
+                    File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
+                    args.Append(" --ref ").Append(Quote(file));
+                }
+                what = "Improving " + run.name + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
+            }
             while (_fullTasOutput.TryDequeue(out _)) { }
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -152,11 +172,10 @@ namespace IGTAPTasMod
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
             _fullTasProgress = null;
-            _fullTasSegments = null;
             _fullTasSolveError = null;
             _fullTasCommand = EngineSimExe + " " + args;
-            _fullTasSolveStatus = "Solving " + run.name + " offline on " + threads + " threads from " + seeds + " seed routes";
-            FullTasLog(_fullTasSolveStatus + " (" + minutes.ToString(CultureInfo.InvariantCulture) + " min)");
+            _fullTasSolveStatus = what;
+            FullTasLog(what + " (" + minutes.ToString(CultureInfo.InvariantCulture) + " min at most)");
         }
 
         int WriteFullTasSeeds(FullTasRunDef run, StringBuilder args)
@@ -317,7 +336,7 @@ namespace IGTAPTasMod
                 return;
             }
             _fullTasKillAt = DateTime.UtcNow.AddSeconds(30);
-            _fullTasSolveStatus = "Stopping: saving the search (archive, explored map)";
+            _fullTasSolveStatus = "Stopping: saving the search";
             FullTasLog(_fullTasSolveStatus);
         }
 
@@ -344,10 +363,15 @@ namespace IGTAPTasMod
                 if (e != null)
                 {
                     e["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    if ((string)e["type"] == "status") { _fullTasProgress = e; return; }
-                    if ((string)e["type"] == "segments") { _fullTasSegments = e; return; }
+                    string type = (string)e["type"];
+                    if (type == "status") { _fullTasProgress = e; return; }
+                    if (FullTasDiskOnlyEvents.Contains(type) || type == "record" && e["lever"] != null) return;
                     _fullTasEvents.Add(e);
-                    if (_fullTasEvents.Count > MaxFullTasEvents) _fullTasEvents.RemoveRange(1, _fullTasEvents.Count - MaxFullTasEvents);
+                    if (_fullTasEvents.Count > MaxFullTasEvents)
+                    {
+                        int drop = _fullTasEvents.FindIndex(1, x => !FullTasKeptEvents.Contains((string)x["type"]));
+                        _fullTasEvents.RemoveAt(drop < 0 ? 1 : drop);
+                    }
                     return;
                 }
             }

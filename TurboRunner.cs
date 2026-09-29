@@ -348,6 +348,9 @@ namespace IGTAPTasMod
             /// <summary>FloatingOrigin.currentOrigin, and whether a MoveOrigin was waiting for the next physics step.</summary>
             public Vector3 origin;
             public bool rebasing;
+            /// <summary>A category start's canonical rebase reference (<see cref="PutCanonicalOrigin"/>): a restore puts the
+            /// world exactly there again instead of shifting it back by the difference (which rounds by what ran since).</summary>
+            public Vector3? canonical;
             /// <summary>The body's position at the start and end of the last physics step (its interpolation's ends).</summary>
             public Vector2 stepFrom, stepTo;
         }
@@ -651,7 +654,7 @@ namespace IGTAPTasMod
         public static void Restore(Snapshot s, Movement movement)
         {
             movement.CancelInvoke();
-            PutOrigin(s.origin);
+            if (s.canonical is Vector3 reference) PutCanonicalOrigin(reference); else PutOrigin(s.origin);
             RestoreMovers(s);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             var own = new List<Collider2D>();
@@ -737,6 +740,65 @@ namespace IGTAPTasMod
             OriginRebasing(origin) = false;
             if (origin.currentOrigin != target) ShiftOrigin(origin, origin.currentOrigin - target);
         }
+
+        /// <summary>Every scene root's position at FloatingOrigin (0, 0), as the scene loaded them (<see cref="RecordPristineRoots"/>).</summary>
+        static readonly Dictionary<Transform, Vector3> PristineRoots = new Dictionary<Transform, Vector3>();
+        static bool _pristineWarned;
+
+        /// <summary>
+        /// The scene roots FloatingOrigin moves (MoveRootTransforms' own set), recorded while currentOrigin is still (0, 0): the
+        /// scene as loaded, before its first rebase (TasPlugin's MoveRootTransforms prefix, or the first canonical origin).
+        /// A reloaded scene (the recorded roots destroyed) is recorded again.
+        /// </summary>
+        internal static void RecordPristineRoots(FloatingOrigin origin)
+        {
+            if (origin == null || origin.currentOrigin.x != 0f || origin.currentOrigin.y != 0f || origin.currentOrigin.z != 0f) return;
+            if (PristineRoots.Count > 0 && PristineRoots.Keys.All(t => t != null)) return;
+            PristineRoots.Clear();
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                UnityEngine.SceneManagement.Scene scene = SceneManager.GetSceneAt(i);
+                if (!origin.UpdateAllScenes && scene != SceneManager.GetActiveScene() || !scene.isLoaded) continue;
+                foreach (GameObject root in scene.GetRootGameObjects()) PristineRoots[root.transform] = root.transform.position;
+            }
+        }
+
+        /// <summary>
+        /// A category start's world, whatever ran before: FloatingOrigin as its own MoveOrigin leaves it after a rebase on the
+        /// player standing at the start's quick restart point, from the scene as loaded. Every scene root at its loaded position
+        /// minus <paramref name="reference"/> (MoveRootTransforms' <c>position -= offset</c> from origin (0, 0)), currentOrigin
+        /// <c>-reference</c>. PutOrigin alone shifts by the difference from wherever the last target left the world, and that
+        /// rounds differently for each origin it comes from (a Course 4 route died at tick 274 from one and finished from two others).
+        /// A root the game moved itself (the camera, HUD) only shifts.
+        /// </summary>
+        public static void PutCanonicalOrigin(Vector3 reference)
+        {
+            FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
+            if (origin == null) return;
+            RecordPristineRoots(origin);
+            if (PristineRoots.Count == 0 || PristineRoots.Keys.Any(t => t == null))
+            {
+                // Not recorded at (0, 0) (a scene loaded before the plugin saw it): the loaded positions as the shifts left them.
+                if (!_pristineWarned) TasPlugin.Log?.LogWarning("FloatingOrigin: scene roots not recorded at (0, 0); taking them from origin " + origin.currentOrigin + ".");
+                _pristineWarned = true;
+                PristineRoots.Clear();
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                    foreach (GameObject root in SceneManager.GetSceneAt(i).GetRootGameObjects())
+                        PristineRoots[root.transform] = root.transform.position - origin.currentOrigin;
+            }
+            Vector3 target = -reference;
+            PutOrigin(target);
+            foreach (KeyValuePair<Transform, Vector3> root in PristineRoots)
+            {
+                Vector3 canonical = root.Value - reference;
+                if ((root.Key.position - canonical).sqrMagnitude < 1f) root.Key.position = canonical;
+            }
+            origin.currentOrigin = target;
+        }
+
+        /// <summary>The rebase reference of a category start: the player where <c>Movement.respawn</c> puts it at the quick
+        /// restart point (world frame, from origin (0, 0): the reset point, 12 down).</summary>
+        public static Vector3 CanonicalReference(Vector2 resetPoint) { return new Vector3(resetPoint.x, resetPoint.y - 12f, 0f); }
 
         static readonly List<Collider2D> Overlaps = new List<Collider2D>();
 

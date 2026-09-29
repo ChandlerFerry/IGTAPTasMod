@@ -118,10 +118,15 @@ namespace IGTAPTasMod
         readonly List<string> _fullTasLog = new List<string>();
         readonly List<JObject> _fullTasEvents = new List<JObject>();
         JObject _fullTasProgress;
-        /// <summary>The solve's last "segments" event (--resets): kept apart, as the event list drops its oldest.</summary>
-        JObject _fullTasSegments;
         string _fullTasSolveError, _fullTasCommand;
         const int MaxFullTasEvents = 400, MaxFullTasLog = 300;
+        /// <summary>--auto's bookkeeping events: on disk in fulltas/&lt;run&gt;.auto.jsonl, not sent to the studio (a model is 300 rows;
+        /// a pull comes every few seconds and would push the records out of the capped list). Its own "record" (with a lever)
+        /// duplicates the solver's record event, which carries both routes; its "goals" (an adopted goal list) and "goalEdit" (each
+        /// edit a goals pull tried) too: the record event of an adopted edit carries its words (goalsEdit).</summary>
+        static readonly HashSet<string> FullTasDiskOnlyEvents = new HashSet<string> { "model", "pull", "check", "joins", "chaining", "ablation", "goals", "goalEdit" };
+        /// <summary>Events the capped list keeps when it trims: the session, what a solve found, and the game's checks of it.</summary>
+        static readonly HashSet<string> FullTasKeptEvents = new HashSet<string> { "session", "autoStart", "record", "gate" };
 
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);

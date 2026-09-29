@@ -25,7 +25,10 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string note;
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string detector;
             public List<string> related = new List<string>();
+            /// <summary>The start a route demo played from (a category route's prefix or a Full-TAS run's); a lab demo starts at its lab's.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string start;
+            /// <summary>A demo route from before every tech was its lab (a library route): kept on disk and playable from the
+            /// library, never shown in the Tech tab.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string routeId;
             /// <summary>The demo plays with the omnidirectional dash on top of its start's unlocks (Vman techs); put back after.</summary>
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public bool omniDash;
@@ -40,12 +43,22 @@ namespace IGTAPTasMod
             /// </summary>
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public int fastForward;
             /// <summary>
-            /// The demo plays on an injected lab map (labmaps/&lt;id&gt;.json): it injects the lab, starts at its lab start and
-            /// restores at the end. Lab-only: never a route, never on a route's path (root README "### Rules").
+            /// The tech's own lab map (labmaps/&lt;id&gt;.json): its demo injects the lab, starts at its lab start and restores at
+            /// the end. Lab-only: never a route, never on a route's path (root README "### Rules"). A lab file naming the tech
+            /// ("tech") is one of its labs too (<see cref="TechLabs"/>).
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labmap;
             /// <summary>Which of the lab map's demos (labmaps/&lt;labmap&gt;.&lt;labDemo&gt;.demo.json, with its own start); none: &lt;labmap&gt;.demo.json.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labDemo;
+            /// <summary>
+            /// The offline tech miner's key window (enginesim TechGrafts): {"contact": a ContactLog kind, "tick": the demo input tick
+            /// near it}, for a demo whose last button isn't where the tech happens. Kept as written; the plugin doesn't read it.
+            /// </summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public JObject graftKey;
+            /// <summary>The offline miner's marker, "todo": known real, no lab yet (the Tech tab lists it as not reproduced). Kept as written.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string graft;
+            /// <summary>Every other techs.json field (the offline side's: graftDemos, ...), written back as read.</summary>
+            [JsonExtensionData] public IDictionary<string, JToken> extra;
         }
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
@@ -61,7 +74,6 @@ namespace IGTAPTasMod
             return value;
         }
 
-        const int TechDemoTailTicks = 25;
         // A tech demo's start: a category route's prefix (2_WJ_DS) or a Full-TAS run's (fulltas/VMAN_NONE, its route-name
         // category fixed); the category part must be one of the categories.
         static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|(?<token>[^_\s/]+)_(?<label>" + Caps.LabelPattern + @"))(?= |$)", RegexOptions.IgnoreCase);
@@ -113,10 +125,14 @@ namespace IGTAPTasMod
         string TechsSeededPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "techs.seeded.json"); } }
 
         /// <summary>
-        /// The live catalog (the Tech tab's, edited in the game) keeps its own text, demos and order; a plugin build adds what
-        /// its built-in list has that the live one lacks: techs it doesn't have (by id, at the end) and a detector for a tech
-        /// that has none, when no other tech has that detector yet. Each is offered once (techs.seeded.json remembers it), so a
-        /// tech deleted or a detector cleared in the Tech tab stays that way. True when the catalog changed.
+        /// The live catalog (the Tech tab's, edited in the game) keeps its own text and order; a plugin build adds what its
+        /// built-in list has that the live one lacks: techs it doesn't have (by id, at the end) and a detector for a tech that
+        /// has none, when no other tech has that detector yet. Each is offered once (techs.seeded.json remembers it), so a tech
+        /// deleted or a detector cleared in the Tech tab stays that way. A tech the built-in list once offered and has since
+        /// dropped (buy-upgrade-from-top, faster-acceleration) goes from the live catalog once too ("-&lt;id&gt;" in
+        /// techs.seeded.json); one the built-in list never offered is the user's and stays. The lab and miner fields (labmap
+        /// with its labDemo, start, graftKey, graft) are the repo's: the built-in ones fill a live tech's gaps on every load, and
+        /// a live "todo" goes once the built-in tech has a lab and no marker. True when the catalog changed.
         /// </summary>
         bool MergeSeedTechs(List<TechDef> seed)
         {
@@ -128,6 +144,13 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogWarning("techs.seeded.json unreadable (" + ex.Message + "); offering the built-in techs again."); }
             int before = offered.Count;
             bool changed = false;
+            foreach (TechDef live in _techs.Where(t => offered.Contains(t.id) && !seed.Any(s => s.id == t.id)).ToList())
+            {
+                if (!offered.Add("-" + live.id)) continue;
+                _techs.Remove(live);
+                Logger.LogInfo("techs.json: removed " + live.name + ", which the built-in list dropped.");
+                changed = true;
+            }
             foreach (TechDef s in seed)
             {
                 TechDef live = _techs.Find(t => t.id == s.id);
@@ -137,6 +160,7 @@ namespace IGTAPTasMod
                     Logger.LogInfo("techs.json: added " + s.name + " from the built-in list.");
                     changed = true;
                 }
+                if (live != null && FillSeedGaps(live, s)) changed = true;
                 if (s.detector != null && offered.Add(s.id + "#" + s.detector) && live != null && live.detector == null
                     && !_techs.Any(t => t.detector == s.detector))
                 {
@@ -149,6 +173,23 @@ namespace IGTAPTasMod
             foreach (TechDef t in _techs) t.related.RemoveAll(r => !_techs.Any(o => o.id == r));
             CheckTechs();
             return true;
+        }
+
+        /// <summary><see cref="MergeSeedTechs"/>'s lab and miner fields: the built-in tech's fill the live one's gaps. True when one did.</summary>
+        static bool FillSeedGaps(TechDef live, TechDef seed)
+        {
+            bool changed = false;
+            if (live.labmap == null && seed.labmap != null)
+            {
+                live.labmap = seed.labmap;
+                live.labDemo = seed.labDemo;
+                changed = true;
+            }
+            if (live.start == null && seed.start != null) { live.start = seed.start; changed = true; }
+            if (live.graftKey == null && seed.graftKey != null) { live.graftKey = seed.graftKey; changed = true; }
+            if (live.graft == null && seed.graft != null) { live.graft = seed.graft; changed = true; }
+            else if (live.graft == "todo" && seed.graft == null && seed.labmap != null) { live.graft = null; changed = true; }
+            return changed;
         }
 
         void CheckTechs()
@@ -200,11 +241,13 @@ namespace IGTAPTasMod
             return string.IsNullOrEmpty(tech.routeId) ? null : _library.macros.Find(m => m.id == tech.routeId);
         }
 
-        /// <summary>The tech whose demo a route plays: the tech trace's (EngineSimTechTrace), a tech probe's, or the one whose demo route it is.</summary>
+        /// <summary>The tech whose demo a route plays: the tech trace's (EngineSimTechTrace), a tech probe's, the Tech tab's lab
+        /// demo (<see cref="PlayTechLab"/>), or the one whose library demo route it is.</summary>
         TechDef TechOfRoute(MacroDefinition route)
         {
             if (_techStart != null) return _techStart;
             if (route == null) return null;
+            if (route.id == LabDemoRouteId) return _labPlay;
             return route.id == ProbeRouteId ? _probe?.tech : _techs.Find(t => t.routeId == route.id);
         }
 
@@ -221,7 +264,7 @@ namespace IGTAPTasMod
 
         bool IsTechDemo(MacroDefinition route)
         {
-            return route != null && (_techs.Any(t => t.routeId == route.id) || route.id == ProbeRouteId && _probe?.tech != null);
+            return route != null && (route.id == LabDemoRouteId || _techs.Any(t => t.routeId == route.id) || route.id == ProbeRouteId && _probe?.tech != null);
         }
 
         MacroDefinition TechPlayable(MacroDefinition route)
@@ -231,56 +274,6 @@ namespace IGTAPTasMod
             string start = string.IsNullOrEmpty(route.savestateId) || !FullTasRouteName.IsMatch(tech.start + " ") ? tech.start : null;
             return new MacroDefinition { id = route.id, name = (string.IsNullOrEmpty(start) ? "" : start + " ") + "tech " + tech.name,
                 savestateId = route.savestateId, steps = route.steps };
-        }
-
-        void SetTechDemo(TechDef tech, MacroDefinition source, TechSpan span)
-        {
-            List<MacroStep> played = source.steps.Where(s => s.enabled).ToList();
-            if (played.Any(s => s.type != MacroStepType.RawInput))
-                throw new InvalidOperationException("A demo is raw input; " + source.name + " has other actions.");
-            List<SolverTick> inputs = ToTicks(played);
-            Savestate state = _savestates.Find(c => c.id == source.savestateId);
-            tech.fastForward = 0;
-            if (span != null)
-            {
-                int ticks = (int)span.input + TechDemoTailTicks;
-                if (ticks < inputs.Count) inputs.RemoveRange(ticks, inputs.Count - ticks);
-                if (span.savestate != null && tech.floatingOrigin) tech.fastForward = (int)span.savestateInput;
-                else if (span.savestate != null)
-                {
-                    inputs.RemoveRange(0, (int)Math.Min(span.savestateInput, inputs.Count));
-                    state = span.savestate;
-                }
-            }
-            if (inputs.Count == 0) throw new InvalidOperationException(source.name + " has no inputs for a demo.");
-            TechDef owner = _techs.Find(t => t.routeId == source.id);
-            Match start = MatchTechStart(source.name);
-            tech.start = owner != null ? owner.start : start.Success ? start.Value : null;
-            MacroDefinition route = TechRoute(tech);
-            if (route == null)
-            {
-                route = new MacroDefinition();
-                _library.macros.Add(route);
-                tech.routeId = route.id;
-            }
-            string replaced = route.savestateId;
-            route.name = "tech/" + tech.name;
-            route.savestateId = state == null ? "" : AddTechSavestate(state, route.name);
-            route.steps = ToSteps(inputs);
-            SaveLibrary();
-            DropSavestate(replaced);
-            SaveTechs();
-        }
-
-        string AddTechSavestate(Savestate state, string name)
-        {
-            Savestate copy = JsonConvert.DeserializeObject<Savestate>(JsonConvert.SerializeObject(state));
-            copy.id = Guid.NewGuid().ToString("N");
-            copy.name = name;
-            copy.createdUtc = DateTime.UtcNow.ToString("o");
-            _savestates.Insert(0, copy);
-            WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(copy.id) + ".json"), copy, false);
-            return copy.id;
         }
 
         void DropSavestate(string id)
@@ -300,27 +293,6 @@ namespace IGTAPTasMod
             WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(state.id) + ".json"), state, false);
         }
 
-        void FillTechDemos()
-        {
-            if (_techSeenRoute == null || _techSeenFilled) return;
-            _techSeenFilled = true;
-            foreach (TechSpan span in _techSeen)
-            {
-                string detector = span.tech.ToString();
-                TechDef tech = _techs.Find(t => t.detector == detector);
-                MacroDefinition route = tech == null ? null : TechRoute(tech);
-                if (tech == null || route != null && (tech.floatingOrigin || route.id != _techSeenRoute.id || !string.IsNullOrEmpty(route.savestateId) || span.savestate == null)) continue;
-                try
-                {
-                    SetTechDemo(tech, _techSeenRoute, span);
-                    bool own = span.savestate != null && !tech.floatingOrigin;
-                    Logger.LogInfo("Tech demo: " + tech.name + " from " + _techSeenRoute.name + " (input ticks " + (own ? span.savestateInput : 0)
-                        + "-" + span.input + (own ? ", from its own savestate)" : ", from the route's start)"));
-                }
-                catch (InvalidOperationException ex) { Logger.LogWarning("No tech demos from this playback: " + ex.Message); return; }
-            }
-        }
-
         void RemoveTechRoute(MacroDefinition route)
         {
             int index = _library.macros.IndexOf(route);
@@ -330,6 +302,85 @@ namespace IGTAPTasMod
                 _library.macros.Count - 1));
             SaveLibrary();
             DropSavestate(route.savestateId);
+        }
+
+        /// <summary>The route id of a lab demo the Tech tab plays (<see cref="PlayTechLab"/>): never in the library.</summary>
+        const string LabDemoRouteId = "lab-demo";
+        /// <summary>The lab demo playing (or last played) from the Tech tab: its tech on that lab (<see cref="TechLabDemo"/>) and its route.</summary>
+        TechDef _labPlay;
+        MacroDefinition _labPlayRoute;
+
+        /// <summary>Each lab map's id by the tech its file names ("tech"); a lab that doesn't load names none.</summary>
+        Dictionary<string, List<string>> LabsNamingTechs()
+        {
+            var byTech = new Dictionary<string, List<string>>();
+            foreach (string id in LabMapIds())
+            {
+                string tech;
+                try { tech = CachedLabMap(id).tech; }
+                catch (Exception) { continue; }
+                if (string.IsNullOrEmpty(tech)) continue;
+                if (!byTech.TryGetValue(tech, out List<string> ids)) byTech[tech] = ids = new List<string>();
+                ids.Add(id);
+            }
+            return byTech;
+        }
+
+        /// <summary>
+        /// A tech's labs, each with the demo it plays: its own labmap (with its labDemo, else the main demo) first, then every
+        /// other lab map whose file names the tech, with its main demo (spring-double-hit and spring-double-hit-side). A tech
+        /// with none isn't reproduced yet.
+        /// </summary>
+        static List<(string lab, string demo)> TechLabs(TechDef tech, Dictionary<string, List<string>> naming)
+        {
+            var labs = new List<(string lab, string demo)>();
+            if (!string.IsNullOrEmpty(tech.labmap)) labs.Add((tech.labmap, tech.labDemo));
+            if (naming.TryGetValue(tech.id, out List<string> ids))
+                foreach (string id in ids)
+                    if (id != tech.labmap) labs.Add((id, null));
+            return labs;
+        }
+
+        /// <summary>
+        /// One of a tech's lab demos (<paramref name="labId"/>, null: its first lab): the tech as it plays there (its labmap
+        /// and labDemo that lab's, its start the lab category's Course 1 start, whose zone and unlocks the lab's demo was solved
+        /// with) and the demo's input ticks, read from the lab's demo file on every call. <paramref name="demoName"/> picks
+        /// another of the lab's demos (labmaps/&lt;lab&gt;.&lt;demo&gt;.demo.json; empty: its main demo); null plays the one
+        /// <see cref="TechLabs"/> gives the lab.
+        /// </summary>
+        TechDef TechLabDemo(TechDef tech, string labId, out List<SolverTick> inputs, string demoName = null)
+        {
+            List<(string lab, string demo)> labs = TechLabs(tech, LabsNamingTechs());
+            if (labs.Count == 0) throw new InvalidOperationException(tech.name + " has no lab yet.");
+            (string lab, string demo) chosen = labId == null ? labs[0] : labs.Find(l => l.lab == labId);
+            if (chosen.lab == null) throw new InvalidOperationException(tech.name + " has no lab " + labId + ".");
+            if (demoName != null)
+            {
+                if (demoName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new InvalidOperationException("A lab demo's name is file-safe.");
+                chosen.demo = demoName.Length == 0 ? null : demoName;
+            }
+            LabMapDef lab = LoadLabMap(chosen.lab);
+            string start = "1_" + lab.category;
+            if (MatchTechStart(start).Length != start.Length) throw new InvalidOperationException("Lab map " + lab.id + "'s category " + lab.category + " is no category.");
+            string demoFile = lab.id + (string.IsNullOrEmpty(chosen.demo) ? "" : "." + chosen.demo) + ".demo.json";
+            JObject demo = CachedLabJson(demoFile) ?? throw new InvalidOperationException("Lab map " + lab.id + " has no demo " + demoFile + " yet.");
+            inputs = demo["inputs"]?.ToObject<List<SolverTick>>();
+            if (inputs == null || inputs.Count == 0) throw new InvalidOperationException(demoFile + " has no inputs.");
+            return new TechDef { id = tech.id, name = tech.name, category = tech.category, requires = tech.requires, origin = tech.origin,
+                labmap = lab.id, labDemo = chosen.demo, start = start, omniDash = tech.omniDash, floatingOrigin = tech.floatingOrigin };
+        }
+
+        /// <summary>Plays one of a tech's lab demos (<see cref="TechLabDemo"/>) at 1x (walk: slowed), as a route that never enters the library.</summary>
+        void PlayTechLab(TechDef tech, string labId, string demoName, bool walk)
+        {
+            if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
+            TechDef playing = TechLabDemo(tech, labId, out List<SolverTick> inputs, demoName);
+            _labPlay = playing;
+            _labPlayRoute = new MacroDefinition { id = LabDemoRouteId, name = playing.start + " tech " + tech.name, savestateId = "", steps = ToSteps(inputs) };
+            EnsureGameUnpaused();
+            _walkSlowdown = walk ? DefaultWalkSlowdown : 0f;
+            _pendingReplay = _labPlayRoute;
+            _pendingReplayStartDelayTicks = 0;
         }
 
         static string OneOf(JObject body, string key, string[] values)
@@ -343,19 +394,6 @@ namespace IGTAPTasMod
         {
             switch (path)
             {
-                case "/api/techs/add":
-                {
-                    string name = Text(body, "name").Trim();
-                    if (name.Length == 0) throw new InvalidOperationException("A tech needs a name.");
-                    RejectCategoryName("tech/" + name);
-                    string category = OneOf(body, "category", TechCategories);
-                    string slug = TechSlug(name), id = slug.Length == 0 ? "tech" : slug;
-                    for (int n = 2; _techs.Any(t => t.id == id); n++) id = (slug.Length == 0 ? "tech" : slug) + "-" + n;
-                    _techs.Add(new TechDef { id = id, name = name, category = category, origin = "ours",
-                        requires = body["requires"] != null ? RequiredUnlocks(body) : "NONE" });
-                    SaveTechs();
-                    return new { ok = true, id };
-                }
                 case "/api/techs/update":
                 {
                     TechDef tech = FindTech(Text(body, "id"));
@@ -386,20 +424,17 @@ namespace IGTAPTasMod
                         tech.detector = detector.Length == 0 ? null : detector;
                     }
                     if (body["floatingOrigin"] != null) tech.floatingOrigin = (bool)body["floatingOrigin"];
-                    if (body["fastForward"] != null) tech.fastForward = Math.Max(0, Number(body, "fastForward", 0));
-                    if (body["labmap"] != null)
+                    if (body["labmap"] != null || body["labDemo"] != null)
                     {
-                        string labmap = Text(body, "labmap").Trim();
+                        // The tech's own lab and which of its demos it plays (empty: the main one); another lab's file naming the
+                        // tech stays one of its labs either way.
+                        string labmap = body["labmap"] != null ? Text(body, "labmap").Trim() : tech.labmap ?? "";
+                        string labDemo = body["labDemo"] != null ? Text(body, "labDemo").Trim() : labmap == tech.labmap ? tech.labDemo ?? "" : "";
                         if (labmap.Length > 0) LoadLabMap(labmap);
+                        if (labDemo.Length > 0 && (labmap.Length == 0 || labDemo.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+                            throw new InvalidOperationException("A lab demo is one of its lab map's demos (labmaps/<labmap>.<labDemo>.demo.json).");
                         tech.labmap = labmap.Length == 0 ? null : labmap;
-                        if (tech.labmap == null) tech.labDemo = null;
-                    }
-                    if (body["start"] != null)
-                    {
-                        string start = Text(body, "start").Trim();
-                        if (start.Length > 0 && MatchTechStart(start).Length != start.Length)
-                            throw new InvalidOperationException("A start is a category route's prefix (2_WJ_DS) or a Full-TAS run's (fulltas/VMAN_NONE).");
-                        tech.start = start.Length == 0 ? null : start;
+                        tech.labDemo = labDemo.Length == 0 ? null : labDemo;
                     }
                     if (body["related"] is JArray related)
                     {
@@ -440,6 +475,11 @@ namespace IGTAPTasMod
                         into.description = (into.description.Length > 0 ? into.description + "\n\n" : "") + from.name + ": " + from.description;
                     if (from.note != null) into.note = (into.note == null ? "" : into.note + "\n\n") + from.name + ": " + from.note;
                     if (into.detector == null) into.detector = from.detector;
+                    if (into.labmap == null && from.labmap != null)
+                    {
+                        into.labmap = from.labmap;
+                        into.labDemo = from.labDemo;
+                    }
                     MacroDefinition fromRoute = TechRoute(from);
                     if (fromRoute != null)
                     {
@@ -460,109 +500,52 @@ namespace IGTAPTasMod
                     return new { ok = true };
                 }
                 case "/api/techs/play":
-                {
-                    TechDef tech = FindTech(Text(body, "id"));
-                    MacroDefinition route = TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
-                    if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
-                    _library.selectedIndex = _library.macros.IndexOf(route);
-                    SaveSelection();
-                    ReplaySelected(0, Truthy(body, "walk") ? DefaultWalkSlowdown : 0f);
+                    // One of the tech's lab demos (lab: its id, else the tech's first lab; demo: which of that lab's demos, else
+                    // the one the tech plays there), at 1x or walked.
+                    PlayTechLab(FindTech(Text(body, "id")), body["lab"] == null ? null : Text(body, "lab"), body["demo"] == null ? null : Text(body, "demo"),
+                        Truthy(body, "walk"));
                     return new { ok = true };
-                }
-                case "/api/techs/demo":
-                {
-                    TechDef tech = FindTech(Text(body, "id"));
-                    if (PlaybackActive) throw new InvalidOperationException("Stop playback first.");
-                    string from = OneOf(body, "from", new[] { "playback", "selected", "ticks", "lab", "none" });
-                    if (from == "lab")
-                    {
-                        // A lab map's solved demo (labmaps/<id>.demo.json): the tech's demo plays on the injected lab map.
-                        InstallLabDemo(tech, body);
-                    }
-                    else if (from == "playback")
-                    {
-                        int seen = Number(body, "seen", -1);
-                        if (_techSeenRoute == null || seen < 0 || seen >= _techSeen.Count) throw new InvalidOperationException("That playback tech is gone.");
-                        SetTechDemo(tech, _techSeenRoute, _techSeen[seen]);
-                    }
-                    else if (from == "selected")
-                    {
-                        MacroDefinition selected = SelectedMacro ?? throw new InvalidOperationException("Select a route first.");
-                        if (selected.id == tech.routeId) throw new InvalidOperationException("The selected route is already " + tech.name + "'s demo.");
-                        SetTechDemo(tech, selected, null);
-                    }
-                    else if (from == "ticks")
-                    {
-                        // A reproduction: raw input ticks with a category's unlocks (start: 1_WJ_DS_DJ), from its quick restart or
-                        // from a savestate (savestateId: e.g. a lab/ one on flat ground), which the demo gets its own copy of; or a
-                        // Full-TAS run's (fulltas/VMAN_NONE): from a new game of that run, its unlocks the ones the ticks buy.
-                        string start = Text(body, "start").Trim();
-                        string savestateId = Text(body, "savestateId");
-                        if (savestateId.Length > 0 && _savestates.Find(c => c.id == savestateId) == null) throw new InvalidOperationException("Savestate not found.");
-                        if (MatchTechStart(start).Length != start.Length || start.Length == 0)
-                            throw new InvalidOperationException("start is a course category prefix (1_WJ_DS_DJ) or a Full-TAS run's (fulltas/VMAN_NONE).");
-                        if (!(body["ticks"] is JArray ticks) || ticks.Count == 0) throw new InvalidOperationException("ticks: the demo's inputs.");
-                        tech.omniDash = body["omniDash"] != null && (bool)body["omniDash"];
-                        SetTechDemo(tech, new MacroDefinition { name = start + " " + tech.name, savestateId = savestateId,
-                            steps = ToSteps(ticks.ToObject<List<SolverTick>>()) }, null);
-                        // fastForward (a Full-TAS start): the first input ticks run in turbo, so the demo starts where the tech begins.
-                        if (body["fastForward"] != null)
-                        {
-                            tech.fastForward = Math.Max(0, Number(body, "fastForward", 0));
-                            SaveTechs();
-                        }
-                    }
-                    else
-                    {
-                        MacroDefinition route = TechRoute(tech);
-                        if (route != null) RemoveTechRoute(route);
-                        tech.routeId = tech.start = null;
-                        tech.labmap = tech.labDemo = null;
-                        tech.fastForward = 0;
-                        SaveTechs();
-                    }
-                    return new { ok = true };
-                }
             }
             throw new InvalidOperationException("Unknown tech command: " + path);
         }
 
-        static string TechSlug(string name)
-        {
-            return Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
-        }
-
-        /// <summary>The techs, the lab maps and the detectors (studio static state).</summary>
+        /// <summary>
+        /// The techs with their labs (<see cref="TechLabs"/>: each lab's id, the demo the tech plays there and that demo's length),
+        /// those labs (shapes, starts, ghosts' paths) and the detectors (studio static state).
+        /// </summary>
         object BuildTechStaticWebState()
         {
+            Dictionary<string, List<string>> naming = LabsNamingTechs();
+            List<(TechDef tech, List<(string lab, string demo)> labs)> techs = _techs.Select(t => (t, TechLabs(t, naming))).ToList();
             return new
             {
-                list = _techs.Select(t =>
+                list = techs.Select(e => new
                 {
-                    MacroDefinition route = TechRoute(t);
-                    return new { t.id, t.name, t.category, t.requires, t.origin, confirmed = route != null, t.omniDash, t.floatingOrigin, t.fastForward, t.description, t.note, t.detector, t.related, t.start, t.labmap, t.labDemo,
-                        routeId = route == null ? null : route.id,
-                        savestate = route != null && _savestates.Any(c => c.id == route.savestateId),
-                        ticks = route == null ? 0 : route.steps.Where(s => s.enabled).Sum(s => Math.Max(1, s.durationTicks)) };
+                    e.tech.id, e.tech.name, e.tech.category, e.tech.requires, e.tech.origin, e.tech.omniDash, e.tech.floatingOrigin, e.tech.description,
+                    e.tech.note, e.tech.detector, e.tech.related, e.tech.labmap, e.tech.labDemo, e.tech.graft,
+                    labs = e.labs.Select(l =>
+                    {
+                        JObject demo;
+                        try { demo = CachedLabJson(l.lab + (string.IsNullOrEmpty(l.demo) ? "" : "." + l.demo) + ".demo.json"); }
+                        catch (Exception) { demo = null; }
+                        return new { id = l.lab, l.demo, ticks = demo?["ticks"], inputTicks = demo?["inputTicks"] };
+                    }).ToList(),
                 }),
-                labs = LabMapIds().Select(id =>
+                labs = techs.SelectMany(e => e.labs.Select(l => l.lab)).Distinct().Select(id =>
                 {
-                    string techId = _techs.Find(t => t.labmap == id)?.id;
                     try
                     {
                         LabMapDef lab = CachedLabMap(id);
-                        JObject demo = CachedLabJson(lab.id + ".demo.json");
                         return (object)new
                         {
-                            lab.id, tech = techId ?? lab.tech, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
+                            lab.id, lab.tech, lab.name, lab.category, lab.techNote, lab.anchor, lab.region, lab.finish,
                             start = new { lab.start.x, lab.start.y, lab.start.vx, lab.start.vy, lab.start.facing, fields = lab.start.fields },
-                            shapes = lab.shapes.Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
+                            shapes = lab.shapes.Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike, s.rotation, s.spring }),
                             hand = lab.hand == null ? null : new
                             {
-                                shapes = (lab.hand.shapes ?? new List<LabShapeDef>()).Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike }),
+                                shapes = (lab.hand.shapes ?? new List<LabShapeDef>()).Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike, s.rotation, s.spring }),
                                 start = lab.hand.start == null ? null : new { lab.hand.start.x, lab.hand.start.y, lab.hand.start.facing },
                             },
-                            demoTicks = demo?["ticks"], demoInputTicks = demo?["inputTicks"],
                             // The ghosts' paths in the lab's `ghosts` order (the in-game tints'), else the main demo's alone.
                             ghosts = (lab.ghosts ?? new List<LabGhostDef> { new LabGhostDef() }).Select(g =>
                             {
@@ -571,7 +554,7 @@ namespace IGTAPTasMod
                             }),
                         };
                     }
-                    catch (Exception ex) { return new { id, tech = techId, error = ex.Message } as object; }
+                    catch (Exception ex) { return new { id, error = ex.Message } as object; }
                 }).ToList(),
                 detectors = Enumerable.Range(0, TechNames.Length).Select(i => new { id = ((Tech)i).ToString(), label = TechNames[i] }),
             };
@@ -588,6 +571,8 @@ namespace IGTAPTasMod
                     routeId = _techSeenRoute.id,
                     route = _techSeenRoute.name,
                     running = OverlayListsRun,
+                    // A Tech tab lab demo's: which tech on which lab, for its card's verdict.
+                    lab = _techSeenRoute == _labPlayRoute ? new { tech = _labPlay.id, lab = _labPlay.labmap } : null,
                     items = _techSeen.Select(s => new { detector = s.tech.ToString(), label = TechLabel(s.tech), s.start, s.end, s.input }),
                 },
             };

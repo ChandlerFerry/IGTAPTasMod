@@ -524,7 +524,7 @@ namespace IGTAPTasMod
                 // The world as the run starts it, not as the live game has it: the category's abilities are applied while it
                 // is written (below block swap the coloured blocks start unswapped, README ### Rules 13), so a trace's world
                 // agrees with the state its run and the judge start from.
-                List<(string field, object value)> exportAbilities = player == null ? null : ApplyAbilities(player, caps);
+                List<(string field, object value)> exportAbilities = player == null ? null : ApplyAbilities(player, caps, finishCourse);
                 try { EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json")); }
                 finally
                 {
@@ -592,27 +592,17 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A tech demo in turbo from the start its playback uses (`tech-<id>.json` and its world, for `replay`): its category's
-        /// quick restart or its savestate, the category's unlocks plus the demo's omnidirectional dash; a Full-TAS demo from
-        /// its run's new game. The demo starts inside a tick, as its playback does, so the trace's start is the state after
-        /// that first tick (its `tick` says which input comes next). A savestate start is off every course: no course
-        /// finish ends it (course -1), as its turbo run has none.
+        /// A tech's lab demo in turbo from the start its playback uses (`tech-<id>.json` and its world, for `replay`): the lab
+        /// injected and the player at the demo's lab start, the lab category's unlocks plus the tech's omnidirectional dash;
+        /// `lab` picks one of the tech's labs (else its first). The demo starts inside a tick, as its playback does, so the
+        /// trace's start is the state after that first tick (its `tick` says which input comes next). A lab start is off every
+        /// course: no course finish ends it (course -1), as its turbo run has none.
         /// </summary>
         object EngineSimTechTrace(WebStudioRequest request, JObject body)
         {
-            TechDef tech = FindTech(Text(body, "tech"));
-            MacroDefinition route = TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
-            List<SolverTick> inputs = ToTicks(route.steps.Where(s => s.enabled).ToList());
+            TechDef tech = TechLabDemo(FindTech(Text(body, "tech")), body["lab"] == null ? null : Text(body, "lab"), out List<SolverTick> inputs);
             string name = "tech-" + tech.id;
-            string start = tech.start ?? throw new InvalidOperationException(tech.name + "'s demo has no start (a category or a Full-TAS run).");
-            Match fullTas = Regex.Match(start, @"^fulltas/(.+)_NONE$", RegexOptions.IgnoreCase);
-            if (fullTas.Success)
-            {
-                FullTasRunDef run = FindFullTasRun(fullTas.Groups[1].Value);
-                ResolveFullTasGoals(run);
-                return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, true));
-            }
-            string[] parts = start.Split(new[] { '_' }, 2);
+            string[] parts = tech.start.Split(new[] { '_' }, 2);
             CourseDef def = _courses.Find(c => string.Equals(c.Token, parts[0], StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException("No course " + parts[0] + " for " + tech.name + "'s demo.");
             if (PlaybackActive || _recorder.IsRecording || _newGamePhase != 0)
@@ -631,8 +621,6 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = "Course " + def.Token + " is loading; retry in a moment." };
             }
-            // A savestate or lab start is off every course (course -1): no course finish ends it.
-            bool savestate = !string.IsNullOrEmpty(route.savestateId) || !string.IsNullOrEmpty(tech.labmap);
             string path = Path.Combine(EngineSimDir, name + ".json"), worldPath = Path.Combine(EngineSimDir, name + ".world.json");
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot first = null;
@@ -677,7 +665,7 @@ namespace IGTAPTasMod
                 TurboRunner.PutOrigin(first.origin);
                 ParkAtStart();
                 w.WriteEndArray();
-                WriteTraceTarget(json, savestate ? null : def, savestate ? -1 : def.id, _solverCaps, inputs);
+                WriteTraceTarget(json, null, -1, _solverCaps, inputs);
                 w.WritePropertyName("tech"); w.WriteValue(tech.id);
                 w.WritePropertyName("start"); w.WriteRawValue(startJson.ToString());
                 w.WritePropertyName("result");

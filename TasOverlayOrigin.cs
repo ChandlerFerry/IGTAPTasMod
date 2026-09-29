@@ -38,10 +38,7 @@ namespace IGTAPTasMod
             get
             {
                 MacroDefinition route = _engine.IsRunning ? _engine.ActiveMacro : null;
-                if (route == null) return false;
-                foreach (TechDef tech in _techs)
-                    if (tech.floatingOrigin && tech.routeId == route.id) return true;
-                return false;
+                return route != null && TechOfRoute(route) is TechDef tech && tech.floatingOrigin;
             }
         }
 

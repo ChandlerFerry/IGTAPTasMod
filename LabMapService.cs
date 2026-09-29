@@ -18,10 +18,10 @@ namespace IGTAPTasMod
     /// demonstrate one tech exactly (root README "### Rules": lab only, never a route, restored afterwards).
     /// <c>POST /api/labmap/inject {id}</c> builds one root of colliders at its anchor (world frame through
     /// FloatingOrigin.currentOrigin), <c>POST /api/labmap/restore</c> destroys it and puts back anything the lab session
-    /// touched (the player included). A tech demo whose tech carries a lab map injects, plays from the lab start (the lab
-    /// savestate <c>place</c> mechanism) and, at a 1x playback's end, leaves the player in the lab's hand play at its start
-    /// (Unload puts back what loading it changed); a scene change restores, and the save gate and autosave refuse while a
-    /// lab map is injected.
+    /// touched (the player included). A tech's lab demo (the Tech tab's Play, <see cref="PlayTechLab"/>) injects, plays from
+    /// the lab start (the lab savestate <c>place</c> mechanism) and, at a 1x playback's end, leaves the player in the lab's
+    /// hand play at its start (Unload puts back what loading it changed); a scene change restores, and the save gate and
+    /// autosave refuse while a lab map is injected.
     /// </summary>
     public sealed partial class TasPlugin
     {
@@ -35,11 +35,37 @@ namespace IGTAPTasMod
             public string tag = "Ground";
             public bool trigger;
             public bool spike;
+            /// <summary>A box's rotation about z in degrees, counter-clockwise: its collider turns with it, and a spring's
+            /// transform.up (180 launches down).</summary>
+            public float rotation;
+            /// <summary>The game's SpringScript with these serialized fields (the shape is its trigger).</summary>
+            public LabSpringDef spring;
+            /// <summary>A coloured block ("blue" or "orange"): on only while its colour is the active one; swapBlocks toggles it
+            /// with the scene's coloured tilemaps (<see cref="AfterSwapBlocks"/>), as the offline engine does (LabMap.Inject).</summary>
+            public string colour;
+
+            /// <summary>The shape object's rotation, the same float quaternion as the offline engine's (LabShape.Rotation).</summary>
+            public Quaternion Rotation()
+            {
+                if (rotation == 0f) return Quaternion.identity;
+                double half = rotation * Math.PI / 360.0;
+                return new Quaternion(0f, 0f, (float)Math.Sin(half), (float)Math.Cos(half));
+            }
+        }
+
+        /// <summary>A lab spring's SpringScript fields (the Course 5 ceiling spring's: upForce 70, strength 300, movementLock 0.25).</summary>
+        public sealed class LabSpringDef
+        {
+            public float upForce = 70f;
+            public float strength;
+            public float movementLock = 0.25f;
         }
 
         public sealed class LabStartDef
         {
             public float? x, y, vx, vy, mx, my, facing;
+            /// <summary>The coloured blocks' state at the start (colouredBlockSwapper.isBlueActive); null keeps the game's.</summary>
+            public bool? blueActive;
             public JObject fields;
         }
 
@@ -119,18 +145,33 @@ namespace IGTAPTasMod
 
         string LabMapsDir { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "labmaps"); } }
 
-        /// <summary>A seeded lab map (or its solved demo) from the plugin's embedded labmaps/, as techs.json seeds itself.</summary>
+        /// <summary>Lab files already checked against the plugin's embedded copy this session (<see cref="LabMapFile"/>).</summary>
+        readonly HashSet<string> _labFilesSeeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A lab map (or one of its solved demos) in the config's labmaps/. The plugin's embedded labmaps/ (the repo's, built in)
+        /// are the source of truth: the first time a session asks for a file it has, a missing or different config copy is
+        /// written over, so a redeploy brings every repo lab and demo in. A file only the config has is left as it is.
+        /// </summary>
         string LabMapFile(string fileName)
         {
             string path = Path.Combine(LabMapsDir, fileName);
-            if (File.Exists(path)) return path;
+            if (!_labFilesSeeded.Add(fileName)) return File.Exists(path) ? path : null;
+            string seeded;
             using (Stream seed = Assembly.GetExecutingAssembly().GetManifestResourceStream("IGTAPTasMod.labmaps." + fileName))
             {
-                if (seed == null) return null;
-                Directory.CreateDirectory(LabMapsDir);
-                using (var reader = new StreamReader(seed)) File.WriteAllText(path, reader.ReadToEnd());
-                return path;
+                if (seed == null) return File.Exists(path) ? path : null;
+                using (var reader = new StreamReader(seed)) seeded = reader.ReadToEnd();
             }
+            if (File.Exists(path) && File.ReadAllText(path) == seeded) return path;
+            Directory.CreateDirectory(LabMapsDir);
+            if (File.Exists(path)) Logger.LogInfo("labmaps/" + fileName + ": the config copy differs from the plugin's; replaced with the plugin's.");
+            // Written aside, then moved over: a crash mid-write never leaves an empty lab file.
+            string temporary = path + ".tmp";
+            File.WriteAllText(temporary, seeded);
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
+            return path;
         }
 
         internal LabMapDef LoadLabMap(string id)
@@ -143,6 +184,12 @@ namespace IGTAPTasMod
             if (lab.shapes == null || lab.shapes.Count == 0) throw new InvalidOperationException("Lab map " + id + " has no shapes.");
             if (lab.anchor == null || lab.anchor.Length < 2) throw new InvalidOperationException("Lab map " + id + " has no anchor [x, y].");
             if (lab.finish == null || lab.finish.Length < 4) throw new InvalidOperationException("Lab map " + id + " has no finish [x, y, w, h].");
+            foreach (LabShapeDef shape in lab.shapes.Concat(lab.hand?.shapes ?? new List<LabShapeDef>()))
+            {
+                if (shape.rotation != 0f && shape.kind != "box") throw new InvalidOperationException("Lab map " + id + ": only a box has a rotation.");
+                if (shape.spring != null && !shape.trigger) throw new InvalidOperationException("Lab map " + id + ": a spring is a trigger (SpringScript acts on OnTriggerStay2D).");
+                if (shape.colour != null && shape.colour != "blue" && shape.colour != "orange") throw new InvalidOperationException("Lab map " + id + ": a shape's colour is blue or orange, not " + shape.colour + ".");
+            }
             return lab;
         }
 
@@ -270,6 +317,13 @@ namespace IGTAPTasMod
             ResetToLabBase(player, (string)demo["solvedIn"]);
             SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)), MacroLibrary.CurrentSchemaVersion);
             if (!placed.Success) throw new InvalidOperationException("Lab start: " + placed.Message);
+            ApplyLabBlocks(player, start);
+        }
+
+        /// <summary>The lab start's coloured blocks (<c>blueActive</c>): the game's own swap, which the lab's coloured shapes follow.</summary>
+        static void ApplyLabBlocks(Movement player, LabStartDef start)
+        {
+            if (start.blueActive is bool blue) SetMovementField(player, BlueActiveField, blue);
         }
 
         /// <summary>
@@ -390,12 +444,17 @@ namespace IGTAPTasMod
             var root = new GameObject("LabMap " + lab.id);
             root.transform.position = new Vector3(ax + origin.x, ay + origin.y, 0f);
             List<LabShapeDef> shapes = hand && lab.hand != null ? lab.shapes.Concat(lab.hand.shapes ?? new List<LabShapeDef>()).ToList() : lab.shapes;
+            LabColours.Clear();
+            colouredBlockSwapper swapper = FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
+            bool blueActive = swapper == null || swapper.isBlueActive;
+            if (shapes.Any(s => s.colour != null)) PatchLabColours();
             for (int i = 0; i < shapes.Count; i++)
             {
                 LabShapeDef shape = shapes[i];
                 var go = new GameObject(lab.id + " " + (i + 1) + " " + shape.kind);
                 go.transform.SetParent(root.transform, false);
                 go.transform.localPosition = new Vector3(shape.at != null ? shape.at[0] : 0f, shape.at != null ? shape.at[1] : 0f, 0f);
+                go.transform.localRotation = shape.Rotation();
                 go.layer = LayerNumber(shape.layer);
                 try { go.tag = string.IsNullOrEmpty(shape.tag) ? "Untagged" : shape.tag; }
                 catch (Exception) { go.tag = "Untagged"; }
@@ -424,7 +483,23 @@ namespace IGTAPTasMod
                     }
                     default: throw new InvalidOperationException("A lab shape's kind is box, polygon or edge, not " + shape.kind + ".");
                 }
+                if (shape.colour != null)
+                {
+                    Collider2D collider = go.GetComponent<Collider2D>();
+                    bool blue = shape.colour == "blue";
+                    LabColours.Add((collider, blue));
+                    collider.enabled = blue == blueActive;
+                }
                 if (shape.spike) go.AddComponent<spikeScript>();
+                if (shape.spring != null)
+                {
+                    // The game's own spring, its serialized fields as a scene spring carries them (no Animator: OnTriggerStay2D
+                    // skips the animation and the sound).
+                    var spring = go.AddComponent<SpringScript>();
+                    LabSpringUpForce.SetValue(spring, shape.spring.upForce);
+                    LabSpringStrength.SetValue(spring, shape.spring.strength);
+                    LabSpringMovementLock.SetValue(spring, shape.spring.movementLock);
+                }
                 LabShapeVisual(go.transform, shape, 1f);
             }
             _lab = new LabSession
@@ -438,6 +513,30 @@ namespace IGTAPTasMod
                 + " (" + shapes.Count + " shapes" + (hand ? ", for hand play" : "") + (_lab.Ghosts.Count > 0 ? ", " + _lab.Ghosts.Count + " ghost" + (_lab.Ghosts.Count == 1 ? "" : "s") : "")
                 + "); autosave and the route gate are off until it is restored.");
         }
+
+        /// <summary>The injected lab's coloured shapes' colliders and colours (blue: true).</summary>
+        static readonly List<(Collider2D collider, bool blue)> LabColours = new List<(Collider2D, bool)>();
+        bool _labColoursPatched;
+
+        /// <summary>swapBlocks's postfix, patched when a lab with coloured shapes is first injected.</summary>
+        void PatchLabColours()
+        {
+            if (_labColoursPatched) return;
+            _labColoursPatched = true;
+            _harmony.Patch(AccessTools.Method(typeof(colouredBlockSwapper), "swapBlocks"),
+                postfix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(AfterSwapBlocks))));
+        }
+
+        /// <summary>A block swap toggles the lab's coloured shapes with the scene's coloured tilemaps.</summary>
+        static void AfterSwapBlocks(bool BlueActive)
+        {
+            foreach (var (collider, blue) in LabColours)
+                if (collider != null) collider.enabled = blue == BlueActive;
+        }
+
+        static readonly FieldInfo LabSpringUpForce = AccessTools.Field(typeof(SpringScript), "upForce"),
+            LabSpringStrength = AccessTools.Field(typeof(SpringScript), "strength"),
+            LabSpringMovementLock = AccessTools.Field(typeof(SpringScript), "movementLock");
 
         static int LayerNumber(string layer)
         {
@@ -501,18 +600,27 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A lab shape as drawn in game, under <paramref name="parent"/> (at the shape's own position): ground dark with a cyan
-        /// outline, spikes red, triggers purple, moss green; <paramref name="alpha"/> below 1 for a ghost lane's see-through copy.
+        /// A lab shape as drawn in game, under <paramref name="parent"/> (at the shape's own position and rotation): ground dark
+        /// with a cyan outline, spikes red, springs yellow with an arrow along their launch (transform.up), other triggers
+        /// purple, moss green; <paramref name="alpha"/> below 1 for a ghost lane's see-through copy.
         /// </summary>
         static void LabShapeVisual(Transform parent, LabShapeDef shape, float alpha)
         {
-            Color color = shape.spike || shape.layer == "Spikes" ? new Color(0.75f, 0.22f, 0.17f, alpha) : shape.trigger ? new Color(0.56f, 0.27f, 0.68f, alpha)
-                : shape.tag == "Moss" ? new Color(0.15f, 0.68f, 0.38f, alpha) : new Color(0.10f, 0.14f, 0.20f, alpha);
+            Color color = shape.spike || shape.layer == "Spikes" ? new Color(0.75f, 0.22f, 0.17f, alpha) : shape.spring != null ? new Color(1f, 0.84f, 0.31f, alpha)
+                : shape.colour == "blue" ? new Color(0.20f, 0.45f, 0.95f, alpha) : shape.colour == "orange" ? new Color(0.95f, 0.55f, 0.15f, alpha)
+                : shape.trigger ? new Color(0.56f, 0.27f, 0.68f, alpha) : shape.tag == "Moss" ? new Color(0.15f, 0.68f, 0.38f, alpha) : new Color(0.10f, 0.14f, 0.20f, alpha);
             if (shape.kind == "box")
             {
                 float w = shape.size[0] / 2f, h = shape.size[1] / 2f;
                 LabBox(parent, Vector2.zero, new Vector2(shape.size[0], shape.size[1]), color);
                 LabLine(parent, new[] { new Vector2(-w, -h), new Vector2(w, -h), new Vector2(w, h), new Vector2(-w, h) }, true, new Color(0.3f, 0.85f, 1f, alpha), 3f);
+                if (shape.spring != null)
+                {
+                    // The launch direction, local up (the parent carries the rotation): out of the far side, in the spring's colour.
+                    float tip = h + 40f, head = Mathf.Min(w, 16f);
+                    LabLine(parent, new[] { new Vector2(0f, h), new Vector2(0f, tip) }, false, color, 6f);
+                    LabLine(parent, new[] { new Vector2(-head, tip - head), new Vector2(0f, tip), new Vector2(head, tip - head) }, false, color, 6f);
+                }
             }
             else LabLine(parent, shape.points.Select(p => new Vector2(p[0], p[1])).ToArray(), shape.kind == "polygon", color, 6f);
         }
@@ -570,14 +678,15 @@ namespace IGTAPTasMod
             if (category == null) throw new InvalidOperationException("Lab map " + lab.id + " has an unknown category " + lab.category + ".");
             LabStartDef at = lab.hand?.start ?? lab.start;
             _engine.ClearInjectedInput(player);
-            if (_lab.SavedAbilities == null) _lab.SavedAbilities = ApplyAbilities(player, category.Id);
+            if (_lab.SavedAbilities == null) _lab.SavedAbilities = ApplyAbilities(player, category.Id, null);
             ResetToLabBase(player, (string)CachedLabJson(lab.id + ".demo.json")?["solvedIn"]);
-            ApplyAbilities(player, category.Id);
+            ApplyAbilities(player, category.Id, null);
             if (_lab.CourseResetPointBefore == null) _lab.CourseResetPointBefore = player.courseResetPoint;
             if (_lab.RespawnPointBefore == null) _lab.RespawnPointBefore = player.respawnPoint;
             Savestate start = PlacedSavestate(LabStartBody(lab, at));
             SavestateResult restored = SavestateService.Restore(player, start, MacroLibrary.CurrentSchemaVersion);
             if (!restored.Success) throw new InvalidOperationException("Lab start: " + restored.Message);
+            ApplyLabBlocks(player, at);
             LeaveCourses(player);
             // Movement.respawn puts the dot at respawnPoint (world frame) 12 units down.
             player.respawnPoint = new Vector2(lab.anchor[0] + (at.x ?? 0f), lab.anchor[1] + (at.y ?? 0f) + 12f);
@@ -608,6 +717,7 @@ namespace IGTAPTasMod
             LabSession lab = _lab;
             _lab = null;
             if (lab.Root != null) DestroyImmediate(lab.Root);
+            LabColours.Clear();
             Movement player = FindWorldMovement();
             if (player != null)
             {
@@ -639,47 +749,6 @@ namespace IGTAPTasMod
             if (!_lab.PlaybackSeen) return;
             if (_lab.ReturnToHand) ReturnToHandPlay();
             else RestoreLab("playback end");
-        }
-
-        /// <summary>
-        /// Installs a tech's lab demo (labmaps/&lt;id&gt;.demo.json's inputs, or labmaps/&lt;id&gt;.&lt;labDemo&gt;.demo.json for one of
-        /// the lab's other demos) as its demo route. The route has no savestate: every playback builds its start from the lab
-        /// (<see cref="PlaceLabDemoStart"/>: the demo's own <c>start</c> when it has one, else the lab's).
-        /// </summary>
-        void InstallLabDemo(TechDef tech, JObject body)
-        {
-            string id = Text(body, "labmap");
-            if (id.Length == 0) id = tech.labmap ?? "";
-            string labDemo = body["labDemo"] != null ? Text(body, "labDemo") : id == tech.labmap ? tech.labDemo ?? "" : "";
-            LabMapDef lab = LoadLabMap(id);
-            string demoFile = id + (labDemo.Length > 0 ? "." + labDemo : "") + ".demo.json";
-            string demoPath = LabMapFile(demoFile) ?? throw new InvalidOperationException("Lab map " + id + " has no demo " + demoFile + ".");
-            JObject demo = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(demoPath));
-            List<SolverTick> ticks = demo["inputs"].ToObject<List<SolverTick>>();
-            if (ticks == null || ticks.Count == 0) throw new InvalidOperationException("Lab map " + id + "'s demo has no inputs.");
-            string start = Text(body, "start");
-            if (start.Length == 0) start = tech.start ?? "";
-            if (MatchTechStart(start).Length != start.Length || start.Length == 0)
-                throw new InvalidOperationException("start is a course category prefix (1_WJ_DS) matching the lab map's category " + lab.category + ".");
-            if (demo["start"] != null && !(demo["start"] is JObject)) throw new InvalidOperationException(demoFile + ": start is an object (the lab start's format).");
-            tech.labmap = id;
-            tech.labDemo = labDemo.Length > 0 ? labDemo : null;
-            tech.start = start;
-            MacroDefinition route = TechRoute(tech);
-            if (route == null)
-            {
-                route = new MacroDefinition();
-                _library.macros.Add(route);
-                tech.routeId = route.id;
-            }
-            string replaced = route.savestateId;
-            route.name = "tech/" + tech.name;
-            route.savestateId = "";
-            route.steps = ToSteps(ticks);
-            SaveLibrary();
-            DropSavestate(replaced);
-            SaveTechs();
-            Logger.LogInfo("Lab demo " + id + " installed for " + tech.name + ": " + ticks.Count + " input ticks from lab/" + id + ".");
         }
     }
 }

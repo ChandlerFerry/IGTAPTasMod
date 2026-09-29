@@ -241,6 +241,80 @@ move a press or a dash a few ticks while keeping where the hold ends.
   wall or floor in reach before the flag clears. The overlay labels the jump FINAL-CLING FLOAT (`Tech.FinalClingFloat`:
   a jump with the flag still on). While the lab is injected, its trainer panel (`LabTrainerFloat.cs`) follows each attempt
   as the pauselift's does: these steps as chips (green done, red failed and why) and a timeline in ticks from the cling.
+- **Spring clip** (`NONE` and up, tech demo `spring-clip` on its lab map): fall through a spike strip on a downward
+  spring's momentum. A spike kills on its 2nd Stay (`counter > graceFrames` 1) and the first overlapping tick is the
+  Enter, so the dot may be in the spikes on 2 ticks: through a 32-tall strip the hurtbox (54 tall) has to travel 86 u in
+  3 ticks, and a plain fast fall tops out at 79.0. A spring pointing down (`hitSpring` with `up` (0, -1): no cutscene)
+  adds `momentum.y` −575 and sets `Velocity.y` −270 (the Course 5 ceiling spring, upForce 70, strength 300); the
+  momentum decays slowly while the fast fall builds, and 14-67 ticks after the hit the fall is faster than the 28.7 u a
+  tick the strip needs (96 u over 3 ticks at best, ~23 ticks after it). By hand on the lab map (a ledge under a ceiling
+  with the spring hanging from it, the strip 618 u below the hit):
+  1. Jump into the spring and hold jump; any held jump from the ledge meets it rising at the same height, so the hit is
+     always at the same place (offline: 0-6 ticks of walking first, full or 0.55 stick).
+  2. Hold down by the 2nd tick after the hit; sideways doesn't matter (the strip is wide and only the fall's speed
+     counts). Later, the fall is 3 ticks in the strip.
+  The strip has to sit in the fall's phase: for the lab's fall its top can be anywhere in a 10 u window, and the same
+  jump away from the spring dies there. Nothing may touch a floor, ceiling or wall between the hit and the spikes: a
+  contact with a (0, ±1) normal, or a cling, zeroes `momentum.y`. The overlay labels the crossing SPIKE GRACE.
+- **Spring double hit** (`DJ`, tech demo `spring-double-hit` on its lab map): a down spring hit refills the double
+  jump, and a double jump 2 ticks after the hit (745 against the ~−550 momentum) holds the dot inside the spring's
+  80x80 trigger, a few u a tick, until `SpringScript`'s 0.15 s cooldown ends; the spring then hits again: `momentum.y`
+  −1054.9 instead of −575. By hand on the lab map (spring-clip's ledge and ceiling spring, a 32-tall strip 302 u under
+  the hit):
+  1. Jump into the spring holding jump (the hit on tick 18), release it right after.
+  2. Press jump again on the 2nd tick after the hit (tick 20) and hold it; the 3rd or 4th tick is too late (the dot
+     has sunk out of the trigger, one hit). The dot hovers at y 222.7-237.8 until the second hit on tick 26.
+  3. Hold down: 32.1 and 32.7 u a tick at the strip, in it on ticks 36 and 37 only, the finish box on tick 40.
+  One hit (the same inputs without the double jump) crosses the strip at 25.3-26.9 u a tick and dies. A third hit
+  fails: the refilled double jump (745 against ~−1030) sinks out of the trigger.
+  Nothing in it is downward-only: `SpringScript`'s cooldown re-hit works for a spring pointing any way, as long as
+  something holds the dot in its trigger until the cooldown ends. The demo is the downward case.
+- **Spring dash stack** (`DS_OM`, tech demo `spring-dash-stack` on its lab map): dash straight down through a second
+  down spring. The dash parks the momentum in `preDashMomentum` (no decay for its ticks), and the hit mid-dash calls
+  `endDash` (95 % back, the signs match) before adding the spring's −575: `momentum.y` −1109 and `Velocity.y` −270. A
+  down or flat dash that ends in the air instead gets the dash-end brake (`endDash` sets `Velocity.y` 10 when it is
+  under 10). By hand on the lab map (spring-clip's ceiling spring, a second one under the ledge's right end, a 32-tall
+  strip under it): jump into the ceiling spring (tick 18), dash with the stick straight down on the next tick (input
+  19; input 20 works too, −1097), hold down. The hit is on tick 27, the strip on ticks 39 and 40, the finish box on
+  tick 42. Aimed down-right the dash misses the spring and ends with `Velocity.y` +10 and −522 momentum (dies in the
+  strip); no dash falls through the same spring for −1013.4, 3 ticks later, and finishes 4 ticks behind.
+  Nothing in it is downward-only either: `endDash` gives back `preDashMomentum.x` for a dash in its sign (not aimed up)
+  and `preDashMomentum.y` for a dash in its sign, so a dash along a spring's direction through the next spring stacks
+  sideways and upward launches the same way. The demo is the downward case.
+- **Overhang slide** (`NONE` and up, tech demo `overhang-slide` on its lab map): move sideways fast into an overhang (a
+  surface whose normal points down and against the motion). Box2D's contact keeps only the along-surface part of the
+  body's velocity, which points down: (vx − vy)/2 per second on a 45° overhang, and the game rewrites the body's
+  velocity to `Velocity + momentum` every tick while leaving `momentum.x` alone, so it holds on every contact tick. A
+  sideways spring's launch (Course 5's Spring (2): momentum (3520, 125)) slides 24-27.6 u a tick down from its first
+  contact tick; a flat launch with momentum.x 3000 slides 33.6. By hand on the lab map: walk right into the sideways
+  spring. The launch meets the 45° box on tick 25 and slides 444.6 u down in 18 ticks into the finish band on tick 50;
+  the same launch the other way (no overhang) rises for 21 ticks and reaches the band on tick 85. Off the slope the
+  extra speed is gone (the fall is the ordinary one). In the normal world two exposed overhangs have room for the dot
+  under them: (7255, 587)-(7856, 1188), 45°, facing down-right (move left into it), and (24278, -4285)-(25274, -5667),
+  about 54° from vertical, facing down-left (move right into it).
+- **Landing jump keeps downward momentum** (`NONE` and up, tech demo `landing-jump-momentum-carry` on its lab map):
+  `OnCollisionStay2D` zeroes `momentum.y` on a floor contact, but not while `recentlyJumped` is on, and a jump buffered
+  for the landing tick (pressed up to 6 ticks before) leaves on the tick the ground rays land the dot. So landing with
+  downward momentum and jumping on that tick keeps it; a jump one tick later finds it zeroed. By hand on the lab map
+  (spring-clip's ceiling spring and a ledge 200 u under the start): jump into the spring (tick 18), press jump 1-6
+  ticks before landing on the ledge and release it at once (jump cut), then hold right and down off the ledge's edge.
+  The landing tick 38 jumps with 805 against −365.7 kept (a low hop, peak y −102.4), and the dot is below y −600 on
+  tick 77 and under y −1000 (the finish box) on tick 90. Jumping one tick late: y −600 on tick 85, the box on tick 100;
+  landing and walking off: tick 80 and tick 95. (`landing-tick-jump` is the `momentum.x` side: ground friction.)
+
+**Downward speed.** What gives the dot downward speed: a spring pointing down (`hitSpring` with `up` (0, −1),
+`momentum.y` +upForce/4·10 − strength/4·10; stacked by a double jump or a straight-down dash, above), a zip mover moving
+down (walking off Course 15's zip mover on its return: momentum (526, −343), offline from `start-c15-wjdsdjbszip`),
+an overhang slide (above), the Long Fall shaft's longfall mode (entering `LongFallCollider` at world (−910,
+13888): 62.6 u/s more every tick with no fall drag, capped at 2200 u/s ~35 ticks in, x locked; it takes no input at
+all, `getPlayerControlledInput` doesn't run), and a dash, which moves 33.4 u a tick down but is only safe in spikes on
+their Enter tick (a Stay while `dashActive` kills). What can't: every upward boost pushes along `Vector2.up` or the
+player's own `transform.up` (the superbounce: `SpecialWallJump(0.6f, 1f, transform.up * dashBoostUpwards)`, Movement.cs 1054), and
+the player's frame is only rotated while dead, so no jump or bounce can be turned downward (a spring's own
+`transform.up` is how the downward pushes happen); and a down or flat dash that ends in the air sets `Velocity.y` to
+10 when it is under 10 (the dash-end brake), so a dash only keeps its downward speed when a spring hit ends it (spring
+dash stack). Keeping it: any (0, ±1) floor or ceiling contact and any cling zero `momentum.y`, except a floor contact
+on a landing-tick jump.
 
 ### Omnidirectional dash (Vman)
 
@@ -274,16 +348,14 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   Vman start that is the platform above and left of Course 4 (floor y 11625), from the platform the top of the map
   (the floor at y 26057 above Course 4's spike tunnel).
 
-  The Tech tab's Float Ultra demo loads a fresh VMAN game, fast-forwards the run's best to its quick restart on that
-  platform in turbo (`fastForward` 635 input ticks: the world as the run left it, which a savestate can't hold), then
-  at 1x: walk, hyper, hyper (float ultra; the sphere moves to the platform), down to the left end of Course 1's floor
-  (crossed below the line: the sphere moves there, no float ultra), and back up to the platform for a second float
-  ultra. Both routes were found with `fulltas`; turbo and the offline engine rebase as 1x does (`enginesim/README.md`),
-  so the demo's turbo trace replays offline with the float ultra at the same tick (`tools/tech-check.py`). While it
-  plays, the overlay (`TasOverlayOrigin.cs`) draws the sphere's edge and centre line green above / red below, tags the
-  player ABOVE/BELOW the line with its height, shows the distance to the edge, the step it is on (ARMED after an
-  above-line crossing, FLOAT ULTRA when it lands) and a minimap of every sphere the playback was in, where each was
-  crossed and the player's path. A tech with `floatingOrigin` gets that overlay and is never cut to a savestate.
+  The Tech tab's Float Ultra is its lab (`labmaps/float-ultra.json`): a floor at world y 17000 that crosses the
+  sphere's edge, a 1200 u gap and a landing platform, where the demo walks, hops and chains two hypers across the edge
+  (the lab's notes have the numbers). Turbo and the offline engine rebase as 1x does (`enginesim/README.md`), so the
+  demo's turbo trace replays offline with the float ultra at the same tick (`tools/tech-check.py`). While it plays,
+  the overlay (`TasOverlayOrigin.cs`) draws the sphere's edge and centre line green above / red below, tags the player
+  ABOVE/BELOW the line with its height, shows the distance to the edge, the step it is on (ARMED after an above-line
+  crossing, FLOAT ULTRA when it lands) and a minimap of every sphere the playback was in, where each was crossed and the
+  player's path. A tech with `floatingOrigin` gets that overlay.
 - **High super**: dash up-diagonal on the ground and press jump in the dash, on any of its first 6 dash ticks. The
   dash lifts off, but `onGround` lasts through the coyote frames, so the jump is a super (805 up, the same 900 sideways
   momentum as a flat super) from up to 129 u above the floor, and it gives the dash back: one dash is enough. The
@@ -396,25 +468,21 @@ normal one lets through), the pauselift (an inwall climb with the pause menu ope
 intangibility (`PlatformMover.MakeIntangible`), each read from the game's state as it happens.
 Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`). The Tech tab's live
 catalog (the config folder's `techs.json`) keeps its own edits; a plugin build adds the techs and detectors its built-in
-list has that the live one lacks, once each (`techs.seeded.json` remembers them, so a deletion in the tab sticks).
-Manual play's techs show on the overlay only: the tab's demos are cut from a route's playback.
-The first time a playback does a tech that has no demo route yet, the tab saves one (`tech/<name>` in the route
-library): while a route plays, the overlay keeps a player savestate for each of the last 256 input ticks, and the demo
-gets its own copy of the latest one at least 25 ticks before the tech starts, taken on a tick with no dash or cutscene
-running, as a savestate of the same name that is attached to it. Its inputs run from that tick to 25 ticks after the
-tech. Playing an older demo that has no savestate gives it one the same way; removing a demo or its tech deletes its
-savestate. A savestate holds only the player (position, velocity, buffers), so a demo cut from a Full-TAS run plays in
-whatever world is loaded, with the unlocks you have now. Starting from a savestate also takes the dot off every course
-(no course tracking, `courseResetPoint` zero), so a quick restart goes to the last checkpoint, not to the start of a
-course an earlier run left timing. A course demo still sets the course's zone and its
-category's unlocks. A demo with no savestate (nothing clean in the window, or **Use selected route** on a route
-without one) starts from its route's start.
+list has that the live one lacks, once each (`techs.seeded.json` remembers them, so a deletion in the tab sticks), and
+removes, once, a tech the built-in list offered before and has since dropped (a tech the built-in list never had is
+yours and stays). The lab fields (`labmap`, `labDemo`) and the offline miner's (`start`, `graftKey`, `graft`) are the
+repo's: the built-in ones fill a live tech's gaps on every load. The plugin's embedded `labmaps/` are the source of truth
+too: a config copy of a lab or demo that differs is replaced with the plugin's the first time a session reads it.
 
-A tech is **confirmed** only while it has a demo route: the Tech tab lists techs with one under Confirmed and the rest
-under Unconfirmed (reported, not reproduced). A reproduction found offline becomes a demo with `POST /api/techs/demo
-{id, from: "ticks", start: "1_WJ_DS_DJ", ticks, savestateId?}`: raw input ticks with that category's unlocks, from its
-quick restart or from a savestate (a `lab/` one from `/api/savestates/place` puts the dot right where the tech starts).
-With `start: "fulltas/VMAN_NONE"` and no savestate the ticks play from a new game of that Full-TAS run.
+A tech is its lab demos, or it isn't a real tech yet. Its labs are its own `labmap` (playing its `labDemo`, else the
+lab's main demo) and every lab map whose file names it (`"tech"`, with its main demo). The Tech tab shows one card per
+tech with a lab: its description and notes, then each lab with its preview (the ghosts' paths and their legend), the lab
+notes, **▶ Play** and **⏵ Walk** (the demo at 1x, or with game time slowed 10×: `POST /api/techs/play {id, lab, demo?,
+walk?}`), and **Load lab** / **Unload** to play it by hand. A tech with no lab is named in one collapsed line at the
+bottom, "Not reproduced yet": a `"graft": "todo"` one is known real with no lab yet, any other is marked "(no lab)".
+A reproduction found offline becomes a tech's demo as a lab (`lab solve`, `labmaps/<id>.demo.json`), not a route. The
+playback detector's tech overlay still works for any route; the tab's verdict on a card compares the last lab demo
+played with the tech's detector.
 
 ## The gate
 

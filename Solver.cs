@@ -84,12 +84,22 @@ namespace IGTAPTasMod
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
+        /// <summary>The fastest offline best's farm time (its run from the quick restart), for an Improve of the farm time.</summary>
+        float _solveBestFarm = float.PositiveInfinity;
+        /// <summary>Improve's last `waypoints {json}` line: the waypoints with the best's ticks at each (null before one).</summary>
+        JObject _solveWaypoints;
+        /// <summary>The running job is Improve (`solve --auto`), not the plain solve: its runs count pulls.</summary>
+        bool _solveAuto;
 
         sealed class SolveJob
         {
             public int course, saved;
             public string caps, label;
             public string[] optional;
+            /// <summary>Improve scores by farm time (quick restart to finish, `--farm`) instead of the record's game timer.</summary>
+            public bool farm;
+            /// <summary>Improve's `--focus a-b`: waypoints first..last (1-based, the finish last); null: the whole course.</summary>
+            public int[] focus;
             public string result;
         }
 
@@ -268,7 +278,7 @@ namespace IGTAPTasMod
         }
 
         static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
-        List<(startGate gate, int zone)> _gateZones = new List<(startGate, int)>();
+        List<(Transform marker, int zone)> _zoneMarkers = new List<(Transform, int)>();
 
         void EnsureZone(CourseDef def)
         {
@@ -285,19 +295,23 @@ namespace IGTAPTasMod
             return zone == 0 || zone == loader.activeZone && ZonesSettled();
         }
 
-        /// <summary>The zone of the start gate nearest the course's start; 0 when there is no zone loader or no gate nearby.</summary>
+        /// <summary>
+        /// The zone of the start gate or checkpoint nearest the course's start; 0 when there is no zone loader or none nearby.
+        /// A bonus start is a checkpoint with no gate near it (bonus5's is 3100 u from one): with gates alone it had no zone, and
+        /// was captured in whichever zone the last course left loaded.
+        /// </summary>
         int TargetZone(CourseDef def, out ZoneLoader loader)
         {
             loader = FindAnyObjectByType<ZoneLoader>();
             if (def == null || loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return 0;
-            if (_gateZones.Count == 0 || _gateZones.Exists(g => g.gate == null)) _gateZones = GateZones(zones);
+            if (_zoneMarkers.Count == 0 || _zoneMarkers.Exists(m => m.marker == null)) _zoneMarkers = ZoneMarkers(zones);
             Vector2 start = new Vector2(def.x, def.y) + CurrentOrigin();
             int zone = 0;
             float nearest = 1000f * 1000f;
-            foreach (var (gate, gateZone) in _gateZones)
+            foreach (var (marker, markerZone) in _zoneMarkers)
             {
-                float d = ((Vector2)gate.transform.position - start).sqrMagnitude;
-                if (d < nearest) { nearest = d; zone = gateZone; }
+                float d = ((Vector2)marker.position - start).sqrMagnitude;
+                if (d < nearest) { nearest = d; zone = markerZone; }
             }
             return zone;
         }
@@ -399,18 +413,21 @@ namespace IGTAPTasMod
             }
         }
 
-        static List<(startGate, int)> GateZones(GameObject[] zones)
+        /// <summary>Every start gate and checkpoint with its zone (the zone root or ZoneDisableLoadList.toLoad it is under;
+        /// 0 outside every zone).</summary>
+        static List<(Transform, int)> ZoneMarkers(GameObject[] zones)
         {
-            var result = new List<(startGate, int)>();
-            foreach (startGate gate in FindObjectsByType<startGate>(FindObjectsInactive.Include, FindObjectsSortMode.None))
-                for (Transform t = gate.transform; t != null; t = t.parent)
-                {
-                    int i = Array.FindIndex(zones, z => z != null && (z == t.gameObject
-                        || z.GetComponent<ZoneDisableLoadList>()?.toLoad?.Contains(t.gameObject) == true));
-                    if (i < 0) continue;
-                    result.Add((gate, i + 1));
-                    break;
-                }
+            var result = new List<(Transform, int)>();
+            IEnumerable<Transform> markers = FindObjectsByType<startGate>(FindObjectsInactive.Include, FindObjectsSortMode.None).Select(g => g.transform)
+                .Concat(FindObjectsByType<checkpointScript>(FindObjectsInactive.Include, FindObjectsSortMode.None).Select(c => c.transform));
+            foreach (Transform marker in markers)
+            {
+                int zone = 0;
+                for (Transform t = marker; t != null && zone == 0; t = t.parent)
+                    zone = Array.FindIndex(zones, z => z != null && (z == t.gameObject
+                        || z.GetComponent<ZoneDisableLoadList>()?.toLoad?.Contains(t.gameObject) == true)) + 1;
+                result.Add((marker, zone));
+            }
             return result;
         }
 
@@ -419,17 +436,43 @@ namespace IGTAPTasMod
             get { return typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value; }
         }
 
-        SolveJob CourseJob(int course, string capabilities, string[] optional)
+        SolveJob CourseJob(JObject item)
         {
+            int course = Number(item, "course", 0);
+            string capabilities = Text(item, "capabilities");
             CourseDef def = _courses.Find(c => c.id == course);
             if (def == null) throw new InvalidOperationException("Unknown course " + course + ".");
             if (!Categories.IsCategory(capabilities ?? "")) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, capabilities);
+            string[] optional = OptionalNames(item, course, capabilities);
             string[] known = OptionalBlocks(course).Where(b => b.caps.Contains(capabilities)).Select(b => b.name).ToArray();
             string missing = optional.FirstOrDefault(n => !known.Contains(n));
             if (missing != null) throw new InvalidOperationException("No optional block '" + missing + "' for " + def.Token + " " + capabilities + ".");
-            return new SolveJob { course = course, caps = capabilities, optional = optional,
-                label = def.Token + "_" + Caps.Parse(capabilities).Label + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional)) };
+            bool farm = Truthy(item, "farm");
+            // Bonuses and transitions are timed in ticks already (README ### Rules 31): their record is their farm time.
+            if (farm && (def.IsBonus || def.IsTransition)) throw new InvalidOperationException(def.Token + " has no separate farm time: improve its record.");
+            int[] focus = item["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
+            if (focus != null && (focus[0] < 1 || focus[1] < focus[0]))
+                throw new InvalidOperationException("focus: a waypoint range [first, last], 1-based.");
+            return new SolveJob { course = course, caps = capabilities, optional = optional, farm = farm, focus = focus,
+                label = def.Token + "_" + Caps.Parse(capabilities).Label + (farm ? " farm" : "") + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional))
+                    + (focus == null ? "" : " waypoints " + focus[0] + "-" + focus[1]) };
+        }
+
+        /// <summary>
+        /// The course has a category route to improve from: a record or farm route of this category or a narrower one (their
+        /// unlocks a subset), the routes the solve seeds with. Without one the job is the plain solve, which finds a first finish.
+        /// </summary>
+        bool HasCourseRoute(CourseDef course, string capabilities)
+        {
+            Caps target = Caps.Parse(capabilities);
+            return _library.macros.Any(m =>
+            {
+                Match g = MatchCategoryRoute(m.name);
+                if (!g.Success) g = MatchFarmRoute(m.name);
+                return g.Success && string.Equals(g.Groups["token"].Value, course.Token, StringComparison.OrdinalIgnoreCase)
+                    && Caps.Parse(g.Groups["label"].Value.ToUpperInvariant()).IsSubsetOf(target);
+            });
         }
 
         // The body's picked optional blocks, or the course's default-on blocks when it names none.
@@ -492,7 +535,7 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
             List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
-            List<SolveJob> jobs = items.Select(i => { int course = Number(i, "course", 0); string caps = Text(i, "capabilities"); return CourseJob(course, caps, OptionalNames(i, course, caps)); }).ToList();
+            List<SolveJob> jobs = items.Select(CourseJob).ToList();
             if (jobs.Count == 0) throw new InvalidOperationException("Nothing selected to optimize.");
             float minutes = FloatNumber(body, "minutes", 60f);
             if (!(minutes >= 0.25f)) throw new InvalidOperationException("Minutes per target must be at least 0.25.");
@@ -514,7 +557,9 @@ namespace IGTAPTasMod
             _solveCourse = job.course; _solveCaps = job.caps; _solveOptional = job.optional;
             _solveRuns = _solveFinishes = 0;
             _turboChecks = _turboSaved = 0;
-            _solveBest = float.PositiveInfinity;
+            _solveBest = _solveBestFarm = float.PositiveInfinity;
+            _solveWaypoints = null;
+            _solveAuto = false;
             _solverSpeed = "";
             while (_solveOutput.TryDequeue(out _)) { }
             if (_solveQueue.Count > 1 || _solveRepeat)
@@ -538,7 +583,8 @@ namespace IGTAPTasMod
             KillSolveProcess();
             SolveJob job = _solveQueue[_solveIndex];
             job.saved = _turboSaved;
-            job.result = outcome + (float.IsInfinity(_solveBest) ? "" : ", best " + _solveBest.ToString("0.00", CultureInfo.InvariantCulture) + "s")
+            float best = job.farm ? _solveBestFarm : _solveBest;
+            job.result = outcome + (float.IsInfinity(best) ? "" : ", best " + (job.farm ? "farm " : "") + best.ToString("0.00", CultureInfo.InvariantCulture) + "s")
                 + ", " + _turboSaved + " saved";
             if (StartNextSolveJob(_solveIndex + 1)) return;
             if (_solveRepeat)
@@ -582,7 +628,11 @@ namespace IGTAPTasMod
             Movement player = FindWorldMovement();
             CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
-            bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target);
+            // Its zone too: a zone load the game still had queued (ZoneLoader.LoadZone's coroutine, e.g. the bootstrap's) can
+            // switch zones back after RestoreRouteStart loaded the course's, and a start captured then has the course's
+            // DisableBits (its start gate, zip movers) off: no run from it starts the timer.
+            bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target)
+                && ZoneReady(target);
             // respawn keeps coyoteFrames and the stable-tick wait pins the player at the reset point (Course 7's is 42 u over its
             // floor), where only coyote time holds onGround: restart from standing (full coyote), or a run that ended airborne
             // never gets 3 stable ticks, or starts with other coyote frames than the trace. Starts that never land: 600 frames.
@@ -611,12 +661,23 @@ namespace IGTAPTasMod
 
         static readonly FieldInfo AllZonesField = AccessTools.Field(typeof(ZoneLoader), "allZones");
 
+        /// <summary>
+        /// The world as ZoneLoader._LoadZone(activeZone) leaves it: the active zone's root and its ZoneDisableLoadList.toLoad on
+        /// (a course's DisableBits: start gate, zip movers), every other zone's root off.
+        /// </summary>
         static bool ZonesSettled()
         {
             ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
             if (loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return true;
             for (int i = 0; i < zones.Length; i++)
-                if (zones[i] != null && zones[i].activeSelf != (i == loader.activeZone - 1)) return false;
+            {
+                if (zones[i] == null) continue;
+                bool active = i == loader.activeZone - 1;
+                if (zones[i].activeSelf != active) return false;
+                if (active && zones[i].GetComponent<ZoneDisableLoadList>()?.toLoad is GameObject[] toLoad)
+                    foreach (GameObject part in toLoad)
+                        if (part != null && !part.activeSelf) return false;
+            }
             return true;
         }
 
@@ -634,10 +695,13 @@ namespace IGTAPTasMod
 
         object BuildSolverWebState()
         {
+            SolveJob current = _solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count ? _solveQueue[_solveIndex] : null;
             return new {
                 running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = _solverSpeed,
+                farm = current?.farm ?? false, focus = current?.focus, auto = _solveAuto, waypoints = _solveWaypoints,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
+                bestFarm = float.IsInfinity(_solveBestFarm) ? (float?)null : _solveBestFarm,
                 log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
                 courses = _courses.Select(c => c.id).ToArray(),
                 minutes = _solveMinutes, repeat = _solveRepeat, pass = _solvePass,
@@ -700,7 +764,7 @@ namespace IGTAPTasMod
             if (_newGamePhase != 0 || _bootstrapRequest != null) { _solverStatus = _newGamePhase != 0 ? "Loading a new game" : "Waiting for the bootstrap"; return; }
             if (!CourseLoaded()) return;
             CourseDef course = _solverTarget;
-            if (!CapabilitiesLocked) ApplyAbilities(FindWorldMovement(), _solveCaps);
+            if (!CapabilitiesLocked) ApplyAbilities(FindWorldMovement(), _solveCaps, course);
             string name = "optimize-c" + course.Token + "-" + _solveCaps;
             JObject body = (JObject)target.DeepClone();
             body["ticks"] = new JArray(); body["name"] = name; body["world"] = true; body["freshStart"] = true;
@@ -710,23 +774,9 @@ namespace IGTAPTasMod
                 EndSolveJob("Start state not captured: " + captured["error"]);
                 return;
             }
-            var args = new StringBuilder(Quote((string)captured["path"]));
-            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
-            string standalonePrefix = course.Token + "_";
-            int seeds = 0;
-            foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
-                && m.name.StartsWith(standalonePrefix, StringComparison.OrdinalIgnoreCase)
-                && m.steps.All(s => s.type == MacroStepType.RawInput)))
-            {
-                string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
-                File.WriteAllText(seed, JsonConvert.SerializeObject(new { ticks = ToTicks(route.steps) }));
-                args.Append(" --seed ").Append(Quote(seed));
-            }
-            int threads = Math.Max(1, Environment.ProcessorCount - 2);
-            AppendOptional(args, _solveCourse, _solveCaps, _solveOptional).Append(" --threads ").Append(threads)
-                .Append(" --minutes ").Append(_solveMinutes.ToString(CultureInfo.InvariantCulture))
-                .Append(" --stall-minutes ").Append(Math.Min(5f, _solveMinutes / 2f).ToString(CultureInfo.InvariantCulture));
-            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, "solve " + args) {
+            SolveJob job = _solveQueue[_solveIndex];
+            string args = CourseSolveArgs(job, course, (string)captured["path"], name, _solveMinutes, out string what, out _solveAuto);
+            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
             process.OutputDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
@@ -735,8 +785,54 @@ namespace IGTAPTasMod
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             _solveProcess = process;
-            _solverStatus = "Solving offline on " + threads + " threads from " + seeds + " seed routes; turbo checks every new best";
-            Logger.LogInfo("Optimize: " + EngineSimExe + " solve " + args);
+            _solverStatus = what + "; turbo checks every new best";
+            Logger.LogInfo("Optimize: " + EngineSimExe + " " + args);
+        }
+
+        /// <summary>
+        /// The engine's command line for a course job on <paramref name="trace"/> (its seed files written as
+        /// <paramref name="name"/>-seedN.json): Improve, `solve --auto` (record, or `--farm`; `--focus a-b` over the waypoints),
+        /// when the course has a category route to start from, else the plain solve that finds a first finish. Improve leaves
+        /// the game 4 cores, as the Full-TAS Improve does.
+        /// </summary>
+        string CourseSolveArgs(SolveJob job, CourseDef course, string trace, string name, float minutes, out string what, out bool auto)
+        {
+            var args = new StringBuilder("solve ").Append(Quote(trace));
+            args.Append(CourseSeedArgs(course, name, out int seeds));
+            AppendOptional(args, job.course, job.caps, job.optional);
+            auto = HasCourseRoute(course, job.caps);
+            int threads = Math.Max(1, Environment.ProcessorCount - (auto ? 4 : 2));
+            args.Append(" --threads ").Append(threads).Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
+            if (!auto)
+            {
+                args.Append(" --stall-minutes ").Append(Math.Min(5f, minutes / 2f).ToString(CultureInfo.InvariantCulture));
+                what = "Solving offline (no route to improve yet) on " + threads + " threads from " + seeds + " seed routes";
+                return args.ToString();
+            }
+            args.Append(" --auto");
+            if (job.farm) args.Append(" --farm");
+            if (job.focus != null) args.Append(" --focus ").Append(job.focus[0]).Append('-').Append(job.focus[1]);
+            what = "Improving " + (job.farm ? "the farm time" : "the record") + (job.focus == null ? "" : " (waypoints " + job.focus[0] + "-" + job.focus[1] + ")")
+                + " on " + threads + " threads from " + seeds + " seed routes";
+            return args.ToString();
+        }
+
+        /// <summary>` --seed "file"` per raw route of the course in the library (its name kept for the engine's log), written as
+        /// <paramref name="name"/>-seedN.json after the old ones go.</summary>
+        string CourseSeedArgs(CourseDef course, string name, out int seeds)
+        {
+            var args = new StringBuilder();
+            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
+            seeds = 0;
+            foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
+                && m.name.StartsWith(course.Token + "_", StringComparison.OrdinalIgnoreCase)
+                && m.steps.All(s => s.type == MacroStepType.RawInput)))
+            {
+                string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
+                File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
+                args.Append(" --seed ").Append(Quote(seed));
+            }
+            return args.ToString();
         }
 
         static string Quote(string path) { return "\"" + path + "\""; }
@@ -767,7 +863,7 @@ namespace IGTAPTasMod
                 request.StatusCode = 400;
                 return new { ok = false, error = "Unknown course " + id + " or capabilities '" + caps + "'." };
             }
-            string trace = new[] { "optimize-c", "start-c" }.Select(p => Path.Combine(EngineSimDir, p + course.Token + "-" + caps + ".json")).FirstOrDefault(File.Exists);
+            string trace = CourseTrace(course, caps);
             if (trace == null)
             {
                 request.StatusCode = 404;
@@ -777,19 +873,65 @@ namespace IGTAPTasMod
             string output = Path.Combine(EngineSimDir, name + ".json");
             // This map's job is running or queued: join it, leaving its seed files alone.
             if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
-            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
-            var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output));
-            int seeds = 0;
-            foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
-                && m.name.StartsWith(course.Token + "_", StringComparison.OrdinalIgnoreCase)
-                && m.steps.All(s => s.type == MacroStepType.RawInput)))
-            {
-                string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
-                File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
-                args.Append(" --seed ").Append(Quote(seed));
-            }
+            var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output)).Append(CourseSeedArgs(course, name, out _));
             AppendOptional(args, id, caps, OptionalNames(body, id, caps));
             return RunEngineSimMap(request, args.ToString(), output);
+        }
+
+        /// <summary>The course's last start capture (the solve's, else the studio's), or null before its first solve.</summary>
+        string CourseTrace(CourseDef course, string caps)
+        {
+            return new[] { "optimize-c", "start-c" }.Select(p => Path.Combine(EngineSimDir, p + course.Token + "-" + caps + ".json")).FirstOrDefault(File.Exists);
+        }
+
+        /// <summary>
+        /// A course target's waypoints for the studio (`solve --auto --waypoints-out`, which places them on the best seed and
+        /// exits): the start gate (record timing), goals along the record's (or with `farm`, the farm route's) path, then the
+        /// finish, with that route's tick at each. Improve's `focus` indexes this list. Run by the engine as a map is, one job per file.
+        /// </summary>
+        object EngineSimWaypoints(WebStudioRequest request, JObject body)
+        {
+            SolveJob job;
+            try { job = CourseJob(body); }
+            catch (InvalidOperationException ex) { request.StatusCode = 400; return new { ok = false, error = ex.Message }; }
+            CourseDef course = _courses.Find(c => c.id == job.course);
+            string trace = CourseTrace(course, job.caps);
+            if (trace == null)
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No start capture for " + course.Token + " " + job.caps + " yet: improve it once first." };
+            }
+            if (!HasCourseRoute(course, job.caps))
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No route for " + job.label + " yet: its first solve makes one." };
+            }
+            string name = "waypoints-c" + course.Token + "-" + job.caps + (job.farm ? "-farm" : "");
+            string output = Path.Combine(EngineSimDir, name + ".json");
+            if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
+            var args = new StringBuilder("solve ").Append(Quote(trace)).Append(CourseSeedArgs(course, name, out _));
+            AppendOptional(args, job.course, job.caps, job.optional).Append(" --auto");
+            if (job.farm) args.Append(" --farm");
+            args.Append(" --waypoints-out ").Append(Quote(output));
+            return RunEngineSimMap(request, args.ToString(), output);
+        }
+
+        /// <summary>
+        /// What /api/solver/start would run for the same body, without starting anything: each job's engine command on the
+        /// course's last start capture (the run itself captures a fresh one first) and whether it is Improve or the plain solve.
+        /// Seed files go to preview-c*-seedN.json.
+        /// </summary>
+        object PreviewSolver(JObject body)
+        {
+            List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
+            float minutes = FloatNumber(body, "minutes", 60f);
+            return new { ok = true, jobs = items.Select(CourseJob).Select(job =>
+            {
+                CourseDef course = _courses.Find(c => c.id == job.course);
+                string trace = CourseTrace(course, job.caps) ?? Path.Combine(EngineSimDir, "optimize-c" + course.Token + "-" + job.caps + ".json");
+                string args = CourseSolveArgs(job, course, trace, "preview-c" + course.Token + "-" + job.caps, minutes, out string what, out bool auto);
+                return new { label = job.label, improve = auto, what, command = Quote(EngineSimExe) + " " + args };
+            }).ToArray() };
         }
 
         // The Ultra map: every floor a hyper lands on in the VMAN Full-TAS run's world (the Vman speedrun's start, the
@@ -862,19 +1004,20 @@ namespace IGTAPTasMod
                     {
                         job.Status = 500;
                         string error = errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode;
-                        job.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + error.Trim() });
+                        job.Response = JsonConvert.SerializeObject(new { ok = false, error = args.Substring(0, args.IndexOf(' ')) + " failed: " + error.Trim() });
                     }
                 }
             }
             catch (Exception ex)
             {
                 job.Status = 500;
-                job.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + ex.Message });
+                job.Response = JsonConvert.SerializeObject(new { ok = false, error = args.Substring(0, args.IndexOf(' ')) + " failed: " + ex.Message });
             }
         }
 
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
-        static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via");
+        static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via .*, run ([\d.,]+)s from the start\)");
+        const string AutoEvent = "@fulltas ", WaypointsLine = "waypoints ";
 
         void ReadSolveLine(string line)
         {
@@ -886,8 +1029,34 @@ namespace IGTAPTasMod
                 _solverSpeed = m.Groups[1].Value + " runs/s, " + m.Groups[2].Value + " ticks/s offline";
                 return;
             }
+            // Improve (`solve --auto`): its waypoints on every new best, and its events. A pull comes every few seconds: pulls
+            // count (as runs) and set the speed line; its gains show as the offline-best lines below, so the rest is dropped
+            // (it's all in the engine's own log).
+            if (line.StartsWith(WaypointsLine, StringComparison.Ordinal))
+            {
+                try { _solveWaypoints = JObject.Parse(line.Substring(WaypointsLine.Length)); }
+                catch (JsonException ex) { Logger.LogWarning("solve: unreadable waypoints line: " + ex.Message); }
+                return;
+            }
+            if (line.StartsWith(AutoEvent, StringComparison.Ordinal))
+            {
+                JObject e;
+                try { e = JObject.Parse(line.Substring(AutoEvent.Length)); }
+                catch (JsonException) { return; }
+                if ((string)e["type"] == "pull")
+                {
+                    _solveRuns = (long?)e["pull"] ?? _solveRuns + 1;
+                    _solverSpeed = "pull " + _solveRuns + ": " + e["lever"] + " at waypoint " + e["goal"] + ", "
+                        + ((long?)e["gain"] > 0 ? "gained " + e["gain"] + " ticks" : "no gain");
+                }
+                return;
+            }
             m = SolveBest.Match(line);
-            if (m.Success) _solveBest = Math.Min(_solveBest, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
+            if (m.Success)
+            {
+                _solveBest = Math.Min(_solveBest, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
+                _solveBestFarm = Math.Min(_solveBestFarm, float.Parse(m.Groups[2].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
+            }
             if (line.Contains("turbo check of") && !line.Contains("deferred")) _turboChecks++;
             if (line.Contains("saved as the new route")) _turboSaved++;
             _solverLog.Add(line);
@@ -975,7 +1144,7 @@ namespace IGTAPTasMod
             bool savedHasReset = _hasPreservedCourseResetPoint;
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
-            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps);
+            List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps, course);
             if (_techStart != null && _techStart.omniDash)
             {
                 savedAbilities.Add(("omniDashUnlocked", GetMovementField(player, "omniDashUnlocked")));
@@ -1007,7 +1176,16 @@ namespace IGTAPTasMod
                         if (!_engine.IsRunning) return;
                         if (_engine.InputsExhausted) idleTicks++;
                         int tick = (int)_engine.RunTicks;
-                        if (_startState == null && tick == 0) settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
+                        if (_startState == null && tick == 0)
+                        {
+                            // The category start's history (CourseStart): the snapshot, the trace written from it and this run
+                            // all go on from the same values, whatever ran before. A tech demo's start is its own savestate's.
+                            if (_techStart == null)
+                                CourseStart.Apply(player, FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+                            settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
+                            // Its restores put the world at the canonical origin exactly, whatever ran since (TurboRunner.PutCanonicalOrigin).
+                            if (_techStart == null) settling.canonical = _canonicalReference;
+                        }
                         if (_startState == null && tick > 0) _startState = settling;
                         if (_audit != null) AuditTick(player, tick);
                         lastTick = tick;

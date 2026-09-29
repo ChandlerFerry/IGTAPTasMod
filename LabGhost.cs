@@ -112,6 +112,7 @@ namespace IGTAPTasMod
                 var copy = new GameObject(shape.kind);
                 copy.transform.SetParent(lane.transform, false);
                 copy.transform.localPosition = new Vector3(shape.at != null ? shape.at[0] : 0f, shape.at != null ? shape.at[1] : 0f, 0f);
+                copy.transform.localRotation = shape.Rotation();
                 LabShapeVisual(copy.transform, shape, 0.55f);
             }
             foreach (Renderer renderer in lane.GetComponentsInChildren<Renderer>()) LabSorting(renderer, LabLaneRank);

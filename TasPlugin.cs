@@ -44,6 +44,8 @@ namespace IGTAPTasMod
         private Rigidbody2D _playerBody;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
+        /// <summary>The canonical FloatingOrigin reference the last quick restart onto a course, bonus or transition start put the world at; null otherwise.</summary>
+        private Vector3? _canonicalReference;
         private CourseDef _runCourse;
         private int _brakeTicks = -1;
         private float _brakeAxis;
@@ -115,7 +117,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchOptional(typeof(Movement), "TimeStop", nameof(BeforeOverlayTimeStop), null);
-            PatchOptional(typeof(FloatingOrigin), "MoveRootTransforms", null, nameof(AfterMoveRootTransforms));
+            PatchOptional(typeof(FloatingOrigin), "MoveRootTransforms", nameof(BeforeMoveRootTransforms), nameof(AfterMoveRootTransforms));
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();

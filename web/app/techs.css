@@ -1,40 +1,29 @@
 .techToolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
-.techSearch, .techAdd input, .techAdd select, .techEditor input, .techEditor select, .techEditor textarea, .techDemo select { border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 8px 10px; outline: none; }
+.techSearch, .techEditor input, .techEditor select, .techEditor textarea { border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 8px 10px; outline: none; }
 .techSearch { flex: 1; min-width: 200px; }
-.techAdd { display: flex; gap: 8px; align-items: center; }
-.techAdd button { white-space: nowrap; }
 .techSeen { display: flex; gap: 18px; align-items: center; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2036; }
 .techSeen strong { font-size: 13px; }
 .techSeenList { display: flex; flex-wrap: wrap; gap: 6px; }
-.techLabs { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2036; }
-.techLabsHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.techLabsHead h3 { margin: 0; }
 .labStatus { padding: 3px 9px; border-radius: 999px; background: #10263d; color: var(--muted); font-size: 12px; }
 .labStatus.on { background: #2a2410; color: var(--amber); }
-.techLabGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin-top: 10px; }
-.techLab { margin-top: 8px; }
-.techLabGrid .techLab { margin-top: 0; padding: 10px; border: 1px solid #294563; border-radius: 8px; }
-.techLabGrid .techLab.loaded { border-color: var(--amber); }
+.techLab { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid #294563; border-radius: 8px; background: #0d1a2c; }
+.techLab.loaded { border-color: var(--amber); }
 .techLabHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.techLabHead .buttonRow { margin-left: auto; }
+.techLabHead .buttonRow { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .labGhostLegend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; }
 .labGhostLegend span { display: inline-flex; align-items: center; gap: 6px; }
 .labGhostLegend i { width: 16px; height: 3px; border-radius: 2px; }
 .seenChip { padding: 3px 9px; border: 1px solid #294563; border-radius: 999px; background: #10263d; color: var(--text); font-size: 12px; cursor: pointer; }
 .seenChip:disabled { color: var(--muted); cursor: default; }
 .muted { color: var(--muted); font-size: 13px; }
-.techGroup { margin-top: 22px; }
-.techGroupHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-.techGroupHead h3 { margin: 0; font-size: 18px; }
-.techGroupHead > span { color: var(--muted); font-size: 13px; }
-.techGroupHead .techBlurb { flex-basis: 100%; margin: 0; }
-.techGroup.unconfirmed .techCard { opacity: .85; border-style: dashed; }
+.techMissing { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.techMissing > summary { cursor: pointer; width: fit-content; }
+.techMissing p { margin: 8px 0 0; line-height: 1.5; }
 .techTier { margin-top: 14px; }
 .techTier header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
 .techTier h4 { margin: 0; font-size: 14px; letter-spacing: .04em; color: var(--cyan); }
 .techTier header span { color: var(--muted); font-size: 12px; }
 .techGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
-.techBlurb { margin: -4px 0 4px; color: var(--muted); font-size: 12px; }
 .techLegend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .legendItem { display: inline-flex; align-items: center; gap: 6px; }
 .legendItem::before { content: ""; width: 12px; height: 12px; border-radius: 3px; background: var(--green); }
@@ -58,8 +47,8 @@
 .relatedChip { display: inline-flex; gap: 4px; align-items: center; padding: 2px 8px; border: 1px solid #294563; border-radius: 999px; background: #0d2036; color: var(--text); font-size: 12px; cursor: pointer; }
 .relatedChip.ours { border-color: var(--amber); }
 .relatedChip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; }
-.techDemo { display: flex; flex-direction: column; gap: 6px; }
-.techDemo .buttonRow, .techEditor .buttonRow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.techHead .techEditButton { margin-left: auto; }
+.techEditor .buttonRow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .demoInfo { color: var(--green); font-size: 12px; }
 .demoInfo.missing { color: var(--muted); }
 .verdict { font-size: 12px; font-weight: 600; }

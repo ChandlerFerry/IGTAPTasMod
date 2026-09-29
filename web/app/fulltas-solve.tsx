@@ -8,10 +8,9 @@ export type FullTasEvent = { type: string; at: number } & Record<string, unknown
 export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; error?: boolean; run?: string; finished?: boolean; time?: number | null; saved?: boolean;
   reason?: string | null; reached?: number; of?: number; expected?: number; next?: string | null; droppedFrames?: number; splits?: FullTasSplit[] };
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
-  events?: FullTasEvent[]; progress?: FullTasEvent | null; segments?: FullTasEvent | null; log: string[] };
-/** The route between two Quick Restarts (the solver's --resets); carries and quickRestart (where it sends the player) are only known once a solve has replayed it. */
-export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number; from?: number; to?: number; reset?: number; carries?: string[] | null;
-  quickRestart?: string | null; known?: number | null; knownWhy?: string | null };
+  events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[] };
+/** The saved best's route between two Quick Restarts: goals first+1..last. */
+export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number; known?: number | null; knownWhy?: string | null };
 /** A faster way the solver found for a segment but the run after it didn't take (fulltas/<run>.faster.json, for the saved best). */
 export type FasterWay = { start: number; first: number; last: number; saves: number; why: string };
 
@@ -79,7 +78,7 @@ const str = (v: unknown) => typeof v === "string" ? v : "";
 
 type Tone = "best" | "progress" | "miss" | "info" | "warn" | "error";
 type Item = { key: string; at: number; tone: Tone; title: string; detail?: string; count?: number; fold?: "reach" | "polish" };
-type Window = { id: number; kind: string; first: number; limit: number; logged: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number; segment?: number };
+type Window = { id: number; kind: string; first: number; limit: number; logged: number; attempt: number; budget: number; start: number; target: number | null; savedStarts: number; piece: string; at: number };
 
 function asWindow(e: FullTasEvent): Window {
   return { id: num(e.id) ?? 0, kind: str(e.kind), first: num(e.first) ?? 0, limit: num(e.limit) ?? 0, logged: num(e.logged) ?? num(e.first) ?? 0, attempt: num(e.attempt) ?? 0, budget: num(e.budget) ?? 60,
@@ -93,14 +92,10 @@ function segmentGoals(r: { first: number; last: number }) {
   return r.last - r.first === 1 ? `goal ${r.last}` : `goals ${r.first + 1}–${r.last}`;
 }
 
-/**
- * The best's reset segments: the solve's own (with where each Quick Restart goes and what it carries) when it has sent them,
- * else the plugin's from the saved best; each with the faster way known for it, if any.
- */
-export function resetSegments(saved: number[][] | undefined, live: FullTasEvent | null | undefined, faster: FasterWay[] | undefined): SegmentRow[] {
-  const liveRows = live?.segments as SegmentRow[] | undefined;
-  const rows = liveRows?.length ? liveRows : (saved ?? []).map(([first, last, inputs, start], i) => ({ n: i + 1, first, last, inputs, start }));
-  return rows.map(r => {
+/** The saved best's reset segments (the plugin's, from its Quick Restarts), each with the faster way known for it, if any. */
+export function resetSegments(saved: number[][] | undefined, faster: FasterWay[] | undefined): SegmentRow[] {
+  return (saved ?? []).map(([first, last, inputs, start], i) => {
+    const r = { n: i + 1, first, last, inputs, start };
     const way = faster?.find(f => f.start === r.start && f.first === r.first && f.last === r.last);
     return way ? { ...r, known: way.saves, knownWhy: way.why } : r;
   });
@@ -109,23 +104,19 @@ export function resetSegments(saved: number[][] | undefined, live: FullTasEvent 
 /**
  * A segment's goals with a bar down their left side, as the TAS overlay marks a tech's ticks: the bar is labeled with the
  * segment's number, its tooltip names its goals and whether saves are kept (safe: no buy after it) or reach a later buy,
- * and an icon strip under the goals marks its closing Quick Restart (hover: where it sends the player), what the player
- * carries over it (✓ nothing, else one icon each) and any faster way already known. Click the bar to solve only that segment.
+ * and a strip under the goals marks its closing Quick Restart and any faster way already known. Click the bar to pick its
+ * goals for Improve (shift-click adds them to the picked goals).
  */
-export function SegmentGroup({ r, end, alt, safe, selected, onSelect, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; safe: boolean;
-  selected: boolean; onSelect: (n: number) => void; disabled: boolean; children: ReactNode }) {
+export function SegmentGroup({ r, end, alt, safe, selected, onPick, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; safe: boolean;
+  selected: boolean; onPick: (shift: boolean) => void; disabled: boolean; children: ReactNode }) {
   const empty = r.last <= r.first;
-  const restart = end ? <i className="segIcon end" title="Route ends here">⚑︎</i>
-    : <i className="segIcon restart" title={`Quick Restart → ${r.quickRestart ?? "not replayed yet"}`}>↻</i>;
-  const carried = end || r.carries == null ? null : r.carries.length === 0
-    ? <i className="segIcon clean" title="Clean restart: nothing carried over">✓</i>
-    : r.carries.map(c => <i key={c} className="segIcon carry" title={`Carried over: ${c}`}>{carryIcon(c)}</i>);
+  const restart = end ? <i className="segIcon end" title="Route ends here">⚑︎</i> : <i className="segIcon restart" title="Quick Restart">↻</i>;
   return <div className={`segmentGroup ${safe ? "safe" : "economy"} ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""} ${r.known != null ? "known" : ""}`}>
-    <button type="button" className="segmentBar" disabled={disabled} onClick={() => onSelect(selected ? 0 : r.n)}
-      title={`Segment ${r.n} · ${segmentGoals(r)} · ${safe ? "saves kept" : "saves affect buys"} · ${selected ? "click to solve all segments" : "click to solve this segment"}`}>
+    <button type="button" className="segmentBar" disabled={disabled || empty} onClick={e => onPick(e.shiftKey)}
+      title={`Segment ${r.n} · ${segmentGoals(r)} · ${safe ? "saves kept" : "saves affect buys"} · ${selected ? "click to clear the picked goals" : "click to improve just these goals; shift-click to add them"}`}>
       {!empty && <span>{r.n}</span>}
     </button>
-    <div className="segmentRows">{children}<div className="segmentRestart">{restart}{carried}
+    <div className="segmentRows">{children}<div className="segmentRestart">{restart}
       {r.known != null && <i className="segIcon faster" title={r.knownWhy ? `Known faster way: ${r.knownWhy}` : "Known faster way, not taken yet"}>⚡︎ −{r.known.toFixed(2)}s</i>}</div></div>
   </div>;
 }
@@ -133,29 +124,40 @@ export function SegmentGroup({ r, end, alt, safe, selected, onSelect, disabled, 
 /** The icon key for SegmentGroup's restart strip, shown under a segmented goals table. */
 export function SegmentLegend() {
   return <div className="segmentLegend">
-    <span><i className="segIcon restart">↻</i>Quick Restart</span><span><i className="segIcon clean">✓</i>clean</span>
-    <span><i className="segIcon carry">↗</i>momentum</span><span><i className="segIcon carry">⇤</i>wall-jump lock</span>
-    <span><i className="segIcon carry">≋</i>zip momentum</span><span><i className="segIcon carry">⤒</i>bounce window</span>
-    <span><i className="segIcon carry">»</i>dash running</span><span><i className="segIcon carry">J</i><i className="segIcon carry">D</i>buffered</span>
-    <span><i className="segIcon faster">⚡︎</i>faster way known</span><span><i className="segIcon end">⚑︎</i>route end</span>
+    <span><i className="segIcon restart">↻</i>Quick Restart</span><span><i className="segIcon faster">⚡︎</i>faster way known</span><span><i className="segIcon end">⚑︎</i>route end</span>
   </div>;
 }
 
-/** One glyph per carry-over the solver reports (FullTasSegments.Carries); J and D match the frame timeline's jump/dash. */
-function carryIcon(c: string): string {
-  if (c.startsWith("momentum")) return "↗";
-  if (c.startsWith("wall jump lock")) return "⇤";
-  if (c.startsWith("zip mover")) return "≋";
-  if (c.startsWith("ground bounce")) return "⤒";
-  if (c.startsWith("dash still")) return "»";
-  if (c.startsWith("jump buffered")) return "J";
-  if (c.startsWith("dash buffered")) return "D";
-  return "•";
+/** The goals (1-based, first..last) whose own splits a new best changed; null when none did. */
+function changedGoals(prev: RouteJson, best: RouteJson): [number, number] | null {
+  let first = 0, last = 0;
+  for (let k = 0; k < Math.min(prev.progress, best.progress); k++) {
+    const d = (best.splits[k] - (k ? best.splits[k - 1] : 0)) - (prev.splits[k] - (k ? prev.splits[k - 1] : 0));
+    if (Math.abs(d) > 1e-4) { if (!first) first = k + 1; last = k + 1; }
+  }
+  return first ? [first, last] : null;
 }
+
+export const goalSpan = ([a, b]: [number, number]) => a === b ? `goal ${a}` : `goals ${a}–${b}`;
+
+/** A --auto log's latest pull (`auto: pull N: <lever> at goal k (<label>), ...`): what Improve is searching now. */
+function lastPull(log: string[]): { lever: string; goal: number; label: string } | null {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const m = /auto: pull \d+: (\w+) at goal (\d+) \((.*?)\), /.exec(log[i]);
+    if (m) return { lever: m[1], goal: Number(m[2]), label: m[3] };
+  }
+  return null;
+}
+
+const LEVERS: Record<string, string> = { window: "window search", lookahead: "look-ahead window", span: "long window", polish: "input polish",
+  graft: "graft from a known route", plan: "contact planner", dropreset: "dropping a quick restart" };
 
 function recordItem(e: FullTasEvent, goals: string[]): Item {
   const prev = e.previous as RouteJson, best = e.best as RouteJson, of = goals.length;
   const how = str(e.how);
+  // Improve's goals part changed the goal list (laps dropped or added): its words, e.g. "Dropped 2 Course 1 laps (goals 88-91): -1.62 s".
+  if (e.goalsEdit) return { key: `r${e.at}`, at: e.at, tone: "best", title: str(e.goalsEdit),
+    detail: `New record ${s2(best.time)} · ${best.progress} goals; the game takes this goal list when it saves the record` };
   if (e.firstComplete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `First complete route: ${of} goals in ${s2(best.time)}`,
     detail: "Replaying in the game to save it. Polishing starts next." };
   if (best.progress > prev.progress) {
@@ -163,15 +165,22 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
     return { key: `r${e.at}`, at: e.at, tone: "best", title: `Reached ${reached}: ${goalName(goals[best.progress - 1])} at ${s2(best.time)}`, detail: how };
   }
   const d = (best.time ?? 0) - (prev.time ?? 0);
+  const changed = e.complete && prev.progress === of ? changedGoals(prev, best) : null;
+  if (changed) return { key: `r${e.at}`, at: e.at, tone: "best", title: `Improved ${goalSpan(changed)}: ${delta(d)}`,
+    detail: `New record ${s2(best.time)} · ${how}` };
   if (e.complete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `New record: ${s2(best.time)} (${delta(d)})`, detail: how };
   return { key: `r${e.at}`, at: e.at, tone: "best", title: `Goal ${best.progress}/${of} now at ${s2(best.time)} (${delta(d)})`, detail: how };
 }
 
+/** Improve's search steps (windows, finds, repairs) are its own business: its feed is the start, the records, the game's
+ *  checks and notes. */
+const AUTO_QUIET: Record<string, true> = { session: true, phase: true, window: true, found: true, windowEnd: true, dropped: true };
+
 function feed(events: FullTasEvent[], goals: string[]): Item[] {
   const windows = new Map<number, Window>();
   const items: Item[] = [];
-  const resets = !!events.find(e => e.type === "session")?.resets;
-  let segment = 0;
+  const auto = events.some(e => e.type === "autoStart");
+  const records = events.filter(e => e.type === "record").length;
   const push = (item: Item) => {
     const last = items[items.length - 1];
     if (item.fold && last?.fold === item.fold) {
@@ -184,34 +193,36 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
     items.push(item);
   };
   for (const e of events) {
+    if (auto && AUTO_QUIET[e.type]) continue;
     switch (e.type) {
       case "session": {
         const best = e.best as RouteJson;
-        push({ key: `s${e.at}`, at: e.at, tone: "info", title: `Solve started at ${best.progress === goals.length ? `record ${s2(best.time)}` : `${best.progress}/${goals.length} goals`}`,
-          detail: `${num(e.threads)} threads · ${num(e.minutes)} min · ${e.resets ? `by reset segments${num(e.segment) ? ` (only segment ${num(e.segment)})` : ""}` : `${num(e.window)}-goal windows`} · ${str(e.from)}` });
+        push({ key: `s${e.at}`, at: e.at, tone: "info", title: `Search started at ${best.progress === goals.length ? `record ${s2(best.time)}` : `${best.progress}/${goals.length} goals`}`,
+          detail: `${num(e.threads)} threads · ${num(e.minutes)} min · ${num(e.window)}-goal windows · ${str(e.from)}` });
         break;
       }
-      case "segment": segment = num(e.n) ?? 0; break;
+      case "autoStart": {
+        const best = e.best as RouteJson, focus = e.focus as [number, number] | undefined;
+        const whole = !focus || (focus[0] <= 1 && focus[1] >= goals.length);
+        push({ key: `a${e.at}`, at: e.at, tone: "info", title: `Improve started from ${s2(best.time)}`,
+          detail: `${whole ? "Whole run" : `Only ${goalSpan(focus)}`} · ${num(e.threads)} threads` });
+        break;
+      }
       case "phase":
         push(e.phase === "reach"
           ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Reach phase", detail: "Next unreached goal only." }
           : e.phase === "build"
             ? { key: `p${e.at}`, at: e.at, tone: "info", title: "Build phase", detail: "Only uncovered steps are searched; unpaid buys get an extra lap." }
-            : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: resets
-              ? "One segment at a time; each save ends at its old Quick Restart."
-              : "Faster pieces rebuilt; windows searched. Route keeps its ending unless the last goal improves." });
+            : { key: `p${e.at}`, at: e.at, tone: "info", title: "Polish phase", detail: "Every goal is reached: press Stop, then Improve." });
         break;
-      case "window": windows.set(num(e.id) ?? 0, { ...asWindow(e), segment }); break;
+      case "window": windows.set(num(e.id) ?? 0, asWindow(e)); break;
       case "found": {
         const w = windows.get(num(e.id) ?? 0), t = num(e.time);
         if (!w) break;
-        push(w.kind === "segment" && w.piece
-          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Segment ${w.segment}: found an extra lap (${w.piece})`, detail: "Checks the state after its old Quick Restart." }
-          : w.kind === "piece"
+        push(w.kind === "piece"
           ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
-          : (w.kind === "polish" || w.kind === "segment") && w.target != null
-            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `${w.kind === "segment" ? `Segment ${w.segment} faster` : "Faster"} through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`,
-              detail: w.kind === "segment" ? "Checks it after the old Quick Restart, then the whole run." : "Verifying in the whole run." }
+          : w.kind === "polish" && w.target != null
+            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
             : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }
@@ -223,7 +234,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
           ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit}: ${w.piece} (${secs}s)` }
           : w.kind === "reach"
             ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : w.logged === w.limit - 1 ? `from just before goal ${w.logged}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
-            : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${w.kind === "segment" ? `segment ${w.segment}${w.piece ? ` (${w.piece})` : `, ${span(w)}`}` : span(w)} (${secs}s)` });
+            : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
         break;
       }
       case "record": push(recordItem(e, goals)); break;
@@ -240,7 +251,9 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
       }
       case "done": {
         const best = e.best as RouteJson;
-        push({ key: `x${e.at}`, at: e.at, tone: "info", title: `Solve finished: ${best.progress === goals.length ? `best ${s2(best.time)}` : `${best.progress}/${goals.length} goals (${s2(best.time)})`}` });
+        push(auto
+          ? { key: `x${e.at}`, at: e.at, tone: "info", title: records ? `Improve finished: record ${s2(best.time)}` : `No improvement found: the record stays ${s2(best.time)}` }
+          : { key: `x${e.at}`, at: e.at, tone: "info", title: `Search finished: ${best.progress === goals.length ? `best ${s2(best.time)}` : `${best.progress}/${goals.length} goals (${s2(best.time)})`}` });
         break;
       }
     }
@@ -282,29 +295,38 @@ function CopyButton({ text, label = "Copy details" }: { text: () => string; labe
   return <button className="secondary copyButton" onClick={async () => { await copy(text()); setDone(true); window.setTimeout(() => setDone(false), 2000); }}>{done ? "Copied" : label}</button>;
 }
 
-export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay, canPlay }: { solve: FullTasSolveState; goals: string[]; route: RouteJson | null;
-  run: string; lastResult?: FullTasOutcome | null; onPlay: () => void; canPlay: boolean }) {
+export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay, canPlay, picked, onPick }: { solve: FullTasSolveState; goals: string[]; route: RouteJson | null;
+  run: string; lastResult?: FullTasOutcome | null; onPlay: () => void; canPlay: boolean; picked: [number, number] | null; onPick: (goal: number, shift: boolean) => void }) {
   const [dismissed, setDismissed] = useState<string>("");
   const allEvents = solve.events ?? [];
   const sessionGoals = allEvents.find(e => e.type === "session")?.goals as string[] | undefined;
   const outdated = !solve.running && sessionGoals != null && (sessionGoals.length !== goals.length || sessionGoals.some((g, i) => g !== goals[i]));
   const events = outdated ? [] : allEvents;
   const session = events.find(e => e.type === "session");
+  // Improve (--auto) announces the best it really starts from: the saved record it was handed can beat the session's.
+  const autoStart = events.find(e => e.type === "autoStart");
   const labels = outdated ? goals : sessionGoals ?? goals;
   const of = labels.length;
   const records = events.filter(e => e.type === "record");
-  const start = session ? session.best as RouteJson : route ?? undefined;
+  const start = (autoStart ?? session)?.best as RouteJson | undefined ?? route ?? undefined;
   const best = (records.length ? records[records.length - 1].best : start) as RouteJson | undefined;
   const complete = best != null && best.progress === of && of > 0;
   const now = Date.now();
   const lastWindowEvent = [...events].reverse().find(e => e.type === "window");
   const window_ = lastWindowEvent ? asWindow(lastWindowEvent) : null;
-  const segmentNow = lastWindowEvent ? [...events.slice(0, events.indexOf(lastWindowEvent))].reverse().find(e => e.type === "segment") : undefined;
-  const windowOpen = solve.running && window_ != null && !events.some(e => e.type === "windowEnd" && e.id === window_.id);
+  const windowOpen = !autoStart && solve.running && window_ != null && !events.some(e => e.type === "windowEnd" && e.id === window_.id);
   const progress = solve.progress && window_ && solve.progress.id === window_.id ? solve.progress : null;
   const phase = [...events].reverse().find(e => e.type === "phase")?.phase;
   const items = feed(events, labels);
   const lastRecord = records[records.length - 1];
+  const runFocus = autoStart?.focus as [number, number] | undefined;
+  const focused = runFocus != null && (runFocus[0] > 1 || runFocus[1] < of) ? runFocus : null;
+  const pull = autoStart && solve.running ? lastPull(solve.log) : null;
+  const improved = new Set<number>();
+  for (const r of records) {
+    const range = r.previous && r.best ? changedGoals(r.previous as RouteJson, r.best as RouteJson) : null;
+    if (range) for (let k = range[0]; k <= range[1]; k++) improved.add(k);
+  }
 
   const problems: { key: string; text: string }[] = [];
   if (solve.error) problems.push({ key: `solve:${solve.error}`, text: solve.error });
@@ -317,7 +339,7 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
   const report = () => [
     `IGTAP Full-TAS report (${new Date().toISOString()})`,
     `Run: ${run}${problem ? `\nProblem: ${problem.text}` : ""}`,
-    `Solve: ${solve.running ? "running" : "idle"} · ${solve.status}`,
+    `Search: ${solve.running ? "running" : "idle"} · ${solve.status}`,
     best ? `Best: ${best.progress}/${of} goals, ${s2(best.time)} [${best.splits.map((t, i) => `${labels[i]} ${runTime(t)}`).join(" + ")}]` : "Best: none",
     lastResult ? `Last result: ${lastResult.text}` : "",
     solve.command ? `Command: ${solve.command}` : "",
@@ -334,6 +356,8 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
     return null;
   })();
   const polishing = phase === "polish" || complete;
+  const minutes = num(session?.minutes);
+  const recordsText = `${records.length} record${records.length === 1 ? "" : "s"}${lastRecord ? `, last ${ago(now - lastRecord.at)}` : ""}`;
 
   return <div className="ftSolve">
     {problem && problem.key !== dismissed && <div className="ftProblem">
@@ -341,42 +365,44 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
       <div className="ftProblemButtons"><CopyButton text={report}/><button className="secondary" onClick={() => setDismissed(problem.key)}>Dismiss</button></div>
     </div>}
 
-    {outdated && <p className="ftNotice">Goals changed after the last solve: results hidden. Solve again.</p>}
+    {outdated && <p className="ftNotice">Goals changed after the last search: results hidden. Improve again.</p>}
 
     <div className="ftStats">
       <div className={`ftStat ${complete ? "good" : ""}`}><p>{complete ? "Record (offline)" : "Route"}</p>
         <strong>{best ? complete ? s2(best.time) : `${best.progress} / ${of}` : "—"}</strong>
         <span>{best && !complete && best.progress > 0 ? `goal ${best.progress} at ${s2(best.time)}` : complete ? "all goals reached" : "no goals reached"}</span></div>
-      <div className={`ftStat ${sessionDelta ? "good" : ""}`}><p>This solve</p><strong>{sessionDelta ?? "—"}</strong>
-        <span>{lastRecord ? `last record ${ago(now - lastRecord.at)}` : session ? "no record yet" : outdated ? "goals changed" : "not started"}</span></div>
-      <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : phase === "build" ? "Build" : "Reach"}</strong>
-        <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 1-${best.progress} of ${of}` : "whole-run checked") : best ? `next: goal ${best.progress + 1} of ${of}` : ""}</span></div>
+      <div className={`ftStat ${sessionDelta ? "good" : ""}`}><p>{autoStart ? "This Improve" : "This search"}</p><strong>{sessionDelta ?? "—"}</strong>
+        <span>{records.length ? recordsText : autoStart ? solve.running ? "no improvement yet" : "no improvement found" : session ? "no record yet" : outdated ? "goals changed" : "not started"}</span></div>
+      {autoStart
+        ? <div className="ftStat"><p>Searching</p><strong>{pull ? `Goal ${pull.goal}` : solve.running ? "Starting" : "—"}</strong>
+          <span>{pull ? `${LEVERS[pull.lever] ?? pull.lever} · ` : ""}{focused ? `only ${goalSpan(focused)}` : "whole run"}</span></div>
+        : <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : phase === "build" ? "Build" : "Reach"}</strong>
+          <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 1-${best.progress} of ${of}` : "whole-run checked") : best ? `next: goal ${best.progress + 1} of ${of}` : ""}</span></div>}
       <div className="ftStat"><p>Elapsed</p><strong>{session ? clock((solve.running ? now : events[events.length - 1].at) - session.at) : "—"}</strong>
-        <span>{session ? `of ${num(session.minutes)} min` : ""}</span></div>
+        <span>{!session ? "" : minutes != null && minutes >= 24 * 60 ? "until Stop" : `of ${minutes} min`}</span></div>
     </div>
 
-    {of > 0 && <div className="ftGoalBar" aria-label="Goals reached">
+    {of > 0 && <div className="ftGoalBar" aria-label="Goals: click to pick, shift-click to extend">
       {labels.map((label, i) => {
         const reached = best != null && i < best.progress;
-        const active = windowOpen && window_ != null && i >= window_.first && i < window_.limit;
-        return <span key={i} className={`${reached ? "reached" : ""} ${active ? "active" : ""}`} title={`${i + 1}. ${goalName(label)}${reached && best ? ` · ${s2(best.splits[i])}` : ""}`}/>;
+        const active = pull ? i + 1 >= pull.goal && i + 1 <= pull.goal + 1 : windowOpen && window_ != null && i >= window_.first && i < window_.limit;
+        const isPicked = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
+        return <span key={i} className={`${reached ? "reached" : ""} ${improved.has(i + 1) ? "improved" : ""} ${isPicked ? "picked" : ""} ${active ? "active" : ""}`}
+          onClick={e => onPick(i + 1, e.shiftKey)}
+          title={`${i + 1}. ${goalName(label)}${reached && best ? ` · ${s2(best.splits[i])}` : ""}${improved.has(i + 1) ? " · improved" : ""} · click to pick, shift-click to extend`}/>;
       })}
     </div>}
 
     {windowOpen && window_ && <div className={`ftNow ${window_.kind}`}>
       <p className="eyebrow">CURRENT WINDOW</p>
-      {window_.kind === "segment"
-        ? <h3>Segment {num(segmentNow?.n)} of {num(segmentNow?.of)}: {window_.piece ? `an extra lap (${window_.piece})` : `time saves through ${span(window_)}`}</h3>
-        : window_.kind === "piece"
+      {window_.kind === "piece"
         ? <h3>Searching a loop piece for goal {window_.limit}: {window_.piece}</h3>
         : window_.kind === "reach"
           ? <h3>Searching for goal {window_.limit}: {goalName(labels[window_.limit - 1])}</h3>
           : window_.kind === "repair"
             ? <h3>Re-finding {span(window_)} after an earlier change</h3>
             : <h3>Searching for time saves through {span(window_)}</h3>}
-      <p className="ftNowDetail">{window_.kind === "segment"
-        ? `Opens at the Quick Restart ${window_.first > 0 ? `after goal ${window_.first} (${s2(window_.start)})` : "before goal 1"}.`
-        : window_.kind === "piece"
+      <p className="ftNowDetail">{window_.kind === "piece"
         ? `From goal ${window_.first} (${s2(window_.start)}).`
         : window_.kind === "reach"
           ? window_.first === window_.limit - 1 ? `From goal ${window_.first} (${s2(window_.start)}).`
@@ -406,15 +432,15 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
         <time>{ago(now - item.at)}</time>
       </li>)}
     </ol>}
-    {!items.length && !solve.running && <p className="ftEmpty">No solve yet.</p>}
+    {!items.length && !solve.running && <p className="ftEmpty">Nothing searched yet: press Improve.</p>}
 
     <details className="howTo"><summary>How it works</summary><ol>
-      <li>Reach finds each missing goal in order.</li>
-      <li>Build assembles buys and laps from saved, reusable pieces.</li>
-      <li>Polish searches goal windows for saves; a sooner ending replaces the route.</li>
-      <li>Segment: route between two Quick Restarts; a save must end at the old one.</li>
-      <li>Safe segment: no later buy, so saved time is kept.</li>
-      <li>Known faster way: found earlier, but the run after it didn't take it.</li>
+      <li><b>Improve</b> searches the whole run from its record and picks the stretches itself.</li>
+      <li>Pick goals first (click a goal or a segment bar, shift-click to extend) to search only there.</li>
+      <li>Every faster run is replayed in the game in turbo and saved when it holds up.</li>
+      <li>It runs until Stop and leaves 4 cores to the game.</li>
+      <li>Cyan goals in the bar are the ones this Improve made faster.</li>
+      <li>A run that misses goals gets <b>Reach missing goals</b> instead.</li>
     </ol></details>
 
     <details className="ftRaw">

@@ -45,10 +45,26 @@
 .matrixCell { display: inline-flex; justify-content: flex-start; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
 .matrixCell input { accent-color: var(--cyan); margin: 0; }
 .matrixCell.on { color: var(--text); }
+.matrixPair { display: flex; flex-direction: column; gap: 2px; }
+.matrixCell button { padding: 1px 4px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.matrixCell button:hover { color: var(--cyan); }
+.matrixCell.farm { font-size: 11px; }
+.matrixCell.opened button { background: #123955; color: var(--cyan); }
 .matrixQueue { margin: 14px 0 0; padding-left: 22px; font-size: 12px; line-height: 1.7; color: var(--muted); }
 .matrixQueue li strong { margin-right: 8px; color: #aac0d7; }
 .matrixQueue li.active strong, .matrixQueue li.active span { color: var(--cyan); }
 .matrixQueue li.done strong { color: var(--text); }
+
+.courseWaypoints { margin: 4px 0 6px; }
+.courseWaypoints .eyebrow { margin: 0 0 6px; }
+.waypointNote { margin: 6px 0; color: var(--muted); font-size: 13px; }
+.courseWaypoints .resultTable { max-height: 40vh; overflow-y: auto; margin-top: 10px; }
+.courseWaypoints .tableHead, .courseWaypoints .tableRow { grid-template-columns: 34px minmax(0,1fr) 110px 110px; }
+.courseWaypoints .tableRow { cursor: pointer; user-select: none; }
+.courseWaypoints .tableRow:hover { background: #10263d; }
+.courseWaypoints .tableRow.pending { color: var(--muted); }
+.courseWaypoints .tableRow.picked { background: #0f2c46; box-shadow: inset 3px 0 0 var(--cyan); }
+.courseWaypoints + .ftImprove { margin-bottom: 12px; }
 
 .solveMap .panelTitle .buttonRow { margin: 0; }
 .mapLayers { user-select: none; -webkit-user-select: none; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 4px 0 10px; }

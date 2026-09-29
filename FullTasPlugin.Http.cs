@@ -146,7 +146,7 @@ namespace IGTAPTasMod
                         return new { ok = true };
                     }
                     FullTasClosest closest = FullTasClosestAttempt(run.name, ResolveFullTasGoals(run).Select(g => g.label).ToList())
-                        ?? throw new InvalidOperationException("Full-TAS run " + run.name + " has no search attempt for its current goals yet: run Solve unsolved.");
+                        ?? throw new InvalidOperationException("Full-TAS run " + run.name + " has no search attempt for its current goals yet: run Reach missing goals.");
                     StartFullTasPlayback(run, new MacroDefinition { name = "fulltas/" + run.name + " closest attempt (" + closest.reached + " of " + run.goals.Count + " goals"
                         + (closest.next == null ? "" : ", next " + closest.next) + (closest.distance == null ? "" : " " + closest.distance.Value.ToString("0.#", CultureInfo.InvariantCulture) + " away") + ")",
                         steps = ToSteps(closest.inputs) }, closest.reached);
@@ -171,7 +171,9 @@ namespace IGTAPTasMod
                     ResolveFullTasGoals(run);
                     if (!(body["ticks"] is JArray)) throw new InvalidOperationException("ticks: the run's inputs.");
                     List<SolverTick> inputs = body["ticks"].ToObject<List<SolverTick>>();
-                    return FullTasWhenReady(request, run, "Judging a " + run.name + " route", () => FullTasJudge(run, inputs));
+                    // A route of goals `fulltas --auto` adopted (its goals part) carries them and the goal lists they came from.
+                    var (goals, from) = FullTasRouteGoals(body);
+                    return FullTasWhenReady(request, run, "Judging a " + run.name + " route", () => FullTasJudge(run, inputs, goals, from));
                 }
                 case "/api/fulltas/avoid":
                 {
@@ -207,7 +209,7 @@ namespace IGTAPTasMod
                     if (!File.Exists(trace))
                     {
                         request.StatusCode = 404;
-                        return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or solve it once first." };
+                        return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or improve it once first." };
                     }
                     string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".json");
                     // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
@@ -252,7 +254,7 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             return new {
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
-                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, segments = _fullTasSegments, log = _fullTasLog },
+                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog },
                 lastResult = _fullTasLastResult,
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,

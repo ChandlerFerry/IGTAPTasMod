@@ -68,18 +68,16 @@ namespace IGTAPTasMod
                         throw new InvalidOperationException("Stop playback, recording, the solver or the running probe first.");
                     string name = Text(body, "name").Trim();
                     if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new InvalidOperationException("A probe needs a file-safe name.");
-                    // tech: the demo's own start, inputs and savestate or lab map, unless given.
-                    TechDef tech = body["tech"] == null ? null : FindTech(Text(body, "tech"));
-                    MacroDefinition demo = tech == null ? null : TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
+                    // tech: the tech's lab demo (lab: which of its labs, else its first), its start and inputs, unless given.
+                    List<SolverTick> demo = null;
+                    TechDef tech = body["tech"] == null ? null : TechLabDemo(FindTech(Text(body, "tech")), body["lab"] == null ? null : Text(body, "lab"), out demo);
                     string route = Text(body, "route").Trim();
-                    if (route.Length == 0 && tech != null) route = tech.start ?? "";
+                    if (route.Length == 0 && tech != null) route = tech.start;
                     if (route.Length == 0 || MatchTechStart(route).Length != route.Length)
                         throw new InvalidOperationException("route is a category prefix (1_WJ_DS): it picks the course, zone and unlocks.");
                     string savestateId = Text(body, "savestateId");
-                    if (savestateId.Length == 0 && demo != null) savestateId = demo.savestateId ?? "";
                     if (savestateId.Length > 0 && _savestates.Find(s => s.id == savestateId) == null) throw new InvalidOperationException("Savestate not found.");
-                    List<SolverTick> ticks = body["ticks"] is JArray list ? list.ToObject<List<SolverTick>>()
-                        : demo != null ? ToTicks(demo.steps.Where(s => s.enabled).ToList()) : null;
+                    List<SolverTick> ticks = body["ticks"] is JArray list ? list.ToObject<List<SolverTick>>() : demo;
                     FieldInfo[] fields = body["fields"] is JArray names ? names.Select(n => AccessTools.Field(typeof(Movement), (string)n)
                         ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
                     _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields, tech = tech,

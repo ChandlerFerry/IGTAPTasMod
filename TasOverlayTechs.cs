@@ -63,8 +63,6 @@ namespace IGTAPTasMod
             public Tech tech;
             public long start, end;
             public long input;
-            public long savestateInput;
-            public Savestate savestate;
             public int lane;
         }
 
@@ -72,8 +70,6 @@ namespace IGTAPTasMod
         const int FlipWindowTicks = 4;
         /// <summary>The most ticks between two climbs of one inwall chain, and between its last climb and the wallbounce.</summary>
         const int InwallChainTicks = 6;
-        const int TechDemoLeadTicks = 25;
-        const int TechStateTicks = 256;
         const long NoTick = long.MinValue / 2;
         static readonly FieldInfo TechJumpBufferField = AccessTools.Field(typeof(Movement), "jumpBuffer");
         static readonly FieldInfo TechCoyoteField = AccessTools.Field(typeof(Movement), "coyoteFrames");
@@ -89,11 +85,7 @@ namespace IGTAPTasMod
         readonly List<TechSpan> _techSpans = new List<TechSpan>();
         readonly List<TechSpan> _techSeen = new List<TechSpan>();
         MacroDefinition _techSeenRoute;
-        bool _techSeenFilled;
         readonly List<(Tech tech, long start)> _techPending = new List<(Tech, long)>();
-        // The last TechStateTicks input ticks' states, oldest at _techStateHead (a ring: a new one replaces the oldest when full).
-        readonly (long input, Savestate state)[] _techStates = new (long, Savestate)[TechStateTicks];
-        int _techStateHead, _techStateCount;
         readonly int[] _techCounts = new int[TechNames.Length];
         readonly List<Tech> _techOrder = new List<Tech>();
         readonly RaycastHit2D[] _techHits = new RaycastHit2D[8];
@@ -302,12 +294,11 @@ namespace IGTAPTasMod
         void ResetTechs(Movement player)
         {
             _techSpans.Clear();
-            // The Tech tab's playback list (demos are cut from it) is the last route's; manual play leaves it alone.
+            // The Tech tab's playback list is the last route's; manual play leaves it alone.
             if (OverlayListsRun)
             {
                 _techSeen.Clear();
                 _techSeenRoute = _engine.ActiveMacro;
-                _techSeenFilled = false;
             }
             _techPending.Clear();
             _techOrder.Clear();
@@ -331,31 +322,7 @@ namespace IGTAPTasMod
             _techPreGround = player.onGround;
             _techPreDashing = player.dashActive;
             _techPreSpring = player.cutsceneMode == Movement.cutsceneModes.spring;
-            // A demo's own savestate comes from a route's playback only (FillTechDemos); manual play keeps none.
-            if (OverlayListsRun) CaptureTechState(player);
         }
-
-        void CaptureTechState(Movement player)
-        {
-            long input = _engine.RunTicks;
-            if (_techStateCount > 0)
-            {
-                long last = TechStateAt(_techStateCount - 1).input;
-                if (last > input) _techStateHead = _techStateCount = 0;
-                else if (last == input) _techStateCount--;
-            }
-            bool clean = !player.dashActive && player.cutsceneMode == Movement.cutsceneModes.none;
-            var state = (input, clean ? SavestateService.Capture(player, "tech", MacroLibrary.CurrentSchemaVersion) : null);
-            if (_techStateCount < TechStateTicks) _techStates[(_techStateHead + _techStateCount++) % TechStateTicks] = state;
-            else
-            {
-                _techStates[_techStateHead] = state;
-                _techStateHead = (_techStateHead + 1) % TechStateTicks;
-            }
-        }
-
-        /// <summary>The i-th oldest captured state.</summary>
-        (long input, Savestate state) TechStateAt(int i) { return _techStates[(_techStateHead + i) % TechStateTicks]; }
 
         void TechAfterTick(Movement player, long tick, bool jumpPress, bool dashPress)
         {
@@ -449,18 +416,8 @@ namespace IGTAPTasMod
                 if (other.end >= start && other.start <= end) used[other.lane] = true;
             int lane = 0;
             while (lane < TechLanes - 1 && used[lane]) lane++;
-            long input = _engine.RunTicks, from = System.Math.Max(0, input - (end - start) - TechDemoLeadTicks);
+            long input = _engine.RunTicks;
             var span = new TechSpan { tech = tech, start = start, end = end, input = input, lane = lane };
-            for (int i = _techStateCount - 1; i >= 0; i--)
-            {
-                (long stateInput, Savestate state) = TechStateAt(i);
-                if (stateInput <= from && state != null)
-                {
-                    span.savestateInput = stateInput;
-                    span.savestate = state;
-                    break;
-                }
-            }
             _techSpans.Add(span);
             if (OverlayListsRun) _techSeen.Add(span);
             if (_techCounts[(int)tech]++ == 0) _techOrder.Add(tech);

@@ -46,8 +46,11 @@
     speedrun boxes, block swap on dash), not a bonus stretch.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
     zone 2).
-21. Every quick restart onto a course loads the zone of the start gate nearest it the game's way (`ZoneLoader`, as the
-    zone activators do); the breaker plays no part.
+21. Every quick restart onto a course, bonus or transition loads the zone of the start gate or checkpoint nearest its
+    start the game's way (`ZoneLoader`, as the zone activators do); the breaker plays no part. Courses 6–15 start as if the free first atom had been bought: the atom
+    room's door (`AtomColliderArea/Door`) is open, as a game load opens it with PlayerPrefs `OpenA2Door` (the atom box's
+    `doorToOpen.JumpToNextState()`), without buying the atom, its prestige or any PlayerPrefs write (`CourseStart.OpenAtomDoor`,
+    in the plugin's category start and the offline engine's course trace load). Course 9's end is reachable only through it.
 22. Their lowest category is `WJ_DS_DJ_BS`.
 23. Courses 11–15 are Courses 1–5 with Area 1 overgrown: the game's own Course 1–5 gates and timer on the overgrown
     terrain (spikes, moss, zip movers).
@@ -90,7 +93,8 @@
 49. `enginesim` can't do something? Fix `enginesim`, don't work around.
 50. Offline replay must match the game tick for tick.
 51. `FloatingOrigin` rebases in turbo and offline as at 1x: turbo runs the game's own `LateUpdate` and `MoveOrigin`, and
-    a turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`).
+    a turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`). A course, bonus or transition
+    start is judged at one origin, whatever ran before: where the game's own rebase on the player standing there leaves it.
 52. Only save strictly faster times: record by the game timer, farm by physics ticks.
 53. Trace every new best and name its trick.
 
@@ -138,11 +142,11 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `TasPlugin.cs`, `TasPlugin.*.cs` | BepInEx plugin, split by responsibility: `TasPlugin.cs` (state, lifecycle, shared helpers), `TasPlugin.Patches.cs` (all Harmony hooks), `TasPlugin.Playback.cs` (pacing & fixed clock), `TasPlugin.Session.cs` (new-game setup, unlocks, bootstrap), `TasPlugin.Savestates.cs`, `TasPlugin.Recording.cs`, `TasPlugin.Persistence.cs`, `TasPlugin.Http.cs` (HTTP API on `http://127.0.0.1:17426/`). Fields stay in `TasPlugin.cs`/`FullTasPlugin.cs` to keep the field-initializer order the compiler emits. |
 | `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Shared with `enginesim`. |
 | `TurboRunner.cs` | Deterministic faster-than-real-time replay inside the game. |
-| `Solver.cs` | Optimize tab and `SaveSolverRoute`, the only way a category route gets saved. |
+| `Solver.cs` | Optimize tab (course **Improve**: `solve --auto` per record or farm target, its waypoints and `--focus`) and `SaveSolverRoute`, the only way a category route gets saved. |
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
-| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and a demo route that performs it. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
+| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `web/` | Next.js studio, served by the plugin. |
 | `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan-fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `tech-check.py` (every tech demo, turbo against the offline engine). |

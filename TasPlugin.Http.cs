@@ -44,6 +44,9 @@ namespace IGTAPTasMod
                 StartSolver(body);
                 return new { ok = true };
             }
+            // What start would run, started nothing (the studio's command preview, README ### Rules 48: agents check with this).
+            if (request.Path == "/api/solver/preview") return PreviewSolver(body);
+            if (request.Path == "/api/solver/waypoints") return EngineSimWaypoints(request, body);
             if (request.Path == "/api/solver/stop")
             {
                 StopSolver("Stopped");

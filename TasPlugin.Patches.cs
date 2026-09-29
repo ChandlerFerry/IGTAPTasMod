@@ -118,6 +118,9 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance)) Instance.OverlayRespawned(__0);
         }
 
+        /// <summary>The scene's roots as loaded, before the first rebase moves them (the category starts' canonical origin).</summary>
+        private static void BeforeMoveRootTransforms(FloatingOrigin __instance) { TurboRunner.RecordPristineRoots(__instance); }
+
         private static void AfterMoveRootTransforms(Vector3 __0)
         {
             if (Instance != null) Instance._engine.WorldMoved(__0);

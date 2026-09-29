@@ -66,6 +66,7 @@ namespace IGTAPTasMod
             TechDef labTech = LabMapEnsureFor(route);
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
+            _canonicalReference = null;
             CourseDef named = CourseOfRoute(route.name);
             _runCourse = named;
             EnsureArea1State(named);
@@ -112,6 +113,11 @@ namespace IGTAPTasMod
                 }
                 if (_runCourse == null && _hasPreservedCourseResetPoint)
                     _runCourse = _courses.Find(c => c.x == _preservedCourseResetPoint.x && c.y == _preservedCourseResetPoint.y);
+                // A course, bonus or transition start is judged at one FloatingOrigin, whatever ran before (TurboRunner.PutCanonicalOrigin).
+                Vector2 reset = _preservedCourseResetPoint;
+                _canonicalReference = _hasPreservedCourseResetPoint && _courses.Exists(c => c.x == reset.x && c.y == reset.y)
+                    ? TurboRunner.CanonicalReference(reset) : (Vector3?)null;
+                if (_canonicalReference is Vector3 reference) TurboRunner.PutCanonicalOrigin(reference);
                 if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint + CurrentOrigin();
                 movement.CancelInvoke("deathRespawn");
                 movement.CancelInvoke("respawn");
@@ -135,6 +141,9 @@ namespace IGTAPTasMod
                     body.angularVelocity = 0f;
                     Physics2D.SyncTransforms();
                 }
+                // The quick restart keeps the last run's history (facing, dash direction, RNG, clone timers): a category start
+                // has fixed ones (CourseStart), as its captured start state does.
+                CourseStart.Apply(movement, FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
             }
             else Logger.LogWarning("No savestate or quick restart was available.");
             return false;

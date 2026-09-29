@@ -145,7 +145,6 @@ namespace IGTAPTasMod
 
         private void OnAttemptEnded(bool success, string reason)
         {
-            if (!_silentEvaluation) FillTechDemos();
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
                 FinishFullTasPlayback(success, reason);

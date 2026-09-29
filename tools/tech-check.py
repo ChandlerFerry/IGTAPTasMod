@@ -1,14 +1,13 @@
 """Every tech demo, turbo against the offline engine.
 
-For each tech with a demo (the studio's Tech tab), the running game captures the demo in turbo from the start its playback
+For each tech with a lab demo (the studio's Tech tab), the running game captures the demo in turbo from the start its playback
 uses (`POST /api/enginesim/trace {tech}` -> enginesim/tech-<id>.json + world), then `IGTAP.EngineSim replay` runs the same
 inputs offline and reports the first tick where they differ.
 
-  tech-check.py                 every tech with a demo
+  tech-check.py                 every tech with a lab demo
   tech-check.py ID [ID ...]     just these
   --exe PATH                    the offline engine to use (default: enginesim/Cli/bin/Release/net10.0/IGTAP.EngineSim.exe)
 
-A Full-TAS demo (fulltas/VMAN_NONE) needs that run's fresh new game in the game first (POST /api/session/newgame).
 Exit code 1 when any demo differs or fails.
 """
 import json
@@ -50,7 +49,7 @@ def main():
         exe = Path(args[at + 1])
         del args[at:at + 2]
     techs = call("/api/state", method="GET")["techs"]["list"]
-    wanted = [t for t in techs if t["confirmed"] and (not args or t["id"] in args)]
+    wanted = [t for t in techs if t.get("labs") and (not args or t["id"] in args)]
     bad = 0
     for tech in wanted:
         result = trace(tech["id"])

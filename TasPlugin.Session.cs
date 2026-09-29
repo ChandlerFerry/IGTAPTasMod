@@ -539,7 +539,9 @@ namespace IGTAPTasMod
         /// gate compares the unlocks only (README ### Rules 10).</summary>
         internal static readonly string[] CategoryRunState = { "airDashesLeft", "airJumpsLeft", BlueActiveField };
 
-        internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
+        /// <summary>Sets the category's abilities (the values before, to put back) and the movers' start: <see cref="ResetZipMovers"/>
+        /// for <paramref name="course"/> (null: a start that is no course's, a lab's).</summary>
+        internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps, CourseDef course)
         {
             var saved = new List<(string, object)>();
             foreach (var (field, value) in CategoryAbilities(caps))
@@ -547,7 +549,7 @@ namespace IGTAPTasMod
                 saved.Add((field, GetMovementField(movement, field)));
                 SetMovementField(movement, field, value);
             }
-            ResetZipMovers();
+            ResetZipMovers(course);
             return saved;
         }
 
@@ -560,9 +562,13 @@ namespace IGTAPTasMod
         /// Every zip mover at its first stop, still, as a game load has it (PlatformMover.Awake: JumpToState(0)). Nothing in the
         /// game puts a mover back after it moved (a zone load keeps its stop), so a category start sets it: turbo, the offline
         /// export and playback all begin with the movers in the same place. Not JumpToState itself: its coroutine keeps
-        /// `reset` on for two physics steps, which a turbo snapshot would capture and keep.
+        /// `reset` on for two physics steps, which a turbo snapshot would capture and keep. Then the atom room's door as the
+        /// load's <c>upgradeBox.Start</c> leaves it: open when the save bought the first atom (the box's TimesUsed, PlayerPrefs
+        /// OpenA2Door, only read), and on Courses 6-15 always (README ### Rules 21, <see cref="CourseStart.AssumesAtomDoor"/>).
+        /// Nothing is bought and nothing written to PlayerPrefs or the save; the door keeps that stop in the session until the
+        /// next category start or a reload.
         /// </summary>
-        static void ResetZipMovers()
+        static void ResetZipMovers(CourseDef course)
         {
             foreach (PlatformMover mover in FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
@@ -577,6 +583,10 @@ namespace IGTAPTasMod
                 if (mover.gameObject.layer != LayerMask.NameToLayer("Ground")) mover.gameObject.layer = LayerMask.NameToLayer("Ground");
                 if (MoverBody.GetValue(mover) is Rigidbody2D body && body != null) body.linearVelocity = Vector2.zero;
             }
+            upgradeBox[] boxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            bool assumed = course != null && !course.IsBonus && !course.IsTransition && CourseStart.AssumesAtomDoor(course.id);
+            if (assumed || PlayerPrefs.HasKey("OpenA2Door") || Array.Exists(boxes, b => CourseStart.IsAtomBox(b) && b.TimesUsed != 0))
+                CourseStart.OpenAtomDoor(boxes);
             Physics2D.SyncTransforms();
         }
 
@@ -584,7 +594,7 @@ namespace IGTAPTasMod
         {
             Match category = MatchRoutePrefix(route.name);
             if (!category.Success || movement == null) return;
-            foreach (var (field, value) in ApplyAbilities(movement, CapsOf(category.Groups["label"].Value).Id))
+            foreach (var (field, value) in ApplyAbilities(movement, CapsOf(category.Groups["label"].Value).Id, CourseOfRoute(route.name)))
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 

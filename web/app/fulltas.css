@@ -11,9 +11,20 @@
 @media (max-width: 1200px) { .fullTasGrid { grid-template-columns: 1fr; } }
 .fullTasGoals .tableHead, .fullTasGoals .tableRow { grid-template-columns: 40px minmax(0,1fr) 130px 130px; }
 .fullTasGoals .tableRow.pending { color: var(--muted); }
+/* A run's goals (hundreds) scroll in place, so Improve's progress below stays a short scroll away. */
+.fullTasGoals .resultTable { max-height: 62vh; overflow-y: auto; }
+.fullTasGoals .resultTable > .tableHead { position: sticky; top: 0; z-index: 1; background: #0b1829; }
 
 .fullTasGoals .tableRow.breakerTrip { background: #3a1420; color: var(--red); font-weight: 700; box-shadow: inset 3px 0 0 var(--red); }
 .fullTasGoals .tableRow.breakerOut { background: #1a0d18; box-shadow: inset 3px 0 0 #7a2438; }
+.fullTasGoals .tableRow.pickable { cursor: pointer; user-select: none; }
+.fullTasGoals .tableRow.pickable:hover { background: #10263d; }
+.fullTasGoals .tableRow.picked { background: #0f2c46; box-shadow: inset 3px 0 0 var(--cyan); }
+.ftFocus { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: #0f1d31; color: var(--muted); font-size: 13px; box-shadow: inset 3px 0 0 #294563; }
+.ftFocus.on { background: #0f2c46; color: var(--text); box-shadow: inset 3px 0 0 var(--cyan); }
+.ftFocus b { color: var(--cyan); }
+.ftImprove { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: 12px; }
+.ftImprove .primary { min-width: 180px; font-size: 15px; }
 .fullTasEditor textarea { width: 100%; min-height: 220px; resize: vertical; border: 1px solid #294563; background: #081524; color: var(--text); border-radius: 8px; padding: 10px 11px; outline: none; font: 12px/1.6 ui-monospace,Consolas,monospace; }
 .fullTasEditor textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px #34b8ff1b; }
 .fullTasEditor .buttonRow, .fullTasSolve .buttonRow { flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
@@ -35,8 +46,10 @@
 .ftStat span { color: var(--muted); font-size: 12px; }
 .ftStat.good strong { color: var(--green); }
 .ftGoalBar { display: flex; gap: 3px; }
-.ftGoalBar span { flex: 1; height: 12px; border-radius: 3px; background: #1c304b; }
+.ftGoalBar span { flex: 1; height: 12px; border-radius: 3px; background: #1c304b; cursor: pointer; }
 .ftGoalBar span.reached { background: var(--green); }
+.ftGoalBar span.improved { background: var(--cyan); }
+.ftGoalBar span.picked { outline: 2px solid var(--text); outline-offset: 1px; }
 .ftGoalBar span.active { background: var(--amber); animation: ftPulse 1.2s ease-in-out infinite; }
 .ftGoalBar span.reached.active { background: linear-gradient(90deg, var(--green), var(--amber)); }
 @keyframes ftPulse { 50% { opacity: .45; } }
@@ -93,8 +106,6 @@
 .segIcon { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; font-style: normal; font-size: 12px; font-weight: 800; line-height: 1; cursor: help; border: 1px solid currentColor; }
 .segIcon.restart { color: var(--cyan); background: #0f2a44; }
 .segIcon.end { color: var(--text); background: #1a2b40; }
-.segIcon.clean { color: var(--green); background: #0d2c24; }
-.segIcon.carry { color: var(--amber); background: #33250c; }
 .segIcon.faster { color: #ffe066; background: #2e2a0d; font-size: 11px; }
 .segmentLegend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 4px; color: var(--muted); font-size: 12px; }
 .segmentLegend > span { display: inline-flex; align-items: center; gap: 5px; }

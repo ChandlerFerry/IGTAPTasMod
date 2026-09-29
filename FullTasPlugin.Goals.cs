@@ -392,9 +392,40 @@ namespace IGTAPTasMod
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 
-        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs)
+        /// <summary>
+        /// A route's own goals (`goals`, with `goalsFrom`: the goal lists they were derived from), as `fulltas --auto`'s goals part
+        /// sends and writes them with a route of goals it adopted; null when the route is of the run's goals.
+        /// </summary>
+        static (List<string> goals, List<List<string>> from) FullTasRouteGoals(JObject body)
         {
-            bool finished = EvaluateFullTas(run, inputs, out float time, out int finishTick, out FullTasTracker tracker);
+            if (!(body["goals"] is JArray goals)) return (null, null);
+            var from = body["goalsFrom"] is JArray lists ? lists.OfType<JArray>().Select(l => l.Select(g => (string)g).ToList()).ToList() : new List<List<string>>();
+            return (goals.Select(g => (string)g).ToList(), from);
+        }
+
+        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<string> goals = null, List<List<string>> goalsFrom = null)
+        {
+            // A route of other goals (the engine's goals part dropped or added economy laps): judged under its own goals, and when
+            // it's saved as the record those become the run's. Only when they were derived from the run's goals as they are now, and
+            // keep its end, area, reward and unlock goals (FullTasGoal.EditRefused).
+            FullTasRunDef judged = run;
+            string[] current = FullTasLabels(run);
+            if (goals != null && !goals.SequenceEqual(current))
+            {
+                string refused = goalsFrom == null || !goalsFrom.Any(l => l.SequenceEqual(current))
+                    ? "its goals (" + goals.Count + ") come from another goal list than " + run.name + "'s " + current.Length + " goals"
+                    : FullTasGoal.EditRefused(current, goals);
+                if (refused != null)
+                {
+                    string text = "Full-TAS " + run.name + ": route not judged: " + refused;
+                    SetFullTasResult(text, new { kind = "judge", text, run = run.name, error = true, finished = false, saved = false, reason = refused });
+                    return new FullTasVerdict { finished = false, reason = refused, splits = new List<FullTasSplit>() };
+                }
+                judged = JsonConvert.DeserializeObject<FullTasRunDef>(JsonConvert.SerializeObject(run));
+                judged.goals = goals.ToList();
+                ResolveFullTasGoals(judged);
+            }
+            bool finished = EvaluateFullTas(judged, inputs, out float time, out int finishTick, out FullTasTracker tracker);
             long runTicks = _engine.PhysicsTicks;
             string status = _engine.Status;
             ParkAtNewGameStart();
@@ -412,13 +443,14 @@ namespace IGTAPTasMod
             {
                 List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
                 string name = category + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
-                _solverFullTas = run;
+                _solverFullTas = judged;
                 try { verdict.saved = SaveSolverRoute(route, time); }
                 finally { _solverFullTas = null; }
                 if (verdict.saved)
                 {
                     StoreFullTasSplits(_library.macros.LastOrDefault(m => m.name == name), verdict.splits);
                     verdict.reason = "saved as " + name;
+                    if (judged != run) verdict.reason += "; " + AdoptFullTasGoals(run, judged.goals);
                 }
                 else verdict.reason = _solverLog[_solverLog.Count - 1];
             }
@@ -429,10 +461,28 @@ namespace IGTAPTasMod
             return verdict;
         }
 
+        /// <summary>
+        /// A record of other goals was saved: they become the run's in fulltas.json (kept first as
+        /// fulltas.json.&lt;yyyyMMdd-HHmmss&gt;.bak beside it), which retires the routes of the old goals as a goals edit does; the
+        /// next Improve captures the start again with them.
+        /// </summary>
+        string AdoptFullTasGoals(FullTasRunDef run, List<string> goals)
+        {
+            int was = run.goals.Count;
+            string backup = FullTasPath + "." + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".bak";
+            if (File.Exists(FullTasPath)) File.Copy(FullTasPath, backup, true);
+            FullTasRunDef adopted = SetFullTasGoals(run.name, goals, null);
+            string text = "the run's goals are now its " + adopted.goals.Count + " (were " + was + "; " + Path.GetFileName(backup) + " kept)";
+            FullTasLog("Full-TAS " + run.name + ": " + text);
+            return text;
+        }
+
         string JudgeFullTasFile(string path, string run)
         {
-            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(path))["ticks"].ToObject<List<SolverTick>>();
-            FullTasVerdict v = FullTasJudge(FindFullTasRun(run), inputs);
+            JObject file = JObject.Parse(File.ReadAllText(path));
+            List<SolverTick> inputs = file["ticks"].ToObject<List<SolverTick>>();
+            var (goals, from) = FullTasRouteGoals(file);
+            FullTasVerdict v = FullTasJudge(FindFullTasRun(run), inputs, goals, from);
             return (v.finished ? "turbo " + v.time.ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish in turbo") + ", " + v.reason;
         }
 
