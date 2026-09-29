@@ -354,7 +354,7 @@ the dot: the checkpoint's position 12 down), with its trigger area dashed; a sta
 box is its trigger box with its name and cost, and says what it is (secret, bonus reward, achievement box, ability,
 tree, one-off or course upgrade), what it gives and what it costs, on hover or tap. Hovering (or tapping) a zip mover
 or moving platform draws where it goes: the corridor its box sweeps, its path and its box at each stop
-(`PlatformMover.Positions`, run in order and back to the first).
+(`PlatformMover.Positions`, run in order and back to the first). Refill orbs are their own sprites, shown and hidden by their marker toggles; an end gate that only stops the timer (`endGate.isEndOfCourse` off: leaving the course that way ends the run without a finish) is a grey **Course exit**. On a course map the level is drawn once per view, so dragging an avoid box or hovering a zip only redraws what follows the pointer.
 The **Area 1** picker switches the level between Area 1's world states, **Normal** and
 **Overgrown** (`OvergrowthLoadScript`: when Area 1 is overgrown its `overgrowthEnable` objects, the moss, spikes, zip
 movers and their boxes and checkpoints under and around Courses 1–5, are on and its `overgrowthDisable` ones are off;

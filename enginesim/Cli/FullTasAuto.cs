@@ -29,6 +29,8 @@ namespace IGTAP.EngineSim.Cli
         Func<Route, string> _hopeless;
         /// <summary>Repair's harvest (--auto): every partial run a repair window reaches.</summary>
         Action<Route, string> _collect;
+        /// <summary>Repair's start (--auto): sets the repair's CPU budget from the lead it chases.</summary>
+        Action<Route> _repairBegin;
         /// <summary>A repair window's budget (--auto: --repair-minutes); null: --window-minutes.</summary>
         double? _repairMinutes;
 
@@ -701,7 +703,24 @@ namespace IGTAP.EngineSim.Cli
             }
             long behind = at - _best.GoalPhysics[p - 1];
             if (behind > _repairSlack) return $"{behind} ticks behind the best at goal {p} (--repair-slack {_repairSlack})";
+            if (_repairAt is (double cpu, long lead))
+            {
+                double spent = CpuSeconds() - cpu, budget = _repairCpuPerTick * lead;
+                if (spent >= budget) return $"its budget is spent ({spent:0} CPU s for a {lead}-tick lead, --repair-cpu-per-tick {_repairCpuPerTick})";
+                // The next window gets what's left of it, on every thread.
+                _repairMinutes = Math.Clamp((budget - spent) / (60.0 * _threads), 0.05, _repairMax);
+            }
             return null;
+        }
+
+        (double cpu, long lead)? _repairAt;
+
+        /// <summary>A repair starts: its budget is --repair-cpu-per-tick CPU seconds per tick it is ahead of the best at its goal.</summary>
+        void RepairBegin(Route run)
+        {
+            int p = run.Progress;
+            long lead = p > 0 && p <= _best.Progress ? _best.GoalPhysics[p - 1] - run.GoalPhysics[p - 1] : 1;
+            _repairAt = (CpuSeconds(), Math.Max(1, lead));
         }
 
         /// <summary>Files a route as a reference (its goal ticks from its replay): a later graft or the gap model can use it.</summary>

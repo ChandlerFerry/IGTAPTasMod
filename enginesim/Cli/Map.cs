@@ -482,7 +482,22 @@ namespace IGTAP.EngineSim.Cli
         // The world states and, per state root object, the "<state>:<option>" it and everything under it are only in.
         // Area 1: normal or overgrown (OvergrowthLoadScript turns overgrowthEnable on and overgrowthDisable off when
         // Area 1 is overgrown, the reverse otherwise).
-        internal static (List<WorldState> states, Dictionary<int, string> roots) WorldStates(JsonElement world)
+        // WorldStates, OnObjects and StateOf read the whole world; a map calls them for every layer it draws, so each result
+        // is kept for the world it came from.
+        static readonly Dictionary<(JsonElement, string), object> Memo = new Dictionary<(JsonElement, string), object>();
+        static T Remember<T>(JsonElement world, string what, Func<T> make)
+        {
+            lock (Memo)
+                if (Memo.TryGetValue((world, what), out object v)) return (T)v;
+            T made = make();
+            lock (Memo) Memo[(world, what)] = made;
+            return made;
+        }
+
+        internal static (List<WorldState> states, Dictionary<int, string> roots) WorldStates(JsonElement world) =>
+            Remember(world, "states", () => MakeWorldStates(world));
+
+        static (List<WorldState> states, Dictionary<int, string> roots) MakeWorldStates(JsonElement world)
         {
             var states = new List<WorldState>();
             var roots = new Dictionary<int, string>();
@@ -505,10 +520,10 @@ namespace IGTAP.EngineSim.Cli
                     components[c.GetProperty("id").GetInt32()] = c;
                 }
             }
+            var boxesOf = components.Where(kv => kv.Value.GetProperty("type").GetString() == "upgradeBox").ToLookup(kv => owner[kv.Key], kv => kv.Key);
             IEnumerable<int> BoxesUnder(int id)
             {
-                foreach (var (cid, c) in components)
-                    if (owner[cid] == id && c.GetProperty("type").GetString() == "upgradeBox") yield return cid;
+                foreach (int cid in boxesOf[id]) yield return cid;
                 if (children.TryGetValue(id, out var kids))
                     foreach (int k in kids)
                         foreach (int b in BoxesUnder(k)) yield return b;
@@ -551,7 +566,10 @@ namespace IGTAP.EngineSim.Cli
         // The objects that are on. With `allStates` (a map of the whole world): as if every zone were loaded (the export
         // holds the world with only the player's zone loaded, and a run loads each zone it enters: ZoneLoader._LoadZone,
         // the zone's root and its ZoneDisableLoadList.toLoad on), in every world state (WorldStates' roots on).
-        internal static HashSet<int> OnObjects(JsonElement world, bool allStates)
+        internal static HashSet<int> OnObjects(JsonElement world, bool allStates) =>
+            Remember(world, allStates ? "on:all" : "on", () => MakeOnObjects(world, allStates));
+
+        static HashSet<int> MakeOnObjects(JsonElement world, bool allStates)
         {
             var on = new HashSet<int>();
             var objects = world.GetProperty("objects").EnumerateArray().ToList();
@@ -585,7 +603,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // Per object, the world state it's only in (its nearest WorldStates root's); objects in every state are absent.
-        static Dictionary<int, string> StateOf(JsonElement world)
+        static Dictionary<int, string> StateOf(JsonElement world) => Remember(world, "when", () => MakeStateOf(world));
+
+        static Dictionary<int, string> MakeStateOf(JsonElement world)
         {
             Dictionary<int, string> roots = WorldStates(world).roots;
             var parent = new Dictionary<int, int>();
@@ -1016,6 +1036,9 @@ namespace IGTAP.EngineSim.Cli
                         y = cy;
                     }
                     if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
+                    // An end gate that isn't the course's end (endGate.isEndOfCourse off) only stops the course's timer:
+                    // leaving the course that way ends the run without a finish (courseScript.stopTracking).
+                    else if (kind == "end" && Fields(c).TryGetValue("isEndOfCourse", out JsonElement eoc) && eoc.ValueKind == JsonValueKind.False) kind = "exit";
                     else if (kind == "box")
                     {
                         // Every upgrade box at its trigger box, where touching it buys it (a bonus's finish): what it

@@ -415,6 +415,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [artLoads, setArtLoads] = useState(0);
   // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
   const [worldState, setWorldState] = useState<StatePick>({});
+  // The zip under the pointer (index into data.zips, -1: none).
+  const [hotZip, setHotZip] = useState(-1);
   const markers = useMemo(() => (data?.markers ?? []).filter(m => inState(m.when, worldState)), [data, worldState]);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
@@ -501,11 +503,10 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     view.current = { scale, ox: (x0 + x1) / 2 - c.clientWidth / 2 / scale, oy: (y0 + y1) / 2 + c.clientHeight / 2 / scale };
   }
 
-  const draw = useCallback(() => {
-    const c = canvas.current; if (!c || !data) return;
-    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
-    if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
-    const g = c.getContext("2d"); if (!g) return;
+  // Everything but what follows the pointer (a box being dragged, a goal being moved, the hovered zip's corridor),
+  // drawn once per view and reused while those change: dragging an avoid box doesn't redraw the level.
+  const paintBase = useCallback((g: CanvasRenderingContext2D, w: number, h: number, dpr: number) => {
+    if (!data) return;
     const { ox, oy, scale } = view.current;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = "#07111f"; g.fillRect(0, 0, w, h);
@@ -607,17 +608,6 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
           if (block.on) { g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1; }
           g.strokeStyle = color; g.lineWidth = 2 * px; g.setLineDash(block.on ? [] : [6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
         }
-    if (sketch) {
-      const [x0, y0, x1, y1] = sketch;
-      g.fillStyle = "#ff3030"; g.globalAlpha = .28; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
-      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
-    }
-    if (moved) {
-      const [x0, y0, x1, y1] = moved.box, [o0, p0, o1, p1] = moved.goal.box;
-      g.strokeStyle = "#3ddc97"; g.lineWidth = 1.5 * px; g.setLineDash([4 * px, 4 * px]); g.strokeRect(o0, p0, o1 - o0, p1 - p0);
-      g.fillStyle = "#3ddc97"; g.globalAlpha = .35; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
-      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
-    }
     // A ghost compare fades the overview and draws its two routes over it (A solid, B dashed).
     if (ghost && ghostCells) g.globalAlpha = .15;
     data.routes.forEach((r, i) => {
@@ -667,22 +657,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         g.restore();
       }
     }
-    // Zips as their boxes; the one under the pointer shows where it goes (its corridor, path and stops).
-    for (const z of data.zips ?? []) {
-      if (!inState(z.when, worldState)) continue;
-      const hot = cursor && cursor.x >= z.box[0] && cursor.x <= z.box[2] && cursor.y >= z.box[1] && cursor.y <= z.box[3];
-      g.strokeStyle = "#ffb74d"; g.lineWidth = (hot ? 2.5 : 1.5) * px; g.strokeRect(z.box[0], z.box[1], z.box[2] - z.box[0], z.box[3] - z.box[1]);
-      if (!hot) continue;
-      g.fillStyle = "#ffb74d"; g.globalAlpha = .18;
-      for (const c of z.corridor) { g.beginPath(); g.moveTo(c[0], c[1]); for (let i = 2; i + 1 < c.length; i += 2) g.lineTo(c[i], c[i + 1]); g.closePath(); g.fill(); }
-      g.globalAlpha = 1;
-      const bw = z.box[2] - z.box[0], bh = z.box[3] - z.box[1];
-      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.beginPath(); g.moveTo(z.path[0][0], z.path[0][1]);
-      for (const [x, y] of z.path.slice(1)) g.lineTo(x, y);
-      g.stroke();
-      g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
-      for (const [x, y] of z.path.slice(1)) g.strokeRect(x - bw / 2, y - bh / 2, bw, bh);
-    }
+    // Zips as their boxes (the one under the pointer shows where it goes: drawn over the cached map below).
+    g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
+    for (const z of data.zips ?? []) if (inState(z.when, worldState)) g.strokeRect(z.box[0], z.box[1], z.box[2] - z.box[0], z.box[3] - z.box[1]);
     if (layers.markers) for (const m of markers) {
       const look = m.kind === "goal" ? { color: "#b9f6ca", shape: "square" } : m.kind === "box" ? BOX_KINDS[m.box!.category] : MARKERS[m.kind];
       if (m.kind === "box" && !layers[`box:${m.box!.category}`]) continue;
@@ -699,7 +676,15 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       };
       // Buy boxes and gates are their trigger boxes; a checkpoint is its spawn box (where a death or quick restart puts
       // the player, solid) over its trigger (where touching it sets the spawn, dashed), as the Ultra map draws them.
-      if ((m.kind === "box" || m.kind === "start" || m.kind === "end") && m.area?.length) { outline(m.area, false, m.kind === "box" ? .12 : .15); continue; }
+      // A refill orb is the game's own orb sprite (art index icons), drawn upright.
+      const icon = art?.icons?.[m.kind];
+      if (icon) {
+        const href = `/art/${icon.file}.webp`;
+        let img = artImages.current.get(href);
+        if (!img) { img = new Image(); img.onload = () => setArtLoads(n => n + 1); img.src = href; artImages.current.set(href, img); }
+        if (img.complete && img.naturalWidth) { g.save(); g.translate(m.x + icon.dx - icon.w / 2, m.y + icon.dy + icon.h / 2); g.scale(1, -1); g.drawImage(img, 0, 0, icon.w, icon.h); g.restore(); continue; }
+      }
+      if ((m.kind === "box" || m.kind === "start" || m.kind === "end" || m.kind === "exit") && m.area?.length) { outline(m.area, false, m.kind === "box" ? .12 : .15); continue; }
       if (m.kind === "checkpoint") {
         if (m.area) outline(m.area, true, .1);
         if (m.spawn) { g.lineWidth = 2 * px; g.strokeStyle = color; g.strokeRect(m.spawn[0], m.spawn[1], m.spawn[2] - m.spawn[0], m.spawn[3] - m.spawn[1]); continue; }
@@ -710,7 +695,52 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       else if (look?.shape === "diamond") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, worldState, markers, art, artLoads, cursor, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
+  }, [data, layers, worldState, markers, art, artLoads, hidden, colors, latest, ghost, ghostCells]);
+  const baseCache = useRef<{ key: string; paint: typeof paintBase; canvas: HTMLCanvasElement } | null>(null);
+  const draw = useCallback(() => {
+    const c = canvas.current; if (!c || !data) return;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+    const g = c.getContext("2d"); if (!g) return;
+    const { ox, oy, scale } = view.current;
+    const key = `${ox},${oy},${scale},${w},${h},${dpr}`;
+    let cache = baseCache.current;
+    if (!cache || cache.key !== key || cache.paint !== paintBase) {
+      const off = cache?.canvas ?? document.createElement("canvas");
+      off.width = c.width; off.height = c.height;
+      const og = off.getContext("2d"); if (!og) return;
+      paintBase(og, w, h, dpr);
+      cache = baseCache.current = { key, paint: paintBase, canvas: off };
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.drawImage(cache.canvas, 0, 0);
+    g.setTransform(dpr * scale, 0, 0, -dpr * scale, -ox * scale * dpr, oy * scale * dpr);
+    const px = 1 / scale;
+    if (sketch) {
+      const [x0, y0, x1, y1] = sketch;
+      g.fillStyle = "#ff3030"; g.globalAlpha = .28; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
+    }
+    if (moved) {
+      const [x0, y0, x1, y1] = moved.box, [o0, p0, o1, p1] = moved.goal.box;
+      g.strokeStyle = "#3ddc97"; g.lineWidth = 1.5 * px; g.setLineDash([4 * px, 4 * px]); g.strokeRect(o0, p0, o1 - o0, p1 - p0);
+      g.fillStyle = "#3ddc97"; g.globalAlpha = .35; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
+    }
+    const z = hotZip >= 0 ? data.zips?.[hotZip] : undefined;
+    if (z) {
+      g.fillStyle = "#ffb74d"; g.globalAlpha = .18;
+      for (const c of z.corridor) { g.beginPath(); g.moveTo(c[0], c[1]); for (let i = 2; i + 1 < c.length; i += 2) g.lineTo(c[i], c[i + 1]); g.closePath(); g.fill(); }
+      g.globalAlpha = 1;
+      const bw = z.box[2] - z.box[0], bh = z.box[3] - z.box[1];
+      g.strokeStyle = "#ffb74d"; g.lineWidth = 2.5 * px; g.strokeRect(z.box[0], z.box[1], bw, bh);
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.beginPath(); g.moveTo(z.path[0][0], z.path[0][1]);
+      for (const [x, y] of z.path.slice(1)) g.lineTo(x, y);
+      g.stroke();
+      g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
+      for (const [x, y] of z.path.slice(1)) g.strokeRect(x - bw / 2, y - bh / 2, bw, bh);
+    }
+  }, [data, paintBase, sketch, moved, hotZip]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -763,6 +793,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     const near = layers.markers ? markers.find(m => Math.abs(m.x - x) < reach && Math.abs(m.y - y) < reach) : undefined;
     const size = data?.explored.cell ?? 1;
     const cell = `${Math.floor(x / size)},${Math.floor(y / size)}`;
+    const zipAt = (data?.zips ?? []).findIndex(z => inState(z.when, worldState) && x >= z.box[0] && x <= z.box[2] && y >= z.box[1] && y <= z.box[3]);
+    if (zipAt !== hotZip) setHotZip(zipAt);
     setCursor({ x, y, marker: near ? (near.box ? boxTitle(near) : `${near.name} (${near.kind})`) : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
   };
   // A tap (not a pan) on a buy box pins its card: what it is, gives and costs.

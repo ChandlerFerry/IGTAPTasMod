@@ -580,7 +580,7 @@ window whose own goal is reached later but with more speed wins when it gains by
 ### Auto
 
 ```powershell
-& $exe fulltas $traces\fulltas-VMAN.json --auto --minutes 75 --window-minutes 0.5 --threads 12 --no-submit   # --probe-minutes p, --repair-minutes r, --repair-slack T, --ref FILE; --minutes 0: the table only
+& $exe fulltas $traces\fulltas-VMAN.json --auto --minutes 75 --window-minutes 0.5 --threads 24 --no-submit   # --parallel K, --probe-minutes p, --repair-minutes r, --repair-cpu-per-tick c, --repair-slack T, --ref FILE; --minutes 0: the table only
 ```
 
 `--auto` (`enginesim\Cli\FullTasAuto.cs`) improves a complete route with no one choosing goals or levers, and needs no
@@ -628,10 +628,13 @@ repaired from is skipped). CPU is the process's
 (`Process.TotalProcessorTime`).
 
 **Every window gain gets its tail repaired**: the merge splices it with the old tail and, where the tail no longer
-follows on, re-finds the later goals from the new state (`Repair`, each window `--repair-minutes`, default twice
-`--window-minutes` and at least 1). In `--auto` a repair is dropped once it can't win:
-when its last goal's tick plus the later goals' lower bounds is no sooner than the best's end, or it is more than
-`--repair-slack` (40) ticks behind the best at a goal. Checking a spliced tail is one replay (about 2 × 10³ ticks)
+follows on, re-finds the later goals from the new state (`Repair`). In `--auto` a repair gets `--repair-cpu-per-tick`
+(15) CPU seconds per tick of the lead it chases, its windows what is left of that on every thread (at most
+`--repair-minutes`), and is dropped once it can't win: its last goal's tick plus the later goals' lower bounds is no
+sooner than the best's end, it falls behind the best at a goal (`--repair-slack`, default 0), or its budget is spent.
+Window arms run side by side: the best non-overlapping window arms, up to `--parallel` (threads / 4) at once, each an
+`OfflineSolver` on its share of the threads from the same best; they are merged latest window first, so each later
+gain lands on an unchanged prefix. Polish, graft, reset study and plan pulls run alone on every thread. Checking a spliced tail is one replay (about 2 × 10³ ticks)
 against a window's 10⁶-10⁷, so the loop doesn't need polish's route sync there.
 
 **Self-harvest.** Every route the loop sees is filed as a reference: the window finishes faster than the best through

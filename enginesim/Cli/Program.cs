@@ -159,7 +159,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
                             + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json>\n"
-                            + "          | --auto [--probe-minutes p] [--repair-minutes r] [--repair-slack T] [--ref <route.json>]...\n"
+                            + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"

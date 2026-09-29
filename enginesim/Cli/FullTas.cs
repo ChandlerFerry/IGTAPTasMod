@@ -1246,6 +1246,7 @@ namespace IGTAP.EngineSim.Cli
 
         void Repair(string where, Route old, Route run)
         {
+            _repairBegin?.Invoke(run);
             int resynced = 0;
             while (!TimeUp)
             {

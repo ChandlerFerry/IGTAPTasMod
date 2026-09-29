@@ -52,7 +52,12 @@ export function StatePicker({ states, pick, onPick, className }: { states: World
 // and y from j to j + 1 tile spans (`tile` / its scale units). `states`: per artKey, per level, tile → image file name.
 // The trees are off until their upgrades are bought, so they have their own tile set under the key with `tree:grown`
 // added to the pick (e.g. "area1:overgrown,tree:grown"), drawn over the level.
-export type ArtIndex = { tile: number; scale: number; states: Record<string, Record<string, string>[]> };
+// `icons`: per refill kind, its orb sprite (file, world size, middle from the orb's position), drawn at its marker.
+export type ArtIndex = { tile: number; scale: number; states: Record<string, Record<string, string>[]>;
+  icons?: Record<string, { file: string; w: number; h: number; dx: number; dy: number }> };
+export type MarkIcon = { href: string; w: number; h: number; dx: number; dy: number };
+export const artIcons = (art: ArtIndex | null, base: string): Record<string, MarkIcon> =>
+  Object.fromEntries(Object.entries(art?.icons ?? {}).map(([k, v]) => [k, { href: `${base}${v.file}.webp`, w: v.w, h: v.h, dx: v.dx, dy: v.dy }]));
 export type ArtTile = { href: string; x: number; y: number; size: number };
 export const artKey = (pick: StatePick) => Object.keys(pick).sort().map(k => `${k}:${pick[k]}`).join(",");
 
@@ -164,6 +169,7 @@ export type MarkerShape = "square" | "small" | "diamond" | "circle" | "star";
 export const MARKERS: Record<string, { color: string; text: string; shape: MarkerShape }> = {
   start: { color: "#3ddc97", text: "Start gate", shape: "square" },
   end: { color: "#ff6b6b", text: "End gate", shape: "square" },
+  exit: { color: "#90a4ae", text: "Course exit (stops the timer, no finish)", shape: "square" },
   checkpoint: { color: "#4fc3f7", text: "Checkpoint", shape: "small" },
   teleporter: { color: "#b388ff", text: "Teleporter", shape: "diamond" },
   dashRefill: { color: "#ff80ab", text: "Dash refill", shape: "circle" },
@@ -275,7 +281,7 @@ export const Level = memo(function Level({ paths, show, px }: { paths: LevelPath
 // `checkpointAreas` a checkpoint's own (defaulting to `areas` where one toggle covers both). Zoomed in to LABEL_PX or
 // closer a box carries its name and cost. Memoized: a pan keeps px, so only a zoom redraws them.
 const LABEL_PX = 3;
-export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, checkpointAreas, showSteps }: { markers: Marker[]; steps: TreeStep[]; px: number; kinds: Record<string, boolean>; areas: boolean; checkpointAreas?: boolean; showSteps: boolean }) {
+export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, checkpointAreas, showSteps, icons }: { markers: Marker[]; steps: TreeStep[]; px: number; kinds: Record<string, boolean>; areas: boolean; checkpointAreas?: boolean; showSteps: boolean; icons?: Record<string, MarkIcon> }) {
   const triggers = checkpointAreas ?? areas;
   return <g>
     {triggers && markers.map((m, i) => m.kind === "checkpoint" && m.area && <path key={`trigger${i}`} d={m.area.map(polyPath).join("")} fill={MARKERS.checkpoint.color} fillOpacity={.1}
@@ -293,8 +299,12 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
       // A checkpoint with its spawn box is that box alone (hover its outline for the name).
       if (m.spawn) return <rect key={i} x={m.spawn[0]} y={fy(m.spawn[3])} width={m.spawn[2] - m.spawn[0]} height={m.spawn[3] - m.spawn[1]} fill="none"
         stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }}><title>{`${look.text}: ${m.name}`}</title></rect>;
-      // A gate is its trigger box (where touching it starts or ends the timer).
-      if ((m.kind === "start" || m.kind === "end") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
+      // A gate is its trigger box (where touching it starts or ends the timer, or leaves the course).
+      // A refill orb is the game's own orb sprite (its marker toggle shows and hides it).
+      const icon = icons?.[m.kind];
+      if (icon) return <image key={i} href={icon.href} x={m.x + icon.dx - icon.w / 2} y={fy(m.y + icon.dy + icon.h / 2)} width={icon.w} height={icon.h}>
+        <title>{`${look.text}: ${m.name}`}</title></image>;
+      if ((m.kind === "start" || m.kind === "end" || m.kind === "exit") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
         stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke"><title>{`${look.text}: ${m.name}`}</title></path>;
       // A buy box is its trigger box (where touching it buys it) in its category's colour, with its name and cost.
       if (m.kind === "box" && m.area) return <g key={i}>

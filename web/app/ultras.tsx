@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./techs.css";
-import { Art, artTiles, Hazards, Zips, type Zip, capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+import { Art, artIcons, artTiles, Hazards, Zips, type Zip, capturedStates, GROWN_COLOR, inState, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type LevelShow, type Marker, type Solid, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 
 // Buy boxes (a marker's `box`), kept in step with level.tsx's BOX_KINDS (ultra-level.tsx is synced from that file).
 export type BoxCategory = "secret" | "bonusUnique" | "bonusBoost" | "achievement" | "movement" | "tree" | "unlock" | "course";
@@ -371,7 +371,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
         stroke="#07111f" strokeWidth={3 * px} paintOrder="stroke" style={{ pointerEvents: "none" }}>↓ {focus.drop.toFixed(1)} u</text>}
       {layers.labels && data?.labels.map(l => <text key={l.name} x={l.x} y={fy(l.y) - 30 * px} fill="#e8eef8" fontSize={14 * px} textAnchor="middle" style={{ pointerEvents: "none" }}>{l.name}</text>)}
       <Zips zips={(data?.zips ?? []).filter(z => inState(z.when, world))} px={px}/>
-      <Marks markers={markers} steps={data?.treeSteps ?? []} px={px} kinds={markerKinds} areas={layers.markers} showSteps={layers.grown}/>
+      <Marks icons={artIcons(art, "/art/")} markers={markers} steps={data?.treeSteps ?? []} px={px} kinds={markerKinds} areas={layers.markers} showSteps={layers.grown}/>
     </svg>
     {boxTip?.box && <div className="mapReadout"><div><strong>{boxTip.name}</strong> · {BOX_KINDS[boxTip.box.category].text}
       <button className="secondary" onClick={() => setBoxTip(null)}>×</button></div>
