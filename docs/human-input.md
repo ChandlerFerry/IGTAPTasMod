@@ -139,6 +139,15 @@ move a press or a dash a few ticks while keeping where the hold ends.
   (`Movement.getPlayerControlledInput`), back into the wall, and the buffered jump is a grounded dash jump from inside
   it. The wall side is the stick before the turn; the turn is 0-4 ticks of stick away, and the dash tick holds the
   stick away, or neutral after a turn long enough to flip facing (~3 ticks from a push) so the dash follows facing.
+- **Wall coyote jump** (lab `wall-coyote-window`): let go of a wall (slide off its bottom, or drift away) and press jump
+  on any of the 8 ticks after the last tick the wall rays hit. It always kicks away from that wall: while `OnWall` holds,
+  the animator block sets `localScale.x` to `wallCoyoteDir` every tick, whatever the stick says.
+- **Stored wall jump** (lab `stored-walljump`): land straight from a cling (slide down onto a floor) and the
+  `wallCoyoteFrames` count stays; walk anywhere, jump, then press jump again 2-7 ticks after the ground jump: a wall jump
+  off no wall. It kicks against `localScale.x`, the way the dot faces: running forward it kicks backward, so to kick
+  forward hold the stick back until `Velocity.x` changes sign (~3 ticks from a full run) before the press. With a super
+  instead of the ground jump and the press 2-4 ticks after the dash, it is the dash boost (the stored superbounce, lab
+  `stored-superbounce`).
 - **GC Wall Clip** (game controller; Course 1 NONE): rising with your back to a wall, flick the stick lightly toward it
   and back. The player's box is offset 5 units to the front (`defaultColliderOffset`/`dashColliderOffset` x 5, width
   41), so the facing flip swings its back edge 10 units into the wall; depenetration pushes it only part way out, and
@@ -205,6 +214,28 @@ move a press or a dash a few ticks while keeping where the hold ends.
   paused on one of those frames (`pauseFrame` 5 at 280 fps) it climbs the whole wall too, so a plain wall cling is enough.
   `Test-Pauselift-TrueEnd-Runup` does it on the face at x 28960 from the cling at (28934.5, 17762): 17762 → 23789 over the
   spikes (21932–23686), then the dash carries onto the block top.
+- **Final-cling float** (`WJ` and up, tech demo `final-cling-float` on its lab map): a cling on a mossy wall with no
+  wall jumps left is the final cling (`outOfWallJumpsCling`: `isFinalWallClingActive` on for 0.7 s, `Velocity.y` 0, no
+  gravity), and moss refills nothing. A refill of the wall jumps before the flag clears (a Ground-tagged wall or floor)
+  leaves it on, so the next jump rises at its launch speed with no gravity until 0.7 s after the cling. By hand on the lab
+  map (a chimney: moss at x 80-120, metal at 172-212, 52 u apart; placed in the air against the moss with 0 wall jumps):
+  1. Let go of the stick: the dot clings to the moss and hangs there (it doesn't slide).
+  2. Within 15 ticks (0.3 s) of the cling, press toward the metal wall. One tick is enough; holding longer is fine. The
+     turn puts the metal under the front ground ray, which grounds the dot in mid-air (as a GC wall clip does) and
+     refills the wall jumps.
+  3. Press jump on the turn's tick or up to 8 ticks after it (0.16 s), and hold it. Not before the turn: a press on the
+     moss is used up there (no wall jumps, no double jump) and the dot then hangs on the metal without jumping.
+  4. Let go of the stick. The dot rises at 805 u/s until 0.7 s after the cling (35 ticks), then arcs normally: about 850
+     at the finish box (1096 at the peak) against 556 for the same inputs with wall jumps left. Held sideways it floats
+     just as high but drifts out of the box.
+  The float lasts 35 ticks from the cling, and everything before the jump comes out of it: turning at once and jumping
+  with the turn is the highest. Keyboard is enough (all full-tilt presses). A quick restart doesn't reset the wall jumps,
+  so place the lab start again for every try. Offline gap check (same inputs): 50-52 u grounds the dot in mid-air (a
+  ground jump, 805), 54-60 u clings it to the metal instead (a wall jump, 730, same float), 70 u misses. In a level it
+  needs a mossy wall reached with all 4 wall jumps spent off moss (no Ground-tagged touch in between) and a Ground-tagged
+  wall or floor in reach before the flag clears. The overlay labels the jump FINAL-CLING FLOAT (`Tech.FinalClingFloat`:
+  a jump with the flag still on). While the lab is injected, its trainer panel (`LabTrainerFloat.cs`) follows each attempt
+  as the pauselift's does: these steps as chips (green done, red failed and why) and a timeline in ticks from the cling.
 
 ### Omnidirectional dash (Vman)
 
@@ -302,9 +333,16 @@ box that grows it and the box it carries. A fresh world has none of it grown, so
 engine doesn't model growing it. Spikes are red; coloured blocks and spikes are drawn in both colours (blue and
 orange, the export's `sourceShapes`), only the active colour being solid. Springs are level too: their trigger box in
 yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
-level is always drawn. **Gates, checkpoints, teleporters, refills** marks start and end gates, checkpoints, teleporters
-and dash, jump and full refill orbs in every zone. The
-course and Full-TAS maps draw all of this the same way (`ultra-level.tsx`, shared with the public viewer's `level.tsx`).
+level is always drawn. **Other world states** draws, as dashed outlines, the ground and spikes of objects that are off
+even with every zone loaded: Area 1 overgrown's moss, spikes and zip movers under and around Courses 1–5, and locked
+upgrade boxes (an off composite has no shapes, so its outline `paths`); nothing of it collides in the run's world. It is
+on in the Ultra map and off by default on a course's **Show map**. **Gates, checkpoints, teleporters, refills,
+secrets** marks start and end gates, checkpoints, teleporters, dash, jump and full refill orbs, and every secret (a
+gold star at its box's trigger: an `upgradeBox` with `isSecret`, named by its achievement number and cost; a bonus's
+finish is one) in every zone. Course labels sit at each course's start and bonus labels at the bonus's finish (its
+reward box in `courses.json`), not at the course it starts from. The map spans the whole level, not only the floors of
+the zones the capture had loaded. The course and Full-TAS maps draw all of this the same way (`ultra-level.tsx`,
+shared with the public viewer's `level.tsx`).
 
 With nothing selected, each floor is coloured by the biggest drop onto it. Clicking a floor draws arrows to every floor
 its ultras reach (coloured by drop) and from every floor whose ultras reach it (cyan), and lists the biggest drops.
@@ -320,13 +358,21 @@ rebase line (dashed green) and, for each later rebase the VMAN run's best so far
 **First shift at** slider moves the first rebase along its line (it starts at the run's) and draws the next line
 around it (cyan).
 
-While a route plays, the in-game input list marks the ticks of each trick with a colored bar (`TasOverlayTechs.cs`):
-the superbounce, reversed super and backwards dash-jump, the wall clip, coyote and wall-coyote jumps, super jumps,
-hypers, chained hypers, ground bounces and hyper ground bounces, wall bounces, spring dashes, spike grace
-(overlay on), the ultra (a hyper that gives back the pre-dash momentum, "Did an ultra!") and the float ultra (a chained
-hyper that passes that check only because a rebase moved the dot since the first hyper), each read from the game's
-state as it happens.
-Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`).
+While a route plays, and in manual play once its list starts, the in-game input list marks the ticks of each trick with a
+colored bar (`TasOverlayTechs.cs`): the superbounce, reversed super and backwards dash-jump, the GC and KB wall clips (the
+flick's stick below or at full tilt), coyote jumps (plain; the dash coyote jump, whose dash was still on at the last ground
+tick; the checkpoint coyote jump, with no full ground tick since a respawn), wall-coyote jumps, stored wall jumps
+(a wall jump off no wall from a `wallCoyoteFrames` count a landing or respawn kept: `OnWall` off, the count above 0), super jumps,
+high supers (the dash going up), hypers, chained hypers, ground bounces and hyper ground bounces, wall bounces, spring dashes,
+spike grace (overlay on), the ultra (a hyper that gives back the pre-dash momentum, "Did an ultra!") and the float ultra (a
+chained hyper that passes that check only because a rebase moved the dot since the first hyper), the superbounce double jump
+and the boosted double jump (a double jump at `Velocity.y` 200 or more, which only the 700 gate after a jump that wasn't a
+normal one lets through), the pauselift (an inwall climb with the pause menu open, once per pause) and the zip mover
+intangibility (`PlatformMover.MakeIntangible`), each read from the game's state as it happens.
+Each bar carries the name of the tech with that detector in the studio's Tech tab (`TechCatalog.cs`). The Tech tab's live
+catalog (the config folder's `techs.json`) keeps its own edits; a plugin build adds the techs and detectors its built-in
+list has that the live one lacks, once each (`techs.seeded.json` remembers them, so a deletion in the tab sticks).
+Manual play's techs show on the overlay only: the tab's demos are cut from a route's playback.
 The first time a playback does a tech that has no demo route yet, the tab saves one (`tech/<name>` in the route
 library): while a route plays, the overlay keeps a player savestate for each of the last 256 input ticks, and the demo
 gets its own copy of the latest one at least 25 ticks before the tech starts, taken on a tick with no dash or cutscene

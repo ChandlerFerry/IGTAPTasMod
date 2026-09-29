@@ -58,6 +58,8 @@ namespace IGTAPTasMod
             public int maxTicks = 90;
             /// <summary>Playing the lab by hand (Tech tab, <c>inject {place: true}</c>): extra shapes and a standing start. The solver never sees it.</summary>
             public LabHandDef hand;
+            /// <summary>The input trainer shown while the lab is injected (<see cref="LabTrainer"/>): "pauselift", "final-cling-float", or none.</summary>
+            public string trainer;
         }
 
         /// <summary>A lab's hand-play setup: a floor to stand on (<c>shapes</c>, added to the lab's own) and where you stand (<c>start</c>).</summary>
@@ -80,11 +82,8 @@ namespace IGTAPTasMod
             /// <summary>Set when the player was put at the lab start (<c>place</c>): the unlocks, course reset point and respawn point it replaced.</summary>
             public List<(string field, object value)> SavedAbilities;
             public Vector2? CourseResetPointBefore, RespawnPointBefore;
-            /// <summary>Hand play with a solved demo: the ghost replaying its path (x, y relative to the anchor, facing ±1) on a loop.</summary>
-            public Transform Ghost;
-            public List<Vector3> GhostPath;
-            public Vector2 GhostScale;
-            public float GhostStart;
+            /// <summary>Hand play with a solved demo: the ghost replaying its path on a loop (<see cref="LabGhost"/>).</summary>
+            public LabGhost Ghost;
         }
 
         LabSession _lab;
@@ -246,65 +245,6 @@ namespace IGTAPTasMod
                 + " (" + shapes.Count + " shapes" + (hand ? ", for hand play" + (_lab.Ghost != null ? " with its demo's ghost" : "") : "") + "); autosave and the route gate are off until it is restored.");
         }
 
-        /// <summary>Ticks the ghost holds its last position before the loop starts over.</summary>
-        const int GhostHoldTicks = 25;
-
-        /// <summary>
-        /// Hand play's ghost: the solved demo's path (labmaps/&lt;id&gt;.demo.json <c>path</c>, from <c>lab solve</c> or <c>lab replay
-        /// --write-path</c>) drawn as a faint line, and a see-through copy of the player's sprites replaying it on a loop at the
-        /// physics rate (<see cref="AnimateLabGhost"/>). Nothing to collide with: sprites only.
-        /// </summary>
-        void BuildLabGhost(LabMapDef lab, Movement player)
-        {
-            string file = LabMapFile(lab.id + ".demo.json");
-            if (file == null) return;
-            JArray points = JObject.Parse(File.ReadAllText(file))["path"] as JArray;
-            if (points == null || points.Count < 2) return;
-            var path = points.Select(p => new Vector3((float)p[0], (float)p[1], (float)p[2])).ToList();
-            var line = new GameObject(lab.id + " ghost path");
-            line.transform.SetParent(_lab.Root.transform, false);
-            LabLine(line.transform, path.Select(p => new Vector2(p.x, p.y)).ToArray(), false, new Color(1f, 1f, 1f, 0.35f), 3f);
-            var ghost = new GameObject(lab.id + " ghost");
-            ghost.transform.SetParent(_lab.Root.transform, false);
-            Vector3 playerScale = player.transform.lossyScale;
-            foreach (SpriteRenderer sprite in player.GetComponentsInChildren<SpriteRenderer>())
-            {
-                if (!sprite.enabled || sprite.sprite == null) continue;
-                var copy = new GameObject("ghost sprite");
-                copy.transform.SetParent(ghost.transform, false);
-                // In the player's frame (its scale's sign undone by the ghost's own facing).
-                copy.transform.localPosition = player.transform.InverseTransformPoint(sprite.transform.position);
-                Vector3 scale = sprite.transform.lossyScale;
-                copy.transform.localScale = new Vector3(scale.x / playerScale.x, scale.y / playerScale.y, 1f);
-                var renderer = copy.AddComponent<SpriteRenderer>();
-                renderer.sprite = sprite.sprite;
-                renderer.flipX = sprite.flipX;
-                renderer.flipY = sprite.flipY;
-                renderer.color = new Color(0.55f, 0.9f, 1f, 0.5f);
-                Material material = LabMaterial();
-                if (material != null) renderer.sharedMaterial = material;
-                LabSorting(renderer);
-            }
-            _lab.Ghost = ghost.transform;
-            _lab.GhostPath = path;
-            _lab.GhostScale = new Vector2(Mathf.Abs(playerScale.x), playerScale.y);
-            _lab.GhostStart = Time.time;
-            AnimateLabGhost();
-        }
-
-        /// <summary>The ghost at its place along the demo's path: one path point per physics tick, interpolated, held at the end, looped.</summary>
-        void AnimateLabGhost()
-        {
-            List<Vector3> path = _lab.GhostPath;
-            float ticks = (Time.time - _lab.GhostStart) / Time.fixedDeltaTime;
-            float t = Mathf.Min(ticks % (path.Count - 1 + GhostHoldTicks), path.Count - 1);
-            int i = Mathf.Min((int)t, path.Count - 2);
-            Vector3 a = path[i], b = path[i + 1];
-            Vector3 at = Vector3.Lerp(a, b, t - i);
-            _lab.Ghost.localPosition = new Vector3(at.x, at.y, 0f);
-            _lab.Ghost.localScale = new Vector3(_lab.GhostScale.x * (b.z < 0f ? -1f : 1f), _lab.GhostScale.y, 1f);
-        }
-
         static int LayerNumber(string layer)
         {
             if (int.TryParse(layer, NumberStyles.Integer, CultureInfo.InvariantCulture, out int number)) return number;
@@ -455,15 +395,18 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// Installs a tech's lab demo (labmaps/&lt;id&gt;.demo.json's inputs) as its demo route, with the lab start placed by
-        /// the lab savestate <c>place</c> mechanism (its id is the route's savestate: every playback starts at the lab start).
+        /// Installs a tech's lab demo (labmaps/&lt;id&gt;.demo.json's inputs, or labmaps/&lt;id&gt;.&lt;labDemo&gt;.demo.json for one of
+        /// the lab's other demos) as its demo route, with its start placed by the lab savestate <c>place</c> mechanism (its id is
+        /// the route's savestate: every playback starts there): the demo's own <c>start</c> when it has one, else the lab's.
         /// </summary>
         void InstallLabDemo(TechDef tech, JObject body)
         {
             string id = Text(body, "labmap");
             if (id.Length == 0) id = tech.labmap ?? "";
+            string labDemo = body["labDemo"] != null ? Text(body, "labDemo") : id == tech.labmap ? tech.labDemo ?? "" : "";
             LabMapDef lab = LoadLabMap(id);
-            string demoPath = LabMapFile(id + ".demo.json") ?? throw new InvalidOperationException("Lab map " + id + " has no solved demo (run `IGTAP.EngineSim lab solve` first).");
+            string demoFile = id + (labDemo.Length > 0 ? "." + labDemo : "") + ".demo.json";
+            string demoPath = LabMapFile(demoFile) ?? throw new InvalidOperationException("Lab map " + id + " has no demo " + demoFile + ".");
             JObject demo = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(demoPath));
             List<SolverTick> ticks = demo["inputs"].ToObject<List<SolverTick>>();
             if (ticks == null || ticks.Count == 0) throw new InvalidOperationException("Lab map " + id + "'s demo has no inputs.");
@@ -471,8 +414,10 @@ namespace IGTAPTasMod
             if (start.Length == 0) start = tech.start ?? "";
             if (TechStart.Match(start).Length != start.Length || start.Length == 0)
                 throw new InvalidOperationException("start is a course category prefix (1_WJ_DS) matching the lab map's category " + lab.category + ".");
-            Savestate placed = PlaceSavestate(LabStartBody(lab, lab.start));
+            LabStartDef demoStart = demo["start"] is JObject own ? own.ToObject<LabStartDef>() : lab.start;
+            Savestate placed = PlaceSavestate(LabStartBody(lab, demoStart));
             tech.labmap = id;
+            tech.labDemo = labDemo.Length > 0 ? labDemo : null;
             tech.start = start;
             MacroDefinition route = TechRoute(tech);
             if (route == null)

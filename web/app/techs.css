@@ -66,3 +66,5 @@
 .techEditorGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .techEditor textarea { width: 100%; min-height: 70px; resize: vertical; font: inherit; font-size: 13px; }
 .techEditorHead { margin: 6px 0 0; }
+.techMore { display: grid; gap: 6px; }
+.techMore > summary { cursor: pointer; color: #7fb4e6; font-size: 12px; font-weight: 700; width: fit-content; }

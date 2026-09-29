@@ -30,6 +30,8 @@ namespace IGTAP.EngineSim
         double[] _awarded = new double[CurrencyCount];
         internal Economy Economy { get; private set; }
         readonly List<BuyMaxRoutine> _buyMax = new List<BuyMaxRoutine>();
+        // Set while EndOfFrame runs the buy-max routines: those purchases continue the touch that started them (Simulation.Bought).
+        bool _continuing;
 
         internal struct BuyMaxRoutine
         {
@@ -122,6 +124,14 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        /// <summary>Whether a buy-max touch of one of these boxes is still buying (it goes on without another touch).</summary>
+        internal bool Buying(string[] boxes)
+        {
+            foreach (BuyMaxRoutine r in _buyMax)
+                if (Array.IndexOf(boxes, _ids[r.Box]) >= 0 || Array.IndexOf(boxes, _paths[r.Box]) >= 0) return true;
+            return false;
+        }
+
         /// <summary>For logs: each box's state (bought/cap, on or off, cost against what the run holds).</summary>
         internal string Describe(string[] boxes)
         {
@@ -141,12 +151,14 @@ namespace IGTAP.EngineSim
 
         internal void EndOfFrame()
         {
+            _continuing = true;
             for (int i = 0; i < _buyMax.Count; i++)
             {
                 BuyMaxRoutine r = _buyMax[i];
                 if (r.Box.gameObject.activeInHierarchy && BuyMaxStep(ref r)) _buyMax[i] = r;
                 else _buyMax.RemoveAt(i--);
             }
+            _continuing = false;
         }
 
         internal void CourseFinished(courseScript course, float time)
@@ -279,7 +291,7 @@ namespace IGTAP.EngineSim
             if (swapBlocks)
             {
                 box.isActive = false;
-                _sim.Bought(path, _ids[box]);
+                _sim.Bought(path, _ids[box], _continuing);
                 if (_sim.Engine.IsRunning) _sim.Engine.Abort("Unmodeled purchase: block swap (collider changes)");
                 return;
             }
@@ -308,7 +320,7 @@ namespace IGTAP.EngineSim
             }
             else ScaleBoxCost(box);
             if (box.TimesUsed >= box.Cap) box.isActive = false;
-            _sim.Bought(path, _ids[box]);
+            _sim.Bought(path, _ids[box], _continuing);
             if (unlocksChange && _sim.Goals == null && _sim.Engine.IsRunning)
                 _sim.Engine.Abort("Category unlocks changed: bought " + move + " at " + path);
         }

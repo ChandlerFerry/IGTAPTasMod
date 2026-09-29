@@ -1,0 +1,1739 @@
+{
+  "schema": 1,
+  "lab": "pauselift-wall",
+  "name": "lab/pauselift-wall.reverse-super",
+  "solvedIn": "start-c1-none.json",
+  "world": "start-c1-none.world.json",
+  "ticks": 17,
+  "inputTicks": 24,
+  "search": {
+    "method": "hand-built and checked by lab replay: stand 99.5 u out facing away from the wall (the demo\u0027s own start); dash away with the stick toward the wall through the dash (lockX) and jump on dash frame 1: a reverse super, 876 momentum toward the wall; stick at rest, so the dot keeps facing away while the momentum carries its back flush against the wall (0.0 u); release jump and 8 ticks later, still in the air (the super gives the dash back), dash with the stick at rest, tilt toward the wall in the freeze (turnX) and open the pause menu on frame 2 of the dash\u0027s second tick for 40 frames: from flush every frame of that tick lifts (offline: frames 0-5 all climb to the top), against only the last one from a cling; the inputs run 10 ticks past the dash so a playback (which ends with its inputs) sees the climb and the finish"
+  },
+  "start": {
+    "x": 465,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "inputs": [
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "held": true,
+      "press": true,
+      "release": false,
+      "dash": true,
+      "dashJump": 1,
+      "springDash": 0,
+      "lockX": -1,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": true,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": true,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": true,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": -1,
+      "lockY": null,
+      "turnX": -1,
+      "turnY": null,
+      "reset": false,
+      "pause": 40,
+      "pauseTick": 1,
+      "pauseFrame": 2
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    },
+    {
+      "x": -1,
+      "y": 0,
+      "held": false,
+      "press": false,
+      "release": false,
+      "dash": false,
+      "dashJump": 0,
+      "springDash": 0,
+      "lockX": null,
+      "lockY": null,
+      "turnX": null,
+      "turnY": null,
+      "reset": false,
+      "pause": 0,
+      "pauseTick": 0,
+      "pauseFrame": 0
+    }
+  ],
+  "path": [
+    [
+      465,
+      34,
+      1,
+      0,
+      1
+    ],
+    [
+      465,
+      34,
+      1,
+      0,
+      1
+    ],
+    [
+      448,
+      34,
+      1,
+      6,
+      1
+    ],
+    [
+      448,
+      34,
+      1,
+      6,
+      1
+    ],
+    [
+      478.4,
+      34,
+      1,
+      6,
+      1
+    ],
+    [
+      493.7,
+      52.1,
+      1,
+      6,
+      1
+    ],
+    [
+      485.8,
+      67.7,
+      1,
+      6,
+      1
+    ],
+    [
+      476.4,
+      82.7,
+      1,
+      6,
+      1
+    ],
+    [
+      465.4,
+      97.2,
+      1,
+      6,
+      1
+    ],
+    [
+      452.7,
+      111.1,
+      1,
+      6,
+      1
+    ],
+    [
+      437.4,
+      124.5,
+      1,
+      6,
+      1
+    ],
+    [
+      422.6,
+      137.4,
+      1,
+      6,
+      1
+    ],
+    [
+      408.1,
+      149.7,
+      1,
+      6,
+      1
+    ],
+    [
+      394.1,
+      161.5,
+      1,
+      6,
+      1
+    ],
+    [
+      380.4,
+      172.7,
+      1,
+      6,
+      1
+    ],
+    [
+      367.2,
+      183.4,
+      1,
+      5,
+      1
+    ],
+    [
+      365.5,
+      193.6,
+      1,
+      5,
+      1
+    ],
+    [
+      348.5,
+      193.4,
+      1,
+      6,
+      1
+    ],
+    [
+      348.5,
+      193.4,
+      1,
+      6,
+      1
+    ],
+    [
+      348.5,
+      193.4,
+      1,
+      6,
+      1
+    ],
+    [
+      378.9,
+      193.4,
+      1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      585.4,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      921.4,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      1201.4,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      1537.4,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      1817.4,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      378.6,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      345.2,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      311.8,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      278.4,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      245,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      211.6,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      178.2,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      144.8,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      111.4,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      78,
+      2036,
+      -1,
+      6,
+      1
+    ],
+    [
+      76.2,
+      2036,
+      -1,
+      1,
+      1
+    ],
+    [
+      76.2,
+      2036,
+      -1,
+      1,
+      1
+    ],
+    [
+      56.9,
+      2036.2,
+      -1,
+      1,
+      1
+    ],
+    [
+      39.1,
+      2035.7,
+      -1,
+      1,
+      1
+    ],
+    [
+      23.6,
+      2035.1,
+      -1,
+      1,
+      1
+    ],
+    [
+      9.9,
+      2034.6,
+      -1,
+      1,
+      1
+    ],
+    [
+      -2.5,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -14,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -24.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -35.1,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -45,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -54.7,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -64.1,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -73.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -82.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -91.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -101,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -110.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -119.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -128.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -137.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -147,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -156.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -165.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -174.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -183.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -193,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -202.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -211.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -220.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -229.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -239,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -248.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -257.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -266.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -275.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -285,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -294.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -303.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -312.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -321.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -331,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -340.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -349.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -358.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -367.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -377,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -386.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -395.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -404.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -413.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -423,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -432.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -441.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -450.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -459.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -469,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -478.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -487.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -496.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -505.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -515,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -524.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -533.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -542.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -551.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -561,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -570.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -579.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -588.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -597.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -607,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -616.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -625.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -634.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -643.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -653,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -662.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -671.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -680.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -689.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -699,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -708.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -717.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -726.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -735.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -745,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -754.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -763.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -772.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -781.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -791,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -800.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -809.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -818.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -827.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -837,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -846.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -855.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -864.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -873.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -883,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -892.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -901.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -910.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -919.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -929,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -938.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -947.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -956.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -965.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -975,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -984.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -993.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1002.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1011.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1021,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1030.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1039.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1048.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1057.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1067,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1076.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1085.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1094.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1103.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1113,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1122.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1131.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1140.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1149.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1159,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1168.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1177.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1186.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1195.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1205,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1214.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1223.4,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1232.6,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1241.8,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1251,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1260.2,
+      2034,
+      -1,
+      1,
+      1
+    ],
+    [
+      -1269.4,
+      2034,
+      -1,
+      1,
+      1
+    ]
+  ]
+}

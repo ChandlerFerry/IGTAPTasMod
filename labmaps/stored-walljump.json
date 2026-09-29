@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "stored-walljump",
+  "name": "Stored wall jump: cling, land, carry the wall coyote to open floor",
+  "tech": "stored-wall-jump",
+  "techNote": "Cling to the post's right face and hold down-left until the dot lands (the last cling tick left wallCoyoteFrames at 7; the ground branch never counts it down). Run right on open floor with no wall in reach, jump (hold), release on the 5th tick of the jump and press again on the 6th: jumpBuffer && wallCoyoteFrames > 0 (1 left) is a wall jump off no wall, Velocity.y 730 and 460 away from the way the dot faces (running right: to the left, for the lock's 7 ticks). The ground jump peaks 331.8 (hitbox top 358.6); with the stored wall jump on the 6th tick 390.8 (top 417.6). The finish box (bottom y 390, x 600-800) is out of reach without it: a ground jump off the floor tops out at 358.6; the post top (y 120) is the only other ground, and its jump stays above y 363 for about 0.55 s, less than the 1.03 s even 460 u/s takes to cover the 475 u to x 575; and a wall jump (or wall coyote jump) off the post leaves from y 139 at most (its rays reach 18 u under the dot), so its apex is 350 at most.",
+  "category": "WJ",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [500, 20], "size": [1400, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [80, 80], "size": [40, 80], "layer": "Ground", "tag": "Ground" }
+  ],
+  "start": {
+    "x": 125.5,
+    "y": 110,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4
+    }
+  },
+  "finish": [700, 420, 200, 60],
+  "maxTicks": 120
+}

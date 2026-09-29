@@ -22,6 +22,8 @@ namespace IGTAPTasMod
             try
             {
                 if (name == BlueActiveField) return BlockSwapperField?.GetValue(movement) is colouredBlockSwapper swapper && swapper != null ? swapper.isBlueActive : (object)null;
+                if (name.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal))
+                    return globalStats.globalUpgradeDict != null && globalStats.globalUpgradeDict.TryGetValue(GlobalUpgradeOf(name), out double level) ? level : (object)null;
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
                 return f == null ? null : f.GetValue(movement);
             }
@@ -32,7 +34,8 @@ namespace IGTAPTasMod
 
         private static void SetMovementField(Movement movement, string name, object value)
         {
-            if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name == "maxAirDashes" || name == "airDashesLeft" || name == "maxAirJumps" || name == "airJumpsLeft")) return;
+            if (Instance != null && Instance.CapabilitiesLocked && (name.EndsWith("Unlocked") || name.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal)
+                || name == "maxAirDashes" || name == "airDashesLeft" || name == "maxAirJumps" || name == "airJumpsLeft")) return;
             try
             {
                 if (name == BlueActiveField)
@@ -40,10 +43,26 @@ namespace IGTAPTasMod
                     if (value is bool blue && BlockSwapperField?.GetValue(movement) is colouredBlockSwapper swapper && swapper != null) swapper.swapBlocks(blue);
                     return;
                 }
+                if (name.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal))
+                {
+                    if (!(value is double || value is int || value is float) || globalStats.globalUpgradeDict == null) return;
+                    double level = Convert.ToDouble(value);
+                    globalStats.globalUpgradeSet upgrade = GlobalUpgradeOf(name);
+                    globalStats.globalUpgradeDict.TryGetValue(upgrade, out double was);
+                    globalStats.globalUpgradeDict[upgrade] = level;
+                    if (was != level && (upgrade == globalStats.globalUpgradeSet.unlockJiggleDrops || upgrade == globalStats.globalUpgradeSet.moreRefreshOrbs))
+                        RefreshRefillOrbs();
+                    return;
+                }
                 FieldInfo f = AccessTools.Field(typeof(Movement), name);
                 if (f != null) f.SetValue(movement, value);
             }
             catch { }
+        }
+
+        static globalStats.globalUpgradeSet GlobalUpgradeOf(string field)
+        {
+            return (globalStats.globalUpgradeSet)Enum.Parse(typeof(globalStats.globalUpgradeSet), field.Substring(GlobalUpgradePrefix.Length));
         }
 
         private static bool GetMovementBool(Movement movement, string name, bool fallback)
@@ -310,8 +329,8 @@ namespace IGTAPTasMod
             _newGameRebased = false;
             _newGameUnlocks = default;
             _vmanSetupPlayer = null;
-            _startState = null;
-            _engineSimStartKey = null;
+            _newGameSpawn = null;
+            ClearEngineSimStarts();
             _newGameNotes.Clear();
             _newGameFrame = Time.frameCount;
             _newGamePhase = 1;
@@ -342,6 +361,7 @@ namespace IGTAPTasMod
                 {
                     _newGameNotes.Add("the Vman world loaded");
                     _vmanSetupPlayer = null;
+                    _newGameSpawn = null;
                     _newGamePhase = 2;
                     _newGameFrame = Time.frameCount;
                 }
@@ -371,6 +391,11 @@ namespace IGTAPTasMod
                 player.gameObject.SetActive(true);
                 _newGameNotes.Add("activated the world player");
                 return;
+            }
+            if (_newGameSpawn == null)
+            {
+                _newGameSpawn = (Vector2)player.transform.position - CurrentOrigin();
+                _newGameSpawnFacing = player.facingRight;
             }
             if (frames < 10 || !ZonesSettled()) return;
             EnsureGameUnpaused();
@@ -407,6 +432,14 @@ namespace IGTAPTasMod
             if (_newGameSavestate != null && !_newGameSavestateApplied) { ApplyNewGameSavestate(player); return; }
             if (_newGameRebaseAt.HasValue && !_newGameRebased) { ApplyNewGameRebase(player); return; }
             _newGamePhase = 0;
+            Vector2 stood = (Vector2)player.transform.position - CurrentOrigin();
+            if (_newGameSpawn.HasValue && (Mathf.Abs(stood.x - _newGameSpawn.Value.x) > NewGameSpawnDrift || player.facingRight != _newGameSpawnFacing))
+            {
+                FailNewGame("The player moved before the start was taken (x " + _newGameSpawn.Value.x.ToString("0.##") + " -> " + stood.x.ToString("0.##")
+                    + ", facing " + (_newGameSpawnFacing ? "right" : "left") + " -> " + (player.facingRight ? "right" : "left")
+                    + "): input reached it while the game loaded. Load it again with nothing pressed.");
+                return;
+            }
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
             bool quiet = _engine.Quiet;
             _engine.Quiet = true;
@@ -479,10 +512,17 @@ namespace IGTAPTasMod
             int level = CapsLevel(caps);
             int dashes = level >= 2 ? 1 : 0;
             int jumps = level >= 3 ? 1 : 0;
+            bool omni = level >= 5;
             var abilities = new List<(string, object)> { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
                 ("maxAirDashes", dashes), ("airDashesLeft", dashes),
                 ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps),
-                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", level >= 5) };
+                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", omni),
+                // WJ_DS_DJ_BS_OM has every refill upgrade and the zip movers (README ### Rules 12): the orbs' unlock box and the
+                // "more orbs" box (1 each) plus Area 1's overgrowth (+1 more orbs, upgradeBox.cs:836), so every orb's
+                // ActivationSequence (0-2) is under their sum and dash, jump and full refill orbs are all on.
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops), omni ? 1.0 : 0.0),
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.moreRefreshOrbs), omni ? 2.0 : 0.0),
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.zipMoversUnlocked), omni ? 1.0 : 0.0) };
             // Below block swap the blocks start unswapped, as a new game has them (Movement.Start: blue active); with it the
             // game's own respawn sets them (isBlueActiveOnRespawn).
             if (level < 4) abilities.Add((BlueActiveField, true));
@@ -497,7 +537,37 @@ namespace IGTAPTasMod
                 saved.Add((field, GetMovementField(movement, field)));
                 SetMovementField(movement, field, value);
             }
+            ResetZipMovers();
             return saved;
+        }
+
+        static readonly FieldInfo MoverPositions = AccessTools.Field(typeof(PlatformMover), "Positions");
+        static readonly FieldInfo MoverIndex = AccessTools.Field(typeof(PlatformMover), "indexInPositions");
+        static readonly FieldInfo MoverBody = AccessTools.Field(typeof(PlatformMover), "body");
+        static readonly string[] MoverFlags = { "isPhaseChangeInProgess", "onCooldown", "exitedLastFrame", "reset" };
+
+        /// <summary>
+        /// Every zip mover at its first stop, still, as a game load has it (PlatformMover.Awake: JumpToState(0)). Nothing in the
+        /// game puts a mover back after it moved (a zone load keeps its stop), so a category start sets it: turbo, the offline
+        /// export and playback all begin with the movers in the same place. Not JumpToState itself: its coroutine keeps
+        /// `reset` on for two physics steps, which a turbo snapshot would capture and keep.
+        /// </summary>
+        static void ResetZipMovers()
+        {
+            foreach (PlatformMover mover in FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (mover == null || !(MoverPositions.GetValue(mover) is Array stops) || stops.Length == 0) continue;
+                object first = stops.GetValue(0);
+                mover.StopAllCoroutines();
+                mover.transform.localPosition = (Vector2)first.GetType().GetField("position").GetValue(first);
+                MoverIndex.SetValue(mover, 0);
+                foreach (string flag in MoverFlags) AccessTools.Field(typeof(PlatformMover), flag).SetValue(mover, false);
+                mover.linearV = Vector2.zero;
+                mover.diff = Vector2.zero;
+                if (mover.gameObject.layer != LayerMask.NameToLayer("Ground")) mover.gameObject.layer = LayerMask.NameToLayer("Ground");
+                if (MoverBody.GetValue(mover) is Rigidbody2D body && body != null) body.linearVelocity = Vector2.zero;
+            }
+            Physics2D.SyncTransforms();
         }
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)

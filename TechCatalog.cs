@@ -43,6 +43,8 @@ namespace IGTAPTasMod
             /// restores at the end. Lab-only: never a route, never on a route's path (root README "### Rules").
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labmap;
+            /// <summary>Which of the lab map's demos (labmaps/&lt;labmap&gt;.&lt;labDemo&gt;.demo.json, with its own start); none: &lt;labmap&gt;.demo.json.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labDemo;
         }
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
@@ -58,13 +60,15 @@ namespace IGTAPTasMod
 
         void LoadTechs()
         {
+            List<TechDef> seed = SeedTechs();
             try
             {
                 if (File.Exists(TechsPath))
                 {
                     _techs = JsonConvert.DeserializeObject<List<TechDef>>(File.ReadAllText(TechsPath)) ?? new List<TechDef>();
                     CheckTechs();
-                    RefreshTechLabels();
+                    if (MergeSeedTechs(seed)) SaveTechs();
+                    else RefreshTechLabels();
                     return;
                 }
             }
@@ -73,11 +77,57 @@ namespace IGTAPTasMod
                 Logger.LogWarning("techs.json rejected (" + ex.Message + "); starting over from the built-in list.");
                 Quarantine(TechsPath);
             }
-            using (Stream seed = Assembly.GetExecutingAssembly().GetManifestResourceStream("IGTAPTasMod.techs.json"))
-            using (var reader = new StreamReader(seed))
-                _techs = JsonConvert.DeserializeObject<List<TechDef>>(reader.ReadToEnd());
+            _techs = seed;
             CheckTechs();
             SaveTechs();
+        }
+
+        static List<TechDef> SeedTechs()
+        {
+            using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("IGTAPTasMod.techs.json"))
+            using (var reader = new StreamReader(stream))
+                return JsonConvert.DeserializeObject<List<TechDef>>(reader.ReadToEnd());
+        }
+
+        string TechsSeededPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "techs.seeded.json"); } }
+
+        /// <summary>
+        /// The live catalog (the Tech tab's, edited in the game) keeps its own text, demos and order; a plugin build adds what
+        /// its built-in list has that the live one lacks: techs it doesn't have (by id, at the end) and a detector for a tech
+        /// that has none, when no other tech has that detector yet. Each is offered once (techs.seeded.json remembers it), so a
+        /// tech deleted or a detector cleared in the Tech tab stays that way. True when the catalog changed.
+        /// </summary>
+        bool MergeSeedTechs(List<TechDef> seed)
+        {
+            var offered = new HashSet<string>();
+            try
+            {
+                if (File.Exists(TechsSeededPath)) offered.UnionWith(JsonConvert.DeserializeObject<List<string>>(File.ReadAllText(TechsSeededPath)) ?? new List<string>());
+            }
+            catch (Exception ex) { Logger.LogWarning("techs.seeded.json unreadable (" + ex.Message + "); offering the built-in techs again."); }
+            int before = offered.Count;
+            bool changed = false;
+            foreach (TechDef s in seed)
+            {
+                TechDef live = _techs.Find(t => t.id == s.id);
+                if (offered.Add(s.id) && live == null)
+                {
+                    _techs.Add(s);
+                    Logger.LogInfo("techs.json: added " + s.name + " from the built-in list.");
+                    changed = true;
+                }
+                if (s.detector != null && offered.Add(s.id + "#" + s.detector) && live != null && live.detector == null
+                    && !_techs.Any(t => t.detector == s.detector))
+                {
+                    live.detector = s.detector;
+                    changed = true;
+                }
+            }
+            if (offered.Count != before) WriteJsonAtomic(TechsSeededPath, offered.OrderBy(o => o, StringComparer.Ordinal).ToList(), false);
+            if (!changed) return false;
+            foreach (TechDef t in _techs) t.related.RemoveAll(r => !_techs.Any(o => o.id == r));
+            CheckTechs();
+            return true;
         }
 
         void CheckTechs()
@@ -94,6 +144,8 @@ namespace IGTAPTasMod
                 if (t.detector != null && !Enum.IsDefined(typeof(Tech), t.detector)) throw new InvalidDataException("tech " + t.id + ": no detector " + t.detector + ".");
                 if (t.labmap != null && (t.labmap.Length == 0 || t.labmap.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
                     throw new InvalidDataException("tech " + t.id + ": labmap is a lab map's id (labmaps/<id>.json).");
+                if (t.labDemo != null && (t.labDemo.Length == 0 || t.labmap == null || t.labDemo.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+                    throw new InvalidDataException("tech " + t.id + ": labDemo names one of its labmap's demos (labmaps/<labmap>.<labDemo>.demo.json).");
                 if (t.description == null) t.description = "";
                 if (t.related == null) t.related = new List<string>();
             }
@@ -311,6 +363,7 @@ namespace IGTAPTasMod
                         string labmap = Text(body, "labmap").Trim();
                         if (labmap.Length > 0) LoadLabMap(labmap);
                         tech.labmap = labmap.Length == 0 ? null : labmap;
+                        if (tech.labmap == null) tech.labDemo = null;
                     }
                     if (body["start"] != null)
                     {
@@ -435,7 +488,7 @@ namespace IGTAPTasMod
                         MacroDefinition route = TechRoute(tech);
                         if (route != null) RemoveTechRoute(route);
                         tech.routeId = tech.start = null;
-                        tech.labmap = null;
+                        tech.labmap = tech.labDemo = null;
                         tech.fastForward = 0;
                         SaveTechs();
                     }
@@ -457,7 +510,7 @@ namespace IGTAPTasMod
                 list = _techs.Select(t =>
                 {
                     MacroDefinition route = TechRoute(t);
-                    return new { t.id, t.name, t.category, t.requires, t.origin, confirmed = route != null, t.omniDash, t.floatingOrigin, t.fastForward, t.description, t.note, t.detector, t.related, t.start, t.labmap,
+                    return new { t.id, t.name, t.category, t.requires, t.origin, confirmed = route != null, t.omniDash, t.floatingOrigin, t.fastForward, t.description, t.note, t.detector, t.related, t.start, t.labmap, t.labDemo,
                         routeId = route == null ? null : route.id,
                         savestate = route != null && _savestates.Any(c => c.id == route.savestateId),
                         ticks = route == null ? 0 : route.steps.Where(s => s.enabled).Sum(s => Math.Max(1, s.durationTicks)) };

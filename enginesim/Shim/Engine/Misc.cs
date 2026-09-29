@@ -11,9 +11,13 @@ namespace UnityEngine
         // audit fails the build on a mutable static that is neither `[ThreadStatic]` nor in enginesim/static-allow.txt.
         [ThreadStatic] static float _fixedDeltaTime = 0.0199999921f;
         [ThreadStatic] static float _timeScale = 1f;
+        // Time.deltaTime while the host resumes coroutines: a physics step's (WaitForFixedUpdate) or a rendered frame's
+        // (WaitForSeconds, null), as the game's player loop has it there. 0 outside a resume: the fixed step.
+        [ThreadStatic] static float _resumeDeltaTime;
 
         public static float fixedDeltaTime { get { return _fixedDeltaTime; } set { _fixedDeltaTime = value; } }
-        public static float deltaTime { get { return fixedDeltaTime; } }
+        public static float deltaTime { get { return _resumeDeltaTime > 0f ? _resumeDeltaTime : fixedDeltaTime; } }
+        public static float resumeDeltaTime { get { return _resumeDeltaTime; } set { _resumeDeltaTime = value; } }
         public static float fixedTime { get; set; }
         public static float time { get; set; }
         public static float unscaledDeltaTime { get { return fixedDeltaTime; } }

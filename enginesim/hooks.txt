@@ -27,9 +27,14 @@ replace courseScript::fullUpdate OnCourseReward
 # playSFX also draws for the Audio.PlayAudio its land cases make (the body is empty here, so the hook draws those too).
 prefix Movement::playSFX OnPlaySfx
 prefix Audio::PlayAudio OnPlayAudio
+# PlayAudioAtPoint (a zip mover's end boom) draws the same way.
+prefix Audio::PlayAudioAtPoint OnPlayAudioAtPoint
 # Block swap on dash: Movement calls the swapper directly, not through a physics callback, so the host marks it touched
 # (Simulation.Touch) and a restore puts isBlueActive back. The colliders it toggles are tracked by Engine.EnabledChanging.
 prefix colouredBlockSwapper::swapBlocks OnSwapBlocks
 # The dash's freeze (TimeStop, cut) stops physics while Update keeps running every rendered frame. The hook reports the
 # call so the host runs the freeze's Update frames (Simulation.InterpolatedFrames, MacroEngine.FrameGrid.FrozenFrames).
 prefix Movement::TimeStop OnTimeStop
+# A refill orb's refresh sets whether it is usable (its cooldown is over and the refill upgrades reach its
+# ActivationSequence) and its sprites. The host hook sets the flag (Simulation.RefillOrbState), not the sprites.
+replace JiggleDropScript::SetActiveVisualState OnRefillOrbState

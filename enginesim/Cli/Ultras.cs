@@ -186,8 +186,12 @@ namespace IGTAP.EngineSim.Cli
             })).ToArray();
             Task.WaitAll(workers);
 
-            float x0 = floors.Min(f => f.X0) - 300f, x1 = floors.Max(f => f.X1) + 300f;
-            float y0 = floors.Min(f => Math.Min(f.Y0, f.Y1)) - 300f, y1 = floors.Max(f => Math.Max(f.Y0, f.Y1)) + 300f;
+            // The whole level (every zone and world state), not only the floors of the zones the export had loaded.
+            var level = Map.LevelBounds(world.RootElement, origin);
+            float x0 = Math.Min(level.x0, floors.Min(f => f.X0)) - 300f, x1 = Math.Max(level.x1, floors.Max(f => f.X1)) + 300f;
+            float y0 = Math.Min(level.y0, floors.Min(f => Math.Min(f.Y0, f.Y1))) - 300f, y1 = Math.Max(level.y1, floors.Max(f => Math.Max(f.Y0, f.Y1))) + 300f;
+            // A course at its start gate; a bonus at its finish (its reward box), where the bonus is, not the course it
+            // starts from.
             var labels = new List<(string name, float x, float y)>();
             if (coursesPath != null && File.Exists(coursesPath))
                 using (JsonDocument courses = JsonDocument.Parse(File.ReadAllText(coursesPath)))
@@ -197,7 +201,9 @@ namespace IGTAP.EngineSim.Cli
                         if (c.TryGetProperty("overgrown", out JsonElement og) && og.ValueKind == JsonValueKind.True) continue;
                         int id = c.GetProperty("id").GetInt32();
                         string name = c.TryGetProperty("name", out JsonElement nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "Course " + id;
-                        labels.Add((name, c.GetProperty("x").GetSingle(), c.GetProperty("y").GetSingle()));
+                        bool bonus = c.TryGetProperty("endW", out JsonElement ew) && ew.GetSingle() > 0f && c.TryGetProperty("endH", out JsonElement eh) && eh.GetSingle() > 0f;
+                        labels.Add(bonus ? (name, c.GetProperty("endX").GetSingle(), c.GetProperty("endY").GetSingle())
+                            : (name, c.GetProperty("x").GetSingle(), c.GetProperty("y").GetSingle()));
                     }
             // The dot hovers a few units over its floor (the ground rays reach 22 below it), so each ultra's height from
             // lastHyperY is put on the floor segment just under it.
@@ -243,7 +249,7 @@ namespace IGTAP.EngineSim.Cli
                 // The trees' ground, where it grows once its tree upgrades are bought (none of it in a fresh world), and
                 // each segment's place in the tree's purchase order.
                 grown = tree.Shapes, treeSteps = tree.Steps,
-                // Start/end gates, checkpoints, springs, teleporters and refill orbs, in every zone.
+                // Start/end gates, checkpoints, springs, teleporters, refill orbs and secrets (bonus rewards), in every zone.
                 markers = Map.Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
                 labels = labels.GroupBy(l => (l.x, l.y)).Select(g => new { name = string.Join(" · ", g.Select(l => l.name)), x = g.Key.x, y = g.Key.y }),
                 // Ground-layer triggers (upgrade boxes): the ground rays hit them, so they are floors too.

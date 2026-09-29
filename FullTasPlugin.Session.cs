@@ -93,6 +93,7 @@ namespace IGTAPTasMod
             origin.currentOrigin -= offset;
             Physics2D.SyncTransforms();
             _newGameNotes.Add("rebased around " + at.ToString("0.#") + " (player " + after.magnitude.ToString("0.#") + " from it)");
+            _newGameSpawn = null;
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;
         }
@@ -118,6 +119,7 @@ namespace IGTAPTasMod
             _newGameAirStart = state.movementFields.TryGetValue("onGround", out SnapshotValue ground)
                 && string.Equals(ground?.value, "false", StringComparison.OrdinalIgnoreCase) ? state : null;
             _newGameNotes.Add("restored savestate " + state.name + (_newGameAirStart != null ? " (in the air: held there until the start)" : ""));
+            _newGameSpawn = null;
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;
         }

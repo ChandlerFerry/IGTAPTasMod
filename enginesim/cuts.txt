@@ -39,7 +39,7 @@ cameraMover::NewPlayersetOffset
 cameraMover::playerRespawned
 StepUpAnimationScript::onSteppedUp
 Audio::PlayAudio
+Audio::PlayAudioAtPoint
 CurrencyDisplayController::swapToMiniDisplay
 CurrencyDisplayController::swapToFullDisplay
-JiggleDropScript::SetActiveVisualState
 SteamManager::get_Initialized

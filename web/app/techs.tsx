@@ -30,12 +30,12 @@ const REQUIRES: [TechRequires, string][] = [
 ];
 const STATUSES: [boolean, string, string][] = [
   [true, "Confirmed", "Has a reproduction: a demo route that performs it."],
-  [false, "Unconfirmed", "No demo route yet: add one (Use selected route, Demo from last playback) to confirm it, or merge or delete it."],
+  [false, "Unconfirmed", "No demo yet. Add one to confirm it, or merge or delete it."],
 ];
 const ORIGINS: [TechOrigin, string, string][] = [
   ["community", "Community", "From the community's tech list"],
   ["game", "Game", "Named in the game's own code"],
-  ["ours", "Ours", "Named or found in this repo: check it isn't a community tech under another name"],
+  ["ours", "Ours", "Named in this repo: check it isn't a community tech renamed."],
 ];
 const TICK_SECONDS = 0.02;
 
@@ -50,7 +50,7 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
   const [newRequires, setNewRequires] = useState<TechRequires>("NONE");
   useEffect(() => { if (!focus) return; document.getElementById(`tech-${focus}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); const t = window.setTimeout(() => setFocus(""), 1600); return () => window.clearTimeout(t); }, [focus]);
   if (!techs) return <div className="panel"><div className="panelTitle"><div><p className="eyebrow">NAMED MOVEMENT</p><h2>Tech</h2></div></div>
-    <p className="lede">The game plugin doesn&apos;t report techs (an older version, or not connected).</p></div>;
+    <p className="lede">The game plugin reports no techs: older version, or not connected.</p></div>;
 
   const byId = new Map(techs.list.map(t => [t.id, t]));
   const byDetector = new Map(techs.list.filter(t => t.detector).map(t => [t.detector as string, t]));
@@ -64,11 +64,14 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
   return <div className="panel techPanel">
     <div className="panelTitle"><div><p className="eyebrow">NAMED MOVEMENT</p><h2>Tech</h2></div>
       <span className="hint">{techs.list.length} techs · {techs.list.filter(t => t.routeId).length} with a demo</span></div>
-    <p className="lede">Every named tech, each with a demo route that performs it. Playing any route marks the techs the overlay detects, and each
-      detected tech without a demo gets one from that playback: a savestate captured 25 ticks before the tech, attached to the demo, then the inputs
-      up to 25 ticks after it. Playing an older demo that has no savestate gives it one the same way. <b>Use selected route</b> takes a route you
-      recorded or wrote, with a copy of its savestate. Renaming a tech renames its in-game overlay label too. <span className="originBadge ours">OURS</span> marks the names we gave:
-      if one is a community tech under another name, merge them.</p>
+    <p className="lede">Every named tech with a demo. Playback detects techs and captures their demos.</p>
+    <details className="howTo"><summary>How it works</summary><ol>
+      <li>Demo capture: savestate at detection &minus;25 t, inputs through +25 t.</li>
+      <li>Old demos without savestates gain one the same way.</li>
+      <li><b>Use selected route</b> keeps the route and copies its savestate.</li>
+      <li>Renaming a tech renames its in-game overlay label too.</li>
+      <li><b>OURS</b> marks our names: merge ones the community named differently.</li>
+    </ol></details>
 
     <div className="techToolbar">
       <input className="techSearch" value={query} placeholder="Search techs" onChange={e => setQuery(e.target.value)} />
@@ -77,7 +80,7 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
         <input value={newName} placeholder="New tech name" onChange={e => setNewName(e.target.value)} />
         <select value={newRequires} onChange={e => setNewRequires(e.target.value as TechRequires)}>{REQUIRES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
         <select value={newCategory} onChange={e => setNewCategory(e.target.value as TechCategory)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
-        <button className="secondary" disabled={!newName.trim()} onClick={async () => { if (await onCommand("/techs/add", { name: newName.trim(), category: newCategory, requires: newRequires })) setNewName(""); }}>+ Add tech</button>
+        <button className="secondary" disabled={!newName.trim()} title={newName.trim() ? undefined : "Name the tech first"} onClick={async () => { if (await onCommand("/techs/add", { name: newName.trim(), category: newCategory, requires: newRequires })) setNewName(""); }}>+ Add tech</button>
       </div>
     </div>
     <div className="techLegend">{CATEGORIES.map(([id, label, blurb]) => <span key={id} className={`legendItem ${id}`} title={blurb}>{label}</span>)}</div>
@@ -108,7 +111,7 @@ export function TechPanel({techs, running, selectedRoute, onCommand, onEditInput
             </div>
           </section>;
         })}
-        {!group.length && <p className="muted">None{q || oursOnly ? " match" : ""}.</p>}
+        {!group.length && <p className="muted">No {title.toLowerCase()} techs{q || oursOnly ? " match" : ""}.</p>}
       </div>;
     })}
   </div>;
@@ -124,41 +127,46 @@ function TechCard({tech, byId, techs, running, selectedRoute, editing, focused, 
   const firstSeen = tech.detector ? seen?.items.findIndex(s => s.detector === tech.detector) ?? -1 : -1;
   const related = tech.related.map(id => byId.get(id)).filter((t): t is Tech => !!t);
   const relatedBy = techs.list.filter(t => t.id !== tech.id && t.related.includes(tech.id) && !tech.related.includes(t.id));
+  // First sentence stays visible; the rest of the description folds under More.
+  const [lead, rest] = /^([\s\S]+?[.!?])\s+([\s\S]+)$/.exec(tech.description ?? "")?.slice(1) ?? [tech.description ?? "", ""];
   return <article id={`tech-${tech.id}`} className={`techCard ${tech.category} ${tech.origin} ${focused ? "focused" : ""}`}
     title={CATEGORIES.find(c => c[0] === tech.category)?.[1]}>
     <div className="techHead">
       <strong>{tech.name}</strong>
       <span className={`originBadge ${tech.origin}`} title={ORIGINS.find(o => o[0] === tech.origin)?.[2]}>{ORIGINS.find(o => o[0] === tech.origin)?.[1].toUpperCase()}</span>
-      {detectorLabel && <span className="detectorChip" title={`Detected in playback (${tech.detector}); the overlay labels it ${tech.name.toUpperCase()}`}>detected</span>}
+      {detectorLabel && <span className="detectorChip" title={`Detected in playback; overlay label ${tech.name.toUpperCase()}`}>detected</span>}
     </div>
-    {tech.description && <p className="techDescription">{tech.description}</p>}
-    {tech.note && <p className="techNote">{tech.note}</p>}
+    {lead && <p className="techDescription">{lead}</p>}
+    {(rest || tech.note) && <details className="techMore"><summary>More</summary>
+      {rest && <p className="techDescription">{rest}</p>}
+      {tech.note && <p className="techNote">{tech.note}</p>}
+    </details>}
     {(related.length > 0 || relatedBy.length > 0) && <div className={`techRelated ${tech.origin === "ours" ? "merge" : ""}`}>
       <span>{tech.origin === "ours" ? "Same as?" : "Related"}</span>
       {[...related, ...relatedBy].map(r => <button key={r.id} className={`relatedChip ${r.origin}`} onClick={() => onFocus(r.id)} title={`${r.name} (${r.origin})`}>{r.name}</button>)}
     </div>}
     <div className="techDemo">
       {tech.routeId
-        ? <span className="demoInfo" title={tech.savestate ? `Starts at its own savestate${tech.start ? `, with ${tech.start}'s unlocks when that is a course category` : ""}`
-            : tech.start ? `Starts as ${tech.start} (course quick restart and unlocks, or the Full-TAS run's new game)` : "Starts at the quick restart where you are"}>
+        ? <span className="demoInfo" title={tech.savestate ? `Own savestate; ${tech.start} unlocks if that's a category`
+            : tech.start ? `Starts at ${tech.start}'s course restart and unlocks, or new game` : "Starts at the quick restart where you are"}>
             Demo · {tech.ticks} t · {(tech.ticks * TICK_SECONDS).toFixed(2)}s{tech.savestate ? " · from its savestate" : tech.start ? ` · from ${tech.start}` : ""}{tech.labmap ? ` · in the injected lab map ${tech.labmap}` : ""}{tech.fastForward ? `, turbo to input ${tech.fastForward}` : ""}{tech.omniDash ? " · + omnidash" : ""}{tech.floatingOrigin ? " · + origin overlay" : ""}</span>
         : <span className="demoInfo missing">No demo yet</span>}
       {playedDemo && tech.detector && <span className={`verdict ${sawIt ? "good" : "bad"}`}>{sawIt ? "✓ performed in the last play" : "✗ not detected in the last play"}</span>}
       <div className="buttonRow">
-        <button className="secondary" disabled={!tech.routeId || running} onClick={() => onCommand("/techs/play", { id: tech.id })}>▶ Play{tech.labmap ? " lab" : ""}</button>
-        <button className="secondary" disabled={!tech.routeId || running} title="Game time slowed 10×" onClick={() => onCommand("/techs/play", { id: tech.id, walk: true })}>⏵ Walk</button>
-        {firstSeen >= 0 && !tech.routeId && <button className="secondary" disabled={running} onClick={() => onCommand("/techs/demo", { id: tech.id, from: "playback", seen: firstSeen })}>Demo from last playback</button>}
+        <button className="secondary" disabled={!tech.routeId || running} title={running ? "Finish playback or recording first" : tech.routeId ? undefined : "Add a demo first"} onClick={() => onCommand("/techs/play", { id: tech.id })}>▶ Play{tech.labmap ? " lab" : ""}</button>
+        <button className="secondary" disabled={!tech.routeId || running} title={running ? "Finish playback or recording first" : tech.routeId ? "Game time slowed 10×" : "Add a demo first"} onClick={() => onCommand("/techs/play", { id: tech.id, walk: true })}>⏵ Walk</button>
+        {firstSeen >= 0 && !tech.routeId && <button className="secondary" disabled={running} title={running ? "Finish playback or recording first" : undefined} onClick={() => onCommand("/techs/demo", { id: tech.id, from: "playback", seen: firstSeen })}>Demo from last playback</button>}
         <button className="secondary" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
       </div>
     </div>
-    {lab && <div className="techLab" title={lab.techNote ?? (lab.anchor ? `${lab.shapes?.length ?? 0} shapes at anchor ${lab.anchor[0]},${lab.anchor[1]} (world frame)` : undefined)}>
+    {lab && <div className="techLab" title={lab.anchor ? `${lab.shapes?.length ?? 0} shapes at anchor ${lab.anchor[0]},${lab.anchor[1]} (world frame)` : undefined}>
       <div className="techLabHead"><strong>Lab map</strong><code>{lab.id}</code>
         {lab.demoTicks ? <span className="demoInfo">solved exactly · {lab.demoTicks} physics ticks · {lab.demoInputTicks} inputs</span>
           : <span className="demoInfo missing">{lab.error ?? "not solved yet"}</span>}
         <LabButtons lab={lab} injected={techs.injectedLab === lab.id} running={running} onCommand={onCommand} />
       </div>
       {!!lab.shapes?.length && <LabPreview lab={lab} />}
-      {lab.techNote && <p className="techNote">{lab.techNote}</p>}
+      {lab.techNote && <details className="techMore"><summary>Lab notes</summary><p className="techNote">{lab.techNote}</p></details>}
     </div>}
     {editing && <TechEditor tech={tech} techs={techs} running={running} selectedRoute={selectedRoute} onCommand={onCommand} onEditInputs={onEditInputs} onClose={onEdit} />}
   </article>;
@@ -167,9 +175,9 @@ function TechCard({tech, byId, techs, running, selectedRoute, editing, focused, 
 function LabButtons({lab, injected, running, onCommand}: {lab: LabInfo; injected: boolean; running: boolean; onCommand: Command}) {
   const unlocks = lab.category ? ` with ${lab.category} unlocks` : "";
   return <span className="buttonRow">
-    <button className="secondary" disabled={running || !!lab.error} title={`Builds lab map ${lab.id} in empty map space and puts you at its start${unlocks}. Autosave and route saving are off until you unload it.`}
+    <button className="secondary" disabled={running || !!lab.error} title={running ? "Finish playback or recording first" : lab.error ? "Solve the lab first" : `Builds the lab${unlocks} and places you at its start`}
       onClick={() => onCommand("/labmap/inject", { id: lab.id, place: true })}>{injected ? "↺ Back to start" : "Load lab"}</button>
-    {injected && <button className="secondary" disabled={running} title="Removes the lab and puts you, your unlocks and your course back where they were"
+    {injected && <button className="secondary" disabled={running} title={running ? "Finish playback or recording first" : "Removes the lab; restores you, unlocks and course"}
       onClick={() => onCommand("/labmap/restore")}>Unload</button>}
   </span>;
 }
@@ -179,9 +187,15 @@ function LabLoader({labs, injected, byId, running, onCommand, onFocus}: {labs: L
   return <div className="techLabs">
     <div className="techLabsHead"><div><p className="eyebrow">LAB MAPS</p><h3>Play a lab by hand</h3></div>
       <span className={`labStatus ${injected ? "on" : ""}`}>{injected ? `Loaded: ${injected}` : "No lab loaded"}</span></div>
-    <p className="techBlurb">Load builds the lab and stands you on its floor with its unlocks, far from every route; dying or a quick restart puts you
-      back there. Load again to go back to the start. Unload puts you, your unlocks and your course back (a scene change or a playback&apos;s end does too).
-      Nothing is autosaved and no route can be saved while a lab is loaded. The dashed floor is only there when you play it by hand, never in its demo.</p>
+    <p className="techBlurb">Practice labs built away from every route. Nothing saves while loaded.</p>
+    <details className="howTo"><summary>How lab maps work</summary><ol>
+      <li>Load builds the lab and stands you on its floor with its unlocks.</li>
+      <li>Dying, quick restart, or Load again returns you to the lab start.</li>
+      <li>Unload restores you, your unlocks and your course.</li>
+      <li>Scene changes and playback ends unload the lab too.</li>
+      <li>Nothing is autosaved; no route saves while a lab loads.</li>
+      <li>The dashed floor appears only in hand play, not demos.</li>
+    </ol></details>
     <div className="techLabGrid">
       {labs.map(lab => { const tech = lab.tech ? byId.get(lab.tech) : undefined;
         return <div key={lab.id} className={`techLab ${injected === lab.id ? "loaded" : ""}`}>
@@ -248,45 +262,52 @@ function TechEditor({tech, techs, running, selectedRoute, onCommand, onEditInput
         <option value="">None</option>
         {techs.detectors.map(d => <option key={d.id} value={d.id} disabled={taken.has(d.id)}>{d.label}{taken.has(d.id) ? ` (${taken.get(d.id)})` : ""}</option>)}</select></label>
       <label className="field"><span>Demo start (2_WJ_DS, fulltas/VMAN_NONE, or empty)</span><input value={draft.start} placeholder="empty: savestate or quick restart" onChange={e => set({ start: e.target.value })} /></label>
-      <label className="field" title="The demo plays on an injected lab map (labmaps/<id>.json): injects, starts at the lab start, restores after. Lab-only: never a route">
+      <label className="field" title="Demo plays on the injected lab map, then restores. Lab-only: never a route">
         <span>Lab map id (labmaps/&lt;id&gt;.json)</span><input value={draft.labmap} placeholder="empty: no lab map" onChange={e => set({ labmap: e.target.value.trim() })} /></label>
-      <label className="field" title="The demo draws the FloatingOrigin sphere, coordinates and lastHyperY in game, and always plays from its start (a savestate doesn't hold the world's origin)">
+      <label className="field" title="Draws the FloatingOrigin overlay; always replays from its start: savestates lack the origin">
         <span>FloatingOrigin demo</span><input type="checkbox" checked={draft.floatingOrigin} onChange={e => set({ floatingOrigin: e.target.checked })} /></label>
-      <label className="field" title="A Full-TAS demo's first input ticks run in turbo after the new game loads, so it starts where the tech begins (the world as the run left it)">
+      <label className="field" title="Turbo for this many first input ticks after the new game loads">
         <span>Fast-forward (input ticks in turbo)</span><input type="number" min={0} value={draft.fastForward} onChange={e => set({ fastForward: Math.max(0, Number(e.target.value) || 0) })} /></label>
     </div>
     <label className="field"><span>Description</span><textarea value={draft.description} onChange={e => set({ description: e.target.value })} /></label>
     <label className="field"><span>Note</span><textarea value={draft.note} onChange={e => set({ note: e.target.value })} /></label>
     <div className="field"><span>Same as / related</span><div className="techRelated">
-      {draft.related.map(id => <span key={id} className="relatedChip">{techs.list.find(t => t.id === id)?.name ?? id}<button onClick={() => set({ related: draft.related.filter(r => r !== id) })}>×</button></span>)}
+      {draft.related.map(id => <span key={id} className="relatedChip">{techs.list.find(t => t.id === id)?.name ?? id}<button title="Remove" onClick={() => set({ related: draft.related.filter(r => r !== id) })}>×</button></span>)}
       <select value="" onChange={e => e.target.value && set({ related: [...draft.related, e.target.value] })}><option value="">+ Add…</option>
         {others.filter(t => !draft.related.includes(t.id)).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
     </div></div>
     <div className="buttonRow">
-      <button className="primary" disabled={!draft.name.trim()} onClick={async () => { if (await onCommand("/techs/update", { id: tech.id, ...draft })) onClose(); }}>Save</button>
+      <button className="primary" disabled={!draft.name.trim()} title={draft.name.trim() ? undefined : "Name the tech first"} onClick={async () => { if (await onCommand("/techs/update", { id: tech.id, ...draft })) onClose(); }}>Save</button>
     </div>
 
     <p className="eyebrow techEditorHead">DEMO</p>
+    <details className="howTo"><summary>How demos start</summary><ul>
+      <li>Empty start: the demo uses its savestate, else your quick restart.</li>
+      <li>Named start: the course&apos;s quick restart and unlocks, or new game.</li>
+      <li>Lab map: the demo plays on the injected lab, then restores.</li>
+      <li>FloatingOrigin: savestates never store the world origin, so it replays fully.</li>
+      <li>Fast-forward: the first input ticks run in turbo after the new game.</li>
+    </ul></details>
     <div className="buttonRow">
-      <button className="secondary" disabled={running || !tech.labmap} title={tech.labmap ? `The solved demo of lab map ${tech.labmap}: plays on the injected lab, from its lab start` : "Attach a lab map first (Lab map id below)"}
+      <button className="secondary" disabled={running || !tech.labmap} title={running ? "Finish playback or recording first" : tech.labmap ? "The solved lab demo, played on the injected lab map" : "Add a lab map id first"}
         onClick={() => onCommand("/techs/demo", { id: tech.id, from: "lab", labmap: tech.labmap })}>Use lab demo{tech.labmap ? ` (${tech.labmap})` : ""}</button>
-      <button className="secondary" disabled={running || !selectedRoute || selectedRoute.id === tech.routeId} title={selectedRoute ? `The whole route, from its own start: ${selectedRoute.name}` : "Select a route in the sidebar"}
+      <button className="secondary" disabled={running || !selectedRoute || selectedRoute.id === tech.routeId} title={running ? "Finish playback or recording first" : selectedRoute ? `The whole route, from its own start: ${selectedRoute.name}` : "Select a route in the sidebar"}
         onClick={() => onCommand("/techs/demo", { id: tech.id, from: "selected" })}>Use selected route{selectedRoute && selectedRoute.id !== tech.routeId ? ` (${selectedRoute.name})` : ""}</button>
       {seen && seen.items.length > 0 && <>
         <select value={cut} onChange={e => setCut(Number(e.target.value))}><option value={-1}>Cut last playback after…</option>
           {seen.items.map((s, i) => <option key={i} value={i}>{s.label} · tick {s.end}</option>)}</select>
-        <button className="secondary" disabled={running || cut < 0} onClick={() => onCommand("/techs/demo", { id: tech.id, from: "playback", seen: cut })}>Cut</button>
+        <button className="secondary" disabled={running || cut < 0} title={running ? "Finish playback or recording first" : cut < 0 ? "Pick a cut point first" : "Demo up to the picked tick"} onClick={() => onCommand("/techs/demo", { id: tech.id, from: "playback", seen: cut })}>Cut</button>
       </>}
-      <button className="secondary" disabled={!tech.routeId} onClick={() => tech.routeId && onEditInputs(tech.routeId)}>Edit inputs</button>
-      <button className="danger" disabled={running || !tech.routeId} onClick={() => window.confirm(`Delete ${tech.name}'s demo route?`) && onCommand("/techs/demo", { id: tech.id, from: "none" })}>Remove demo</button>
+      <button className="secondary" disabled={!tech.routeId} title={tech.routeId ? undefined : "Add a demo first"} onClick={() => tech.routeId && onEditInputs(tech.routeId)}>Edit inputs</button>
+      <button className="danger" disabled={running || !tech.routeId} title={running ? "Finish playback or recording first" : tech.routeId ? "Deletes the demo route" : "Add a demo first"} onClick={() => window.confirm(`Delete ${tech.name}'s demo route?`) && onCommand("/techs/demo", { id: tech.id, from: "none" })}>Remove demo</button>
     </div>
 
     <p className="eyebrow techEditorHead">MERGE OR DELETE</p>
     <div className="buttonRow">
       <select value={into} onChange={e => setInto(e.target.value)}><option value="">Merge into…</option>{others.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-      <button className="secondary" disabled={!into || running} title="This tech's text goes into the other one, and its detector and demo fill what the other lacks; then this tech is gone"
+      <button className="secondary" disabled={!into || running} title={running ? "Finish playback or recording first" : into ? "Merges text, and fills missing detector and demo; then deletes this tech." : "Pick a tech to merge into"}
         onClick={() => window.confirm(`Merge ${tech.name} into ${techs.list.find(t => t.id === into)?.name}?`) && onCommand("/techs/merge", { id: tech.id, into })}>Merge</button>
-      <button className="danger" disabled={running} onClick={() => window.confirm(`Delete ${tech.name}${tech.routeId ? " and its demo" : ""}?`) && onCommand("/techs/delete", { id: tech.id })}>Delete tech</button>
+      <button className="danger" disabled={running} title={running ? "Finish playback or recording first" : "Deletes the tech and its demo"} onClick={() => window.confirm(`Delete ${tech.name}${tech.routeId ? " and its demo" : ""}?`) && onCommand("/techs/delete", { id: tech.id })}>Delete tech</button>
     </div>
   </div>;
 }

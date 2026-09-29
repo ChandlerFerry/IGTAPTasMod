@@ -25,6 +25,7 @@ SpringScript::endCooldown
 checkpointScript::OnTriggerEnter2D
 longFallColliderController::OnTriggerStay2D
 JiggleDropScript::OnTriggerStay2D
+JiggleDropScript::FixedUpdate
 TeleporterScript::OnTriggerEnter2D
 TeleporterScript::OnTriggerExit2D
 a1Statesetter::OnTriggerEnter2D

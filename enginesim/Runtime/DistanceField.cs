@@ -54,6 +54,7 @@ namespace IGTAP.EngineSim
         readonly object _gate = new object();
         Vector2[] _points = new Vector2[0];
         List<Rect> _finish, _gates;
+        List<Rect>[] _via = new List<Rect>[0];
         bool _bounds;
         float _x0, _y0, _x1, _y1;
         int _region;
@@ -76,13 +77,27 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>
-        /// How far <paramref name="at"/> (capture frame) is from the target the run scores on now: the current at: goal in
-        /// Full-TAS goal mode, else the finish box, the finish start's gate or the course's end gate. NaN when the run has no
-        /// place to walk to yet (a goal that isn't an at: one, or a world with no gate for it).
+        /// A course run's forced-path boxes (world frame, in order): until a run has passed them all, the guide walks it to the
+        /// next one it hasn't, then to the run's own target. The field is per simulation, so each worker sets it on its own.
         /// </summary>
-        public float Distance(CapturePos at)
+        public void SetVia(IReadOnlyList<OfflineSolver.Box> via)
         {
-            if (!Target(out int key, out List<Rect> boxes)) return float.NaN;
+            _via = via.Select(b =>
+            {
+                CapturePos a = _sim.ToCapture(new WorldPos(b.X0, b.Y0)), c = _sim.ToCapture(new WorldPos(b.X1, b.Y1));
+                return new List<Rect> { new Rect(a.x, a.y, c.x - a.x, c.y - a.y) };
+            }).ToArray();
+        }
+
+        /// <summary>
+        /// How far <paramref name="at"/> (capture frame) is from the target the run scores on now: the current at: goal in
+        /// Full-TAS goal mode, else the next forced-path box not yet passed (<paramref name="waypoints"/>: how many the run
+        /// has), else the finish box, the finish start's gate or the course's end gate. NaN when the run has no place to
+        /// walk to yet (a goal that isn't an at: one, or a world with no gate for it).
+        /// </summary>
+        public float Distance(CapturePos at, int waypoints = int.MaxValue)
+        {
+            if (!Target(waypoints, out int key, out List<Rect> boxes)) return float.NaN;
             int version = Version();
             lock (_gate)
             {
@@ -100,9 +115,10 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>Where the run ends now: its boxes, and a key naming them (-1: the finish box, -2: the finish start's gate,
-        /// -3: the course's end gate, else the at: goal's index), false while the current goal is not an at: one.</summary>
-        bool Target(out int key, out List<Rect> boxes)
+        /// <summary>Where the run heads now: its boxes, and a key naming them (-1: the finish box, -2: the finish start's gate,
+        /// -3: the course's end gate, -4 - i: forced-path box i, else the at: goal's index), false while the current goal is
+        /// not an at: one.</summary>
+        bool Target(int waypoints, out int key, out List<Rect> boxes)
         {
             FullTasTracker goals = _sim.Goals;
             if (goals != null)
@@ -114,6 +130,12 @@ namespace IGTAP.EngineSim
                 boxes = _goalBoxes[key];
                 if (boxes == null)
                     _goalBoxes[key] = boxes = new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
+                return true;
+            }
+            if (waypoints >= 0 && waypoints < _via.Length)
+            {
+                key = -4 - waypoints;
+                boxes = _via[waypoints];
                 return true;
             }
             if (_sim.TargetFinish.W > 0f)

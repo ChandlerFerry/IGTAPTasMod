@@ -205,3 +205,32 @@ ordered as the sections they came from.
 - **Fix:** a collider whose static fixtures change, or whose static body moves, is regridded alone at the next query
   (throughput ~1,800 runs/s, 205,000 ticks/s).
 - **Where:** the scene-query grid behind raycasts, point tests and `Collider2D.Distance`.
+
+## Zip movers once unlocked (WJ_DS_DJ_BS_OM)
+
+- **Symptom:** with `zipMoversUnlocked` on, every Course 7 offline best failed its turbo check (no finish), and the
+  offline solver crashed on a mover's end boom (`MissingMethodException: AudioSource.set_minDistance`).
+- **Cause:** turbo resumed a mover's tween with the Unity frame's `Time.deltaTime` (the host's shim used the fixed
+  step), turbo snapshots kept a moved mover where the last run left it, the live movers started wherever play had left
+  them, and `Audio.PlayAudioAtPoint` was neither cut nor hooked.
+- **Fix:** a coroutine step sees the player loop's deltaTime in both (the fixed step after `WaitForFixedUpdate`, the
+  playback clock's crossing frame after `WaitForSeconds`); turbo snapshots keep each mover's position and velocity; a
+  category start puts every mover at its first stop, still; `PlayAudioAtPoint` is cut with its draws kept. Course 7
+  bests then agreed in turbo (7.58 to 6.86).
+- **Where:** `TurboRunner.Resume`/`UseCoroutineDeltaTime`/`RestoreMovers`, `Scheduler.Resume`, shim `Time.deltaTime`,
+  `TasPlugin.ResetZipMovers`, `hooks.txt`/`cuts.txt`.
+
+## Lab starts one half-tick ahead
+
+- **Symptom:** the stored superbounce lab demo finished offline (`lab replay`) and matched in `tools/tech-check.py`, but
+  at 1x and in turbo it did no super and no boost: the overlay marked nothing.
+- **Cause:** the plugin starts a demo's engine inside `Movement.FixedUpdate`'s prefix, after `MacroEngine.BeforeTick`
+  already ran idle, so the first tick's pre-hook stick read is at rest (the step is pressed at the input hook). Offline,
+  a lab run from its placed start ran `BeforeTick` on that tick, so the first tick's stick down sped the wall slide up
+  (Velocity.y −37.8 against the game's −27), the dot landed a tick early, and the dash meant for the landing tick came
+  in the air in the game. Tech-check couldn't see it: its turbo trace starts after that first tick.
+- **Fix:** `Simulation.StartsInsideTick` (set by `DemoStart.ApplyLabStart`, which `lab solve`/`replay` now share) skips
+  `BeforeTick` on the first tick from the start. Offline then matches the turbo trace tick for tick (−10504.92 on tick
+  11); the demo holds the cling one tick longer to dash on the landing tick. The other five lab demos are unchanged
+  (their first tick has no vertical stick).
+- **Where:** `Simulation.Run`, `TechGrafts.DemoStart.ApplyLabStart`, `Cli/Lab.cs` `Place`, `labmaps/stored-superbounce.demo.json`.

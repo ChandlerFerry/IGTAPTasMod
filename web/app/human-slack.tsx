@@ -16,16 +16,16 @@ export type SlackReply = { ok: true; file: string; human: string; slack: SlackRe
 // exact: one tick or one value only. window: the input moves or re-tilts a little. band: fixed at the start.
 // free: no limit found. The strictest input on a frame picks its colour, so a frame that holds an exact input is red.
 const TONE: Record<string, { color: string; short: string; label: string; rank: number }> = {
-  exact: { color: "#ff5b6e", short: "exact", label: "exact — only this tick (or only this stick value) works; practice it", rank: 3 },
-  band: { color: "#c77dff", short: "band", label: "band — fixed at the start of the run, only a band of stick values works", rank: 2 },
-  free: { color: "#38d996", short: "free", label: "free — no timing or value limit found within the tested range", rank: 0 },
+  exact: { color: "#ff5b6e", short: "exact", label: "exact — only this tick or stick value works", rank: 3 },
+  band: { color: "#c77dff", short: "band", label: "band — fixed at run start; a stick range works", rank: 2 },
+  free: { color: "#38d996", short: "free", label: "free — no timing or value limit found", rank: 0 },
 };
 function toneOf(cls: string) {
   if (TONE[cls]) return TONE[cls];
   const windowed = /^window (\d+)$/.exec(cls);
   if (windowed) {
     const n = Number(windowed[1]);
-    return { color: n <= 2 ? "#ff8a4c" : n <= 4 ? "#ffbf5b" : "#ffd98a", short: `win ${n}`, label: `window ${n} — works on ${n} consecutive ticks; not tick-exact`, rank: 1 };
+    return { color: n <= 2 ? "#ff8a4c" : n <= 4 ? "#ffbf5b" : "#ffd98a", short: `win ${n}`, label: `window ${n} — works on ${n} consecutive ticks`, rank: 1 };
   }
   return { color: "#8fa8c4", short: cls, label: cls, rank: 0 };
 }
@@ -99,7 +99,7 @@ export function HumanSlackTimeline({ routeName, load }: { routeName?: string; lo
       <div>
         <strong>Human version · input slack</strong>
         <span>{loading ? "Reading the slack report…" : slack
-          ? `${reply!.file} · same time as the best (${slack.time.toFixed(2)}s) · play this one, not the record`
+          ? `${reply!.file} · same time as best (${slack.time.toFixed(2)}s) · play this, not the record`
           : missing || "No human version for this route yet."}</span>
       </div>
       {slack && <div className="frameLegend slackLegend">
@@ -112,14 +112,22 @@ export function HumanSlackTimeline({ routeName, load }: { routeName?: string; lo
     {slack && <div className="slackSummary">
       <strong>{slack.inputs.length} inputs</strong>
       <span className={exact.length ? "slackExact" : "slackFine"}>{exact.length === 0 ? "none tick-exact"
-        : `${exact.length} exact — practice ${exact.slice(0, 8).map(e => `tick ${e.tick} (${inputName(e)})`).join(", ")}${exact.length > 8 ? ", …" : ""}`}</span>
-      <small>Each frame is colored by the slack of the input on it (the strictest one). The report moves every input up to 6 ticks either way, one tick at a time, until it stops working, and tries every stick value.</small>
+        : `${exact.length} exact — practice ticks`}{exact.slice(0, 8).map((e, i) => <b key={i} title={`tick ${e.tick}: ${inputName(e)}`}>{i ? ", " : " "}{e.tick}</b>)}{exact.length > 8 ? ", …" : ""}</span>
+      <small>Frame colour = the strictest input on it.</small>
     </div>}
+    {slack && <details className="howTo"><summary>How slack is measured</summary><ol>
+      <li>Each input is nudged up to 6 ticks either way.</li>
+      <li>Nudging stops when the run stops working.</li>
+      <li>Every stick value is tested the same way.</li>
+      <li>exact = only this tick or stick value works.</li>
+      <li>window n = works on n consecutive ticks.</li>
+      <li>band = stick range, fixed early. free = no limit found.</li>
+    </ol></details>}
     {slack && frames.length > 0 && <div className="frameScroller"><div className="frameTrack">
       {frames.map(({ tick, k, on, strict }) => {
         const tone = strict ? toneOf(strict.class) : null;
         return <div key={tick} className={`frameCell slackCell ${tone ? "slackOn" : ""}`} style={tone ? { background: tone.color, color: "#0b1220" } : undefined}
-          title={`Frame ${tick + 1}${on.length ? ` · ${on.map(e => `${inputName(e)} — ${toneOf(e.class).label}`).join(" · ")}` : " · stick held"}`}>
+          title={`Frame ${tick + 1}${on.length ? ` · ${on.slice(0, 2).map(e => inputName(e)).join(" · ")}${on.length > 2 ? " …" : ""}` : " · stick held"}`}>
           <b>{tick + 1}</b>
           <span>{glyphs(k).join(" ") || "·"}</span>
           <small>{tone ? tone.short : ""}</small>
@@ -127,9 +135,9 @@ export function HumanSlackTimeline({ routeName, load }: { routeName?: string; lo
       })}
     </div></div>}
     {slack && reply?.ticks == null && <ul className="slackList">
-      {slack.inputs.map(e => <li key={e.tick} style={{ borderLeftColor: toneOf(e.class).color }}>
-        <b>tick {e.tick}</b> {inputName(e)} <small>{e.class} · {toneOf(e.class).label}</small></li>)}
+      {slack.inputs.map((e, i) => <li key={i} style={{ borderLeftColor: toneOf(e.class).color }}>
+        <b>tick {e.tick}</b> {inputName(e)} <small title={toneOf(e.class).label}>{toneOf(e.class).short}</small></li>)}
     </ul>}
-    {slack && <p className="slackFoot">{slack.human}: {slack.runTicks} physics ticks from the run start. Exact inputs: {slack.exact} here, {slack.exactBefore} in the best it came from (humanize keeps the time, drops what it can).</p>}
+    {slack && <p className="slackFoot">{slack.human}: {slack.runTicks} physics ticks · exact inputs: {slack.exact} here, {slack.exactBefore} in the best</p>}
   </section>;
 }

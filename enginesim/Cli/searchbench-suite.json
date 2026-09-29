@@ -1,0 +1,7 @@
+{
+  "courses": [
+    { "name": "c4-wjdsdj", "trace": "start-c4-wjdsdj.json", "target": 11.24 },
+    { "name": "c1-none", "trace": "start-c1-none.json", "target": 1.40 },
+    { "name": "bonus1-wj", "trace": "optimize-cbonus1-wj.json", "target": 6.70 }
+  ]
+}

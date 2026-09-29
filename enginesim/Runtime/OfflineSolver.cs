@@ -44,6 +44,8 @@ namespace IGTAP.EngineSim
         public sealed class ForcedPath
         {
             public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
+            /// <summary>A standing rule's "guide": true turns the guide on for every solve it covers, as --guide does.</summary>
+            public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
         }
 
@@ -458,7 +460,11 @@ namespace IGTAP.EngineSim
                 _omni = owner.Capabilities == "omni" || owner.Capabilities == "wjdsdjbsom";
                 _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
                 _goalMode = sim.Goals != null;
-                if (owner.GuideWeight > 0f && DistanceField.Enabled) _guide = DistanceField.For(sim);
+                if (owner.GuideWeight > 0f && DistanceField.Enabled)
+                {
+                    _guide = DistanceField.For(sim);
+                    if (!_goalMode && owner._path != null) _guide.SetVia(owner._path.Via);
+                }
                 if (_goalMode) Interlocked.CompareExchange(ref owner._near, Enumerable.Repeat(float.PositiveInfinity, sim.Goals.Goals.Length + 1).ToArray(), null);
                 _archive = owner._archive;
                 _swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
@@ -645,11 +651,12 @@ namespace IGTAP.EngineSim
             void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
             {
                 // Tech demos mined into grafts (TechGrafts): the demo's own input window around the same contact kind, jittered
-                // and filtered by the run's category unlocks, offered in addition to the hand-written graft below.
+                // ±TechGrafts.Jitter ticks and filtered by the run's category unlocks, offered in addition to the hand-written
+                // graft below. Its mode names the tech, so a new best says which demo's window found it.
                 if (_owner.Mined is TechGrafts mined && mined.Pick(contact, _rng) is TechPattern pattern
-                    && TechGrafts.Compose(run, tick, TechGrafts.Jitter, lo, pattern, out List<InputTick> tech))
+                    && TechGrafts.Compose(run, tick, _rng.Next(-TechGrafts.Jitter, TechGrafts.Jitter + 1), lo, pattern, out List<InputTick> tech))
                 {
-                    Try(tech, "tech graft", from);
+                    Try(tech, pattern.Mode, from);
                     Interlocked.Increment(ref _owner.TechGrafted);
                 }
                 var (before, after, plain, omni) = GraftsAt[contact];
@@ -1639,7 +1646,7 @@ namespace IGTAP.EngineSim
                 if (state != null) state.Waypoints = _waypoints;
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
-                float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture) : _goalMode ? GoalDistance(_sim) : float.NaN;
+                float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture, _waypoints) : _goalMode ? GoalDistance(_sim) : float.NaN;
                 var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
                 if (!_owner.File(key, filed)) return;
                 if (ClipLog && cell == null) Console.WriteLine($"NEWCELL {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(key < 0 ? 1 : 0)} {(_clipWatch >= 0 || _setupWatch >= 0 ? 1 : 0)}");

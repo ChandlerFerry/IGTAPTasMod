@@ -36,8 +36,8 @@ namespace IGTAPTasMod
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
             [JsonIgnore] public int MaxLevel { get { return !string.IsNullOrEmpty(maxCapabilities) ? CapsLevel(maxCapabilities) : IsBonus ? MinLevel : TopLevel; } }
-            /// <summary>WJ_DS_DJ_BS_OM is every course's (not a bonus's or transition's), outside its min–max range.</summary>
-            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level == OmniLevel ? !IsBonus && !IsTransition : level >= MinLevel && level <= MaxLevel; }
+            /// <summary>WJ_DS_DJ_BS_OM is every target's (course, bonus or transition), outside its min–max range.</summary>
+            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level == OmniLevel || level >= MinLevel && level <= MaxLevel; }
         }
 
         sealed class SolverTick
@@ -97,8 +97,8 @@ namespace IGTAPTasMod
             return new[] {
                 new CourseDef { id = 1, x = 2241f, y = -292f, minCapabilities = "none", maxCapabilities = "wjdsdj" },
                 new CourseDef { id = 2, x = 4783.43359f, y = 1878.2251f, minCapabilities = "none", maxCapabilities = "wjdsdj" },
-                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wjds", maxCapabilities = "wjdsdj" },
-                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjdsdj", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 3, x = 9505f, y = 6967.01465f, minCapabilities = "wj", maxCapabilities = "wjdsdj" },
+                new CourseDef { id = 4, x = 20200.4004f, y = 10554.5449f, minCapabilities = "wjds", maxCapabilities = "wjdsdj" },
                 new CourseDef { id = 5, x = -3281f, y = -295.455078f, minCapabilities = "wjdsdj", maxCapabilities = "wjdsdj" },
                 new CourseDef { id = 6, x = 26174.6016f, y = -476.427734f, minCapabilities = "wjdsdjbs" },
                 new CourseDef { id = 7, x = 19891f, y = 3039f, minCapabilities = "wjdsdjbs" },
@@ -249,7 +249,7 @@ namespace IGTAPTasMod
             throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
                 + " category; it " + (def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
                     : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel))
-                + (def.IsBonus || def.IsTransition ? "" : " and " + Label(OmniLevel)) + ".");
+                + " and " + Label(OmniLevel) + ".");
         }
 
         static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
@@ -440,7 +440,7 @@ namespace IGTAPTasMod
             {
                 _optionalBlocksRead = stamp;
                 _optionalBlocks = stamp == default(DateTime) ? new OptionalBlock[0]
-                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>()
+                    : ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
                         .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
                             course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
                             caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
@@ -538,7 +538,7 @@ namespace IGTAPTasMod
             EndSolveJob("Skipped");
         }
 
-        int _parkedFrame = -1000;
+        int _parkedFrame = -1000, _airborneFrame = -1;
 
         bool CourseLoaded()
         {
@@ -547,13 +547,28 @@ namespace IGTAPTasMod
             CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target);
+            // respawn keeps coyoteFrames and the stable-tick wait pins the player at the reset point (Course 7's is 42 u over its
+            // floor), where only coyote time holds onGround: restart from standing (full coyote), or a run that ended airborne
+            // never gets 3 stable ticks, or starts with other coyote frames than the trace. Starts that never land: 600 frames.
+            bool grounded = player != null && player.onGround && Convert.ToSingle(GetMovementField(player, "coyoteFrames")) >= player.maxCoyoteFrames;
             if (!parked)
             {
                 RestoreRouteStart(new MacroDefinition { name = target.Token + "_" });
                 _parkedFrame = Time.frameCount;
+                _airborneFrame = -1;
             }
-            else if (Time.frameCount - _parkedFrame >= 10 && ZonesSettled() && (target.HasFinish
-                || _solverCourses.Any(c => c.courseNumber == (target.IsTransition ? target.toCourse : target.GameCourse) && c.isActiveAndEnabled))) return true;
+            else
+            {
+                if (grounded) _airborneFrame = -1;
+                else if (_airborneFrame < 0) _airborneFrame = Time.frameCount;
+                if (Time.frameCount - _parkedFrame >= 10 && (grounded || Time.frameCount - _airborneFrame >= 600) && ZonesSettled() && (target.HasFinish
+                    || _solverCourses.Any(c => c.courseNumber == (target.IsTransition ? target.toCourse : target.GameCourse) && c.isActiveAndEnabled)))
+                {
+                    if (!grounded) Logger.LogWarning("Course " + target.Token + ": starting without the player standing at its reset point (it never landed there).");
+                    _airborneFrame = -1;
+                    return true;
+                }
+            }
             _solverStatus = "Loading course " + target.Token;
             return false;
         }
@@ -620,7 +635,8 @@ namespace IGTAPTasMod
                 + (box.TimesUsed > 0 ? " (bought)" : "");
         }
 
-        Vector2 _startOrigin;
+        /// <summary>Why the last start capture failed (engine status and the player's state at the end), for the caller's error.</summary>
+        string _captureFailure;
         /// <summary>A tech demo's own start for the next start capture (EngineSimTechTrace): its savestate and the omnidirectional dash.</summary>
         TechDef _techStart;
 
@@ -689,7 +705,21 @@ namespace IGTAPTasMod
 
         static string Quote(string path) { return "\"" + path + "\""; }
 
-        volatile bool _mapRunning;
+        // One job per map file: a request for a map already being drawn (a second click, a page's second mount) waits for
+        // that job's result instead of failing, and different maps queue, one engine process at a time.
+        sealed class MapJob
+        {
+            public readonly System.Threading.ManualResetEvent Done = new System.Threading.ManualResetEvent(false);
+            public int Status = 200;
+            public string Response;
+        }
+        readonly Dictionary<string, MapJob> _mapJobs = new Dictionary<string, MapJob>(StringComparer.OrdinalIgnoreCase);
+        readonly object _mapQueue = new object();
+
+        bool MapInFlight(string output)
+        {
+            lock (_mapJobs) return _mapJobs.ContainsKey(output);
+        }
 
         object EngineSimMap(WebStudioRequest request, JObject body)
         {
@@ -707,14 +737,11 @@ namespace IGTAPTasMod
                 request.StatusCode = 404;
                 return new { ok = false, error = "No start capture for " + course.Token + " " + caps + " yet: solve it once first." };
             }
-            if (_mapRunning)
-            {
-                request.StatusCode = 409;
-                return new { ok = false, error = "A map is already being drawn." };
-            }
             string name = "map-c" + course.Token + "-" + caps;
-            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
             string output = Path.Combine(EngineSimDir, name + ".json");
+            // This map's job is running or queued: join it, leaving its seed files alone.
+            if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
+            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
             var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output));
             int seeds = 0;
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
@@ -751,49 +778,63 @@ namespace IGTAPTasMod
             return RunEngineSimMap(request, "ultras " + Quote(trace) + " --courses " + Quote(CoursesPath) + " --out " + Quote(output), output);
         }
 
+        // Draws `output` with the engine (`args`), or joins the job already drawing it (`args` unused then).
         object RunEngineSimMap(WebStudioRequest request, string args, string output)
         {
-            if (_mapRunning)
+            MapJob job;
+            bool owner;
+            lock (_mapJobs)
             {
-                request.StatusCode = 409;
-                return new { ok = false, error = "A map is already being drawn." };
+                owner = !_mapJobs.TryGetValue(output, out job);
+                if (owner) _mapJobs[output] = job = new MapJob();
             }
-            _mapRunning = true;
             request.AsyncHandling = true;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
-                try
+                if (owner)
                 {
-                    using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
-                        UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                        WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
+                    try { lock (_mapQueue) RunMapProcess(job, args, output); }
+                    finally
                     {
-                        process.Start();
-                        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
-                        var errors = process.StandardError.ReadToEndAsync();
-                        process.StandardOutput.ReadToEnd();
-                        process.WaitForExit();
-                        if (process.ExitCode == 0) request.Response = File.ReadAllText(output);
-                        else
-                        {
-                            request.StatusCode = 500;
-                            string error = errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode;
-                            request.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + error.Trim() });
-                        }
+                        lock (_mapJobs) _mapJobs.Remove(output);
+                        job.Done.Set();
                     }
                 }
-                catch (Exception ex)
-                {
-                    request.StatusCode = 500;
-                    request.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + ex.Message });
-                }
-                finally
-                {
-                    _mapRunning = false;
-                    request.Completed.Set();
-                }
+                else job.Done.WaitOne();
+                request.StatusCode = job.Status;
+                request.Response = job.Response;
+                request.Completed.Set();
             });
             return null;
+        }
+
+        void RunMapProcess(MapJob job, string args, string output)
+        {
+            try
+            {
+                using (var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                    WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } })
+                {
+                    process.Start();
+                    try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
+                    var errors = process.StandardError.ReadToEndAsync();
+                    process.StandardOutput.ReadToEnd();
+                    process.WaitForExit();
+                    if (process.ExitCode == 0) job.Response = File.ReadAllText(output);
+                    else
+                    {
+                        job.Status = 500;
+                        string error = errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode;
+                        job.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + error.Trim() });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                job.Status = 500;
+                job.Response = JsonConvert.SerializeObject(new { ok = false, error = "map failed: " + ex.Message });
+            }
         }
 
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
@@ -852,7 +893,8 @@ namespace IGTAPTasMod
                 || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
                 || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0)
                 || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4)
-                || GetMovementBool(player, "omniDashUnlocked", false) != (level >= 5))
+                || GetMovementBool(player, "omniDashUnlocked", false) != (level >= 5)
+                || CategoryAbilities(_solverCaps).Any(a => a.field.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal) && !Equals(GetMovementField(player, a.field), a.value)))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
         }
 
@@ -912,10 +954,14 @@ namespace IGTAPTasMod
                         if (_engine.InputsExhausted) idleTicks++;
                         int tick = (int)_engine.RunTicks;
                         if (_startState == null && tick == 0) settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
-                        if (_startState == null && tick > 0) { _startState = settling; _startOrigin = CurrentOrigin(); }
+                        if (_startState == null && tick > 0) _startState = settling;
                         if (_audit != null) AuditTick(player, tick);
                         lastTick = tick;
                     }, from);
+                if (from == null && _startState == null)
+                    _captureFailure = "engine '" + _engine.Status + "', dead " + GetMovementField(player, "isDead") + ", onGround " + GetMovementField(player, "onGround")
+                        + ", coyote " + GetMovementField(player, "coyoteFrames") + ", cutscene " + GetMovementField(player, "cutsceneMode")
+                        + ", at " + ((Vector2)player.transform.position - CurrentOrigin());
                 if (_engine.IsRunning) _engine.Abort("Solver run ended");
             }
             finally

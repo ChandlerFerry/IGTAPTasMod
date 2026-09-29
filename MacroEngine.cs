@@ -144,6 +144,8 @@ namespace IGTAPTasMod
 
             public readonly float[] Alphas;
             public float LastAlpha { get { return Alphas[Alphas.Length - 1]; } }
+            /// <summary>The game time of the frame that crosses a physics tick: Time.deltaTime of the frame whose coroutines resume after it.</summary>
+            public float CrossStep { get { return _crossStep; } }
             readonly float _prevStep, _crossStep, _frozenStep;
 
             public FrameGrid(int fps)

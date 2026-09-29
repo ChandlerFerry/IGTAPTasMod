@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "id": "stored-superbounce",
+  "name": "Stored superbounce: a super, then the carried wall coyote as a dash boost",
+  "tech": "stored-superbounce",
+  "techNote": "The stored wall jump's lab with the dash: cling to the post, hold down-left until the dot lands (wallCoyoteFrames 7 kept), run right, then dash right with jump on dash frame 2 (a super: 805 up, 900 momentum) and press jump again 3 ticks later. The super ends the dash, so getPlayerControlledInput runs within dashBoostMax (6) frames of it, and the stored count (4 left) makes that press a wall jump off no wall with the dash boost: SpecialWallJump(0.6, 0.6, up * 410), Velocity (-276, 730) plus 401 momentum up, while the super's momentum keeps the dot going right. The super alone peaks 328.8 (hitbox top 355.6), the stored wall jump without a dash 390.8; the stored superbounce 537 (top 564). The finish box (x 980-1180, bottom y 490) is out of reach of all of those, and of a superbounce off the post (527 at x 437, falling long before x 980).",
+  "category": "WJ_DS",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [500, 20], "size": [1400, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [80, 80], "size": [40, 80], "layer": "Ground", "tag": "Ground" }
+  ],
+  "start": {
+    "x": 125.5,
+    "y": 110,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1
+    }
+  },
+  "finish": [1080, 510, 200, 40],
+  "maxTicks": 120
+}

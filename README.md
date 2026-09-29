@@ -23,8 +23,9 @@
     `doubleJumpUnlocked`/`maxAirJumps`, `Solver.cs` `AuditTick`).
 11. Categories stack: `NONE`, `WJ` (wall jump), `WJ_DS` (+ dash), `WJ_DS_DJ` (+ double jump), `WJ_DS_DJ_BS` (+ block
     swap on dash, `blockSwapUnlocked`), `WJ_DS_DJ_BS_OM` (+ the omnidirectional dash, `omniDashUnlocked`, the OmniDash
-    box's toggle).
-12. Every other category has the omnidirectional dash off.
+    box's toggle, plus every refill orb and the zip movers: `globalUpgradeDict` `unlockJiggleDrops` 1, `moreRefreshOrbs`
+    2, `zipMoversUnlocked` 1, so dash, jump and full refill orbs are all on).
+12. Every other category has the omnidirectional dash, the refill orbs and the zip movers off.
 13. Below `WJ_DS_DJ_BS` the coloured blocks start unswapped (blue active, as a new game has them; the save's state is
     put back after); from `WJ_DS_DJ_BS` up the game's own respawn sets them.
 14. Turbo, offline and playback use identical unlocks.
@@ -34,7 +35,7 @@
 17. Bonuses run only in their first category, or up to their `maxCapabilities` in `courses.json`.
 18. Courses and transitions run from `minCapabilities` up to `maxCapabilities`, or up to `WJ_DS_DJ_BS` when it's unset:
     Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
-19. Every course (1–15, not bonuses or transitions) also runs in `WJ_DS_DJ_BS_OM`.
+19. Every course, bonus and transition also runs in `WJ_DS_DJ_BS_OM`.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
     zone 2).
 21. Every quick restart onto a course loads the zone of the start gate nearest it the game's way (`ZoneLoader`, as the

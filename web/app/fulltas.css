@@ -89,3 +89,13 @@
 .segmentBar span { position: absolute; left: 7px; top: 50%; transform: translateY(-50%) rotate(180deg); writing-mode: vertical-rl; font-size: 10px; font-weight: 700; line-height: 1; }
 .segmentBar:hover:not(:disabled) { background: #10263d; }
 .segmentGroup.known .segmentBar::before { outline: 1px solid var(--text); outline-offset: 1px; box-shadow: 0 0 6px 2px currentColor; }
+.segmentRestart { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 8px 7px; border-top: 1px dashed #2c4868; }
+.segIcon { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; font-style: normal; font-size: 12px; font-weight: 800; line-height: 1; cursor: help; border: 1px solid currentColor; }
+.segIcon.restart { color: var(--cyan); background: #0f2a44; }
+.segIcon.end { color: var(--text); background: #1a2b40; }
+.segIcon.clean { color: var(--green); background: #0d2c24; }
+.segIcon.carry { color: var(--amber); background: #33250c; }
+.segIcon.faster { color: #ffe066; background: #2e2a0d; font-size: 11px; }
+.segmentLegend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 4px; color: var(--muted); font-size: 12px; }
+.segmentLegend > span { display: inline-flex; align-items: center; gap: 5px; }
+.segmentLegend .segIcon { cursor: default; }

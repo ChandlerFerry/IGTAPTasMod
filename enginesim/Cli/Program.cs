@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
+                    case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
@@ -110,7 +111,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  bench <trace.json> [seconds]           runs/s and ticks/s on one core\n"
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit] [--fresh]\n"
                             + "        [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]... [--path-name name] [--optional name]... [--no-optional name]...\n"
-                            + "        [--guide] [--guide-weight W] [--rng N]\n"
+                            + "        [--guide] [--guide-weight W] [--rng N] [--log-json file] [--no-humanize] [--tech-cache file]\n"
                             + "                                         offline solver from that trace's start state; bests that beat\n"
                             + "                                         the seeds are confirmed in turbo (/api/enginesim/submit) when the game runs;\n"
                             + "                                         --via/--avoid force a path (boxes passed in order / boxes that cut a run);\n"
@@ -123,19 +124,25 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         distance to the target; --guide-weight W is how hard it pulls (default 1);\n"
                             + "                                         --rng N seeds the search's randomness (worker i gets N + i) instead of\n"
                             + "                                         the clock, so a one-thread run repeats exactly\n"
-                            + "                                         each new best also gets a human version (humanize)\n"
+                            + "                                         each new best also gets a human version (humanize; --no-humanize skips it)\n"
+                            + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks)\n"
+                            + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
+                            + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
+                            + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
+                            + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--piece-minutes p] [--seed <file>]... [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
+                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--repair] [--unsolved] [--goal N] [--resets] [--segment N]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
                             + "                                         (archive/fulltas-pieces.json; a missing piece is searched for up to\n"
                             + "                                         p minutes, default 3); run state in <traces>/fulltas/<run>.json,\n"
                             + "                                         bests to the gate (/api/fulltas/submit) when the game runs; --seed:\n"
-                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts;\n"
+                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
+                            + "                                         (--seed-list: a file of seed paths, one per line);\n"
                             + "                                         --goal N: polish only the W goals ending at goal N (from goal N-W on),\n"
                             + "                                         over and over; --resets: polish by reset segments (the route cut at its\n"
                             + "                                         quick restarts), each closed by its old restart with the same player state\n"

@@ -70,19 +70,31 @@ namespace IGTAPTasMod
                     throw new InvalidOperationException("Route " + routeId + " is missing or not raw input.");
                 inputs = ToTicks(route.steps);
             }
-            if (Truthy(body, "freshStart") || _engineSimStartKey != key || CurrentOrigin() != _startOrigin) _startState = null;
-            if (_startState == null && !CourseLoaded())
+            // Start states are per category (a submit of another category must not discard this one's: the solver's Confirm
+            // judges every other category before the target's), and the target's is the one its trace was written from. A
+            // FloatingOrigin move keeps them (a restore puts the world back at the snapshot's origin, TurboRunner.PutOrigin):
+            // a far course's runs and restarts rebase, and each recapture there dropped the trace's start. A fresh start recaptures all.
+            // A cached start only judges: a run it would save is judged again from a start captured now (Judge).
+            if (Truthy(body, "freshStart")) _startStates.Clear();
+            _startKey = key;
+            _startFresh = !_startStates.TryGetValue(key, out TurboRunner.Snapshot cached);
+            if (_startFresh)
             {
-                request.StatusCode = 409;
-                return new { ok = false, error = "Course " + _solverTarget.Token + " is loading; retry in a moment." };
-            }
-            if (_startState == null)
-            {
-                _engineSimStartKey = null;
+                _startState = null;
+                if (!CourseLoaded())
+                {
+                    request.StatusCode = 409;
+                    return new { ok = false, error = "Course " + _solverTarget.Token + " is loading; retry in a moment." };
+                }
                 Evaluate(new List<SolverTick> { new SolverTick() }, out _, out _, out _);
-                if (_startState == null) throw new InvalidOperationException("The start state was not captured.");
-                _engineSimStartKey = key;
+                if (_startState == null)
+                {
+                    Logger.LogWarning("Start state of " + key + " not captured: " + _captureFailure);
+                    throw new InvalidOperationException("The start state was not captured (" + _captureFailure + ").");
+                }
+                _startStates[key] = _startState;
             }
+            else _startState = cached;
             return null;
         }
 
@@ -102,7 +114,10 @@ namespace IGTAPTasMod
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
             if (error != null) return error;
-            return Judge(inputs);
+            JudgeResult result = Judge(inputs);
+            if (result != null) return result;
+            request.StatusCode = 409;
+            return new { ok = false, error = RecaptureError };
         }
 
         object EngineSimPlay(JObject body)
@@ -271,6 +286,13 @@ namespace IGTAPTasMod
             return null;
         }
 
+        const string RecaptureError = "A new best: its start is loading again from a quick restart before the save; retry in a moment.";
+
+        /// <summary>
+        /// Turbo replay of a candidate, saved (SaveSolverRoute) when it beats the record or the farm route. Null when it
+        /// would be saved but its start came from the cache: the cached start is dropped and the caller retries, so the
+        /// replay that saves starts from a quick restart captured for it, never from a snapshot an earlier game state left.
+        /// </summary>
         JudgeResult Judge(List<SolverTick> inputs)
         {
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
@@ -283,6 +305,12 @@ namespace IGTAPTasMod
                 previousBest = float.IsInfinity(best) ? (float?)null : best,
                 previousFarmTicks = farmBest == long.MaxValue ? (long?)null : farmBest };
             if (!finished) return result;
+            if (!_startFresh && (time < best - .0001f || FarmTracked && runTicks < farmBest))
+            {
+                _startStates.Remove(_startKey);
+                _startState = null;
+                return null;
+            }
             List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
             if (time < best - .0001f)
             {
@@ -409,6 +437,7 @@ namespace IGTAPTasMod
                             if (error != null) return;
                             List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
                             JudgeResult r = Judge(inputs);
+                            if (r == null) return; // a new best from a cached start: judged again from a fresh one on the next pump
                             line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
                                     + (r.previousFarmTicks is long farm ? ", farm route's " + farm : "") + ")" : "no finish in turbo")
                                 + (r.saved ? ", saved" : "") + (r.farmSaved ? ", saved as farm" : "") + (r.rejected != null ? ", " + r.rejected : "");
@@ -593,8 +622,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("ticks");
                 w.WriteStartArray();
                 _techStart = tech;
-                _startState = null;
-                _engineSimStartKey = null;
+                ClearEngineSimStarts();
                 _engineSimTickHook = p =>
                 {
                     if (first != null)
@@ -615,7 +643,7 @@ namespace IGTAPTasMod
                 {
                     _engineSimTickHook = null;
                     _techStart = null;
-                    _startState = null;
+                    ClearEngineSimStarts();
                 }
                 if (first == null) throw new InvalidOperationException(tech.name + "'s demo ran no tick in turbo.");
                 Vector2 end = player.transform.position;
@@ -638,7 +666,13 @@ namespace IGTAPTasMod
             return new { ok = true, path, finished, time, finishTick, ticks = samples };
         }
 
-        string _engineSimStartKey;
+        readonly Dictionary<string, TurboRunner.Snapshot> _startStates = new Dictionary<string, TurboRunner.Snapshot>();
+        /// <summary>The last PrepareEngineSimRun's category key, and whether it captured its start just then.</summary>
+        string _startKey;
+        bool _startFresh;
+
+        /// <summary>Every cached start state goes: a new game or a tech demo's own start captures its own.</summary>
+        void ClearEngineSimStarts() { _startStates.Clear(); _startState = null; }
 
         static bool Truthy(JObject body, string key) { return body[key] != null && body[key].Type == JTokenType.Boolean && (bool)body[key]; }
     }

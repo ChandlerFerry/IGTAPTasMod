@@ -126,6 +126,16 @@ namespace IGTAP.EngineSim
             return Parse(doc.RootElement, path);
         }
 
+        /// <summary>
+        /// A demo's own start (<c>start</c> in labmaps/&lt;id&gt;.&lt;demo&gt;.demo.json, the lab start's format): one lab map can
+        /// carry several demos that begin in different places (pauselift-wall: the cling, and the reverse super on its floor).
+        /// Without one the demo starts at the lab's start.
+        /// </summary>
+        public void UseDemoStart(JsonElement demo)
+        {
+            if (demo.TryGetProperty("start", out JsonElement s) && s.ValueKind == JsonValueKind.Object) start = ParseStart(s);
+        }
+
         public static LabMapDef Parse(JsonElement root, string path = null)
         {
             var lab = new LabMapDef();

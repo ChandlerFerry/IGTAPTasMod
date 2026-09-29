@@ -68,7 +68,7 @@
       "course": 4,
       "capabilities": ["none", "wj", "wjds", "wjdsdj", "wjdsdjbsom"],
       "note": "Left side: everything left of the rightmost buy machine's left edge (x 19644.9), top to bottom, is cut. Every route goes right from the start; the search otherwise spends most of its runs out west.",
-      "avoid": [[-10039.6, -4300, 19644.9, 25700]],
+      "avoid": [[-10039.6, -4300, 19644.9, 25700], [19636.4, 10402.1, 19958.1, 11139.7], [20092.5, 11043.2, 20330.5, 11087.6], [20287.9, 10242.0, 21283.6, 10365.4]],
       "via": []
     },
     {
@@ -96,19 +96,20 @@
       "course": 6,
       "capabilities": ["wjdsdjbs", "wjdsdjbsom"],
       "note": "x 25507 to 25621, y -396 to 220, is cut.",
-      "avoid": [[25506.6, -396.43, 25620.6, 219.57]],
+      "avoid": [[27244.4, -664.8, 28079.5, 870.1], [22378.9, -512.5, 22584.0, 1346.5], [22533.2, 406.1, 25855.5, 629.9], [26061.6, 5.5, 26291.4, 40.9], [22506.8, 258.3, 25004.8, 484.2], [24231.5, -734.0, 24744.7, -679.3]],
       "via": []
     },
     {
       "course": 7,
       "capabilities": ["wjdsdjbs", "wjdsdjbsom"],
       "note": "x 20301 to 20582, y 2941 to 4703, is cut.",
-      "avoid": [[20301, 2941, 20582, 4703]],
+      "avoid": [[20301, 2941, 20582, 4703], [20063.6, 4005.4, 20325.9, 5068.2]],
       "via": [],
       "optional": [
         {
           "name": "avoid-backwards",
-          "note": "x 19800.2 to 19978.2, y 3538.6 to 3581.9. Off unless picked.",
+          "note": "x 19800.2 to 19978.2, y 3538.6 to 3581.9. On unless turned off.",
+          "default": true,
           "avoid": [[19800.2, 3538.6, 19978.2, 3581.9]],
           "via": []
         }
@@ -205,6 +206,46 @@
       "note": "Drawn on the Full-TAS map.",
       "drawn": true,
       "avoid": [[18742.9, 17073.0, 25179.2, 18072.3], [23136.6, 17131.8, 26222.5, 22774.6], [16141.9, 16015.0, 19389.4, 22862.8]]
+    },
+    {
+      "course": 13,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[9061.1, 6933.2, 9249.5, 7794.1], [9416.3, 7450.0, 9623.4, 7501.1]],
+      "via": []
+    },
+    {
+      "course": 3,
+      "capabilities": ["wj", "wjds", "wjdsdj", "wjdsdjbsom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[10312.5, 7217.9, 10431.1, 7504.4], [8976.4, 6873.5, 9111.8, 7818.1], [10171.2, 7858.9, 10267.1, 8271.1], [9431.2, 7473.8, 9602.6, 7506.6], [9095.7, 6895.4, 9403.4, 7527.3]],
+      "via": []
+    },
+    {
+      "course": 3,
+      "capabilities": ["wj"],
+      "note": "Through the top hole: a finish counts only after the player's center passes this box over the hole in the right room's ceiling (x 9920 to 10016, the ceiling's top at y 7881), 50x50 around (9967.8, 7932.4). The guide is on for these solves: it walks runs to the box, then to the end gate.",
+      "guide": true,
+      "avoid": [],
+      "via": [[9942.8, 7907.4, 9992.8, 7957.4]]
+    },
+    {
+      "course": 101,
+      "capabilities": ["wj", "wjdsdjbsom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[7043.0, 3037.8, 7340.9, 3095.6]],
+      "via": []
+    },
+    {
+      "course": 103,
+      "capabilities": ["wjds", "wjdsdjbsom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[9038.2, 6840.9, 9256.2, 7538.8], [9391.4, 7489.8, 9638.1, 7513.5], [9796.9, 7476.3, 10276.8, 7636.8], [10070.7, 6842.6, 10336.0, 7037.0]],
+      "via": []
     }
   ]
 }

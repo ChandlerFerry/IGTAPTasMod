@@ -15,6 +15,11 @@ namespace IGTAPTasMod
         static readonly MethodInfo UpdateMethod = AccessTools.Method(typeof(Movement), "Update");
         static readonly MethodInfo CourseFixedUpdate = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly MethodInfo VmanFixedUpdate = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
+        static readonly MethodInfo OrbFixedUpdate = AccessTools.Method(typeof(JiggleDropScript), "FixedUpdate");
+        static readonly MethodInfo OrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
+        static readonly AccessTools.FieldRef<JiggleDropScript, float> OrbCooldown = AccessTools.FieldRefAccess<JiggleDropScript, float>("cooldown");
+        static readonly AccessTools.FieldRef<JiggleDropScript, bool> OrbUsable = AccessTools.FieldRefAccess<JiggleDropScript, bool>("usable");
+        static readonly AccessTools.FieldRef<PlatformMover, Rigidbody2D> MoverBody = AccessTools.FieldRefAccess<PlatformMover, Rigidbody2D>("body");
         static readonly MethodInfo OriginLateUpdate = AccessTools.Method(typeof(FloatingOrigin), "LateUpdate");
         static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
@@ -58,6 +63,8 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "TimeStop"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
+            harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")),
+                transpiler: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseCoroutineDeltaTime))));
         }
 
         /// <summary>
@@ -144,12 +151,37 @@ namespace IGTAPTasMod
         {
             if (Routines.Count == 0) return;
             Routine[] parked = Routines.ToArray();
-            foreach (Routine r in parked)
+            // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
+            // others in the rendered frame that crosses the tick (a zip mover's first tween step after its WaitForSeconds).
+            _resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.CrossStep;
+            try
             {
-                if (r.wait != wait || wait == Wait.Seconds && r.due > _tick) continue;
-                Routines.Remove(r);
-                if (r.target == null) continue;
-                if (r.body.MoveNext()) Park(r, r.body.Current);
+                foreach (Routine r in parked)
+                {
+                    if (r.wait != wait || wait == Wait.Seconds && r.due > _tick) continue;
+                    Routines.Remove(r);
+                    if (r.target == null) continue;
+                    if (r.body.MoveNext()) Park(r, r.body.Current);
+                }
+            }
+            finally { _resumeDeltaTime = 0f; }
+        }
+
+        // Time.deltaTime inside a parked coroutine's step: turbo resumes it from its own loop in one Unity frame, whose real
+        // deltaTime is that frame's, not the step the game's player loop would resume it in. The enginesim host does the same
+        // (Scheduler.Resume, Time.resumeDeltaTime).
+        static float _resumeDeltaTime;
+
+        static float CoroutineDeltaTime() { return _resumeDeltaTime > 0f ? _resumeDeltaTime : Time.deltaTime; }
+
+        static IEnumerable<CodeInstruction> UseCoroutineDeltaTime(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo deltaTime = AccessTools.PropertyGetter(typeof(Time), nameof(Time.deltaTime));
+            MethodInfo replacement = AccessTools.Method(typeof(TurboRunner), nameof(CoroutineDeltaTime));
+            foreach (CodeInstruction i in instructions)
+            {
+                if (i.Calls(deltaTime)) i.operand = replacement;
+                yield return i;
             }
         }
 
@@ -237,8 +269,10 @@ namespace IGTAPTasMod
             public (courseScript course, object[] fields)[] courses;
             public Vector3 position;
             public Vector2 bodyPosition, velocity;
-            /// <summary>Every zip mover's fields and layer (MakeIntangible moves it off Ground), and the coroutines parked on a yield.</summary>
-            public (PlatformMover mover, object[] fields, int layer)[] movers;
+            /// <summary>Every zip mover's fields, layer (MakeIntangible moves it off Ground) and pose, and the coroutines parked on a yield.</summary>
+            public (PlatformMover mover, object[] fields, int layer, Vector3 local, (Vector2 position, Vector2 velocity) body)[] movers;
+            /// <summary>Every refill orb's fields (its cooldown after a use and whether it is usable).</summary>
+            public (JiggleDropScript orb, object[] fields)[] orbs;
             public (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] routines;
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
@@ -359,9 +393,10 @@ namespace IGTAPTasMod
                 light.GetType().GetProperty("pointLightOuterRadius").SetValue(light, outer);
                 light.GetType().GetProperty("pointLightInnerRadius").SetValue(light, inner);
             }
-            foreach (var (collider, enabled) in s.blocks) if (collider != null) collider.enabled = enabled;
+            // The game's own swap first, for its tilemap visuals (opacity, tint, sorting); then the captured colliders exactly.
             colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
-            if (swapper != null) swapper.isBlueActive = s.blueActive;
+            if (swapper != null) swapper.swapBlocks(s.blueActive);
+            foreach (var (collider, enabled) in s.blocks) if (collider != null) collider.enabled = enabled;
         }
 
         static readonly AccessTools.FieldRef<upgradeBox, float> BoxCooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
@@ -500,8 +535,24 @@ namespace IGTAPTasMod
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
                 stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
                 movers = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None),
-                    m => (m, FieldState.Capture(m), m.gameObject.layer)),
+                    m => (m, FieldState.Capture(m), m.gameObject.layer, m.transform.localPosition, MoverPose(m))),
+                orbs = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                    o => (o, FieldState.Capture(o))),
                 routines = CaptureRoutines(next) };
+        }
+
+        /// <summary>The refill orbs as the snapshot had them; their sprites follow (the game's refresh), the usable flag stays the snapshot's.</summary>
+        static void RestoreOrbs(Snapshot s)
+        {
+            if (s.orbs == null) return;
+            foreach (var (orb, fields) in s.orbs)
+            {
+                if (orb == null) continue;
+                FieldState.Restore(orb, fields);
+                bool usable = OrbUsable(orb);
+                OrbState.Invoke(orb, new object[] { false });
+                OrbUsable(orb) = usable;
+            }
         }
 
         public static void Restore(Snapshot s, Movement movement)
@@ -525,12 +576,17 @@ namespace IGTAPTasMod
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
             body.rotation = s.rotation;
+            // The scene (coloured block colliders, zone objects) before the settle, so contacts settle against the snapshot's
+            // colliders, not the live game's: a block the last run swapped on under the player would otherwise make a fresh
+            // contact (and its enter callbacks) on the first judged tick. Blocks it turns off were muted above.
+            if (s.economy != null) RestoreEconomy(s.economy);
             Physics2D.SyncTransforms();
             MuteAround(own, muted);
             SettleContacts(body, muted);
             FieldState.Restore(movement, s.movement);
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
-            if (s.economy != null) RestoreEconomy(s.economy);
+            // After the economy: the orbs' sprites follow the refill upgrades the snapshot had.
+            RestoreOrbs(s);
             s.vman?.Restore();
             // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
             UnityEngine.Random.state = s.random;
@@ -549,14 +605,28 @@ namespace IGTAPTasMod
         static void RestoreMovers(Snapshot s)
         {
             if (s.movers == null) return;
-            foreach (var (mover, fields, layer) in s.movers)
+            foreach (var (mover, fields, layer, local, pose) in s.movers)
             {
                 if (mover == null) continue;
                 mover.StopAllCoroutines();
                 FieldState.Restore(mover, fields);
                 if (mover.gameObject.layer != layer) mover.gameObject.layer = layer;
+                // Where a zip mover stood: once unlocked a run moves it (IE_AdvanceToNextState), and nothing puts it back.
+                mover.transform.localPosition = local;
+                Rigidbody2D body = MoverBody(mover);
+                if (body != null)
+                {
+                    body.position = pose.position;
+                    body.linearVelocity = pose.velocity;
+                }
             }
             RestoreRoutines(s.routines);
+        }
+
+        static (Vector2 position, Vector2 velocity) MoverPose(PlatformMover mover)
+        {
+            Rigidbody2D body = MoverBody(mover);
+            return body == null ? default : (body.position, body.linearVelocity);
         }
 
         /// <summary>
@@ -637,6 +707,7 @@ namespace IGTAPTasMod
             courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            JiggleDropScript[] orbs = UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsSortMode.None);
             // Steps in scene-load order (instance id, highest first), as the engine does: FindObjectsSortMode.None's order changed
             // from one game session to the next, and two courses spawning on one tick swap their fast/big rolls with it.
             Array.Sort(clones, (a, b) => b.GetInstanceID().CompareTo(a.GetInstanceID()));
@@ -683,6 +754,9 @@ namespace IGTAPTasMod
                         ref float cooldown = ref BoxCooldown(box);
                         if (cooldown >= 0f) cooldown -= dt;
                     }
+                    // A used refill orb counts its cooldown down and grows back at its end (JiggleDropScript.FixedUpdate).
+                    foreach (JiggleDropScript orb in orbs)
+                        if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) OrbFixedUpdate.Invoke(orb, null);
                     // No write: the blend was never the body's, so the sync before the step leaves the body where it is.
                     if (player.position == lag) Place(player, _stepTo);
                     Physics2D.SyncTransforms();

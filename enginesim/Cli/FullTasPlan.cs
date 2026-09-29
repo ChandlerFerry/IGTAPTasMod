@@ -19,6 +19,8 @@ namespace IGTAP.EngineSim.Cli
         FullTasGoal[] _kept;
         FullTasTracker _planBase;
         string _whyNot;
+        // The run's goal labels, and the best's stretch the plan replaces (goals from..until): its ways are borrowed (Borrowed).
+        (string[] labels, int from, int until) _borrow;
 
         int PlanFarm(string[] args)
         {
@@ -58,6 +60,7 @@ namespace IGTAP.EngineSim.Cli
             SeedLaps(at, route, kept, lap);
             _kept = all.Take(kept).ToArray();
             _planBase = _runGoals;
+            _borrow = (all.Select(g => g.label).ToArray(), kept, Math.Min(targetIndex, _best.Progress - 1));
             // Piece searches replay the plan so far on fresh simulations: they track the plan's goals, as the evaluator does.
             Func<Simulation> make = _create;
             _create = () => { Simulation sim = make(); sim.UseGoals(_runGoals.For(_runGoals.Goals)); return sim; };
@@ -87,11 +90,19 @@ namespace IGTAP.EngineSim.Cli
                 (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta)? pick = null;
                 var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap) };
                 options.AddRange(buys.Where(l => l != aim && !unreachable.Contains(l)).Select(l => (l, new[] { byLabel[l] })));
+                bool aimPayable = false, aimPlayed = false;
                 foreach (var (what, goals) in options)
                 {
                     bool? affordable = goals[0].kind == FullTasGoal.Buy ? Affordable(at, goals[0]) : true;
+                    // The target box can be off only because its course is unloaded here (Course 3's buydj seen from Course 2): the
+                    // Cash decides. Skipping it laped Course 2 1724 times with a hundred times buydj's price held.
+                    if (affordable == null && what == aim) affordable = Cash(at) >= cost;
                     if (affordable == null) continue;
+                    // A buy-max touch still buying goes on without another touch; a search for a way to touch it again found none.
+                    if (goals[0].kind == FullTasGoal.Buy && what != aim && Buying(at, goals[0])) continue;
+                    if (what == aim) aimPayable = affordable == true;
                     var played = what == "lap" ? Lap(at, route, planned, lap) : Play(at, route, planned, goals, affordable == true);
+                    if (what == aim) aimPlayed = played != null;
                     if (played == null)
                     {
                         if (affordable == true && what != "lap" && what != aim && unreachable.Add(what)) Log($"{what}: no way found from tick {now}; dropped from the plan");
@@ -110,6 +121,8 @@ namespace IGTAP.EngineSim.Cli
                     }
                     if (pick == null || eta < pick.Value.eta) pick = (what, goals, inputs, state, tick, eta);
                 }
+                // More laps only add Cash: once the target is paid for and still no way reaches it, the plan is stuck here.
+                if (aimPayable && !aimPlayed) { Log($"stuck at tick {now}: {aim} is paid for but no way reaches it from {Where(at.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); break; }
                 if (pick == null) { Log($"stuck at tick {now}: no option plays from here"); break; }
                 var p = pick.Value;
                 planned.AddRange(p.goals);
@@ -319,24 +332,29 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Plays goals one after another from at (after route and the plan so far), each with the fastest library piece (or a piece
-        /// search when <paramref name="search"/> and none plays). Null when one can't be reached.
+        /// search when <paramref name="search"/> and none plays). A goal with another after it (a lap's gate) takes the piece after
+        /// which that next goal comes soonest: the fastest gate piece alone can cross the gate where only a slow finish piece plays
+        /// (Course 1's laps took 248 ticks from the box for the best's 107). Null when one can't be reached.
         /// </summary>
         (List<InputTick> inputs, SimSnapshot state, long tick)? Play(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] goals, bool search)
         {
             var inputs = route.ToList();
             var list = _kept.Concat(planned).ToList();
             long tick = -1;
-            foreach (FullTasGoal g in goals)
+            for (int k = 0; k < goals.Length; k++)
             {
+                FullTasGoal g = goals[k];
                 list.Add(g);
                 Track(list);
                 int i = list.Count - 1;
                 at = at.WithGoal(Fresh(list.Count, i));
                 var target = new Target { Goal = i, Key = g.label };
-                Step step = BestKnown(at, inputs, i, target);
+                Step step = k + 1 < goals.Length ? Leading(at, inputs, list, goals[k + 1], target) : BestKnown(at, inputs, i, target);
                 if (step == null && search)
                 {
-                    step = SolvePiece(at, inputs, i, target, _pieceMinutes, BuildStall, new List<List<InputTick>>());
+                    var borrowed = BorrowedInputs(at, target);
+                    step = Borrowed(at, inputs, target, borrowed);
+                    if (step == null) step = SolvePiece(at, inputs, i, target, _pieceMinutes, BuildStall, borrowed);
                     if (step != null) Keep(step, at, inputs, target);
                 }
                 if (step == null || inputs.Count > 0 && inputs[inputs.Count - 1].reset && step.Inputs[0].reset)
@@ -349,6 +367,70 @@ namespace IGTAP.EngineSim.Cli
                 tick = step.Physics;
             }
             return (inputs, at, tick);
+        }
+
+        const int BorrowBack = 12;
+
+        /// <summary>
+        /// Ways to target to replay before a piece search: the library's pieces for it from any distance (nearest first; the library
+        /// plays only those within <see cref="PieceReach"/>, and each box of a row leaves the player elsewhere), then the best's own
+        /// inputs to the same goal in the stretch the plan replaces, from each of its quick restarts and goal cuts up to
+        /// <see cref="BorrowBack"/> goals before it (a quick restart lands at a checkpoint wherever it's pressed, so the best's way
+        /// on from one plays from any spot: the climb from Course 2 to buydj). Also the search's seeds when none plays.
+        /// </summary>
+        List<List<InputTick>> BorrowedInputs(SimSnapshot at, Target target)
+        {
+            var (here, unlocks) = Where(at);
+            var tries = _pieces.Where(p => p.Target == target.Key && p.Unlocks == unlocks).OrderBy(p => Distance(p, here))
+                .Take(MaxPieceTries).Select(p => p.Inputs).ToList();
+            var (labels, from, until) = _borrow;
+            for (int j = from; j <= until && labels != null; j++)
+            {
+                if (labels[j] != target.Key) continue;
+                int end = (int)Math.Min(_best.GoalInput[j] + 2, _best.Inputs.Count);
+                var cuts = new SortedSet<int>();
+                for (int k = Math.Max(0, j - BorrowBack); k < j; k++) cuts.Add((int)Math.Min(_best.GoalInput[k], end - 1));
+                for (int c = cuts.Count > 0 ? cuts.Min : end; c < end; c++) if (_best.Inputs[c].reset) cuts.Add(c);
+                foreach (int c in cuts) if (c < end) tries.Add(_best.Inputs.GetRange(c, end - c));
+            }
+            return tries;
+        }
+
+        /// <summary>The fastest of tries that reaches target from at (after route); null when none does.</summary>
+        Step Borrowed(SimSnapshot at, List<InputTick> route, Target target, List<List<InputTick>> tries)
+        {
+            Step best = null;
+            foreach (List<InputTick> t in tries)
+            {
+                if (t.Count == 0 || route.Count > 0 && route[route.Count - 1].reset && t[0].reset) continue;
+                Step s = Reaches(at, route.Count, t, target);
+                if (s != null && (best == null || s.Physics < best.Physics)) best = s;
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Of the library's pieces to list's last goal from at, the one after which next is reached soonest by the library (on a tie
+        /// the one that reaches its own goal first); the fastest to its own goal when next plays after none. Leaves the plan's goals
+        /// tracking list.
+        /// </summary>
+        Step Leading(SimSnapshot at, List<InputTick> inputs, List<FullTasGoal> list, FullTasGoal next, Target target)
+        {
+            List<Step> steps = KnownSteps(at, inputs, target.Goal, target);
+            if (steps.Count < 2) return steps.FirstOrDefault();
+            var ahead = list.Append(next).ToList();
+            Track(ahead);
+            var then = new Target { Goal = list.Count, Key = next.label };
+            Step pick = null;
+            long pickAhead = long.MaxValue;
+            foreach (Step s in steps)
+            {
+                Step after = BestKnown(s.Next.WithGoal(Fresh(ahead.Count, then.Goal)), inputs.Concat(s.Inputs).ToList(), then.Goal, then);
+                long a = after?.Physics ?? long.MaxValue;
+                if (pick == null || a < pickAhead || a == pickAhead && s.Physics < pick.Physics) (pick, pickAhead) = (s, a);
+            }
+            Track(list);
+            return pick;
         }
 
         /// <summary>
@@ -412,10 +494,11 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>Restores s to read the economy: its goal state can be another plan's, so it gets one the tracker holds.</summary>
         void Read(SimSnapshot s) { _eval.Restore(s.WithGoal(Fresh(_goals, 0))); }
-
         double Cash(SimSnapshot s) { Read(s); return _eval.Shop.CashNow; }
 
         bool? Affordable(SimSnapshot s, FullTasGoal g) { Read(s); return _eval.Shop.Affordable(g.boxes); }
+
+        bool Buying(SimSnapshot s, FullTasGoal g) { Read(s); return _eval.Shop.Buying(g.boxes); }
 
         static readonly Regex CostText = new Regex(@"costs (\S+)"), LevelText = new Regex(@": (\d+)/");
 

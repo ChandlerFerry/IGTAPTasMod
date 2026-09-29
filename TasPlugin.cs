@@ -182,6 +182,23 @@ namespace IGTAPTasMod
         internal const string BlueActiveField = "blockSwapper.isBlueActive";
         static readonly FieldInfo BlockSwapperField = AccessTools.Field(typeof(Movement), "blockSwapper");
 
+        // A global upgrade (globalStats.globalUpgradeDict) as a pseudo field of the player, saved and put back with the
+        // unlocks: WJ_DS_DJ_BS_OM has every refill orb and the zip movers on, every other category has them off.
+        internal const string GlobalUpgradePrefix = "globalUpgradeDict.";
+        internal static string GlobalUpgradeField(globalStats.globalUpgradeSet upgrade) { return GlobalUpgradePrefix + upgrade; }
+        static readonly MethodInfo RefillOrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
+
+        /// <summary>
+        /// Each refill orb's usable flag and sprites from the refill upgrades now (JiggleDropScript.SetActiveVisualState, the
+        /// game's own refresh): the game runs it only on an orb's use, cooldown end or coming on camera, so one on screen
+        /// would keep the state from before the upgrades changed.
+        /// </summary>
+        internal static void RefreshRefillOrbs()
+        {
+            foreach (JiggleDropScript orb in FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                if (orb != null) RefillOrbState.Invoke(orb, new object[] { false });
+        }
+
         const string CapabilitiesLockedError = "\"Don't touch my unlocks\" is on; turn it off to use this.";
 
         static FloatingOrigin _floatingOrigin;
@@ -224,6 +241,15 @@ namespace IGTAPTasMod
         // this many grounded ticks every tick-driven threshold (dash boost window 6 × 1.4, platform momentum history 7) is
         // passed, so each load's start plays the same.
         const int NewGameRestTicks = 10;
+        // Where the loading player first stood (world position, facing) and whether it still stands so when the start is taken.
+        // Real input reaches the player while a new game loads unless NewGameLoading neutralises it, and a start taken after it
+        // walked is another start: FalseEnding2-Any%'s stood 95.6 units left of the spawn, facing left, and its best replayed
+        // to goal 1 only. Reset whenever the start moves the player on purpose (a savestate, a rebase, the Vman world).
+        Vector2? _newGameSpawn;
+        bool _newGameSpawnFacing;
+        const float NewGameSpawnDrift = 0.5f;
+        /// <summary>The new game's world player is loading and settling: no input of the player's reaches it (patches).</summary>
+        bool NewGameLoading { get { return _newGamePhase == 2 || _newGamePhase == 3; } }
         // The FloatingOrigin the start was captured at. Real-time play far from it rebases the world (FloatingOrigin.LateUpdate),
         // and a restore puts back only the player's scene position, which then lies somewhere else in the world: such a game
         // is no longer fresh, and the next Full-TAS run loads a new one.
@@ -266,6 +292,7 @@ namespace IGTAPTasMod
             PumpFastForward();
             PumpProbe();
             PumpLabMap();
+            PumpLabTrainer();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -279,7 +306,7 @@ namespace IGTAPTasMod
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        // WJ_DS_DJ_BS_OM (the last) is WJ_DS_DJ_BS plus the omnidirectional dash: every course has it, whatever its range.
+        // WJ_DS_DJ_BS_OM (the last) is WJ_DS_DJ_BS plus the omnidirectional dash: every course, bonus and transition has it, whatever its range.
         internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom" };
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }

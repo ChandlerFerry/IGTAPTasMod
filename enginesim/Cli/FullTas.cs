@@ -30,7 +30,7 @@ namespace IGTAP.EngineSim.Cli
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal, _onlySegment;
         readonly double _minutes, _windowMinutes, _stallMinutes, _pieceMinutes;
-        readonly bool _submit, _fresh, _unsolved, _resets;
+        readonly bool _submit, _fresh, _unsolved, _resets, _repair;
         string _name, _caps, _runFile, _closestFile, _outDir;
         string[] _labels;
         int _goals;
@@ -95,7 +95,12 @@ namespace IGTAP.EngineSim.Cli
             _onlyGoal = Solve.Option(args, "--goal", 0);
             _onlySegment = Solve.Option(args, "--segment", 0);
             _resets = args.Contains("--resets") || _onlySegment > 0;
+            _repair = args.Contains("--repair");
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
+            // --seed-list: a file of seed paths, one per line (a run's seeds can pass Windows' 32767-character command line).
+            for (int i = 1; i < args.Length - 1; i++)
+                if (args[i] == "--seed-list")
+                    _seedFiles.AddRange(File.ReadAllLines(args[i + 1]).Select(l => l.Trim()).Where(l => l.Length > 0));
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--harvest") _harvestFiles.Add(args[i + 1]);
         }
 
@@ -215,7 +220,11 @@ namespace IGTAP.EngineSim.Cli
             _visitsFile = VisitsFile(dir, _name);
             _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _name);
             string startKey = StartKey(header).ToString("x16");
-            if (StartChanged(dir, _name, startKey))
+            bool startChanged = StartChanged(dir, _name, startKey);
+            _eval.Restore(_origin);
+            _startAt = (_eval.PlayerWorld.x, _eval.PlayerWorld.y, _eval.Player.facingRight);
+            if (!_fresh && File.Exists(_runFile)) RefuseOtherStart();
+            if (startChanged)
             {
                 Log($"Start state changed since the last solve of {_name}: dropping its archive and visits map");
                 Directory.Delete(_archiveDir, true);
@@ -239,6 +248,11 @@ namespace IGTAP.EngineSim.Cli
                 int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count), stored = inputs.Count;
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route run = Padded(Evaluate(inputs));
+                int recorded = Recorded(solved, goalInput, _labels, stored);
+                if (run.Progress < recorded && !_repair)
+                    throw new InvalidOperationException($"fulltas/{Path.GetFileName(_runFile)} recorded {recorded} goals, but replayed from {Path.GetFileName(_trace)} "
+                        + $"it reaches {run.Progress} ({(run.Progress < _goals ? _labels[run.Progress] + ": " : "")}{run.EndReason}). The engine plays it differently "
+                        + "(another build: rebuild enginesim) or the start differs; the run file is left as it is. Pass --repair to solve on from the replay anyway.");
                 if (!Better(_best, run))
                 {
                     _best = run;
@@ -255,6 +269,41 @@ namespace IGTAP.EngineSim.Cli
             LoadKnown(dir);
             foreach (string file in _harvestFiles) HarvestRoute(file);
             return from;
+        }
+
+        (float x, float y, bool facingRight) _startAt;
+
+        /// <summary>How far (world units) a trace's start may lie from the one its run file was solved from.</summary>
+        const float StartTolerance = 0.5f;
+
+        /// <summary>
+        /// Stops the solve, leaving the run file as it is, when the trace starts where its best wasn't solved from (startAt): a new
+        /// game whose player moved before the start was taken (real input while it loaded: FalseEnding2-Any%'s start stood 95.6
+        /// units left of the spawn, facing left) replays the best to its first goal only.
+        /// </summary>
+        void RefuseOtherStart()
+        {
+            using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
+            if (!saved.RootElement.TryGetProperty("startAt", out JsonElement at)) return;
+            float x = at.GetProperty("x").GetSingle(), y = at.GetProperty("y").GetSingle();
+            bool right = at.GetProperty("facingRight").GetBoolean();
+            if (Math.Abs(x - _startAt.x) > StartTolerance || Math.Abs(y - _startAt.y) > StartTolerance || right != _startAt.facingRight)
+                throw new InvalidOperationException($"{Path.GetFileName(_trace)} starts at ({_startAt.x:0.##}, {_startAt.y:0.##}) facing {(_startAt.facingRight ? "right" : "left")}, "
+                    + $"but fulltas/{Path.GetFileName(_runFile)} was solved from ({x:0.##}, {y:0.##}) facing {(right ? "right" : "left")}; the run file is left as it is: "
+                    + "capture the start again (a fresh new game, no input while it loads), or pass --fresh to solve from this start anyway");
+        }
+
+        /// <summary>
+        /// The goals a run file records reaching that are still the run's (its leading goals with the same labels and a goal tick).
+        /// A replay that reaches fewer means this engine or start plays the best differently; solving on from it would save a
+        /// partial run over the best (a build without the buy-max fix replayed FalseEnding2-Any%'s 409.34 s best to goal 282 of 300
+        /// and wrote that back).
+        /// </summary>
+        static int Recorded(string[] solved, long[] goalInput, string[] labels, int count)
+        {
+            int n = 0;
+            while (n < solved.Length && n < labels.Length && n < goalInput.Length && solved[n] == labels[n] && goalInput[n] >= 0 && goalInput[n] <= count + 2) n++;
+            return n;
         }
 
         const int MaxReachBack = 3, MaxReachRounds = 3;
@@ -1102,6 +1151,7 @@ namespace IGTAP.EngineSim.Cli
                 goalInputTicks = r.GoalInput,
                 goalPhysicsTicks = r.GoalPhysics,
                 total = r.Progress == _goals ? r.Last : -1,
+                startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
             }));
             Solve.Replace(temp, _runFile);
         }

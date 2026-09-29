@@ -145,6 +145,8 @@ namespace IGTAPTasMod
             if (!OverlayListsRun && !OverlayListsManual) return;
             _pendingBreak = quickRestart ? RowBreak.QuickRestart : RowBreak.Death;
             if (OverlayListsManual) _manualRestart = true;
+            // The checkpoint coyote jump's respawn: the tick it came after (manual play counts from 0 again).
+            else _techRespawnTick = _overlayTicks;
         }
 
         void OverlayCaptureAxis(Movement player)
@@ -247,13 +249,18 @@ namespace IGTAPTasMod
                     _inputRows.Clear();
                     _pendingBreak = RowBreak.None;
                 }
+                bool respawned = _manualRestart;
                 _overlayTicks = 0;
                 _overlayManual = true;
                 _manualRestart = false;
+                // The ticks count from 1 again, so the tech bars do too; a respawn's coyote ticks follow tick 0.
+                ResetTechs(player);
+                if (respawned) _techRespawnTick = 0;
             }
             if (!_overlayManual) return;
             _overlayTicks++;
             _overlayClock = null;
+            TechAfterTick(player, _overlayTicks, jumpPress, dash);
             if (idle) return;
             InputRow row = NextInputRow();
             row.tick = _overlayTicks;
@@ -305,11 +312,12 @@ namespace IGTAPTasMod
 
         private void OnGUI()
         {
-            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown;
+            bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown;
             if (!origin) ResetOriginOverlay();
-            if (!(_settings.showOverlay || goals || origin) || Event.current.type != EventType.Repaint) return;
+            if (!(_settings.showOverlay || goals || origin || trainer) || Event.current.type != EventType.Repaint) return;
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
+            if (trainer) DrawLabTrainer();
             if (goals) DrawFullTasGoals(scale);
             if (origin) DrawOriginOverlay(scale);
             if (!_settings.showOverlay) return;
@@ -897,7 +905,7 @@ namespace IGTAPTasMod
             DrawPanelTitle(x, y, titleLine, scale);
             Label(new Rect(x, y + titleLine, inner, clockLine), _overlayClock, _overlaySmall, MutedColor);
             Label(new Rect(x, y, inner, titleLine), _playbackSpeedText, _overlaySmallRight, _walkScaled ? TasColor : MutedColor);
-            if (!_overlayManual && _techOrder.Count > 0) DrawTechSummary(x, y + titleLine + clockLine, inner, clockLine, scale);
+            if (_techOrder.Count > 0) DrawTechSummary(x, y + titleLine + clockLine, inner, clockLine, scale);
             y = panel.y + bandHeight;
             Fill(new Rect(panel.x, y, width, 1), PanelLine);
 
@@ -929,7 +937,7 @@ namespace IGTAPTasMod
             }
             for (int n = shown; n < slots; n++, y += rowHeight)
                 if (n % 2 == 1) Fill(new Rect(panel.x, y, width - 1, rowHeight), PanelStripe);
-            if (!_overlayManual) DrawTechBars(gutter, listTop, rowHeight, _inputRows[_inputRows.Count - 1].tick, shown, scale);
+            DrawTechBars(gutter, listTop, rowHeight, _inputRows[_inputRows.Count - 1].tick, shown, scale);
             // A respawn between two listed ticks: a line under the first tick after it (the list runs newest first).
             float breakLine = Mathf.Max(2f, Mathf.Round(3 * scale));
             for (int i = _inputRows.Count - 1, n = 0; n < shown - 1; i--, n++)

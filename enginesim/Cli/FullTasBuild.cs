@@ -87,16 +87,30 @@ namespace IGTAP.EngineSim.Cli
         {
             _piecesFile = Path.Combine(traceDir, "archive", "fulltas-pieces.json");
             if (_fresh || !File.Exists(_piecesFile)) return;
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_piecesFile));
-            foreach (JsonElement p in doc.RootElement.GetProperty("pieces").EnumerateArray())
-                _pieces.Add(new Piece { Target = p.GetProperty("target").GetString(), Unlocks = p.GetProperty("unlocks").GetInt32(),
-                    X = p.GetProperty("x").GetSingle(), Y = p.GetProperty("y").GetSingle(), Inputs = Solve.DecodeTicks(p.GetProperty("inputs").GetString()) });
+            _pieces.AddRange(ReadPieces(_piecesFile));
             Log($"loop pieces: {_pieces.Count} in {Path.GetFileName(_piecesFile)}");
         }
 
+        static IEnumerable<Piece> ReadPieces(string file)
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
+            return doc.RootElement.GetProperty("pieces").EnumerateArray().Select(p => new Piece { Target = p.GetProperty("target").GetString(),
+                Unlocks = p.GetProperty("unlocks").GetInt32(), X = p.GetProperty("x").GetSingle(), Y = p.GetProperty("y").GetSingle(),
+                Inputs = Solve.DecodeTicks(p.GetProperty("inputs").GetString()) }).ToList();
+        }
+
+        /// <summary>
+        /// Writes the library. Runs in parallel (planned stretches, solves) share it: under a lock, the pieces another process filed
+        /// since are merged in first, so no run's pieces are lost and each learns the others'.
+        /// </summary>
         void SavePieces()
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_piecesFile));
+            using FileStream held = Solve.Lock(_piecesFile);
+            if (!_fresh && File.Exists(_piecesFile))
+                foreach (Piece p in ReadPieces(_piecesFile))
+                    if (!_pieces.Any(q => q.Target == p.Target && q.Unlocks == p.Unlocks && Distance(q, new Vector3(p.X, p.Y, 0f)) <= 0.01f && q.Inputs.SequenceEqual(p.Inputs)))
+                        _pieces.Add(p);
             Solve.WriteShared(_piecesFile, JsonSerializer.Serialize(new
             {
                 pieces = _pieces.Select(p => new { target = p.Target, unlocks = p.Unlocks, x = Math.Round(p.X, 2), y = Math.Round(p.Y, 2), inputs = Solve.EncodeTicks(p.Inputs) }),
@@ -262,11 +276,26 @@ namespace IGTAP.EngineSim.Cli
         Step BestKnown(SimSnapshot at, List<InputTick> route, int reached, Target target)
         {
             Step best = null;
+            foreach (Step step in KnownSteps(at, route, reached, target))
+                if (best == null || step.Physics < best.Physics) best = step;
+            return best;
+        }
+
+        /// <summary>
+        /// Every library piece that reaches target from at, as <see cref="BestKnown"/> tries them: as they are, then after each restart
+        /// pad up to the first whose pieces beat the fastest so far (or the first with none filed at its spot).
+        /// </summary>
+        List<Step> KnownSteps(SimSnapshot at, List<InputTick> route, int reached, Target target)
+        {
+            var steps = new List<Step>();
+            long fastest = long.MaxValue;
             void Try(List<InputTick> inputs)
             {
                 if (route.Count > 0 && route[route.Count - 1].reset && inputs.Count > 0 && inputs[0].reset) return;
                 Step step = Reaches(at, route.Count, inputs, target);
-                if (step != null && (best == null || step.Physics < best.Physics)) best = step;
+                if (step == null) return;
+                steps.Add(step);
+                fastest = Math.Min(fastest, step.Physics);
             }
             (Vector3 here, int unlocks) = Where(at);
             foreach (Piece p in Near(target.Key, unlocks, here).ToList()) Try(p.Inputs);
@@ -275,11 +304,11 @@ namespace IGTAP.EngineSim.Cli
                 (Vector3 there, int after) = Where(state);
                 List<Piece> filed = Near(target.Key, after, there).ToList();
                 if (filed.Count == 0) break;
-                Step direct = best;
+                long direct = fastest;
                 foreach (Piece p in filed) Try(pre.Concat(p.Inputs).ToList());
-                if (best != direct) break;
+                if (fastest < direct) break;
             }
-            return best;
+            return steps;
         }
 
         FullTasGoal RunGoal(string label, string kind, int course)
@@ -523,6 +552,21 @@ namespace IGTAP.EngineSim.Cli
                 if (known != null) return Append(built, ref at, known, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
                 _eval.Restore(at);
                 if (g.kind != FullTasGoal.Buy || _eval.Shop.Affordable(g.boxes) != false) break;
+                // Clone income that pays for the box within a few seconds beats a lap (FalseEnding2-Any%'s boosted Course 2 clones
+                // after the statue; its lap before buy:buydj took 14.6 s from start:3). Standing still first (the player already at
+                // the box: an area goal on it before the buy), then a search that may walk there and stand until it can pay; either
+                // is taken only when it buys the box, else the lap follows.
+                if (laps == 0 && AffordableWithin(at, built.Inputs, g, ShortWaitTicks))
+                {
+                    Step stand = Stand(at, built.Inputs.Count, target);
+                    if (stand != null && Append(built, ref at, stand, target))
+                    {
+                        Log($"build: goal {goal + 1} ({g.label}) bought {stand.Inputs.Count} ticks on, walking under its box and hopping for the clones' income, no lap");
+                        return Advanced(built);
+                    }
+                    Log($"build: goal {goal + 1} ({g.label}) is short of Cash, but clone income pays for it within {ShortWaitTicks} ticks: searching it before a lap");
+                    if (BuildStep(built, ref at, target, oldSeeds, true) == null) return Advanced(built);
+                }
                 int course = LoopCourse(goal);
                 if (course == 0) return $"goal {goal + 1} ({g.label}): short of Cash, and no course to lap for it";
                 if (laps == MaxExtraLaps) return $"goal {goal + 1} ({g.label}): still short of Cash after {MaxExtraLaps} extra laps";
@@ -548,6 +592,44 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static string Advanced(Built built) { built.Reached++; return null; }
+
+        /// <summary>Ticks of clone income a buy may wait for instead of an extra lap (<see cref="BuildGoal"/>): about a lap and its walk.</summary>
+        const int ShortWaitTicks = 900;
+
+        /// <summary>
+        /// A walk of 0 to 60 ticks left or right, then hops in place for up to ShortWaitTicks, that buys target's box: the player
+        /// stands under it (an area goal there before the buy), each hop touches the box's trigger (a strip along its underside:
+        /// buydj's is 6 units tall, 140 above the floor, so standing never buys) and the clones' income pays for it meanwhile. The
+        /// one that buys it first; null for none.
+        /// </summary>
+        Step Stand(SimSnapshot at, int length, Target target)
+        {
+            Step best = null;
+            foreach (int period in new[] { 0, 30, 40, 50 })
+                foreach (int hold in period == 0 ? new[] { 0 } : new[] { 6, 14 })
+                    for (int walk = 0; walk <= 60; walk += 4)
+                        foreach (float x in walk == 0 ? new[] { 0f } : new[] { -1f, 1f })
+                        {
+                            var inputs = Enumerable.Repeat(new InputTick { x = x }, walk).ToList();
+                            for (int t = 0; t < ShortWaitTicks; t++)
+                            {
+                                int k = period == 0 ? -1 : t % period;
+                                inputs.Add(new InputTick { press = k == 0, held = k >= 0 && k < hold, release = k == hold });
+                            }
+                            Step s = Reaches(at, length, inputs, target);
+                            if (s != null && (best == null || s.Physics < best.Physics)) best = s;
+                        }
+            return best;
+        }
+
+        /// <summary>Whether goal's box is affordable after standing still for ticks from at (the clones' income meanwhile).</summary>
+        bool AffordableWithin(SimSnapshot at, List<InputTick> route, FullTasGoal goal, int ticks)
+        {
+            SimSnapshot later = AdvanceFrom(at, route.Count, Enumerable.Repeat(new InputTick(), ticks).ToList());
+            if (later == null) return false;
+            _eval.Restore(later);
+            return _eval.Shop.Affordable(goal.boxes) == true;
+        }
 
         /// <summary>
         /// Builds the run's goals from..until-1 onto the route's first <paramref name="from"/> goals, as far as it gets;

@@ -10,6 +10,22 @@ no save file, except that `Saveloader` neither loads nor saves for the rest of t
 play far from it rebases the world, and the start's player position would then lie elsewhere, so the next run loads a new
 game.
 
+While a new game loads and settles, no keyboard or pad input reaches the player (the stick reads zero and the jump and
+dash buffers are cleared each tick), and the start is refused when the player stands elsewhere than it spawned (more than
+0.5 units sideways, or facing the other way: `The player moved before the start was taken ...`). A start taken after input
+walked the player is another start: `FalseEnding2-Any%`'s stood 95.6 units left of the spawn, facing left, and its best
+replayed to goal 1 only.
+
+The run file (`fulltas/<run>.json`) records the start it was solved from (`startAt`: world x, y, facing). A solve whose
+trace starts more than 0.5 units from it, or facing the other way, stops before touching it (`... was solved from ...;
+the run file is left as it is`). Capture the start again from a fresh new game, or pass `--fresh` to solve from the new
+start anyway. A solve also stops when the run file's best, replayed, reaches fewer of its unchanged goals than the file
+records (`... recorded N goals, but replayed ... it reaches M`): the engine plays it differently (another build) or the
+start differs, and solving on would save the shorter replay over the best. That happened twice: the moved start rebuilt
+the whole run from goal 1, about 200 s slower, and a build without the buy-max rule below replayed `FalseEnding2-Any%`'s
+409.34 s best to goal 282 of 300 and wrote that back. Rebuild the engine, or pass `--repair` (the studio's solve body
+`repair: true`) when the engine change is meant and the run should be re-found from where the replay stops.
+
 ## fulltas.json
 
 In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second, never mid-run):
@@ -113,7 +129,9 @@ for exactly those runs. **Remove** under the map (`remove: true`, `name`) takes 
 so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
 copy beside its exe, and a solve rereads the boxes before every window, so a box drawn mid-solve applies from the next
 window on. A hand edit of the source file needs an engine rebuild
-(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy.
+(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy. Course search maps draw
+their rules the same way (**Draw avoid**, `POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}`;
+a named box becomes a pickable optional block of the rule covering the map's category).
 
 A Full-TAS rule's `optional` blocks (`name`, `note`, `avoid`, `offFor`) are avoid boxes that are on except in windows
 heading for one of the goals in `offFor` (a reach or polish window whose goals include it, or a loop piece for it).
@@ -319,8 +337,12 @@ inputs past the last unchanged goal the same way.
   over (**Solve segment N**). The goals table draws a numbered bar down each segment's goals, as the TAS overlay marks a
   tech's ticks (`/api/state`
   `fullTas.runs[].offline.segments`: `[goals before, goals by its Quick Restart, inputs]` each): its number, goals and
-  inputs in its tooltip; clicking the bar picks it for **Only segment**. Once a solve has sent them (`fullTas.solve.segments`,
-  the solver's `segments` event) the tooltip also says where its Quick Restart sends the player and what that leaves on.
+  inputs in its tooltip; clicking the bar picks it for **Only segment**. Under each segment's goals an icon strip marks its
+  closing Quick Restart (↻, hover for where it sends the player; ⚑ at the route's end). Once a solve has sent them
+  (`fullTas.solve.segments`, the solver's `segments` event) the strip also shows what the restart leaves on: ✓ for
+  nothing, else one amber icon per carry-over (↗ momentum, ⇤ wall jump lock, ≋ zip mover momentum, ⤒ ground bounce
+  window, » dash still running, J / D jump or dash buffered; hover for the solver's wording). A ⚡ chip gives a known
+  faster way's saving. A legend under the table keys the icons.
   The bar is amber or orange while a buy goal comes from the segment's first goal on (time saved there changes the Cash
   that buy sees) and green or teal after the last buy (time saved there is kept); neighbours alternate between the two
   shades. A bar glows when a faster way is known for its segment (`fullTas.runs[].offline.faster`, from `.faster.json`
@@ -342,10 +364,14 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --resets, --segment N
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --repair, --threads N, --goal N, --piece-minutes P, --resets, --segment N, --seed FILE, --seed-list FILE
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
+- The studio's solve writes its seeds (`fulltas-<run>-seed-N.json`) and passes them as one list file
+  (`--seed-list fulltas-<run>-seeds.txt`, a path per line): a seed run adds a seed per goal it reaches, and 372 seeds
+  (`FalseEnding2-Any%`'s 294 goals seeding `FalseEnding-Any%`) as `--seed` arguments passed Windows' 32767-character
+  command line (`The filename or extension is too long`).
 - By default the search polishes the goals the best reaches (all of them once it's complete); a best that reaches none
   is reached first. `--unsolved`: a complete route first: until every goal is reached, only the first goal not reached
   yet is worked on. A loop goal (`buy:`, `start:`, `finish:`) is built from pieces (below). Any other goal is searched
@@ -501,12 +527,19 @@ them together from pieces instead:
   it plays for longer), and files it for reuse. A way that quick restarts within its first 25 ticks is filed from the
   restart on, so every later restart to that spot reuses it.
 - A buy the run can't pay for yet (`Shop.Affordable`: the boxes' costs against the run's Cash now) gets an extra lap of
-  its course first (the course of the last `start:`/`finish:` goal before it), up to 64, until it can: the run never
-  waits at a box. An extra lap isn't one of the run's goals (an event that isn't the next goal changes nothing): its
+  its course first (the course of the last `start:`/`finish:` goal before it), up to 64, until it can. An extra lap isn't
+  one of the run's goals (an event that isn't the next goal changes nothing): its
   gate and its finish are built as two steps, each checked against a goal of its own (`FullTasTracker.For`,
   `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps. A lap step is cut at the
   first input by which its goal is reached; a lap with dashes plays more physics ticks than inputs (a dash's ticks
   read no input of their own), so the check runs on past the cut's inputs rather than stopping at as many ticks.
+- Except when the clones pay for it soon: when standing still for 900 ticks (`ShortWaitTicks`) would pay for the box, the
+  builder first tries a walk of 0-60 ticks either way and then hops in place (every 30, 40 or 50 ticks, jump held 6 or 14)
+  until it buys, then a piece search, and laps only when neither buys it. Boxes buy on a touch of their trigger, a strip
+  along their underside (`buydj`'s is 6 units tall, 140 above the floor), so standing under one never buys: the hops do.
+  Put an area goal under the box before the buy (`FalseEnding2-Any%`: `at:7951,6950,120,50` then `buy:buydj`). The course
+  it would lap is the last `start:`/`finish:` goal's, which after a trip is the wrong one: `FalseEnding2-Any%`'s build lapped
+  Course 2 five times for `buydj` from Course 3's shaft before this.
 - Every purchase is a goal: a route buys only the box of its next goal (`Simulation.StrictBuys`, on for every Full-TAS
   simulation: the builder, every search window and the saved best's replay). A walk that also bought another box spent
   Cash and levels the plan counted on, and could cap a box a later goal buys (a build that ran through `FastCloneChance`
@@ -533,11 +566,28 @@ when it would buy the target: its end tick, plus the Cash the target still needs
 there, plus the walk to the target. The income is the course's lap reward over a lap (the best's own back-to-back
 laps) plus the clones' income measured standing still after a quick restart for 2000 ticks: one lap's clone payouts
 are too few to average their rolls, and picking the best of several one-lap guesses bought every box to its cap (Course
-3: `buydj` 1718 ticks later than the best). It never waits at a box: laps fill. Before planning it files the best's
+3: `buydj` 1718 ticks later than the best). It never waits at a box: laps fill. A lap's gate piece is the one after which
+the finish comes soonest, not the fastest to the gate: the fastest gate piece crossed Course 1's gate where only a slow
+finish piece played, and the plan's laps took 248 ticks from the box for the best's 107. Before planning it files the best's
 own steps in the span as library pieces (a polished route passes spots the builder never filed). It prints the planned
 goals and a line per step (tick, Cash, estimate, box levels); `--out` writes the run's whole goal list with them in
 place of the old stretch (the goals up to and after it kept), for `fulltas.json` by hand. Planning is greedy and takes
 a few seconds a step.
+
+Before a piece search the planner replays cheaper ways to the goal (`Borrowed`): the library's pieces for it from any
+distance (the library plays only those within 48 units, and each box of a row leaves the player elsewhere), then the
+best's own inputs to the same goal in the stretch it replaces, from each quick restart and goal cut up to 12 goals before
+it. A quick restart lands at a checkpoint wherever it's pressed, so the best's way on from one plays from anywhere: the
+climb from Course 2 to `buydj`, which no search found. When none plays they seed the search. A box whose buy-max touch
+is still buying is skipped (it goes on without another touch; searching for a second touch took 1.5 minutes a box). The
+target is tried whenever the run holds its price, even when its box reads inactive because its course isn't loaded
+(`buydj` from Course 2). Once it's paid for and no way reaches it, the plan stops (`stuck at tick N: ... is paid for
+but no way reaches it`) instead of lapping: before this it lapped Course 2 1724 times with 7.9e13 Cash for a 5.55e11 box.
+
+Stretches can be planned in parallel: the loop pieces (`archive/fulltas-pieces.json`) are written under a lock
+(`fulltas-pieces.json.lock`) and merged with what other processes filed since, and shared files get a per-process temp
+name (two plans crashed on one `.tmp`). The planner plays the goals of the trace's header, not `fulltas.json`: to plan a
+stretch on top of a planned route, capture the start again with its goals first.
 
 `--route FILE` writes the planned route too, under the planned goal list (the goals up to `--from`, the plan, the goals
 after the target). When the best Quick Restarts after the target, the old route from that Quick Restart on is joined to the
@@ -650,7 +700,9 @@ buying course's tier plus its own mod and its reward updates, and its boxes gain
 buy-max and turn back on. A buy-max box's touch buys what `GetNumPlayerCouldBuy` counts (`IE_BuyMax`): the first during
 the tick's physics, the next at that tick's end, then one at the end of every following tick while affordable (one frame
 per tick, `TurboRunner.EndOfFrame`, `Shop.EndOfFrame`). Real-time playback renders more frames per tick and so buys
-faster. The block swap (`buyswap`) is modeled as the purchase's bookkeeping
+faster. Such a touch is one buy goal: the levels bought after the first continue it, so they neither reach a goal nor end
+a strict run as a stray buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with one goal each after the
+statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
 ...`): clone speed/size/colour rolls, clone dust, the other global boxes and a prestige buy while Vman is active. A Vman
@@ -670,6 +722,64 @@ changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights
 keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on unless Area 1 is overgrown, GlobalLight
 off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
 Vman speedrun's start is lit with no breaker light on.
+
+## FalseEnding-Any% and FalseEnding2-Any% (2026-09-28)
+
+Both end at the credits trigger after `buy:buydj`, `VMAN`'s way up (goals `at:8570,8300` to `at:22200,15900`).
+`FalseEnding2-Any%` is the copy the economy work was tried on first. `FalseEnding-Any%` now has its own recalculated economy
+(below), 390.38 s.
+
+**Economy re-evaluation** (`fulltas-plan` from `FalseEnding-Any%`'s 487.14 s best, per stretch; ticks of the target buy):
+Course 1 to `buywj` 5445 against the best's 5327, `reward:bonus1` to `buyds` 12142 against 11672, statue to `buydj` 23192
+against 23083, and `reward:bonus3` to `buystatue` 16726 against 16903 (177 sooner, but with fewer Course 3 levels
+`buydj` then came at 23457). The greedy planner beats none of the polished buy orders; the one gain, an earlier statue, only
+pays once the Course 3 levels it skips no longer carry the income after it (below: `FalseEnding2-Any%`'s statue plan saved 1 s).
+
+**Recalculated economy, 390.38 s** (from the 403.28 s route, all four stretches planned again with the planner
+above). Course 1 to `buywj` (5458 against 5311) and `reward:bonus1` to `buyds` (12345 against 11656) are still slower than
+the polished orders. `reward:bonus3` to `buystatue` bought the statue at tick 16629 against 16836 (Course 3's buys
+reordered: 88 goals for 86). The statue to `buydj`, planned again on top of that: buy the three boosted Course 2 boxes
+straight off the shaft (`buyclone2`, `buyclonemult2`, `buyreward2`; 338.78-339.62 s), then run **six Course 2 laps with
+the dash** (quick restart to the gate, about 1.9 s a lap, 340.34-351.80 s). The laps are the open idea below: a dash lap
+makes a new best path, so Course 2's 52 clones run a shorter path and pay faster, and each lap pays the boosted reward
+too. Then the old route's climb (borrowed from its quick restart) buys `buydj` on arrival at 362.02 s (374.96 s before),
+with no hopping under the box. Splits: `buy:buystatue` 332.58, `buy:buydj` 362.02, the credits 390.40 offline, 390.38 s
+judged in turbo (`fulltas/FalseEnding-Any%_NONE 390.38`). The area goals down the shaft and under the `buydj` box aren't
+in its 300 goals.
+
+**The statue boost.** `buy:buystatue` (`BoostOldCourses`) sets Courses 1 and 2 to Course 3's reward tier plus their mod
+and turns their boxes back on as buy-max boxes with 1.5x caps, at their old costs: `buyreward2` 39 -> 68 levels,
+`buyclone2` 23 -> 52, `buyclonemult2` 6 -> 15, for about 7e5 W against 3.2e10 held. `FalseEnding-Any%` never went back
+for them and lapped Course 3 for 6180 ticks to afford `buydj` (5.55e11). `FalseEnding2-Any%` drops from the statue down
+the shaft (`at:7645,6050`, `at:6827.5,4537.8`, `at:4300,2850`), crosses `start:2`, touches the three boxes (one goal
+each, 0.9 s), climbs back to Course 3, stands under the `buydj` box (`at:7951,6950,120,50`) and hops into it until the
+clones have paid (`buy:buydj` at 374.96 s against 461.66 s). Records: 409.34 s (Course 3 lap before `buydj`), 408.28 s
+(the statue plan), then the goals edit that dropped the lap staled it: 411.02 s, and 403.30 s once the ending was polished.
+
+Splits of the 410.22 s best (the 403.30 s record's ending is 7 s faster): `buy:buywj` 106.22, `reward:bonus1` 142.60,
+`buy:buyds` 233.12, `start:3` 247.06, `reward:bonus3` 251.40, `buy:buystatue` 336.72, `start:2` 346.20, the last Course 2
+box 347.10, under the `buydj` box 361.86, `buy:buydj` 374.96, the credits 410.22 (`FalseEnding-Any%`'s ending from
+`buydj` is 25.7 s). `buydj` waits on Cash, not the walk: a faster climb saves nothing unless the income rises.
+
+Open ideas, estimates only:
+- Course 2's clones pay per best path: its laps were all run before the dash (about 2.4 s) and the `2_WJ_DS` record is
+  1.6 s. Taken in `FalseEnding-Any%`'s 390.38 s (six dash laps after the statue, `buydj` 13 s sooner); its laps run about
+  1.9 s, so a faster Course 2 lap still pays.
+- Every second the statue comes sooner moves the whole second half; the Course 3 economy (85 s) is the stretch to cut,
+  and faster Course 3 laps (`3_WJ_DS`) shorten both the laps and the clones' path.
+- `reward:bonus2` (+1 global reward level, ~10% on every reward after it) costs ~8 s: break-even unless taken early.
+- Course 1's boosted boxes: no clone multiplier box, about a sixth of Course 2's income, ~9 s detour: likely a loss.
+- Reaching Course 3 without the dash and buying `buyds` with post-statue Cash would skip most of the 90 s Course 2
+  economy; unknown whether the climb goes without the dash.
+
+Since the redeploy on 2026-09-28 `FalseEnding-Any%`'s own routes (487.34 and 487.14 s) stop at `at:22200,15900`
+without entering the credits trigger; `FalseEnding2-Any%`'s solve re-found that goal 45 ticks slower (488.04 s), cause
+not found. Each goals edit stales the run's records: try goal changes on a copy of the run and move the goals and
+route over only when they beat the record.
+
+`--goal N` scores at goal N and keeps what it finds even when the goals after it are then re-found slower: run over
+`FalseEnding2-Any%`'s ending goal by goal it left the run file at 409.46 s under the 403.30 s record (restored from
+`offline-best/fulltas-FalseEnding2-Any%-403.32.json`). Polish an ending with **Solve** or `--resets` instead.
 
 ## Status (2026-09-25)
 

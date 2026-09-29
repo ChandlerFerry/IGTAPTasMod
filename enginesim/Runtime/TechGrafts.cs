@@ -246,10 +246,11 @@ namespace IGTAP.EngineSim
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(start));
             ApplyStart(sim, doc.RootElement, ".");
             // A lab start is often mid-air: the demo's inputs start on the first tick (no wait for three grounded ticks and no
-            // start alignment), as an in-game lab demo's do.
+            // start alignment), as an in-game lab demo's do, and inside that tick (Simulation.StartsInsideTick).
             SetEngineField(sim, "_waitingForStable", false);
             SetEngineField(sim, "_preRollTicksRemaining", 0);
             SetEngineField(sim, "_requireCourseFinish", false);
+            sim.StartsInsideTick = true;
             sim.SetStart(sim.Capture(0), 0);
         }
 
@@ -332,6 +333,10 @@ namespace IGTAP.EngineSim
         public int DemoContact;      // the contact's tick in the demo
         public string DemoStart;     // where the demo played (its trace)
 
+        /// <summary>The solver's mode for a graft of this pattern ("tech graft &lt;id&gt;"), as a new best's "via" names it.</summary>
+        [JsonIgnore] public string Mode => _mode ??= "tech graft " + Tech;
+        string _mode;
+
         public override string ToString() => Tech + " " + Kind + " " + First + ".." + Last;
     }
 
@@ -384,22 +389,38 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>The patterns ready for one solve's category unlocks, by contact kind (read-only once prepared).</summary>
+        /// <summary>A techs.json "requires" (NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS, OMNI) as the level it needs and the omnidash:
+        /// OMNI needs only the omnidash (the statue's, or Vman's free box), whatever the category level.</summary>
+        public static (int level, bool omni) Requires(string requires)
+        {
+            return requires == "OMNI" ? (0, true) : Caps((requires ?? "").Replace("_", "").ToLowerInvariant());
+        }
+
+        /// <summary>The share of picks that take the tech's key window (the contact its demo does the tech at) over the
+        /// demo's other contact windows, which are mostly its set-up and travel.</summary>
+        public const double KeyShare = .6;
+
+        /// <summary>The patterns ready for one solve's category unlocks, by contact kind and then by tech (read-only once
+        /// prepared): a pick draws the tech first, so a demo with many contacts doesn't crowd out a short one.</summary>
         public void Prepare(string capabilities)
         {
             (int level, bool omni) = Caps(capabilities);
-            _ready = new List<TechPattern>[Enum.GetValues(typeof(Contact)).Length];
+            _ready = new (TechPattern[] key, TechPattern[] all)[Enum.GetValues(typeof(Contact)).Length][];
             for (int i = 0; i < _ready.Length; i++)
-                _ready[i] = Patterns.Where(p => p.Kind == (Contact)i && p.MinLevel <= level && (!p.NeedsOmni || omni)
-                    && (!p.NeedsDash || level >= 2 || omni)).ToList();
+                _ready[i] = Patterns.Where(p => p.Kind == (Contact)i && p.MinLevel <= level && (!p.NeedsOmni || omni))
+                    .GroupBy(p => p.Tech, StringComparer.Ordinal)
+                    .Select(g => (g.Where(p => p.Key).ToArray(), g.ToArray())).ToArray();
         }
-        List<TechPattern>[] _ready;
+        (TechPattern[] key, TechPattern[] all)[][] _ready;
 
-        /// <summary>A pattern for this contact kind the run's unlocks allow, drawn uniformly; null when there is none.</summary>
+        /// <summary>A pattern for this contact kind the run's unlocks allow: a tech drawn uniformly, then its key window
+        /// <see cref="KeyShare"/> of the time (when it has one here), else any of its windows; null when there is none.</summary>
         public TechPattern Pick(Contact kind, System.Random rng)
         {
-            List<TechPattern> list = _ready[(int)kind];
-            return list.Count == 0 ? null : list[rng.Next(list.Count)];
+            var techs = _ready[(int)kind];
+            if (techs.Length == 0) return null;
+            var (key, all) = techs[rng.Next(techs.Length)];
+            return key.Length > 0 && rng.NextDouble() < KeyShare ? key[rng.Next(key.Length)] : all[rng.Next(all.Length)];
         }
 
         /// <summary>The pattern's input window on <paramref name="run"/>, its contact at the run's contact tick plus the jitter:
@@ -444,7 +465,7 @@ namespace IGTAP.EngineSim
 
         sealed class TechDef
         {
-            public string id, name, category, requires, start, routeId, labmap;
+            public string id, name, category, requires, start, routeId, labmap, labDemo;
             public bool omniDash, floatingOrigin;
             public int fastForward;
         }
@@ -454,8 +475,8 @@ namespace IGTAP.EngineSim
             public TechDef Tech;
             public string Trace, Savestate;   // the trace the demo replays over, and its own savestate (macro demos)
             public MacroDefinition Macro;
-            public bool Lab;                  // a lab map's solved demo (labmaps/<id>.demo.json)
-            public string LabId, LabMapPath, LabDemoPath;
+            public bool Lab;                  // a lab map's solved demo (labmaps/<id>.demo.json, or <id>.<LabDemo>.demo.json)
+            public string LabId, LabDemo, LabMapPath, LabDemoPath;
             public List<string> KeyFiles = new List<string>();   // everything the replay reads (the cache key)
         }
 
@@ -466,7 +487,9 @@ namespace IGTAP.EngineSim
         /// <param name="refresh">Re-mine instead of reading the cache.</param>
         /// <param name="techDir">Where the demos' traces, savestates, lab maps and the cache resolve from
         /// (<c>--tech-dir</c>); the configured traces dir when it is absent.</param>
-        public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null)
+        /// <param name="cacheFile">Where the mining is cached (<c>--tech-cache</c>); <c>tech-grafts.cache.json</c> in the tech dir
+        /// when it is absent.</param>
+        public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null, string cacheFile = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
             string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
@@ -477,10 +500,10 @@ namespace IGTAP.EngineSim
             foreach (TechDef tech in techs)
             {
                 var forTech = new List<DemoSource> { new DemoSource { Tech = tech } };
-                var labs = new HashSet<string>(StringComparer.Ordinal);
-                if (!string.IsNullOrEmpty(tech.labmap)) labs.Add(tech.labmap);
-                foreach ((string id, string techId, _) in labmaps) if (techId == tech.id) labs.Add(id);
-                foreach (string id in labs) forTech.Add(new DemoSource { Tech = tech, Lab = true, LabId = id });
+                var labs = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(tech.labmap)) labs[tech.labmap] = tech.labDemo;
+                foreach ((string id, string techId, _) in labmaps) if (techId == tech.id && !labs.ContainsKey(id)) labs[id] = null;
+                foreach (var (id, labDemo) in labs) forTech.Add(new DemoSource { Tech = tech, Lab = true, LabId = id, LabDemo = labDemo });
                 foreach (DemoSource source in forTech)
                 {
                     try { Resolve(source, tracesDir, config, macros); }
@@ -488,8 +511,8 @@ namespace IGTAP.EngineSim
                     sources.Add(source);
                 }
             }
-            string key = CacheKey(sources, tracesDir);
-            string cache = Path.Combine(tracesDir, "tech-grafts.cache.json");
+            string key = CacheKey(sources);
+            string cache = cacheFile == null ? Path.Combine(tracesDir, "tech-grafts.cache.json") : Path.GetFullPath(cacheFile);
             if (!refresh && File.Exists(cache))
             {
                 try
@@ -510,7 +533,7 @@ namespace IGTAP.EngineSim
             mined.Dedupe();
             try
             {
-                Directory.CreateDirectory(tracesDir);
+                Directory.CreateDirectory(Path.GetDirectoryName(cache));
                 File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
             }
             catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
@@ -583,9 +606,10 @@ namespace IGTAP.EngineSim
             if (source.Lab)
             {
                 source.LabMapPath = FindLab(config, source.LabId + ".json");
-                source.LabDemoPath = FindLab(config, source.LabId + ".demo.json");
+                string demoName = source.LabId + (string.IsNullOrEmpty(source.LabDemo) ? "" : "." + source.LabDemo) + ".demo.json";
+                source.LabDemoPath = FindLab(config, demoName);
                 if (source.LabMapPath == null) throw new InvalidDataException("lab demo: no labmaps/" + source.LabId + ".json");
-                if (source.LabDemoPath == null) throw new InvalidDataException("lab demo: no labmaps/" + source.LabId + ".demo.json solved yet");
+                if (source.LabDemoPath == null) throw new InvalidDataException("lab demo: no labmaps/" + demoName + " solved yet");
                 using JsonDocument demo = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
                 source.Trace = Path.Combine(tracesDir, demo.RootElement.GetProperty("solvedIn").GetString());
                 if (!File.Exists(source.Trace)) throw new InvalidDataException("no " + Path.GetFileName(source.Trace));
@@ -697,8 +721,10 @@ namespace IGTAP.EngineSim
             throw new InvalidDataException("no start trace for " + start);
         }
 
-        // The cache key: the catalog content, the demo macros and every file a demo replays over, plus the engine build.
-        static string CacheKey(List<DemoSource> sources, string tracesDir)
+        // The cache key: what the miner reads and nothing else, so a note edit in techs.json or a new route saved to routes.json
+        // doesn't re-mine: per demo source its tech's mined fields (TechDef), where it resolved (or why it didn't), its macro,
+        // and every file it replays over; plus the engine build.
+        static string CacheKey(List<DemoSource> sources)
         {
             using var sha = SHA256.Create();
             var hash = new StringBuilder();
@@ -709,10 +735,9 @@ namespace IGTAP.EngineSim
                 else if (File.Exists(what)) hash.Append(new FileInfo(what).Length).Append(':').Append(File.GetLastWriteTimeUtc(what).Ticks);
                 hash.Append('\n');
             }
-            Add(RepoTechs());
-            string config = Path.GetDirectoryName(tracesDir);
-            Add(Path.Combine(config, "techs.json"));
-            Add(Path.Combine(config, "routes.json"));
+            foreach (DemoSource s in sources)
+                hash.Append(JsonSerializer.Serialize(s.Tech, Json)).Append('|').Append(s.Lab).Append(s.LabId).Append('|').Append(s.LabDemo).Append('|')
+                    .Append(s.Trace).Append('|').Append(s.Macro == null ? "" : JsonSerializer.Serialize(s.Macro, Json)).Append('\n');
             foreach (string file in sources.SelectMany(s => s.KeyFiles).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.Ordinal)) Add(file);
             foreach (string file in new[] { typeof(TechGrafts).Assembly.Location, typeof(Movement).Assembly.Location })
                 if (!string.IsNullOrEmpty(file)) Add(file);
@@ -751,6 +776,7 @@ namespace IGTAP.EngineSim
                     // run is judged on its own finish box, not the host trace's course (Cli\Lab.cs's lab replay).
                     using JsonDocument solved = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
                     inputs = SolveInputs(solved.RootElement);
+                    lab.UseDemoStart(solved.RootElement);
                     DemoStart.ApplyLabStart(sim, lab);
                     (float fx, float fy, float fw, float fh) = lab.Finish;
                     (float ax, float ay) = lab.Anchor;
@@ -802,7 +828,7 @@ namespace IGTAP.EngineSim
         }
 
         // A demo macro is raw input (TechCatalog refuses anything else): one input tick per duration tick, with the press,
-        // release, dash, dash jump, spring dash, lock and dash turn on the step's first tick (Solver.ToTicks's shape).
+        // release, dash, dash jump, spring dash, lock, dash turn and pause on the step's first tick (Solver.ToTicks's shape).
         static List<InputTick> ToInputs(MacroDefinition macro)
         {
             var ticks = new List<InputTick>();
@@ -817,8 +843,9 @@ namespace IGTAP.EngineSim
                         press = i == 0 && s.rawJumpPressed, release = i == 0 && s.rawJumpReleased, dash = i == 0 && s.rawDashPressed,
                         dashJump = i == 0 && s.rawDashPressed ? s.dashJumpFrame : 0, springDash = i == 0 ? s.springDashFrame : 0,
                         lockX = i == 0 ? s.lockMoveX : null, lockY = i == 0 ? s.lockMoveY : null,
-                        turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null,
-                        reset = i == 0 && s.rawQuickRestart,
+                        turnX = i == 0 && s.rawDashPressed ? s.dashTurnX : null, turnY = i == 0 && s.rawDashPressed ? s.dashTurnY : null,
+                        reset = i == 0 && s.rawQuickRestart, pause = i == 0 ? s.pauseFrames : 0,
+                        pauseTick = i == 0 && s.pauseFrames > 0 ? s.pauseTick : 0, pauseFrame = i == 0 && s.pauseFrames > 0 ? s.pauseFrame : 0,
                     });
             }
             return ticks;
@@ -875,8 +902,7 @@ namespace IGTAP.EngineSim
 
         static void Tag(TechPattern pattern, string requires)
         {
-            (int level, bool omni) = requires == "OMNI" ? (0, true) : requires == "WJ" ? (1, false) : requires == "WJ_DS" ? (2, false)
-                : requires == "WJ_DS_DJ" ? (3, false) : requires == "WJ_DS_DJ_BS" ? (4, false) : (0, false);
+            (int level, bool omni) = Requires(requires);
             pattern.MinLevel = level;
             pattern.NeedsOmni = omni;
             pattern.NeedsDash = pattern.Ticks.Any(k => k.dash || k.dashJump > 0 || k.springDash > 0);
@@ -907,20 +933,25 @@ namespace IGTAP.EngineSim
             return t;
         }
 
+        // The same window (every InputTick field, InputTick.Equals) at the same contact kind and offset is one pattern.
         void Dedupe()
         {
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            Patterns.RemoveAll(p => !seen.Add(Signature(p)));
+            var seen = new HashSet<TechPattern>(SameWindow.Instance);
+            Patterns.RemoveAll(p => !seen.Add(p));
         }
 
-        static string Signature(TechPattern p)
+        sealed class SameWindow : IEqualityComparer<TechPattern>
         {
-            var text = new StringBuilder().Append(p.Kind).Append('|').Append(p.First).Append('|');
-            foreach (InputTick t in p.Ticks)
-                text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(t.y.ToString("R", CultureInfo.InvariantCulture))
-                    .Append(t.held ? 'h' : '-').Append(t.press ? 'p' : '-').Append(t.release ? 'r' : '-').Append(t.dash ? 'd' : '-')
-                    .Append(t.dashJump).Append(t.springDash).Append(t.lockX).Append(t.lockY).Append(t.turnX).Append(t.reset ? 'q' : '-').Append(';');
-            return text.ToString();
+            public static readonly SameWindow Instance = new SameWindow();
+            public bool Equals(TechPattern a, TechPattern b) { return a.Kind == b.Kind && a.First == b.First && a.Ticks.SequenceEqual(b.Ticks); }
+            public int GetHashCode(TechPattern p)
+            {
+                var hash = new HashCode();
+                hash.Add(p.Kind);
+                hash.Add(p.First);
+                foreach (InputTick t in p.Ticks) hash.Add(t);
+                return hash.ToHashCode();
+            }
         }
 
         // ---- the CLI listing ----
@@ -975,7 +1006,9 @@ namespace IGTAP.EngineSim
                 if (t.held) text.Append(" hold");
                 if (t.dash) text.Append(" dash");
                 if (t.dashJump > 0) text.Append(" dashjump@").Append(t.dashJump);
-                if (t.turnX.HasValue) text.Append(" turn").Append(t.turnX.Value.ToString("0.##", CultureInfo.InvariantCulture));
+                if (t.turnX.HasValue || t.turnY.HasValue) text.Append(" turn").Append(t.turnX?.ToString("0.##", CultureInfo.InvariantCulture))
+                    .Append(t.turnY.HasValue ? "," + t.turnY.Value.ToString("0.##", CultureInfo.InvariantCulture) : "");
+                if (t.pause > 0) text.Append(" pause").Append(t.pause).Append('@').Append(t.pauseTick).Append('.').Append(t.pauseFrame);
                 if (t.springDash > 0) text.Append(" springdash@").Append(t.springDash);
                 if (t.lockX.HasValue || t.lockY.HasValue) text.Append(" lock").Append(t.lockX).Append(',').Append(t.lockY);
                 if (t.reset) text.Append(" reset");

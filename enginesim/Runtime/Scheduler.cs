@@ -105,6 +105,9 @@ namespace IGTAP.EngineSim
             Routines.Add(r);
         }
 
+        /// <summary>Time.deltaTime of the rendered frame that resumes WaitForSeconds and frame waits (the playback clock's crossing frame).</summary>
+        public float FrameDeltaTime;
+
         /// <summary>Resumes every coroutine parked on <paramref name="wait"/> that is due, each one step, in start order.</summary>
         public void Resume(Wait wait)
         {
@@ -118,14 +121,22 @@ namespace IGTAP.EngineSim
                 if (r.Wait != wait || wait == Wait.Seconds && r.Due > Tick) continue;
                 (due ??= new Routine[count])[n++] = r;
             }
-            for (int i = 0; i < n; i++)
+            if (n == 0) return;
+            // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
+            // others in a rendered frame (a zip mover's first tween step after its WaitForSeconds adds that frame's time).
+            Time.resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : FrameDeltaTime;
+            try
             {
-                Routine r = due[i];
-                Routines.Remove(r);
-                if (r.Handle.stopped || !r.Target) continue;
-                Stepping?.Invoke(r.Target);
-                if (r.Body.MoveNext()) Park(r, r.Body.Current);
+                for (int i = 0; i < n; i++)
+                {
+                    Routine r = due[i];
+                    Routines.Remove(r);
+                    if (r.Handle.stopped || !r.Target) continue;
+                    Stepping?.Invoke(r.Target);
+                    if (r.Body.MoveNext()) Park(r, r.Body.Current);
+                }
             }
+            finally { Time.resumeDeltaTime = 0f; }
         }
 
         /// <summary>A parked coroutine's own copy (the compiler's iterator object, fields shallow-copied), for a snapshot.</summary>

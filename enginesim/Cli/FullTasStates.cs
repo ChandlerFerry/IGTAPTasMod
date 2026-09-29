@@ -64,9 +64,10 @@ namespace IGTAP.EngineSim.Cli
             }
             Solve.Replace(temp, file);
             Saved++;
-            // Per goal the newest arrivals win: the older ones were a route that no longer is.
+            // Per goal the newest arrivals win: the older ones were a route that no longer is. Another worker (or solve) can be
+            // deleting or replacing the same file: Windows then refuses with access denied, and that file is gone or new anyway.
             foreach (string old in Directory.GetFiles(_dir, goal + "-*.bin").OrderByDescending(File.GetLastWriteTimeUtc).Skip(3))
-                try { File.Delete(old); } catch (IOException) { }
+                try { File.Delete(old); } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
         }
 
         /// <summary>

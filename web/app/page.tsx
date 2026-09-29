@@ -5,11 +5,11 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, SegmentGroup, place, resetSegments, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, SegmentGroup, SegmentLegend, place, resetSegments, runTime, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { UltraMap, type UltraData } from "./ultras";
-import { GROWN_COLOR, MARKERS, SPRING_COLOR, TONE_COLORS, type TreeStep } from "./ultra-level";
+import { GROWN_COLOR, MARKERS, OFF_COLOR, SPRING_COLOR, TONE_COLORS, type TreeStep } from "./ultra-level";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -68,33 +68,33 @@ export default function Studio() {
       <div className="brand"><span className="brandMark">T</span><div><strong>IGTAP</strong><small>TAS STUDIO</small></div></div>
       <div className={`connection ${state.connected ? "online" : "offline"}`}><i />{state.connected ? `Connected · v${state.version}` : "Waiting for game"}</div>
       <RouteSidebar routes={state.routes} courses={state.courses ?? []} activeId={route?.id} unlockLevel={unlockLevel} onCommand={command} />
-      <div className="sidebarFooter"><p>The game keeps simulating while this window is focused.</p><kbd>F8</kbd><span>Emergency stop</span></div>
+      <div className="sidebarFooter"><p>Game keeps running while this window is open.</p><kbd>F8</kbd><span>Emergency stop</span></div>
     </aside>
 
     <section className="workspace">
       <div className="toggleBar">
-        <label className={`capabilityLock ${state.capabilitiesLocked ? "on" : ""}`} title={state.capabilitiesLocked ? "On: wall jump / dash on your player are never changed, so your save stays as it is. Course solving and turbo tools need it off; Full-TAS runs work either way (they get their unlocks from the game's own purchases)." : "Off: routes and the solver switch wall jump / dash on your player to match their category, and the game autosaves that."}>
+        <label className={`capabilityLock ${state.capabilitiesLocked ? "on" : ""}`} title={state.capabilitiesLocked ? "On: your unlocks never change. Course solving needs this off." : "Off: routes and solving change unlocks to match; the game saves."}>
           <input type="checkbox" checked={state.capabilitiesLocked} disabled={!state.connected} onChange={e => command("/settings/lock-capabilities", { locked: e.target.checked })} />
           <strong>Don&apos;t touch my unlocks</strong>
         </label>
-        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: the player's hurtbox, spikes with their 2-step grace, the player's velocity, the inputs playback gave on the last ticks (as many as fit on screen), and the air dashes, air jumps and wall jumps left.">
+        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: shows hurtbox, spikes, velocity, recent inputs and jumps left.">
           <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
           <strong>Overlay</strong>
         </label>
-        <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker tripped, plus every breaker light. Visual only: the breaker's saved lights and the unlocks they come from don't change, start snapshots (a new game's, a Vman speedrun's) keep the game's own lights, and turning it off shows those again.">
+        <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker. Saved lights unchanged.">
           <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
           <strong>Breaker lights</strong>
         </label>
-        <label className={`capabilityLock executable ${state.checkpointRespawns ? "on" : ""}`} title="The game's pause-menu setting, for every route, trace and search: on, a death on a course respawns at the last checkpoint touched; off, at the course's start. Off a course, deaths and quick restarts go to the last checkpoint either way. Switch it only with nothing playing or solving; the in-game overlay shows it under INTERPOLATION.">
+        <label className={`capabilityLock executable ${state.checkpointRespawns ? "on" : ""}`} title="On: deaths respawn at checkpoints. Off: at course start. Switch while idle.">
           <input type="checkbox" checked={!!state.checkpointRespawns} disabled={!state.connected || state.running || state.recording || state.solver?.running || state.fullTas?.solve?.running} onChange={e => command("/settings/checkpoint-respawns", { on: e.target.checked })} />
           <strong>Checkpoint respawns</strong>
         </label>
       </div>
       <header className={`topbar ${state.humanPlayback ? "humanized" : ""}`}>
-        <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Playing the human version of an offline best (enginesim humanize): same time, fewer perfect inputs. It is not the best route and is never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
+        <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
-          <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replay the route with game time slowed 10×, as its human version when one is as fast; the frame rate is unchanged"}>⏵ Walk route</button>
+          <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
           <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
           <button className="record" disabled={!route || state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button>
@@ -107,9 +107,9 @@ export default function Studio() {
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
       <div className="content">
-        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />)}</div></div>}
+        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.length ? route.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />) : <div className="emptyState"><span className="orbit">●</span><h2>No inputs yet</h2><p>Record a run to fill this route.</p></div>}</div></div>}
 
-        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2 (optionally _WJ …): a transition route to optimize" onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
+        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.type.toLowerCase()} ${DirectionText(action.direction)} ${action.durationTicks}f${action.type==="WALLJUMP"&&action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?` (hold ${DirectionText(action.wallJumpHoldDirection)})`:""}`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
         {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
@@ -119,7 +119,7 @@ export default function Studio() {
 
         {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} routes={state.routes} running={state.running} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} solver={state.solver ?? emptyState.solver} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
-        {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Assign a savestate to optimize an isolated section. Compatibility fingerprints prevent invalid restores.</p><div className="savestateList">{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
+        {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Capture a game state, then assign it as a route start.</p><div className="savestateList">{!state.savestates.length && <div className="emptyState"><span className="orbit">●</span><h2>No savestates yet</h2><p>Capture one to start routes mid-game.</p></div>}{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
       </div>
     </section>
   </main>;
@@ -129,29 +129,29 @@ const CATEGORIES: [string, string][] = [["NONE", "Nothing"], ["WJ", "Wall jump"]
 const CATEGORY_ROUTE = /^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?([\d.]+)$/i;
 
 const BONUS_WHERE: Record<string, string> = {
-  bonus1: "Below Course 2, a little right of its restart. The run starts right of Course 2, up a bit (where Course 2 → Bonus 1 ends).",
-  bonus2: "Between Course 2 and Course 3: below and left of Course 3's start, on the way up. The run starts just left of it.",
-  bonus3: "Right of Course 3's restart, a little higher. The run starts at Course 3's restart.",
-  bonus4: "Straight below Course 5's start. The run starts at Course 5's restart.",
-  bonus5: "Left end of Course 3's upgrade row, a bit below it (the buyfree3 box). The run starts at Course 3's restart.",
-  bonus6: "Very high up above Course 3, far left of Course 4 (the buyfree4c box). The run starts at Course 4's restart.",
-  bonus7: "Left of Course 4's upgrade row, a little higher (the buyfree4a box). The run starts at Course 4's restart.",
-  bonus8: "Far above Course 4 (Course 6's box). The run starts at Course 6's restart.",
-  bonus9: "Below and left of Course 9's start. The run starts at Course 6's restart.",
-  bonus10: "Left of Course 7's start, a bit lower. The run starts at Course 6's restart.",
-  bonus11: "Just below and right of Course 7's start. The run starts at Course 6's restart.",
-  bonus12: "Between Course 7 and Course 9: above Course 7, below Course 9. The run starts at Course 6's restart.",
-  bonus13: "Below Course 10, a little left. The run starts at Course 10's restart.",
-  bonus14: "Right of Course 10. The run starts at Course 10's restart.",
-  bonus15: "Far left of Course 5, up high. The run starts at Course 5's restart.",
-  bonus16: "Very high above Course 1, level with Bonus 6 (the buyfree4b box). The run starts at Course 4's restart.",
-  bonus17: "Far below Course 7 (unlocks jiggle drops, no watts). The run starts at Course 7's restart.",
-  bonus18: "Just left of Course 8's start (unlocks clone dust, no watts). The run starts at Course 8's restart.",
-  bonus19: "At The Tree in Area 1 (plants the tree, no watts). The run starts at Course 10's restart.",
-  bonus20: "The Vman speedrun start in overgrown Area 1, far above Course 10 (no watts). The run starts at Course 10's restart.",
-  bonus21: "The other Vman speedrun start, just above Bonus 20 (no watts). The run starts at Course 10's restart.",
-  bonus22: "High above Course 5's start, a little left (secret #2, the buyfree5 box; costs watts). The run starts at Course 5's restart.",
-  bonus23: "Swap coloured blocks when dashing (buyblockswap5): left end of Course 4's upgrade row, there only after the breaker. The run starts at Course 5's restart.",
+  bonus1: "Below Course 2, right of its restart. Starts right of Course 2.",
+  bonus2: "Below and left of Course 3's start. Starts just left of it.",
+  bonus3: "Right of Course 3's restart, higher. Starts at that restart.",
+  bonus4: "Straight below Course 5's start. Starts at Course 5's restart.",
+  bonus5: "Below Course 3's left upgrades (buyfree3). Starts at Course 3's restart.",
+  bonus6: "Above Course 3, left of Course 4 (buyfree4c). Starts at Course 4.",
+  bonus7: "Left of Course 4's upgrades (buyfree4a), higher. Starts at Course 4.",
+  bonus8: "Far above Course 4 (Course 6's box). Starts at Course 6.",
+  bonus9: "Below and left of Course 9's start. Starts at Course 6.",
+  bonus10: "Left of Course 7's start, lower. Starts at Course 6.",
+  bonus11: "Just below Course 7's start, right. Starts at Course 6.",
+  bonus12: "Above Course 7, below Course 9. Starts at Course 6.",
+  bonus13: "Below Course 10, slightly left. Starts at Course 10's restart.",
+  bonus14: "Right of Course 10. Starts at Course 10's restart.",
+  bonus15: "Far left of Course 5, high up. Starts at Course 5's restart.",
+  bonus16: "Above Course 1 (buyfree4b), level with Bonus 6. Starts at Course 4.",
+  bonus17: "Far below Course 7 (jiggle drops). Starts at Course 7.",
+  bonus18: "Left of Course 8's start (clone dust). Starts at Course 8.",
+  bonus19: "The Tree in Area 1 (plants it). Starts at Course 10.",
+  bonus20: "Vman start, overgrown Area 1, above Course 10. Starts at Course 10.",
+  bonus21: "The other Vman start, just above Bonus 20. Starts at Course 10.",
+  bonus22: "Above Course 5's start (secret #2, buyfree5). Starts at Course 5.",
+  bonus23: "Left of Course 4's upgrades (buyblockswap5, after breaker). Starts at Course 5.",
 };
 const BONUS_TOKENS: Record<string, string> = { buyfree3: "bonus5", buyfree4a: "bonus7", buyfree4b: "bonus16", buyfree4c: "bonus6", buyfree5: "bonus22", buyblockswap5: "bonus23" };
 
@@ -215,16 +215,16 @@ function RouteSidebar({routes,courses,activeId,unlockLevel,onCommand}:{routes:Ro
     if (!best.has(`${c.id}:${cat}`) && !farms.has(`${c.id}:${cat}`)) return [];
     const record = soloBest(best, c, level), lap = soloBest(farms, c, level);
     const beyond = unlockLevel != null && level > unlockLevel;
-    return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat} title={beyond ? `Your save's unlocks only reach ${CATEGORIES[unlockLevel][1]}` : undefined}>
+    return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat} title={beyond ? `Your unlocks only reach ${SHORT_CATEGORY[CATEGORIES[unlockLevel][0]]}` : undefined}>
       <span>{SHORT_CATEGORY[cat]}</span>
       {cell(record?.route.id, record ? record.time.toFixed(2) : "—", record?.route.name ?? "No record route")}
-      {cell(lap?.route.id, lap ? lap.time.toFixed(2) : "—", lap ? `${lap.route.name}: ${Math.round(lap.time / .02)} physics ticks from the quick restart to the finish` : "No farm route yet")}
+      {cell(lap?.route.id, lap ? lap.time.toFixed(2) : "—", lap ? `${lap.route.name}: ${Math.round(lap.time / .02)} ticks, quick restart to finish` : "No farm route yet")}
     </div>];
   });
   const section = (label: string, list: Course[]) => {
     const groups = list.map(c => ({c, r: rows(c)})).filter(g => g.r.length > 0);
     return groups.length > 0 && <>
-      <div className="cmpHead"><label className="sectionLabel">{label}</label><span title="Runs record: the game's timer, start gate to end gate">Record</span><span title="Farm this course: physics ticks from the quick restart to the finish">Farm</span></div>
+      <div className="cmpHead"><label className="sectionLabel">{label}</label><span title="Record: the game's timer, start gate to end gate">Record</span><span title="Farm: ticks from quick restart to finish">Farm</span></div>
       {groups.map(({c, r}) => <div className="courseGroup" key={c.token}><strong className="courseName" title={placeTitle(c)}>{courseLabel(c, c.id)}</strong>{r}</div>)}
     </>;
   };
@@ -275,13 +275,13 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
   const solo=chosenCourse?soloBest(categoryBests(routes,courses).best,chosenCourse,CAPS.indexOf(chosenCaps)):undefined;
   const runRoute=async()=>{ if(solo&&await onCommand("/routes/select",{routeId:solo.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SOLVER</p><h2>Solve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?"Solving":"Idle"}</span></div>
-    <p className="lede">Captures the course start in the game, then searches offline on every core: it explores new paths from the start and sharpens the best finish; only the start and stop timer gates matter. Every offline best is replayed in the game (turbo) and, if it holds up there, saved as the record route (the game's timer) and, on a course, as the farm route when it takes fewer physics ticks from the quick restart to the finish.</p>
+    <p className="lede">Captures the start in game, then searches offline on every core.</p><details className="howTo"><summary>How it works</summary><ol><li>Only the start and stop timer gates matter.</li><li>Every offline best is replayed in game (turbo check).</li><li>Held-up bests save as record; farm if fewer ticks.</li><li>Farm time = ticks × 0.02 s, restart to finish.</li></ol></details>
     <div className="offlineControls">
       <Field label="1. Course"><select value={chosen} disabled={solver.running} title={placeTitle(chosenCourse)} onChange={e=>{ if(e.target.value==="new") { let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(()=>setCourse(id)); } else setCourse(Number(e.target.value)); }}>{solver.courses.map(id=>{ const c=courses.find(c=>c.id===id); return <option key={id} value={id} title={placeTitle(c)}>{courseLabel(c,id)}</option>; })}<option value="new">+ New course from last recording</option></select></Field>
       <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>setCaps(e.target.value)}>{capsOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
-    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",target)}>3. Solve</button>}<button className="secondary" onClick={()=>onMap(target)} title="Draw what the search has explored for this course and category: saved routes, the offline best, the explored area and the forced-path boxes">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Play this category's newest offline best (the latest solve's) in the game in real time, even one the turbo check rejected; nothing is saved"}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Play the human version of this category's newest offline best (enginesim humanize: same time, fewer perfect inputs; its -human.md next to the best lists how much slack each input has) in real time for practice; nothing is saved"}>▶ Play human version</button></div>
+    <div className="buttonRow">{solver.running?<button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>:<button className="primary" onClick={()=>onCommand("/solver/start",target)}>3. Solve</button>}<button className="secondary" onClick={()=>onMap(target)} title="Draws the explored area, saved routes, best and forced-path boxes.">Show map</button><button className="secondary" disabled={!solo||running||solver.running} onClick={runRoute} title={solo?`Run ${solo.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Plays this category's newest offline best. Nothing is saved."}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Plays the humanized best for practice. Nothing is saved."}>▶ Play human version</button></div>
     <div className="offlineSummary"><div><span>Best</span><strong>{solver.best!=null?`${solver.best.toFixed(2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}`:"Not started"}</small></div><div><span>Runs</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.finishes.toLocaleString()} timed finishes</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
@@ -290,7 +290,9 @@ function Solver({solver,courses,routes,running,onCommand,onMap}:{solver:SolverSt
 }
 
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string };
-type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null };
+// `off`: another world state's ground (off in every zone of the capture: Area 1 overgrown's moss and spikes), not in
+// the run's world; outlines only.
+type MapSolid = { k: "poly" | "line" | "circle" | "capsule"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; off?: boolean | null };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
 // Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
 // per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
@@ -306,14 +308,14 @@ type MapData = { course: number; capabilities: string; label: string; fulltas?: 
   explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
-type MapLayers = { explored: boolean; boxes: boolean; markers: boolean };
+type MapLayers = { explored: boolean; boxes: boolean; markers: boolean; off: boolean };
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
 function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true });
+  const [layers, setLayers] = useState<MapLayers>({ explored: true, boxes: true, markers: true, off: false });
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
@@ -358,6 +360,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [drawing, setDrawing] = useState(false);
   const [sketch, setSketch] = useState<number[] | null>(null);
   const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
+  // Course maps: the avoid box's optional block name (empty: cut for every solve) and whether that block starts on.
+  const [sketchName, setSketchName] = useState("");
+  const [sketchOn, setSketchOn] = useState(false);
   const [saving, setSaving] = useState(false);
   const sketchStart = useRef<{ x: number; y: number } | null>(null);
   // Full-TAS: an at: goal dragged to a new place (same size), shown there until it's saved or discarded.
@@ -369,11 +374,20 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const drag = useRef<{ x: number; y: number } | null>(null);
   const fitted = useRef(false);
 
+  // Only the latest load lands: an older one still in flight (a Redraw, a second mount) neither overwrites its data nor
+  // leaves its error standing.
+  const loads = useRef(0);
   const load = useCallback(async () => {
+    const id = ++loads.current;
     setLoading(true); setFailure("");
-    try { const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas }) : await request("/enginesim/map", target); setData(d); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0))); if (!fitted.current) { fit(d); fitted.current = true; } }
-    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
-    finally { setLoading(false); }
+    try {
+      const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas }) : await request("/enginesim/map", target);
+      if (id !== loads.current) return;
+      setData(d); setFailure(""); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0)));
+      if (!fitted.current) { fit(d); fitted.current = true; }
+    }
+    catch (e) { if (id === loads.current) setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { if (id === loads.current) setLoading(false); }
   }, [target]);
   useEffect(() => { load(); }, [load]);
 
@@ -401,13 +415,17 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       }
     }
     for (const s of data.solids) {
-      const color = s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
+      if (s.off && !layers.off) continue;
+      const color = s.off ? (s.spike ? "#e5484d" : OFF_COLOR) : s.spring ? SPRING_COLOR : s.tone ? TONE_COLORS[s.tone] : s.spike ? "#e5484d" : "#8193ab";
       g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(px * 1.5, s.k === "capsule" ? s.r * 2 : 0); g.lineCap = "round";
       g.beginPath();
-      if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); g.fill(); continue; }
+      if (s.k === "circle") { g.arc(s.p[0], s.p[1], s.r, 0, Math.PI * 2); if (s.off) { g.setLineDash([5 * px, 3 * px]); g.stroke(); g.setLineDash([]); } else g.fill(); continue; }
       g.moveTo(s.p[0], s.p[1]);
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
-      if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
+      if (s.k === "poly") g.closePath();
+      // Another world state's ground: dashed outlines, never filled (the run can't touch it).
+      if (s.off) { g.lineWidth = 1.5 * px; g.setLineDash([5 * px, 3 * px]); g.stroke(); g.setLineDash([]); continue; }
+      if (s.k === "poly") { g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
       if (s.spring) {
         // Launch direction: from the box's middle out past its far side.
         const [ux, uy] = s.spring, n = s.p.length / 2;
@@ -508,9 +526,14 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     }
     if (layers.markers) for (const m of data.markers) {
       g.fillStyle = m.kind === "goal" ? "#b9f6ca" : MARKERS[m.kind]?.color ?? "#4fc3f7";
-      const s = (m.kind === "checkpoint" ? 4 : 6) * px;
+      const s = (m.kind === "checkpoint" ? 4 : m.kind === "secret" ? 10 : 6) * px;
       if (MARKERS[m.kind]?.shape === "circle") { g.beginPath(); g.arc(m.x, m.y, s, 0, Math.PI * 2); g.fill(); }
       else if (m.kind === "teleporter") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
+      else if (MARKERS[m.kind]?.shape === "star") {
+        g.beginPath();
+        for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, k = i % 2 ? s * .45 : s; g.lineTo(m.x + k * Math.cos(a), m.y + k * Math.sin(a)); }
+        g.closePath(); g.fill(); g.strokeStyle = "#07111f"; g.lineWidth = px; g.stroke();
+      }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
   }, [data, layers, hidden, colors, latest, sketch, moved, ghost, ghostCells]);
@@ -573,6 +596,12 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
+  const editCourseAvoid = async (box: number[], name: string, on: boolean, remove: boolean) => {
+    setSaving(true); setFailure("");
+    try { await request("/enginesim/avoid", { course: target.course, capabilities: target.capabilities, box, name, on, remove }); if (!remove) setSketch(null); await load(); }
+    catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
   const center = (b: number[]) => ({ x: Math.round((b[0] + b[2]) / 2 * 10) / 10, y: Math.round((b[1] + b[3]) / 2 * 10) / 10 });
   const placeMoved = (x: number, y: number) => setMoved(m => {
     if (!m) return m;
@@ -591,16 +620,16 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{target.fulltas ? `Full-TAS · ${target.fulltas}` : <>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</>}</h2></div>
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
-      ? <p className="lede">Where this run's search windows have gone (every solve of its current goals, from <code>archive\fulltas-{target.fulltas}.visits.json</code>), colored by the run time a window first got there (blue early, red late); the best so far (gold) replayed from the run's start; its <code>at:</code> goals as they are in <code>fulltas.json</code> now (green boxes, numbered markers) and its avoid boxes (red: forced-paths.json rules with <code>"fulltas": ["{target.fulltas}"]</code>; a window run entering one is cut, from the next window of a running solve). <strong>Draw avoid</strong>, then drag a box on the map to add one. <strong>Move goals</strong>, then drag a green goal box (same size) or type its new centre, and save it: the run's goals change as with <b>Save goals</b>. Coordinates are game-world ones, the frame of forced-paths.json and <code>at:</code> goals. Wheel to zoom, drag to pan.</p>
-      : <p className="lede">Replayed offline from the course start of the last solve: the level as the solver sees it (its world export, with the unlocks and blocks of that moment), the explored area colored by the fastest time any explored run reached each spot with the timer going (blue early, red late; grey: only reached with the timer off, before the start gate or after a run was cancelled), saved routes, the fastest offline best (gold) and forced-path boxes (red: runs entering them are cut; dashed: an optional block that is off). A ring marks where a route's timer starts. <strong>Ghost compare</strong> draws any two routes (saved routes, the offline best, its human version) over the map with the first tick their states diverge and, per map cell along the paths, how much later one first arrives than the other. Coordinates are game-world ones, the frame of forced-paths.json, <code>--via</code>/<code>--avoid</code>, <code>at:</code> goals and courses.json. Wheel to zoom, drag to pan.</p>}
+      ? <><p className="lede">Shows this run&apos;s search windows, best route, goals and avoid boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: when a window first arrived; blue early, red late.</li><li>Gold: best so far, replayed from the run&apos;s start.</li><li>Green boxes: <code>at:</code> goals; red: avoid boxes.</li><li>Avoid boxes come from forced-paths.json rules naming this run.</li><li>Draw avoid drags a box; Move goals drags goal boxes.</li><li>Wheel zooms, drag pans; coordinates match forced-paths.json and <code>at:</code>.</li></ul></details></>
+      : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"]] as [keyof MapLayers, string][]).map(([key, label]) =>
+      {([["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"], ["off", "Other world states (Area 1 overgrown; not in this run)"]] as [keyof MapLayers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
-      {data?.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box on the map: runs of the search that enter it are cut" onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
-      {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag an at: goal's green box to a new place; it keeps its size" onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
+      {data && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box: search runs entering it are cut." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
+      {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag a goal's green box; it keeps its size." onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
     </div>
     <div className="ghostBar">
       <strong>Ghost compare</strong>
@@ -630,20 +659,33 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     </div>
     {ghostError && <p className="mapFailure">{ghostError}</p>}
     <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove}/>
-    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reached at ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · ghost Δ first arrival {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
+    <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reach ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · Δ {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
     {sketch && !sketchStart.current && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
-      {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
-      <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
+      {data?.fulltas ? <>
+        {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
+        <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
+      </> : <>
+        <input placeholder="block name (optional)" value={sketchName} onChange={e => setSketchName(e.target.value)} title="Empty: cut for every solve. Named: a pickable optional block."/>
+        <label className="passLoop" title="Starts on for solves that pick no blocks."><input type="checkbox" disabled={!sketchName.trim()} checked={sketchOn} onChange={e => setSketchOn(e.target.checked)}/>on by default</label>
+        <button className="primary" disabled={saving} onClick={() => editCourseAvoid(sketch, sketchName.trim(), sketchOn, false)}>Add avoid</button>
+      </>}
       <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
     {moved && <div className="buttonRow">
       <span className="hint">Goal {moved.goal.index} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
       <Field label="x"><input type="number" step="0.1" value={center(moved.box).x} onChange={e => placeMoved(Number(e.target.value), center(moved.box).y)}/></Field>
       <Field label="y"><input type="number" step="0.1" value={center(moved.box).y} onChange={e => placeMoved(center(moved.box).x, Number(e.target.value))}/></Field>
-      <button className="primary" disabled={saving || busy} title={busy ? "Stop the solve or playback first (as Save goals)" : "Saves the goal here in fulltas.json"} onClick={saveMoved}>Save goal</button>
+      <button className="primary" disabled={saving || busy} title={busy ? "Stop solving or playing first." : "Saves the goal in fulltas.json."} onClick={saveMoved}>Save goal</button>
       <button className="secondary" disabled={saving} onClick={() => setMoved(null)}>Discard</button></div>}
     {data?.fulltas && data.avoid.length > 0 && <ul className="mapRoutes">{data.avoid.map((b, i) => <li key={i}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
-      <button className="secondary" disabled={saving} title={`Takes this box out of every forced-paths.json rule of ${data.fulltas} (a box shared with other runs goes for them too)`} onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
+      <button className="secondary" disabled={saving} title="Removes this box; shared boxes go for other runs too." onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
+    {data && !data.fulltas && (data.avoid.length > 0 || (data.optional ?? []).some(b => b.avoid.length + b.via.length > 0)) && <ul className="mapRoutes">
+      {data.avoid.map((b, i) => <li key={`standing${i}`}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
+        <button className="secondary" disabled={saving} title="Removes this box; shared boxes go for other maps too." onClick={() => editCourseAvoid(b, "", false, true)}>Remove</button></li>)}
+      {(data.optional ?? []).flatMap(block => [...block.avoid.map(b => ({ b, via: false })), ...block.via.map(b => ({ b, via: true }))].map(({ b, via }, j) =>
+        <li key={`${block.name}${via ? "v" : "a"}${j}`}><span className="mapSwatch" style={{ background: via ? "#3ddc97" : "#ff3030" }}/><code>{block.name}</code> {via ? "via" : "avoid"} {boxText(b)}
+          <button className="secondary" disabled={saving} title="Removes this box; the block drops when empty." onClick={() => editCourseAvoid(b, "", false, true)}>Remove</button></li>))}
+    </ul>}
     {data && data.routes.length > 0 && <ul className="mapRoutes">{data.routes.map((r, i) => <li key={i}><label className="passLoop"><input type="checkbox" checked={!hidden.has(i)} onChange={() => setHidden(h => { const n = new Set(h); if (n.has(i)) n.delete(i); else n.add(i); return n; })}/>
       <span className="mapSwatch" style={{ background: colors[i] }}/>{r.name}<small>{r.finished ? `${r.time.toFixed(2)}s` : "no finish"} · {r.points.length / 2} ticks</small></label></li>)}</ul>}
   </div>;
@@ -669,7 +711,7 @@ function PassFields({passes,update,disabled}:{passes:Passes;update:(u:Partial<Pa
   const clamp = (v: string) => Math.max(0.25, Math.round((Number(v) || 0.25) * 4) / 4);
   return <div className="passFields">
     <Field label={passes.repeat ? "Minutes per target, pass 1" : "Minutes per target"}><input type="number" min={0.25} step={0.25} disabled={disabled} value={passes.minutes} onChange={e => update({ minutes: clamp(e.target.value) })} /></Field>
-    <label className="passLoop" title="When the last target ends, start over from the first, each pass with twice the minutes (up to the max): the run gets quick passes first, deeper ones after. Runs until Stop."><input type="checkbox" disabled={disabled} checked={passes.repeat} onChange={e => update({ repeat: e.target.checked })} /><span>Loop until stopped</span></label>
+    <label className="passLoop" title="Loops targets with double minutes per pass, up to max."><input type="checkbox" disabled={disabled} checked={passes.repeat} onChange={e => update({ repeat: e.target.checked })} /><span>Loop until stopped</span></label>
     <Field label="Max minutes per target"><input type="number" min={0.25} step={0.25} disabled={disabled || !passes.repeat} value={passes.maxMinutes} onChange={e => update({ maxMinutes: clamp(e.target.value) })} /></Field>
   </div>;
 }
@@ -703,7 +745,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     <input type="checkbox" checked={selected.has(t.key)} onChange={() => toggle([t.key])} /><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span></label>;
   const progress = solver.queue ?? [];
   return <div className="panel offlinePanel solveMatrix"><div className="panelTitle"><div><p className="eyebrow">BATCH SOLVER</p><h2>Optimize many</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{solver.running ? progressText(solver) || "Solving" : "Idle"}</span></div>
-    <p className="lede">Tick what to optimize (a row or column header ticks all of it). Each target is solved in turn exactly like Solve, for up to its minutes or until half of them (at most 5) pass without a new best; every gain goes through the same turbo check and gate. Times are the current record (the game's timer).</p>
+    <p className="lede">Tick targets to optimize; each one solves in turn like Solve.</p><details className="howTo"><summary>How it works</summary><ol><li>Row or column headers tick whole groups.</li><li>Each target runs up to its minutes, or 5 quiet passes.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li><li>Times show the current record, the game&apos;s timer.</li></ol></details>
     <div className="matrixTools">
       <button className="secondary" onClick={() => select(new Set(all.map(t => t.key)))}>All</button>
       <button className="secondary" onClick={() => select(new Set(all.filter(t => t.time != null).map(t => t.key)))} title="Only targets that already have a route">With a time</button>
@@ -711,7 +753,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
     </div>
     <PassFields passes={passes} update={updatePasses} disabled={solver.running} />
     <div className="matrixScroll"><table className="matrix">
-      <thead><tr><th />{CATEGORIES.map(([cat, title], level) => <th key={cat}><button title={`Tick every ${title.toLowerCase()} target`} onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
+      <thead><tr><th />{CATEGORIES.map(([cat], level) => <th key={cat}><button title="Ticks every target in this column." onClick={() => toggle(groups.flatMap(([, list]) => list.map(c => cells(c)[level]).filter(open).map(t => t.key)))}>{cat}</button></th>)}</tr></thead>
       <tbody>
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={CATEGORIES.length + 1}>{label}</th></tr>
@@ -730,7 +772,7 @@ function SolveMatrix({routes,courses,solver,onCommand}:{routes:Route[];courses:C
 }
 
 const TICK_SECONDS = 0.02;
-const tickText = (ticks: number) => `${ticks} t · ${(ticks * TICK_SECONDS).toFixed(2)}s`;
+const tickText = (ticks: number) => `${ticks} t · ${runTime(ticks * TICK_SECONDS)}`;
 
 function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(name:string)=>void}) {
   const runs = fullTas?.runs ?? [];
@@ -747,7 +789,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
-    <p className="lede">The game plugin doesn&apos;t report Full-TAS runs (an older version, or not connected).</p></div>;
+    <p className="lede">The game plugin doesn&apos;t report Full-TAS runs.</p></div>;
   const solve: FullTasSolveState = fullTas.solve ?? { running: false, status: "", log: [] };
   const busy = solve.running || running;
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
@@ -758,12 +800,12 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const segments = resetSegments(run?.offline?.segments, liveSegments, run?.offline?.faster);
   const segment = onlySegment > 0 && onlySegment <= segments.length ? onlySegment : 0;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Solving":running?"Playing":"Idle"}</span></div>
-    <p className="lede">A Full-TAS run is the whole game from a fresh new game (or, with <code>"start": "vman"</code> in <code>fulltas.json</code>, from a Vman speedrun's world) as one continuous input stream, timed from its first tick to its last goal. Goals (one token per line: <code>start:1</code>, <code>finish:1</code>, <code>buy:buyreward</code>, <code>reward:bonus1</code>, or an area goal <code>at:x,y,width,height</code>, optionally entered only from given sides: <code>at:x,y,width,height,from=left+bottom</code>) are reached in order; they only split the run, nothing restarts between them (a quick restart is an input the route chooses, but one right after an area goal takes that goal back). <b>Solve</b> searches offline window by window; the game replays every better route from its start and saves it only when it holds up and is faster.</p>
+    <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code></li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in fulltas.json: Vman world.</li></ul></details><details className="howTo"><summary>How solving works</summary><ol><li><b>Solve</b> searches offline window by window.</li><li>The game replays every better route from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li><li>Reset segments keep their route unless the start state matches.</li></ol></details>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.savestate ? "Savestate · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
-        {r.best?<b>{r.best.time.toFixed(2)}s</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {r.offline.time.toFixed(2)}s</b>:<b className="none">no route yet</b>}
-        <span className={`badge ${r.traceReady?"":"missing"}`}>{r.traceReady?"Trace ready":"No trace"}</span>
+        {r.best?<b>{runTime(r.best.time)}</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {runTime(r.offline.time)}</b>:<b className="none">no route yet</b>}
+        {!r.traceReady && <span className="badge missing">No trace</span>}
       </button>)}
       {name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
     </div>
@@ -774,7 +816,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     </div>
     {name && <div className="fullTasGrid">
       <div className="fullTasGoals">
-        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached} OF ${run.goals.length} GOALS · NOT SAVED (ONLY COMPLETE RUNS GO TO THE GATE)`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${run.best.time.toFixed(2)}s`:run?.offline?` · ${run.offline.time.toFixed(2)}s to goal ${run.offline.reached}`:""}</h2></div></div>
+        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${runTime(run.best.time)}`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached}`:""}</h2></div></div>
         <div className={`resultTable ${segments.length > 1 ? "segmented" : ""}`}>
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
           {(() => {
@@ -797,13 +839,14 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           })()}
           {!labels.length && <div className="tableRow pending"><span>—</span><span>No goals</span></div>}
         </div>
+        {segments.length > 1 && <SegmentLegend />}
         <div className="fullTasSolve">
           <div className="buttonRow">
-            <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh new game (seeded with the saved best's inputs)" onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
-            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game" : "Plays the offline search's best so far in real time from a new game (it stops at the last goal it reaches)"} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
-            <button className="secondary" disabled={running || !run?.closest} title={run?.closest ? `Plays the search's attempt furthest toward the goals so far (${run.closest.reached} of ${run.goals.length} reached${run.closest.next ? `, next ${run.closest.next}` : ""}${run.closest.distance != null ? `, ${run.closest.distance} away` : ""}; ${tickText(run.closest.ticks)}) in real time from a new game, ending where the attempt ends. Works while a solve runs: stop it with the header's Stop or F8 (this panel's Stop ends the solve too).` : "No search attempt for these goals yet: Solve unsolved writes the attempt that gets closest to the next goal"} onClick={() => onCommand("/fulltas/play", { name, closest: true })}>Test best</button>
+            <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh game." onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
+            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game." : "Plays the offline best so far; stops at its last goal."} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
+            <button className="secondary" disabled={running || !run?.closest} title={run?.closest ? `Plays the closest attempt (${run.closest.reached}/${run.goals.length} goals, ${tickText(run.closest.ticks)}).` : "No attempt yet; Solve unsolved creates one."} onClick={() => onCommand("/fulltas/play", { name, closest: true })}>Test best</button>
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
-            <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: this run's area goal (at:) and bonus end (reward:) rects, numbered, where the goal check tests them. While the run plays, reached goals turn green and the next one yellow.">
+            <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: shows this run's goal boxes; reached ones turn green.">
               <input type="checkbox" checked={!!run && fullTas.goalsOverlay === name} disabled={!run} onChange={e => onCommand("/settings/fulltas-goals", { name: e.target.checked ? name : "" })} />
               <strong>Goals in game</strong>
             </label>
@@ -812,13 +855,13 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
             <Field label="Minutes (total)"><input type="number" min="1" value={minutes} disabled={solve.running} onChange={e => setMinutes(Number(e.target.value))}/></Field>
             <Field label="Minutes per window"><input type="number" min="0.1" step="0.1" value={windowMinutes} disabled={solve.running} onChange={e => setWindowMinutes(Number(e.target.value))}/></Field>
             <Field label="Window (goals)"><input type="number" min="1" value={window_} disabled={solve.running} onChange={e => setWindow(Number(e.target.value))}/></Field>
-            <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polish only the window of goals ending at this one (Window goals: 2 is the goal before it and this one), over and over, with the rest of the route kept as it is" onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
-            <Field label="Only segment (0: all)"><input type="number" min="0" max={segments.length} value={segment} disabled={solve.running || segments.length <= 1} title="Solve by resets: search only this reset segment (the route between two quick restarts), over and over. Pick one in the Reset segments list below too." onChange={e => setOnlySegment(Math.max(0, Math.min(segments.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
+            <Field label="Only goal (0: all)"><input type="number" min="0" max={labels.length} value={onlyGoal} disabled={solve.running} title="Polishes only the window ending at this goal; the rest is kept." onChange={e => setOnlyGoal(Math.max(0, Math.min(labels.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
+            <Field label="Only segment (0: all)"><input type="number" min="0" max={segments.length} value={segment} disabled={solve.running || segments.length <= 1} title="Searches only this reset segment; pick one in the list below." onChange={e => setOnlySegment(Math.max(0, Math.min(segments.length, Math.floor(Number(e.target.value)) || 0)))}/></Field>
           </div>
-          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes only goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}, from ${onlyGoal - window_ > 0 ? "goal " + (onlyGoal - window_) : "the start"}` : "Polishes the goals the best reaches, windows from goal 1 on (captures the start first if there's no trace or the goals changed)"} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, goal: onlyGoal })}>{onlyGoal > 0 ? (window_ > 1 ? `Solve goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}` : `Solve goal ${onlyGoal}`) : "Solve"}</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches the goals the best doesn't reach yet (no time), starting at the first of them; polishes once every goal is reached" onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
-            <button className="secondary" disabled={busy || !run || !run.goals.length || segments.length <= 1} title={segments.length <= 1 ? "The best has no quick restart to split it at" : `Polishes the best one reset segment at a time${segment ? ` (only segment ${segment})` : ""}: from the state after the Quick Restart that opens it to its last goal, closed by the old Quick Restart. A way counts only when the player leaves that restart exactly as the old route did (no momentum, wall-jump lock, zip-mover or bounce carry-over, buffers or timers that differ), so the route after it is kept, never re-solved. Per segment: Minutes per window.`} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, resets: true, segment })}>{segment ? `Solve segment ${segment}` : "Solve by resets"}</button>
-            <button className="secondary" disabled={!run?.traceReady} title="Draws where this run's search windows have gone, its best so far, its at: goals and its avoid boxes (forced-paths.json)" onClick={() => onMap(name)}>Show map</button></div>
+          <div className="buttonRow"><button className="primary" disabled={busy || !run || !run.goals.length} title={onlyGoal > 0 ? `Polishes goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal} only.` : "Polishes reached goals in windows from goal 1."} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, goal: onlyGoal })}>{onlyGoal > 0 ? (window_ > 1 ? `Solve goals ${Math.max(1, onlyGoal - window_ + 1)}–${onlyGoal}` : `Solve goal ${onlyGoal}`) : "Solve"}</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length} title="Reaches missing goals first; polishes once all are reached." onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, unsolved: true })}>Solve unsolved</button>
+            <button className="secondary" disabled={busy || !run || !run.goals.length || segments.length <= 1} title={segments.length <= 1 ? "The best has no quick restart to split it at" : `Polishes one reset segment at a time${segment ? ` (only segment ${segment})` : ""}.`} onClick={() => onCommand("/fulltas/solve", { name, minutes, windowMinutes, window: window_, resets: true, segment })}>{segment ? `Solve segment ${segment}` : "Solve by resets"}</button>
+            <button className="secondary" disabled={!run?.traceReady} title="Draws search windows, best route, goals and avoid boxes." onClick={() => onMap(name)}>Show map</button></div>
         </div>
       </div>
       <div className="fullTasEditor">

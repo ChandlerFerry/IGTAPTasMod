@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Box2D;
 using static Box2D.b2Collision;
@@ -700,10 +701,15 @@ namespace IGTAP.EngineSim
             _regrid.Add(s);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void EnsureGrid()
         {
+            if (_cells == null || _regrid.Count != 0) UpdateGrid();
+        }
+
+        void UpdateGrid()
+        {
             if (_cells == null) { BuildGrid(); return; }
-            if (_regrid.Count == 0) return;
             bool inBounds = true;
             foreach (ColliderState s in _regrid)
             {
@@ -843,22 +849,35 @@ namespace IGTAP.EngineSim
                     _cells[y * _cellsX + x].Add(i);
         }
 
+        const float InvCellSize = 1f / CellSize;
+
+        // Floor-free, same cells: x / 64 == x * (1 / 64f) exactly (a power of two); below 0 a lower bound clamps to 0 and an
+        // upper bound's range is empty either way, and at or above 0 (or NaN) truncation is Floor.
         void CellRange(in b2AABB box, out int x0, out int y0, out int x1, out int y1)
         {
-            x0 = System.Math.Max(0, (int)MathF.Floor((box.lowerBound.x - _gridX) / CellSize));
-            y0 = System.Math.Max(0, (int)MathF.Floor((box.lowerBound.y - _gridY) / CellSize));
-            x1 = System.Math.Min(_cellsX - 1, (int)MathF.Floor((box.upperBound.x - _gridX) / CellSize));
-            y1 = System.Math.Min(_cellsY - 1, (int)MathF.Floor((box.upperBound.y - _gridY) / CellSize));
+            float lx = (box.lowerBound.x - _gridX) * InvCellSize, ly = (box.lowerBound.y - _gridY) * InvCellSize;
+            float ux = (box.upperBound.x - _gridX) * InvCellSize, uy = (box.upperBound.y - _gridY) * InvCellSize;
+            x0 = System.Math.Max(0, (int)lx);
+            y0 = System.Math.Max(0, (int)ly);
+            x1 = ux < 0f ? -1 : System.Math.Min(_cellsX - 1, (int)ux);
+            y1 = uy < 0f ? -1 : System.Math.Min(_cellsY - 1, (int)uy);
         }
+
+        // Accept's trigger half. A mover list holds only its own layer's colliders (every Layer write drops _movers), so the
+        // mover loops need only this.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        bool Hittable(ColliderState s) => _queriesHitTriggers || !s.Collider.m_IsTrigger;
 
         ColliderState FindInside(b2Vec2 p, int layerMask)
         {
             EnsureGrid();
             ColliderState found = null;
             int count = 0;
-            CellRange(new b2AABB { lowerBound = p, upperBound = p }, out int x0, out int y0, out int x1, out int y1);
-            if (x0 <= x1 && y0 <= y1)
-                foreach (int i in _cells[y0 * _cellsX + x0])
+            // CellRange of the point alone: its one cell, or none.
+            float cx = (p.x - _gridX) * InvCellSize, cy = (p.y - _gridY) * InvCellSize;
+            int x = (int)cx, y = (int)cy;
+            if (!(cx < 0f) && !(cy < 0f) && x < _cellsX && y < _cellsY)
+                foreach (int i in CollectionsMarshal.AsSpan(_cells[y * _cellsX + x]))
                 {
                     ref StaticShape s = ref _static[i];
                     if (!Contains(s.Box, p) || !Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
@@ -867,9 +886,9 @@ namespace IGTAP.EngineSim
                 }
             if (_movers == null) BuildMovers();
             for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
-                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)])
+                foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
                 {
-                    if (!Accept(s, layerMask)) continue;
+                    if (!Hittable(s)) continue;
                     for (int c = 0; c < f.m_proxyCount; c++)
                         if (f.TestPoint(p)) { found = s; count++; }
                 }
@@ -892,7 +911,7 @@ namespace IGTAP.EngineSim
             _stamp++;
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    foreach (int i in _cells[y * _cellsX + x])
+                    foreach (int i in CollectionsMarshal.AsSpan(_cells[y * _cellsX + x]))
                     {
                         if (_seen[i] == _stamp) continue;
                         _seen[i] = _stamp;
@@ -902,9 +921,9 @@ namespace IGTAP.EngineSim
                     }
             if (_movers == null) BuildMovers();
             for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
-                foreach (var (f, s) in _movers[System.Numerics.BitOperations.TrailingZeroCount(layers)])
+                foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
                 {
-                    if (!Accept(s, layerMask)) continue;
+                    if (!Hittable(s)) continue;
                     for (int c = 0; c < f.m_proxyCount; c++)
                         if (RayHit(f, c, s, input) && ++count > 1) return false;
                 }

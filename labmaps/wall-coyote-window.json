@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "wall-coyote-window",
+  "name": "Wall coyote jump: slide off the wall's bottom, jump through a low window",
+  "tech": "wall-coyote-jump",
+  "techNote": "Hold left down the hanging wall (bottom y 200) and let it go past the bottom: the wall rays miss from y 181, OnWall stays on and wallCoyoteFrames counts down, and a jump in those ticks (1-8 after the last cling tick; the 8th with the count spent, before the next tick's else branch clears OnWall) is a wall jump off no wall, (460, 730) away from the wall, rising 14.6 u for every 9.2 u across. Hold right from the last cling tick and jump on the 7th coyote tick: the arc rises through the window in the spike wall at x 175-185 (y 90-250) without touching it and on to the finish box (x 380-420, y 330-370). A wall jump off the wall itself leaves from y 186 or higher, and its hurtbox (40x54) is in the spikes above the window for the whole crossing, 6 ticks at the lock's 460 (a jump cut only comes 6 ticks into a jump); a fall through the window can't rise again. Offline, every wall jump off the wall (every press tick, stick at rest or held into the wall before it) dies at the window; the 5th-8th coyote tick with the stick right finish, the 5th and 6th grazing the spikes inside their grace.",
+  "category": "WJ",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [80, 400], "size": [40, 400], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [180, -455], "size": [10, 1090], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true },
+    { "kind": "box", "at": [180, 625], "size": [10, 750], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true }
+  ],
+  "start": {
+    "x": 125.5,
+    "y": 300,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4
+    }
+  },
+  "finish": [400, 350, 40, 40],
+  "maxTicks": 80
+}

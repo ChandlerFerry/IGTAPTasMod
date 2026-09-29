@@ -235,6 +235,8 @@ namespace IGTAPTasMod
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
             Instance._engine.FixedTick(__instance);
+            // A loading new game takes no input: the start is where the game spawns the player (NewGameLoading).
+            if (Instance.NewGameLoading && !Instance._engine.IsRunning && !IsMenuPlayer(__instance)) Instance._engine.ClearInjectedInput(__instance);
             Instance.OverlayCaptureAxis(__instance);
             if (Instance._brakeTicks >= 0 && !IsMenuPlayer(__instance)) Instance.Brake(__instance);
             return true;
@@ -242,15 +244,18 @@ namespace IGTAPTasMod
 
         private static void BeforeNormaliseInput(Movement __instance, ref Vector2 __0)
         {
-            if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording || !Instance._engine.IsRunning) return;
-            __0 = Instance._engine.StickFor(__instance);
+            if (Instance == null || IsMenuPlayer(__instance) || Instance._recorder.IsRecording) return;
+            if (Instance._engine.IsRunning) __0 = Instance._engine.StickFor(__instance);
+            else if (Instance.NewGameLoading) __0 = Vector2.zero;
         }
 
         private static void BeforeSteppedUp(StepUpAnimationScript __instance)
         {
             if (Instance == null) return;
             Movement player = __instance.GetComponentInParent<Movement>();
-            if (player != null && !IsMenuPlayer(player)) Instance.TechSteppedUp(player);
+            if (player == null || IsMenuPlayer(player)) return;
+            Instance.TechSteppedUp(player);
+            Instance.TrainerSteppedUp(player);
         }
 
         private static void BeforeWallTouch(Movement __instance, bool touchedGround)

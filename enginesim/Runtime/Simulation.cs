@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
 using IGTAPTasMod;
@@ -123,6 +124,17 @@ namespace IGTAP.EngineSim
         static readonly MethodInfo UpdateMethod = typeof(Movement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo CourseFixedUpdateMethod = typeof(courseScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly string[] CoursePathLists = { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
+        const BindingFlags OrbFields = BindingFlags.Instance | BindingFlags.NonPublic;
+        static readonly MethodInfo OrbFixedUpdateMethod = typeof(JiggleDropScript).GetMethod("FixedUpdate", OrbFields);
+        static readonly Func<JiggleDropScript, float> OrbCooldown = OrbGetter<float>("cooldown");
+        static readonly Func<JiggleDropScript, int> OrbSequence = OrbGetter<int>("ActivationSequence");
+        static readonly FieldInfo OrbUsableField = typeof(JiggleDropScript).GetField("usable", OrbFields);
+
+        static Func<JiggleDropScript, T> OrbGetter<T>(string name)
+        {
+            ParameterExpression orb = Expression.Parameter(typeof(JiggleDropScript));
+            return Expression.Lambda<Func<JiggleDropScript, T>>(Expression.Field(orb, typeof(JiggleDropScript).GetField(name, OrbFields)), orb).Compile();
+        }
 
         public readonly World World;
         public readonly Movement Player;
@@ -133,6 +145,8 @@ namespace IGTAP.EngineSim
         public readonly Shop Shop;
         readonly Action _fixedUpdate, _update;
         readonly Action[] _courseFixedUpdates;
+        readonly JiggleDropScript[] _orbs;
+        readonly Action[] _orbFixedUpdates;
         readonly System.Collections.IList[][] _coursePathLists;
         readonly BoxCollider2D[] _playerColliders;
         SimSnapshot _start;
@@ -158,6 +172,7 @@ namespace IGTAP.EngineSim
         {
             World = world;
             IGTAP.EngineSim.Engine.Scheduler = Scheduler;
+            Scheduler.FrameDeltaTime = Frames.CrossStep;
             Player = world.All<Movement>().First(m => m.gameObject.activeInHierarchy && !(bool)typeof(Movement).GetField("isOnMainMenu",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(m));
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
@@ -186,6 +201,8 @@ namespace IGTAP.EngineSim
             _coursePathLists = Courses.Select(c => CoursePathLists
                 .Select(n => typeof(courseScript).GetField(n, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(c) as System.Collections.IList)
                 .Where(l => l != null).ToArray()).ToArray();
+            _orbs = world.All<JiggleDropScript>();
+            _orbFixedUpdates = _orbs.Select(o => (Action)Delegate.CreateDelegate(typeof(Action), o, OrbFixedUpdateMethod)).ToArray();
             _playerColliders = Player.GetComponents<BoxCollider2D>();
             Engine.AttemptEnded += (success, reason) =>
             {
@@ -193,7 +210,7 @@ namespace IGTAP.EngineSim
                 _finishTime = Engine.AuthoritativeCompletionTime;
                 _endReason = reason;
             };
-            Hooks.PlayerInput = m => Engine.FixedTick((Movement)m);
+            Hooks.PlayerInput = m => { Engine.FixedTick((Movement)m); BeforeInput?.Invoke((Movement)m); };
             IGTAP.EngineSim.Engine.Stick = () => Engine.StickFor(Player);
             Hooks.WallTouch = (m, touchedGround) => Engine.WallTouch((Movement)m, touchedGround);
             Hooks.Death = m =>
@@ -207,6 +224,7 @@ namespace IGTAP.EngineSim
             Hooks.UpgradeBoxStay = Shop.Stay;
             Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
             Hooks.TimeStop = (_, duration) => { if (_freezeFor < 0f || duration < _freezeFor) _freezeFor = duration; };
+            Hooks.RefillOrbState = RefillOrbState;
             Hooks.PlaySfx = (_, code) =>
             {
                 switch (code)
@@ -266,9 +284,12 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal bool StrictBuys;
 
-        internal void Bought(string path, string id)
+        /// <param name="continuing">A buy-max box's later levels, bought at the ends of the ticks after the touch (a prestige-boosted
+        /// course's boxes): they are the touch's own purchase, so they neither reach a goal nor count as a stray buy. One buy goal
+        /// per touch of such a box.</param>
+        internal void Bought(string path, string id, bool continuing)
         {
-            if (Goals == null || !Engine.IsRunning) return;
+            if (Goals == null || !Engine.IsRunning || continuing) return;
             FullTasGoal next = Goals.Current;
             if (StrictBuys && (next?.boxes == null || Array.IndexOf(next.boxes, id) < 0 && Array.IndexOf(next.boxes, path) < 0))
             {
@@ -716,6 +737,18 @@ namespace IGTAP.EngineSim
         /// the frame's blend, and whether time stood still in it (a freeze or a pause).</summary>
         public Action<float, bool> OnFrame;
 
+        /// <summary>At Movement.getPlayerControlledInput's start, once the tick's input is in (lab solve's wall control): the
+        /// contact branch has run, so OnWall and wallCoyoteFrames say whether the wall rays hit on this tick.</summary>
+        public Action<Movement> BeforeInput;
+
+        /// <summary>
+        /// The run from the start snapshot begins inside its first tick, as an in-game lab demo or probe from a placed start
+        /// does (TasPlugin starts the engine in Movement.FixedUpdate's prefix after MacroEngine.BeforeTick ran idle): that tick
+        /// skips BeforeTick, so Movement's pre-hook stick read is at rest and the first step is pressed at the input hook.
+        /// A trace's start is already the state after that tick.
+        /// </summary>
+        public bool StartsInsideTick;
+
         /// <summary>
         /// The tick's rendered frames: one Movement.Update per frame at its blend, the first frame repeated for a dash freeze's
         /// frames (time stands still, TimeStop), and a route's pause (the menu held open for MacroStep.pauseFrames frames)
@@ -979,7 +1012,9 @@ namespace IGTAP.EngineSim
                     RespawnMethod.Invoke(Player, new object[] { true });
                     Goals?.QuickRestarted();
                 }
-                Engine.BeforeTick(Player);
+                // A start inside a tick: the game started the engine in Movement.FixedUpdate's prefix after BeforeTick had run
+                // idle, so that tick's pre-hook stick read is at rest and its step is pressed at the input hook (FixedTick).
+                if (!(StartsInsideTick && from.Tick == 0 && Scheduler.Tick == 0)) Engine.BeforeTick(Player);
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
                 Engine.AfterFixedTick(Player);
@@ -987,6 +1022,7 @@ namespace IGTAP.EngineSim
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 VmanClock();
+                StepOrbs();
                 Shop.TickCooldowns(World.FixedDeltaTime);
                 Physics.SyncTransforms();
                 _stepFrom = BodyPosition();
@@ -1064,6 +1100,34 @@ namespace IGTAP.EngineSim
             };
         }
 
+        /// <summary>
+        /// A used refill orb counts its cooldown down (JiggleDropScript.FixedUpdate, while the orbs are unlocked) and grows
+        /// back at its end (onCooldownEnd, the refresh <see cref="RefillOrbState"/> keeps).
+        /// </summary>
+        void StepOrbs()
+        {
+            for (int i = 0; i < _orbs.Length; i++)
+            {
+                JiggleDropScript orb = _orbs[i];
+                if (!(OrbCooldown(orb) > 0f) || !orb.isActiveAndEnabled) continue;
+                Touch(orb);
+                _orbFixedUpdates[i]();
+            }
+        }
+
+        /// <summary>
+        /// JiggleDropScript.SetActiveVisualState without the sprites: the orb is usable when its cooldown is over and the refill
+        /// upgrades (unlockJiggleDrops + moreRefreshOrbs) are above its ActivationSequence.
+        /// </summary>
+        void RefillOrbState(object target)
+        {
+            var orb = (JiggleDropScript)target;
+            Touch(orb);
+            Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
+            double orbs = upgrades[globalStats.globalUpgradeSet.unlockJiggleDrops] + upgrades[globalStats.globalUpgradeSet.moreRefreshOrbs];
+            OrbUsableField.SetValue(orb, OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb));
+        }
+
         void VmanClock()
         {
             if (!VmanScript.isCurrentlyVman || !(_vmanTimeLeft > 0.0)) return;
@@ -1114,7 +1178,7 @@ namespace IGTAP.EngineSim
                     last.durationMs = Mathf.RoundToInt(last.durationTicks * Time.fixedDeltaTime * 1000f);
                     continue;
                 }
-                steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
+                steps.Add(new MacroStep(false) { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1,
                     durationMs = tickMs, endCondition = ActionEndCondition.FixedTicks,
                     direction = k.x > 0f ? 1 : k.x < 0f ? -1 : 0, rawMoveX = k.x, rawMoveY = k.y, rawJumpHeld = k.held,
                     rawJumpPressed = k.press, rawJumpReleased = k.release, rawDashPressed = k.dash,
@@ -1123,7 +1187,7 @@ namespace IGTAP.EngineSim
                     rawQuickRestart = k.reset, pauseFrames = k.pause, pauseTick = k.pause > 0 ? k.pauseTick : 0,
                     pauseFrame = k.pause > 0 ? k.pauseFrame : 0 });
             }
-            if (steps.Count == 0) steps.Add(new MacroStep { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,
+            if (steps.Count == 0) steps.Add(new MacroStep(false) { label = "Solver input", type = MacroStepType.RawInput, durationTicks = 1, durationMs = tickMs,
                 endCondition = ActionEndCondition.FixedTicks });
             return steps;
         }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./techs.css";
-import { GROWN_COLOR, Level, levelPaths, MARKERS, Marks, SPRING_COLOR, TONE_COLORS, type Marker, type Solid, type TreeStep } from "./ultra-level";
+import { GROWN_COLOR, Level, levelPaths, MARKERS, Marks, OFF_COLOR, SPRING_COLOR, TONE_COLORS, type LevelShow, type Marker, type Solid, type TreeStep } from "./ultra-level";
 
 export type UltraData = { world: string; bounds: number[]; player: { stand: number[]; dash: number[] }; kinds: string[];
   floors: number[][]; solids: Solid[]; boxes: number[][]; labels: { name: string; x: number; y: number }[]; launches: number;
@@ -20,7 +20,7 @@ type Ultra = { fromX: number; fromY: number; side: number; x: number; y: number;
 // One way an ultra goes: lastHyperY set on floor `from`, the ultra's hyper on floor `to`; the flight line a → b.
 // `line`: the flight line check found it; `ultra`: the engine's biggest-drop ultra on this pair.
 type Pair = { index: number; from: number; to: number; drop: number; ax: number; ay: number; bx: number; by: number; line: boolean; ultra: Ultra | null };
-type Layers = { grown: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean };
+type Layers = { grown: boolean; off: boolean; markers: boolean; floors: boolean; labels: boolean; rebase: boolean; next: boolean };
 type Which = "all" | "engine" | "shift";
 type Direction = "both" | "out" | "in";
 type View = { x: number; y: number; w: number };
@@ -58,7 +58,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const [data, setData] = useState<UltraData | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  const [layers, setLayers] = useState<Layers>({ grown: true, markers: true, floors: true, labels: true, rebase: true, next: true });
+  const [layers, setLayers] = useState<Layers>({ grown: true, off: true, markers: true, floors: true, labels: true, rebase: true, next: true });
   // Where on the first rebase line the last rebase happened (an index into `arc`), for the next line.
   const [nextAt, setNextAt] = useState(-1);
   const [which, setWhich] = useState<Which>("all");
@@ -140,6 +140,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   }, [data, byFloor]);
   const floorPaths = useMemo(() => (data?.kinds ?? []).map((_, k) => (data?.floors ?? []).filter(f => f[4] === k).map(floorPath).join("")), [data]);
   const level = useMemo(() => levelPaths(data?.solids ?? [], data?.boxes ?? [], data?.grown ?? []), [data]);
+  const levelShow = useMemo<LevelShow>(() => ({ spikes: true, boxes: true, blue: true, orange: true, springs: true, grown: layers.grown, off: layers.off }), [layers]);
+  const markerKinds = useMemo(() => Object.fromEntries(Object.keys(MARKERS).map(k => [k, layers.markers])), [layers]);
 
   const scale = view && svg.current ? svg.current.clientWidth / view.w : 1;
   const toWorld = (e: { clientX: number; clientY: number }) => {
@@ -217,23 +219,37 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     { a: [sel.landX, sel.y], b: [sel.x, sel.y], label: "slide, ULTRA jump", color: "#ffd54f", dash: false },
   ];
   const where = (fl: number[]) => `${fl[0].toFixed(0)}…${fl[2].toFixed(0)} at ${fl[1] === fl[3] ? fl[1].toFixed(0) : `${fl[1].toFixed(0)}→${fl[3].toFixed(0)}`}`;
-  const counts = (i: number) => `${byFloor.out[i].length} out${byFloor.out[i][0] ? ` (up to ${byFloor.out[i][0].drop.toFixed(0)} u)` : ""} · ${byFloor.into[i].length} in${byFloor.into[i][0] ? ` (up to ${byFloor.into[i][0].drop.toFixed(0)} u)` : ""}`;
+  const counts = (i: number) => `${byFloor.out[i].length} out${byFloor.out[i][0] ? ` (max ${byFloor.out[i][0].drop.toFixed(0)} u)` : ""} · ${byFloor.into[i].length} in${byFloor.into[i][0] ? ` (max ${byFloor.into[i][0].drop.toFixed(0)} u)` : ""}`;
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">WHERE THE GAME&apos;S ULTRA WORKS</p><h2>Ultra map</h2></div>
     <div className="buttonRow">
       <button className="secondary" disabled={!data} onClick={() => data && setView(fitView(data, svg.current))}>Fit</button>
       <button className="secondary" disabled={!data} onClick={download} title="The whole map as one SVG file">Download SVG</button>
       <button className="secondary" disabled={busy} onClick={() => fetchData(true)} title="Recompute from the VMAN trace's world (minutes)">{busy ? "Working…" : "Recompute"}</button></div></div>
-    <p className="lede">The game&apos;s ultra (<code>CheckForSuperJump</code>, &quot;Did an ultra!&quot;): a hyper whose dash went the way the momentum before it went and whose jump is more than 4 units below <code>lastHyperY</code> gives back all of that momentum. <code>lastHyperY</code> is the height of the last hyper, or of the floor last stood on (the game writes it on every grounded tick), so an ultra joins two floors: the one it comes from and a lower one it lands on. Every pair of hyper floors in the VMAN run&apos;s world is here, with the drop between them, where a flight line clears the level (straight, or over a hop as high as a held jump); the engine&apos;s own ultras (hop + wavedash, then a second wavedash, from points along every floor) confirm pairs and add the ones those lines miss. A floor&apos;s colour is the biggest drop onto it. Click a floor for where its ultras go and where the ultras onto it come from; click a listed pair for its line (and the engine&apos;s inputs when it has them).</p>
+    <p className="lede">Every hyper floor pair in the world, with its drop. Click a floor for details.</p>
+    <details className="howTo"><summary>How it works</summary><ol>
+      <li>Ultra: a hyper whose dash follows the momentum before it.</li>
+      <li>Its jump lands more than 4 u below <code>lastHyperY</code>.</li>
+      <li>Success gives back all of that momentum.</li>
+      <li><code>lastHyperY</code> = the last hyper&apos;s height, or the last grounded floor.</li>
+      <li>So an ultra joins two floors: it leaves one, lands lower.</li>
+      <li>Origin shift: the world moved, <code>lastHyperY</code> didn&apos;t; any drop passes.</li>
+    </ol></details>
+    <details className="howTo"><summary>Legend notes</summary><ul>
+      <li>Tree ground appears once its tree upgrades are bought.</li>
+      <li>Numbers are the purchase order; Plant Tree is 1.</li>
+      <li>Hover a number to see the box that grows it.</li>
+      <li>The fresh world has none: no floors or pairs there.</li>
+    </ul></details>
     {failure && <p className="mapFailure">{failure}</p>}
     {data && !data.pairs && <p className="mapFailure">This result predates the floor pairs: Recompute.</p>}
     <div className="mapLayers">
-      {([["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course labels"]] as [keyof Layers, string][]).map(([key, label]) =>
+      {([["grown", "Tree ground + purchase order"], ["off", "Other world states (Area 1 overgrown)"], ["markers", "Gates, checkpoints, teleporters, refills, secrets"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"]] as [keyof Layers, string][]).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       <label className="passLoop">Pairs <select value={which} onChange={e => { setWhich(e.target.value as Which); setFocus(null); }}>
         <option value="all">every height drop</option><option value="engine">engine-confirmed drops</option><option value="shift">origin-shift ultras</option></select></label>
       <label className="passLoop">Selected floor <select value={direction} onChange={e => setDirection(e.target.value as Direction)}>
         <option value="both">from and to it</option><option value="out">ultras from it</option><option value="in">ultras onto it</option></select></label>
-      {data && <span className="hint">{shown.length.toLocaleString()} of {pairs.length.toLocaleString()} floor pairs · {data.floors.length.toLocaleString()} floors · {ultras.length.toLocaleString()} engine ultras from {data.launches.toLocaleString()} launches · {data.world}</span>}
+      {data && <span className="hint">{shown.length.toLocaleString()}/{pairs.length.toLocaleString()} pairs · {data.floors.length.toLocaleString()} floors · {ultras.length.toLocaleString()} ultras · {data.world}</span>}
     </div>
     {layers.next && arc.length > 0 && <div className="mapLayers">
       <label className="passLoop" style={{ flex: 1 }}>First shift at
@@ -243,12 +259,13 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     </div>}
     <div className="mapLayers">
       {data?.kinds.map(k => <span key={k} className="hint"><span className="mapSwatch" style={{ background: KIND_COLORS[k] }}/>{KIND_TEXT[k] ?? k}</span>)}
-      <span className="hint"><span className="mapSwatch" style={{ background: "#bcaaa4" }}/>Upgrade box (a floor too: the ground rays hit it)</span>
-      <span className="hint"><span className="mapSwatch" style={{ background: GROWN_COLOR }}/>Tree ground: there once its tree upgrades are bought; the number is the purchase that grows it (Plant Tree is 1; hover for the box). Not in the fresh world, so no floors or pairs</span>
-      {(["blue", "orange"] as const).map(t => <span key={t} className="hint"><span className="mapSwatch" style={{ background: TONE_COLORS[t] }}/>{t === "blue" ? "Blue" : "Orange"} blocks and spikes (dashed: spikes); only the active colour is solid</span>)}
-      <span className="hint"><span className="mapSwatch" style={{ background: SPRING_COLOR }}/>Spring: its trigger box, the arrow the way it launches</span>
-      {Object.values(MARKERS).map(m => <span key={m.text} className="hint"><span className="mapSwatch" style={{ background: m.color, borderRadius: m.shape === "circle" ? 8 : 2 }}/>{m.text}</span>)}
-      {BANDS.map(([top, color], i) => <span key={i} className="hint"><span className="mapSwatch" style={{ background: color, borderRadius: 8 }}/>{i === 0 ? "4" : BANDS[i - 1][0]}{top === Infinity ? "+" : `–${top}`} u</span>)}
+      <span className="hint"><span className="mapSwatch" style={{ background: "#bcaaa4" }}/>Upgrade box (ground rays hit it like a floor)</span>
+      <span className="hint"><span className="mapSwatch" style={{ background: GROWN_COLOR }}/>Tree ground (appears after tree upgrades)</span>
+      <span className="hint"><span className="mapSwatch" style={{ background: `repeating-linear-gradient(90deg, ${OFF_COLOR} 0 5px, transparent 5px 8px)` }}/>Another world state&apos;s ground (Area 1 overgrown, locked boxes): not in this world</span>
+      {(["blue", "orange"] as const).map(t => <span key={t} className="hint"><span className="mapSwatch" style={{ background: TONE_COLORS[t] }}/>{t === "blue" ? "Blue" : "Orange"} blocks + spikes (dashed = spikes; only active colour is solid)</span>)}
+      <span className="hint"><span className="mapSwatch" style={{ background: SPRING_COLOR }}/>Spring: trigger box; arrow shows launch direction</span>
+      {Object.values(MARKERS).map(m => <span key={m.text} className="hint">{m.shape === "star" ? <span style={{ color: m.color }}>★ </span> : <span className="mapSwatch" style={{ background: m.color, borderRadius: m.shape === "circle" ? 8 : 2 }}/>}{m.text}</span>)}
+      {BANDS.map(([top, color], i) => <span key={i} className="hint"><span className="mapSwatch" style={{ background: color, borderRadius: 8 }}/>Drop {i === 0 ? "4" : BANDS[i - 1][0]}{top === Infinity ? "+" : `–${top}`} u</span>)}
       <span className="hint"><span className="mapSwatch" style={{ background: SHIFT_COLOR, borderRadius: 8 }}/>Origin shift (any drop, even flat)</span>
       <span className="hint"><span className="mapSwatch" style={{ background: IN_COLOR }}/>Onto the selected floor</span>
       {data?.rebase && <span className="hint"><span className="mapSwatch" style={{ background: `repeating-linear-gradient(90deg, ${SHIFT_COLOR} 0 5px, transparent 5px 9px)` }}/>First rebase line ({data.rebase.threshold} from the origin)</span>}
@@ -256,7 +273,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     <svg ref={svg} className="mapCanvas" viewBox={view && svg.current ? `${view.x} ${view.y} ${view.w} ${view.w * svg.current.clientHeight / svg.current.clientWidth}` : "0 0 1 1"}
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={() => { setCursor(null); setHoverFloor(-1); }}>
       <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#07111f"/>
-      <Level paths={level} grown={layers.grown} px={px}/>
+      <Level paths={level} show={levelShow} px={px}/>
       {layers.floors && data?.kinds.map((k, i) => <path key={k} d={floorPaths[i]} fill="none" stroke={KIND_COLORS[k] ?? "#fff"} strokeWidth={2} strokeOpacity={f ? .35 : 1} vectorEffect="non-scaling-stroke"/>)}
       {layers.rebase && <path d={rebaseLine} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.7} strokeWidth={1.5} strokeDasharray="10 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
       {layers.rebase && <path d={routeLines} fill="none" stroke={SHIFT_COLOR} strokeOpacity={.4} strokeWidth={1} strokeDasharray="4 8" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }}/>}
@@ -289,12 +306,13 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
       {focus && <text x={(focus.ax + focus.bx) / 2} y={fy(Math.max(focus.ay, focus.by) + Math.max(24, Math.abs(focus.bx - focus.ax) * .25) / 2) - 8 * px} fill="#ffffff" fontSize={13 * px} textAnchor="middle"
         stroke="#07111f" strokeWidth={3 * px} paintOrder="stroke" style={{ pointerEvents: "none" }}>↓ {focus.drop.toFixed(1)} u</text>}
       {layers.labels && data?.labels.map(l => <text key={l.name} x={l.x} y={fy(l.y) - 30 * px} fill="#e8eef8" fontSize={14 * px} textAnchor="middle" style={{ pointerEvents: "none" }}>{l.name}</text>)}
-      <Marks markers={data?.markers ?? []} steps={data?.treeSteps ?? []} px={px} showMarkers={layers.markers} showSteps={layers.grown}/>
+      <Marks markers={data?.markers ?? []} steps={data?.treeSteps ?? []} px={px} kinds={markerKinds} areas={layers.markers} showSteps={layers.grown}/>
     </svg>
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}</> : "Point at the map for coordinates."}
-      {hover && hoverFloor >= 0 && <> · floor {where(hover)}: {counts(hoverFloor)}</>}</div>
-    {f && <div className="mapReadout"><strong>Floor {where(f)}</strong> · {counts(floor)}
-      {listed.length > LIST && <> · the {LIST} biggest drops listed</>}
+      {hover && hoverFloor >= 0 && <div>floor {where(hover)}</div>}
+      {hover && hoverFloor >= 0 && <div>{counts(hoverFloor)}</div>}</div>
+    {f && <div className="mapReadout"><strong>Floor {where(f)}</strong>
+      <div>{counts(floor)}{listed.length > LIST && <> · top {LIST} shown</>}</div>
       <div className="techSeenList" style={{ marginTop: 8 }}>
         {listed.slice(0, LIST).map(({ p, dir }) => {
           const other = data!.floors[dir === "out" ? p.to : p.from];
@@ -305,10 +323,12 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
         {listed.length === 0 && <span className="muted">No ultra pairs {direction === "out" ? "from" : direction === "in" ? "onto" : "from or onto"} this floor.</span>}
       </div></div>}
     {sel && <div className="mapReadout"><strong>Engine ultra at {sel.x.toFixed(1)}, {sel.y.toFixed(1)}</strong>
-      {" "}· {sel.shift ? <>origin shift: the world moved under a stale lastHyperY (real drop {sel.drop.toFixed(1)} u)</> : <>drop {sel.drop.toFixed(1)} u</>} · hyper {sel.hyper} of the chain · second dash touched down at {sel.landX.toFixed(1)}
-      {" "}· launch {sel.fromX.toFixed(1)}, {sel.fromY.toFixed(1)} going {sel.side > 0 ? "right" : "left"}
-      {" "}· inputs (input ticks): stand 3, hop, dash {sel.side > 0 ? "↘" : "↙"} {sel.delay} later with jump on dash frame {sel.jump} held {sel.hold}
-      {sel.gap > 0 && <>, second dash {sel.gap} after the first with jump on dash frame {sel.jump2}</>}</div>}
+      <div>{sel.shift ? <>origin shift · real drop {sel.drop.toFixed(1)} u</> : <>drop {sel.drop.toFixed(1)} u</>} · hyper {sel.hyper} of the chain</div>
+      <div>launch {sel.fromX.toFixed(1)}, {sel.fromY.toFixed(1)} going {sel.side > 0 ? "right" : "left"}</div>
+      <div>second dash landed at {sel.landX.toFixed(1)}</div>
+      <div>inputs (ticks): stand 3, hop, dash {sel.side > 0 ? "↘" : "↙"} +{sel.delay}</div>
+      <div>jump on dash frame {sel.jump}, hold {sel.hold}</div>
+      {sel.gap > 0 && <div>second dash +{sel.gap}, jump on dash frame {sel.jump2}</div>}</div>}
   </div>;
 }
 

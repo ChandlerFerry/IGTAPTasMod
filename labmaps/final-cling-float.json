@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "id": "final-cling-float",
+  "name": "Final-cling float: last cling on moss, refill on metal, float up the chimney",
+  "tech": "final-cling-float",
+  "techNote": "A chimney: a mossy wall (tag Moss, x 80-120) and a metal one (Ground, x 172-212), 52 u apart, both up to y 400. The dot starts in the air against the moss with no wall jumps left. Its first cling there is the last one (outOfWallJumpsCling: isFinalWallClingActive on, 0.7 s, Velocity.y 0) and the moss refills nothing; turning right puts the metal wall inside the wall rays at once, and that cling refills the wall jumps (touchedSolidGround) with the flag still on. The wall jump off the metal then rises at 730 u/s with no gravity until the 0.7 s run out, out of the chimney and up to the finish box, far above anything a wall jump climb up the chimney reaches.",
+  "category": "WJ",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [300, 20], "size": [800, 40], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [100, 250], "size": [40, 300], "layer": "Ground", "tag": "Moss" },
+    { "kind": "box", "at": [192, 250], "size": [40, 300], "layer": "Ground", "tag": "Ground" }
+  ],
+  "start": {
+    "x": 145.5,
+    "y": 300,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 0
+    }
+  },
+  "finish": [146, 900, 400, 60],
+  "maxTicks": 150,
+  "trainer": "final-cling-float"
+}

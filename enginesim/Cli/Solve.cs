@@ -29,7 +29,8 @@ namespace IGTAP.EngineSim.Cli
             bool guide = args.Contains("--guide");
             double guideWeight = Option(args, "--guide-weight", 1.0);
             int rng = Option(args, "--rng", 0);
-            if (guide) DistanceField.Enabled = true;
+            string logJson = Option(args, "--log-json", (string)null);
+            if (logJson != null) File.WriteAllText(logJson, "");
             var seedPaths = new List<string>();
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--seed") seedPaths.Add(args[i + 1]);
             OfflineSolver.ForcedPath forced = CliBoxes(args);
@@ -41,6 +42,8 @@ namespace IGTAP.EngineSim.Cli
             string caps = header.GetProperty("capabilities").GetString();
             List<string> optional = Optional(args, course, caps);
             AddStandingPaths(forced, course, caps, optional);
+            guide |= forced.Guide;
+            if (guide) DistanceField.Enabled = true;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             foreach (string path in seedPaths)
                 using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 }))
@@ -57,7 +60,8 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null)) : null;
+            TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null),
+                cacheFile: Option(args, "--tech-cache", (string)null)) : null;
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
@@ -67,7 +71,8 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
-            var humanize = new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
+            Humanize.Background humanize = args.Contains("--no-humanize") ? null
+                : new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;
@@ -75,7 +80,10 @@ namespace IGTAP.EngineSim.Cli
                 WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(time, runTicks, inputs);
-                humanize.Set(file, inputs);
+                humanize?.Set(file, inputs);
+                // Raised under the solver's lock, so the appends never interleave.
+                if (logJson != null)
+                    File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how }) + "\n");
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
@@ -102,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
             }
             SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
-            humanize.Finish();
+            humanize?.Finish();
             Console.WriteLine("Done. Best " + solver.Shared.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s");
             return 0;
         }
@@ -135,11 +143,22 @@ namespace IGTAP.EngineSim.Cli
             return forced;
         }
 
+        // The temp file is per process: runs sharing a file (the loop pieces) collided on one temp name.
         internal static void WriteShared(string path, string contents)
         {
-            string temp = path + ".tmp";
+            string temp = path + "." + Environment.ProcessId + ".tmp";
             File.WriteAllText(temp, contents);
             Replace(temp, path);
+        }
+
+        /// <summary>An exclusive lock on path + ".lock" across processes, held until disposed.</summary>
+        internal static FileStream Lock(string path)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
+                catch (IOException) when (attempt < 1000) { Thread.Sleep(10); }
+            }
         }
 
         internal static void Replace(string temp, string path)
@@ -199,6 +218,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonElement rule in matching)
             {
                 AddBoxes(standing, rule);
+                if (rule.TryGetProperty("guide", out JsonElement guide) && guide.GetBoolean()) standing.Guide = true;
                 if (rule.TryGetProperty("optional", out JsonElement optional))
                     foreach (JsonElement block in optional.EnumerateArray())
                     {
@@ -501,7 +521,12 @@ namespace IGTAP.EngineSim.Cli
                     using JsonDocument r = JsonDocument.Parse(reply);
                     if (!r.RootElement.TryGetProperty("saved", out JsonElement saved))
                     {
-                        if (!reply.Contains("loading") && !reply.Contains("Stop playback")) return;
+                        if (!reply.Contains("loading") && !reply.Contains("Stop playback"))
+                        {
+                            if (!reply.Contains(" category; it "))
+                                Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s as {target.Course}_{caps} not judged: {reply}");
+                            return;
+                        }
                         Thread.Sleep(2000);
                         continue;
                     }
@@ -510,7 +535,11 @@ namespace IGTAP.EngineSim.Cli
                         Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s also saved as {target.Course}_{caps}'s farm route");
                     return;
                 }
-                catch (Exception) { return; }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {time:0.00}s as {target.Course}_{caps} not judged: {ex.GetBaseException().Message}");
+                    return;
+                }
             }
         }
 
