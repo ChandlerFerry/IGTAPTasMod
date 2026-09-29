@@ -136,6 +136,7 @@ namespace IGTAP.EngineSim.Cli
             _repairMinutes = _repairMax;
             // Windows run side by side, each on a few threads, rather than one window on every thread.
             _parallel = Math.Max(1, Solve.Option(args, "--parallel", Math.Max(1, _threads / 4)));
+            _stages = Math.Clamp(Solve.Option(args, "--stages", 4), 0, 4);
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _autoLog = Path.Combine(dir, "fulltas", _name + ".auto.jsonl");
             _refsFile = Path.Combine(dir, "fulltas", _name + ".auto-refs.json");
@@ -151,6 +152,15 @@ namespace IGTAP.EngineSim.Cli
             Route start = _best;
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 refs = args.Where((a, i) => i > 0 && args[i - 1] == "--ref").ToArray() });
+            if (_stages >= 1)
+            {
+                _lib = new StateLibrary(_goals, Solve.Option(args, "--library-runs", 150));
+                double t0 = CpuSeconds();
+                TraceRun(_best.Inputs, "the starting best");
+                var (fast, median) = Chaining(_best.Inputs);
+                Log($"auto: goal-state library: the starting best traced in {CpuSeconds() - t0:0.0} CPU s ({_lib.Describe()}); chaining: {fast} of {_goals} goal touches at 600+ u/s, median {median:0} u/s");
+                _chain0 = (fast, median);
+            }
             Collect(_best, "the starting best");
             if (!_fresh) LoadRefs();
             for (int i = 1; i < args.Length - 1; i++)
@@ -196,7 +206,7 @@ namespace IGTAP.EngineSim.Cli
                 else RunWindows(batch);
                 if (_pullNo % 8 < batch.Count) PrintArms();
                 // The waypoint study, once, after a quarter of the budget: report-only (the run's goals are never edited).
-                if (!ablated && _clock.Elapsed.TotalMinutes >= _minutes / 4)
+                if (!ablated && _stages == 0 && _clock.Elapsed.TotalMinutes >= _minutes / 4)
                 {
                     ablated = true;
                     Ablations();
@@ -212,12 +222,19 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto: lever {g.Key}: {g.Sum(a => a.Pulls)} pulls, {g.Sum(a => a.Cpu):0} CPU s, {g.Sum(a => a.Gain):0} ticks gained"
                     + (g.Any(a => a.Gain > 0) ? " at goals " + string.Join(",", g.Where(a => a.Gain > 0).Select(a => $"{a.Goal}(-{a.Gain:0})")) : ""));
             Log("auto: pull order: " + string.Join(" ", _order));
+            if (_lib != null)
+            {
+                var (fast, median) = Chaining(_best.Inputs);
+                Log($"auto: chaining check: {fast} of {_goals} goal touches at 600+ u/s (median {median:0} u/s) on the final best, against {_chain0.fast} (median {_chain0.median:0} u/s) on the starting best; library {_lib.Describe()}");
+                AutoWrite(new { type = "chaining", start = _chain0.fast, startMedian = Math.Round(_chain0.median), end = fast, endMedian = Math.Round(median), library = _lib.Describe() });
+            }
             AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = _pullNo, cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                 curve = _curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
             SaveRefs();
         }
 
         int _parallel;
+        (int fast, float median) _chain0;
         double _repairCpuPerTick, _repairMax, _autoCpu0;
         TimeSpan _autoWall0;
         readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
@@ -324,7 +341,7 @@ namespace IGTAP.EngineSim.Cli
                     foreach (List<InputTick> f in Enumerable.Reverse(found).Take(5)) Collect(Evaluate(prefix.Concat(f).ToList()), how);
                     // The merge re-finds the goals after goal limit from these finds itself: a graft bridge from there would repeat it.
                     _grafted.Add((how, j.limit));
-                    try { Merge($"faster through goals {j.k}-{j.limit} ({j.arm.Lever}, auto)", _best, PrefixAt(_best, j.k), j.limit, found); }
+                    try { MergeAuto($"faster through goals {j.k}-{j.limit} ({j.arm.Lever}, auto)", _best, PrefixAt(_best, j.k), j.limit, found); }
                     catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException || ex is NullReferenceException || ex is IndexOutOfRangeException)
                     {
                         Log($"auto: merge of goals {j.k}-{j.limit} failed: {ex.GetBaseException().Message}");
@@ -361,7 +378,7 @@ namespace IGTAP.EngineSim.Cli
             }
             if (gain > 0 || _refsChanged)
             {
-                if (gain > 0) BuildModel(); else Refresh();
+                if (gain > 0) { BuildModel(); if (_lib != null) TraceRun(_best.Inputs, $"new best by {arm.Lever}@{arm.Goal}"); } else Refresh();
                 if (_refsChanged) SaveRefs();
                 _refsChanged = false;
             }
@@ -492,7 +509,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (List<InputTick> f in Enumerable.Reverse(found).Take(5)) Collect(Evaluate(prefix.Concat(f).ToList()), how);
             // The merge re-finds the goals after goal limit from these finds itself: a graft bridge from there would repeat it.
             _grafted.Add((how, limit));
-            Merge($"faster through goals {k}-{limit} (auto)", best, prefixLength, limit, found);
+            MergeAuto($"faster through goals {k}-{limit} (auto)", best, prefixLength, limit, found);
             return $"goals {k}-{limit}: {found.Count} faster through goal {limit}";
         }
 
@@ -590,7 +607,7 @@ namespace IGTAP.EngineSim.Cli
             string how = $"plan of goal {k} #{_pullNo}";
             foreach (List<InputTick> f in found) Collect(Evaluate(prefix.Concat(f).ToList()), how);
             _grafted.Add((how, k));
-            Merge($"plan of goal {k} (auto)", best, prefixLength, k, found);
+            MergeAuto($"plan of goal {k} (auto)", best, prefixLength, k, found);
             return $"plan goal {k}: {finishes.Count} finishes, fastest {finishes.Min(f => f.RunTicks) - w.StartPhysics} ticks against the best's {w.OldWindowPhysics}";
         }
 

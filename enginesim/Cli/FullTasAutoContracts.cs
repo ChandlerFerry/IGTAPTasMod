@@ -84,7 +84,7 @@ namespace IGTAP.EngineSim.Cli
         (IReadOnlyList<Segment> path, long end) ShortestPath();
         /// <summary>States filed at goal touches of this goal (1-based).</summary>
         IReadOnlyList<LibState> StatesAt(int goal);
-        /// <summary>The known end tick from a state (the fastest way on from it), long.MaxValue when none reaches the end.</summary>
+        /// <summary>Physics ticks from the state to the run's end on the fastest known way on from it (through exact joins), long.MaxValue when none reaches the end.</summary>
         long ToEnd(int stateId);
         int Runs { get; }
     }

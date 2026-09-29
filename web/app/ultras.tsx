@@ -300,7 +300,7 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     {failure && <p className="mapFailure">{failure}</p>}
     {data && !data.pairs && <p className="mapFailure">This result predates the floor pairs: Recompute.</p>}
     <div className="mapLayers">
-      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line (slider)"], ["labels", "Course + bonus labels"],
+      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree"], ["shapes", "Collision shapes"], ["grown", "Tree ground + purchase order"], ["markers", "Gates, checkpoints, teleporters, refills"], ["floors", "Hyper floors"], ["rebase", "Origin-shift line"], ["next", "Next shift line"], ["labels", "Course + bonus labels"],
         ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof Layers, string])] as [keyof Layers, string][]).filter(([key]) => art || (key !== "art" && key !== "background" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={world} onPick={setWorld} className="passLoop"/>}

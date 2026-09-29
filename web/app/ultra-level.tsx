@@ -169,7 +169,7 @@ export type MarkerShape = "square" | "small" | "diamond" | "circle" | "star";
 export const MARKERS: Record<string, { color: string; text: string; shape: MarkerShape }> = {
   start: { color: "#3ddc97", text: "Start gate", shape: "square" },
   end: { color: "#ff6b6b", text: "End gate", shape: "square" },
-  exit: { color: "#90a4ae", text: "Course exit (stops the timer, no finish)", shape: "square" },
+  exit: { color: "#90a4ae", text: "Course exit", shape: "square" },
   checkpoint: { color: "#4fc3f7", text: "Checkpoint", shape: "small" },
   teleporter: { color: "#b388ff", text: "Teleporter", shape: "diamond" },
   dashRefill: { color: "#ff80ab", text: "Dash refill", shape: "circle" },
@@ -179,14 +179,14 @@ export const MARKERS: Record<string, { color: string; text: string; shape: Marke
 // Buy boxes (Marker.box) by category: a glance says which kind it is. bonusUnique vs bonusBoost is what the free
 // reward gives — something unique (an ability, a mechanic unlock) or just cash or a stat.
 export const BOX_KINDS: Record<BoxCategory, { color: string; text: string; shape: MarkerShape }> = {
-  secret: { color: "#ffd740", text: "Secret (a bonus's hidden reward box)", shape: "star" },
-  bonusUnique: { color: "#66bb6a", text: "Bonus reward — unique unlock (good)", shape: "diamond" },
-  bonusBoost: { color: "#b0bec5", text: "Bonus reward — cash/stat boost (weak)", shape: "diamond" },
-  achievement: { color: "#ce93d8", text: "Achievement box (grants an achievement)", shape: "star" },
+  secret: { color: "#ffd740", text: "Secret", shape: "star" },
+  bonusUnique: { color: "#66bb6a", text: "Bonus reward — unique unlock", shape: "diamond" },
+  bonusBoost: { color: "#b0bec5", text: "Bonus reward — cash/stat boost", shape: "diamond" },
+  achievement: { color: "#ce93d8", text: "Achievement box", shape: "star" },
   movement: { color: "#29b6f6", text: "Movement/ability upgrade", shape: "diamond" },
   tree: { color: "#c5a26b", text: "Tree upgrade", shape: "square" },
   unlock: { color: "#ff7043", text: "One-off unlock", shape: "square" },
-  course: { color: "#90caf9", text: "Course upgrade (repeatable)", shape: "small" },
+  course: { color: "#90caf9", text: "Course upgrade", shape: "small" },
 };
 
 // A box's cost as its label shows it ("300 W", "free"); big numbers in exponent form.

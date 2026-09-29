@@ -843,7 +843,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
-      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree (grown)"], ["shapes", "Collision shapes"], ["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"],
+      {([["art", "Game art"], ["background", "Background art"], ["tree", "Tree"], ["shapes", "Collision shapes"], ["explored", "Explored"], ["boxes", "Forced-path boxes"], ["markers", "Gates, checkpoints, teleporters, refills"],
         ...Object.entries(BOX_KINDS).map(([k, m]) => [`box:${k}`, `Buy box: ${m.text}`] as [keyof MapLayers, string])] as [keyof MapLayers, string][]).filter(([key]) => art || (key !== "art" && key !== "background" && key !== "tree" && key !== "shapes")).map(([key, label]) =>
         <label key={key} className="passLoop"><input type="checkbox" checked={layers[key]} onChange={() => toggle(key)}/>{label}</label>)}
       {data?.states && <StatePicker states={data.states} pick={worldState} onPick={setWorldState} className="passLoop"/>}
