@@ -64,12 +64,20 @@ namespace IGTAP.EngineSim
         public readonly string Capabilities;
         readonly Func<Simulation> _createSimulation;
         readonly List<List<InputTick>> _seeds;
-        readonly Memory _memory;
+        // The loaded archive (Memory) is not kept: its runs count and plateau routes are, and its sources only until each
+        // worker has restored its share (a resident 150k-cell archive held 3 GB of inputs after its cells were replaced).
+        readonly long _priorRuns;
+        readonly List<List<InputTick>> _plateaus;
+        List<Memory.Source> _loaded;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
-        public long Runs, Ticks, Finishes, Drifts, Splices, Grafts, CornerGrafts, ClipGrafts, ClipsLanded, SetupGrafts, SetupsLanded, GateTaps, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
-        /// <summary>Grafts made from mined tech demos (0 with --no-tech-grafts).</summary>
-        public long TechGrafted;
+        public long Runs, Ticks, Finishes, Drifts, Splices, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
+        /// <summary>Grafts made from mined tech demos (0 with --no-tech-grafts), and those at a per-step tech contact
+        /// (ContactLog.Step's kinds: a spring hit, an air jump, a dash jump, a wall boost, a pause, a step-up, a spike, a slant).</summary>
+        public long TechGrafted, TechGraftedAtStep;
+        /// <summary>Mined grafts made by a chain (PatternChain), and the chain grafts whose run was checked for / showed the
+        /// contact the demo showed after it (a wall clip's landing).</summary>
+        public long ChainGrafts, ExpectChecks, ExpectsMet;
         /// <summary>The tech demos mined into graft patterns (null: --no-tech-grafts), offered at the same contact kinds.</summary>
         public readonly TechGrafts Mined;
         public int MostWaypoints;
@@ -83,11 +91,18 @@ namespace IGTAP.EngineSim
         float _maxTimedRank;
         int _minProgress = int.MaxValue, _maxProgress = -1;
         float[] _near;
-        // Each worker's share of half the memory for its states, divided by what its captures allocate (measured: a state
-        // after a FloatingOrigin rebase or in a big economy is several times a plain course's).
+        // The memory the solver keeps is half of AvailableMemory: each worker's share of half of that for its states, divided
+        // by what its captures allocate (measured: a state after a FloatingOrigin rebase or in a big economy is several times a
+        // plain course's), and a quarter for the archive. The rest of the heap is the worlds, the replays and the GC's room.
         long _stateBudget;
         public int StatesPerWorker { get; private set; }
         int _cells;
+        // The archive's bytes, counted as cells are filed, replaced and evicted (Count), its budget, what a cell costs beyond
+        // its inputs, and the eviction passes made (a worker rebuilds its draw pools after one).
+        long _archiveBytes, _archiveBudget, _cellBytes;
+        int _evictions;
+        public long EvictedCells;
+        readonly object _evicting = new object();
         /// <summary>A Full-TAS run's stored goal-boundary states, resumed instead of replaying a cell's prefix over them (null: none).</summary>
         public SnapshotIndex Resume;
         /// <summary>No quick restarts: no mutation adds or moves one (a Full-TAS reset study: the way on that keeps the momentum).
@@ -95,11 +110,14 @@ namespace IGTAP.EngineSim
         public bool NoResets;
         /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
         public long GoalResumes;
+        /// <summary>Mined patterns drawn per grafted contact.</summary>
+        public int MinedDraws = 1;
 
         public string ArchiveStatus()
         {
             long hits = Interlocked.Read(ref StateHits), replays = Interlocked.Read(ref StateReplays), goals = Interlocked.Read(ref GoalResumes);
-            return $"archive {_cells} cells, states {(hits + replays == 0 ? 100 : 100 * hits / (hits + replays))}% cached ({StatesPerWorker} per worker), "
+            return $"archive {_cells} cells ({Interlocked.Read(ref _archiveBytes) >> 20} MB" + (_evictions == 0 ? "" : $", {Interlocked.Read(ref EvictedCells)} evicted") + "), "
+                + $"states {(hits + replays == 0 ? 100 : 100 * hits / (hits + replays))}% cached ({StatesPerWorker} per worker), "
                 + $"{Interlocked.Read(ref ReplayTicks)} replay ticks" + (goals == 0 ? "" : $", {goals} from stored goal states");
         }
 
@@ -122,7 +140,9 @@ namespace IGTAP.EngineSim
             _createSimulation = createSimulation;
             Capabilities = capabilities;
             _seeds = seeds;
-            _memory = memory;
+            _priorRuns = memory?.Runs ?? 0;
+            _plateaus = memory?.Plateau ?? new List<List<InputTick>>();
+            _loaded = memory?.Sources;
             _path = path != null && !path.IsEmpty ? path : null;
             VisitCell = visitCell;
             GuideWeight = guide;
@@ -137,16 +157,20 @@ namespace IGTAP.EngineSim
         {
             var threads = new Thread[workers];
             _workers = new Worker[workers];
-            _stateBudget = AvailableMemory() / 2 / workers;
+            long available = AvailableMemory();
+            _stateBudget = available / 2 / workers;
             StatesPerWorker = (int)Math.Max(512, _stateBudget / Worker.StartStateBytes);
-            _partitions = Enumerable.Range(0, workers).Select(i => _memory == null ? new List<Memory.Source>()
-                : _memory.Sources.Where((s, k) => k % workers == i).ToList()).ToArray();
+            _archiveBudget = available / 4;
+            _cellBytes = CellBytes(workers);
+            _partitions = Enumerable.Range(0, workers).Select(i => _loaded == null ? new List<Memory.Source>()
+                : _loaded.Where((s, k) => k % workers == i).ToList()).ToArray();
+            _loaded = null;
             for (int i = 0; i < workers; i++)
             {
                 int index = i;
                 int seed = Rng != 0 ? Rng + i : Environment.TickCount * 31 + i * 7919;
                 var seeds = i == 0 ? _seeds : new List<List<InputTick>>();
-                List<InputTick> plateau = _memory != null && _memory.Plateau.Count > 0 ? _memory.Plateau[i % _memory.Plateau.Count] : null;
+                List<InputTick> plateau = _plateaus.Count > 0 ? _plateaus[i % _plateaus.Count] : null;
                 threads[i] = new Thread(() =>
                 {
                     var worker = new Worker(this, index, _createSimulation(), seed, seeds, _partitions[index], plateau);
@@ -204,7 +228,7 @@ namespace IGTAP.EngineSim
                 bool better = rank < c.rank || (rank == c.rank && length < c.length);
                 cells[key] = better ? (source, length, c.picks + picks, rank) : (c.source, c.length, c.picks + picks, c.rank);
             }
-            var memory = new Memory { Runs = (_memory?.Runs ?? 0) + Interlocked.Read(ref Runs) };
+            var memory = new Memory { Runs = _priorRuns + Interlocked.Read(ref Runs) };
             foreach (var pair in _archive) Add(pair.Key, pair.Value.Source, pair.Value.Length, pair.Value.Picks, pair.Value.Rank);
             for (int i = 0; i < _workers.Length; i++)
             {
@@ -298,6 +322,65 @@ namespace IGTAP.EngineSim
             /// <summary>The worker that last kept a state for it (filed it, or replayed to it): the one whose own draws it is in.
             /// Written by any worker, read racily by the rest; a stale read only puts a draw in the other pool.</summary>
             public int Owner;
+            /// <summary>Replaced or evicted from the archive: an eviction pass takes it out of its descendants' Parent chains, so
+            /// it and its inputs can go.</summary>
+            public volatile bool Removed;
+        }
+
+        /// <summary>What an archive cell costs beyond its inputs: the Cell, its dictionary node and bucket, and its slots in each
+        /// worker's four draw pool arrays (Pool: the cells and their cumulative weights, the own ones and theirs; grown by
+        /// doubling, so ~1.5 slots a cell).</summary>
+        static long CellBytes(int workers) { return 80 + 56 + 8 + workers * 4 * 12; }
+
+        /// <summary>Counts a cell into (<paramref name="sign"/> 1) or out of (-1) the archive's bytes: the cell, and its inputs
+        /// while it is their first cell in the archive (a run's cells share its inputs).</summary>
+        void Count(Cell cell, int sign)
+        {
+            long bytes = _cellBytes;
+            int filed = Interlocked.Add(ref cell.Source.Cells, sign);
+            if (sign > 0 ? filed == 1 : filed == 0) bytes += cell.Source.Bytes;
+            Interlocked.Add(ref _archiveBytes, sign * bytes);
+        }
+
+        /// <summary>The archive is over its budget: an eviction is due (<see cref="Evict"/>).</summary>
+        bool ArchiveFull => Volatile.Read(ref _archiveBytes) > _archiveBudget;
+
+        /// <summary>
+        /// Takes the archive back to 7/8 of its budget: removes its least useful cells, those with the lowest pick weight
+        /// (<paramref name="weight"/>: the calling worker's, which is also what its state eviction weighs), and then takes the
+        /// removed cells (these and the ones replaced since the last pass) out of every live cell's Parent chain, so nothing
+        /// but a worker's state or draw pool keeps them. One worker evicts at a time; the others carry on filing.
+        /// </summary>
+        void Evict(Func<long, Cell, double> weight)
+        {
+            if (!Monitor.TryEnter(_evicting)) return;
+            try
+            {
+                if (!ArchiveFull) return;
+                var cells = new List<(double weight, long key, Cell cell)>(_cells + 64);
+                foreach (var pair in _archive) cells.Add((weight(pair.Key, pair.Value), pair.Key, pair.Value));
+                cells.Sort((a, b) => a.weight.CompareTo(b.weight));
+                long target = _archiveBudget / 8 * 7;
+                int removed = 0;
+                foreach (var (_, key, cell) in cells)
+                {
+                    if (Volatile.Read(ref _archiveBytes) <= target) break;
+                    if (!_archive.TryRemove(new KeyValuePair<long, Cell>(key, cell))) continue;
+                    cell.Removed = true;
+                    Count(cell, -1);
+                    Interlocked.Decrement(ref _cells);
+                    removed++;
+                }
+                Interlocked.Add(ref EvictedCells, removed);
+                foreach (var pair in _archive)
+                {
+                    Cell parent = pair.Value.Parent;
+                    while (parent != null && parent.Removed) parent = parent.Parent;
+                    pair.Value.Parent = parent;
+                }
+                Interlocked.Increment(ref _evictions);
+            }
+            finally { Monitor.Exit(_evicting); }
         }
 
         static bool Earlier(float rank, int length, Cell than) { return than.Rank > rank || (than.Rank == rank && than.Length > length); }
@@ -310,10 +393,15 @@ namespace IGTAP.EngineSim
                 {
                     if (!_archive.TryAdd(key, cell)) continue;
                     Interlocked.Increment(ref _cells);
+                    Count(cell, 1);
                     return true;
                 }
                 if (!Earlier(cell.Rank, cell.Length, old)) return false;
-                if (_archive.TryUpdate(key, cell, old)) return true;
+                if (!_archive.TryUpdate(key, cell, old)) continue;
+                old.Removed = true;
+                Count(cell, 1);
+                Count(old, -1);
+                return true;
             }
         }
 
@@ -402,28 +490,6 @@ namespace IGTAP.EngineSim
             }).ToList();
         }
 
-        // Per contact: the graft's first tick relative to it (lo..hi), the plain inputs and the omnidash ones (null: all).
-        // Also the planner's primitive windows (Planner).
-        internal static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> GraftsAt = new Dictionary<Contact, (int, int, string[], string[])>
-        {
-            [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
-            [Contact.LeftGround] = (-4, 3, new[] { "jump", "jump", "dashjump", "dashjump", "backdash", "primed" },
-                new[] { "wavedash", "ultra", "superground", "wavejump", "aim" }),
-            [Contact.Landed] = (-4, 1, new[] { "jump", "dashjump", "dashjump", "primed", "primed", "dash" },
-                new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
-            [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
-            [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
-            [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
-            [Contact.WallBehindLeft] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
-            [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
-            [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
-            [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
-            [Contact.NearGateLeft] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
-            [Contact.NearGateRight] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
-            [Contact.WallAboveLeft] = (0, 0, new[] { "rest" }, new[] { "rest" }),
-            [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
-        };
-
         sealed class Worker
         {
             internal const float CellSize = 48f;
@@ -467,6 +533,10 @@ namespace IGTAP.EngineSim
             Cell[] _pool = Array.Empty<Cell>(), _ownPool = Array.Empty<Cell>();
             double[] _poolWeights = Array.Empty<double>(), _ownWeights = Array.Empty<double>();
             int _poolCount, _ownCount, _poolPicks;
+            // The archive's eviction passes as of the last Pool: an eviction since makes it rebuild them without the cells gone.
+            int _poolEvictions;
+            // The archive's eviction weighs cells as this worker's state eviction does (Weight, no guide closeness).
+            readonly Func<long, Cell, double> _evictWeight;
             double _ownShare;
             readonly bool _dash, _omni;
             float _best = float.PositiveInfinity;
@@ -547,6 +617,7 @@ namespace IGTAP.EngineSim
                 _owner = owner;
                 _index = index;
                 _afterTick = AfterTick;
+                _evictWeight = (key, cell) => Weight(key, cell, 0f);
                 _onStep = OnStep;
                 _sim = sim;
                 _store = new SnapshotStore(sim);
@@ -560,6 +631,8 @@ namespace IGTAP.EngineSim
                 _omni = caps.Omni;
                 _dash = caps.Dash;
                 _goalMode = sim.Goals != null;
+                // A run that may quick-restart (a Full-TAS window, resets allowed) also grafts the mined windows that restart.
+                _resets = _goalMode && !owner.NoResets;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
                 {
                     _guide = DistanceField.For(sim);
@@ -589,7 +662,13 @@ namespace IGTAP.EngineSim
                     int generation = _owner._exportGeneration;
                     if (Exported != generation) HandOver(generation);
                     if (_seeds.Count > 0) { Try(_seeds.Dequeue(), "seed"); continue; }
-                    if (_restore.Count > 0) { Restore(_restore.Dequeue()); _spliceScan |= _restore.Count == 0; continue; }
+                    if (_restore.Count > 0)
+                    {
+                        Restore(_restore.Dequeue());
+                        // Its share restored, the loaded sources can go: the cells filed from them hold what they still need.
+                        if (_restore.Count == 0) { _spliceScan = true; _owner._partitions[_index] = new List<Memory.Source>(); }
+                        continue;
+                    }
                     if (_plateau != null) { Try(_plateau, "plateau"); _plateau = null; continue; }
                     if (_spliceScan && _bestInputs != null) { QueueSplices(); _spliceScan = false; }
                     if (_spliceQueue.Count > 0)
@@ -669,7 +748,7 @@ namespace IGTAP.EngineSim
 
             void Explore()
             {
-                if (_poolPicks <= 0 || _owner._cells > _poolCount + _poolCount / 8 + 16) Pool();
+                if (_poolPicks <= 0 || _owner._cells > _poolCount + _poolCount / 8 + 16 || _poolEvictions != _owner._evictions) Pool();
                 if (_poolCount == 0) { Try(RandomBurst(new List<InputTick>()), "explore"); return; }
                 Cell chosen = Draw();
                 for (int draw = 1; draw < CachedDraws && !_states.ContainsKey(chosen); draw++) chosen = Draw();
@@ -682,13 +761,19 @@ namespace IGTAP.EngineSim
                 _spliceAt = -1;
                 _fromCell = chosen;
                 List<InputTick> spliceInto = _bestInputs;
-                _recordContacts = true;
+                // Contacts are graft sites only for the mined windows: with --no-tech-grafts there is nothing to record.
+                bool grafts = _owner.Mined != null;
+                _recordContacts = grafts;
                 Try(inputs, "explore", from);
                 _recordContacts = false;
-                if (_died) _contacts.Add((_endTick, Contact.Died));
                 int lo = Math.Max(chosen.Length, from.Tick + 1);
-                _log.DropBefore(lo);
-                (int tick, Contact kind)? graft = _contacts.Count > 0 && _rng.NextDouble() < GraftRate ? _contacts[_rng.Next(_contacts.Count)] : null;
+                (int tick, Contact kind)? graft = null;
+                if (grafts)
+                {
+                    if (_died) _contacts.Add((_endTick, Contact.Died));
+                    _log.DropBefore(lo);
+                    if (_contacts.Count > 0 && _rng.NextDouble() < GraftRate) graft = GraftContact();
+                }
                 _splicing = false;
                 // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
                 if (_spliceAt > chosen.Length && ReferenceEquals(spliceInto, _bestInputs)) Splice(inputs, _spliceAt, _spliceBestTick, from);
@@ -697,177 +782,105 @@ namespace IGTAP.EngineSim
             }
 
             // Tech lives on the ticks where the player's contact changes, and a random burst puts its jump and dash anywhere in
-            // its chunks, so it seldom lands them there. An explore run's contacts are recorded (it leaves the ground at a
-            // ledge, lands, touches or leaves a wall, dies), and a graft replaces the run from one of them with an input made
-            // for it, a few ticks around it, then GraftCoast ticks of stick: a ledge gets the coyote jump, a super off its edge,
-            // the backwards dash-jump, a hyper, ultra or super ground bounce; a landing the buffered jump, the buffered dash's
-            // superjump, a jump held into a dash, ground and wave bounces; a wall the wall jump, superbounce, wall dash; a wall
-            // left the wall coyote jump; a death (mostly spikes past their grace) all of the plain ones, 1 to 7 ticks early.
-            // A corner hyper: a down-diagonal dash that landed (canHyper, flat) and slid off the floor's edge with onGround still
-            // up on coyote frames. Its contact is the tick that dash was pressed, and the graft presses it again a few ticks
-            // either way with a later jump, so the hyper lands on the corner and jumps in coyote time past the edge, where a
-            // landing past the corner can sit below lastHyperY - 4 (the game's ultra).
-            // A wall behind: in the air, not dashing, Velocity.y under 580 (a jump cut brings it to 50), a wall within reach of
-            // the back edge at the ground rays' height (WallBehindLeft: the wall is at -x). The graft is the wall clip: a light
-            // flick toward the wall (release on it, cutting a held jump), the jump pressed with a light flick back the next
-            // tick, then a hold, so a second clip off the same wall can follow. A wall ahead (in the air, not dashing, a wall
-            // within 12 u of the front edge) sets one up: the stick turns away from the wall for a few ticks and then rests,
-            // which leaves the wall behind a player drifting off it. A start gate in reach while the timer is off is the late
-            // gate touch: a tap toward the gate and back, as late as the route can leave it, so the timer starts only then.
-            // (The contacts themselves are the shared ContactLog's: the same detection the mined tech grafts replay demos with.)
+            // its chunks, so it seldom lands them there. An explore run's contacts are recorded (ContactLog: it leaves the ground
+            // at a ledge, lands, touches or leaves a wall, dies; a flat hyper dash slides off a corner; a wall behind, ahead or
+            // above the back; the start gate in reach before the timer; and the per-step kinds), and a graft replaces the run from
+            // one of them with a mined tech demo's input window at the same contact kind (TechGrafts): the Tech tab's demos are
+            // the graft library, with the same detection replayed over them.
             readonly ContactLog _log = new ContactLog();
             readonly ContactProbe _gate;
             List<(int tick, Contact kind)> _contacts => _log.Contacts;
             bool _recordContacts;
             const double GraftRate = .5;
-            const int GraftCoast = 40;
-
 
             void RecordContact(int tick) { _log.Tick(tick, _sim.Player, _gate.NearGate()); }
-
-
 
             // Every physics step of an explore run (a dash runs ticks with no input tick, which RecordContact never sees): the
             // input tick a dash was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.
             void RecordSlide() { _log.Slide((int)_sim.Engine.RunTicks, _sim.Player); }
 
-            void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
+            // The per-step tech contacts (ContactLog.Step: a spring hit, an air jump, a dash jump, a wall boost, a landing jumped
+            // out of at once, a pause, a step-up, a spike touched or left, an overhang or slope touched).
+            void RecordStep() { _log.Step(_sim); }
+
+            /// <summary>A contact of the run to graft at, uniformly among the kinds the mined tech windows offer at this run's
+            /// unlocks.</summary>
+            (int tick, Contact kind)? GraftContact()
             {
-                // Tech demos mined into grafts (TechGrafts): the demo's own input window around the same contact kind, jittered
-                // ±TechGrafts.Jitter ticks and filtered by the run's category unlocks, offered in addition to the hand-written
-                // graft below. Its mode names the tech, so a new best says which demo's window found it.
-                if (_owner.Mined is TechGrafts mined && mined.Pick(contact, _rng) is TechPattern pattern
-                    && TechGrafts.Compose(run, tick, _rng.Next(-TechGrafts.Jitter, TechGrafts.Jitter + 1), lo, pattern, out List<InputTick> tech))
-                {
-                    Try(tech, pattern.Mode, from);
-                    Interlocked.Increment(ref _owner.TechGrafted);
-                }
-                var (before, after, plain, omni) = GraftsAt[contact];
-                omni ??= OmniKinds;
-                int at = Math.Min(tick, run.Count) + _rng.Next(before, after + 1);
-                if (at < lo || at > run.Count) return;
-                List<InputTick> t = run.GetRange(0, at);
-                InputTick last = t[at - 1];
-                float side = last.x != 0f ? Math.Sign(last.x) : _rng.NextDouble() < .5 ? -1f : 1f;
-                if (_rng.NextDouble() < .3) side = -side;
-                var coast = new InputTick { x = side, y = last.y };
-                for (int i = 0; i < GraftCoast; i++) t.Add(coast);
-                if (last.held) { InputTick r = t[at]; r.release = true; t[at] = r; }
-                // A corner hyper's contact is a dash press: only the corner re-timings fit it. A wall behind takes only the clip,
-                // a wall ahead only the turn away that sets one up, a wall above the back only the rest that rises to it, a start
-                // gate in reach only the tap that touches it.
-                bool clip = contact == Contact.WallBehindLeft || contact == Contact.WallBehindRight;
-                bool ahead = contact == Contact.WallAheadLeft || contact == Contact.WallAheadRight
-                    || contact == Contact.WallAboveLeft || contact == Contact.WallAboveRight;
-                bool gate = contact == Contact.NearGateLeft || contact == Contact.NearGateRight;
-                string kind = clip ? "wallclip" : ahead ? OneOf(plain) : gate ? "gatetap"
-                    : !_dash ? "jump" : _omni && (contact == Contact.CornerHyper || _rng.NextDouble() < .4) ? OneOf(omni) : OneOf(plain);
-                switch (kind)
-                {
-                    case "jump":
-                        Hop(t, at, OneOf(Holds));
-                        break;
-                    case "dash":
-                    case "dashjump":
-                    {
-                        InputTick d = t[at];
-                        d.dash = true;
-                        if (kind == "dashjump") d.dashJump = _rng.Next(1, 5);
-                        t[at] = d;
-                        break;
-                    }
-                    case "primed":
-                    {
-                        // Jump pressed first and held: the jump buffer is still up when the dash fires, so a dash that
-                        // touches ground (a corner's gap, a spike wall's ground rays) jumps out of it at once.
-                        int dash = at + _rng.Next(1, 7);
-                        Hop(t, at, dash - at + OneOf(DashHolds));
-                        InputTick d = t[dash]; d.dash = true; t[dash] = d;
-                        break;
-                    }
-                    case "superbounce":
-                        SuperBounce(t, at, side);
-                        break;
-                    case "backdash":
-                        BackDash(t, at, lo);
-                        break;
-                    case "wallclip":
-                        WallClip(t, at, contact == Contact.WallBehindLeft ? -1f : 1f);
-                        break;
-                    case "turnaway":
-                        TurnAway(t, at, contact == Contact.WallAheadLeft ? -1f : 1f, last.held, _rng.Next(1, 5));
-                        break;
-                    case "rest":
-                        TurnAway(t, at, contact == Contact.WallAboveLeft ? -1f : 1f, last.held, 0);
-                        break;
-                    case "gatetap":
-                        // The run rests from the contact to the tap (explore's burst would carry it off the spot), and one
-                        // contact tries several taps: only a 1-2 tick brush at the right height starts the timer.
-                        for (int variant = 1; variant < GateVariants; variant++)
-                        {
-                            List<InputTick> other = t.ToList();
-                            GateTap(other, at, contact == Contact.NearGateLeft ? -1f : 1f, last.held);
-                            Interlocked.Increment(ref _owner.GateTaps);
-                            ClipChain(other, -1, at, from, 0);
-                        }
-                        GateTap(t, at, contact == Contact.NearGateLeft ? -1f : 1f, last.held);
-                        break;
-                    default:
-                        Omni(t, at, lo, kind);
-                        break;
-                }
-                Interlocked.Increment(ref _owner.Grafts);
-                if (contact == Contact.CornerHyper) Interlocked.Increment(ref _owner.CornerGrafts);
-                if (gate) Interlocked.Increment(ref _owner.GateTaps);
-                if (!clip && !ahead && !gate) { Try(t, contact == Contact.CornerHyper ? "corner hyper" : "graft", from); return; }
-                if (ahead) Interlocked.Increment(ref _owner.SetupGrafts);
-                ClipChain(t, clip ? at : -1, clip ? -1 : at, from, 0);
+                int n = 0;
+                for (int i = 0; i < _contacts.Count; i++) if (_owner.Mined.Offers(_contacts[i].kind, _resets)) n++;
+                if (n == 0) return null;
+                int pick = _rng.Next(n);
+                for (int i = 0; i < _contacts.Count; i++)
+                    if (_owner.Mined.Offers(_contacts[i].kind, _resets) && pick-- == 0) return _contacts[i];
+                return null;
             }
 
-            // A wall clip or its set-up, then more clips in the same run: its run records its contacts, and a clip goes on the
-            // first wall behind after the last input made (the next one needs Velocity.y back under 580, or a set-up that drifted
-            // to a stop with the wall at its back). An explore cell keeps only the earliest arrival in its square, so the slow
-            // set-up next to a wall and the states between clips seldom survive to be explored from later; chaining finds a
-            // climb of several clips (Course 1 NONE's pillar and shelf: four) in one explore step.
-            void ClipChain(List<InputTick> t, int clipAt, int setupAt, SimSnapshot from, int depth)
+            // The demo's own input window around the same contact kind, placed and sampled as its graft spec says and filtered by
+            // the run's category unlocks. Its mode names the tech, so a new best says which demo's window found it.
+            void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
             {
-                if (clipAt >= 0) Interlocked.Increment(ref _owner.ClipGrafts);
-                _clipWatch = clipAt;
-                _setupWatch = setupAt;
-                _clipLanded = _setupLanded = false;
-                bool record = _recordContacts;
-                _recordContacts = depth < MaxClipChain;
-                Try(t, clipAt >= 0 ? "wall clip" : "wall clip setup", from);
-                _recordContacts = record;
-                bool landed = _clipLanded;
-                if (landed) Interlocked.Increment(ref _owner.ClipsLanded);
-                if (_setupLanded) Interlocked.Increment(ref _owner.SetupsLanded);
-                _clipWatch = _setupWatch = -1;
-                if (depth >= MaxClipChain || clipAt >= 0 && !landed) return;
-                int after = Math.Max(clipAt, setupAt) + 2;
-                foreach (var (tick, kind) in _contacts)
+                for (int draw = 0; draw < _owner.MinedDraws; draw++)
                 {
-                    if (tick < after || kind != Contact.WallBehindLeft && kind != Contact.WallBehindRight) continue;
-                    int at = Math.Min(tick, t.Count) + _rng.Next(0, 9);
-                    if (at >= t.Count || _rng.NextDouble() < .15) return;
-                    List<InputTick> next = t.GetRange(0, at);
-                    InputTick last = next[at - 1];
-                    // After the clip's hold the run drifts: on along the wall, off it, or back the way it came (Course 1 NONE
-                    // leaves the pillar's left face for the shelf's edge, 90 u away, in the second clip's rise).
-                    var coast = new InputTick { x = OneOf(Sticks), y = last.y };
-                    for (int i = 0; i < GraftCoast; i++) next.Add(coast);
-                    WallClip(next, at, kind == Contact.WallBehindLeft ? -1f : 1f);
-                    ClipChain(next, at, -1, from, depth + 1);
-                    return;
+                    if (_owner.Mined.Pick(contact, _rng, _resets) is not TechPattern pattern) break;
+                    if (contact >= Contact.SpringHitLeft) Interlocked.Increment(ref _owner.TechGraftedAtStep);
+                    MinedGraft(_owner.Mined, run, tick, lo, pattern, from, 0, null);
                 }
             }
-            const int MaxClipChain = 4;
-            int _clipWatch = -1, _setupWatch = -1;
-            bool _clipLanded, _setupLanded, _watchAir;
-            static readonly bool ClipLog = Environment.GetEnvironmentVariable("IGTAP_CLIPLOG") == "1";
+
+            // One mined graft at a contact: the pattern composed onto the run (its Tries times, each sampled anew) and run. A
+            // pattern with a chain (its own, else the one it was chained from) records its run's contacts, and the first contact of
+            // a chained kind at least 2 ticks after its placement gets the next graft, up to the chain's depth, 85% of the time;
+            // with an expected contact only when the run shows it where the demo did (the graft worked: a wall clip grounded the
+            // player). An explore cell keeps only the earliest arrival in its square, so the slow states between a chain's grafts
+            // (a set-up drifting to a stop by a wall, the rise between two clips) seldom survive to be explored from later: chaining
+            // finds a climb of several clips (Course 1 NONE's pillar and shelf: four) in one explore step.
+            void MinedGraft(TechGrafts mined, List<InputTick> run, int tick, int lo, TechPattern pattern, SimSnapshot from, int depth, PatternChain inherited,
+                (int lo, int hi)? shift = null)
+            {
+                PatternChain chain = pattern.Chain ?? inherited;
+                bool chaining = chain != null && depth < chain.Depth;
+                for (int attempt = 0; attempt < pattern.Tries; attempt++)
+                {
+                    if (!TechGrafts.Compose(run, tick, lo, pattern, _rng, out List<InputTick> t, out int placed, shift)) continue;
+                    Interlocked.Increment(ref _owner.TechGrafted);
+                    if (depth > 0) Interlocked.Increment(ref _owner.ChainGrafts);
+                    bool record = _recordContacts;
+                    _recordContacts = chaining;
+                    Try(t, pattern.Mode, from);
+                    _recordContacts = record;
+                    if (!chaining) continue;
+                    if (pattern.Chain?.Expect is Contact expect)
+                    {
+                        Interlocked.Increment(ref _owner.ExpectChecks);
+                        int want = placed + pattern.Chain.ExpectAt;
+                        bool met = false;
+                        foreach (var c in _contacts) if (c.kind == expect && c.tick >= want - 1 && c.tick <= want + 2) { met = true; break; }
+                        if (!met) continue;
+                        Interlocked.Increment(ref _owner.ExpectsMet);
+                    }
+                    (int tick, Contact kind)? next = null;
+                    foreach (var c in _contacts) if (c.tick >= placed + 2 && Array.IndexOf(chain.On, c.kind) >= 0) { next = c; break; }
+                    if (next is not var (at, kind) || _rng.NextDouble() < .15) continue;
+                    if (mined.PickChain(kind, chain.With, _rng, _resets) is TechPattern follow)
+                        MinedGraft(mined, t, at, lo, follow, from, depth + 1, chain, (chain.ShiftLo, chain.ShiftHi));
+                }
+            }
+            bool _resets;
 
             void Pool()
             {
+                if (_poolEvictions != _owner._evictions)
+                {
+                    // After an eviction pass no live cell's Parent chain holds a removed cell: their states would only wait
+                    // for the state eviction (on a 40 MB archive budget they were half the cache).
+                    foreach (Entry removed in _states.Values.Where(e => e.Cell.Removed).ToList())
+                    {
+                        removed.Use = 0;
+                        _states.Remove(removed.Cell);
+                    }
+                    _poolEvictions = _owner._evictions;
+                }
                 int count = 0;
                 float near = float.PositiveInfinity, far = float.NegativeInfinity;
                 foreach (KeyValuePair<long, Cell> pair in _archive)
@@ -1151,73 +1164,6 @@ namespace IGTAP.EngineSim
                 return Hop(t, at, OneOf(DashHolds));
             }
 
-            // The wall clip (techs.json gc-wall-clip): a light flick toward the wall behind on `at` with the jump released (a
-            // held jump is cut to 50 up), the jump pressed with a light flick back on at + 1, where the turned hitbox's front
-            // ground ray starts inside the wall and grounds the player, then a hold with the stick at rest. The flick back
-            // leaves the back edge ~8 u from the wall, close enough for a second clip off it after the hold.
-            int WallClip(List<InputTick> t, int at, float toward)
-            {
-                int hold = OneOf(ClipHolds);
-                Pad(t, at + 3 + hold);
-                InputTick flick = t[at];
-                flick.x = toward * OneOf(ClipFlicks); flick.y = 0f; flick.press = false; flick.dash = false;
-                flick.release = at > 0 && t[at - 1].held; flick.held = false;
-                t[at] = flick;
-                InputTick jump = t[at + 1];
-                jump.x = -toward * OneOf(ClipBacks); jump.y = 0f; jump.press = true; jump.held = true; jump.release = false; jump.dash = false;
-                t[at + 1] = jump;
-                int end = at + 2 + hold;
-                for (int i = at + 2; i < end; i++) { InputTick k = t[i]; k.x = 0f; k.y = 0f; k.press = false; k.held = true; k.release = false; k.dash = false; t[i] = k; }
-                for (int i = end; i < t.Count && t[i].held && !t[i].press; i++) { InputTick k = t[i]; k.held = false; k.release = false; t[i] = k; }
-                InputTick r = t[end]; r.release = true; t[end] = r;
-                return end;
-            }
-            static readonly float[] ClipFlicks = { .3f, .35f, .4f, .45f, .5f, .55f }, ClipBacks = { .3f, .4f, .5f, .65f, 1f };
-            static readonly int[] ClipHolds = { 0, 3, 6, 9, 12, 16, 20, 26 };
-
-            // Sets up a wall clip: with a wall ahead, the stick turns away from it for 1-4 ticks, then rests for 3-30, so the
-            // player drifts to a stop facing away with the wall at its back; the jump stays as it was (held on, not cut).
-            // ClipChain then clips off the wall behind that the run records.
-            int TurnAway(List<InputTick> t, int at, float wall, bool held, int turn)
-            {
-                int rest = _rng.Next(3, 31);
-                Pad(t, at + turn + rest + 1);
-                float away = -wall * OneOf(TurnAways);
-                int end = at + turn + rest;
-                for (int i = at; i < end; i++)
-                {
-                    InputTick k = t[i];
-                    k.x = i < at + turn ? away : 0f; k.y = 0f; k.press = false; k.dash = false; k.held = held; k.release = false;
-                    t[i] = k;
-                }
-                if (held) { InputTick r = t[end]; r.release = true; t[end] = r; }
-                return end;
-            }
-            static readonly float[] TurnAways = { .3f, .5f, .7f, 1f };
-
-            // The late gate touch (techs.json late-gate-touch): with the start gate in reach and the timer off, the stick rests
-            // (a jump pressed at the contact half the time: standing by the gate, the brush comes in the jump's rise), then a
-            // tap toward the gate (1-2 ticks, 0.3-1) and back (1-2 ticks), then rest again, the jump held as it was, so the
-            // hitbox brushes the gate for a tick; ClipChain then clips off the wall behind it.
-            int GateTap(List<InputTick> t, int at, float gate, bool held)
-            {
-                int delay = _rng.Next(0, 21), tap = _rng.Next(1, 3), back = _rng.Next(1, 3), rest = _rng.Next(5, 31);
-                int from = at + delay, end = from + tap + back + rest;
-                Pad(t, end + 1);
-                bool jump = !held && _rng.NextDouble() < .5;
-                float toward = gate * OneOf(TurnAways), away = -gate * OneOf(TurnAways);
-                for (int i = at; i < end; i++)
-                {
-                    InputTick k = t[i];
-                    k.x = i < from ? 0f : i < from + tap ? toward : i < from + tap + back ? away : 0f;
-                    k.y = 0f; k.press = jump && i == at; k.dash = false; k.held = held || jump; k.release = false;
-                    t[i] = k;
-                }
-                if (held || jump) { InputTick r = t[end]; r.release = true; t[end] = r; }
-                return end;
-            }
-            const int GateVariants = 8;
-
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "steep", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce",
                 "wavejump", "superground", "bouncechain", "bouncechain" };
@@ -1286,24 +1232,11 @@ namespace IGTAP.EngineSim
                     }
                     case "wavejump":
                         return OmniDash(t, at, side, 1f, _rng.NextDouble() < .6 ? _rng.Next(1, 11) : 0, side);
-                    case "cornerhyper":
-                        return CornerHyper(t, at, side);
-                    case "cornerultra":
-                    {
-                        // The chain's first hyper a few ticks before, so the corner hyper's pre-dash momentum is a hyper's.
-                        int first = at - _rng.Next(8, 17);
-                        if (first >= lo) WaveDash(t, first, side);
-                        return CornerHyper(t, at, side);
-                    }
                 }
                 return at;
             }
 
             int WaveDash(List<InputTick> t, int at, float side) { return OmniDash(t, at, side, -1f, _rng.NextDouble() < .85 ? _rng.Next(4, 11) : 0, side); }
-
-            // A wavedash whose jump comes late (dash frame 4-12): after the landing's 4 dash frames, into the coyote frames
-            // once the flat dash has slid off the corner.
-            int CornerHyper(List<InputTick> t, int at, float side) { return OmniDash(t, at, side, -1f, _rng.Next(4, 13), side); }
 
             int DashBounce(List<InputTick> t, int at, float side) { return OmniDash(t, at, 0f, -1f, _rng.Next(1, 11), side); }
 
@@ -1614,7 +1547,7 @@ namespace IGTAP.EngineSim
                 _runJudgeAfter = judgeAfter;
                 _runConverge = converge;
                 RunResult result = _sim.Run(inputs, from, _afterTick, _goalMode ? 400 + inputs.Count : 400,
-                    path == null && Visits == null && !_runCorners ? null : _onStep);
+                    path == null && Visits == null && !_runCorners && !_recordContacts ? null : _onStep);
                 if (_capturePath != null) Interlocked.Add(ref _owner.ReplayTicks, result.Stepped);
                 else
                 {
@@ -1642,6 +1575,7 @@ namespace IGTAP.EngineSim
             void OnStep(int step)
             {
                 if (_runCorners) RecordSlide();
+                if (_recordContacts) RecordStep();
                 ForcedPath path = _owner._path;
                 Dictionary<long, float> visits = Visits;
                 if (path == null && visits == null) return;
@@ -1663,23 +1597,12 @@ namespace IGTAP.EngineSim
                 List<InputTick> inputs = _runInputs;
                 Replay replay = _runReplay;
                 _endTick = tick;
-                // The tick's WallBehind probe (NaN: not cast yet), cast once for the contacts, the set-up watch and the cell key.
+                // The tick's WallBehind probe (NaN: not cast yet), cast once for the contacts and the cell key.
                 float behind = float.NaN;
                 if (_recordContacts)
                 {
                     RecordContact(tick);
                     behind = _log.Behind;
-                }
-                if (_clipWatch >= 0 && tick > _clipWatch && tick <= _clipWatch + 3 && !_clipLanded && _watchAir && _sim.Player.Velocity.y >= 780f)
-                {
-                    _clipLanded = true;
-                    if (ClipLog) Console.WriteLine($"CLIPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
-                }
-                _watchAir = !_sim.Player.onGround;
-                if (_setupWatch >= 0 && tick > _setupWatch && !_setupLanded && Behind(_sim.Player, ref behind) != 0f)
-                {
-                    _setupLanded = true;
-                    if (ClipLog) Console.WriteLine($"SETUPLOG {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(_sim.TimingCourse() != null ? 1 : 0)}");
                 }
                 if (_avoided) return false;
                 bool recorded = replay != null && tick < replay.Body.Length;
@@ -1761,7 +1684,7 @@ namespace IGTAP.EngineSim
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFF;
                 long key = (x << 16) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
-                // A clip-ready state (a wall at the back, in reach of a wall clip) is its own cell: the earliest arrival in a
+                // A clip-ready state (a wall at the back, in reach of a wall clip graft) is its own cell: the earliest arrival in a
                 // square is seldom the slow one that stopped next to the wall, and only that one clips.
                 if (!resources) key |= Behind(player, ref behind) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
                 bool moss = GroundType(player) != 0;
@@ -1822,9 +1745,9 @@ namespace IGTAP.EngineSim
                 float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture, _waypoints) : _goalMode ? GoalDistance(_sim) : float.NaN;
                 var filed = new Cell { Source = _runEncoded ??= InputRuns.From(inputs), Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
                 if (!_owner.File(key, filed)) return;
-                if (ClipLog && cell == null) Console.WriteLine($"NEWCELL {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(key < 0 ? 1 : 0)} {(_clipWatch >= 0 || _setupWatch >= 0 ? 1 : 0)}");
                 Keep(filed, state);
                 _owner.Extend(key, filed, _goalMode ? GoalProgress(key) : -1);
+                if (_owner.ArchiveFull) _owner.Evict(_evictWeight);
             }
         }
     }

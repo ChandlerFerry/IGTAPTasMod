@@ -108,7 +108,7 @@ namespace IGTAP.EngineSim
                     // restore's rebuilds below read the rebase state, the player's collider geometry and the toggles.
                     case "Rebases": _sim.PutRebases(s.Rebases); break;
                     case "Colliders": ApplyPose(s); break;
-                    case "Layers": ApplyToggles(s); break;
+                    case "Layers": _sim.TrackToggles(s); ApplyToggles(s); break;
                 }
             }
             i.Adopt(s.Physics);

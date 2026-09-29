@@ -21,6 +21,13 @@ namespace IGTAP.EngineSim
 
         public int Count { get; }
 
+        /// <summary>The explore archive's cells on these inputs (OfflineSolver counts them into its archive's bytes while
+        /// one is there). The one mutable field: the sequence itself never changes.</summary>
+        internal int Cells;
+
+        /// <summary>What it holds in memory: this object and its two arrays, headers included.</summary>
+        public long Bytes => 48 + 2 * 24 + _ticks.Length * (long)System.Runtime.CompilerServices.Unsafe.SizeOf<InputTick>() + _ends.Length * 4L;
+
         InputRuns(InputTick[] ticks, int[] ends, int runs, int count)
         {
             _ticks = ticks;

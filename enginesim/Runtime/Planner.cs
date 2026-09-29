@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim
     /// ticks. A node is the state after an input tick where the player's contact changed (<see cref="ContactLog"/>), or after
     /// <see cref="Options.Cap"/> ticks without one. An edge is one primitive played from the node's snapshot until the next
     /// contact after its own inputs: a decision at the node (the stick, a jump press or release, a dash with its jump frame,
-    /// the omnidash's aims), a <see cref="OfflineSolver.GraftsAt"/> input at its window around the node's contact or around the
+    /// the omnidash's aims), a <see cref="Primitives"/> input at its window around the node's contact or around the
     /// contact a coast from the node runs into (a buffered jump before a landing, a coyote jump after a ledge, a wall clip), or
     /// a mined tech demo window (<see cref="TechGrafts"/>) at those contacts. Every layer keeps its best
     /// <see cref="Options.Width"/> nodes: most goals or forced-path boxes passed, then the <see cref="DistanceField"/>
@@ -119,9 +119,36 @@ namespace IGTAP.EngineSim
             _path = path != null && !path.IsEmpty ? path : null;
             _o = options;
             if (mined != null)
-                foreach (var g in mined.Patterns.Where(p => p.Requires.IsSubsetOf(_caps)).GroupBy(p => p.Kind))
+                foreach (var g in mined.Patterns.Where(p => p.Requires.IsSubsetOf(_caps) && !p.Resets).GroupBy(p => p.Kind))
                     _patterns[g.Key] = g.ToArray();
+            // The per-step tech contacts (ContactLog.Step) become nodes only when a mined window grafts at one of their kinds.
+            _stepContacts = _patterns.Keys.Any(k => !Primitives.ContainsKey(k));
         }
+
+        /// <summary>The planner's primitive library, per contact: the window its inputs start in relative to the contact (lo..hi),
+        /// the plain inputs and the omnidash ones (null: all; the expansion's Grafts builds them). The solver grafts only mined
+        /// tech windows (<see cref="TechGrafts"/>); the planner enumerates these as edges beside the mined windows.</summary>
+        internal static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> Primitives = new Dictionary<Contact, (int, int, string[], string[])>
+        {
+            [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
+            [Contact.LeftGround] = (-4, 3, new[] { "jump", "jump", "dashjump", "dashjump", "backdash", "primed" },
+                new[] { "wavedash", "ultra", "superground", "wavejump", "aim" }),
+            [Contact.Landed] = (-4, 1, new[] { "jump", "dashjump", "dashjump", "primed", "primed", "dash" },
+                new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
+            [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
+            [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
+            [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
+            [Contact.WallBehindLeft] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+            [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+            [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+            [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+            [Contact.NearGateLeft] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+            [Contact.NearGateRight] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+            [Contact.WallAboveLeft] = (0, 0, new[] { "rest" }, new[] { "rest" }),
+            [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
+        };
+
+        readonly bool _stepContacts;
 
         // ---- search state ----
 
@@ -664,7 +691,7 @@ namespace IGTAP.EngineSim
                     if (coast && _hit is Contact kind) predicted.Add((ticks[0], _hitTick, kind));
                 }
                 // The node's own contact: its window's later ticks (a coyote jump off a ledge, a wall clip once clip-ready).
-                if (n.Kind is Contact own && OfflineSolver.GraftsAt.TryGetValue(own, out var mine))
+                if (n.Kind is Contact own && Primitives.TryGetValue(own, out var mine))
                     foreach (int o in Offsets(1, mine.hi))
                         foreach (var (ticks, how) in Grafts(n, own, mine, n.Last, o))
                             Edge(state, Concat(Coast(n.Last, o), ticks), how);
@@ -672,7 +699,7 @@ namespace IGTAP.EngineSim
                 // a wall, a death).
                 foreach (var (coast, tick, kind) in predicted)
                 {
-                    if (!OfflineSolver.GraftsAt.TryGetValue(kind, out var at)) continue;
+                    if (!Primitives.TryGetValue(kind, out var at)) continue;
                     foreach (int o in Offsets(at.lo, -1))
                     {
                         int lead = tick + o - n.Tick;
@@ -912,7 +939,7 @@ namespace IGTAP.EngineSim
                 };
             }
 
-            /// <summary>The GraftsAt inputs for this contact at offset <paramref name="o"/> from it, on the coast's stick: the jump
+            /// <summary>The primitive inputs for this contact at offset <paramref name="o"/> from it, on the coast's stick: the jump
             /// (a buffered, coyote or wall jump), the dash and dash jump, the primed jump into a dash, the superbounce, the
             /// backwards dash-jump, the wall clip, the turn away and rest that set one up, the gate tap, the omnidash kinds.</summary>
             IEnumerable<(InputTick[] ticks, string how)> Grafts(Node n, Contact contact, (int lo, int hi, string[] plain, string[] omni) window, InputTick coast, int o)
@@ -1102,6 +1129,7 @@ namespace IGTAP.EngineSim
             void OnStep(int step)
             {
                 if (_node != null && _node.Omni && !_replaying) _log.Slide((int)_sim.Engine.RunTicks, _player);
+                if (_p._stepContacts && !_replaying) _log.Step(_sim);
                 OfflineSolver.ForcedPath path = _p._path;
                 if (path == null) return;
                 WorldPos p = _sim.PlayerWorld;

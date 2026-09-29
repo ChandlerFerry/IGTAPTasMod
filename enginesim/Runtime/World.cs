@@ -40,6 +40,9 @@ namespace IGTAP.EngineSim
         public readonly Dictionary<Transform, int> SiblingIndex = new Dictionary<Transform, int>();
         /// <summary>The root transforms of the scene FloatingOrigin moves (UpdateAllScenes off: the active scene; the export's `activeScene`).</summary>
         public readonly List<Transform> MovedRoots = new List<Transform>();
+        /// <summary>A lab map's coloured shapes (LabMap.Inject): each collider is on while its colour is the active one, and
+        /// colouredBlockSwapper.swapBlocks toggles them with the scene's coloured tilemaps (Simulation's SwapBlocks hook).</summary>
+        public readonly List<(Collider2D collider, bool blue)> LabColours = new List<(Collider2D, bool)>();
         public float FixedDeltaTime;
         public Assembly Game { get; } = typeof(Movement).Assembly;
         readonly Assembly _shim = typeof(Object).Assembly;

@@ -126,6 +126,50 @@ namespace IGTAPTasMod
             return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        /// <summary>
+        /// The economy boxes: a course's repeatable income boxes (reward, clones, clone multiplier, global reward, fast, big and
+        /// max-size clone chances, green reward). `fulltas --auto`'s goals part may drop, add, regroup or reorder these buy goals and
+        /// the laps (`start:N`, `finish:N`) around them; every other goal is the run's skeleton.
+        /// </summary>
+        public static readonly HashSet<string> EconomyBoxes = new HashSet<string> {
+            "buyreward", "buyclone", "buyreward2", "buyclone2", "buyclonemult2", "buyglobalreward2",
+            "buyreward3", "buyclone3", "buyclonemult3", "buyfast3", "buyglobalreward3",
+            "buyreward4", "buyclone4", "buyclonemult4", "buybig4", "buyfast4", "buymaxsize4", "buyglobalreward4",
+            "buyreward5", "buyclone5", "buyclonemult5", "buyglobalreward5", "buybig5", "buyfast5",
+            "buyreward6", "buygreen6", "buyclone6", "buyreward7", "buyclone7", "buyclonemult7", "buygreen7",
+            "buyreward9", "buyclone9", "buygreen9", "buyclonemult9", "buyreward10", "buyclone10", "buyclonemult10", "buygreen10" };
+
+        /// <summary>A goal label the goals part may edit: a lap's gate or finish, or a buy of economy boxes only.</summary>
+        public static bool IsEconomy(string label)
+        {
+            if (label.StartsWith("start:", StringComparison.Ordinal) || label.StartsWith("finish:", StringComparison.Ordinal)) return true;
+            if (!label.StartsWith("buy:", StringComparison.Ordinal)) return false;
+            foreach (string token in label.Substring(4).Split('+'))
+                if (!EconomyBoxes.Contains(token)) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Why a goal list may not replace another (null: it may): the run's end goal, its area and reward goals and every buy of
+        /// an unlock (anything but economy boxes) stay, in their order; only the economy goals between them change (docs/fulltas.md,
+        /// "Parts": goals). The engine's goals part proposes only such edits, and the game adopts a judged route's goals only then.
+        /// </summary>
+        public static string EditRefused(IList<string> from, IList<string> to)
+        {
+            if (to == null || to.Count == 0) return "the new goal list is empty";
+            if (from.Count == 0) return "the run has no goals";
+            if (from[from.Count - 1] != to[to.Count - 1]) return "the end goal changes (" + from[from.Count - 1] + " -> " + to[to.Count - 1] + ")";
+            var a = new List<string>();
+            var b = new List<string>();
+            foreach (string l in from) if (!IsEconomy(l)) a.Add(l);
+            foreach (string l in to) if (!IsEconomy(l)) b.Add(l);
+            for (int i = 0; i < Math.Max(a.Count, b.Count); i++)
+                if (i >= a.Count || i >= b.Count || a[i] != b[i])
+                    return "the skeleton (area, reward and unlock goals) changes at its goal " + (i + 1) + ": "
+                        + (i < a.Count ? a[i] : "none") + " -> " + (i < b.Count ? b[i] : "none");
+            return null;
+        }
+
         public bool EnteredFrom(float rx0, float rx1, float ry0, float ry1, float px0, float px1, float py0, float py1)
         {
             return from == 0

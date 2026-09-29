@@ -403,29 +403,102 @@ ordered as the sections they came from.
   start is captured again, which loads the course's world first.
 - **Where:** `EngineSimBridge.PrepareEngineSimRun`, `ZoneReady`/`TargetZone` in `Solver.cs`.
 
-## Quick-restart start carries the last run's history (open)
+## Course start captured with its zone switched off, and the quick restart's history
 
 - **Symptom:** right after a game launch, `10_WJ_DS_DJ_BS_ZIP 17.84` (the saved record) doesn't finish: submitted
   twice, no finish at physics tick 288. A freshStart trace moments later finishes 17.84. The pump failed
   `10_wjdsdjbszip-15.00` the same way seconds after a launch, but a freshStart trace later finishes it at 15.0002
-  (finishTick 742). It is parked in `offline-best/hold-GameOwner2/`, unjudged.
-- **Cause:** the quick restart (`Movement.respawn(true)`) resets position and the run's state, but not a set of Movement
-  history fields, the RNG state or the clone timers. A start captured after a run carries that run's leftovers, and a
-  start captured right after launch has the launch values. Routes solved against a start trace that had leftovers need
-  those leftovers. Start diff, after launch (`go3-bad.json`) vs after other runs (`go3-good.json`), Course 10
-  `wjdsdjbszip`: `facingRight` true/false, `wallJumpFacing` (1,0)/(-1,0), `dashDirection` (0,0)/(-1,0),
-  `wallCoyoteDir` 0/1, `framesSinceLastDash` 119/326, `MostRecentUpwardsMoveWasNormalJump` false/true,
-  `timeSinceLastAfterimage`, `emitWallSlideParticlesThisFrame`, `UnityEngine.Random` state, and
-  `clonesScript.timeSinceLastClone` 10002.85/10010.63. The runs part by 1 u in x at tick 191. The offline start trace
-  `start-c10-wjdsdjbszip.json` has `facingRight` false and `wallJumpFacing` (-1,0). Bonus 5's starts also differ in
-  `heightOfLastJumpStart`, `lastHyperY`, `preDashMomentum` and `finalWallClingTimeLeft`.
+  (finishTick 742). It is parked in `offline-best/hold-GameOwner2/`, unjudged. With the plugin logging the start gate's
+  and zip movers' state (5 launches, `go4-bad-1..5`): 3 of 5 launches failed, each one where the first submit had to
+  wait for "loading".
+- **Cause:** the start was captured with Course 10's zone switched off. Its `DisableBits` (zone 2's
+  `ZoneDisableLoadList.toLoad`: the course's `Start` gate and zip movers; the `courseScript` sits outside the zone) were
+  inactive at every failing capture and active at every good one. `RestoreRouteStart` loads the course's zone
+  (`ZoneLoader._LoadZone`), but a zone load the game still had queued (`ZoneLoader.LoadZone`'s coroutine, the
+  bootstrap's `LoadZone(1, force)`) switched it back, and `CourseLoaded` let a player already parked at the reset
+  point start without checking the zone; `ZonesSettled` looked at the zone roots only. So no run from that start started
+  the timer: `go3-bad`/`go3-good` have identical player state on every tick up to 191, and at tick 119, where the good
+  run enters the start gate and `tracking` goes on, the bad one's course never tracks; at 191 the zip mover the good run
+  touches isn't there.
+  The quick restart (`Movement.respawn(true)`) also keeps a set of Movement history fields, the RNG state and the clone
+  timers, so every capture's start differed with what ran before (`go3-bad` after launch vs `go3-good` after other runs:
+  `facingRight` true/false, `wallJumpFacing` (1,0)/(-1,0), `dashDirection` (0,0)/(-1,0), `wallCoyoteDir` 0/1,
+  `framesSinceLastDash` 119/326, `MostRecentUpwardsMoveWasNormalJump` false/true, `timeSinceLastAfterimage`,
+  `emitWallSlideParticlesThisFrame`, the RNG, `clonesScript.timeSinceLastClone` 10002.85/10010.63; Bonus 5's also
+  `heightOfLastJumpStart`, `lastHyperY`, `preDashMomentum`, `finalWallClingTimeLeft`). That was not this failure:
+  offline, 17.84 from `start-c10-wjdsdjbszip.json` with every `go3-bad` value, each alone and all together, still
+  finishes 17.840218.
 - **Repro:** relaunch the game and bootstrap, then at once `POST /api/enginesim/submit` course 10, `wjdsdjbszip`,
   with the 17.84 route's ticks: no finish, twice. Then a trace with `freshStart` finishes 17.84.
-- **Proposed fix:** make the category start canonical. When the start is captured, set these history fields, the RNG
-  state and the clone timers to fixed values, as a lab start already does from its start trace. That changes every
-  category's start, so the start traces would have to be recaptured and the saved routes judged again. A Full-TAS run
-  starts from a fresh new game, so VMAN is not affected. Deferred for now.
-- **Where:** `EngineSimBridge.PrepareEngineSimRun` (start capture), `TasPlugin.RestoreRouteStart`.
+- **Fix:** `CourseLoaded` parks only in the course's zone (`ZoneReady`), and `ZonesSettled` also wants the active
+  zone's `toLoad` objects on (true in every world export checked, the Full-TAS new games' too); a switch back makes the
+  wait start over. The category start's history is fixed (`CourseStart`, one file shared by the plugin and the engine):
+  the fields above at a launched game's values (`framesSinceLastDash` 1000, past every window it opens; in the air
+  `lastHyperY` 1e8), one RNG state and every clone timer at 10000, set after the quick restart and again when the start
+  is captured. The searches load a category trace's start the same way (`Simulation.LoadStart(start, canonical: true)`
+  from `Solve.Creator`, a course `--auto` trace's too), so an older trace searches from the start the game judges;
+  `replay`/`path` load a trace as captured. Offline, all 64 saved category and farm routes replay exactly the same from
+  their start with and without the fixed history (`bonus5_WJ_DS_DJ_BS_ORB_ZIP_OM 4.66` fails offline either way).
+  After the fix, 5 of 5 fresh launches judged 17.84 at once (every capture with zone 2 settled and the gate on), including
+  the 3 whose first submit waited for "loading".
+- **Where:** `CourseLoaded`, `ZonesSettled` in `Solver.cs`; `CourseStart.cs`, `Solver.Evaluate` (start capture),
+  `TasPlugin.RestoreRouteStart`; `Simulation.LoadStart`/`SetTarget`, `Solve.Creator`.
+
+## Bonus starts captured in whichever zone the last course left
+
+- **Symptom:** `start-cbonus5-wjdsdjbsorbzipom.world.json` and every `start-cbonus1-*` capture had zone 2 loaded, with
+  Zone 1's root (the bonus's own checkpoint included) switched off. After a full `tools/validate.py` run, a bonus5
+  trace with `freshStart` waited for "loading" for over 2 minutes.
+- **Cause:** `TargetZone` took the zone of the nearest start gate within 1000 u. Bonus starts are checkpoints
+  2500-4300 u from any gate (bonus1, bonus2, bonus2to3, bonus5, bonus6, bonus7), so they got zone 0 ("any zone"): no zone
+  load, and `ZoneReady` passed in the zone the previous target had loaded.
+- **Fix:** `TargetZone` takes the nearest start gate or `checkpointScript` (`ZoneMarkers`: the zone root or
+  `ZoneDisableLoadList.toLoad` each sits under). Every target's start is 11-16 u from a checkpoint. Targets that had a zone
+  keep it, and those six get zone 1. `ZonesSettled` is unchanged: zone 1's `toLoad` (Courses 1-5 `DisableBits`) shares no
+  object with another zone or with `OvergrowthLoadScript`'s lists, and all 166 start captures checked have their zone
+  settled. Fresh launch: `validate.py` passes everything it passed before except `bonus1_WJ_DS_DJ_BS_ORB_ZIP_OM 5.02`
+  (see below). After a Course 10 submit, the start traces of the six targets each load zone 1 and settle in 2.8-3.4 s.
+  3 of 3 fresh launches judged `10_WJ_DS_DJ_BS_ZIP 17.74` (after one zone reload each time the bootstrap's queued load
+  switched zone 2 back) and captured bonus5 on the first try.
+- **Not this:** `bonus5_WJ_DS_DJ_BS_ORB_ZIP_OM 4.66` is stale. It was solved from bonus5's old start (Course 3's restart,
+  (9505, 6955)), before `courses.json` moved the start to Course 3's Checkpoint (2) (6825, 4535) on 9/28. Offline it
+  finishes 4.659998 from the old start, and from the new one it runs away from the finish, so it has to be solved again.
+  `bonus1_WJ_DS_DJ_BS_ORB_ZIP_OM 5.02`'s validate failure was the start's FloatingOrigin (next entry).
+- **Where:** `TargetZone`, `ZoneMarkers` in `Solver.cs`.
+
+## Category start judged at whatever FloatingOrigin the last target left
+
+- **Symptom:** the judge depended on what ran before it. After the validate order, `bonus1_WJ_DS_DJ_BS_ORB_ZIP_OM 5.02`
+  failed a submit, a cached trace and a freshStart trace, while a freshStart trace on the launch before finished it.
+  `4_WJ_DS_DJ 13.28` passed `validate.py` and then failed its submit and freshStart trace (tick 285) on the same launch
+  after bonus start captures. Neither route had changed.
+- **Cause:** FloatingOrigin rebases only once the player is 17500 u from scene (0, 0), so a start's scene frame is where
+  the last rebase left it, and that depends on the targets before it. The saved captures of Course 4 have 4 different
+  origins. The physics runs in the scene frame, and routes are float-sensitive to it. Offline, the same inputs from the
+  same world position: 13.28 finishes at origins (-9505, -6955) and (-20200, -10542) and dies at tick 274 at (-6825,
+  -4523). 5.02 finishes at (-9505, -6955) and (-6825, -4523) and not at (-20200, -10542). Tonight's records were judged
+  at (-9505, -6955): bonus5's old start (Course 3's restart), which the offline-best pump visited. Visits to bonus5's
+  new start rebase to (-6825, -4523). A restore's `PutOrigin` shifts the world back by the difference, which also rounds
+  according to the origin it comes from.
+- **Fix:** one origin per start. The quick restart onto a course, bonus or transition start
+  (`RestoreRouteStart`) puts the world where the game's own rebase on the player standing there leaves it:
+  `TurboRunner.PutCanonicalOrigin` sets each scene root to its position as the scene loaded it (recorded at origin (0, 0),
+  before the first `MoveRootTransforms`) minus the reference, which is the reset point 12 down, where `Movement.respawn`
+  puts the player. It also sets `currentOrigin` to minus the reference, and the player then stands at scene (0, 0). The
+  start snapshot carries the reference, so each restore puts the world there exactly again. Roots the game moves itself
+  (camera, HUD) only shift. The offline engine's category starts (`Simulation.LoadStart` canonical: the searches, `path
+  --canonical`) rebase a trace captured elsewhere to the same origin as a rebase of its own. It moves the scene-frame
+  fields the start writes (`courseResetPoint`, the interpolation ends, `heightOfLastJumpStart`, and when standing,
+  `lastHyperY`) along with the world. A trace captured at the canonical origin loads unchanged. Offline, 13.28 and 5.02
+  finish from all 3 origins' captures. All 63 saved course, bonus and transition routes in `validate.py`'s set finish at
+  their saved times from the canonical origin. In game (fresh launch): Course 4's start captured after bonus5 and
+  after Course 10, and bonus1's after Course 4 and after bonus5, each have one origin ((-20200.4004, -10542.5449) and
+  (-7392.42676, -2795.01489)), the player at scene (0, 0), and the same positions for every transform but the UI's and
+  particles'. `4_WJ_DS_DJ 13.24` and `bonus1_WJ_DS_DJ_BS_ORB_ZIP_OM 5.02` judged finished after each. `validate.py`'s 63
+  routes, submitted in routes.json order and then in reverse: 63 of 63 OK both times, the same time and run ticks for each.
+  Full-TAS runs start from a new game and don't go through this.
+- **Where:** `TurboRunner.PutCanonicalOrigin`/`RecordPristineRoots`/`Snapshot.canonical`, `TasPlugin.RestoreRouteStart`,
+  `Solver.Evaluate`; `Simulation.PutCanonicalOrigin`, `path --canonical`.
 
 ## Turbo ran the afterimages on the real frame's deltaTime
 
@@ -441,3 +514,79 @@ ordered as the sections they came from.
   34.28 (23/23), with no playback left running.
 - **Where:** `TurboRunner.BeforeHandleAfterimages`, `TasPlugin.EvaluateFullTas`, `TasPlugin.Evaluate`,
   `TasPlugin.PumpFullTasPending`.
+
+## A restore left the other run's body transforms (zip movers)
+
+- **Symptom:** `determinism` on Course 7 `WJ_DS_DJ_BS_ZIP` (`7_wjdsdjbszip-7.96` over `start-c7-wjdsdjbszip.json`):
+  467 of 1,137 restores gave another physics state than their capture. The only difference was the Unity transform of
+  `ZipMoverMovingPart`, a kinematic body, which kept wherever the run before had left it: restoring input 170 after a
+  run from input 60 left it at y 844.54 instead of 1344.54. Restored from a route capture and continued on the route's
+  own inputs, 2 of 278 boundaries (inputs 170 and 180) left the uninterrupted run one tick later, and 1 of 79 mid-edge
+  captures ended elsewhere. 4 of the 5 route snapshots that store, loaded into a fresh simulation, restored another
+  state than their capture. Course 13 `WJ_DS_DJ_BS` and FalseEnding (`fulltas/FalseEnding-Any%.json`) were exact.
+- **Cause:** `Simulation.Restore` puts back the player's transform, and `PhysicsWorld.Restore` puts back the bodies in
+  Box2D, but nothing restored the other bodies' transforms. A moving body's transform normally follows its body (the
+  step writes it back). At the end of a move, though, `PlatformMover.IE_AdvanceToNextState` writes the mover's
+  `transform.localPosition`, and the next sync reads that write back into the body (`TransformDirty`). A capture taken
+  in that window restored the pending flag while the transform still held the last run's value, so the next sync
+  teleported the mover there.
+- **Fix:** the physics snapshot holds every body's transform except the player's (position, local position,
+  rotations, scales; `PhysicsSnapshot.Poses`), and a restore writes them back. Captures share the list until a body's
+  transform changes (bit for bit), so a capture with every body at rest allocates nothing new. `determinism` also
+  continues each mid-edge capture on its edge's own inputs, from the same loop budget, after other runs have gone
+  between, and requires it to end in the edge's own end state. The stored-snapshot check now saves every snapshot
+  before it makes the fresh simulation: a simulation takes over its thread's hooks when it is made. Before, the fresh
+  simulation's arrival made 9 of 25 stored edges look different on Course 7, which was a harness artefact. After the
+  fix, Course 7 has every restore equal to its capture (1,137/1,137), every continuation equal to its edge (79/79) and
+  every stored snapshot restoring its capture (5/5), and is DETERMINISTIC. Course 13 and FalseEnding stay exact. The
+  502-trace verbose replay corpus is byte-identical. 5 of Course 7's 10 route snapshots couldn't be stored
+  (`SnapshotStore`: collider 448's shapes can't be rebuilt), before and after: fixed in *A stored state lost the
+  toggles its simulation never made (block swap)*.
+- **Not the cause of** Macros' "restore drift" (median 2.04 u, p95 9.5 u): that was its harness. It replayed
+  `inputs[0..stop)`, and on a list that ends there `MacroEngine.Finish` zeroes the stick on the last tick, so every end
+  position was a tick short. The same truncated list from a fresh start (no restore) drifts the same. Fixed in
+  `FullTasAutoMacros.Apply`: each list runs a tick past the stop. Rerun on this build (`macros --samples 120`, 86,873
+  applications on the held-out routes): drift median 0, p95 0; 125 over 0.1, all at 12 anchors of 4 held-out routes
+  whose own run ends before the window does (VMAN 34.62 and 34.88 die in a spike at physics tick 296 on today's trace,
+  `1_wjdsdj` second finishes at 52, `Test-No-Omni-Skip` 7.92 stops at 90), so the replay has no position there to
+  compare with. The hit rate is 5.3% in position and speed (position 12.5%, speed 28.4%; down-dash-landing 22.0%).
+  The 2.3% before was on the tick-short lists and a smaller corpus (39,839 applications).
+- **Where:** `PhysicsWorld.Capture`/`Restore` (`PhysicsSnapshot.Poses`, `Pose`), `Cli/Determinism.cs`,
+  `Cli/FullTasAutoMacros.cs`.
+
+## A stored state lost the toggles its simulation never made (block swap)
+
+- **Symptom:** `determinism` on Course 7 `WJ_DS_DJ_BS_ZIP` (`7_wjdsdjbszip-7.96`): 5 of the 10 route snapshots
+  (inputs 25-127) couldn't be loaded into a fresh simulation: "a collider's shapes can't be rebuilt to the snapshot's
+  (collider 448 #15)". A Full-TAS solve drops such a stored state and replays the run up to it. Collider 448 is not a
+  zip mover: it is `/Grid/colouredBlocks/blueSpikes`, the static `CompositeCollider2D` over the blue spikes' tilemap
+  collider (447). 447 is off at load, and the route's dashes (`colouredBlockSwapper.swapBlocks`) had it on at those
+  inputs, so the snapshot listed the composite's 16 rebuilt fixtures. The same happened on the other block-swap courses:
+  Course 10 zip 3 of 10, Course 10 orb 3 of 9, Course 8 zipom 2 of 9, Course 8 orb 1 of 2, Course 15 zip and orb 2 of
+  10 each. On Course 10 zip the snapshot at input 518 loaded with its capture's physics digest, but 5 of its 5 edges
+  ended differently from the same edges in the simulation that took it (NOT DETERMINISTIC).
+- **Cause:** a simulation tracks a GameObject's active flag, a Behaviour's enabled flag or a layer from its first
+  change (`Engine.ActiveChanging`/`EnabledChanging`/`LayerChanging` into `_activeAsLoaded` and the others), and a
+  restore puts back only the objects it tracks. A stored state comes from another simulation. The fresh one had never
+  toggled 447, so `SnapshotStore.ApplyToggles` (and `Simulation.Restore` after it) left it off. The composite then
+  rebuilt with no shapes, and the snapshot's fixtures had nothing to bind to.
+- **A second finding, on the orb courses:** `Simulation.Fingerprint` XOR'd every tracked object, including one back at
+  its loaded value, so the same state hashed differently depending on whether some earlier run had toggled the object
+  (an orb taken, say). `determinism` compares that hash between passes and on continuations, so it reported NOT
+  DETERMINISTIC on Course 8 zipom (389/400 runs, 85/88 continuations) and Course 10 orb (375/400, 92/99). Every player
+  end state and physics digest matched in those runs. The solver's convergence check (`OfflineSolver`) compares the same
+  hash, so it could miss a convergence the same way [inference: not measured]. It would also have hashed the toggles a
+  stored state brings in.
+- **Fix:** before it applies a stored state's toggles, `SnapshotStore.Load` tracks every object they name that this
+  simulation hasn't tracked yet (`Simulation.TrackToggles`). It records each one's value now, which is its loaded value,
+  as the change hooks would have. The fingerprint now hashes only the toggles that differ from their loaded value.
+- **Results:** `determinism` on the start traces as recaptured on 2026-09-29, before/after. Stored route snapshots:
+  Course 7 zip 5/10 → 10/10 (50/50 edges); Course 8 zip 10/10 → 10/10 (archive route); Course 8 zipom 7/9 → 9/9;
+  Course 8 orb 1/2 → 2/2 (the route's run ends at input 176); Course 10 zip 7/10 with 30/35 edges → 10/10 with 50/50;
+  Course 10 orb 6/9 → 9/9; Course 14 zip and orb 10/10 → 10/10; Course 15 zip and orb 8/10 → 10/10; Course 13
+  `WJ_DS_DJ_BS` and FalseEnding 10/10 → 10/10. After the fix every case is DETERMINISTIC: every restore equals its
+  capture, every continuation ends as its edge, and every run is identical across orders and processes. Each case's
+  run-set digest is the same before and after. The 8/10/14/15 routes are stand-ins: an `archive/` source for 8 and 10
+  orb, `judged/10_wjdsdjbszip-15.00` for 10 zip, and the `EngineSpeed` corpus seeds' inputs for 14 and 15. The
+  502-trace verbose replay corpus is byte-identical to the build before.
+- **Where:** `Simulation.TrackToggles`, `Simulation.Fingerprint`, `SnapshotStore.Load`.

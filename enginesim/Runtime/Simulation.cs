@@ -9,6 +9,29 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
+    /// <summary>What the player did in one physics step (its FixedUpdate, physics callbacks and rendered frames), from the game's
+    /// own calls: the tech contacts <see cref="ContactLog.Step"/> files (Runtime\TechGrafts.cs).</summary>
+    [Flags]
+    public enum StepEvents
+    {
+        None = 0,
+        /// <summary>An air jump spent (playSFX "airJump").</summary>
+        DoubleJump = 1,
+        /// <summary>A jump out of a dash: CheckForSuperJump's super or hyper (playSFX "bigJump" with dashActive still up), or a
+        /// ground bounce's jump (DashBounceFrames up).</summary>
+        DashJump = 2,
+        /// <summary>Movement.hitSpring (<see cref="Simulation.SpringUp"/>: the spring's up).</summary>
+        SpringHit = 4,
+        /// <summary>Movement.SpecialWallJump: a wallbounce, a dash into a wall with the jump buffered, a dash-boosted wall jump.</summary>
+        WallBoost = 8,
+        /// <summary>The ground rays touched ground while onGround was off (touchedSolidGround/touchedMossyGround(true)).</summary>
+        Landed = 16,
+        /// <summary>The pause menu held open after this step (a route's pause: MacroStep.pauseFrames).</summary>
+        Paused = 32,
+        /// <summary>Movement.Update's step-up lifted the player onto a step in one of the step's rendered frames.</summary>
+        SteppedUp = 64,
+    }
+
     public struct InputTick : IEquatable<InputTick>
     {
         public float x, y;
@@ -212,7 +235,14 @@ namespace IGTAP.EngineSim
             };
             Hooks.PlayerInput = m => { Engine.FixedTick((Movement)m); BeforeInput?.Invoke((Movement)m); };
             IGTAP.EngineSim.Engine.Stick = () => Engine.StickFor(Player);
-            Hooks.WallTouch = (m, touchedGround) => Engine.WallTouch((Movement)m, touchedGround);
+            Hooks.WallTouch = (m, touchedGround) =>
+            {
+                if (touchedGround && !((Movement)m).onGround) Events |= StepEvents.Landed;
+                Engine.WallTouch((Movement)m, touchedGround);
+            };
+            Hooks.HitSpring = (_, up) => { Events |= StepEvents.SpringHit; SpringUp = up; };
+            Hooks.SpecialWallJump = m => { Events |= StepEvents.WallBoost; WallBoostSide = ((Movement)m).transform.localScale.x < 0f ? -1f : 1f; };
+            Hooks.SteppedUp = _ => { Events |= StepEvents.SteppedUp; StepUpSide = Player.facingRight ? 1f : -1f; };
             Hooks.Death = m =>
             {
                 if (!Engine.IsRunning) return;
@@ -222,21 +252,31 @@ namespace IGTAP.EngineSim
             Hooks.CourseStop = CourseStop;
             Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns;
             Hooks.UpgradeBoxStay = Shop.Stay;
-            Hooks.SwapBlocks = swapper => Touch((MonoBehaviour)swapper);
+            Hooks.SwapBlocks = (swapper, blueActive) =>
+            {
+                Touch((MonoBehaviour)swapper);
+                SetLabColours(blueActive);
+            };
             Hooks.TimeStop = (_, duration) => { if (_freezeFor < 0f || duration < _freezeFor) _freezeFor = duration; };
             Hooks.RefillOrbState = RefillOrbState;
-            Hooks.PlaySfx = (_, code) =>
+            Hooks.PlaySfx = (m, code) =>
             {
                 switch (code)
                 {
                     case "land":
                     case "grassLand": UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); break;
                     case "bigJump":
+                        if (((Movement)m).dashActive || DashBounceFrames((Movement)m) > 0) Events |= StepEvents.DashJump;
+                        UnityEngine.Random.Draw();
+                        break;
+                    case "airJump":
+                        Events |= StepEvents.DoubleJump;
+                        UnityEngine.Random.Draw();
+                        break;
                     case "smallJump":
                     case "wallSlide":
                     case "grassWallSlide":
                     case "dash":
-                    case "airJump":
                     case "death": UnityEngine.Random.Draw(); break;
                 }
                 UnityEngine.Random.Draw();
@@ -390,6 +430,14 @@ namespace IGTAP.EngineSim
         {
             if (script == Player || script is courseScript || !_touched.Add(script)) return;
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
+        }
+
+        /// <summary>A lab map's coloured shapes (<see cref="World.LabColours"/>) on for the active colour, off for the other, as
+        /// swapBlocks sets the scene's coloured tilemaps (a toggle is tracked: snapshots put it back).</summary>
+        public void SetLabColours(bool blueActive)
+        {
+            foreach (var (collider, blue) in World.LabColours)
+                if (collider.enabled != (blue == blueActive)) collider.enabled = blue == blueActive;
         }
 
         public int TargetCourse;
@@ -555,6 +603,19 @@ namespace IGTAP.EngineSim
         /// <summary>A persisted snapshot's restore (SnapshotStore) re-materializes its rebases before its physics rebuilds.</summary>
         internal void PutRebases(Vector3[] rebases) { MaterializeRebases(rebases); }
 
+        /// <summary>
+        /// A persisted snapshot (SnapshotStore) comes from another simulation: its toggles can name objects this one never
+        /// changed, which Restore would leave as they are (a blue block swap stored while the blue colliders were on loaded
+        /// with them off, and the composite's shapes couldn't be rebuilt to the snapshot's). Tracks each such object from its
+        /// value now, which is its loaded one, as the change hooks would have.
+        /// </summary>
+        internal void TrackToggles(SimSnapshot s)
+        {
+            foreach (var (g, _) in s.Active) _activeAsLoaded.TryAdd(g, g.activeSelf);
+            foreach (var (b, _) in s.Enabled) _enabledAsLoaded.TryAdd(b, b.enabled);
+            foreach (var (g, _) in s.Layers) _layerAsLoaded.TryAdd(g, g.layer);
+        }
+
         internal IReadOnlyDictionary<GameObject, bool> ActiveAsLoaded { get { return _activeAsLoaded; } }
         internal IReadOnlyDictionary<Behaviour, bool> EnabledAsLoaded { get { return _enabledAsLoaded; } }
         internal IReadOnlyDictionary<GameObject, int> LayerAsLoaded { get { return _layerAsLoaded; } }
@@ -568,6 +629,7 @@ namespace IGTAP.EngineSim
         public void SetTarget(JsonElement header)
         {
             TargetCourse = (header.TryGetProperty("gameCourse", out JsonElement gameCourse) ? gameCourse : header.GetProperty("course")).GetInt32();
+            _traceCourse = header.GetProperty("course").GetInt32();
             if (header.TryGetProperty("finish", out JsonElement finish))
                 TargetFinish = new CaptureRect(new CapturePos(finish[0].GetSingle(), finish[1].GetSingle()), finish[2].GetSingle(), finish[3].GetSingle());
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
@@ -588,7 +650,16 @@ namespace IGTAP.EngineSim
                 _savestateStart = fulltas.TryGetProperty("savestate", out JsonElement savestate) && savestate.ValueKind == JsonValueKind.String;
             }
             CheckpointRespawns = header.TryGetProperty("checkpointRespawns", out JsonElement checkpoints) && checkpoints.GetBoolean();
+            // Course --auto's synthetic trace is a course's header with goals added ("courseAuto"): its start is the course's.
+            _categoryTrace = !header.TryGetProperty("tech", out _) && (!header.TryGetProperty("fulltas", out _)
+                || header.TryGetProperty("courseAuto", out JsonElement courseAuto) && courseAuto.ValueKind == JsonValueKind.True);
         }
+
+        /// <summary>A category trace's start (a course, bonus or transition from its quick restart): not a Full-TAS run's or a tech demo's.</summary>
+        bool _categoryTrace;
+
+        /// <summary>The trace header's course id (courses.json's: 11-15 are Courses 1-5 overgrown), for the atom door rule.</summary>
+        int _traceCourse;
 
         bool _savestateStart;
 
@@ -648,7 +719,12 @@ namespace IGTAP.EngineSim
 
         public static float CourseTime(courseScript course) { return PathTime(course); }
 
-        public void LoadStart(JsonElement start)
+        /// <summary>
+        /// Loads a trace's start. <paramref name="canonical"/> (the searches) gives a category trace's start the history every
+        /// category start has in the game now (<see cref="IGTAPTasMod.CourseStart"/>), so a trace captured before that searches
+        /// from the start the game judges; a replay of what the game recorded (replay, path) loads it as captured.
+        /// </summary>
+        public void LoadStart(JsonElement start, bool canonical = false)
         {
             ApplyFields(Player, start.GetProperty("movement"));
             if (_savestateStart) Goals.NoCheckpointAt(Player.respawnPoint.x, Player.respawnPoint.y);
@@ -700,6 +776,10 @@ namespace IGTAP.EngineSim
                     s0 = random[0].GetInt32(), s1 = random[1].GetInt32(), s2 = random[2].GetInt32(), s3 = random[3].GetInt32(),
                 };
             else UnityEngine.Random.InitState(0);
+            if (canonical && _categoryTrace) IGTAPTasMod.CourseStart.Apply(Player, World.All<clonesScript>());
+            // Courses 6-15 start with the atom room's door open (README ### Rules 21), as the plugin's category start sets it:
+            // a trace captured before that rule searches from the start the game now judges.
+            if (_categoryTrace && IGTAPTasMod.CourseStart.AssumesAtomDoor(_traceCourse)) IGTAPTasMod.CourseStart.OpenAtomDoor(World.All<upgradeBox>());
             MaterializeRebases(Array.Empty<Vector3>());
             _rebasePending = Vector3.zero;
             _rebaseDue = false;
@@ -717,10 +797,52 @@ namespace IGTAP.EngineSim
                 _loadedStepTo = new Vector3(to.x, to.y, at.z);
                 _loadedStepAt = at;
             }
+            if (canonical && _categoryTrace) PutCanonicalOrigin(start);
             // A tech demo's trace starts after its first input tick (the demo starts inside a tick, as its playback does).
             // The start's pending Invokes are due counted from its next tick, which Capture counts from Tick + 1.
             Scheduler.Tick = -1;
             _start = Capture(start.TryGetProperty("tick", out JsonElement startTick) ? startTick.GetInt32() : 0);
+        }
+
+        static readonly FieldInfo LastHyperYField = typeof(Movement).GetField("lastHyperY", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
+            JumpStartHeightField = typeof(Movement).GetField("heightOfLastJumpStart", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        /// <summary>
+        /// A category start at the FloatingOrigin the plugin judges it at (TurboRunner.PutCanonicalOrigin): as the game's rebase
+        /// on the player at the quick restart point leaves it, currentOrigin minus that point (12 under the reset point). A trace
+        /// captured at another origin (whatever ran before it in the game) is rebased there from its capture, as a rebase of its
+        /// own (restores and the capture frame follow). The game's own values then differ at most by the rounding of the shifts
+        /// it came through. A trace captured there is left as it is. The scene-frame fields the start writes move with the world:
+        /// <c>courseResetPoint</c>, the interpolation ends, and standing, <c>lastHyperY</c> and <c>heightOfLastJumpStart</c>.
+        /// </summary>
+        void PutCanonicalOrigin(JsonElement start)
+        {
+            if (_floating == null) return;
+            Vector2 reset = Player.courseResetPoint != Vector2.zero
+                ? new Vector2(Player.courseResetPoint.x - Origin.x, Player.courseResetPoint.y - Origin.y) : Player.respawnPoint;
+            var reference = new Vector3(reset.x, reset.y - 12f, 0f);
+            if (Origin.x == -reference.x && Origin.y == -reference.y) return;
+            var by = new Vector3(reference.x + Origin.x, reference.y + Origin.y, 0f);
+            _rebases = new[] { by };
+            MoveWorld(by);
+            Engine.WorldMoved(by);
+            Physics.WorldMoved();
+            _rebasePending = Vector3.zero;
+            _rebaseDue = false;
+            if (Player.courseResetPoint != Vector2.zero) Player.courseResetPoint -= new Vector2(by.x, by.y);
+            // Standing, the game writes both every tick; in the air CourseStart set the jump height from the player's y and
+            // lastHyperY to its no-hyper value.
+            JumpStartHeightField.SetValue(Player, (float)JumpStartHeightField.GetValue(Player) - by.y);
+            if (Player.onGround) LastHyperYField.SetValue(Player, (float)LastHyperYField.GetValue(Player) - by.y);
+            if (!float.IsNaN(_loadedStepAt.x))
+            {
+                _loadedStepFrom -= by;
+                _loadedStepTo -= by;
+                _loadedStepAt -= by;
+            }
+            Vector2 body = World.Vec2(start.GetProperty("bodyPosition"));
+            Physics.ResetPlayer(new Vector2(body.x - by.x, body.y - by.y), World.Vec2(start.GetProperty("velocity")),
+                World.ReadFloat(start.GetProperty("rotation")), World.ReadFloat(start.GetProperty("angularVelocity")));
         }
 
         void ApplyFields(object target, JsonElement fields)
@@ -750,6 +872,12 @@ namespace IGTAP.EngineSim
         Vector3 _stepFrom, _stepTo;
         float _freezeFor = -1f;
         int _pauseFrames, _pauseAfter;
+        /// <summary>The last physics step's <see cref="StepEvents"/> (cleared at each step's start), the spring's up at its last
+        /// hit, and the side (-1: -x) of the wall at its last special wall jump and of the step at its last step-up.</summary>
+        public StepEvents Events;
+        public Vector2 SpringUp;
+        public float WallBoostSide, StepUpSide;
+        static readonly Func<Movement, int> DashBounceFrames = ContactRays.FieldGetter<int>("DashBounceFrames");
         bool _inRun;
         /// <summary>The trace start's interpolation ends (its last physics step's start and end, turbo's _stepFrom/_stepTo) and
         /// where it put the player; a start moved from there (a lab or probe placement) is at rest instead.</summary>
@@ -927,9 +1055,10 @@ namespace IGTAP.EngineSim
             }
             h.Add(touched);
             int toggled = 0;
-            foreach (GameObject g in _activeAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
-            foreach (Behaviour b in _enabledAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
-            foreach (GameObject g in _layerAsLoaded.Keys) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.layer);
+            // Only what differs from the load: an object back at its loaded value hashes as one never toggled, whatever ran before.
+            foreach (var (g, loaded) in _activeAsLoaded) if (g.activeSelf != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
+            foreach (var (b, loaded) in _enabledAsLoaded) if (b.enabled != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
+            foreach (var (g, loaded) in _layerAsLoaded) if (g.layer != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.layer);
             h.Add(toggled);
             foreach (Scheduler.Routine r in Scheduler.Routines)
             {
@@ -1104,6 +1233,7 @@ namespace IGTAP.EngineSim
                 Vector3 lag = LagForFixedUpdate();
                 _freezeFor = -1f;
                 _pauseFrames = _pauseAfter = 0;
+                Events = StepEvents.None;
                 if (Engine.TakeQuickRestart())
                 {
                     string refused = Goals?.RestartRefused(Player.respawnPoint.x, Player.respawnPoint.y, Player.courseResetPoint != Vector2.zero);
@@ -1122,6 +1252,7 @@ namespace IGTAP.EngineSim
                 Engine.CountPhysicsTick();
                 Engine.AfterFixedTick(Player);
                 _pauseFrames = Engine.TakePause(out _pauseAfter);
+                if (_pauseFrames > 0) Events |= StepEvents.Paused;
                 for (int i = 0; i < Courses.Length; i++)
                     if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
                 VmanClock();

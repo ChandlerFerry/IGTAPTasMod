@@ -38,3 +38,10 @@ prefix Movement::TimeStop OnTimeStop
 # A refill orb's refresh sets whether it is usable (its cooldown is over and the refill upgrades reach its
 # ActivationSequence) and its sprites. The host hook sets the flag (Simulation.RefillOrbState), not the sprites.
 replace JiggleDropScript::SetActiveVisualState OnRefillOrbState
+# The tech contacts (Runtime\TechGrafts.cs ContactLog.Step): a spring hit with the spring's up, and a special wall jump
+# (a wallbounce, a dash into a wall with the jump buffered, a dash-boosted wall jump). Observers only: the game's bodies
+# run unchanged.
+prefix Movement::hitSpring OnHitSpring
+prefix Movement::SpecialWallJump OnSpecialWallJump
+# The step-up's animation call (Movement.Update lifting the player onto a step; its body is cut): the step-up contact.
+prefix StepUpAnimationScript::onSteppedUp OnSteppedUp

@@ -41,6 +41,9 @@ namespace IGTAP.EngineSim
             /// <summary>Rebuilt since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Reshaped;
             public bool Regrid;
+            /// <summary>Whether the player touching it is a spike touch (<see cref="PlayerTouch"/>): -1 not looked up yet, 0 no,
+            /// 1 a spikeScript's trigger.</summary>
+            public sbyte TouchKind = -1;
         }
 
         sealed class BodyState
@@ -590,11 +593,56 @@ namespace IGTAP.EngineSim
         public int TouchingPairs { get { return _pairsBefore.Count; } }
         public int BodyCount { get { return _b2.GetBodyCount(); } }
 
+        /// <summary>The player's touches after the last step (<see cref="DispatchCallbacks"/>): a spike trigger (spikeScript: its
+        /// OnTriggerEnter2D/Stay2D pairs), and the side (-1: the surface is at -x) of a solid surface it touches whose normal
+        /// is neither axis-aligned: facing down (an overhang: y &lt; 0) or up (a slope: y &gt; 0). The tech contacts read it
+        /// (ContactLog.Step).</summary>
+        public struct PlayerTouches
+        {
+            public bool Spike;
+            public float Overhang, Slope;
+        }
+        public PlayerTouches PlayerTouch;
+        const float SlantedNormal = .02f;
+
+        void CollectPlayerTouch()
+        {
+            var touch = new PlayerTouches();
+            for (int i = 0; i < _pairsNow.Count; i++)
+            {
+                Pair p = _pairsNow[i];
+                bool selfIsA = p.A.Body == _player;
+                if (!selfIsA && p.B.Body != _player) continue;
+                ColliderState other = selfIsA ? p.B : p.A;
+                if (p.Trigger)
+                {
+                    if (other.TouchKind < 0) other.TouchKind = other.Collider.GetComponent<spikeScript>() != null ? (sbyte)1 : (sbyte)0;
+                    if (other.TouchKind == 1) touch.Spike = true;
+                    continue;
+                }
+                List<b2Contact> contacts = _pairContacts[i];
+                for (int k = 0; k < contacts.Count; k++)
+                {
+                    b2Contact c = contacts[k];
+                    c.GetWorldManifold(_worldManifold);
+                    // Box2D's normal points from fixture A to B; the player sees the other surface's normal (toward itself).
+                    bool selfIsB = ((ColliderState)c.GetFixtureB().UserData).Body == _player;
+                    float nx = selfIsB ? _worldManifold.normal.x : -_worldManifold.normal.x, ny = selfIsB ? _worldManifold.normal.y : -_worldManifold.normal.y;
+                    if (MathF.Abs(nx) < SlantedNormal || MathF.Abs(ny) < SlantedNormal) continue;
+                    float side = nx > 0f ? -1f : 1f;
+                    if (ny < 0f) touch.Overhang = side;
+                    else touch.Slope = side;
+                }
+            }
+            PlayerTouch = touch;
+        }
+
         readonly List<(Pair pair, int message, Collision2D a, Collision2D b)> _sends = new List<(Pair, int, Collision2D, Collision2D)>();
 
         void DispatchCallbacks()
         {
             CollectTouching();
+            CollectPlayerTouch();
             _sends.Clear();
             _collisionsUsed = 0;
             for (int i = 0; i < _pairsBefore.Count; i++)
@@ -1599,6 +1647,43 @@ namespace IGTAP.EngineSim
             /// capture between steps (a search's, after a tick's frames) can hold some: a spring's push synced after the step.
             /// </summary>
             public int[] Bodies, Colliders;
+            /// <summary>
+            /// Every body's transform but the player's (<see cref="Simulation.Restore"/> puts that back), by body index. A step
+            /// writes each moving body's position back to it, and a script's write waits in it for the next sync (a zip mover's
+            /// end-of-move localPosition, TransformDirty), which then moves the body there: a restore that left another run's
+            /// transforms in place teleported the body to them.
+            /// </summary>
+            public Pose[] Poses;
+        }
+
+        /// <summary>A body's transform as a snapshot holds it (<see cref="PhysicsSnapshot.Poses"/>).</summary>
+        struct Pose
+        {
+            public Vector3 Position, LocalPosition, LocalScale, LossyScale;
+            public Quaternion Rotation, LocalRotation;
+
+            public Pose(Transform t)
+            {
+                Position = t.m_Position; LocalPosition = t.m_LocalPosition; LocalScale = t.m_LocalScale; LossyScale = t.m_LossyScale;
+                Rotation = t.m_Rotation; LocalRotation = t.m_LocalRotation;
+            }
+
+            /// <summary>Bit for bit: a -0 is another value to the digest, and a NaN never matches (the capture makes a new list).</summary>
+            public bool Is(Transform t)
+            {
+                return Same(Position, t.m_Position) && Same(LocalPosition, t.m_LocalPosition) && Same(LocalScale, t.m_LocalScale)
+                    && Same(LossyScale, t.m_LossyScale) && Same(Rotation, t.m_Rotation) && Same(LocalRotation, t.m_LocalRotation);
+            }
+
+            public void WriteTo(Transform t)
+            {
+                t.m_Position = Position; t.m_LocalPosition = LocalPosition; t.m_LocalScale = LocalScale; t.m_LossyScale = LossyScale;
+                t.m_Rotation = Rotation; t.m_LocalRotation = LocalRotation;
+            }
+
+            static bool Same(float a, float b) { return BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b); }
+            static bool Same(Vector3 a, Vector3 b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z); }
+            static bool Same(Quaternion a, Quaternion b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z) && Same(a.w, b.w); }
         }
 
         /// <summary>A rebuilt collider as a snapshot holds it: its fixtures and what they were built with.</summary>
@@ -1622,6 +1707,25 @@ namespace IGTAP.EngineSim
         // the restored snapshot's until a rebuild.
         Built[] _changedCapture = Array.Empty<Built>();
 
+        // The bodies' transforms as the last capture saw them (PhysicsSnapshot.Poses), shared by the captures after it while
+        // none moves (a body at rest, the static ones), and after a restore the restored snapshot's.
+        Pose[] _posesCapture;
+
+        Pose[] CapturePoses()
+        {
+            Pose[] last = _posesCapture;
+            if (last != null)
+            {
+                int i = 0;
+                while (i < _bodyList.Length && (_bodyList[i] == _player || last[i].Is(_bodyList[i].Rigidbody.transform))) i++;
+                if (i == _bodyList.Length) return last;
+            }
+            var poses = new Pose[_bodyList.Length];
+            for (int i = 0; i < poses.Length; i++)
+                if (_bodyList[i] != _player) poses[i] = new Pose(_bodyList[i].Rigidbody.transform);
+            return _posesCapture = poses;
+        }
+
         public object Capture()
         {
             Settle();
@@ -1643,7 +1747,7 @@ namespace IGTAP.EngineSim
             }
             return new PhysicsSnapshot { World = _b2.SaveState(), WorldMoved = _worldMoved, StaticsMoved = _staticsMoved, Player = player,
                 Touching = _pairsBefore.Count == 0 ? Array.Empty<Pair>() : _pairsBefore.ToArray(), Changed = _changedCapture,
-                Bodies = PendingBodies(), Colliders = PendingColliders() };
+                Bodies = PendingBodies(), Colliders = PendingColliders(), Poses = CapturePoses() };
         }
 
         int[] PendingBodies()
@@ -1673,6 +1777,9 @@ namespace IGTAP.EngineSim
             Settle();
             var s = (PhysicsSnapshot)snapshot;
             _b2.LoadState(s.World);
+            for (int i = 0; i < _bodyList.Length; i++)
+                if (_bodyList[i] != _player) s.Poses[i].WriteTo(_bodyList[i].Rigidbody.transform);
+            _posesCapture = s.Poses;
             // Not provably unchanged: the restored bodies' fixture lists (and the layers below) may differ from the lists'.
             _moversDirty = true;
             foreach (ColliderState c in _player.Colliders) { c.Fixtures.Clear(); c.FixturesAs = null; }

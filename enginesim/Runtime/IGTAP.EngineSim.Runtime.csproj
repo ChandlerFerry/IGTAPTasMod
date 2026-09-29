@@ -21,6 +21,12 @@
     <Compile Include="..\..\FieldState.cs" Link="Shared\FieldState.cs" />
     <Compile Include="..\..\FullTas.cs" Link="Shared\FullTas.cs" />
     <Compile Include="..\..\Categories.cs" Link="Shared\Categories.cs" />
+    <Compile Include="..\..\CourseStart.cs" Link="Shared\CourseStart.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The source tree, for a solver copied out of it: the tech miner reads the repo's techs.json and labmaps\ there (TechGrafts.SourceRoot). -->
+    <AssemblyMetadata Include="IgtapRepo" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))" />
   </ItemGroup>
 
   <ItemGroup>
