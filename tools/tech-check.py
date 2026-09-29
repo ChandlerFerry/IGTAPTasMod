@@ -10,36 +10,17 @@ inputs offline and reports the first tick where they differ.
 
 Exit code 1 when any demo differs or fails.
 """
-import json
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-from gamepaths import TRACES
+from gamepaths import TRACES, call, call_retry
 
-API = "http://127.0.0.1:17426"
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ROOT / "enginesim" / "Cli" / "bin" / "Release" / "net10.0" / "IGTAP.EngineSim.exe"
 
-def call(path, body=None, method="POST"):
-    data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(API + path, data=data, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=900) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        return json.loads(error.read())
-
 def trace(tech):
-    for _ in range(60):
-        result = call("/api/enginesim/trace", {"tech": tech})
-        if result.get("ok") or "loading" not in str(result.get("error", "")) and "Busy" not in str(result.get("error", "")):
-            return result
-        time.sleep(2)
-    return result
+    return call_retry("/api/enginesim/trace", {"tech": tech}, 60, 2, busy=("loading", "Busy"), timeout=900)
 
 def main():
     args = sys.argv[1:]
@@ -48,7 +29,7 @@ def main():
         at = args.index("--exe")
         exe = Path(args[at + 1])
         del args[at:at + 2]
-    techs = call("/api/state", method="GET")["techs"]["list"]
+    techs = call("/api/state", timeout=900)["techs"]["list"]
     wanted = [t for t in techs if t.get("labs") and (not args or t["id"] in args)]
     bad = 0
     for tech in wanted:

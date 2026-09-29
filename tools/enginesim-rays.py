@@ -1,10 +1,12 @@
 import json
+import os
 import random
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
+
+from gamepaths import call
 
 EXE = Path(__file__).resolve().parent.parent / "enginesim" / "Cli" / "bin" / "Release" / "net10.0" / "IGTAP.EngineSim.exe"
 
@@ -40,11 +42,13 @@ def main():
         rays += probe_rays(x, y, ground, blocking)
         rays += probe_rays(x + rng.uniform(-40, 40), y + rng.uniform(-40, 40), ground, blocking)
     rays = [[float(v) if i < 5 else int(v) for i, v in enumerate(r)] for r in rays]
-    request = urllib.request.Request("http://127.0.0.1:17426/api/enginesim/raycast", data=json.dumps({"rays": rays}).encode(), method="POST")
-    unity = json.loads(urllib.request.urlopen(request, timeout=600).read())["hits"]
+    unity = call("/api/enginesim/raycast", {"rays": rays})["hits"]
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump({"rays": rays}, f)
-    offline = json.loads(subprocess.run([exe, "rays", sys.argv[1], f.name], capture_output=True, text=True, check=True).stdout)["hits"]
+    try:
+        offline = json.loads(subprocess.run([exe, "rays", sys.argv[1], f.name], capture_output=True, text=True, check=True).stdout)["hits"]
+    finally:
+        os.unlink(f.name)
     bad = [(r, u, o) for r, u, o in zip(rays, unity, offline) if u != o]
     print(f"{len(rays)} rays, {len(rays) - len(bad)} identical, {len(bad)} different")
     for r, u, o in bad[:15]:

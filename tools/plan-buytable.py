@@ -1,7 +1,7 @@
 """The buy-order planner: the phase's buy sequence and grouping from the measured time-to-buy table.
 
 Reads the table `fulltas-buytable` writes (fulltas/<run>.buytable.json: per place the run stands at in the phase, per
-ordered box set and technique, the engine-measured ticks to buy the set in one go) and tools/plan-fulltas.py's economy
+ordered box set and technique, the engine-measured ticks to buy the set in one go) and tools/plan_fulltas.py's economy
 model of Course 2 (clone income, box costs, laps), and searches (Dijkstra over the model's states, time first, with the
 model's dominance) for the buy sequence and grouping that buys the phase's target soonest. It emits a strict goal list:
 one `buy:a+b` goal where one pass buys several boxes, plain `buy:<box>` goals otherwise, the laps as `start:N finish:N`.
@@ -17,19 +17,12 @@ Course 2's stretch (reward:bonus1 .. buy:buyds) is the phase the economy model c
 import argparse
 import difflib
 import heapq
-import importlib.util
 import itertools
 import json
 import os
-import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import gamepaths  # noqa: E402
-
-spec = importlib.util.spec_from_file_location("plan_fulltas", os.path.join(HERE, "plan-fulltas.py"))
-pf = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(pf)
+import gamepaths
+import plan_fulltas as pf
 
 LETTER = {"buy:" + t: k for k, t in pf.TOKEN.items()}
 TARGET = "D"
@@ -190,7 +183,7 @@ def goal_objects(header, labels):
 
 
 def calibrate(best, trace_path, table):
-    """Sets plan-fulltas.py's Course 2 constants from the run's best and its trace at reward:bonus1."""
+    """Sets plan_fulltas.py's Course 2 constants from the run's best and its trace at reward:bonus1."""
     goals, ticks = best["goals"], best["goalPhysicsTicks"]
     b, d = goals.index("reward:bonus1"), goals.index("buy:buyds")
     B = ticks[b]

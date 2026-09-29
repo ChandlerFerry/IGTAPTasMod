@@ -19,8 +19,12 @@ namespace IGTAPTasMod
         /// reads a step's id, and a Guid per merged input group per run is measurable in a search.</summary>
         internal MacroStep(bool noId) { }
         public MacroStepType type = MacroStepType.Move;
+        /// <summary>Old routes' millisecond timing: read once to turn them into ticks (TasPlugin.NormalizeStepFrameTiming),
+        /// never written.</summary>
         public int durationMs = 100;
         public int timeoutMs = 1200;
+        public bool ShouldSerializedurationMs() { return false; }
+        public bool ShouldSerializetimeoutMs() { return false; }
         public int direction;
         public int wallJumpHoldDirection = 2;
         public ActionEndCondition endCondition = ActionEndCondition.FixedTicks;
@@ -115,7 +119,6 @@ namespace IGTAPTasMod
         public long courseStartTick = -1;
         public float courseTimeSeconds;
         public List<RawTickSample> samples = new List<RawTickSample>();
-        public List<MacroStep> semanticSteps = new List<MacroStep>();
     }
 
     [Serializable]

@@ -179,7 +179,6 @@ namespace IGTAPTasMod
 
         sealed class FullTasOfflineFile
         {
-            public DateTime written;
             public List<string> goals;
             public List<long> ticks, inputTicks;
             public List<SolverTick> inputs;
@@ -195,19 +194,18 @@ namespace IGTAPTasMod
             /// <summary>Faster ways the solver found for a segment whose Quick Restart matched but whose whole run failed (fulltas/&lt;run&gt;.faster.json), while that file is of this best.</summary>
             public List<JObject> faster;
         }
-        readonly Dictionary<string, (DateTime written, JObject file)> _fullTasFaster = new Dictionary<string, (DateTime, JObject)>(StringComparer.OrdinalIgnoreCase);
-        readonly Dictionary<string, FullTasOfflineFile> _fullTasOffline = new Dictionary<string, FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
+        readonly CachedFiles<JObject> _fullTasFaster = new CachedFiles<JObject>(StringComparer.OrdinalIgnoreCase);
+        readonly CachedFiles<FullTasOfflineFile> _fullTasOffline = new CachedFiles<FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
 
         sealed class FullTasClosest
         {
-            public DateTime written;
             public List<string> goals;
             public int reached;
             public string next;
             public float? distance;
             public List<SolverTick> inputs;
         }
-        readonly Dictionary<string, FullTasClosest> _fullTasClosest = new Dictionary<string, FullTasClosest>(StringComparer.OrdinalIgnoreCase);
+        readonly CachedFiles<FullTasClosest> _fullTasClosest = new CachedFiles<FullTasClosest>(StringComparer.OrdinalIgnoreCase);
 
         Rect _fullTasPlayerBounds;
 
@@ -226,8 +224,7 @@ namespace IGTAPTasMod
         static readonly Regex FullTasSeedTransition = new Regex(@"^(bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
 
         readonly Dictionary<string, List<float[]>> _fullTasAvoids = new Dictionary<string, List<float[]>>(StringComparer.OrdinalIgnoreCase);
-        DateTime _fullTasAvoidsRead;
-        float _fullTasAvoidsChecked = float.NegativeInfinity;
+        JObject _fullTasAvoidsOf;
         static readonly List<float[]> NoAvoids = new List<float[]>();
 
         static readonly Regex CompactScalarArrays = new Regex(@"\[((?:\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*,)*\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*)\]");

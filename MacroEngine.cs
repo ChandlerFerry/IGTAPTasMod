@@ -24,7 +24,6 @@ namespace IGTAPTasMod
         private List<MacroStep> _steps;
         private string _macroName;
         private int _stepIndex = -1;
-        private float _elapsedMs;
         private int _elapsedTicks;
         private bool _wallJumpTriggered;
         private bool _rawJumpHeld;
@@ -162,11 +161,9 @@ namespace IGTAPTasMod
                 return;
             }
             _steps = Expand(macro.steps);
-            NormalizeFrameTiming(_steps);
             _macroName = macro.name;
             ActiveMacro = macro;
             _stepIndex = 0;
-            _elapsedMs = 0f;
             _elapsedTicks = 0;
             _wallJumpTriggered = false;
             _rawJumpHeld = false;
@@ -208,15 +205,12 @@ namespace IGTAPTasMod
 
         /// <summary>Resume on a caller-owned, already-filtered step list: skips Expand's per-step Copy (its
         /// Guid.NewGuid id is never read by the engine). Exact where the list holds only enabled non-Bundle steps
-        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id. NormalizeFrameTiming
-        /// still runs, mutating the caller's steps in place of the copies.</summary>
+        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id.</summary>
         public void ResumeOwned(object[] state, List<MacroStep> steps, int elapsedTicks)
         {
             FieldState.Restore(this, state);
             _steps = steps;
-            NormalizeFrameTiming(_steps);
             _stepIndex = 0;
-            _elapsedMs = elapsedTicks * Time.fixedDeltaTime * 1000f;
             _elapsedTicks = elapsedTicks;
             _wallJumpTriggered = false;
             _finishWaitTicks = 0;
@@ -337,7 +331,6 @@ namespace IGTAPTasMod
         {
             _steps = null;
             _stepIndex = -1;
-            _elapsedMs = 0f;
             _elapsedTicks = 0;
         }
 
@@ -346,7 +339,6 @@ namespace IGTAPTasMod
             bool wasRunning = IsRunning;
             _steps = null;
             _stepIndex = -1;
-            _elapsedMs = 0f;
             _elapsedTicks = 0;
             Status = reason;
             if (!Quiet) TasPlugin.Log.LogInfo(reason);
@@ -441,7 +433,6 @@ namespace IGTAPTasMod
             else if (entering && step.type == MacroStepType.Dash)
                 PressDash(movement);
 
-            _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
             if (ShouldEnd(movement, step))
                 Advance(movement, step.type == MacroStepType.Jump);
@@ -452,14 +443,12 @@ namespace IGTAPTasMod
             if (!_wallJumpTriggered)
             {
                 SetDirection(movement, -step.direction);
-                _elapsedMs += Time.fixedDeltaTime * 1000f;
                 _elapsedTicks++;
                 if (IsWallJumpAvailable(movement))
                 {
                     PressJump(movement);
                     SetDirection(movement, WallJumpHoldDirection(step));
                     _wallJumpTriggered = true;
-                    _elapsedMs = 0f;
                     _elapsedTicks = 0;
                 }
                 else if (_elapsedTicks >= Mathf.Max(1, step.timeoutTicks))
@@ -470,7 +459,6 @@ namespace IGTAPTasMod
             }
 
             SetDirection(movement, WallJumpHoldDirection(step));
-            _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
             if (ShouldEnd(movement, step))
                 Advance(movement, true);
@@ -485,7 +473,6 @@ namespace IGTAPTasMod
             _lockX = step.lockMoveX;
             _lockY = step.lockMoveY;
             if (entering) PressStep(movement);
-            _elapsedMs += Time.fixedDeltaTime * 1000f;
             _elapsedTicks++;
             if (_elapsedTicks >= Mathf.Max(1, step.durationTicks)) Advance(movement, false);
         }
@@ -500,7 +487,6 @@ namespace IGTAPTasMod
         {
             if (releaseJump) ReleaseJump(movement);
             _stepIndex++;
-            _elapsedMs = 0f;
             _elapsedTicks = 0;
             _wallJumpTriggered = false;
             if (_stepIndex >= _steps.Count)
@@ -539,26 +525,6 @@ namespace IGTAPTasMod
             foreach (MacroStep step in source)
                 if (step.enabled && step.type != MacroStepType.Bundle) result.Add(step.Copy());
             return result;
-        }
-
-        private static void NormalizeFrameTiming(List<MacroStep> steps)
-        {
-            int tickMs = Mathf.Max(1, Mathf.RoundToInt(Time.fixedDeltaTime * 1000f));
-            foreach (MacroStep step in steps)
-            {
-                if (step.endCondition == ActionEndCondition.Duration)
-                {
-                    step.durationTicks = Mathf.Max(1, Mathf.RoundToInt(step.durationMs / (float)tickMs));
-                    step.endCondition = ActionEndCondition.FixedTicks;
-                }
-                else if (step.endCondition == ActionEndCondition.FixedTicks)
-                    step.durationTicks = Mathf.Max(1, step.durationTicks);
-                step.durationMs = step.durationTicks * tickMs;
-                step.timeoutTicks = step.timeoutTicks > 0
-                    ? step.timeoutTicks
-                    : Mathf.Max(1, Mathf.RoundToInt(step.timeoutMs / (float)tickMs));
-                step.timeoutMs = step.timeoutTicks * tickMs;
-            }
         }
 
         private static bool IsWallJumpAvailable(Movement movement)
@@ -639,10 +605,8 @@ namespace IGTAPTasMod
             WallBouncePossible(movement) = false;
             movement.hitDashResetterWhileInCurrentDash = false;
 
-            Component body = movement.GetComponent("Rigidbody2D");
-            if (body == null) return;
-            Rigidbody2D rb = body as Rigidbody2D;
-            if (rb != null) { rb.linearVelocity = Vector2.zero; rb.velocity = Vector2.zero; rb.angularVelocity = 0f; }
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            if (body != null) { body.linearVelocity = Vector2.zero; body.angularVelocity = 0f; }
         }
 
         private void PinSynchronizationPosition(Movement movement)
@@ -667,9 +631,7 @@ namespace IGTAPTasMod
 
         private bool ShouldEnd(Movement movement, MacroStep step)
         {
-            return step.endCondition == ActionEndCondition.FixedTicks
-                ? _elapsedTicks >= Mathf.Max(1, step.durationTicks)
-                : _elapsedMs >= Mathf.Max(0, step.durationMs);
+            return _elapsedTicks >= Mathf.Max(1, step.durationTicks);
         }
 
     }

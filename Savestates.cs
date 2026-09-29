@@ -86,17 +86,17 @@ namespace IGTAPTasMod
             "atJumpApex", "isDead", "cutsceneMode", "facingRight", "blocked", "movementMode"
         };
         private static readonly string[] BodyFieldNames = {
-            "linearVelocity", "velocity", "angularVelocity", "gravityScale", "linearDamping", "drag",
-            "angularDamping", "angularDrag", "bodyType", "constraints", "simulated"
+            "linearVelocity", "angularVelocity", "gravityScale", "linearDamping", "angularDamping", "bodyType", "constraints",
+            "simulated"
         };
 
-        public static Savestate Capture(Movement movement, string name, int pluginSchemaVersion)
+        public static Savestate Capture(Movement movement, string name)
         {
             if (movement == null) throw new ArgumentNullException(nameof(movement));
             Transform transform = movement.transform;
             Savestate result = new Savestate {
                 name = string.IsNullOrWhiteSpace(name) ? "Savestate" : name,
-                fingerprint = CreateFingerprint(movement, pluginSchemaVersion),
+                fingerprint = CreateFingerprint(movement),
                 positionX = transform.position.x, positionY = transform.position.y, positionZ = transform.position.z,
                 rotationX = transform.rotation.x, rotationY = transform.rotation.y,
                 rotationZ = transform.rotation.z, rotationW = transform.rotation.w,
@@ -107,13 +107,12 @@ namespace IGTAPTasMod
             result.originX = origin.x;
             result.originY = origin.y;
             CaptureMembers(movement, MovementFieldNames, result.movementFields);
-            Component body = movement.GetComponent("Rigidbody2D");
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             if (body != null) CaptureMembers(body, BodyFieldNames, result.bodyFields);
             return result;
         }
 
-        public static SavestateResult Restore(Movement movement, Savestate savestate,
-            int pluginSchemaVersion)
+        public static SavestateResult Restore(Movement movement, Savestate savestate)
         {
             SavestateResult result = new SavestateResult();
             if (movement == null || savestate == null) {
@@ -124,15 +123,15 @@ namespace IGTAPTasMod
                 result.Message = "Unsupported savestate schema " + savestate.schemaVersion;
                 return result;
             }
-            CompatibilityFingerprint current = CreateFingerprint(movement, pluginSchemaVersion);
+            CompatibilityFingerprint current = CreateFingerprint(movement);
             if (!current.Matches(savestate.fingerprint)) {
                 result.Message = "Savestate rejected: " + current.DescribeMismatch(savestate.fingerprint);
                 return result;
             }
 
             Transform transform = movement.transform;
-            Component body = movement.GetComponent("Rigidbody2D");
-            SetBodySimulation(body, false);
+            Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
+            if (body != null) body.simulated = false;
             Vector3 position = new Vector3(savestate.positionX, savestate.positionY, savestate.positionZ);
             if (savestate.hasOrigin)
             {
@@ -143,8 +142,11 @@ namespace IGTAPTasMod
             transform.rotation = new Quaternion(savestate.rotationX, savestate.rotationY, savestate.rotationZ, savestate.rotationW);
             transform.localScale = new Vector3(savestate.scaleX, savestate.scaleY, savestate.scaleZ);
             RestoreMembers(movement, savestate.movementFields, TasPlugin.UnlocksLocked);
-            if (body != null) RestoreMembers(body, savestate.bodyFields, false);
-            SetBodySimulation(body, ReadBool(savestate.bodyFields, "simulated", true));
+            if (body != null)
+            {
+                RestoreMembers(body, savestate.bodyFields, false);
+                body.simulated = ReadBool(savestate.bodyFields, "simulated", true);
+            }
             Physics2D.SyncTransforms();
             SnapCamera(transform.position);
             result.Success = true;
@@ -170,13 +172,13 @@ namespace IGTAPTasMod
             cam.orthographicSize = mover.camSize;
         }
 
-        public static CompatibilityFingerprint CreateFingerprint(Movement movement, int pluginSchemaVersion)
+        static CompatibilityFingerprint CreateFingerprint(Movement movement)
         {
             return new CompatibilityFingerprint {
                 gameVersion = Application.version ?? "",
                 assemblySha256 = HashAssembly(typeof(Movement).Assembly),
                 scene = movement.gameObject.scene.name,
-                pluginSchemaVersion = pluginSchemaVersion
+                pluginSchemaVersion = MacroLibrary.CurrentSchemaVersion
             };
         }
 
@@ -256,14 +258,6 @@ namespace IGTAPTasMod
                 result = Convert.ChangeType(input.value, targetType, CultureInfo.InvariantCulture);
                 return true;
             } catch { return false; }
-        }
-
-        private static void SetBodySimulation(Component body, bool value)
-        {
-            if (body == null) return;
-            PropertyInfo property = AccessTools.Property(body.GetType(), "simulated");
-            try { if (property != null && property.CanWrite) property.SetValue(body, value, null); }
-            catch { }
         }
 
         private static bool ReadBool(Dictionary<string, SnapshotValue> values, string key, bool fallback)

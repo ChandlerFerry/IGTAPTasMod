@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEngine;
 
 namespace IGTAPTasMod
 {
@@ -32,10 +33,8 @@ namespace IGTAPTasMod
         /// </summary>
         static int EditForcedPaths(Func<JArray, int> edit)
         {
-            string exe = EngineSimExe;
-            if (string.IsNullOrEmpty(exe)) throw new InvalidOperationException("The offline solver's path isn't known to this build.");
-            string built = Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
-            string source = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(exe), "..", "..", "..", "forced-paths.json"));
+            string built = ForcedPathsFile ?? throw new InvalidOperationException("The offline solver's path isn't known to this build.");
+            string source = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(built), "..", "..", "..", "forced-paths.json"));
             string[] files = new[] { source, built }.Where(File.Exists).ToArray();
             if (files.Length == 0) throw new InvalidOperationException("No forced-paths.json at " + source + " or " + built + ".");
             JObject root = JObject.Parse(File.ReadAllText(files[0]));
@@ -44,8 +43,31 @@ namespace IGTAPTasMod
                 "[" + string.Join(", ", m.Groups[1].Value.Split(',').Select(s => s.Trim())) + "]");
             text = CompactBoxLists.Replace(text, m => "[" + string.Join(", ", InnerArrays.Matches(m.Groups[1].Value).Cast<Match>().Select(i => i.Value)) + "]") + "\n";
             foreach (string file in new[] { source, built }.Where(f => Directory.Exists(Path.GetDirectoryName(f)))) File.WriteAllText(file, text);
-            _optionalBlocksCheckAt = float.NegativeInfinity;
+            _forcedPathsCheckAt = float.NegativeInfinity;
             return changed;
+        }
+
+        /// <summary>The built forced-paths.json, the one the solver reads; null: this build doesn't know the solver's path.</summary>
+        static string ForcedPathsFile
+        {
+            get { string exe = EngineSimExe; return string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json"); }
+        }
+
+        static readonly CachedFiles<JObject> _forcedPaths = new CachedFiles<JObject>();
+        // Looked at once a second at most (the overlay asks every frame, the studio for every course); EditForcedPaths, the
+        // plugin's own writer, makes the next call look again.
+        static float _forcedPathsCheckAt = float.NegativeInfinity;
+        static JObject _forcedPathsRoot;
+
+        /// <summary><see cref="ForcedPathsFile"/> parsed, for reading only; null: none, or unreadable.</summary>
+        static JObject ForcedPaths()
+        {
+            if (Time.unscaledTime < _forcedPathsCheckAt) return _forcedPathsRoot;
+            _forcedPathsCheckAt = Time.unscaledTime + 1f;
+            string file = ForcedPathsFile;
+            try { _forcedPathsRoot = file != null && File.Exists(file) ? _forcedPaths.Get(file, p => JObject.Parse(File.ReadAllText(p))) : null; }
+            catch (Exception ex) { Log.LogWarning("forced-paths.json unreadable: " + ex.Message); _forcedPathsRoot = null; }
+            return _forcedPathsRoot;
         }
 
         /// <summary>

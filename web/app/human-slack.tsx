@@ -5,7 +5,7 @@ import "./human-slack.css";
 
 // One input of the human version and its slack (`<best>-human.slack.json`, enginesim humanize).
 export type SlackInput = { tick: number; end: number; kind: string; value: number; class: string; window: number };
-export type SlackReport = {
+type SlackReport = {
   course: number; capabilities: string; source: string; human: string;
   time: number; runTicks: number; exact: number; exactBefore: number; inputs: SlackInput[];
 };

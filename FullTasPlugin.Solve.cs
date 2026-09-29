@@ -21,14 +21,9 @@ namespace IGTAPTasMod
         {
             string path = Path.Combine(EngineSimDir, "fulltas", run + ".faster.json");
             if (!File.Exists(path) || offline.reached == 0) return new List<JObject>();
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (!_fullTasFaster.TryGetValue(run, out var cached) || cached.written != written)
-            {
-                try { cached = (written, JObject.Parse(File.ReadAllText(path))); }
-                catch (Exception) { return new List<JObject>(); }
-                _fullTasFaster[run] = cached;
-            }
-            JObject o = cached.file;
+            JObject o;
+            try { o = _fullTasFaster.Get(path, p => JObject.Parse(File.ReadAllText(p))); }
+            catch (Exception) { return new List<JObject>(); }
             List<string> goals = o["goals"]?.ToObject<List<string>>();
             if (goals == null || !goals.SequenceEqual(labels) || (long?)o["bestTicks"] != offline.splits[offline.reached - 1].ticks) return new List<JObject>();
             return ((JArray)o["ways"]).Select(w => new JObject { ["start"] = w["start"], ["first"] = w["first"], ["last"] = w["last"], ["saves"] = w["saves"], ["why"] = w["why"] }).ToList();
@@ -37,16 +32,15 @@ namespace IGTAPTasMod
         FullTasOfflineFile ReadFullTasOffline(string run)
         {
             string path = Path.Combine(EngineSimDir, "fulltas", run + ".json");
-            if (!File.Exists(path)) { _fullTasOffline.Remove(run); return null; }
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (_fullTasOffline.TryGetValue(run, out FullTasOfflineFile cached) && cached.written == written) return cached;
+            if (!File.Exists(path)) return null;
             try
             {
-                JObject o = JObject.Parse(File.ReadAllText(path));
-                var file = new FullTasOfflineFile { written = written, goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
-                    inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
-                _fullTasOffline[run] = file;
-                return file;
+                return _fullTasOffline.Get(path, p =>
+                {
+                    JObject o = JObject.Parse(File.ReadAllText(p));
+                    return new FullTasOfflineFile { goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
+                        inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
+                });
             }
             catch (Exception ex)
             {
@@ -96,23 +90,21 @@ namespace IGTAPTasMod
         FullTasClosest FullTasClosestAttempt(string run, IList<string> labels)
         {
             string path = Path.Combine(EngineSimDir, "fulltas", run + ".closest.json");
-            if (!File.Exists(path)) { _fullTasClosest.Remove(run); return null; }
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (!_fullTasClosest.TryGetValue(run, out FullTasClosest closest) || closest.written != written)
+            if (!File.Exists(path)) return null;
+            FullTasClosest closest;
+            try
             {
-                try
+                closest = _fullTasClosest.Get(path, p =>
                 {
-                    JObject o = JObject.Parse(File.ReadAllText(path));
-                    closest = new FullTasClosest { written = written, goals = o["goals"].ToObject<List<string>>(), reached = (int)o["reached"],
+                    JObject o = JObject.Parse(File.ReadAllText(p));
+                    return new FullTasClosest { goals = o["goals"].ToObject<List<string>>(), reached = (int)o["reached"],
                         next = (string)o["next"], distance = (float?)o["distance"], inputs = o["inputs"].ToObject<List<SolverTick>>() };
-                    _fullTasClosest[run] = closest;
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning("Full-TAS closest attempt " + path + " unreadable: " + ex.Message);
-                    _fullTasClosest.Remove(run);
-                    return null;
-                }
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("Full-TAS closest attempt " + path + " unreadable: " + ex.Message);
+                return null;
             }
             return closest.inputs.Count > 0 && closest.goals.SequenceEqual(labels) ? closest : null;
         }
@@ -159,17 +151,7 @@ namespace IGTAPTasMod
                 what = "Improving " + run.name + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
             }
             while (_fullTasOutput.TryDequeue(out _)) { }
-            var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args.ToString()) {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                RedirectStandardInput = true, WorkingDirectory = Path.GetDirectoryName(EngineSimExe) } };
-            process.OutputDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
-            process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
-            process.Start();
-            // Below the game, as the course solve (Solver.LaunchSolve): 1x playback beside an Improve keeps its frames.
-            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            _fullTasProcess = process;
+            _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
             _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
@@ -345,10 +327,7 @@ namespace IGTAPTasMod
         void KillFullTasSolve(string status, string error = null)
         {
             if (_fullTasProcess == null) return;
-            try { if (!_fullTasProcess.HasExited) _fullTasProcess.Kill(); }
-            catch (Exception ex) { Logger.LogWarning("Could not stop the Full-TAS solve: " + ex.Message); }
-            _fullTasProcess.Dispose();
-            _fullTasProcess = null;
+            KillEngineSim(ref _fullTasProcess, "Full-TAS solve");
             while (_fullTasOutput.TryDequeue(out string line)) FullTasSolveLine(line);
             _fullTasSolveStatus = status;
             if (error != null) _fullTasSolveError = error;
@@ -442,29 +421,19 @@ namespace IGTAPTasMod
 
         List<float[]> FullTasAvoids(string run)
         {
-            if (Time.unscaledTime >= _fullTasAvoidsChecked + 1f)
+            JObject root = ForcedPaths();
+            if (root != _fullTasAvoidsOf)
             {
-                _fullTasAvoidsChecked = Time.unscaledTime;
-                string exe = EngineSimExe;
-                string file = string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json");
-                DateTime stamp = file != null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default(DateTime);
-                if (stamp != _fullTasAvoidsRead)
-                {
-                    _fullTasAvoidsRead = stamp;
-                    _fullTasAvoids.Clear();
-                    if (stamp != default(DateTime))
-                        try
-                        {
-                            foreach (JObject rule in ((JArray)JObject.Parse(File.ReadAllText(file))["paths"]).OfType<JObject>())
-                                if (rule["fulltas"] is JArray runs && rule["avoid"] is JArray avoid)
-                                    foreach (string name in runs.Select(r => (string)r))
-                                    {
-                                        if (!_fullTasAvoids.TryGetValue(name, out List<float[]> list)) _fullTasAvoids[name] = list = new List<float[]>();
-                                        list.AddRange(avoid.OfType<JArray>().Where(b => b.Count == 4).Select(b => b.Select(v => (float)v).ToArray()));
-                                    }
-                        }
-                        catch (Exception ex) { Logger.LogWarning("forced-paths.json unreadable for the goals overlay: " + ex.Message); }
-                }
+                _fullTasAvoidsOf = root;
+                _fullTasAvoids.Clear();
+                if (root != null)
+                    foreach (JObject rule in ((JArray)root["paths"]).OfType<JObject>())
+                        if (rule["fulltas"] is JArray runs && rule["avoid"] is JArray avoid)
+                            foreach (string name in runs.Select(r => (string)r))
+                            {
+                                if (!_fullTasAvoids.TryGetValue(name, out List<float[]> list)) _fullTasAvoids[name] = list = new List<float[]>();
+                                list.AddRange(avoid.OfType<JArray>().Where(b => b.Count == 4).Select(b => b.Select(v => (float)v).ToArray()));
+                            }
             }
             return _fullTasAvoids.TryGetValue(run, out List<float[]> boxes) ? boxes : NoAvoids;
         }

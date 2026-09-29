@@ -71,7 +71,6 @@ namespace IGTAPTasMod
 
         public sealed class LabMapDef
         {
-            public int schema = 1;
             public string id;
             public string name;
             public string tech;
@@ -82,7 +81,6 @@ namespace IGTAPTasMod
             public List<LabShapeDef> shapes = new List<LabShapeDef>();
             public LabStartDef start = new LabStartDef();
             public float[] finish;
-            public int maxTicks = 90;
             /// <summary>Playing the lab by hand (Tech tab, <c>inject {place: true}</c>): extra shapes and a standing start. The solver never sees it.</summary>
             public LabHandDef hand;
             /// <summary>The input trainer shown while the lab is injected (<see cref="LabTrainer"/>): "pauselift", "final-cling-float", or none.</summary>
@@ -166,11 +164,8 @@ namespace IGTAPTasMod
             if (File.Exists(path) && File.ReadAllText(path) == seeded) return path;
             Directory.CreateDirectory(LabMapsDir);
             if (File.Exists(path)) Logger.LogInfo("labmaps/" + fileName + ": the config copy differs from the plugin's; replaced with the plugin's.");
-            // Written aside, then moved over: a crash mid-write never leaves an empty lab file.
-            string temporary = path + ".tmp";
-            File.WriteAllText(temporary, seeded);
-            if (File.Exists(path)) File.Replace(temporary, path, null);
-            else File.Move(temporary, path);
+            File.WriteAllText(path + ".tmp", seeded);
+            ReplaceAtomic(path + ".tmp", path);
             return path;
         }
 
@@ -201,8 +196,8 @@ namespace IGTAPTasMod
             .Select(r => r.Substring("IGTAPTasMod.labmaps.".Length, r.Length - "IGTAPTasMod.labmaps.".Length - ".json".Length)).ToArray();
         List<string> _labMapIds;
         float _labMapIdsAt = float.NegativeInfinity;
-        readonly Dictionary<string, (DateTime written, LabMapDef lab)> _labMapCache = new Dictionary<string, (DateTime, LabMapDef)>();
-        readonly Dictionary<string, (DateTime written, JObject json)> _labJsonCache = new Dictionary<string, (DateTime, JObject)>();
+        readonly CachedFiles<LabMapDef> _labMapCache = new CachedFiles<LabMapDef>();
+        readonly CachedFiles<JObject> _labJsonCache = new CachedFiles<JObject>();
 
         /// <summary>Every lab map's id: the config folder's files and the plugin's embedded seeds (solved demos excluded).</summary>
         internal List<string> LabMapIds()
@@ -221,24 +216,14 @@ namespace IGTAPTasMod
         LabMapDef CachedLabMap(string id)
         {
             string path = string.IsNullOrWhiteSpace(id) || id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ? null : LabMapFile(id + ".json");
-            if (path == null) return LoadLabMap(id);
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (_labMapCache.TryGetValue(path, out var cached) && cached.written == written) return cached.lab;
-            LabMapDef lab = LoadLabMap(id);
-            _labMapCache[path] = (written, lab);
-            return lab;
+            return path == null ? LoadLabMap(id) : _labMapCache.Get(path, _ => LoadLabMap(id));
         }
 
         /// <summary>A lab demo's JSON (labmaps/&lt;name&gt;), parsed once per version of its file; null: no such demo. For reading only.</summary>
         JObject CachedLabJson(string fileName)
         {
             string path = LabMapFile(fileName);
-            if (path == null) return null;
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (_labJsonCache.TryGetValue(path, out var cached) && cached.written == written) return cached.json;
-            JObject json = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(path));
-            _labJsonCache[path] = (written, json);
-            return json;
+            return path == null ? null : _labJsonCache.Get(path, p => JsonConvert.DeserializeObject<JObject>(File.ReadAllText(p)));
         }
 
         internal string InjectedLabId { get { return _lab?.Id; } }
@@ -251,7 +236,7 @@ namespace IGTAPTasMod
                 {
                     // place: also put the player at the lab start with the lab's unlocks, to play it by hand.
                     string id = Text(body, "id");
-                    bool place = body["place"] != null && (bool)body["place"];
+                    bool place = Truthy(body, "place");
                     if (place && PlaybackActive) throw new InvalidOperationException("Stop playback first.");
                     LabMapDef lab = LoadLabMap(id);
                     if (_lab != null) RestoreLab("another lab map");
@@ -265,13 +250,6 @@ namespace IGTAPTasMod
                     return new { ok = true, injected = true };
                 case "/api/labmap/status":
                     return new { ok = true, injected = _lab != null, id = _lab?.Id, scene = _lab?.Scene, playing = PlaybackActive };
-                case "/api/labmap/demo":
-                {
-                    // The solved demo of a lab map (labmaps/<id>.demo.json): its inputs, for the studio and tech-check.
-                    string id = Text(body, "id");
-                    string path2 = LabMapFile(id + ".demo.json") ?? throw new InvalidOperationException("No solved demo for lab map \"" + id + "\".");
-                    return new { ok = true, demo = JsonConvert.DeserializeObject<JObject>(File.ReadAllText(path2)) };
-                }
             }
             throw new InvalidOperationException("Unknown lab map command: " + path);
         }
@@ -315,7 +293,7 @@ namespace IGTAPTasMod
             JObject demo = CachedLabJson(demoFile) ?? throw new InvalidOperationException("Lab map " + tech.labmap + " has no demo " + demoFile + ".");
             LabStartDef start = demo["start"] is JObject own ? own.ToObject<LabStartDef>() : lab.start;
             ResetToLabBase(player, (string)demo["solvedIn"]);
-            SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)), MacroLibrary.CurrentSchemaVersion);
+            SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)));
             if (!placed.Success) throw new InvalidOperationException("Lab start: " + placed.Message);
             ApplyLabBlocks(player, start);
         }
@@ -337,8 +315,8 @@ namespace IGTAPTasMod
         /// <summary>The start trace a lab demo is solved from when its demo names none (`lab solve`'s usual one).</summary>
         const string LabBaseTrace = "start-c1-none.json";
 
-        readonly Dictionary<string, (DateTime written, List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
-            new Dictionary<string, (DateTime, List<(FieldInfo, object)>, JArray)>();
+        readonly CachedFiles<(List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
+            new CachedFiles<(List<(FieldInfo, object)>, JArray)>();
 
         /// <summary>
         /// Every value-type Movement field (and the hitbox colliders) set to a start trace's (enginesim/&lt;trace&gt;, the one the
@@ -352,8 +330,7 @@ namespace IGTAPTasMod
             if (!File.Exists(path))
                 throw new InvalidOperationException("A lab start is placed over the start trace its demo was solved from, and " + path
                     + " is missing: capture it (tools/enginesim-capture.py start 1 NONE).");
-            DateTime written = File.GetLastWriteTimeUtc(path);
-            if (!_labBases.TryGetValue(path, out var based) || based.written != written)
+            var based = _labBases.Get(path, _ =>
             {
                 JObject start;
                 using (var reader = new JsonTextReader(new StreamReader(path)) { MaxDepth = 256 })
@@ -366,9 +343,8 @@ namespace IGTAPTasMod
                     if (field == null || field.IsStatic || field.IsLiteral || field.IsInitOnly) continue;
                     if (LabBaseValue(field.FieldType, entry[2], out object value)) fields.Add((field, value));
                 }
-                based = (written, fields, start["colliders"] as JArray);
-                _labBases[path] = based;
-            }
+                return (fields, start["colliders"] as JArray);
+            });
             foreach (var (field, value) in based.fields) field.SetValue(player, value);
             BoxCollider2D[] colliders = player.GetComponents<BoxCollider2D>();
             if (based.colliders != null)
@@ -505,7 +481,7 @@ namespace IGTAPTasMod
             _lab = new LabSession
             {
                 Id = lab.id, Lab = lab, Root = root, Hand = hand,
-                PlayerBefore = player != null ? SavestateService.Capture(player, "lab/" + lab.id + " before", MacroLibrary.CurrentSchemaVersion) : null,
+                PlayerBefore = player != null ? SavestateService.Capture(player, "lab/" + lab.id + " before") : null,
                 Scene = SceneManager.GetActiveScene().name,
             };
             if (player != null && (hand || playing != null)) BuildLabGhosts(lab, player, hand ? null : playing);
@@ -684,7 +660,7 @@ namespace IGTAPTasMod
             if (_lab.CourseResetPointBefore == null) _lab.CourseResetPointBefore = player.courseResetPoint;
             if (_lab.RespawnPointBefore == null) _lab.RespawnPointBefore = player.respawnPoint;
             Savestate start = PlacedSavestate(LabStartBody(lab, at));
-            SavestateResult restored = SavestateService.Restore(player, start, MacroLibrary.CurrentSchemaVersion);
+            SavestateResult restored = SavestateService.Restore(player, start);
             if (!restored.Success) throw new InvalidOperationException("Lab start: " + restored.Message);
             ApplyLabBlocks(player, at);
             LeaveCourses(player);
@@ -727,7 +703,7 @@ namespace IGTAPTasMod
                 if (lab.RespawnPointBefore != null) player.respawnPoint = lab.RespawnPointBefore.Value;
                 if (lab.PlayerBefore != null)
                 {
-                    SavestateService.Restore(player, lab.PlayerBefore, MacroLibrary.CurrentSchemaVersion);
+                    SavestateService.Restore(player, lab.PlayerBefore);
                     if (lab.SavedAbilities != null) { Physics2D.SyncTransforms(); SnapCameraAtPlaybackStart(player); }
                 }
             }
