@@ -58,11 +58,14 @@ namespace IGTAPTasMod
         {
             if (live == null || captured == null) return live == captured;
             if (live.GetType() != captured.GetType()) return false;
-            Type type = live.GetType();
-            Type definition = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
-            if (definition == typeof(HashSet<>)) return false;
-            if (!(live is Array) && definition != typeof(List<>) && definition != typeof(Queue<>) && definition != typeof(Stack<>))
-                return Equals(live, captured);
+            if (live is Array) return SameItems(live, captured);
+            Collection kind = CollectionOf(live.GetType());
+            if (kind.Copy == null) return Equals(live, captured);
+            return !kind.HashSet && SameItems(live, captured);
+        }
+
+        static bool SameItems(object live, object captured)
+        {
             System.Collections.IEnumerator a = ((System.Collections.IEnumerable)live).GetEnumerator(), b = ((System.Collections.IEnumerable)captured).GetEnumerator();
             while (true)
             {
@@ -76,19 +79,49 @@ namespace IGTAPTasMod
         internal static object Copy(object value)
         {
             if (value is Array array) return array.Clone();
-            if (value != null && value.GetType().IsGenericType)
+            Func<object, object> copy = value == null ? null : CollectionOf(value.GetType()).Copy;
+            return copy == null ? value : copy(value);
+        }
+
+        /// <summary>A List, HashSet, Queue or Stack type's copy (a new one of its items); no copy for any other type.</summary>
+        struct Collection
+        {
+            public Func<object, object> Copy;
+            public bool HashSet;
+        }
+
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Collection> Collections =
+            new System.Collections.Concurrent.ConcurrentDictionary<Type, Collection>();
+
+        static Collection CollectionOf(Type type)
+        {
+            Collection kind;
+            if (Collections.TryGetValue(type, out kind)) return kind;
+            string method = null;
+            if (type.IsGenericType)
             {
-                Type definition = value.GetType().GetGenericTypeDefinition();
-                if (definition == typeof(List<>) || definition == typeof(HashSet<>) || definition == typeof(Queue<>))
-                    return Activator.CreateInstance(value.GetType(), value);
-                if (definition == typeof(Stack<>))
-                {
-                    Array items = (Array)value.GetType().GetMethod("ToArray").Invoke(value, null);
-                    Array.Reverse(items);
-                    return Activator.CreateInstance(value.GetType(), items);
-                }
+                Type definition = type.GetGenericTypeDefinition();
+                method = definition == typeof(List<>) ? nameof(CopyList) : definition == typeof(HashSet<>) ? nameof(CopyHashSet)
+                    : definition == typeof(Queue<>) ? nameof(CopyQueue) : definition == typeof(Stack<>) ? nameof(CopyStack) : null;
             }
-            return value;
+            if (method != null)
+            {
+                kind.Copy = (Func<object, object>)typeof(FieldState).GetMethod(method, BindingFlags.Static | BindingFlags.NonPublic)
+                    .MakeGenericMethod(type.GetGenericArguments()).CreateDelegate(typeof(Func<object, object>));
+                kind.HashSet = method == nameof(CopyHashSet);
+            }
+            return Collections[type] = kind;
+        }
+
+        static object CopyList<T>(object value) { return new List<T>((List<T>)value); }
+        static object CopyHashSet<T>(object value) { return new HashSet<T>((HashSet<T>)value); }
+        static object CopyQueue<T>(object value) { return new Queue<T>((Queue<T>)value); }
+
+        static object CopyStack<T>(object value)
+        {
+            T[] items = ((Stack<T>)value).ToArray();
+            Array.Reverse(items);
+            return new Stack<T>(items);
         }
 
         /// <summary>

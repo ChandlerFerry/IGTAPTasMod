@@ -177,7 +177,7 @@ namespace IGTAP.EngineSim
         float _finishTime;
         string _endReason;
         readonly Dictionary<MonoBehaviour, object[]> _pristine = new Dictionary<MonoBehaviour, object[]>();
-        readonly HashSet<MonoBehaviour> _touched = new HashSet<MonoBehaviour>();
+        readonly HashSet<MonoBehaviour> _touched = new HashSet<MonoBehaviour>(), _restoring = new HashSet<MonoBehaviour>();
         readonly Dictionary<object, object[]> _captured = new Dictionary<object, object[]>();
 
         object[] CaptureShared(object target)
@@ -1134,11 +1134,15 @@ namespace IGTAP.EngineSim
             k = 0;
             foreach (var (g, loaded) in _layerAsLoaded) g.m_Layer = Saved(s.Layers, k++, g, loaded);
             Physics.Suspended = false;
+            // A script the snapshot lists is written whole below: its pristine write would be overwritten field for field.
+            foreach (var (target, _) in s.Touched) _restoring.Add(target);
             foreach (MonoBehaviour script in _touched)
-            {
-                FieldState.Restore(script, _pristine[script]);
-                _captured[script] = _pristine[script];
-            }
+                if (!_restoring.Contains(script))
+                {
+                    FieldState.Restore(script, _pristine[script]);
+                    _captured[script] = _pristine[script];
+                }
+            _restoring.Clear();
             _touched.Clear();
             foreach (var (target, fields) in s.Touched)
             {
