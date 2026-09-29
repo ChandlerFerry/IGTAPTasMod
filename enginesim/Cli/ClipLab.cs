@@ -22,8 +22,6 @@ namespace IGTAP.EngineSim.Cli
     static class ClipLab
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", Fields);
-        static readonly FieldInfo MomentumField = typeof(Movement).GetField("momentum", Fields);
         static readonly FieldInfo NormalCollider = typeof(Movement).GetField("normalCollider", Fields);
 
         public static int Run(string[] args)
@@ -212,7 +210,7 @@ namespace IGTAP.EngineSim.Cli
             probeStart["fields"] = fields;
             if (start.ContainsKey("vx") || start.ContainsKey("vy") || start.ContainsKey("mx") || start.ContainsKey("my"))
             {
-                Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+                Vector2 v = sim.Player.Velocity, m = sim.Player.momentum;
                 if (start.TryGetValue("vx", out JsonElement vx)) v.x = vx.GetSingle();
                 if (start.TryGetValue("vy", out JsonElement vy)) v.y = vy.GetSingle();
                 if (start.TryGetValue("mx", out JsonElement mx)) m.x = mx.GetSingle();
@@ -255,7 +253,7 @@ namespace IGTAP.EngineSim.Cli
                 WorldPos p = sim.PlayerWorld;
                 if (p.y > maxY) { maxY = p.y; maxStep = step; }
                 maxX = Math.Max(maxX, p.x); minX = Math.Min(minX, p.x);
-                Vector2 v = (Vector2)VelocityField.GetValue(sim.Player), m = (Vector2)MomentumField.GetValue(sim.Player);
+                Vector2 v = sim.Player.Velocity, m = sim.Player.momentum;
                 var body = sim.Physics.PlayerBody();
                 if (v.y + m.y > launch) { launch = v.y + m.y; launchVx = v.x + m.x; }
                 bodyVy = Math.Max(bodyVy, body.vy);
@@ -273,46 +271,38 @@ namespace IGTAP.EngineSim.Cli
             string trace = args[0], labPath = args[1];
             Lab lab = Load(labPath);
             string baseDir = Path.GetDirectoryName(Path.GetFullPath(labPath));
-            int threads = Opt(args, "--threads", Environment.ProcessorCount);
-            int top = Opt(args, "--top", lab.Top);
-            string outPath = OptS(args, "--out", null);
+            int threads = Solve.Option(args, "--threads", Environment.ProcessorCount);
+            int top = Solve.Option(args, "--top", lab.Top);
+            string outPath = Solve.Option(args, "--out", (string)null);
             // The prefix runs once per start (Simulation.Advance); every branch restores the state at its end.
             var inputs = lab.Branches.Select(b => b.ticks).ToList();
             long total = (long)lab.Starts.Count * lab.Branches.Count;
             Console.Error.WriteLine($"{lab.Starts.Count} starts x {lab.Branches.Count} branches = {total} runs on {threads} threads");
             var results = new Outcome[total];
-            int nextStart = -1;
             long done = 0;
             var errors = new ConcurrentQueue<string>();
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            var workers = Enumerable.Range(0, Math.Max(1, Math.Min(threads, lab.Starts.Count))).Select(_ => new Thread(() =>
+            Solve.Workers(threads, lab.Starts.Count, () => { var (sim, _, _) = Program.Open(trace); return (sim, pristine: sim.Start); }, (w, s) =>
             {
-                var (sim, _, _) = Program.Open(trace);
-                SimSnapshot pristine = sim.Start;
-                int s;
-                while ((s = Interlocked.Increment(ref nextStart)) < lab.Starts.Count)
+                Simulation sim = w.sim;
+                SimSnapshot from;
+                try
                 {
-                    SimSnapshot from;
-                    try
+                    sim.SetStart(w.pristine, 0);
+                    from = Apply(sim, lab.Starts[s], baseDir);
+                    if (lab.Prefix.Count > 0)
                     {
-                        sim.SetStart(pristine, 0);
-                        from = Apply(sim, lab.Starts[s], baseDir);
-                        if (lab.Prefix.Count > 0)
-                        {
-                            sim.SetStart(from, 0);
-                            from = sim.Advance(lab.Prefix) ?? throw new InvalidOperationException("the prefix ended before its last tick");
-                        }
+                        sim.SetStart(from, 0);
+                        from = sim.Advance(lab.Prefix) ?? throw new InvalidOperationException("the prefix ended before its last tick");
                     }
-                    catch (Exception ex) { errors.Enqueue($"start {s}: {ex.Message}"); continue; }
-                    for (int b = 0; b < inputs.Count; b++)
-                        results[(long)s * inputs.Count + b] = RunOne(sim, from, lab, s, b, inputs[b]);
-                    long d = Interlocked.Add(ref done, inputs.Count);
-                    if (s % Math.Max(1, lab.Starts.Count / 20) == 0)
-                        Console.Error.WriteLine($"  {d}/{total} runs, {d / Math.Max(0.001, clock.Elapsed.TotalSeconds):0}/s");
                 }
-            }, 16 << 20) { IsBackground = true }).ToList();
-            workers.ForEach(t => t.Start());
-            workers.ForEach(t => t.Join());
+                catch (Exception ex) { errors.Enqueue($"start {s}: {ex.Message}"); return; }
+                for (int b = 0; b < inputs.Count; b++)
+                    results[(long)s * inputs.Count + b] = RunOne(sim, from, lab, s, b, inputs[b]);
+                long d = Interlocked.Add(ref done, inputs.Count);
+                if (s % Math.Max(1, lab.Starts.Count / 20) == 0)
+                    Console.Error.WriteLine($"  {d}/{total} runs, {d / Math.Max(0.001, clock.Elapsed.TotalSeconds):0}/s");
+            })();
             foreach (string e in errors.Take(10)) Console.Error.WriteLine(e);
 
             string[] varying = lab.Starts.SelectMany(s => s.Keys).Distinct()
@@ -350,14 +340,14 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot from = Apply(sim, lab.Starts[s], Path.GetDirectoryName(Path.GetFullPath(labPath)));
             List<InputTick> inputs = lab.Prefix.Concat(lab.Branches[b].ticks).ToList();
             string[] extra = new[] { "wallJumpFacing", "dashFramesRemaining", "jumpBuffer", "wallCoyoteFrames", "wallJumpDirection", "wallJumpsLeft", "airDashesLeft", "dashCooldown" }
-                .Concat(OptS(args, "--fields", "").Split(',', StringSplitOptions.RemoveEmptyEntries)).ToArray();
+                .Concat(Solve.Option(args, "--fields", "").Split(',', StringSplitOptions.RemoveEmptyEntries)).ToArray();
             FieldInfo[] extraInfos = extra.Select(n => typeof(Movement).GetField(n, Fields) ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray();
             var rows = new List<Dictionary<string, object>>();
             Dictionary<string, object> first = Probe.Row(sim, -1, extra, extraInfos);
             rows.Add(first);
             // --rays file: {"rays": [[dx, dy, dirX, dirY, length, layerMask], ...]} cast from the player's transform (the physics
             // frame the game's scripts see) after every step, as "ray i: distance" (or "-" for no hit).
-            string raysPath = OptS(args, "--rays", null);
+            string raysPath = Solve.Option(args, "--rays", (string)null);
             float[][] rays = raysPath == null ? Array.Empty<float[]>() : JsonDocument.Parse(File.ReadAllText(raysPath)).RootElement.GetProperty("rays")
                 .EnumerateArray().Select(a => a.EnumerateArray().Select(v => v.GetSingle()).ToArray()).ToArray();
             var rayRows = new List<string>();
@@ -385,7 +375,7 @@ namespace IGTAP.EngineSim.Cli
                     + string.Join(" ", extra.Select(e => e + "=" + (row[e] is float[] a ? string.Join(",", a) : row[e])))
                     + (n > 0 && n - 1 < rayRows.Count ? " | " + rayRows[n - 1] : ""));
             }
-            string outPath = OptS(args, "--out", null);
+            string outPath = Solve.Option(args, "--out", (string)null);
             if (outPath != null) File.WriteAllText(outPath, sb.ToString()); else Console.Write(sb);
             return 0;
         }
@@ -400,7 +390,5 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static float F(string s) { return float.Parse(s, CultureInfo.InvariantCulture); }
-        static int Opt(string[] args, string name, int fallback) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? int.Parse(args[i + 1], CultureInfo.InvariantCulture) : fallback; }
-        static string OptS(string[] args, string name, string fallback) { int i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback; }
     }
 }

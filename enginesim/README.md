@@ -56,9 +56,7 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   new game (a `"start": "vman"` run: the Vman speedrun's world) with the run's goals in the header (`fulltas.goals`);
   `IGTAP.EngineSim fulltas <trace>` searches the whole run in windows of goals and sends complete, faster runs to
   `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json>` only replays a route (a run file's `inputs` or an
-  offline best's `ticks`) and prints each goal's physics and input tick and how it ended; `--transplant <old.json>`
-  first repairs an old route of the run (an offline best, or a 1x probe of it with its per-tick path) where it fails on
-  this engine and hands what it reaches faster to the solve ([`docs/fulltas.md`](../docs/fulltas.md#transplant)).
+  offline best's `ticks`) and prints each goal's physics and input tick and how it ended.
 
 `tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.

@@ -28,9 +28,7 @@ namespace IGTAP.EngineSim.Cli
             string what = only > 0 ? args[only + 1] : "all";
             JsonElement header = Solve.ReadHeader(trace);
             Func<Simulation> make = Solve.Creator(trace, header);
-            List<InputTick> inputs;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(route), new JsonDocumentOptions { MaxDepth = 256 }))
-                inputs = doc.RootElement.TryGetProperty("ticks", out JsonElement ticks) ? ticks.EnumerateArray().Select(InputTick.FromJson).ToList() : Solve.ReadInputs(doc.RootElement);
+            List<InputTick> inputs = Plan.ReadRoute(route);
             int goals = header.GetProperty("fulltas").GetProperty("goals").GetArrayLength();
             Simulation sim = make();
             sim.StrictBuys = true;

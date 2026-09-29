@@ -134,23 +134,12 @@ namespace IGTAP.EngineSim.Cli
         /// and goal tracker as made), until the time is up.</summary>
         void RunOnThreads(int count, Action<Simulation, SimSnapshot, FullTasTracker, int> work)
         {
-            int next = -1;
-            var threads = new List<Thread>();
-            for (int t = 0; t < Math.Min(_threads, count); t++)
+            Solve.Workers(_threads, count, () => { Simulation sim = _create(); return (sim, origin: sim.Start, tracker: sim.Goals); }, (s, i) =>
             {
-                var thread = new Thread(() =>
-                {
-                    Simulation sim = _create();
-                    SimSnapshot origin = sim.Start;
-                    FullTasTracker tracker = sim.Goals;
-                    for (int i; (i = Interlocked.Increment(ref next)) < count && !TimeUp;)
-                        try { work(sim, origin, tracker, i); }
-                        catch (Exception ex) { Log($"auto goals: edit {i + 1} failed: {ex.GetBaseException().GetType().Name}: {ex.GetBaseException().Message}"); }
-                }, 64 << 20);
-                thread.Start();
-                threads.Add(thread);
-            }
-            foreach (Thread t in threads) t.Join();
+                if (TimeUp) return;
+                try { work(s.sim, s.origin, s.tracker, i); }
+                catch (Exception ex) { Log($"auto goals: edit {i + 1} failed: {ex.GetBaseException().GetType().Name}: {ex.GetBaseException().Message}"); }
+            })();
         }
 
         /// <summary>The goals of a label list: the run's own goal objects, and for a set of boxes the run buys one by one (buy:a+b),
@@ -681,9 +670,7 @@ namespace IGTAP.EngineSim.Cli
             Collect(_best, "the best after a goals edit");
             BuildModel();
             PrintModel("goals edit");
-            if (Part("ctg")) _ctg = MakePart<ICostToGo>();
-            if (Part("sched")) _sched = MakePart<IPullScheduler>();
-            if (Part("macros")) _macros = MakePart<IMacroSource>();
+            MakeParts();
             RefitParts();
             SaveRefs();
         }

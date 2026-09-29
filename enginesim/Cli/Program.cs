@@ -28,7 +28,6 @@ namespace IGTAP.EngineSim.Cli
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());
                     case "enginebench": return EngineBench.Run(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
-                    case "waypoints": return CourseWaypoints.Command(args.Skip(1).ToArray());
                     case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
                     case "plan": return Plan.Run(args.Skip(1).ToArray());
                     case "polish": return Polish.Command(args.Skip(1).ToArray());
@@ -42,31 +41,16 @@ namespace IGTAP.EngineSim.Cli
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
-                    case "archive-check":
-                    {
-                        // archive-check <archive> <copy>: saves the archive again as <copy> and checks it reads back the same.
-                        OfflineSolver.Memory a = Solve.LoadMemory(args[1]);
-                        Solve.SaveMemory(args[2], a);
-                        OfflineSolver.Memory b = Solve.LoadMemory(args[2]);
-                        bool same = a.Runs == b.Runs && a.Sources.Count == b.Sources.Count && a.Plateau.Count == b.Plateau.Count
-                            && a.Plateau.Zip(b.Plateau).All(p => p.First.SequenceEqual(p.Second))
-                            && a.Sources.Zip(b.Sources).All(p => p.First.Inputs.SequenceEqual(p.Second.Inputs) && p.First.Cells.SequenceEqual(p.Second.Cells));
-                        Console.WriteLine($"{a.Sources.Count} sources, {new FileInfo(args[1]).Length >> 20} MB -> {new FileInfo(args[2]).Length >> 20} MB, {(same ? "same" : "DIFFERENT")}");
-                        return same ? 0 : 1;
-                    }
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
-                    case "climb": return SpikeClimb.Run(args.Skip(1).ToArray());
                     case "path":
                     {
                         // --canonical: the start as the searches load it (Simulation.LoadStart canonical: the category start's
                         // history and FloatingOrigin), not as captured.
                         var (sim, _, _) = Open(args[1], args.Contains("--canonical"));
-                        using JsonDocument route = JsonDocument.Parse(File.ReadAllText(args[2]));
-                        JsonElement list = route.RootElement.TryGetProperty("ticks", out JsonElement ticksList) ? ticksList : route.RootElement.GetProperty("inputs");
-                        var inputs = list.EnumerateArray().Select(InputTick.FromJson).ToList();
+                        List<InputTick> inputs = Plan.ReadRoute(args[2]);
                         bool verbose = args.Contains("--verbose");
                         string[] fields = { "Velocity", "momentum", "onGround", "OnWall", "cutsceneMode", "framesSinceLastDash", "airDashesLeft", "jumpBuffer", "wallCoyoteFrames",
                             "coyoteFrames", "canHyper", "lastHyperY", "preDashMomentum" };
@@ -78,7 +62,6 @@ namespace IGTAP.EngineSim.Cli
                         FieldInfo counter = typeof(spikeScript).GetField("counter", bf), grace = typeof(spikeScript).GetField("graceFrames", bf),
                             onDash = typeof(spikeScript).GetField("killPlayerOnDash", bf), killed = typeof(spikeScript).GetField("playerKilled", bf);
                         spikeScript[] spikes = sim.World.All<spikeScript>();
-                        FieldInfo dashActive = typeof(Movement).GetField("dashActive", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: st =>
                         {
                             WorldPos pos = sim.PlayerWorld;
@@ -91,7 +74,7 @@ namespace IGTAP.EngineSim.Cli
                             foreach (spikeScript s in spikes)
                                 if ((int)counter.GetValue(s) > 0)
                                     Console.WriteLine($"tick {st}: SPIKE {s.name} at {sim.ToWorld(ScenePos.From(s.transform.position)).x:0},{sim.ToWorld(ScenePos.From(s.transform.position)).y:0} counter {counter.GetValue(s)} graceFrames {grace.GetValue(s)}"
-                                        + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {dashActive.GetValue(sim.Player)}"
+                                        + $" killOnDash {onDash.GetValue(s)} playerKilled {killed.GetValue(s)} dashActive {sim.Player.dashActive}"
                                         + $" player {pos.x:0.0},{pos.y:0.0}");
                             bool timing = sim.TimingCourse() != null;
                             if (verbose)
@@ -164,11 +147,11 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
-                            + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"
+                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
+                            + "          [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
-                            + "                   [--parts LIST] [--library-runs R] [--join-physics] [--focus a-b] [--tail-minutes t]\n"
-                            + "                   [--combine-repair-minutes m] [--stray-study [--study-from TEXT]]\n"
+                            + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
+                            + "                   [--combine-repair-minutes m]\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
@@ -178,9 +161,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
                             + "                                         (--seed-list: a file of seed paths, one per line);\n"
                             + "                                         --goal N: polish only the W goals ending at goal N (from goal N-W on),\n"
-                            + "                                         over and over; --resets: polish by reset segments (the route cut at its\n"
-                            + "                                         quick restarts), each closed by its old restart with the same player state\n"
-                            + "                                         after it, the route after it kept; --segment N: only segment N, over and over\n"
+                            + "                                         over and over\n"
                             + "                                         --auto: the unattended loop (docs/fulltas.md \"Auto\"): per-goal lower\n"
                             + "                                         bounds and slow stretches rank the goals, a bandit over (lever, goal)\n"
                             + "                                         spends the CPU where ticks per CPU second are; --minutes 0 prints the table;\n"
@@ -188,8 +169,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         with the wait fix, route-sync and tail windows, the pull scheduler, the\n"
                             + "                                         cost-to-go, macro seeds, stray-buy re-timing, avoid and revive (docs/fulltas.md\n"
                             + "                                         \"Parts\"); --focus a-b: the scheduler and levers pull windows starting in goals\n"
-                            + "                                         a..b only (combine still splices anywhere); --stray-study: measures the stray\n"
-                            + "                                         levers on the known routes' dropped finds, then exits\n"
+                            + "                                         a..b only (combine still splices anywhere)\n"
                             + "  macros [--tech-dir D] [--no-default] [--mine route.json]... [--measure route.json]... [--min-uses N] [--dump N]\n"
                             + "         [--samples N] [--out file]    mines --auto's macro seeds from the saved and judged records (--mine: more\n"
                             + "                                         routes) and measures how often one beats a held-out route's own next ticks\n"

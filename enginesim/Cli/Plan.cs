@@ -44,8 +44,7 @@ namespace IGTAP.EngineSim.Cli
                 Chains = !args.Contains("--no-chains"),
                 GuideAhead = Solve.Option(args, "--guide-ahead", 60),
             };
-            for (int i = 0; i < args.Length - 1; i++)
-                if (args[i] == "--guide-route") options.Guides.Add(ReadRoute(args[i + 1]));
+            options.Guides.AddRange(Solve.Args(args, "--guide-route").Select(ReadRoute));
             Field(args);
             var clock = Stopwatch.StartNew();
             void Log(string line) => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}");
@@ -83,16 +82,8 @@ namespace IGTAP.EngineSim.Cli
             long runTicks = route.RunTicks, polishTicks = 0;
             if (!args.Contains("--no-polish"))
             {
-                var polish = new Polish(create, forced, threads, Log);
-                try
-                {
-                    Polish.Result p = polish.Run(inputs);
-                    polishTicks = p.Ticks;
-                    inputs = p.Inputs;
-                    time = p.Time;
-                    runTicks = p.RunTicks;
-                }
-                finally { polish.Stop(); }
+                Polish.Result p = Polish.Once(create, forced, threads, Log, inputs);
+                (polishTicks, inputs, time, runTicks) = (p.Ticks, p.Inputs, p.Time, p.RunTicks);
             }
             string outFile = Solve.Option(args, "--out", Path.Combine(Path.GetDirectoryName(Path.GetFullPath(trace)), "plan",
                 label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json"));
@@ -123,7 +114,7 @@ namespace IGTAP.EngineSim.Cli
         {
             var userGuides = options.Guides.ToList();
             var trails = new List<Planner.Trail>();
-            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--guide-probe") trails.Add(ReadProbe(args[i + 1]));
+            trails.AddRange(Solve.Args(args, "--guide-probe").Select(ReadProbe));
             options.TrailFollowSpeed = Solve.Option(args, "--trail-follow-speed", options.TrailFollowSpeed);
             // --drop-reset N: the route's quick restart at input N dropped, the window planned from there (the momentum kept) to the
             // route's next goal (or --to-goal), the route itself a trail.
@@ -230,16 +221,8 @@ namespace IGTAP.EngineSim.Cli
             long runTicks = r.PhysicsTicks, polishTicks = 0;
             if (!args.Contains("--no-polish"))
             {
-                var polish = new Polish(w.Full, new OfflineSolver.ForcedPath(), threads, log);
-                try
-                {
-                    Polish.Result p = polish.Run(inputs, from: start, to: planned);
-                    polishTicks = p.Ticks;
-                    inputs = p.Inputs;
-                    time = p.Time;
-                    runTicks = p.RunTicks;
-                }
-                finally { polish.Stop(); }
+                Polish.Result p = Polish.Once(w.Full, new OfflineSolver.ForcedPath(), threads, log, inputs, start, planned);
+                (polishTicks, inputs, time, runTicks) = (p.Ticks, p.Inputs, p.Time, p.RunTicks);
             }
             string outFile = Solve.Option(args, "--out", Path.Combine(Path.GetDirectoryName(Path.GetFullPath(trace)), "plan",
                 $"fulltas-{w.Name}-goals-{from + 1}-{w.To}-{time.ToString("0.00", CultureInfo.InvariantCulture)}.json"));
@@ -329,25 +312,17 @@ namespace IGTAP.EngineSim.Cli
                 RunResult r = null;
                 Caps caps = default;
                 long startPhysics = 0;
-                Exception failure = null;
-                var t = new Thread(() =>
+                Solve.OnThread(() =>
                 {
-                    try
-                    {
-                        Simulation sim = w.Full();
-                        r = sim.Run(route, null, null, 1000000);
-                        if (r.Progress < w.From) return;
-                        int cut = startInput >= 0 ? startInput : w.From == 0 ? 0 : (int)r.GoalInputTicks[w.From - 1];
-                        SimSnapshot at = cut == 0 ? sim.Start : sim.Advance(route.GetRange(0, cut));
-                        sim.Restore(at);
-                        caps = PlayerCaps.Of(sim.Player);
-                        startPhysics = sim.Engine.PhysicsTicks;
-                    }
-                    catch (Exception ex) { failure = ex; }
+                    Simulation sim = w.Full();
+                    r = sim.Run(route, null, null, 1000000);
+                    if (r.Progress < w.From) return;
+                    int cut = startInput >= 0 ? startInput : w.From == 0 ? 0 : (int)r.GoalInputTicks[w.From - 1];
+                    SimSnapshot at = cut == 0 ? sim.Start : sim.Advance(route.GetRange(0, cut));
+                    sim.Restore(at);
+                    caps = PlayerCaps.Of(sim.Player);
+                    startPhysics = sim.Engine.PhysicsTicks;
                 });
-                t.Start();
-                t.Join();
-                if (failure != null) throw new InvalidOperationException("replaying the route failed", failure);
                 if (r.Progress < (partial ? w.From : w.To)) throw new InvalidOperationException($"the route reaches goal {r.Progress} of {goals} ({r.EndReason}), not goal {(partial ? w.From : w.To)}");
                 int start = startInput >= 0 ? startInput : w.From == 0 ? 0 : (int)r.GoalInputTicks[w.From - 1];
                 w.RouteGoalInputs = (long[])r.GoalInputTicks.Clone();
@@ -381,11 +356,7 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>The whole run from the start (its own thread and world).</summary>
             public RunResult Evaluate(List<InputTick> inputs)
             {
-                RunResult r = null;
-                var t = new Thread(() => r = Full().Run(inputs, null, null, 1000000));
-                t.Start();
-                t.Join();
-                return r;
+                return Solve.OnThread(() => Full().Run(inputs, null, null, 1000000));
             }
 
             /// <summary>The prefix and a window's inputs (from the window's start) cut where they reach goal To: the inputs a
@@ -403,7 +374,7 @@ namespace IGTAP.EngineSim.Cli
                 var at = new List<WorldPos>();
                 var v = new List<Vector2>();
                 var input = new List<int>();
-                var t = new Thread(() =>
+                Solve.OnThread(() =>
                 {
                     Simulation sim = Full();
                     sim.Run(route, null, null, 1000000, _ =>
@@ -415,8 +386,6 @@ namespace IGTAP.EngineSim.Cli
                         input[p] = (int)sim.Engine.RunTicks;
                     });
                 });
-                t.Start();
-                t.Join();
                 return new Planner.Trail { Name = name, Inputs = route, At = at.ToArray(), V = v.ToArray(), Input = input.ToArray() };
             }
         }
@@ -436,9 +405,7 @@ namespace IGTAP.EngineSim.Cli
         /// timer runs), to see where it misleads.</summary>
         static int Profile(Func<Simulation> create, OfflineSolver.ForcedPath forced, string routePath)
         {
-            List<InputTick> route;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routePath), new JsonDocumentOptions { MaxDepth = 256 }))
-                route = Solve.ReadInputs(doc.RootElement);
+            List<InputTick> route = ReadRoute(routePath);
             Simulation sim = create();
             DistanceField field = DistanceField.For(sim);
             if (sim.Goals == null) field.SetVia(forced.Via);
@@ -468,15 +435,13 @@ namespace IGTAP.EngineSim.Cli
             Planner.Route route = planner.Run(log);
             if (route == null) return null;
             Planner.Route checkedRoute = null;
-            var t = new Thread(() =>
+            Solve.OnThread(() =>
             {
                 Simulation sim = create();
                 RunResult r = sim.Run(route.Inputs);
                 if (r.Finished && Math.Abs(r.Time - route.Time) < .0001f && r.PhysicsTicks == route.RunTicks) checkedRoute = route;
                 else log($"plan best {route.Time:0.00}s replays from the start as {(r.Finished ? r.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s" : r.EndReason)}");
             });
-            t.Start();
-            t.Join();
             return checkedRoute;
         }
     }

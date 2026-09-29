@@ -171,20 +171,14 @@ namespace IGTAP.EngineSim.Cli
             if (launches.Count > limit) launches = launches.Where((_, i) => i % Math.Max(1, launches.Count / limit) == 0).Take(limit).ToList();
 
             var found = new List<object>[launches.Count];
-            int next = -1, done = 0;
+            int done = 0;
             DateTime began = DateTime.UtcNow;
-            var workers = Enumerable.Range(0, Math.Max(1, Math.Min(threads, launches.Count))).Select(_ => Task.Run(() =>
+            Solve.Workers(threads, launches.Count, () => { Simulation sim = create(); return (sim, start: sim.Advance(new List<InputTick>())); }, (w, k) =>
             {
-                Simulation sim = create();
-                SimSnapshot start = sim.Advance(new List<InputTick>());
-                for (int k; (k = Interlocked.Increment(ref next)) < launches.Count;)
-                {
-                    found[k] = Search(sim, start, launches[k], stand, standOffset, dash, dashOffset);
-                    int d = Interlocked.Increment(ref done);
-                    if (d % 500 == 0) Console.WriteLine($"[{(DateTime.UtcNow - began):mm\\:ss}] {d}/{launches.Count} launches");
-                }
-            })).ToArray();
-            Task.WaitAll(workers);
+                found[k] = Search(w.sim, w.start, launches[k], stand, standOffset, dash, dashOffset);
+                int d = Interlocked.Increment(ref done);
+                if (d % 500 == 0) Console.WriteLine($"[{(DateTime.UtcNow - began):mm\\:ss}] {d}/{launches.Count} launches");
+            })();
 
             // The whole level (every zone and world state), not only the floors of the zones the export had loaded.
             var level = Map.LevelBounds(world.RootElement, origin);
@@ -280,9 +274,7 @@ namespace IGTAP.EngineSim.Cli
                 pairs = pairs.Select((p, i) => new object[] { p.From, p.To, R(p.Drop), R(p.Ax), R(p.Ay), R(p.Bx), R(p.By), p.Line ? 1 : 0,
                     example.TryGetValue(i, out int e) ? e : -1 }),
             };
-            string temp = output + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(result));
-            File.Move(temp, output, true);
+            Solve.WriteShared(output, JsonSerializer.Serialize(result));
             File.WriteAllText(keyPath, outputKey);
             Console.WriteLine($"ultras: {pairs.Count} floor pairs ({example.Count} with an engine ultra), {ultras.Count} ultras from {found.Count(f => f is { Count: > 0 })} of {launches.Count} launches -> {output}");
             return 0;
