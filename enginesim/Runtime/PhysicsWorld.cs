@@ -1064,8 +1064,15 @@ namespace IGTAP.EngineSim
             }
             Grid g = _grid;
             int stale = 0;
-            foreach (ColliderState s in _regrid) if (!Holds(g, s)) stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
-            if (stale > LayOutAbove)
+            bool outside = false;
+            foreach (ColliderState s in _regrid)
+                if (!Holds(g, s))
+                {
+                    stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
+                    outside = outside || !InBounds(g, s);
+                }
+            // A shape leaving the grid (a rebase's first rebuilds) lays out a grid too: the current one is kept whole as a spare.
+            if (stale > LayOutAbove || outside)
             {
                 foreach (ColliderState s in _regrid) s.Regrid = false;
                 _regrid.Clear();
@@ -1080,15 +1087,14 @@ namespace IGTAP.EngineSim
                 _grid = back;
                 return;
             }
-            bool inBounds = true;
             foreach (ColliderState s in _regrid)
             {
                 s.Regrid = false;
-                if (inBounds) inBounds = Regrid(g, s);
+                Regrid(g, s);
             }
             _regrid.Clear();
             // Freed slots cost every query that walks their cells: past half the slots, lay the grid out again.
-            if (!inBounds || g.Dead > g.StaticCount / 2) LayOut(g);
+            if (g.Dead > g.StaticCount / 2) LayOut(g);
         }
 
         /// <summary>The grid holds the collider as it is now: the same fixtures (a fixture's shape never changes) at the same
@@ -1171,23 +1177,22 @@ namespace IGTAP.EngineSim
             foreach (int c in g.ExtraUsed) g.Extra[c].Clear();
             g.ExtraUsed.Clear();
             // Counting sort: each cell's count, its start, then the slots in slot order.
-            int[] start = g.CellStart;
+            int[] start = g.CellStart, fill = g.CellFill;
+            int cellsX = g.CellsX;
             for (int i = 0; i < g.StaticCount; i++)
             {
                 CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
-                    for (int x = x0; x <= x1; x++)
-                        start[y * g.CellsX + x + 1]++;
+                    for (int x = y * cellsX + x0 + 1, end = y * cellsX + x1 + 1; x <= end; x++) start[x]++;
             }
-            for (int c = 0; c < cells; c++) start[c + 1] += start[c];
+            for (int c = 0; c < cells; c++) { fill[c] = start[c]; start[c + 1] += start[c]; }
             if (g.CellSlots.Length < start[cells]) g.CellSlots = new int[System.Math.Max(start[cells], 2 * g.CellSlots.Length)];
-            Array.Copy(start, g.CellFill, cells);
+            int[] slots = g.CellSlots;
             for (int i = 0; i < g.StaticCount; i++)
             {
                 CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
-                    for (int x = x0; x <= x1; x++)
-                        g.CellSlots[g.CellFill[y * g.CellsX + x]++] = i;
+                    for (int x = y * cellsX + x0, end = y * cellsX + x1; x <= end; x++) slots[fill[x]++] = i;
             }
             foreach (ColliderState s in _colliderList)
                 if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) NoteGrid(g, s);
@@ -1201,10 +1206,11 @@ namespace IGTAP.EngineSim
             return g.StaticCount++;
         }
 
-        bool Regrid(Grid g, ColliderState s)
+        /// <summary>The collider's slots as it is now; its boxes lie inside the grid (UpdateGrid checked <see cref="InBounds"/>).</summary>
+        void Regrid(Grid g, ColliderState s)
         {
             bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
-            if (isStatic && Gridded(g, s)) return true;
+            if (isStatic && Gridded(g, s)) return;
             List<int> slots = g.Slots[s.Id];
             foreach (int i in slots)
             {
@@ -1212,16 +1218,23 @@ namespace IGTAP.EngineSim
                 g.Dead++;
             }
             slots.Clear();
-            if (!isStatic) { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); return true; }
+            if (!isStatic) { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); return; }
+            foreach (b2Fixture f in s.Fixtures)
+                for (int c = 0; c < f.m_proxyCount; c++) AddShape(g, f, c, s, GridBox(f, c));
+            NoteGrid(g, s);
+        }
+
+        /// <summary>Every box of the collider's fixtures lies inside the grid.</summary>
+        bool InBounds(Grid g, ColliderState s)
+        {
+            if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return true;
             float right = g.X + g.CellsX * CellSize, top = g.Y + g.CellsY * CellSize;
             foreach (b2Fixture f in s.Fixtures)
                 for (int c = 0; c < f.m_proxyCount; c++)
                 {
                     b2AABB box = GridBox(f, c);
                     if (box.lowerBound.x < g.X || box.lowerBound.y < g.Y || box.upperBound.x >= right || box.upperBound.y >= top) return false;
-                    AddShape(g, f, c, s, box);
                 }
-            NoteGrid(g, s);
             return true;
         }
 
@@ -1248,11 +1261,63 @@ namespace IGTAP.EngineSim
         {
             b2Fixture[] held = g.Fixtures[s.Id];
             if (s.Fixtures.Count != held.Length || Children(s) != g.Children[s.Id]) return false;
+            bool same = true;
             for (int k = 0; k < held.Length; k++)
-                if (!ReferenceEquals(s.Fixtures[k], held[k])) return false;
+                if (!ReferenceEquals(s.Fixtures[k], held[k]))
+                {
+                    if (!SameShape(s.Fixtures[k].b2Shape, held[k].b2Shape)) return false;
+                    same = false;
+                }
             b2Transform now = (s.Body?.Body ?? _ground).GetTransform(), pose = g.Poses[s.Id];
-            return now.p.x == pose.p.x && now.p.y == pose.p.y && now.q == pose.q;
+            if (!(now.p.x == pose.p.x && now.p.y == pose.p.y && now.q == pose.q)) return false;
+            if (!same) Retarget(g, s, held);
+            return true;
         }
+
+        /// <summary>A rebuild of the same geometry (a rebase's rebuild on a run that crossed it before, a toggle off and back): the
+        /// slots take the new fixtures in place of the held ones, whose shapes and pose, so every query's answer, are the same.</summary>
+        static void Retarget(Grid g, ColliderState s, b2Fixture[] held)
+        {
+            foreach (int i in g.Slots[s.Id])
+                g.Static[i].Fixture = s.Fixtures[Array.IndexOf(held, g.Static[i].Fixture)];
+            g.Fixtures[s.Id] = s.Fixtures.ToArray();
+        }
+
+        /// <summary>The two shapes are the same, bit for bit (the fields every query and AABB of theirs reads).</summary>
+        static bool SameShape(b2Shape a, b2Shape b)
+        {
+            if (a.GetType() != b.GetType() || !Same(a.m_radius, b.m_radius)) return false;
+            switch (a)
+            {
+                case b2PolygonShape p:
+                {
+                    var q = (b2PolygonShape)b;
+                    if (p.m_count != q.m_count || !Same(p.m_centroid, q.m_centroid)) return false;
+                    for (int i = 0; i < p.m_count; i++)
+                        if (!Same(p.m_vertices[i], q.m_vertices[i]) || !Same(p.m_normals[i], q.m_normals[i])) return false;
+                    return true;
+                }
+                case b2ChainShape c:
+                {
+                    var d = (b2ChainShape)b;
+                    if (c.m_count != d.m_count || !Same(c.m_prevVertex, d.m_prevVertex) || !Same(c.m_nextVertex, d.m_nextVertex)) return false;
+                    for (int i = 0; i < c.m_count; i++) if (!Same(c.m_vertices[i], d.m_vertices[i])) return false;
+                    return true;
+                }
+                case b2CircleShape c: return Same(c.m_p, ((b2CircleShape)b).m_p);
+                case b2EdgeShape e:
+                {
+                    var f = (b2EdgeShape)b;
+                    return e.m_oneSided == f.m_oneSided && Same(e.m_vertex1, f.m_vertex1) && Same(e.m_vertex2, f.m_vertex2)
+                        && e.m_vertex0.HasValue == f.m_vertex0.HasValue && (!e.m_vertex0.HasValue || Same(e.m_vertex0.Value, f.m_vertex0.Value))
+                        && e.m_vertex3.HasValue == f.m_vertex3.HasValue && (!e.m_vertex3.HasValue || Same(e.m_vertex3.Value, f.m_vertex3.Value));
+                }
+                default: return false;
+            }
+        }
+
+        static bool Same(float a, float b) => BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b);
+        static bool Same(b2Vec2 a, b2Vec2 b) => Same(a.x, b.x) && Same(a.y, b.y);
 
         void AddShape(Grid g, b2Fixture f, int child, ColliderState s, in b2AABB box)
         {
