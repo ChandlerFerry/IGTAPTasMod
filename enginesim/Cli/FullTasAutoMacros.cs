@@ -76,10 +76,8 @@ namespace IGTAP.EngineSim.Cli
         readonly Action<string> _log;
         List<Pattern> _ranked = new List<Pattern>();
 
-        /// <summary>The reflection loader's constructor (FullTasAuto fills what it has by name); <paramref name="corpus"/> is
-        /// for tests and tools (null: the built-in corpus).</summary>
-        public FullTasAutoMacros(int goals = 0, string[] labels = null, int threads = 1, string name = null,
-            IStateLibrary library = null, Action<string> log = null, IEnumerable<Source> corpus = null)
+        /// <summary><paramref name="corpus"/> is for tests and tools (null: the built-in corpus).</summary>
+        public FullTasAutoMacros(Action<string> log = null, IEnumerable<Source> corpus = null)
         {
             _log = log ?? Console.Error.WriteLine;
             if (corpus != null) _corpus.AddRange(corpus);

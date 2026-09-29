@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading;
 using UnityEngine;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
@@ -90,7 +89,7 @@ namespace IGTAP.EngineSim.Cli
         // A tick's move longer than twice what the player's speed (|Velocity + momentum|) covers in it, plus this slack, is a quick
         // restart's or a respawn's teleport, not movement.
         const float TeleportSlack = 20f;
-        const int SpeedWindow = 10, SlowStretch = 6, MaxRefs = 400, AblateTop = 6;
+        const int SpeedWindow = 10, SlowStretch = 6, MaxRefs = 400;
         const float SlowShare = .35f;
 
         readonly List<AutoRef> _refs = new List<AutoRef>();
@@ -138,7 +137,7 @@ namespace IGTAP.EngineSim.Cli
         {
             // --ref routes, replayed on this engine. A complete one faster than the best is the loop's start: the studio passes the
             // run's saved record, which the engine's run file trails when that record was found and judged elsewhere.
-            _parts = ParseParts(Solve.Option(args, "--parts", string.Join(",", DefaultParts)));
+            _parts = ParseParts(Solve.Option(args, "--parts", string.Join(",", AllParts)));
             // A course run's goals are its waypoints: no economy to edit.
             if (_course != null) _parts.Remove("goals");
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
@@ -200,7 +199,6 @@ namespace IGTAP.EngineSim.Cli
             if (Part("lib"))
             {
                 _lib = new StateLibrary(_goals, Solve.Option(args, "--library-runs", 150));
-                _joinPhysics = args.Contains("--join-physics");
                 double t0 = CpuSeconds();
                 TraceRun(_best.Inputs, "the starting best");
                 var (fast, median) = Chaining(_best.Inputs);
@@ -225,12 +223,9 @@ namespace IGTAP.EngineSim.Cli
             if (Part("sched") && (_sched = MakePart<IPullScheduler>()) == null) Log("auto: no IPullScheduler in this build; the bandit picks the pulls");
             if (Part("macros") && (_macros = MakePart<IMacroSource>()) == null) Log("auto: no IMacroSource in this build; windows get no macro seeds");
             RefitParts();
-            // --stray-study: the known routes' dropped finds measured against the stray levers, then out (docs/fulltas.md).
-            if (args.Contains("--stray-study")) { StrayStudy(Solve.Option(args, "--study-from", (string)null)); return; }
             Outlook();
 
             _curve.Add((0, 0, _best.Last, "start", 0));
-            bool ablated = false;
             var probes = new Queue<int>();
             // Measured headroom first: one short window probe per label (the lap phases of a repeated run: every `buy:buyclone2` is
             // one), at its goal with the most expected headroom, most expected first; the bandit then starts from what they gave.
@@ -318,12 +313,6 @@ namespace IGTAP.EngineSim.Cli
                 if (batch.Count == 1 && !Windowish(batch[0].arm.Lever)) RunSingle(batch[0].arm, batch[0].budget, batch[0].score);
                 else RunWindows(batch);
                 if (_pullNo % 8 < batch.Count) PrintArms();
-                // The waypoint study, once, after a quarter of the budget: report-only (the run's goals are never edited).
-                if (!ablated && _lib == null && _clock.Elapsed.TotalMinutes >= _minutes / 4)
-                {
-                    ablated = true;
-                    Ablations();
-                }
             }
             BuildModel();
             PrintModel("end");
@@ -339,11 +328,8 @@ namespace IGTAP.EngineSim.Cli
             {
                 var (fast, median) = Chaining(_best.Inputs);
                 Log($"auto: chaining check: {fast} of {_goals} goal touches at 600+ u/s (median {median:0} u/s) on the final best, against {_chain0.fast} (median {_chain0.median:0} u/s) on the starting best; library {_lib.Describe()}");
-                var (jf, jp, jx) = _lib.JoinCounts();
-                Log($"auto: join points: {jf} on the full-state digest (joined on), {jp} on the player alone{(jx >= 0 ? $", {jx} with the Box2D world digest" : "")}; stitches {_stitchExact} of {_stitchTried} replayed exactly as predicted");
-                AutoWrite(new { type = "joins", full = jf, player = jp, physics = jx, stitches = _stitchTried, exact = _stitchExact });
+                Log($"auto: stitches {_stitchExact} of {_stitchTried} replayed exactly as predicted");
                 AutoWrite(new { type = "chaining", start = _chain0.fast, startMedian = Math.Round(_chain0.median), end = fast, endMedian = Math.Round(median), library = _lib.Describe() });
-                DumpLibrary(Path.Combine(Path.GetDirectoryName(_autoLog), _name + ".auto-lib.jsonl"));
             }
             AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = _pullNo, cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                 curve = _curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
@@ -493,74 +479,6 @@ namespace IGTAP.EngineSim.Cli
             }, 1000000);
             sim.SetStart(_origin, 0);
             return got;
-        }
-
-        /// <summary>
-        /// --stray-study: every known route that is ahead of the best at its last goal p (a window find, a repair's partial run) is
-        /// spliced with the best's tail after goal p and replayed; each that dies on a stray buy (a dropped find) is then tried with
-        /// the plain wait fix, the wait fix with the whole-stretch re-timing, a tail window, a tail window with the stray box as an
-        /// avoid box, and both (the order MergeAuto plays them). Logs one `study` line per find and lever and the totals, then
-        /// --auto ends.
-        /// </summary>
-        void StrayStudy(string from)
-        {
-            Route best = _best;
-            bool retime0 = _strayRetime, avoid0 = _strayAvoid;
-            var levers = new[] { "wait", "wait+retime", "tail", "tail+avoid", "all" };
-            var tally = levers.ToDictionary(l => l, l => (whole: 0, faster: 0, cpu: 0.0, gain: 0L));
-            int finds = 0, whole = 0, strays = 0, deaths = 0, other = 0;
-            bool started = from == null;
-            foreach (AutoRef r in _refs.ToList())
-            {
-                if (!started && !r.How.Contains(from, StringComparison.Ordinal)) continue;
-                started = true;
-                int p = r.Progress;
-                if (p == 0 || p >= _goals || best.GoalPhysics[p - 1] - r.GoalPhysics[p - 1] <= 0) continue;
-                finds++;
-                var (inputs, changedStart, changedEnd) = WithBestTail(r, best);
-                string how = $"study: {r.How} (goal {p}, {best.GoalPhysics[p - 1] - r.GoalPhysics[p - 1]} ticks ahead)";
-                Route c = TraceRun(inputs, how);
-                string box = StrayBox(c.EndReason);
-                if (c.Progress == _goals) { whole++; Log($"study: {how}: whole as spliced, {Describe(c)}"); continue; }
-                if (box == null)
-                {
-                    if (c.EndReason != null && c.EndReason.Contains("death", StringComparison.OrdinalIgnoreCase)) deaths++; else other++;
-                    Log($"study: {how}: dies at goal {c.Progress + 1} ({c.EndReason}), not a stray buy");
-                    continue;
-                }
-                strays++;
-                Log($"study: {how}: dropped at goal {c.Progress + 1} ({_labels[c.Progress]}), stray {box}");
-                foreach (string lever in levers)
-                {
-                    _strayRetime = lever.Contains("retime") || lever == "all";
-                    _strayAvoid = lever.Contains("avoid") || lever == "all";
-                    double c0 = CpuSeconds();
-                    Route got = null;
-                    if (lever.StartsWith("wait", StringComparison.Ordinal) || lever == "all") got = WaitFix(c, best, changedEnd, $"{how} [{lever}]", changedStart);
-                    if (lever.StartsWith("tail", StringComparison.Ordinal) || lever == "all" && (got == null || got.Last >= best.Last))
-                        got = TailWindows(c, best, $"{how} [{lever}]") ?? got;
-                    double cpu = CpuSeconds() - c0;
-                    bool done = got != null && got.Progress == _goals, faster = done && got.Last < best.Last;
-                    var t = tally[lever];
-                    tally[lever] = (t.whole + (done ? 1 : 0), t.faster + (faster ? 1 : 0), t.cpu + cpu, t.gain + (faster ? best.Last - got.Last : 0));
-                    Log($"study: {how} [{lever}]: {(done ? $"survives, {Describe(got)}{(faster ? $", {best.Last - got.Last} ticks faster than the best" : ", not faster")}" : "dropped")} in {cpu:0.0} CPU s");
-                    // A survivor faster than the best is kept as a route file (a later --ref of an --auto run stitches it in).
-                    if (faster)
-                    {
-                        string file = Path.Combine(Path.GetDirectoryName(_autoLog), $"study-{got.Last}-{finds}-{lever.Replace('+', '_')}.json");
-                        File.WriteAllText(file, JsonSerializer.Serialize(new { inputs = got.Inputs.Select(t => t.ToJson()) }));
-                        Log($"study: saved {file}");
-                    }
-                }
-            }
-            _strayRetime = retime0;
-            _strayAvoid = avoid0;
-            Log($"study: {finds} known routes ahead of the best at their last goal; {whole} whole as spliced, {strays} dropped on a stray buy, {deaths} on a death, {other} otherwise");
-            foreach (string lever in levers)
-            {
-                var t = tally[lever];
-                Log($"study: {lever}: {t.whole} of {strays} survive (whole runs), {t.faster} faster than the best (best gain {t.gain} ticks summed), {t.cpu:0} CPU s");
-            }
         }
 
         /// <summary>A partial known route to its last goal p, then the best's inputs after the best's goal p: with the first input
@@ -1008,9 +926,8 @@ namespace IGTAP.EngineSim.Cli
                 try
                 {
                     using var lanes = new Lanes(Math.Max(1, _threads), _create, _goals);
-                    var g = new Graft { Inputs = r.Inputs.ToList(), From = Enumerable.Range(0, r.Inputs.Count).ToList(), How = r.How };
-                    long gain = Splices(lanes, r.Inputs, g, null, k, false, false);
-                    if (gain > 0) Splices(lanes, r.Inputs, g, null, k, true, false);
+                    long gain = Splices(lanes, r.Inputs, k, false);
+                    if (gain > 0) Splices(lanes, r.Inputs, k, true);
                     said.Add($"reanchor of {r.How} ({(gain > 0 ? gain + " ticks sooner at goal " + k : "none sooner")})");
                 }
                 finally { _reference = saved; }
@@ -1050,59 +967,6 @@ namespace IGTAP.EngineSim.Cli
             _grafted.Add((how, k));
             MergeAuto($"plan of goal {k} (auto)", best, prefixLength, k, found);
             return $"plan goal {k}: {finishes.Count} finishes, fastest {finishes.Min(f => f.RunTicks) - w.StartPhysics} ticks against the best's {w.OldWindowPhysics}";
-        }
-
-        /// <summary>
-        /// Report only: whether an area goal costs time. The window from goal k-1 to goal k+1 is searched with goal k left out of a
-        /// copy of the run's goals; the run's own goals are never edited.
-        /// </summary>
-        void Ablations()
-        {
-            var picks = _model.Where(r => r.K < _goals && _runGoals.Goals[r.K - 1].kind == FullTasGoal.At).OrderByDescending(r => r.Expected).Take(AblateTop).ToList();
-            foreach (GoalRow row in picks)
-            {
-                if (TimeUp) return;
-                double c0 = CpuSeconds();
-                (long at, long baseline) = Ablate(row.K, Math.Min(0.5, _windowMinutes));
-                string verdict = at == long.MaxValue ? "no way to the next goal found without it"
-                    : at < baseline ? $"costs {baseline - at} ticks: without it goal {row.K + 1} is reached at tick {at} against {baseline}"
-                    : $"costs nothing found: without it goal {row.K + 1} at tick {at} against {baseline}";
-                Log($"auto: waypoint goal {row.K} ({row.Label}) {verdict} ({CpuSeconds() - c0:0} CPU s; report only, the run's goals are unchanged)");
-                AutoWrite(new { type = "ablation", goal = row.K, label = row.Label, without = at == long.MaxValue ? (long?)null : at, baseline, cost = at == long.MaxValue ? (long?)null : baseline - at });
-            }
-        }
-
-        (long at, long baseline) Ablate(int k, double minutes)
-        {
-            JsonNode node = JsonNode.Parse(AutoHeader().GetRawText());
-            node["fulltas"]["goals"].AsArray().RemoveAt(k - 1);
-            JsonElement header;
-            using (JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 })) header = doc.RootElement.Clone();
-            Func<Simulation> make = Solve.Creator(_trace, header);
-            Route best = _best;
-            int prefixLength = PrefixAt(best, k);
-            List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
-            long baseline = best.GoalPhysics[k];
-            Func<Simulation> create = () =>
-            {
-                Simulation s = make();
-                s.StrictBuys = true;
-                s.Goals.Limit = k;
-                if (prefix.Count == 0) return s;
-                SimSnapshot at = s.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
-                s.SetStart(at, prefix.Count);
-                return s;
-            };
-            var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
-            var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(2)), seeds, null, Solve.FullTasPaths(_name, new[] { _labels[k] }, _labels), VisitCell);
-            long bestAt = long.MaxValue;
-            solver.Improved += (time, runTicks, inputs, how) => { lock (solver) bestAt = Math.Min(bestAt, runTicks - Simulation.StrictFinishTicks); };
-            Thread[] threads = solver.Start(_threads);
-            var clock = Stopwatch.StartNew();
-            while (!TimeUp && clock.Elapsed.TotalMinutes < minutes) Thread.Sleep(250);
-            solver.Stop();
-            foreach (Thread t in threads) t.Join(60000);
-            lock (solver) return (bestAt, baseline);
         }
 
         // ---------------------------------------------------------------- commit check, repair bound, references

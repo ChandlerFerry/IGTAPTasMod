@@ -62,9 +62,6 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The player-only key (movement, engine, tracker; no world): what joins would be if the world were left out
         /// (measured, never joined on).</summary>
         public ulong PlayerKey;
-        /// <summary>Key plus the Box2D world digest (b2World.StateDigest, absolute touch counters included), measured only with
-        /// --join-physics.</summary>
-        public ulong PhysicsKey;
         /// <summary>Physics ticks from the run's start on the run that filed it.</summary>
         public long Tick;
         /// <summary>The exact snapshot handle: the filing run and how many of its inputs had been played (replaying them from the

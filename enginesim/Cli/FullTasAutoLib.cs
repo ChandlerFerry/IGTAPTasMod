@@ -288,14 +288,6 @@ namespace IGTAP.EngineSim.Cli
             return $"{Runs} runs, {_states.Count} states, {joins} join points";
         }
 
-        /// <summary>Join points (a (goal, key) two live runs share) under each key: the full digest joined on, the player-only key,
-        /// and with the Box2D world digest (when measured).</summary>
-        public (int full, int player, int physics) JoinCounts()
-        {
-            int Count(Func<LibState, ulong> key) => AllRuns.SelectMany(r => r.States).Select(id => _states[id])
-                .GroupBy(s => (s.Goal, key(s))).Count(g => g.Select(s => s.Run).Distinct().Count() > 1);
-            return (Count(s => s.Key), Count(s => s.PlayerKey), _states.Any(s => s.PhysicsKey != 0) ? Count(s => s.PhysicsKey) : -1);
-        }
     }
 
     sealed partial class FullTas
@@ -307,9 +299,9 @@ namespace IGTAP.EngineSim.Cli
         /// scheduler; ctg: the cost-to-go (needs lib); macros: macro seeds (needs lib); stray: a run that dies on a stray buy is
         /// re-timed as a whole (Retime) and its tail windows avoid the stray box (StrayAvoid) (needs lib); goals: the economy
         /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs).</summary>
-        HashSet<string> _parts = new HashSet<string>(DefaultParts);
+        /// <summary>Every part, all on by default.</summary>
         static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals" };
-        static readonly string[] DefaultParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals" };
+        HashSet<string> _parts = new HashSet<string>(AllParts);
         /// <summary>--parts stray's two halves (the stray study switches them one at a time).</summary>
         bool _strayRetime, _strayAvoid;
         bool Part(string p) => _parts.Contains(p);
@@ -567,7 +559,6 @@ namespace IGTAP.EngineSim.Cli
 
         static ulong Mix(ulong h, ulong v) { h ^= v + 0x9E3779B97F4A7C15UL + (h << 6) + (h >> 2); return h * 1099511628211UL; }
 
-        bool _joinPhysics;
         static readonly FieldInfo[] NormalizedTimers = new[] { KeyDashCooldown, KeyWallCoyote, KeySinceDash }.Where(i => i >= 0).Select(i => KeyMoveFields[i]).ToArray();
 
         /// <summary>
@@ -602,34 +593,9 @@ namespace IGTAP.EngineSim.Cli
             ulong key = Mix(player, (ulong)(uint)WorldDigest(sim));
             return new LibState
             {
-                Goal = goal, Kind = kind, Key = key, PlayerKey = player, PhysicsKey = _joinPhysics ? Mix(key, sim.Physics.StateDigest()) : 0,
+                Goal = goal, Kind = kind, Key = key, PlayerKey = player,
                 Tick = tick, Input = input, Features = FeaturesNow(sim),
             };
-        }
-
-        /// <summary>
-        /// Every library state filed at a goal touch, one JSON line each (fulltas/&lt;run&gt;.auto-lib.jsonl): goal, kind, tick, run,
-        /// features, the known ticks to the end from it (null: none) and the filing run's end: the cost-to-go's data.
-        /// </summary>
-        void DumpLibrary(string file)
-        {
-            if (_lib == null) return;
-            using var w = new System.IO.StreamWriter(file, false);
-            foreach (StateLibrary.LibRun run in _lib.AllRuns)
-                foreach (int id in run.States)
-                {
-                    LibState s = _lib.State(id);
-                    if ((s.Kind & LibPoint.Goal) == 0 || s.Goal == 0) continue;
-                    long toEnd = _lib.ToEnd(id);
-                    LibFeatures f = s.Features;
-                    w.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        goal = s.Goal, kind = s.Kind.ToString(), tick = s.Tick, run = s.Run, how = run.How, runEnd = run.End == long.MaxValue ? (long?)null : run.End,
-                        toEnd = toEnd == long.MaxValue ? (long?)null : toEnd,
-                        x = f.X, y = f.Y, vx = f.VX, vy = f.VY, mx = f.MX, my = f.MY, dashes = f.DashesLeft, jumps = f.AirJumpsLeft, right = f.FacingRight,
-                        ground = f.OnGround, buys = f.BuysHash, cash = f.Cash,
-                    }));
-                }
         }
 
         static ulong Bits(float f) => (uint)BitConverter.SingleToInt32Bits(f);
@@ -819,8 +785,7 @@ namespace IGTAP.EngineSim.Cli
                 bool exact = r.Progress == _goals && r.End == end;
                 _stitchTried++;
                 if (exact) _stitchExact++;
-                var (jf, jp, jx) = _lib.JoinCounts();
-                Log($"auto stitch: library {_lib.Describe()} (join points: {jf} on the full digest, {jp} on the player alone{(jx >= 0 ? $", {jx} with the Box2D digest" : "")}); "
+                Log($"auto stitch: library {_lib.Describe()}; "
                     + $"shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}"
                     + (exact ? " (exactly as predicted)" : " (NOT as predicted)") + $"; {_stitchExact} of {_stitchTried} stitches replayed exactly so far");
                 if (r.Progress == _goals && r.Last < _best.Last)

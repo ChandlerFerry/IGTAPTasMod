@@ -12,7 +12,7 @@ using FullTasGoal = IGTAPTasMod.FullTasGoal;
 namespace IGTAP.EngineSim.Cli
 {
     // solve <course trace> --auto (enginesim/README.md, "Course --auto"): the Full-TAS --auto loop on a course. The course becomes a
-    // Full-TAS run whose goals are its waypoints (CourseWaypoints.For: area goals along the best's path, the course's checkpoints,
+    // Full-TAS run whose goals are its waypoints (CourseWaypoints.Build: area goals along the best's path, the course's checkpoints,
     // in record timing the start-gate crossing) and its finish, so the windows, library, tail windows, combine, scheduler,
     // cost-to-go and macros all work goal to goal. Waypoints are checkpoints, not cut points: a window runs through them from the
     // state the route has there, and is scored on arrival. The run lives in <traces>/course-auto/ (its trace, world, run file,
@@ -85,7 +85,7 @@ namespace IGTAP.EngineSim.Cli
             // The goals: the waypoints along the best (the start gate among them in record timing), then the finish.
             WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
             options.Record = run.Timing == "record" && gated;
-            run.Goals = CourseWaypoints.For(trace, best.inputs, options);
+            run.Goals = CourseWaypoints.Build(trace, best.inputs, options).Goals;
             TimerGoal = 0;
             if (options.Record)
             {

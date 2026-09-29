@@ -153,12 +153,6 @@ namespace IGTAP.EngineSim.Cli
             FitCore(Math.Max(goals, 1), samples, ticks);
         }
 
-        /// <summary>The same fit from arrivals measured outside the library (the cost-to-go's own measurements).</summary>
-        public void FitMeasured(int goals, List<Sample> samples, List<(int run, int goal, long tick)> ticks)
-        {
-            FitCore(goals > 0 ? goals : 1, samples, ticks);
-        }
-
         void FitCore(int goals, List<Sample> samples, List<(int run, int goal, long tick)> ticks)
         {
             foreach (Sample s in samples) goals = Math.Max(goals, s.Goal);
