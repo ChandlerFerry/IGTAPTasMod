@@ -17,18 +17,6 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        List<JObject> FullTasFasterWays(string run, IList<string> labels, FullTasOffline offline)
-        {
-            string path = Path.Combine(EngineSimDir, "fulltas", run + ".faster.json");
-            if (!File.Exists(path) || offline.reached == 0) return new List<JObject>();
-            JObject o;
-            try { o = _fullTasFaster.Get(path, p => JObject.Parse(File.ReadAllText(p))); }
-            catch (Exception) { return new List<JObject>(); }
-            List<string> goals = o["goals"]?.ToObject<List<string>>();
-            if (goals == null || !goals.SequenceEqual(labels) || (long?)o["bestTicks"] != offline.splits[offline.reached - 1].ticks) return new List<JObject>();
-            return ((JArray)o["ways"]).Select(w => new JObject { ["start"] = w["start"], ["first"] = w["first"], ["last"] = w["last"], ["saves"] = w["saves"], ["why"] = w["why"] }).ToList();
-        }
-
         FullTasOfflineFile ReadFullTasOffline(string run)
         {
             string path = Path.Combine(EngineSimDir, "fulltas", run + ".json");
@@ -61,7 +49,6 @@ namespace IGTAPTasMod
             int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
             offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
-            offline.faster = FullTasFasterWays(run, labels, offline);
             return offline;
         }
 

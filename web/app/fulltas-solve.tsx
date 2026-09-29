@@ -10,9 +10,7 @@ export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; er
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
   events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[] };
 /** The saved best's route between two Quick Restarts: goals first+1..last. */
-export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number; known?: number | null; knownWhy?: string | null };
-/** A faster way the solver found for a segment but the run after it didn't take (fulltas/<run>.faster.json, for the saved best). */
-export type FasterWay = { start: number; first: number; last: number; saves: number; why: string };
+export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number };
 
 /** What each bonus's reward box gives (its upgradeBox's own reward), shown in place of the bonusN token. The watts ones are the game's
  *  secrets (upgradeBox.isSecret) by their achievement number; each adds +40% global watts (globalUpgradeSet.cashPerLoop). */
@@ -92,39 +90,34 @@ function segmentGoals(r: { first: number; last: number }) {
   return r.last - r.first === 1 ? `goal ${r.last}` : `goals ${r.first + 1}–${r.last}`;
 }
 
-/** The saved best's reset segments (the plugin's, from its Quick Restarts), each with the faster way known for it, if any. */
-export function resetSegments(saved: number[][] | undefined, faster: FasterWay[] | undefined): SegmentRow[] {
-  return (saved ?? []).map(([first, last, inputs, start], i) => {
-    const r = { n: i + 1, first, last, inputs, start };
-    const way = faster?.find(f => f.start === r.start && f.first === r.first && f.last === r.last);
-    return way ? { ...r, known: way.saves, knownWhy: way.why } : r;
-  });
+/** The saved best's reset segments (the plugin's, from its Quick Restarts). */
+export function resetSegments(saved: number[][] | undefined): SegmentRow[] {
+  return (saved ?? []).map(([first, last, inputs, start], i) => ({ n: i + 1, first, last, inputs, start }));
 }
 
 /**
  * A segment's goals with a bar down their left side, as the TAS overlay marks a tech's ticks: the bar is labeled with the
  * segment's number, its tooltip names its goals and whether saves are kept (safe: no buy after it) or reach a later buy,
- * and a strip under the goals marks its closing Quick Restart and any faster way already known. Click the bar to pick its
+ * and a strip under the goals marks its closing Quick Restart. Click the bar to pick its
  * goals for Improve (shift-click adds them to the picked goals).
  */
 export function SegmentGroup({ r, end, alt, safe, selected, onPick, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; safe: boolean;
   selected: boolean; onPick: (shift: boolean) => void; disabled: boolean; children: ReactNode }) {
   const empty = r.last <= r.first;
   const restart = end ? <i className="segIcon end" title="Route ends here">⚑︎</i> : <i className="segIcon restart" title="Quick Restart">↻</i>;
-  return <div className={`segmentGroup ${safe ? "safe" : "economy"} ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""} ${r.known != null ? "known" : ""}`}>
+  return <div className={`segmentGroup ${safe ? "safe" : "economy"} ${alt ? "alt" : ""} ${selected ? "selected" : ""} ${empty ? "empty" : ""}`}>
     <button type="button" className="segmentBar" disabled={disabled || empty} onClick={e => onPick(e.shiftKey)}
       title={`Segment ${r.n} · ${segmentGoals(r)} · ${safe ? "saves kept" : "saves affect buys"} · ${selected ? "click to clear the picked goals" : "click to improve just these goals; shift-click to add them"}`}>
       {!empty && <span>{r.n}</span>}
     </button>
-    <div className="segmentRows">{children}<div className="segmentRestart">{restart}
-      {r.known != null && <i className="segIcon faster" title={r.knownWhy ? `Known faster way: ${r.knownWhy}` : "Known faster way, not taken yet"}>⚡︎ −{r.known.toFixed(2)}s</i>}</div></div>
+    <div className="segmentRows">{children}<div className="segmentRestart">{restart}</div></div>
   </div>;
 }
 
 /** The icon key for SegmentGroup's restart strip, shown under a segmented goals table. */
 export function SegmentLegend() {
   return <div className="segmentLegend">
-    <span><i className="segIcon restart">↻</i>Quick Restart</span><span><i className="segIcon faster">⚡︎</i>faster way known</span><span><i className="segIcon end">⚑︎</i>route end</span>
+    <span><i className="segIcon restart">↻</i>Quick Restart</span><span><i className="segIcon end">⚑︎</i>route end</span>
   </div>;
 }
 

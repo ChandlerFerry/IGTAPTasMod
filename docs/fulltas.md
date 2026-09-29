@@ -477,11 +477,9 @@ inputs past the last unchanged goal the same way.
 - The goals table draws a numbered bar down each reset segment's goals (the saved best cut at its Quick Restarts, see
   [Reset segments](#reset-segments); `/api/state` `fullTas.runs[].offline.segments`: `[goals before, goals by its Quick
   Restart, inputs]` each): its number, goals and inputs in its tooltip; clicking it picks its goals. Under each
-  segment's goals a strip marks its closing Quick Restart (↻; ⚑ at the route's end) and a ⚡ chip a known faster way's
-  saving. The bar is amber or orange while a buy goal comes from the segment's first goal on (time saved there changes
+  segment's goals a strip marks its closing Quick Restart (↻; ⚑ at the route's end). The bar is amber or orange while a buy goal comes from the segment's first goal on (time saved there changes
   the Cash that buy sees) and green or teal after the last buy (time saved there is kept); neighbours alternate between
-  the two shades. A bar glows when a faster way is known for its segment (`fullTas.runs[].offline.faster`, from
-  `.faster.json` when that file is of the saved best).
+  the two shades.
 - The Improve panel shows the record, this Improve's gain and record count, the goal it is searching now (from the log's
   `auto: pull` lines) and whether it searches the whole run or the picked goals, a bar of every goal (cyan: made faster
   by this Improve, amber: being searched) and a feed in plain words: `Improve started from 6:19.40`, `Improved goals

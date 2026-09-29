@@ -124,7 +124,7 @@ namespace IGTAPTasMod
         /// a pull comes every few seconds and would push the records out of the capped list). Its own "record" (with a lever)
         /// duplicates the solver's record event, which carries both routes; its "goals" (an adopted goal list) and "goalEdit" (each
         /// edit a goals pull tried) too: the record event of an adopted edit carries its words (goalsEdit).</summary>
-        static readonly HashSet<string> FullTasDiskOnlyEvents = new HashSet<string> { "model", "pull", "check", "joins", "chaining", "ablation", "goals", "goalEdit" };
+        static readonly HashSet<string> FullTasDiskOnlyEvents = new HashSet<string> { "model", "pull", "check", "chaining", "goals", "goalEdit" };
         /// <summary>Events the capped list keeps when it trims: the session, what a solve found, and the game's checks of it.</summary>
         static readonly HashSet<string> FullTasKeptEvents = new HashSet<string> { "session", "autoStart", "record", "gate" };
 
@@ -189,12 +189,9 @@ namespace IGTAPTasMod
             public int reached;
             public List<FullTasSplit> splits;
             public float time;
-            /// <summary>The route cut at its Quick Restarts, as the solver's --resets sees it: [goals before, goals by its Quick Restart, inputs, first input] per segment.</summary>
+            /// <summary>The route cut at its Quick Restarts, [goals before, goals by its Quick Restart, inputs, first input] per segment.</summary>
             public List<int[]> segments;
-            /// <summary>Faster ways the solver found for a segment whose Quick Restart matched but whose whole run failed (fulltas/&lt;run&gt;.faster.json), while that file is of this best.</summary>
-            public List<JObject> faster;
         }
-        readonly CachedFiles<JObject> _fullTasFaster = new CachedFiles<JObject>(StringComparer.OrdinalIgnoreCase);
         readonly CachedFiles<FullTasOfflineFile> _fullTasOffline = new CachedFiles<FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
 
         sealed class FullTasClosest
