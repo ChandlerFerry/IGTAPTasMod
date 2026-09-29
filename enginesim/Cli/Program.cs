@@ -25,6 +25,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
+                    case "determinism": return Determinism.Run(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
                     case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
                     case "plan": return Plan.Run(args.Skip(1).ToArray());
@@ -112,6 +113,10 @@ namespace IGTAP.EngineSim.Cli
                     default:
                         Console.Error.WriteLine("usage:\n  replay <trace.json>... [--verbose]   compare offline runs with turbo traces tick by tick\n"
                             + "  bench <trace.json> [seconds]           runs/s and ticks/s on one core\n"
+                            + "  determinism <trace.json> <route.json> [--edges N] [--seed S] [--passes P] [--no-child]\n"
+                            + "                                         whether a run from a snapshot depends on anything but the snapshot:\n"
+                            + "                                         a fixed set of edges from snapshots along the route, in order, shuffled\n"
+                            + "                                         and in a second process, every restore and end state digested\n"
                             + "  solve <start-trace.json> [--threads N] [--minutes M] [--seed <trace.json>]... [--no-submit] [--fresh]\n"
                             + "        [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]... [--path-name name] [--optional name]... [--no-optional name]...\n"
                             + "        [--guide] [--guide-weight W] [--rng N] [--log-json file] [--no-humanize] [--tech-cache file]\n"
@@ -154,6 +159,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
                             + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json>\n"
+                            + "          | --auto [--probe-minutes p] [--repair-minutes r] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
@@ -166,6 +172,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         over and over; --resets: polish by reset segments (the route cut at its\n"
                             + "                                         quick restarts), each closed by its old restart with the same player state\n"
                             + "                                         after it, the route after it kept; --segment N: only segment N, over and over\n"
+                            + "                                         --auto: the unattended loop (docs/fulltas.md \"Auto\"): per-goal lower\n"
+                            + "                                         bounds and slow stretches rank the goals, a bandit over (lever, goal)\n"
+                            + "                                         spends the CPU where ticks per CPU second are; --minutes 0 prints the table\n"
                             + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
                             + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
                             + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"

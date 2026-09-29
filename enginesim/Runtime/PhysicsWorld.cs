@@ -20,12 +20,17 @@ namespace IGTAP.EngineSim
             public readonly List<b2Fixture> Fixtures = new List<b2Fixture>(1);
             public int Layer, ContactMask, Id;
             public Vector3 BuiltScale;
+            /// <summary>What the world loaded it as (with <see cref="Pristine"/>): a restore to a snapshot that doesn't list it.</summary>
+            public Vector3 PristineScale;
+            public int PristineLayer, PristineMask;
             public (MonoBehaviour script, Action<object> call)[][] Handlers;
             public bool Listens;
             public ColliderState Composite;
             public ColliderState[] Sources;
             public bool[] SourcesLiveAtLoad;
-            public b2Fixture[] Pristine, Restoring;
+            public b2Fixture[] Pristine;
+            /// <summary>What the snapshot being restored lists for it (Restore's scratch).</summary>
+            public Built Restoring;
             /// <summary>An array holding exactly what Fixtures holds now (null when none is known): Restore skips comparing it.</summary>
             public b2Fixture[] FixturesAs;
             /// <summary>Changed with its fixtures not built yet (PhysicsWorld.RebuildLater; built by Settle).</summary>
@@ -45,6 +50,8 @@ namespace IGTAP.EngineSim
             public bool TransformDirty, ScaleDirty;
             /// <summary>Teleported (SetTransform) since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Shifted;
+            /// <summary>Its place in _bodyList (a snapshot names bodies by it).</summary>
+            public int Index;
             public readonly List<ColliderState> Colliders = new List<ColliderState>();
         }
 
@@ -170,6 +177,9 @@ namespace IGTAP.EngineSim
                 Rebuild(state);
                 // What the world loaded it as: a snapshot that doesn't list it restores this, whatever its rebuilds made since.
                 state.FixturesAs = state.Pristine = state.Fixtures.ToArray();
+                state.PristineScale = state.BuiltScale;
+                state.PristineLayer = state.Layer;
+                state.PristineMask = state.ContactMask;
             }
             Movement player = sim.Player;
             _player = _bodies[player.GetComponent<Rigidbody2D>()];
@@ -188,6 +198,7 @@ namespace IGTAP.EngineSim
             }
             _bodyList = new BodyState[_bodies.Count];
             _bodies.Values.CopyTo(_bodyList, 0);
+            for (int i = 0; i < _bodyList.Length; i++) _bodyList[i].Index = i;
             _colliderList = new ColliderState[_colliders.Count];
             _colliders.Values.CopyTo(_colliderList, 0);
             _loaded = true;
@@ -626,8 +637,7 @@ namespace IGTAP.EngineSim
                 b2Fixture fa = c.GetFixtureA(), fb = c.GetFixtureB();
                 bool trigger = fa.IsSensor() || fb.IsSensor();
                 var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
-                bool overlap = trigger && b2TestOverlap(fa.GetShape(), c.GetChildIndexA(), fb.GetShape(), c.GetChildIndexB(), fa.GetBody().GetTransform(), fb.GetBody().GetTransform(),
-                    _proxyBufferA, _proxyBufferB);
+                bool overlap = trigger && Overlap(c, fa, fb);
                 if (overlap) _overlapNext.Add(pair);
                 bool touching = trigger
                     ? overlap || c.IsTouching() && !sa.Rescaled && !sb.Rescaled && !_touching.Contains(pair)
@@ -646,6 +656,21 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _pairContacts.Count; i++)
                 if (_pairContacts[i].Count > 1) SortByTouchOrder(_pairContacts[i]);
         }
+
+        /// <summary>The trigger contact's shapes overlap where their bodies stand (b2TestOverlap, kept per contact: b2Contact.m_overlap).</summary>
+        bool Overlap(b2Contact c, b2Fixture fa, b2Fixture fb)
+        {
+            b2Transform xfA = fa.GetBody().GetTransform(), xfB = fb.GetBody().GetTransform();
+            if (c.m_overlap >= 0 && SameBits(c.m_overlapXfA, xfA) && SameBits(c.m_overlapXfB, xfB)) return c.m_overlap != 0;
+            bool overlap = b2TestOverlap(fa.GetShape(), c.GetChildIndexA(), fb.GetShape(), c.GetChildIndexB(), xfA, xfB, _proxyBufferA, _proxyBufferB);
+            c.m_overlapXfA = xfA;
+            c.m_overlapXfB = xfB;
+            c.m_overlap = (sbyte)(overlap ? 1 : 0);
+            return overlap;
+        }
+
+        static bool SameBits(in b2Transform a, in b2Transform b)
+            => MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in b)));
 
         // A contact's touch order and its place in the contact list walk: CollectTouching's sort key.
         readonly struct TouchOrdered
@@ -1563,33 +1588,84 @@ namespace IGTAP.EngineSim
         sealed class PhysicsSnapshot
         {
             public object World;
-            public bool TransformDirty, ScaleDirty, WorldMoved, StaticsMoved;
-            public Vector3[] BuiltScales;
+            public bool WorldMoved, StaticsMoved;
+            /// <summary>The player's colliders' built scale, layer and contact mask (their fixtures are the body's).</summary>
+            public (Vector3 scale, int layer, int mask)[] Player;
             public Pair[] Touching;
-            public (ColliderState state, b2Fixture[] fixtures)[] Changed;
+            public Built[] Changed;
+            /// <summary>
+            /// What the next step reads of the syncs and moves since the last one: each body's pending transform and scale sync
+            /// and teleport (<see cref="BodyFlag"/> by body index), each collider rebuilt or rescaled since (by collider id). A
+            /// capture between steps (a search's, after a tick's frames) can hold some: a spring's push synced after the step.
+            /// </summary>
+            public int[] Bodies, Colliders;
         }
 
-        // The rebuilt colliders' fixtures as a snapshot holds them; null once one is rebuilt again. Shared by every snapshot
-        // taken until then (after a rebase that is every body-less collider, each capture's largest part).
-        (ColliderState state, b2Fixture[] fixtures)[] _changedCapture = Array.Empty<(ColliderState, b2Fixture[])>();
+        /// <summary>A rebuilt collider as a snapshot holds it: its fixtures and what they were built with.</summary>
+        sealed class Built
+        {
+            public ColliderState State;
+            public b2Fixture[] Fixtures;
+            public Vector3 Scale;
+            public int Layer, Mask;
+        }
+
+        [Flags]
+        enum BodyFlag { TransformDirty = 1, ScaleDirty = 2, Shifted = 4 }
+
+        [Flags]
+        enum ColliderFlag { Reshaped = 1, Rescaled = 2 }
+        const int FlagBits = 3;
+
+        // The rebuilt colliders as a snapshot holds them; null once one is rebuilt again. Shared by every snapshot taken
+        // until then (after a rebase that is every body-less collider, each capture's largest part), and after a restore
+        // the restored snapshot's until a rebuild.
+        Built[] _changedCapture = Array.Empty<Built>();
 
         public object Capture()
         {
             Settle();
             if (_changedCapture == null)
             {
-                _changedCapture = new (ColliderState, b2Fixture[])[_changed.Count];
+                _changedCapture = new Built[_changed.Count];
                 for (int i = 0; i < _changedCapture.Length; i++)
                 {
                     ColliderState c = _changed[i];
                     c.FixturesAs = c.Fixtures.ToArray();
-                    _changedCapture[i] = (c, c.FixturesAs);
+                    _changedCapture[i] = new Built { State = c, Fixtures = c.FixturesAs, Scale = c.BuiltScale, Layer = c.Layer, Mask = c.ContactMask };
                 }
             }
-            var builtScales = new Vector3[_player.Colliders.Count];
-            for (int i = 0; i < builtScales.Length; i++) builtScales[i] = _player.Colliders[i].BuiltScale;
-            return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, WorldMoved = _worldMoved,
-                StaticsMoved = _staticsMoved, Touching = _pairsBefore.ToArray(), BuiltScales = builtScales, Changed = _changedCapture };
+            var player = new (Vector3 scale, int layer, int mask)[_player.Colliders.Count];
+            for (int i = 0; i < player.Length; i++)
+            {
+                ColliderState c = _player.Colliders[i];
+                player[i] = (c.BuiltScale, c.Layer, c.ContactMask);
+            }
+            return new PhysicsSnapshot { World = _b2.SaveState(), WorldMoved = _worldMoved, StaticsMoved = _staticsMoved, Player = player,
+                Touching = _pairsBefore.Count == 0 ? Array.Empty<Pair>() : _pairsBefore.ToArray(), Changed = _changedCapture,
+                Bodies = PendingBodies(), Colliders = PendingColliders() };
+        }
+
+        int[] PendingBodies()
+        {
+            int n = 0;
+            foreach (BodyState b in _bodyList) if (b.TransformDirty || b.ScaleDirty || b.Shifted) n++;
+            if (n == 0) return Array.Empty<int>();
+            var pending = new int[n];
+            n = 0;
+            foreach (BodyState b in _bodyList)
+                if (b.TransformDirty || b.ScaleDirty || b.Shifted)
+                    pending[n++] = b.Index << FlagBits | (int)((b.TransformDirty ? BodyFlag.TransformDirty : 0) | (b.ScaleDirty ? BodyFlag.ScaleDirty : 0) | (b.Shifted ? BodyFlag.Shifted : 0));
+            return pending;
+        }
+
+        int[] PendingColliders()
+        {
+            if (_reshaped.Count == 0 && _rescaled.Count == 0) return Array.Empty<int>();
+            var pending = new List<int>(_reshaped.Count + _rescaled.Count);
+            foreach (ColliderState c in _reshaped) pending.Add(c.Id << FlagBits | (int)(ColliderFlag.Reshaped | (c.Rescaled ? ColliderFlag.Rescaled : 0)));
+            foreach (ColliderState c in _rescaled) if (!c.Reshaped) pending.Add(c.Id << FlagBits | (int)ColliderFlag.Rescaled);
+            return pending.ToArray();
         }
 
         public void Restore(object snapshot)
@@ -1602,16 +1678,15 @@ namespace IGTAP.EngineSim
             foreach (ColliderState c in _player.Colliders) { c.Fixtures.Clear(); c.FixturesAs = null; }
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
             // _changed only grows: every collider the snapshot lists is in it, and the ones it doesn't list were pristine then.
-            foreach (var (state, saved) in s.Changed) state.Restoring = saved;
+            foreach (Built saved in s.Changed) saved.State.Restoring = saved;
             foreach (ColliderState c in _changed)
             {
-                b2Fixture[] fixtures = c.Restoring ?? c.Pristine;
+                Built saved = c.Restoring;
                 c.Restoring = null;
-                if (c.Layer != c.Collider.gameObject.m_Layer)
-                {
-                    c.Layer = c.Collider.gameObject.m_Layer;
-                    c.ContactMask = ContactMask(_layerMasks, c.Collider);
-                }
+                b2Fixture[] fixtures = saved?.Fixtures ?? c.Pristine;
+                c.BuiltScale = saved?.Scale ?? c.PristineScale;
+                c.Layer = saved?.Layer ?? c.PristineLayer;
+                c.ContactMask = saved?.Mask ?? c.PristineMask;
                 // The same array restored again (or the one its fixtures were captured into): nothing to compare.
                 if (ReferenceEquals(fixtures, c.FixturesAs)) continue;
                 c.FixturesAs = fixtures;
@@ -1620,21 +1695,41 @@ namespace IGTAP.EngineSim
                 c.Fixtures.AddRange(fixtures);
                 if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(c);
             }
-            // A capture after this must re-derive the changed set: every collider whose fixtures now differ from its
-            // pristine ones, not the restored snapshot's own list.
-            _changedCapture = null;
+            // Every collider now holds what the snapshot lists (or its pristine fixtures): a capture before the next rebuild
+            // holds the same.
+            _changedCapture = s.Changed;
             foreach (BodyState b in _movedStatic)
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
-            _player.TransformDirty = s.TransformDirty;
             _worldMoved = s.WorldMoved;
             _staticsMoved = s.StaticsMoved;
-            _player.ScaleDirty = s.ScaleDirty;
-            for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];
+            for (int i = 0; i < _player.Colliders.Count; i++)
+            {
+                ColliderState c = _player.Colliders[i];
+                (c.BuiltScale, c.Layer, c.ContactMask) = s.Player[i];
+            }
             _touching.Clear();
             foreach (Pair p in s.Touching) _touching.Add(p);
             _pairsBefore.Clear();
             _pairsBefore.AddRange(s.Touching);
             ClearMoved();
+            for (int i = 0; i < _rescaled.Count; i++) _rescaled[i].Rescaled = false;
+            _rescaled.Clear();
+            foreach (BodyState b in _bodyList) b.TransformDirty = b.ScaleDirty = false;
+            foreach (int pending in s.Bodies)
+            {
+                BodyState b = _bodyList[pending >> FlagBits];
+                var flag = (BodyFlag)(pending & ((1 << FlagBits) - 1));
+                b.TransformDirty = (flag & BodyFlag.TransformDirty) != 0;
+                b.ScaleDirty = (flag & BodyFlag.ScaleDirty) != 0;
+                if ((flag & BodyFlag.Shifted) != 0) Shift(b);
+            }
+            foreach (int pending in s.Colliders)
+            {
+                ColliderState c = _byId[pending >> FlagBits];
+                var flag = (ColliderFlag)(pending & ((1 << FlagBits) - 1));
+                if ((flag & ColliderFlag.Reshaped) != 0) { c.Reshaped = true; _reshaped.Add(c); }
+                if ((flag & ColliderFlag.Rescaled) != 0) { c.Rescaled = true; _rescaled.Add(c); }
+            }
         }
 
         static bool Holds(List<b2Fixture> list, b2Fixture[] fixtures)
@@ -1658,7 +1753,7 @@ namespace IGTAP.EngineSim
 
         internal bool IsPlayerCollider(int id) => _byId.TryGetValue(id, out ColliderState s) && s.Body == _player;
 
-        internal IEnumerable<int> ChangedIdsOf(object snapshot) => ((PhysicsSnapshot)snapshot).Changed.Select(c => c.state.Id);
+        internal IEnumerable<int> ChangedIdsOf(object snapshot) => ((PhysicsSnapshot)snapshot).Changed.Select(c => c.State.Id);
 
         /// <summary>Which collider a fixture belongs to and where in its fixture list (its load fixtures' if it is gone).</summary>
         internal (int owner, int index) LocateFixture(b2Fixture fixture)
@@ -1694,24 +1789,73 @@ namespace IGTAP.EngineSim
         internal void AdoptChanged(object snapshot)
         {
             Settle();
-            foreach (var (state, saved) in ((PhysicsSnapshot)snapshot).Changed)
+            foreach (Built saved in ((PhysicsSnapshot)snapshot).Changed)
             {
+                ColliderState state = saved.State;
                 if (_changed.Contains(state)) continue;
                 // It changed first in the snapshot's world; what this world loaded takes the pristine fixtures' place.
                 state.Tracked = true;
                 _changed.Add(state);
                 state.Fixtures.Clear();
-                state.Fixtures.AddRange(saved);
-                state.FixturesAs = saved;
-                if (state.Layer != state.Collider.gameObject.m_Layer)
+                state.Fixtures.AddRange(saved.Fixtures);
+                state.FixturesAs = saved.Fixtures;
+                state.BuiltScale = saved.Scale;
+                if (state.Layer != saved.Layer || state.ContactMask != saved.Mask)
                 {
-                    state.Layer = state.Collider.gameObject.m_Layer;
-                    state.ContactMask = ContactMask(_layerMasks, state.Collider);
+                    state.Layer = saved.Layer;
+                    state.ContactMask = saved.Mask;
                     if (state.Body != null) _moversDirty = true;
                 }
                 if ((state.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(state);
             }
             _changedCapture = null;
+        }
+
+        /// <summary>
+        /// The physics state a step reads, bit for bit, as a digest that is the same in every process for the same state (the
+        /// determinism check, Cli/Determinism.cs): the Box2D world (<see cref="b2World.StateDigest"/>, a fixture named by its
+        /// collider, its place in the collider's fixtures and its shape), each collider's fixtures, layer, contact mask and
+        /// built scale, the bodies' pending syncs, the touching pairs in order and the rebase flags.
+        /// </summary>
+        internal ulong StateDigest(System.Text.StringBuilder log = null)
+        {
+            Settle();
+            var h = b2Digest.Start(log);
+            h.Add((long)_b2.StateDigest(FixtureKey, log));
+            foreach (ColliderState s in _colliderList)
+            {
+                h.Line("collider " + s.Id);
+                h.Add(s.Fixtures.Count);
+                foreach (b2Fixture f in s.Fixtures) h.Add(FixtureKey(f));
+                h.Add(s.Layer); h.Add(s.ContactMask);
+                h.Add(s.BuiltScale.x); h.Add(s.BuiltScale.y); h.Add(s.BuiltScale.z);
+                h.Add(s.Reshaped); h.Add(s.Rescaled);
+            }
+            h.Line("syncs");
+            foreach (BodyState b in _bodyList)
+            {
+                h.Add(b.TransformDirty); h.Add(b.ScaleDirty); h.Add(b.Shifted);
+                Transform t = b.Rigidbody.transform;
+                h.Add(t.m_Position.x); h.Add(t.m_Position.y); h.Add(t.m_Position.z);
+                h.Add(t.m_Rotation.x); h.Add(t.m_Rotation.y); h.Add(t.m_Rotation.z); h.Add(t.m_Rotation.w);
+                h.Add(t.m_LossyScale.x); h.Add(t.m_LossyScale.y); h.Add(t.m_LossyScale.z);
+            }
+            h.Line("pairs");
+            h.Add(_pairsBefore.Count);
+            foreach (Pair p in _pairsBefore) { h.Add(p.A.Id); h.Add(p.B.Id); h.Add(p.Trigger); h.Add(p.Overlapped); }
+            var touching = new List<long>(_touching.Count);
+            foreach (Pair p in _touching) touching.Add(((long)p.A.Id << 32) | (uint)p.B.Id);
+            touching.Sort();
+            h.Add(touching.Count);
+            foreach (long p in touching) h.Add(p);
+            h.Add(_worldMoved); h.Add(_staticsMoved);
+            return h.Value;
+        }
+
+        static long FixtureKey(b2Fixture f)
+        {
+            if (!(f.UserData is ColliderState s)) return -1;
+            return ((long)s.Id << 40) ^ ((long)(s.Fixtures.IndexOf(f) + 1) << 32) ^ (uint)FingerprintOf(f);
         }
 
         /// <summary>What a fixture's shape is: a restored fixture must have been built from the same geometry. Deterministic

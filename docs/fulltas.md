@@ -141,15 +141,27 @@ landing that dies on the spikes (it falls in from above) never reaches it. The o
 goal 20 on the tick before a spike death and the search for goal 21 started from a dead player, while a living exit
 that slid in from the left missed its `from=top`.
 
-Status (2026-09-29): the record is `fulltas/VMAN_NONE 35.16`, a `polish` of 35.32 (six 1–2 tick re-timings in inputs
-142–594). 35.32 came from two `--transplant` grafts of the old 34.88 s inputs onto 41.34: from 41.34's state at goal 15
-(`at:12500`) the old inputs replay the down-dash landing chain over goals 16–18 again (splits 74/44/93 against 41.34's
-98/109/193; repair windows re-found goals 19–23, 36.62), then the old route's Clone-buying way through Courses 1–2 (loose
-buys: Course 1 `Clone`, Course 2 `Clone` and `CashPerLoop`; `finish:2` at tick 458 against 508) bridged by repair
-windows onto it. It also walks through Course 4's `GLOBALfastCloneChance` box after goal 16. Its splits, against the
-old route's, are 81/48/49/31/82/105/62/37/33/94/145/91/103/70/222/74/44/93/86/55/9/55/97 (35.32): goal 11 (+48, the dash off
-the wall at goal 10 goes up-left and loops back where the old one went up-right; the old inputs die there on this engine)
-and goal 15 (+57) are what's left against the old route; goals 18–20 are now faster than it.
+Status (2026-09-29): the record is `fulltas/VMAN_NONE 34.28` (1714 ticks), under the old 34.88. Its splits are
+81/48/49/30/82/105/62/37/30/94/100/91/103/67/222/74/44/93/86/55/9/55/97. How it got there from 41.34:
+
+- 36.62 and 35.32, two `--transplant` grafts of the old 34.88 s inputs. From 41.34's state at goal 15 (`at:12500`) the old
+  inputs replay the down-dash landing chain over goals 16–18 again (74/44/93 against 41.34's 98/109/193). Then the old
+  route's Clone-buying way through Courses 1–2 (loose buys: Course 1 `Clone`, Course 2 `Clone` and `CashPerLoop`; `finish:2`
+  at tick 458 against 508) was bridged onto it by repair windows. The route also walks through Course 2's
+  `GLOBALcashPerLoop` and Course 4's `GLOBALfastCloneChance`.
+- 35.16, a `polish` (six 1–2 tick re-timings in inputs 142–594).
+- 34.28, a window over goals 10–14 scored at goal 14 (`fulltas --goal 14 --window 5`): goal 11 in 100 ticks against 144.
+  35.16's dash off the wall at goal 10 went up-left and looped back; the new one goes up-right, as the old route did.
+  Windows scored at goal 11 (`--window 2`) found it 56 ticks sooner, but they reached the large goal 12–13 boxes in a state
+  the goals after couldn't use, and their repair came out slower. Scoring at the small goal 14 box kept it.
+
+Against the old route, only goal 15 (+57, 222 against 165) is still well behind. A window over goals 15–18 scored at goal 18
+(`--goal 18 --window 4`, 6 minutes) reached goal 18 30 ticks sooner (tick 1382 against 1412). The goals after it didn't
+replay faster from there, and its repair of goals 19–22 was stopped unfinished. One scored at goal 17 was 14 ticks ahead
+there but lost about 100 at the column. The `--reset-study` rows so far (on 35.16): the resets at inputs 61, 81, 103 and 138 (Course 1 and `buy:buywj`) are teleports.
+Without them goals 3–6 come 18–53 ticks later. The reset right before goal 15 refills both dashes next to the goal's box;
+it wasn't studied. The bench of goals 17–19 on the momentum cell key and `bouncechain` (4 min, 2 threads per arm, one run
+each) found no slowdown: 17–20 M ticks simulated per arm, goal 19 at 1716–1728 with either change, 1760 with neither.
 
 Earlier (2026-09-28, late): the record was `fulltas/VMAN_NONE 45.20`, the second whole-run `polish` sweep over 48.18 (48.54,
 48.42, 48.18 and 46.18 were saved before it that evening; the polish cut held ticks before inputs across goals 1–20).
@@ -564,6 +576,84 @@ stops. `--resets` (segment mode) isn't for `VMAN`: it keeps every reset.
 
 `--lookahead N` makes each polish and repair window search on N goals past its own last goal and scores it there, so a
 window whose own goal is reached later but with more speed wins when it gains by the goal after next.
+
+### Auto
+
+```powershell
+& $exe fulltas $traces\fulltas-VMAN.json --auto --minutes 75 --window-minutes 0.5 --threads 12 --no-submit   # --probe-minutes p, --repair-minutes r, --repair-slack T, --ref FILE; --minutes 0: the table only
+```
+
+`--auto` (`enginesim\Cli\FullTasAuto.cs`) improves a complete route with no one choosing goals or levers, and needs no
+reference route. It is the same solve (windows, merge, repair, reset study, the transplant's splices, polish, plan), driven
+by a measured gap.
+
+**The gap model**, rebuilt after every new best (the log's per-goal table, and a `model` line in `fulltas/<run>.auto.jsonl`):
+
+- *Top path speed* per unlock set (`PlayerCaps`): the fastest 10-tick path speed (units per physics tick, teleports left
+  out: a tick's move longer than twice |Velocity + momentum| × dt + 20) on the best's own path and on speed probes played
+  from the best's state at every goal: a dash each way, dash jumps at frames 3/5/7, and with the omnidash the down-dash
+  landing chain (`Planner`'s bounce chain edge: 2-6 links, gaps 3/7, jump frames 3/6, both sides). Every later best
+  raises it when it goes faster.
+- *Lower bound* of goal k: the walkable distance (`DistanceField`, the run's avoid boxes for that goal as walls; an area
+  goal never less than the straight line to its rect; a buy or reward goal the straight line to where the best reached
+  it) from where the best starts goal k, or from where a teleport in it (a quick restart) lands plus a tick, over the top
+  speed for the goal's unlocks. It's an empirical bound (no route has shown a faster speed with those unlocks), not a
+  proof; `gap` = split − bound. A first replay grows the field's grid over the whole route, so one measured pass reads
+  one grid (the grid coarsens as it grows).
+- *Speed deficit*: along the best, the progress toward the goal's target each tick against the 80th percentile of what it
+  makes in that goal; a stretch of 6 or more ticks under 35% of that is flagged, with the ticks it would save, as
+  `reset`, `loops back`, `standing/wait` or `slow`.
+- *Known*: every route the loop has seen (below): each goal's soonest arrival and shortest split among them.
+- *Expected* headroom of goal k = 0.6 × (the known routes' lead there: sooner arrival or shorter split) + 0.3 × deficit +
+  0.05 × gap. Goals rank by it.
+
+**The bandit.** An arm is a lever at a goal: `polish` (Polish.cs over goal k's inputs only, 3 sweeps), `window` (goals
+k..k+1 from goal k−1's state), `lookahead` (goals k..k+2, scored at the goal after next: a way that reaches goal k later
+with more speed can win), `span` (a long window from goal k scored at the first small goal 3-5 goals on: a buy, a
+gate or an area rect of at most 300×300; scored at a large area box a window wins by touching its near edge in a state the
+next goals can't use, as Vman4 saw on `VMAN` goals 10-14 and 15-18; twice a window's budget), `dropreset` (the reset study of the next quick restart in goal k not studied yet), `graft` (a
+known route that does goal k better: reached sooner, its way there kept and the later goals re-found as the transplant's
+bridges do; a shorter split, its inputs picked up from the best's states nearest its path by position, velocity and
+facing, the transplant's splices), and `plan` (the contact planner on goal k's window, the best's window as its guide; a
+goal whose plan finds no finish is dropped from the plan lever). First every goal gets one window probe of
+`--probe-minutes` (half of `--window-minutes`), most expected first. Then each pull takes the arm with the most expected
+ticks per CPU second, (lever share × expected + ticks gained) / (the lever's CPU seconds per pull + CPU seconds spent on
+the arm; a pull's cost is its budget's CPU seconds counted as one pull, averaged with every pull the lever made, so one
+that ended early doesn't make a lever look free): an arm that pays keeps winning, one that doesn't fades as its CPU grows. Lever shares (from the `VMAN` work: the goal 11 gain came from a window scored at goal 14's small box, windows scored
+at large area boxes found arrivals the next goals couldn't use, and the early resets proved to be teleports): polish
+0.15, window 0.2, lookahead and plan 0.3, span 0.45, dropreset 0.15, graft 0.6 (of the proven lead). A window arm pulled again searches
+longer (`--window-minutes` × pulls, up to 4×; its archive resumes it), a plan pull 1.5× that and at least 2 minutes. A
+graft tries each known route's source once per goal (a window pull's finds are one source, and the goal its merge already
+repaired from is skipped). CPU is the process's
+(`Process.TotalProcessorTime`).
+
+**Every window gain gets its tail repaired**: the merge splices it with the old tail and, where the tail no longer
+follows on, re-finds the later goals from the new state (`Repair`, each window `--repair-minutes`, default twice
+`--window-minutes` and at least 1). In `--auto` a repair is dropped once it can't win:
+when its last goal's tick plus the later goals' lower bounds is no sooner than the best's end, or it is more than
+`--repair-slack` (40) ticks behind the best at a goal. Checking a spliced tail is one replay (about 2 × 10³ ticks)
+against a window's 10⁶-10⁷, so the loop doesn't need polish's route sync there.
+
+**Self-harvest.** Every route the loop sees is filed as a reference: the window finishes faster than the best through
+their window (the five fastest of a window), each partial run a repair reaches, plan finishes, polish results, graft leads,
+every checked best and the starting best. They give the model's *known* column and the graft lever's candidates, so a
+later goal can graft from what an earlier pull found. The useful ones (3 soonest arrivals and 3 shortest splits per goal)
+are kept in `fulltas/<run>.auto-refs.json` and read again by the next `--auto` (not with `--fresh`). `--ref FILE` adds a
+route that replays on this engine.
+
+**Every new best** is replayed from the start on a new simulation on its own thread before it is kept (`VerifyFresh`, the
+`--check` replay: the engine can play a route differently after other runs on the same simulation) and kept as that replay
+has it, only if it still beats the best. Then it is merged, written (`fulltas/<run>.json`, `offline-best/`), and logged:
+`auto: record` with the lever, the goal and the splits that changed, a `record` line in the jsonl (time, ticks, all
+splits, wall and CPU seconds since the start).
+
+**Waypoint ablation** (report only), once, after a quarter of `--minutes`: for the 6 area goals with the most expected
+headroom, the window from goal k−1 to goal k+1 is searched for half a minute with goal k left out of a copy of the goals;
+`auto: waypoint goal k ... costs N ticks` is how much sooner goal k+1 comes without it. The run's goals are never edited.
+
+The log ends with the time-to-gain curve (wall and CPU seconds to each new best, with the lever and goal), each lever's
+pulls, CPU and ticks gained, and the pull order. `fulltas/<run>.auto.jsonl` has every pull (`pull`: lever, goal, budget,
+outcome, gain, CPU, wall), `check`, `record`, `ablation`, `model` and `autoEnd` (the curve).
 
 ### Reset segments
 

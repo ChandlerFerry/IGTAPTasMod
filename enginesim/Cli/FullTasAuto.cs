@@ -1,0 +1,934 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using UnityEngine;
+using FullTasGoal = IGTAPTasMod.FullTasGoal;
+
+namespace IGTAP.EngineSim.Cli
+{
+    // --auto (docs/fulltas.md, "Auto"): an anytime loop that spends the search where the measured gap is, with no one choosing
+    // goals or levers. It needs no reference route: every goal gets a lower bound (the distance to its target over the fastest
+    // speed the engine has shown with those unlocks), the best's speed profile flags its slow stretches, and a bandit over
+    // (lever, goal) arms learns which pays in ticks per CPU second. Every route a lever finds (window finishes, repaired
+    // partials, plan finishes, polish results, old bests) is kept as a reference, so a later pull can graft from it. Each new
+    // best is replayed on a fresh simulation before it is kept (the engine's results can depend on its history).
+    sealed partial class FullTas
+    {
+        bool _auto;
+        string[] _args;
+        /// <summary>Commit's check (--auto): the route replayed on a fresh simulation, returned as that replay has it, or null to keep the best.</summary>
+        Func<Route, string, Route> _verify;
+        /// <summary>Repair's bound (--auto): why a partial repaired run can't beat the best any more (null: search on).</summary>
+        Func<Route, string> _hopeless;
+        /// <summary>Repair's harvest (--auto): every partial run a repair window reaches.</summary>
+        Action<Route, string> _collect;
+        /// <summary>A repair window's budget (--auto: --repair-minutes); null: --window-minutes.</summary>
+        double? _repairMinutes;
+
+        sealed class AutoRef
+        {
+            public string How;
+            public List<InputTick> Inputs;
+            public int Progress;
+            public long[] GoalPhysics, GoalInput;
+            public ulong Key;
+        }
+
+        sealed class Arm
+        {
+            public string Lever;
+            public int Goal, Pulls, Wins;
+            public double Cpu, Gain;
+        }
+
+        sealed class GoalRow
+        {
+            public int K;
+            public string Label, Caps, Worst = "";
+            public long Split, Arrival, Bound;
+            public float Distance, VTop;
+            public long RefArrival = -1, RefSplit = -1;
+            public string RefArrivalHow, RefSplitHow;
+            public double Deficit, Expected;
+            public long Gap => Math.Max(0, Split - Bound);
+            public long ArrivalLead => RefArrival >= 0 ? Math.Max(0, Arrival - RefArrival) : 0;
+            public long SplitLead => RefSplit >= 0 ? Math.Max(0, Split - RefSplit) : 0;
+        }
+
+        struct Sample
+        {
+            public long Tick;
+            public int Input, Progress;
+            public float X, Y, CX, CY, Dist, Speed;
+            public string Caps;
+        }
+
+        static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan" };
+        // A lever's share of a goal's expected headroom it is credited with before it has run there (the bandit's prior).
+        static readonly Dictionary<string, double> LeverPrior = new Dictionary<string, double>
+        {
+            // From the VMAN work (2026-09-29): a window scored at a small goal 3-5 goals on gave the goal 11 gain where windows scored
+            // at large area boxes found arrivals the next goals couldn't use; its resets at inputs 61-138 were teleports worth keeping.
+            ["polish"] = .15, ["window"] = .2, ["lookahead"] = .3, ["span"] = .45, ["dropreset"] = .15, ["graft"] = .6, ["plan"] = .3,
+        };
+        // Expected headroom from each signal: another known route did it (proven), the best's own slow stretches, the bound.
+        const double ProvenWeight = .6, DeficitWeight = .3, GapWeight = .05;
+        // A tick's move longer than twice what the player's speed (|Velocity + momentum|) covers in it, plus this slack, is a quick
+        // restart's or a respawn's teleport, not movement.
+        const float TeleportSlack = 20f;
+        const int SpeedWindow = 10, SlowStretch = 6, MaxRefs = 400, AblateTop = 6;
+        const float SlowShare = .35f;
+
+        readonly List<AutoRef> _refs = new List<AutoRef>();
+        readonly HashSet<ulong> _refKeys = new HashSet<ulong>();
+        readonly Dictionary<(string, int), Arm> _arms = new Dictionary<(string, int), Arm>();
+        readonly Dictionary<string, (int pulls, double cpu)> _leverCost = new Dictionary<string, (int, double)>();
+        readonly HashSet<(string, int)> _grafted = new HashSet<(string, int)>();
+        int _pullNo;
+        readonly HashSet<(int goal, int offset)> _studied = new HashSet<(int, int)>();
+        readonly HashSet<int> _planDead = new HashSet<int>();
+        readonly Dictionary<string, (float speed, string how)> _vtop = new Dictionary<string, (float, string)>();
+        List<GoalRow> _model;
+        long[] _bounds;
+        string _autoLog, _refsFile;
+        JsonElement? _autoHeader;
+        int _repairSlack = 40;
+        bool _refsChanged;
+
+        static double CpuSeconds()
+        {
+            using Process p = Process.GetCurrentProcess();
+            return p.TotalProcessorTime.TotalSeconds;
+        }
+
+        JsonElement AutoHeader() { _autoHeader ??= Solve.ReadHeader(_trace); return _autoHeader.Value; }
+
+        void AutoWrite(object e)
+        {
+            string line = JsonSerializer.Serialize(e, EventJson);
+            File.AppendAllText(_autoLog, line + "\n");
+            Console.WriteLine("@fulltas " + line);
+        }
+
+        long Split(long[] physics, int k) { return physics[k - 1] - (k == 1 ? 0 : physics[k - 2]); }
+
+        string Splits(Route r) { return string.Join(" ", Enumerable.Range(1, r.Progress).Select(k => $"{k}:{Split(r.GoalPhysics, k)}")); }
+
+        /// <summary>The unattended loop (see the class comment); returns when --minutes is up or no arm is left.</summary>
+        void Auto(string[] args)
+        {
+            if (_best.Progress < _goals)
+                throw new InvalidOperationException($"--auto improves a complete route; the best reaches {_best.Progress} of {_goals} goals (run the solve with --unsolved first)");
+            _repairSlack = Solve.Option(args, "--repair-slack", 40);
+            // A tail re-found after a gain crosses many goals: its windows get more than a probe's budget.
+            _repairMinutes = Solve.Option(args, "--repair-minutes", Math.Max(1.0, 2 * _windowMinutes));
+            string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
+            _autoLog = Path.Combine(dir, "fulltas", _name + ".auto.jsonl");
+            _refsFile = Path.Combine(dir, "fulltas", _name + ".auto-refs.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(_autoLog));
+            // The planner's field cell (plan's --field-cell default): the bounds and the plan lever share it.
+            DistanceField.CellSize = 8f;
+            _verify = VerifyFresh;
+            _hopeless = Hopeless;
+            _collect = (r, how) => Collect(r, $"{how} #{_pullNo}");
+            double cpu0 = CpuSeconds();
+            TimeSpan wall0 = _clock.Elapsed;
+            Route start = _best;
+            AutoWrite(new { type = "autoStart", run = _name, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
+                refs = args.Where((a, i) => i > 0 && args[i - 1] == "--ref").ToArray() });
+            Collect(_best, "the starting best");
+            if (!_fresh) LoadRefs();
+            for (int i = 1; i < args.Length - 1; i++)
+                if (args[i] == "--ref") Collect(Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(args[i + 1])), "--ref " + Path.GetFileName(args[i + 1]));
+            MeasureSpeeds();
+            BuildModel();
+            PrintModel("start");
+
+            var curve = new List<(double wall, double cpu, long ticks, string lever, int goal)> { (0, 0, _best.Last, "start", 0) };
+            var order = new List<string>();
+            bool ablated = false;
+            int pull = 0;
+            // Measured headroom first: every goal gets one short window probe (most expected first), so the bandit starts from what
+            // each goal gave, not from the model alone.
+            var probes = new Queue<int>(_model.OrderByDescending(r => r.Expected).Select(r => r.K));
+            double probeMinutes = Solve.Option(args, "--probe-minutes", _windowMinutes / 2);
+            while (!TimeUp)
+            {
+                Arm arm;
+                double score = double.NaN, budget;
+                if (probes.Count > 0)
+                {
+                    int k = probes.Dequeue();
+                    if (!_arms.TryGetValue(("window", k), out arm)) _arms[("window", k)] = arm = new Arm { Lever = "window", Goal = k };
+                    budget = probeMinutes;
+                }
+                else
+                {
+                    (arm, score) = PickArm();
+                    if (arm == null) { Log("auto: no arm left to pull"); break; }
+                    budget = Budget(arm);
+                }
+                pull++;
+                _pullNo = pull;
+                Route before = _best;
+                double c0 = CpuSeconds();
+                TimeSpan w0 = _clock.Elapsed;
+                Log($"auto: pull {pull}: {arm.Lever} at goal {arm.Goal} ({_labels[arm.Goal - 1]}), {(double.IsNaN(score) ? "first-round probe" : $"score {score:0.0000} ticks/CPU s")}, expected {_model[arm.Goal - 1].Expected:0.0} ticks, "
+                    + $"arm {arm.Pulls} pulls {arm.Cpu:0} CPU s {arm.Gain:0} gained, budget {budget:0.00} min");
+                string outcome;
+                try { outcome = Pull(arm, budget); }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException || ex is NullReferenceException || ex is IndexOutOfRangeException)
+                {
+                    outcome = "failed: " + ex.GetBaseException().Message;
+                }
+                double cpu = CpuSeconds() - c0;
+                long gain = Math.Max(0, before.Last - _best.Last);
+                arm.Pulls++;
+                arm.Cpu += cpu;
+                arm.Gain += gain;
+                if (gain > 0) arm.Wins++;
+                var lc = _leverCost.TryGetValue(arm.Lever, out var was) ? was : (0, 0.0);
+                _leverCost[arm.Lever] = (lc.Item1 + 1, lc.Item2 + cpu);
+                order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
+                Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, "
+                    + $"{(_clock.Elapsed - w0).TotalSeconds:0} s; best {Describe(_best)}");
+                AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
+                    wall = Math.Round((_clock.Elapsed - wall0).TotalSeconds, 1), best = Seconds(_best.Last), score });
+                if (gain > 0)
+                {
+                    curve.Add(((_clock.Elapsed - wall0).TotalSeconds, CpuSeconds() - cpu0, _best.Last, arm.Lever, arm.Goal));
+                    var changed = Enumerable.Range(1, _goals).Where(k => Split(before.GoalPhysics, k) != Split(_best.GoalPhysics, k))
+                        .Select(k => $"{k}:{Split(before.GoalPhysics, k)}->{Split(_best.GoalPhysics, k)}");
+                    Log($"auto: record {Describe(before)} -> {Describe(_best)} by {arm.Lever} at goal {arm.Goal} (-{gain} ticks); splits changed: {string.Join(" ", changed)}");
+                    AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = Seconds(_best.Last), ticks = _best.Last,
+                        wall = Math.Round((_clock.Elapsed - wall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - cpu0, 1),
+                        splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray() });
+                }
+                if (gain > 0 || _refsChanged)
+                {
+                    if (gain > 0) BuildModel(); else Refresh();
+                    if (_refsChanged) SaveRefs();
+                    _refsChanged = false;
+                }
+                if (pull % 8 == 0) PrintArms();
+                // The waypoint study, once, after a quarter of the budget: report-only (the run's goals are never edited).
+                if (!ablated && _clock.Elapsed.TotalMinutes >= _minutes / 4)
+                {
+                    ablated = true;
+                    Ablations();
+                }
+            }
+            BuildModel();
+            PrintModel("end");
+            PrintArms();
+            Log($"auto: {Describe(start)} -> {Describe(_best)} in {(_clock.Elapsed - wall0).TotalMinutes:0.0} min, {CpuSeconds() - cpu0:0} CPU s, {pull} pulls");
+            Log("auto: time-to-gain (wall s, CPU s, ticks, time, lever@goal): " + string.Join("; ",
+                curve.Select(c => $"{c.wall:0} s/{c.cpu:0} CPU s -> {c.ticks} ({c.ticks * _dt:0.00} s) {c.lever}@{c.goal}")));
+            foreach (var g in _arms.Values.GroupBy(a => a.Lever).OrderByDescending(g => g.Sum(a => a.Gain)))
+                Log($"auto: lever {g.Key}: {g.Sum(a => a.Pulls)} pulls, {g.Sum(a => a.Cpu):0} CPU s, {g.Sum(a => a.Gain):0} ticks gained"
+                    + (g.Any(a => a.Gain > 0) ? " at goals " + string.Join(",", g.Where(a => a.Gain > 0).Select(a => $"{a.Goal}(-{a.Gain:0})")) : ""));
+            Log("auto: pull order: " + string.Join(" ", order));
+            AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = pull, cpu = Math.Round(CpuSeconds() - cpu0, 1),
+                curve = curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
+            SaveRefs();
+        }
+
+        // ---------------------------------------------------------------- the bandit
+
+        double LeverCost(string lever)
+        {
+            // The budget's CPU seconds (polish and graft have none: a guess) as one pull's worth, then the mean with every pull made: a
+            // pull that ends early (a plan with no finish) doesn't make the lever look free.
+            double wm = _windowMinutes * 60 * _threads;
+            double guess = lever switch { "polish" => 20.0 * _threads, "graft" => 40.0 * _threads, "plan" => 1.5 * wm, "lookahead" => 1.2 * wm, "span" => 2 * wm, _ => wm };
+            var c = _leverCost.TryGetValue(lever, out var known) ? known : (0, 0.0);
+            return Math.Max(1, (guess + c.Item2) / (1 + c.Item1));
+        }
+
+        double Prior(string lever, GoalRow row)
+        {
+            if (lever == "graft") return LeverPrior[lever] * Math.Max(row.ArrivalLead, row.SplitLead);
+            return LeverPrior[lever] * row.Expected;
+        }
+
+        /// <summary>The arm with the most expected ticks per CPU second: (prior + gained) / (a pull's cost + CPU spent).</summary>
+        (Arm, double) PickArm()
+        {
+            Arm best = null;
+            double top = 0;
+            foreach (GoalRow row in _model)
+                foreach (string lever in AutoLevers)
+                {
+                    if (!Eligible(lever, row.K)) continue;
+                    if (!_arms.TryGetValue((lever, row.K), out Arm arm)) _arms[(lever, row.K)] = arm = new Arm { Lever = lever, Goal = row.K };
+                    double score = (Prior(lever, row) + arm.Gain) / (LeverCost(lever) + arm.Cpu);
+                    if (score > top) { top = score; best = arm; }
+                }
+            return (best, top);
+        }
+
+        bool Eligible(string lever, int k)
+        {
+            switch (lever)
+            {
+                case "lookahead": return k + 2 <= _goals;
+                case "span": return SpanEnd(k) > 0;
+                case "dropreset": return NextReset(k) >= 0;
+                case "graft": return GraftCandidate(k) != null;
+                case "plan": return !_planDead.Contains(k);
+                default: return true;
+            }
+        }
+
+        double Budget(Arm arm)
+        {
+            // A window's archive resumes it, so a pulled-again arm searches on for longer.
+            double m = _windowMinutes * Math.Min(4, 1 + arm.Pulls);
+            // The planner needs minutes to its first finish (Planner3: about 1 min on goals 6-7, 8 threads).
+            return arm.Lever == "plan" ? Math.Max(2.0, 1.5 * m) : m;
+        }
+
+        string Pull(Arm arm, double budget)
+        {
+            int k = arm.Goal;
+            switch (arm.Lever)
+            {
+                case "polish": return PullPolish(k);
+                case "window": return PullWindow(k, Math.Min(_goals, k + 1), budget);
+                case "lookahead": return PullWindow(k, Math.Min(_goals, k + 2), budget);
+                case "span": return PullWindow(k, SpanEnd(k), 2 * budget);
+                case "dropreset": return PullDropReset(k);
+                case "graft": return PullGraft(k);
+                case "plan": return PullPlan(k, budget);
+            }
+            return "unknown lever";
+        }
+
+        // A goal whose target is this small (an area goal's rect, units squared) or a gate or box is where a long window is scored.
+        const float SmallGoal = 300f * 300f;
+
+        /// <summary>
+        /// The goal a long window from goal k is scored at: the first small goal 3-5 goals on (a buy, a gate, or an area goal's rect of at
+        /// most 300x300), else none. Scored at a large area box, a window wins by touching its near edge in a state the next goals can't
+        /// use, and the repair after it loses the gain (Vman4 on VMAN goals 10-14 and 15-18); scored at a small goal further on, the gain
+        /// is one the goals after it keep.
+        /// </summary>
+        int SpanEnd(int k)
+        {
+            for (int j = k + 2; j <= Math.Min(_goals, k + 4); j++)
+            {
+                FullTasGoal g = _runGoals.Goals[j - 1];
+                if (g.kind != FullTasGoal.At || g.w * g.h <= SmallGoal) return j;
+            }
+            return 0;
+        }
+
+        int PrefixAt(Route r, int k) { return k <= 1 ? 0 : (int)Math.Min(r.GoalInput[k - 2], r.Inputs.Count); }
+
+        // ---------------------------------------------------------------- levers
+
+        /// <summary>Polish (Polish.cs) over goal k's inputs only: re-timings, stick values, jump frames, dropped or moved resets.</summary>
+        string PullPolish(int k)
+        {
+            Route best = _best;
+            int from = PrefixAt(best, k), to = (int)Math.Min(best.GoalInput[k - 1], best.Inputs.Count);
+            var polish = new Polish(() => { Simulation s = _create(); s.Goals.Limit = _goals; return s; }, new OfflineSolver.ForcedPath(), _threads, line => Log(line));
+            try
+            {
+                Polish.Result p = polish.Run(best.Inputs, maxSweeps: 3, from: from, to: to);
+                if (p.Kept == 0) return $"polish inputs {from}-{to}: nothing kept ({p.Ticks} ticks)";
+                Route r = Evaluate(p.Inputs);
+                Collect(r, $"polish of goal {k} #{_pullNo}");
+                if (Better(r, _best)) Commit(r, $"polish of goal {k}'s inputs ({p.Kept} changes)");
+                return $"polish inputs {from}-{to}: {p.Kept} kept, {Describe(r)} ({p.Ticks} ticks)";
+            }
+            finally { polish.Stop(); }
+        }
+
+        /// <summary>A window search from goal k-1's state through goal limit (limit k+2: the goal after next, so a way that reaches goal
+        /// k later with more speed can win), then the solve's merge: splice, and re-find the later goals when the old tail breaks.</summary>
+        string PullWindow(int k, int limit, double budget)
+        {
+            Route best = _best;
+            int prefixLength = PrefixAt(best, k);
+            var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
+            List<List<InputTick>> found = SearchWindow("polish", best, prefixLength, limit, seeds, best.GoalPhysics[limit - 1], budget, 0);
+            if (found.Count == 0) return $"goals {k}-{limit}: nothing faster";
+            List<InputTick> prefix = best.Inputs.Take(prefixLength).ToList();
+            string how = $"window {k}-{limit} #{_pullNo}";
+            foreach (List<InputTick> f in Enumerable.Reverse(found).Take(5)) Collect(Evaluate(prefix.Concat(f).ToList()), how);
+            // The merge re-finds the goals after goal limit from these finds itself: a graft bridge from there would repeat it.
+            _grafted.Add((how, limit));
+            Merge($"faster through goals {k}-{limit} (auto)", best, prefixLength, limit, found);
+            return $"goals {k}-{limit}: {found.Count} faster through goal {limit}";
+        }
+
+        /// <summary>The first quick restart in goal k's inputs not studied yet (-1: none).</summary>
+        int NextReset(int k)
+        {
+            Route best = _best;
+            int lo = PrefixAt(best, k), hi = (int)Math.Min(best.GoalInput[k - 1], best.Inputs.Count);
+            for (int i = Math.Max(1, lo); i < hi; i++)
+                if (best.Inputs[i].reset && !_studied.Contains((k, i - lo))) return i;
+            return -1;
+        }
+
+        string PullDropReset(int k)
+        {
+            int q = NextReset(k);
+            _studied.Add((k, q - PrefixAt(_best, k)));
+            return StudyReset(_best, q, GoalsBy(_best, q));
+        }
+
+        AutoRef GraftCandidate(int k)
+        {
+            Route best = _best;
+            long arrival = best.GoalPhysics[k - 1], split = Split(best.GoalPhysics, k);
+            return _refs.Where(r => r.Progress >= k && !_grafted.Contains((r.How, k)) && (r.GoalPhysics[k - 1] < arrival || Split(r.GoalPhysics, k) < split))
+                .OrderBy(r => Math.Min(r.GoalPhysics[k - 1] - arrival, Split(r.GoalPhysics, k) - split)).FirstOrDefault();
+        }
+
+        /// <summary>
+        /// A known route that does goal k better: reached sooner, its way there kept and the later goals re-found (Repair, as the
+        /// transplant's bridges); split shorter, its inputs picked up from the best's states nearest its path by place and speed
+        /// (the transplant's splices, FullTasTransplant.cs), not by tick.
+        /// </summary>
+        string PullGraft(int k)
+        {
+            AutoRef r = GraftCandidate(k);
+            _grafted.Add((r.How, k));
+            Route best = _best;
+            var said = new List<string>();
+            if (r.GoalPhysics[k - 1] < best.GoalPhysics[k - 1])
+            {
+                Route run = Evaluate(r.Inputs.Take((int)Math.Min(r.GoalInput[k - 1], r.Inputs.Count)).ToList(), k);
+                if (run.Progress >= k && run.GoalPhysics[k - 1] < best.GoalPhysics[k - 1])
+                {
+                    Log($"auto graft: bridge from {r.How} at goal {k}: tick {run.GoalPhysics[k - 1]} against the best's {best.GoalPhysics[k - 1]}; re-finding goals {k + 1}-{_goals}");
+                    Repair($"the way to goal {k} of {r.How} (auto bridge)", best, new Route { Inputs = run.Inputs, Progress = k, GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, EndReason = run.EndReason });
+                    said.Add($"bridge from {r.How}");
+                }
+            }
+            if (_best == best && Split(r.GoalPhysics, k) < Split(best.GoalPhysics, k))
+            {
+                Reference saved = _reference;
+                _reference = ReferenceOf(r.Inputs);
+                _leads.Clear();
+                try
+                {
+                    using var lanes = new Lanes(Math.Max(1, _threads), _create, _goals);
+                    var g = new Graft { Inputs = r.Inputs.ToList(), From = Enumerable.Range(0, r.Inputs.Count).ToList(), How = r.How };
+                    long gain = Splices(lanes, r.Inputs, g, null, k, false, false);
+                    if (gain > 0) Splices(lanes, r.Inputs, g, null, k, true, false);
+                    said.Add($"reanchor of {r.How} ({(gain > 0 ? gain + " ticks sooner at goal " + k : "none sooner")})");
+                }
+                finally { _reference = saved; }
+                foreach (var (p, lead) in _leads) Collect(Evaluate(lead.inputs), $"graft lead at goal {p} #{_pullNo}");
+                _leads.Clear();
+            }
+            return said.Count == 0 ? $"{r.How}: no longer better at goal {k}" : string.Join("; ", said);
+        }
+
+        /// <summary>The contact planner (Plan.cs, Planner.cs) on goal k's window, the best's window its guide; its finishes go to
+        /// the merge (the old tail re-found where it breaks). A goal whose plan finds no finish is dropped for the plan lever.</summary>
+        string PullPlan(int k, double minutes)
+        {
+            Route best = _best;
+            global::IGTAP.EngineSim.Cli.Plan.Window w = global::IGTAP.EngineSim.Cli.Plan.Window.Build(_trace, AutoHeader(), best.Inputs, k - 1, k, partial: false);
+            var options = new Planner.Options
+            {
+                Threads = _threads, Width = Math.Max(48, 2 * _threads), MaxWidth = 768, Cell = 16f, Cap = 8, Labels = 2,
+                Seconds = minutes * 60, MomentumSlack = 30, FromGoal = k - 1,
+            };
+            options.Guides.Add(w.OldWindow);
+            var finishes = new List<Planner.Route>();
+            var planner = new Planner(w.Create, w.Caps, w.Path, null, options);
+            planner.Found += f => { lock (finishes) finishes.Add(f); };
+            planner.Run(line => Log("plan: " + line));
+            if (finishes.Count == 0)
+            {
+                _planDead.Add(k);
+                return $"plan goal {k}: no finish in {minutes:0.0} min ({planner.Ticks} ticks); the plan lever stops for this goal";
+            }
+            int prefixLength = PrefixAt(best, k);
+            // Merge tries the last first: by arrival less the speed carried (plan's --momentum-worth, 60 u/s per tick).
+            List<List<InputTick>> found = finishes.OrderByDescending(f => f.RunTicks - f.Speed / 60f).TakeLast(8).Select(f => f.Inputs).ToList();
+            List<InputTick> prefix = best.Inputs.Take(prefixLength).ToList();
+            string how = $"plan of goal {k} #{_pullNo}";
+            foreach (List<InputTick> f in found) Collect(Evaluate(prefix.Concat(f).ToList()), how);
+            _grafted.Add((how, k));
+            Merge($"plan of goal {k} (auto)", best, prefixLength, k, found);
+            return $"plan goal {k}: {finishes.Count} finishes, fastest {finishes.Min(f => f.RunTicks) - w.StartPhysics} ticks against the best's {w.OldWindowPhysics}";
+        }
+
+        /// <summary>
+        /// Report only: whether an area goal costs time. The window from goal k-1 to goal k+1 is searched with goal k left out of a
+        /// copy of the run's goals; the run's own goals are never edited.
+        /// </summary>
+        void Ablations()
+        {
+            var picks = _model.Where(r => r.K < _goals && _runGoals.Goals[r.K - 1].kind == FullTasGoal.At).OrderByDescending(r => r.Expected).Take(AblateTop).ToList();
+            foreach (GoalRow row in picks)
+            {
+                if (TimeUp) return;
+                double c0 = CpuSeconds();
+                (long at, long baseline) = Ablate(row.K, Math.Min(0.5, _windowMinutes));
+                string verdict = at == long.MaxValue ? "no way to the next goal found without it"
+                    : at < baseline ? $"costs {baseline - at} ticks: without it goal {row.K + 1} is reached at tick {at} against {baseline}"
+                    : $"costs nothing found: without it goal {row.K + 1} at tick {at} against {baseline}";
+                Log($"auto: waypoint goal {row.K} ({row.Label}) {verdict} ({CpuSeconds() - c0:0} CPU s; report only, the run's goals are unchanged)");
+                AutoWrite(new { type = "ablation", goal = row.K, label = row.Label, without = at == long.MaxValue ? (long?)null : at, baseline, cost = at == long.MaxValue ? (long?)null : baseline - at });
+            }
+        }
+
+        (long at, long baseline) Ablate(int k, double minutes)
+        {
+            JsonNode node = JsonNode.Parse(AutoHeader().GetRawText());
+            node["fulltas"]["goals"].AsArray().RemoveAt(k - 1);
+            JsonElement header;
+            using (JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 })) header = doc.RootElement.Clone();
+            Func<Simulation> make = Solve.Creator(_trace, header);
+            Route best = _best;
+            int prefixLength = PrefixAt(best, k);
+            List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+            long baseline = best.GoalPhysics[k];
+            Func<Simulation> create = () =>
+            {
+                Simulation s = make();
+                s.StrictBuys = true;
+                s.Goals.Limit = k;
+                if (prefix.Count == 0) return s;
+                SimSnapshot at = s.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
+                s.SetStart(at, prefix.Count);
+                return s;
+            };
+            var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
+            var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(2)), seeds, null, Solve.FullTasPaths(_name, new[] { _labels[k] }, _labels), VisitCell);
+            long bestAt = long.MaxValue;
+            solver.Improved += (time, runTicks, inputs, how) => { lock (solver) bestAt = Math.Min(bestAt, runTicks - Simulation.StrictFinishTicks); };
+            Thread[] threads = solver.Start(_threads);
+            var clock = Stopwatch.StartNew();
+            while (!TimeUp && clock.Elapsed.TotalMinutes < minutes) Thread.Sleep(250);
+            solver.Stop();
+            foreach (Thread t in threads) t.Join(60000);
+            lock (solver) return (bestAt, baseline);
+        }
+
+        // ---------------------------------------------------------------- commit check, repair bound, references
+
+        /// <summary>The route replayed from the start on a new simulation (its own thread and world, as a fresh process would):
+        /// kept as that replay has it when it still beats the best; null otherwise.</summary>
+        Route VerifyFresh(Route r, string where)
+        {
+            Route fresh = null;
+            Exception failed = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    Simulation sim = _create();
+                    sim.Goals.Limit = _goals;
+                    RunResult rr = sim.Run(r.Inputs, null, null, 1000000);
+                    fresh = new Route { Inputs = r.Inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, EndReason = rr.EndReason };
+                }
+                catch (Exception ex) { failed = ex; }
+            }, 64 << 20);
+            t.Start();
+            t.Join();
+            if (failed != null || fresh == null)
+            {
+                Log($"fresh check of {Describe(r)} ({where}) failed: {failed?.GetBaseException().Message}; not kept");
+                return null;
+            }
+            string same = fresh.Progress == r.Progress && fresh.GoalPhysics.Take(fresh.Progress).SequenceEqual(r.GoalPhysics.Take(r.Progress)) ? "same goal ticks"
+                : $"differs from this process's replay ({Describe(r)})";
+            if (!Better(fresh, _best))
+            {
+                Log($"fresh check ({where}): a new simulation replays it as {Describe(fresh)}, {same}: no faster than the best {Describe(_best)}; not kept");
+                AutoWrite(new { type = "check", where, kept = false, time = fresh.Progress == _goals ? Seconds(fresh.Last) : (double?)null, progress = fresh.Progress });
+                return null;
+            }
+            Log($"fresh check ({where}): {Describe(fresh)} from a new simulation, {same}; per goal {Splits(fresh)}");
+            AutoWrite(new { type = "check", where, kept = true, time = Seconds(fresh.Last), progress = fresh.Progress });
+            Collect(fresh, where);
+            return fresh;
+        }
+
+        /// <summary>
+        /// A repaired run can't win any more: even at every later goal's lower bound it ends no sooner than the best, or it is more
+        /// than --repair-slack ticks behind the best at its last goal (the window's gain is gone and more).
+        /// </summary>
+        string Hopeless(Route run)
+        {
+            int p = run.Progress;
+            if (p == 0 || p > _best.Progress) return null;
+            long at = run.GoalPhysics[p - 1];
+            if (_bounds != null)
+            {
+                long floor = at + Enumerable.Range(p, Math.Max(0, _goals - p)).Sum(j => _bounds[j]);
+                if (floor >= _best.Last) return $"at goal {p} (tick {at}) even the later goals' lower bounds end at tick {floor}, no sooner than the best's {_best.Last}";
+            }
+            long behind = at - _best.GoalPhysics[p - 1];
+            if (behind > _repairSlack) return $"{behind} ticks behind the best at goal {p} (--repair-slack {_repairSlack})";
+            return null;
+        }
+
+        /// <summary>Files a route as a reference (its goal ticks from its replay): a later graft or the gap model can use it.</summary>
+        void Collect(Route r, string how)
+        {
+            if (r == null || r.Progress == 0) return;
+            List<InputTick> inputs = r.Inputs.Take((int)Math.Min(r.GoalInput[r.Progress - 1], r.Inputs.Count)).ToList();
+            ulong key = SnapshotIndex.Hash(inputs, inputs.Count);
+            if (!_refKeys.Add(key)) return;
+            _refs.Add(new AutoRef { How = how, Inputs = inputs, Progress = r.Progress, GoalPhysics = (long[])r.GoalPhysics.Clone(), GoalInput = (long[])r.GoalInput.Clone(), Key = key });
+            _refsChanged = true;
+            if (_refs.Count > MaxRefs) Prune();
+        }
+
+        /// <summary>Keeps the references that hold some goal's soonest arrival or shortest split (three of each per goal).</summary>
+        HashSet<AutoRef> Useful()
+        {
+            var keep = new HashSet<AutoRef>();
+            for (int k = 1; k <= _goals; k++)
+            {
+                var reach = _refs.Where(r => r.Progress >= k).ToList();
+                foreach (AutoRef r in reach.OrderBy(r => r.GoalPhysics[k - 1]).Take(3)) keep.Add(r);
+                foreach (AutoRef r in reach.OrderBy(r => Split(r.GoalPhysics, k)).Take(3)) keep.Add(r);
+            }
+            return keep;
+        }
+
+        void Prune()
+        {
+            HashSet<AutoRef> keep = Useful();
+            _refs.RemoveAll(r => !keep.Contains(r));
+        }
+
+        void SaveRefs()
+        {
+            HashSet<AutoRef> keep = Useful();
+            string temp = _refsFile + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new
+            {
+                name = _name, goals = _labels,
+                refs = _refs.Where(keep.Contains).Select(r => new { how = r.How, progress = r.Progress, goalPhysicsTicks = r.GoalPhysics, inputs = r.Inputs.Select(t => t.ToJson()) }),
+            }));
+            Solve.Replace(temp, _refsFile);
+        }
+
+        void LoadRefs()
+        {
+            if (!File.Exists(_refsFile)) return;
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_refsFile), new JsonDocumentOptions { MaxDepth = 256 });
+            if (!doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_labels)) return;
+            int n = 0;
+            foreach (JsonElement r in doc.RootElement.GetProperty("refs").EnumerateArray())
+            {
+                Route route = Evaluate(r.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList());
+                if (route.Progress == 0) continue;
+                Collect(route, r.GetProperty("how").GetString() + " (earlier --auto)");
+                n++;
+            }
+            Log($"auto: {n} references from {Path.GetFileName(_refsFile)}");
+        }
+
+        /// <summary>A replayable route's own path per physics tick, as a transplant's probe gives the old route's (world place,
+        /// Velocity + momentum, facing, the input played).</summary>
+        Reference ReferenceOf(List<InputTick> inputs)
+        {
+            var rows = new List<(long t, WorldPos p, Vector2 v, bool right, int input)>();
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            _eval.Run(inputs, null, null, 1000000, _ => rows.Add((_eval.Engine.PhysicsTicks, _eval.PlayerWorld, _eval.Player.Velocity + _eval.Player.momentum,
+                _eval.Player.facingRight, (int)_eval.Engine.RunTicks - 1)));
+            int count = (int)rows.Max(r => r.t) + 1;
+            var reference = new Reference { X = new float[count], Y = new float[count], VX = new float[count], VY = new float[count], Right = new bool[count],
+                FirstTick = Enumerable.Repeat(-1, inputs.Count + 1).ToArray(), InputAt = Enumerable.Repeat(-1, count).ToArray() };
+            foreach (var r in rows)
+            {
+                int t = (int)r.t;
+                reference.X[t] = r.p.x;
+                reference.Y[t] = r.p.y;
+                reference.VX[t] = r.v.x;
+                reference.VY[t] = r.v.y;
+                reference.Right[t] = r.right;
+                int input = Math.Min(r.input, inputs.Count - 1);
+                reference.InputAt[t] = input;
+                if (input >= 0 && reference.FirstTick[input] < 0) reference.FirstTick[input] = t;
+            }
+            return reference;
+        }
+
+        // ---------------------------------------------------------------- the gap model
+
+        /// <summary>Replays inputs from the start: per physics tick the player's place (world and capture frame), speed
+        /// (|Velocity + momentum|), unlocks, goals reached and, with distances, the walkable distance to the current goal's target.</summary>
+        List<Sample> Profile(List<InputTick> inputs, bool distances)
+        {
+            var s = new List<Sample>();
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            DistanceField field = distances ? DistanceField.For(_eval) : null;
+            int avoidFor = -1, capsFor = -1;
+            string caps = "";
+            _eval.Run(inputs, null, null, 1000000, _ =>
+            {
+                int p = _eval.Progress;
+                if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(_eval.Player).Id; }
+                if (field != null && p != avoidFor && p < _goals)
+                {
+                    avoidFor = p;
+                    field.SetAvoid(Solve.FullTasPaths(_name, new[] { _labels[p] }, _labels).Avoid);
+                }
+                WorldPos w = _eval.PlayerWorld;
+                CapturePos c = _eval.PlayerAtCapture;
+                float d = field == null || p >= _goals ? float.NaN : field.Distance(c);
+                s.Add(new Sample { Tick = _eval.Engine.PhysicsTicks, Input = (int)_eval.Engine.RunTicks, Progress = p, X = w.x, Y = w.y, CX = c.x, CY = c.y,
+                    Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Caps = caps });
+            });
+            return s;
+        }
+
+        /// <summary>The fastest path speed (units per physics tick over SpeedWindow ticks, teleports excluded) per unlock set.</summary>
+        void Sustained(List<Sample> s, string how)
+        {
+            float sum = 0f;
+            var steps = new Queue<float>();
+            for (int i = 1; i < s.Count; i++)
+            {
+                float dx = s[i].X - s[i - 1].X, dy = s[i].Y - s[i - 1].Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
+                if (Jumped(s[i - 1], s[i]) || s[i].Caps != s[i - 1].Caps) { steps.Clear(); sum = 0f; continue; }
+                steps.Enqueue(step);
+                sum += step;
+                if (steps.Count > SpeedWindow) sum -= steps.Dequeue();
+                if (steps.Count < SpeedWindow) continue;
+                float v = sum / SpeedWindow;
+                if (!_vtop.TryGetValue(s[i].Caps, out var known) || v > known.speed) _vtop[s[i].Caps] = (v, $"{how}, tick {s[i].Tick}");
+            }
+        }
+
+        bool Jumped(Sample a, Sample b)
+        {
+            float dx = b.X - a.X, dy = b.Y - a.Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
+            return step > 2f * Math.Max(a.Speed, b.Speed) * _dt + TeleportSlack;
+        }
+
+        /// <summary>
+        /// Top speeds from the engine: the best's own path, then from the best's state at each goal the moves that build speed played
+        /// on their own (a dash each way, dash jumps, and with the omnidash the down-dash landing chain of 2-6 links, both sides): the
+        /// fastest path speed any shows per unlock set.
+        /// </summary>
+        void MeasureSpeeds()
+        {
+            double c0 = CpuSeconds();
+            Sustained(Profile(_best.Inputs, false), "the best's path");
+            var peaks = new SortedDictionary<int, float>();
+            for (int k = 1; k <= _goals; k++)
+            {
+                int prefixLength = PrefixAt(_best, k);
+                _eval.SetStart(_origin, 0);
+                _eval.Goals.Limit = _goals;
+                SimSnapshot at = prefixLength == 0 ? _origin : _eval.Advance(_best.Inputs.GetRange(0, prefixLength));
+                if (at == null) continue;
+                _eval.SetStart(at, prefixLength);
+                _eval.Restore(at);
+                string capsId = PlayerCaps.Of(_eval.Player).Id;
+                bool omni = capsId.Contains("om", StringComparison.OrdinalIgnoreCase);
+                foreach (var (moves, links) in SpeedMoves(omni))
+                {
+                    var s = new List<Sample>();
+                    float peak = 0f, first = float.NaN;
+                    _eval.Run(moves, null, null, 20, _ =>
+                    {
+                        WorldPos w = _eval.PlayerWorld;
+                        float v = (_eval.Player.Velocity + _eval.Player.momentum).magnitude;
+                        if (float.IsNaN(first)) first = v;
+                        peak = Math.Max(peak, v);
+                        s.Add(new Sample { Tick = _eval.Engine.PhysicsTicks, X = w.x, Y = w.y, Speed = v, Caps = capsId });
+                    });
+                    Sustained(s, $"speed probe from goal {k - 1}" + (links > 0 ? $", a {links}-link bounce chain" : ""));
+                    // What the chain itself adds to the speed it started with (the growth per link the old route lived on).
+                    float added = peak - (float.IsNaN(first) ? 0f : first);
+                    if (links > 0 && (!peaks.TryGetValue(links, out float p) || added > p)) peaks[links] = added;
+                }
+            }
+            _eval.SetStart(_origin, 0);
+            Log("auto: top path speed per unlock set (units per physics tick over " + SpeedWindow + " ticks): "
+                + string.Join("; ", _vtop.OrderBy(v => v.Key).Select(v => $"{v.Key} {v.Value.speed:0.0} ({v.Value.how})")));
+            if (peaks.Count > 0) Log("auto: bounce chain speed added (|Velocity + momentum| peak less its start) by links: " + string.Join(", ", peaks.Select(p => $"{p.Key}: {p.Value:0}")));
+            Log($"auto: speed probes {CpuSeconds() - c0:0} CPU s");
+        }
+
+        static InputTick Stick(float x, float y, bool held, bool press = false, bool release = false)
+        {
+            return new InputTick { x = x, y = y, held = held || press, press = press, release = release && !held && !press };
+        }
+
+        static IEnumerable<(List<InputTick> moves, int links)> SpeedMoves(bool omni)
+        {
+            foreach (float side in new[] { -1f, 1f })
+            {
+                var dash = new List<InputTick> { new InputTick { x = side, dash = true } };
+                dash.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 40));
+                yield return (dash, 0);
+                foreach (int jump in new[] { 3, 5, 7 })
+                {
+                    var super = new List<InputTick> { new InputTick { x = side, dash = true, dashJump = jump, lockX = side } };
+                    super.AddRange(Enumerable.Repeat(Stick(side, 0f, true), 6));
+                    super.Add(Stick(side, 0f, false, release: true));
+                    super.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 40));
+                    yield return (super, 0);
+                }
+                if (!omni) continue;
+                // Planner.BounceChain's shape: a dash straight down with a jump frame, the jump out of the landing held 3 ticks, air.
+                foreach (int links in new[] { 2, 3, 4, 5, 6 })
+                    foreach (int gap in new[] { 3, 7 })
+                        foreach (int jump in new[] { 3, 6 })
+                        {
+                            var t = new List<InputTick>();
+                            for (int l = 0; l < links; l++)
+                            {
+                                InputTick d = Stick(0f, -1f, false);
+                                d.dash = true;
+                                d.dashJump = jump;
+                                d.lockX = side;
+                                t.Add(d);
+                                for (int i = 0; i < 3; i++) t.Add(Stick(side, 0f, true));
+                                t.Add(Stick(side, 0f, false, release: true));
+                                for (int i = 0; i < gap; i++) t.Add(Stick(side, 0f, false));
+                            }
+                            t.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 20));
+                            yield return (t, links);
+                        }
+            }
+        }
+
+        /// <summary>
+        /// Per goal: the best's split; the lower bound (the walkable distance, DistanceField with the run's avoid boxes, else the
+        /// straight line, from where the best starts the goal or lands after a teleport in it, over the top path speed with those
+        /// unlocks); the speed-deficit stretches (ticks the best moves toward the target at under a third of what it manages in that
+        /// goal: standing starts, loops back, resets, waits) and the ticks each would save; the known routes' soonest arrival and
+        /// shortest split. Expected headroom = proven (a known route did it) + deficit + a share of the gap to the bound.
+        /// </summary>
+        void BuildModel()
+        {
+            // The field's grid covers every place asked about so far and coarsens as it grows (DistanceField.Build): a first pass
+            // grows it over the whole route, so the measured pass has one grid from start to end.
+            Profile(_best.Inputs, true);
+            List<Sample> s = Profile(_best.Inputs, true);
+            var rows = new List<GoalRow>();
+            for (int k = 1; k <= _goals; k++)
+            {
+                long arrival = _best.GoalPhysics[k - 1], start = k == 1 ? 0 : _best.GoalPhysics[k - 2];
+                List<Sample> seg = s.Where(x => x.Tick > start && x.Tick <= arrival).ToList();
+                var row = new GoalRow { K = k, Label = _labels[k - 1], Split = arrival - start, Arrival = arrival };
+                if (seg.Count == 0) { row.Bound = 1; rows.Add(row); continue; }
+                Sample end = seg[seg.Count - 1];
+                FullTasGoal goal = _runGoals.Goals[k - 1];
+                float Straight(Sample x)
+                {
+                    if (goal.kind == FullTasGoal.At)
+                    {
+                        float dx = Math.Max(0f, Math.Abs(x.CX - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(x.CY - goal.y) - goal.h / 2f);
+                        return (float)Math.Sqrt(dx * dx + dy * dy);
+                    }
+                    float ex = x.X - end.X, ey = x.Y - end.Y;
+                    return (float)Math.Sqrt(ex * ex + ey * ey);
+                }
+                float Dist(Sample x)
+                {
+                    float st = Straight(x);
+                    if (float.IsNaN(x.Dist) || x.Progress != k - 1) return st;
+                    // An area goal's rect is exact (the walk can't be shorter than the line); a gate's walk is to its own box.
+                    return goal.kind == FullTasGoal.At ? Math.Max(st, x.Dist) : x.Dist;
+                }
+                row.Caps = seg[0].Caps;
+                row.VTop = _vtop.TryGetValue(row.Caps, out var v) ? Math.Max(1f, v.speed) : 1f;
+                // Where the goal can be started from: its first tick, and after each teleport in it (a quick restart costs a tick).
+                float d0 = Dist(seg[0]);
+                double best = d0 / row.VTop;
+                for (int i = 1; i < seg.Count; i++)
+                {
+                    if (Jumped(seg[i - 1], seg[i])) best = Math.Min(best, 1 + Dist(seg[i]) / row.VTop);
+                }
+                row.Distance = d0;
+                row.Bound = Math.Max(1, (long)Math.Ceiling(best));
+                // Speed deficit: progress toward the target per tick against what the best manages in this goal (its 80th percentile).
+                var rates = new List<float>();
+                for (int i = 1; i < seg.Count; i++) rates.Add(Dist(seg[i - 1]) - Dist(seg[i]));
+                var positive = rates.Where(r => r > 0f).OrderBy(r => r).ToList();
+                float attain = positive.Count == 0 ? 1f : Math.Max(1f, positive[(int)(positive.Count * .8)]);
+                var stretches = new List<(double saved, string what)>();
+                for (int i = 0; i < rates.Count;)
+                {
+                    if (rates[i] >= SlowShare * attain) { i++; continue; }
+                    int j = i;
+                    while (j < rates.Count && rates[j] < SlowShare * attain) j++;
+                    int len = j - i;
+                    if (len >= SlowStretch)
+                    {
+                        double made = rates.Skip(i).Take(len).Sum(), saved = len - Math.Max(0, made) / attain;
+                        bool teleport = Enumerable.Range(i + 1, len).Any(m => m < seg.Count && Jumped(seg[m - 1], seg[m]));
+                        double moved = Enumerable.Range(i + 1, len).Where(m => m < seg.Count).Average(m => Math.Sqrt(Math.Pow(seg[m].X - seg[m - 1].X, 2) + Math.Pow(seg[m].Y - seg[m - 1].Y, 2)));
+                        string kind = teleport ? "reset" : made < 0 ? "loops back" : moved < 1.5 ? "standing/wait" : "slow";
+                        stretches.Add((saved, $"{kind} {len} ticks from input {seg[i].Input} (~{saved:0} saved)"));
+                    }
+                    i = j;
+                }
+                row.Deficit = stretches.Sum(x => x.saved);
+                row.Worst = string.Join(", ", stretches.OrderByDescending(x => x.saved).Take(2).Select(x => x.what));
+                rows.Add(row);
+            }
+            _model = rows;
+            _bounds = rows.Select(r => r.Bound).ToArray();
+            Refresh();
+        }
+
+        /// <summary>The known routes' per-goal records and every goal's expected headroom (after a reference is filed).</summary>
+        void Refresh()
+        {
+            foreach (GoalRow row in _model)
+            {
+                int k = row.K;
+                var reach = _refs.Where(r => r.Progress >= k).ToList();
+                AutoRef soonest = reach.OrderBy(r => r.GoalPhysics[k - 1]).FirstOrDefault(), shortest = reach.OrderBy(r => Split(r.GoalPhysics, k)).FirstOrDefault();
+                row.RefArrival = soonest?.GoalPhysics[k - 1] ?? -1;
+                row.RefArrivalHow = soonest?.How;
+                row.RefSplit = shortest == null ? -1 : Split(shortest.GoalPhysics, k);
+                row.RefSplitHow = shortest?.How;
+                row.Expected = ProvenWeight * Math.Max(row.ArrivalLead, row.SplitLead) + DeficitWeight * row.Deficit + GapWeight * row.Gap;
+            }
+        }
+
+        void PrintModel(string when)
+        {
+            var b = new StringBuilder();
+            b.AppendLine($"auto: per-goal model ({when}), best {Describe(_best)}; bound = distance / top path speed for the goal's unlocks");
+            b.AppendLine(" goal label                                    split  bound   gap  dist   v/tick  deficit  known  expect  slowest stretches");
+            foreach (GoalRow r in _model)
+                b.AppendLine($" {r.K,4} {r.Label,-40} {r.Split,5} {r.Bound,6} {r.Gap,5} {r.Distance,6:0} {r.VTop,7:0.0} {r.Deficit,8:0} {(r.RefSplit < 0 ? "-" : r.RefSplit.ToString(CultureInfo.InvariantCulture)),6} {r.Expected,7:0.0}  {r.Worst}");
+            long bound = _model.Sum(r => r.Bound);
+            b.Append($" total {_best.Last} ticks ({Describe(_best)}); lower bound {bound} ticks ({bound * _dt:0.00} s), deficit {_model.Sum(r => r.Deficit):0} ticks, "
+                + $"most expected: {string.Join(", ", _model.OrderByDescending(r => r.Expected).Take(6).Select(r => $"{r.K} ({r.Expected:0})"))}");
+            Log(b.ToString());
+            AutoWrite(new { type = "model", when, best = Seconds(_best.Last), bound = _model.Sum(r => r.Bound),
+                goals = _model.Select(r => new { goal = r.K, label = r.Label, split = r.Split, bound = r.Bound, gap = r.Gap, distance = Math.Round(r.Distance), vtop = Math.Round(r.VTop, 1),
+                    caps = r.Caps, deficit = Math.Round(r.Deficit, 1), refSplit = r.RefSplit, refArrival = r.RefArrival, expected = Math.Round(r.Expected, 1), slow = r.Worst }) });
+        }
+
+        void PrintArms()
+        {
+            var rows = _arms.Values.Where(a => a.Pulls > 0).OrderByDescending(a => a.Gain).ThenByDescending(a => a.Pulls).Take(12)
+                .Select(a => $"{a.Lever}@{a.Goal}: {a.Pulls} pulls, {a.Cpu:0} CPU s, {a.Gain:0} gained");
+            Log("auto: arms " + string.Join("; ", rows) + "; lever cost per pull: "
+                + string.Join(", ", AutoLevers.Select(l => $"{l} {LeverCost(l):0} CPU s")));
+        }
+    }
+}

@@ -407,18 +407,29 @@ namespace IGTAP.EngineSim.Cli
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
         }
 
-        internal static string EncodeTicks(List<InputTick> ticks)
+        internal static string EncodeTicks(List<InputTick> ticks) => EncodeRuns(Runs(ticks));
+
+        static IEnumerable<(InputTick tick, int count)> Runs(List<InputTick> ticks)
         {
-            var text = new StringBuilder();
             for (int i = 0; i < ticks.Count;)
             {
                 int j = i + 1;
                 while (j < ticks.Count && ticks[j].Equals(ticks[i])) j++;
-                InputTick t = ticks[i];
+                yield return (ticks[i], j - i);
+                i = j;
+            }
+        }
+
+        /// <summary>Runs of equal ticks as text (adjacent runs are expected to differ: each is written as one).</summary>
+        static string EncodeRuns(IEnumerable<(InputTick tick, int count)> runs)
+        {
+            var text = new StringBuilder();
+            foreach (var (t, count) in runs)
+            {
                 int flags = (t.held ? 1 : 0) | (t.press ? 2 : 0) | (t.release ? 4 : 0) | (t.dash ? 8 : 0) | (t.reset ? 16 : 0)
                     | (t.y < 0f ? 32 : 0) | (t.y > 0f ? 64 : 0);
                 if (text.Length > 0) text.Append(';');
-                text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(j - i);
+                text.Append(t.x.ToString("R", CultureInfo.InvariantCulture)).Append(',').Append(flags).Append(',').Append(t.dashJump).Append(',').Append(count);
                 bool pause = t.pause > 0;
                 if (t.ArmsLock || t.turnX.HasValue || t.turnY.HasValue || pause)
                     text.Append(',').Append(t.springDash).Append(',').Append(Number(t.lockX)).Append(',').Append(Number(t.lockY));
@@ -426,7 +437,6 @@ namespace IGTAP.EngineSim.Cli
                 if (t.turnY.HasValue || pause) text.Append(',').Append(Number(t.turnY));
                 if (pause) text.Append(',').Append(t.pause).Append(',').Append(t.pauseTick);
                 if (pause && t.pauseFrame != 0) text.Append(',').Append(t.pauseFrame);
-                i = j;
             }
             return text.ToString();
         }
@@ -436,7 +446,14 @@ namespace IGTAP.EngineSim.Cli
         internal static List<InputTick> DecodeTicks(string text)
         {
             var ticks = new List<InputTick>();
-            if (text.Length == 0) return ticks;
+            foreach (var (t, count) in DecodeRuns(text))
+                for (int n = count; n > 0; n--) ticks.Add(t);
+            return ticks;
+        }
+
+        static IEnumerable<(InputTick tick, int count)> DecodeRuns(string text)
+        {
+            if (text.Length == 0) yield break;
             foreach (string run in text.Split(';'))
             {
                 string[] f = run.Split(',');
@@ -456,9 +473,8 @@ namespace IGTAP.EngineSim.Cli
                     pauseTick = f.Length > 10 ? int.Parse(f[10], CultureInfo.InvariantCulture) : 0,
                     pauseFrame = f.Length > 11 ? int.Parse(f[11], CultureInfo.InvariantCulture) : 0,
                 };
-                for (int n = int.Parse(f[3], CultureInfo.InvariantCulture); n > 0; n--) ticks.Add(t);
+                yield return (t, int.Parse(f[3], CultureInfo.InvariantCulture));
             }
-            return ticks;
         }
 
         /// <summary>
@@ -469,7 +485,7 @@ namespace IGTAP.EngineSim.Cli
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temp = path + ".tmp";
-            List<InputTick> previous = null;
+            InputRuns previous = null;
             using (FileStream file = File.Create(temp))
                 JsonSerializer.Serialize(file, new
                 {
@@ -477,10 +493,9 @@ namespace IGTAP.EngineSim.Cli
                     plateau = memory.Plateau.Select(EncodeTicks),
                     sources = memory.Sources.Select(s =>
                     {
-                        int shared = 0;
-                        if (previous != null) while (shared < previous.Count && shared < s.Inputs.Count && s.Inputs[shared].Equals(previous[shared])) shared++;
+                        int shared = previous == null ? 0 : InputRuns.SharedPrefix(previous, s.Inputs);
                         previous = s.Inputs;
-                        return new { shared, ticks = EncodeTicks(s.Inputs.GetRange(shared, s.Inputs.Count - shared)),
+                        return new { shared, ticks = EncodeRuns(s.Inputs.Runs(shared)),
                             cells = s.Cells.Select(c => new object[] { c.Key, c.Length, c.Picks, c.Rank }) };
                     }),
                 });
@@ -493,7 +508,7 @@ namespace IGTAP.EngineSim.Cli
             using FileStream file = File.OpenRead(path);
             using JsonDocument doc = JsonDocument.Parse(file);
             JsonElement root = doc.RootElement;
-            List<InputTick> previous = null;
+            InputRuns previous = null;
             return new OfflineSolver.Memory
             {
                 Runs = root.GetProperty("runs").GetInt64(),
@@ -501,12 +516,13 @@ namespace IGTAP.EngineSim.Cli
                 Sources = root.GetProperty("sources").EnumerateArray().Select(s =>
                 {
                     int shared = s.TryGetProperty("shared", out JsonElement n) ? n.GetInt32() : 0;
-                    var inputs = new List<InputTick>(previous == null ? Enumerable.Empty<InputTick>() : previous.Take(shared));
-                    inputs.AddRange(DecodeTicks(s.GetProperty("ticks").GetString()));
-                    previous = inputs;
+                    var inputs = new InputRuns.Builder();
+                    if (previous != null) inputs.AddRange(previous, shared);
+                    foreach (var (tick, count) in DecodeRuns(s.GetProperty("ticks").GetString())) inputs.Add(tick, count);
+                    previous = inputs.Build();
                     return new OfflineSolver.Memory.Source
                     {
-                        Inputs = inputs,
+                        Inputs = previous,
                         Cells = s.GetProperty("cells").EnumerateArray().Select(c => new OfflineSolver.Memory.SavedCell
                         {
                             Key = c[0].GetInt64(), Length = c[1].GetInt32(), Picks = c[2].GetInt32(), Rank = c[3].GetSingle(),

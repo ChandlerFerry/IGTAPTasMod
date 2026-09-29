@@ -14,7 +14,8 @@ namespace Box2D
         internal BodyRec[] bodies;
         internal ContactRec[] contacts;
         internal object broadphaseSnapshot;
-        internal int staticEpoch;
+        internal long staticEpoch;
+        internal long touchCount;
 
         internal sealed class BodyRec
         {
@@ -36,7 +37,7 @@ namespace Box2D
             internal float linearDamping;
             internal float angularDamping;
             internal b2Fixture[] fixtures;
-            internal int staticEpoch;
+            internal long staticEpoch;
 
             internal int[] fixtureProxyCount;
             internal int[][] fixtureProxyIds;
@@ -89,7 +90,11 @@ namespace Box2D
 
     public partial class b2World
     {
-        private int m_staticEpoch, m_staticValuesEpoch;
+        // The static bodies' fixture state is numbered: a load skips them when the snapshot's number is the world's. The
+        // numbers start at a random base per world, so a snapshot saved by another world (a state file of another process,
+        // SnapshotStore) can't match by chance and have its static fixtures skipped.
+        private long m_staticEpoch = (long)(uint)System.Random.Shared.Next() << 32;
+        private long m_staticValuesEpoch = -1;
 
         internal void StaticChanged(b2Body body)
         {
@@ -150,6 +155,7 @@ namespace Box2D
                 allowSleep = m_allowSleep,
                 bodyCountGuard = m_bodyCount,
                 staticEpoch = m_staticValuesEpoch,
+                touchCount = m_touchCount,
             };
 
             int nonStatic = 0;
@@ -329,6 +335,7 @@ namespace Box2D
             m_stepComplete = state.stepComplete;
             m_inv_dt0 = state.invDt0;
             m_allowSleep = state.allowSleep;
+            m_touchCount = state.touchCount;
 
             b2Contact discarded = m_contactManager.m_contactList;
             m_contactManager.m_contactList = null;
@@ -344,6 +351,8 @@ namespace Box2D
             foreach (b2WorldState.BodyRec rec in state.bodies)
             {
                 b2Body b = rec.body;
+                // The body now is this record: a save before it changes shares it (a body a run leaves alone, asleep).
+                m_savedBodyRecs[b] = rec;
                 b.m_type = rec.type;
                 b.m_xf = rec.xf;
                 b.m_sweep = rec.sweep;
@@ -626,12 +635,17 @@ namespace Box2D
 
         internal object SaveSnapshot()
         {
-            if (!_snapshotBases.TryGetValue(_capacity, out Node[] baseNodes))
+            // The base the tree last matched a snapshot on (the one loaded or saved): only the nodes written since, and that
+            // snapshot's own delta, can differ from it. After a restore that is the restored snapshot's base, not the newest
+            // one: across a rebase they differ almost everywhere, and comparing against the newest took a full scan and a new
+            // base copy on every capture on the other side.
+            Node[] baseNodes;
+            bool tracked = _synced != null && _synced.baseNodes.Length == _capacity;
+            if (tracked) baseNodes = _synced.baseNodes;
+            else if (!_snapshotBases.TryGetValue(_capacity, out baseNodes))
                 _snapshotBases[_capacity] = baseNodes = _nodes.AsSpan(0, _capacity).ToArray();
             // Count the changed nodes first so the delta arrays are exactly sized: no List growth chain, no ToArray
-            // copies. The second pass reads the same unchanged nodes as the first, so the delta is identical. Only
-            // nodes written since the tree last matched a snapshot on this base can differ from it.
-            bool tracked = _synced != null && ReferenceEquals(_synced.baseNodes, baseNodes);
+            // copies. The second pass reads the same unchanged nodes as the first, so the delta is identical.
             int changed = 0;
             if (tracked)
             {
@@ -678,6 +692,19 @@ namespace Box2D
             };
             Resync(saved);
             return saved;
+        }
+
+        internal void AddTo(ref b2Digest h, Func<b2Fixture, long> fixtureKey)
+        {
+            h.Add(_capacity); h.Add(_root); h.Add(_freeNodes); h.Add(_nodeCount);
+            for (int i = 0; i < _capacity; i++)
+            {
+                ref Node n = ref _nodes[i];
+                h.Line("node " + i);
+                h.Add(n.Aabb); h.Add(n.Parent); h.Add(n.Child1); h.Add(n.Child2); h.Add(n.Height); h.Add(n.Moved);
+                if (n.UserData is FixtureProxy p) { h.Add(fixtureKey(p.fixture)); h.Add(p.childIndex); h.Add(p.proxyId); }
+                else h.Add(n.UserData == null ? -1 : -2);
+            }
         }
 
         internal void LoadSnapshot(object snapshot)
@@ -749,6 +776,17 @@ namespace Box2D
             return snap;
         }
 
+        internal void AddTo(ref b2Digest h, Func<b2Fixture, long> fixtureKey)
+        {
+            h.Line("moves");
+            h.Add(m_moveCount);
+            for (int i = 0; i < m_moveCount; i++) h.Add(m_moveBuffer[i]);
+            h.Add(m_pairCount);
+            for (int i = 0; i < m_pairCount; i++) { h.Add(m_pairBuffer[i].proxyIdA); h.Add(m_pairBuffer[i].proxyIdB); }
+            h.Add(m_proxyCount); h.Add(m_queryProxyId);
+            m_tree.AddTo(ref h, fixtureKey);
+        }
+
         internal void LoadSnapshot(object snapshot)
         {
             var snap = (BroadPhaseSnapshot)snapshot;
@@ -763,6 +801,88 @@ namespace Box2D
             m_pairCount = snap.pairCount;
             m_proxyCount = snap.proxyCount;
             m_queryProxyId = snap.queryProxyId;
+        }
+    }
+    /// <summary>
+    /// FNV-1a over 64-bit values: a digest that is the same in every process (no HashCode seed, no identity hashes).
+    /// </summary>
+    public struct b2Digest
+    {
+        public ulong Value;
+        /// <summary>When set, every value added as text (a failing determinism check's dumps, to diff).</summary>
+        public System.Text.StringBuilder Log;
+        public static b2Digest Start(System.Text.StringBuilder log = null) => new b2Digest { Value = 14695981039346656037UL, Log = log };
+        public void Add(long v)
+        {
+            for (int i = 0; i < 8; i++) { Value ^= (byte)(v >> (8 * i)); Value *= 1099511628211UL; }
+            Log?.Append(v).Append(' ');
+        }
+        public void Line(string label) => Log?.Append('\n').Append(label).Append(": ");
+        public void Add(float f) => Add(BitConverter.SingleToInt32Bits(f));
+        public void Add(bool b) => Add(b ? 1 : 0);
+        public void Add(in b2Vec2 v) { Add(v.x); Add(v.y); }
+        public void Add(in b2AABB box) { Add(box.lowerBound); Add(box.upperBound); }
+        public void Add(in b2Transform xf) { Add(xf.p); Add(xf.q.M11); Add(xf.q.M12); Add(xf.q.M21); Add(xf.q.M22); Add(xf.q.M31); Add(xf.q.M32); }
+        public void Add(in b2Sweep s) { Add(s.localCenter); Add(s.c0); Add(s.c); Add(s.a0); Add(s.a); Add(s.alpha0); }
+    }
+
+    public partial class b2World
+    {
+        /// <summary>
+        /// Everything a step reads from this world, bit for bit, in list order: the world's values, each body (its values,
+        /// fixtures and their proxies, its contact edge list), the contact list with each contact's values and manifold,
+        /// and the broadphase (move and pair buffers, every tree node). <paramref name="fixtureKey"/> names a fixture the same
+        /// way in every process. Two worlds that step differently from here differ in it (the determinism check's measure).
+        /// </summary>
+        public ulong StateDigest(Func<b2Fixture, long> fixtureKey, System.Text.StringBuilder log = null)
+        {
+            var h = b2Digest.Start(log);
+            h.Line("world");
+            h.Add(m_gravity); h.Add(m_newContacts); h.Add(m_stepComplete); h.Add(m_inv_dt0); h.Add(m_allowSleep);
+            h.Add(m_bodyCount); h.Add(m_touchCount); h.Add(m_contactManager.m_contactCount);
+            var index = new Dictionary<b2Contact, int>();
+            int ci = 0;
+            for (b2Contact c = m_contactManager.m_contactList; c != null; c = c.m_next) index[c] = ci++;
+            h.Add(ci);
+            h.Add(m_contactManager.m_contactTail == null ? -1 : index[m_contactManager.m_contactTail]);
+            for (b2Body b = m_bodyList; b != null; b = b.m_next)
+            {
+                h.Line("body");
+                h.Add((int)b.m_type); h.Add((int)b.m_flags); h.Add(b.m_xf); h.Add(b.m_sweep);
+                h.Add(b.m_linearVelocity); h.Add(b.m_angularVelocity); h.Add(b.m_force); h.Add(b.m_torque); h.Add(b.m_sleepTime);
+                h.Add(b.m_mass); h.Add(b.m_invMass); h.Add(b.m_I); h.Add(b.m_invI); h.Add(b.m_gravityScale);
+                h.Add(b.m_linearDamping); h.Add(b.m_angularDamping); h.Add(b.m_fixtureCount);
+                for (b2Fixture f = b.m_fixtureList; f != null; f = f.m_next)
+                {
+                    h.Add(fixtureKey(f)); h.Add(f.IsSensor()); h.Add(f.m_density); h.Add(f.m_friction); h.Add(f.m_restitution);
+                    h.Add(f.m_filter.categoryBits); h.Add(f.m_filter.groupIndex); h.Add(f.m_filter.maskBits);
+                    h.Add(f.m_proxyCount);
+                    for (int j = 0; j < f.m_proxyCount; j++) { h.Add(f.m_proxies[j].proxyId); h.Add(f.m_proxies[j].aabb); h.Add(f.m_proxies[j].childIndex); }
+                }
+                h.Add(-2);
+                for (b2ContactEdge e = b.m_contactList; e != null; e = e.next)
+                {
+                    h.Add(index[e.contact]); h.Add(ReferenceEquals(e, e.contact.m_nodeB));
+                }
+                h.Add(-3);
+            }
+            for (b2Contact c = m_contactManager.m_contactList; c != null; c = c.m_next)
+            {
+                h.Line("contact");
+                h.Add(fixtureKey(c.m_fixtureA)); h.Add(c.m_indexA); h.Add(fixtureKey(c.m_fixtureB)); h.Add(c.m_indexB);
+                h.Add((int)c.m_flags); h.Add(c.m_friction); h.Add(c.m_restitution); h.Add(c.m_tangentSpeed);
+                h.Add(c.m_toi); h.Add(c.m_toiCount); h.Add(c.m_touchOrder);
+                h.Add(c.m_prev == null ? -1 : index[c.m_prev]);
+                b2Manifold m = c.m_manifold;
+                h.Add(m.localNormal); h.Add(m.localPoint); h.Add((int)m.type); h.Add(m.pointCount);
+                for (int j = 0; j < m.pointCount; j++)
+                {
+                    b2ManifoldPoint p = m.points[j];
+                    h.Add(p.localPoint); h.Add(p.normalImpulse); h.Add(p.tangentImpulse); h.Add(p.id.key);
+                }
+            }
+            m_contactManager.m_broadPhase.AddTo(ref h, fixtureKey);
+            return h.Value;
         }
     }
 }

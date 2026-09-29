@@ -111,6 +111,8 @@ namespace IGTAP.EngineSim.Cli
                 if (args[i] == "--seed-list")
                     _seedFiles.AddRange(File.ReadAllLines(args[i + 1]).Select(l => l.Trim()).Where(l => l.Length > 0));
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--harvest") _harvestFiles.Add(args[i + 1]);
+            _auto = args.Contains("--auto");
+            _args = args;
             int transplant = Array.IndexOf(args, "--transplant");
             if (transplant > 0 && transplant + 1 < args.Length) _transplantFile = args[transplant + 1];
         }
@@ -174,6 +176,14 @@ namespace IGTAP.EngineSim.Cli
                 new Thread(Submitter) { IsBackground = true }.Start();
             }
             new Thread(WatchStdin) { IsBackground = true }.Start();
+            // --auto: the unattended gap-driven loop (FullTasAuto.cs); then stops.
+            if (_auto)
+            {
+                Auto(_args);
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
+                Emit(new { type = "done", best = RouteJson(_best) });
+                return 0;
+            }
             // --transplant FILE: an old route of this run repaired where it fails, before the solve goes on (FullTasTransplant.cs).
             if (_transplantFile != null) Transplant(_transplantFile);
             // --reset-study: each reset in the best against the way on without it (FullTasResets.cs); then stops.
@@ -1263,10 +1273,17 @@ namespace IGTAP.EngineSim.Cli
                     Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." });
                     return;
                 }
+                string hopeless = _hopeless?.Invoke(run);
+                if (hopeless != null)
+                {
+                    Log("repair dropped: " + hopeless);
+                    Emit(new { type = "dropped", text = "Repair gave up: " + hopeless + "." });
+                    return;
+                }
                 int reached = run.Progress, limit = Math.Min(reached + _window + _lookahead, old.Progress);
                 int prefixLength = (int)Math.Min(run.GoalInput[reached - 1], run.Inputs.Count);
                 var seeds = new List<List<InputTick>> { run.Inputs.Skip(prefixLength).ToList(), old.Inputs.Skip((int)old.GoalInput[reached - 1]).ToList() };
-                List<List<InputTick>> found = SearchWindow("repair", run, prefixLength, limit, seeds, long.MaxValue, _windowMinutes, 0);
+                List<List<InputTick>> found = SearchWindow("repair", run, prefixLength, limit, seeds, long.MaxValue, _repairMinutes ?? _windowMinutes, 0);
                 if (found.Count == 0)
                 {
                     Log($"repair dropped: no route to {_labels[reached]} from the new state");
@@ -1281,6 +1298,7 @@ namespace IGTAP.EngineSim.Cli
                     return;
                 }
                 run = next;
+                _collect?.Invoke(next, where + " (repairing)");
             }
         }
 
@@ -1302,6 +1320,7 @@ namespace IGTAP.EngineSim.Cli
         void Commit(Route r, string where)
         {
             r = Padded(r);
+            if (_verify != null && (r = _verify(r, where)) == null) return;
             Route previous = _best;
             _best = r;
             WriteRunFile(r);

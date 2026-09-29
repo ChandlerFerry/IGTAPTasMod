@@ -53,8 +53,8 @@ namespace Box2D
 
         private int m_bodyCount;
 
-        // Contacts number their start of touching from this (b2Contact.m_touchOrder). Only the order matters, so a
-        // restored snapshot's contacts keep theirs and this is never rewound.
+        // Contacts number their start of touching from this (b2Contact.m_touchOrder). Only the order matters, but a snapshot
+        // saves and restores it with the contacts, so a restored world is the saved one bit for bit (b2World.StateDigest).
         private long m_touchCount;
         public long NextTouchOrder() => ++m_touchCount;
 

@@ -62,6 +62,7 @@ $exe = "enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe"
 $traces = "C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer\BepInEx\config\IGTAPTasMod\enginesim"
 & $exe replay $traces\rand-*.json $traces\route-*.json   # fidelity: first tick where offline != turbo
 & $exe bench  $traces\route-c1-none-4.14.json            # single-core speed
+& $exe determinism $traces\fulltas-VMAN.json route.json  # a snapshot's runs depend on nothing else (orders, processes)
 & $exe solve  $traces\route-c1-none-4.14.json --threads 16 --minutes 60 --stall-minutes 5
 & $exe path   $traces\route-c1-none-4.14.json route.json  # where the course timer starts/stops along a route
 & $exe humanize $traces\start-c1-none.json $traces\offline-best\1_none-1.66.json  # same-time, easier version + slack report
@@ -771,6 +772,13 @@ section.
   something writes `<route>-polished-<time>.json`. `plan` runs it on its best (`--no-polish` skips).
 - `solve --plan [--plan-minutes M]`: the planner and polish first (a third of `--minutes` by default, inside it; the
   solve's seeds that finish guide it), its route a seed and a `how: "plan"` line in `--log-json`.
+- `fulltas <trace> --auto` (`Cli\FullTasAuto.cs`, [docs/fulltas.md](../docs/fulltas.md#auto)): the levers above and the
+  solve's own (window, lookahead window, reset study, the transplant's bridges and splices from any known route) as arms of
+  a bandit over (lever, goal), rewarded in ticks gained per CPU second. It needs no reference route: a per-goal lower
+  bound (walkable `DistanceField` distance over the fastest path speed the engine has shown with the goal's unlocks, from
+  the best's path and speed probes including the bounce chain), the best's slow stretches and the routes the loop itself
+  found rank the goals; every window gain has its tail re-found (`Repair`, dropped once the lower bounds say it can't
+  win); every new best is replayed on a fresh simulation before it is kept. `--minutes 0` prints the lower-bound table.
 - `coverage <trace> <route-human.json>` (`Cli\Coverage.cs`): each input of a human version mapped onto the contact whose
   GraftsAt window reaches it and the kind that makes it, a mined window with it, and whether the planner's decisions make
   its value. Tables: [`docs/planner-coverage.md`](../docs/planner-coverage.md). Course 4 `WJ_DS_DJ` 11.24 (the old
@@ -802,6 +810,7 @@ route; "first faster" is the first window finish before it.
 | Search | First finish | First faster | Best (goal 7) | Ticks simulated | Whole run |
 |---|---|---|---|---|---|
 | `fulltas` default window search | the seed, 1.8 s | 497 (−11) at 171 s, 5.1 × 10⁷ ticks | 497 (−11) | 5.1 × 10⁷ at its best; ran out of memory at 258 s (12 GB heap cap) before merging | none |
+| same, again after SolveMemory's archive fix (run-length cell inputs) on the then-current tree (`out/bench/b2-5-7/`) | the seed, 0.7 s | none in 5 min | 508 (0) | 1.06 × 10⁸ in 5 min; finished, heap peak 9.4 GB (read before a GC; mostly snapshots), 125,624 archive cells | none |
 | `plan` (guide + exact chains, mid-air, bounce chain) | the guide, at the first layers | 506 (−2) at 67 s, 2.1 × 10⁷ | 478 (−30) at 179 s, 6.0 × 10⁷ | 1.0 × 10⁸ in 5.4 min | 2251 (−7): a finish whose rest follows on |
 | `plan` + the old route's probe trail | the guide | 492 (−16) at 62 s, 1.8 × 10⁷ | 485 (−23) at 172 s, 6.0 × 10⁷ | 1.2 × 10⁸ in 5.3 min | none of 6 finishes' rests follow on |
 | `polish --from-goal 5 --to-goal 7` | the route | none (0 kept; plain + plateau sweeps) | 508 | 2.6 × 10⁵ in 4.3 s | — |
@@ -1074,6 +1083,17 @@ replays were ~23% of all ticks simulated before cells had owners (each worker us
 [`docs/fidelity-log.md`](../docs/fidelity-log.md), *A snapshot per cell per worker*). `solve` and `fulltas` print the archive's size, the share of picks whose snapshot was
 cached and the ticks spent replaying (`ArchiveStatus`).
 
+The states get half the heap; everything else has to fit in the other half, and the cells' inputs are most of that. A
+cell's inputs (its run's, shared by every cell the run filed) are run-length stored (`InputRuns`, ~25 equal ticks a
+run on a saved archive), and so are a loaded or exported archive's sources (`Memory.Source.Inputs`): `Export` trims a
+source without copying it, and the archive loads straight into runs. As `List<InputTick>` (68 bytes a tick, and every
+explore run copies its cell's 1,000-2,000-tick prefix on Area 2's courses) they outgrew the states: resuming Course 9
+WJ_DS_DJ_BS from a 147k-cell archive with 16 threads under a 20 GiB heap, the loaded archive took 3 GB, the explore
+cells' lists grew ~1.5 GB every 10 s, and `Export`'s copy of every source threw OutOfMemory after 2.5 minutes (the
+committed engine did the same, so no engine change caused it). Run-length, the same solve's live heap stays ~2-4 GB
+over the states' budget (inputs ~1.3 GB at 200k cells, still growing with the archive) and every export succeeds; a
+heap dump puts the rest mostly in the states' broadphase trees.
+
 A Full-TAS run's goal-boundary states also persist to disk (`SnapshotStore`, `SnapshotIndex`): when the run first
 reaches goal k, or a better arrival does, its state goes to `archive\fulltas-<run>\states\`, keyed by the hash of the
 run's inputs up to it and dropped with the archive (the run's `start.key`). A solve's windows start from the stored
@@ -1085,10 +1105,43 @@ it doesn't know) just isn't stored and the run replays to it as before. On the V
 (the broadphase tree's shared base is a full copy per state) against ~25 KB in memory.
 
 The physics backing those states rely on: a fixture's shape fingerprint is a plain deterministic mix
-(`PhysicsWorld.FingerprintOf`), `Pristine` is the fixtures the world loaded (`ColliderState.Tracked` marks the rebuilds
-that join `_changed`), and a capture after a restore re-derives its changed-collider list
-(`PhysicsWorld._changedCapture`). Storing states across runs needed all three
-([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Persisted states across runs*).
+(`PhysicsWorld.FingerprintOf`), and `Pristine` is the fixtures the world loaded (`ColliderState.Tracked` marks the
+rebuilds that join `_changed`), so a restore puts a collider its snapshot doesn't list back to what the world loaded
+(fixtures, scale, layer, contact mask). Storing states across runs needed both
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Persisted states across runs*). The static bodies' fixture state
+is numbered from a random base per world (`b2World.m_staticEpoch`, which lets a load skip them), so a state another
+process saved can't match the number by chance.
+
+A restore gives back exactly the physics state its capture saw, whatever the simulation ran before: Box2D's (bodies,
+fixtures and proxy ids, the contact list in order with each contact's flags, manifold and touch order, the touch
+counter, the move and pair buffers, every broadphase tree node) and the host's (each collider's fixtures, scale, layer
+and contact mask, the player's colliders' too, the touching pairs, and the syncs, teleports, rebuilds and rescales
+pending for the next step: `PhysicsSnapshot`). Before, the player's box kept the last run's contact mask and a restore
+kept the last run's pending flags, so an edge could end differently after other edges
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *A restored run depended on the runs before it*). `determinism
+<trace> <route> [--edges N] [--seed S] [--passes P]` checks it (`Cli/Determinism.cs`): 10 snapshots along the route
+(both sides of its rebases), a fixed set of N edges from them (default 300; 17-150 ticks of the route's inputs, near
+the snapshot or from anywhere later), every third capturing a state halfway that a child edge runs from later in the
+pass, run in order, then in P-1 shuffled orders, then in a second process with another shuffle. Every restore's
+physics digest (`PhysicsWorld.StateDigest`, `b2World.StateDigest`: all of the above, bit for bit, the same in every
+process) must equal its capture's, every run's end state must be the same in every order and process, and the route
+snapshots stored as bytes (`SnapshotStore`) and loaded into a fresh simulation must restore the same state and end
+their edges the same. It prints `DETERMINISTIC` (exit 0) or the first differences; `IGTAP_DETERMINISM_DUMP=<edge>`
+writes that edge's halfway capture and its restore as text to diff. VMAN 45.20, 44.92 and 48.18 with 600 edges:
+every restore equal to its capture (2,256-2,286 each), 800 of 800 runs identical across orders and processes (the
+build before: 21 restores off and 5 runs different on 45.20).
+
+A capture after a restore shares the restored snapshot's changed-collider list until a collider is rebuilt
+(`PhysicsWorld._changedCapture`), and each body's record until the body changes (a load seeds `b2World.m_savedBodyRecs`).
+The broadphase tree's delta is taken against the base of the snapshot the tree was last loaded from or saved as, not the
+newest base: a capture after a restore across the rebase compared the whole tree (5,800 nodes on VMAN) and copied a new
+base every time. On the 48.18 route (`enginebench`, restore and capture of the snapshots at inputs 200-1650, two runs
+each) a restore plus capture took 113-218 µs (up to 73 KB), now 22-59 µs; the physics capture alone 104 → 7 µs; 17-tick
+branches ~6-8% faster, branches across the rebase unchanged. Trigger dispatch keeps each trigger contact's
+`b2TestOverlap` with the two bodies' transforms bit for bit (`b2Contact.m_overlap`): a trigger on a body at rest isn't
+tested again, 94% of the tests hit and `CollectTouching` takes 1.8 µs a step instead of 3.0. Results are
+byte-identical: the 502-trace verbose replay corpus and the VMAN 45.20 (2260 ticks), 44.92 (2246) and 48.18 (2409)
+checks.
 
 Scene queries (raycasts, point tests, `Collider2D.Distance`) read static shapes from a grid built once over the world. A
 collider whose static fixtures change, or whose static body moves, is regridded alone at the next query (the whole

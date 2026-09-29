@@ -262,6 +262,9 @@ ordered as the sections they came from.
 - **Fix:** a fixture's shape fingerprint is a plain deterministic mix (`PhysicsWorld.FingerprintOf`); `Pristine` is the
   fixtures the world loaded (`ColliderState.Tracked` marks the rebuilds that join `_changed`); a capture after a
   restore re-derives its changed-collider list (`PhysicsWorld._changedCapture`).
+- **Later:** with `Pristine` the loaded fixtures, a collider a restored snapshot doesn't list holds what the world
+  loaded, so a capture after a restore shares the restored snapshot's list again until a collider is rebuilt (*A
+  restored run depended on the runs before it*; `determinism` checks stored snapshots in a fresh simulation).
 - **Where:** `PhysicsWorld.FingerprintOf`, `ColliderState.Pristine`, `ColliderState.Tracked`,
   `PhysicsWorld._changed`, `PhysicsWorld._changedCapture`.
 
@@ -273,6 +276,33 @@ ordered as the sections they came from.
 - **Fix:** a collider whose static fixtures change, or whose static body moves, is regridded alone at the next query
   (throughput ~1,800 runs/s, 205,000 ticks/s).
 - **Where:** the scene-query grid behind raycasts, point tests and `Collider2D.Distance`.
+
+## A restored run depended on the runs before it
+
+- **Symptom:** the same edge from the same snapshot ended differently depending on what the simulation ran before it.
+  `determinism` on VMAN 45.20 (600 edges from 10 route snapshots and 200 from their mid-run captures, run in order,
+  shuffled twice and in a second process): 21 of 2,256 restores gave another physics state than the capture saw, 5 of
+  800 runs ended in another state between orders (in one, edge 134, the player too: x 6661.75 or 6661.7505 after 151
+  ticks) and one in the second process. `enginebench`'s 17-tick branches from input 800 of 48.18,
+  run after 3,000 from input 200, ended differently in 37 of 3,000 from a fresh process's. An earlier timed bench saw
+  the player's x velocity 460 or 0 on one edge.
+- **Cause:** a restore put back what the snapshot held, not everything the next step reads. The player's box's contact
+  mask (what the contact filter reads) was rebuilt only when the box changed: `Simulation.Restore` writes the box's
+  `excludeLayers` directly, so the box kept the last run's mask (a dash's excluded layer, -194 against -66) until it
+  changed again. A capture between steps also dropped the syncs and moves pending for the next step (a body's transform
+  or scale sync and teleport, a collider rebuilt or rescaled since the step), and a restore left the last run's
+  `Rescaled` flags. A rebuilt collider's scale, layer and mask came back only when its layer differed. Box2D's touch
+  counter wasn't rewound (only the order of touch numbers matters, so this changed no run, but the state wasn't the
+  saved one).
+- **Fix:** the physics snapshot holds the player's colliders' scale, layer and mask, each rebuilt collider's with its
+  fixtures (unlisted ones go back to what the world loaded), and the pending body and collider flags; `b2WorldState`
+  holds the touch counter. `determinism` digests the whole physics state (every body, fixture, proxy, contact in list
+  order with its manifold and touch order, the move and pair buffers, every tree node, the host's collider and pair
+  state) at each capture and after each restore, and every run's end state. Now every restore equals its capture and
+  every run agrees across orders and processes on 45.20, 44.92 and 48.18, and stored snapshots loaded into a fresh
+  simulation restore the same state. The branches above now end as a fresh process's do.
+- **Where:** `PhysicsWorld.Capture`/`Restore` (`PhysicsSnapshot`, `Built`), `b2World.SaveState`/`LoadState`,
+  `Cli/Determinism.cs`.
 
 ## Zip movers once unlocked (WJ_DS_DJ_BS_ORB_ZIP_OM)
 

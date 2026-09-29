@@ -89,6 +89,12 @@ namespace Box2D
         // multi-contact pair in the turbo trace corpus (a corner of four shapes: diverge-c5-13.14 ticks 881-885).
         public long m_touchOrder;
 
+        // The last trigger overlap test of this contact's shapes (b2Collision.b2TestOverlap, PhysicsWorld.CollectTouching) and
+        // the body transforms it ran at, bit for bit. The shapes are the fixtures' own and never change, so the same transforms
+        // give the same answer: a trigger on a body at rest (asleep, static or the ground) isn't tested again each step.
+        public b2Transform m_overlapXfA, m_overlapXfB;
+        public sbyte m_overlap = -1;
+
         // Swap-remove from the pair's list: the pair's last touching contact takes this one's place.
         internal void LeaveTouchOrder()
         {

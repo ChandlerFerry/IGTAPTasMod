@@ -30,7 +30,8 @@ namespace IGTAP.EngineSim
 
             public sealed class Source
             {
-                public List<InputTick> Inputs;
+                /// <summary>Run-length stored: a saved archive's 36 M ticks were 3 GB as lists (Course 9 WJ_DS_DJ_BS).</summary>
+                public InputRuns Inputs;
                 public List<SavedCell> Cells = new List<SavedCell>();
             }
 
@@ -196,8 +197,8 @@ namespace IGTAP.EngineSim
             int generation = ++_exportGeneration;
             var clock = Stopwatch.StartNew();
             while (clock.ElapsedMilliseconds < timeoutMs && _workers.Any(w => w == null || w.Exported < generation)) Thread.Sleep(10);
-            var cells = new Dictionary<long, (List<InputTick> source, int length, int picks, float rank)>();
-            void Add(long key, List<InputTick> source, int length, int picks, float rank)
+            var cells = new Dictionary<long, (InputRuns source, int length, int picks, float rank)>();
+            void Add(long key, InputRuns source, int length, int picks, float rank)
             {
                 if (!cells.TryGetValue(key, out var c)) { cells[key] = (source, length, picks, rank); return; }
                 bool better = rank < c.rank || (rank == c.rank && length < c.length);
@@ -212,14 +213,15 @@ namespace IGTAP.EngineSim
                     foreach (Memory.SavedCell c in s.Cells) Add(c.Key, s.Inputs, c.Length, c.Picks, c.Rank);
                 if (h?.Plateau != null && !memory.Plateau.Any(p => p.SequenceEqual(h.Plateau))) memory.Plateau.Add(h.Plateau);
             }
-            var sources = new Dictionary<List<InputTick>, Memory.Source>(ReferenceEqualityComparer.Instance);
+            var sources = new Dictionary<InputRuns, Memory.Source>(ReferenceEqualityComparer.Instance);
             foreach (var pair in cells)
             {
                 if (!sources.TryGetValue(pair.Value.source, out Memory.Source s)) sources[pair.Value.source] = s = new Memory.Source { Inputs = pair.Value.source };
                 s.Cells.Add(new Memory.SavedCell { Key = pair.Key, Length = pair.Value.length, Picks = pair.Value.picks, Rank = pair.Value.rank });
             }
+            // Trimmed without a copy (Take shares the runs): a copy of every source's inputs here ran the CLI out of memory.
             foreach (Memory.Source s in sources.Values)
-                s.Inputs = s.Inputs.GetRange(0, Math.Min(s.Inputs.Count, s.Cells.Max(c => c.Length) + 1));
+                s.Inputs = s.Inputs.Take(Math.Min(s.Inputs.Count, s.Cells.Max(c => c.Length) + 1));
             memory.Sources = sources.Values.ToList();
             return memory;
         }
@@ -285,7 +287,9 @@ namespace IGTAP.EngineSim
 
         sealed class Cell
         {
-            public List<InputTick> Source;
+            /// <summary>The inputs of the run that filed it (shared by every cell that run filed); the cell is their first
+            /// Length ticks. Run-length stored: as lists, the cells' inputs outgrew the states on Area 2's long routes.</summary>
+            public InputRuns Source;
             public int Length, Picks, Waypoints;
             public Cell Parent;
             public float Rank, Distance;
@@ -370,7 +374,7 @@ namespace IGTAP.EngineSim
         {
             ClosestCell c = _closest;
             return c == null ? null : new Attempt { Progress = c.Progress, Distance = c.Cell.Distance, Rank = c.Cell.Rank,
-                Inputs = c.Cell.Source.GetRange(0, Math.Min(c.Cell.Length, c.Cell.Source.Count)) };
+                Inputs = c.Cell.Source.ToList(c.Cell.Length) };
         }
 
         /// <summary>
@@ -394,7 +398,7 @@ namespace IGTAP.EngineSim
             return near.OrderBy(n => n.d).Take(max).Select(n =>
             {
                 skip.Add(n.key);
-                return n.cell.Source.GetRange(0, Math.Min(n.cell.Length, n.cell.Source.Count));
+                return n.cell.Source.ToList(n.cell.Length);
             }).ToList();
         }
 
@@ -593,7 +597,7 @@ namespace IGTAP.EngineSim
                         var (cell, bestTick) = _spliceQueue.Dequeue();
                         SimSnapshot state = StateOf(cell);
                         _fromCell = cell;
-                        Splice(cell.Source, cell.Length, bestTick, state);
+                        Splice(cell.Source.ToList(cell.Length), cell.Length, bestTick, state);
                         _fromCell = null;
                         continue;
                     }
@@ -630,9 +634,10 @@ namespace IGTAP.EngineSim
 
             void Restore(Memory.Source source)
             {
-                _restoreKeys = new long[source.Inputs.Count + 1];
+                List<InputTick> inputs = source.Inputs.ToList();
+                _restoreKeys = new long[inputs.Count + 1];
                 Array.Fill(_restoreKeys, long.MinValue);
-                Evaluate(source.Inputs, null, null, false, out _, out _, out _);
+                Evaluate(inputs, null, null, false, out _, out _, out _, encoded: source.Inputs);
                 long[] keys = _restoreKeys;
                 _restoreKeys = null;
                 foreach (Memory.SavedCell saved in source.Cells)
@@ -672,7 +677,7 @@ namespace IGTAP.EngineSim
                 Interlocked.Increment(ref chosen.Picks);
                 SimSnapshot from = StateOf(chosen);
                 if (from == null) return;
-                List<InputTick> inputs = RandomBurst(chosen.Source.GetRange(0, Math.Min(chosen.Length, chosen.Source.Count)));
+                List<InputTick> inputs = RandomBurst(chosen.Source.ToList(chosen.Length));
                 _splicing = _bestInputs != null;
                 _spliceAt = -1;
                 _fromCell = chosen;
@@ -942,8 +947,9 @@ namespace IGTAP.EngineSim
                 path.Reverse();
                 if (found != null) Touch(found);
                 SimSnapshot from = found?.State;
+                List<InputTick> inputs = cell.Source.ToList();
                 // The run's stored goal state may sit later on the cell's own prefix than this worker's nearest state does.
-                if (_owner.Resume is SnapshotIndex resume && resume.Find(cell.Source, cell.Length, from?.Tick ?? -1) is SnapshotIndex.Entry goal)
+                if (_owner.Resume is SnapshotIndex resume && resume.Find(inputs, cell.Length, from?.Tick ?? -1) is SnapshotIndex.Entry goal)
                     try
                     {
                         from = _store.StateOf(goal, goal.Tick - resume.Base);
@@ -953,7 +959,7 @@ namespace IGTAP.EngineSim
                 _capturePath = path;
                 _captureNext = 0;
                 _captured = null;
-                Evaluate(cell.Source, from, null, false, out _, out _, out _, judgeAfter: cell.Length);
+                Evaluate(inputs, from, null, false, out _, out _, out _, judgeAfter: cell.Length, encoded: cell.Source);
                 _capturePath = null;
                 Interlocked.Increment(ref _owner.StateReplays);
                 return _captured;
@@ -1589,8 +1595,10 @@ namespace IGTAP.EngineSim
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 
+            /// <param name="encoded">The inputs already run-length stored (a restored source, a cell's replay): the cells this run
+            /// files share it. Otherwise they're stored at the run's first filed cell (a run never changes its inputs).</param>
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, Replay replay, bool cut,
-                out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue)
+                out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue, InputRuns encoded = null)
             {
                 _converged = false;
                 ForcedPath path = _owner._path;
@@ -1599,6 +1607,7 @@ namespace IGTAP.EngineSim
                 if (_recordContacts) _log.Reset();
                 _runCorners = _recordContacts && _omni;
                 _runInputs = inputs;
+                _runEncoded = encoded;
                 _runFrom = from;
                 _runReplay = replay;
                 _runCut = cut;
@@ -1624,6 +1633,7 @@ namespace IGTAP.EngineSim
             readonly Func<int, bool> _afterTick;
             readonly Action<int> _onStep;
             List<InputTick> _runInputs;
+            InputRuns _runEncoded;
             SimSnapshot _runFrom;
             Replay _runReplay;
             bool _runCut, _runCorners;
@@ -1810,7 +1820,7 @@ namespace IGTAP.EngineSim
                 if (states != null && state != null) states[tick] = state;
                 if (!better || state == null) return;
                 float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture, _waypoints) : _goalMode ? GoalDistance(_sim) : float.NaN;
-                var filed = new Cell { Source = inputs, Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
+                var filed = new Cell { Source = _runEncoded ??= InputRuns.From(inputs), Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
                 if (!_owner.File(key, filed)) return;
                 if (ClipLog && cell == null) Console.WriteLine($"NEWCELL {_sim.PlayerWorld.x:0} {_sim.PlayerWorld.y:0} {(key < 0 ? 1 : 0)} {(_clipWatch >= 0 || _setupWatch >= 0 ? 1 : 0)}");
                 Keep(filed, state);
