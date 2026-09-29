@@ -87,11 +87,13 @@ namespace IGTAP.EngineSim
         /// </summary>
         public void SetVia(IReadOnlyList<OfflineSolver.Box> via)
         {
-            _via = via.Select(b =>
-            {
-                CapturePos a = _sim.ToCapture(new WorldPos(b.X0, b.Y0)), c = _sim.ToCapture(new WorldPos(b.X1, b.Y1));
-                return new List<Rect> { new Rect(a.x, a.y, c.x - a.x, c.y - a.y) };
-            }).ToArray();
+            _via = via.Select(b => new List<Rect> { CaptureRect(b) }).ToArray();
+        }
+
+        Rect CaptureRect(OfflineSolver.Box b)
+        {
+            CapturePos a = _sim.ToCapture(new WorldPos(b.X0, b.Y0)), c = _sim.ToCapture(new WorldPos(b.X1, b.Y1));
+            return new Rect(a.x, a.y, c.x - a.x, c.y - a.y);
         }
 
         /// <summary>
@@ -102,11 +104,7 @@ namespace IGTAP.EngineSim
         {
             lock (_gate)
             {
-                _avoid = avoid.Where(b => b.After == 0).Select(b =>
-                {
-                    CapturePos a = _sim.ToCapture(new WorldPos(b.X0, b.Y0)), c = _sim.ToCapture(new WorldPos(b.X1, b.Y1));
-                    return new Rect(a.x, a.y, c.x - a.x, c.y - a.y);
-                }).ToList();
+                _avoid = avoid.Where(b => b.After == 0).Select(CaptureRect).ToList();
                 _built.Clear();
             }
         }
@@ -210,16 +208,33 @@ namespace IGTAP.EngineSim
             if (!counts || course == null || want != 0 && course.courseNumber != want) return;
             BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
             if (box == null) return;
-            Vector3 scale = gate.transform.lossyScale, gateAt = gate.transform.position;
-            Vector2 at = new Vector2(gateAt.x - by.x, gateAt.y - by.y);
-            float w = Math.Abs(box.size.x * scale.x), h = Math.Abs(box.size.y * scale.y);
-            boxes.Add(new Rect(at.x + box.offset.x * scale.x - w / 2f, at.y + box.offset.y * scale.y - h / 2f, w, h));
+            Vector3 gateAt = gate.transform.position;
+            boxes.Add(GateRect(box, gateAt.x - by.x, gateAt.y - by.y, gate.transform.lossyScale));
         }
 
-        /// <summary>What the geometry is now: every collider's live state (a zone load toggles them) and the swapper's colour.</summary>
+        /// <summary>A gate's box collider as a rect, its transform at (x, y) with this scale.</summary>
+        internal static Rect GateRect(BoxCollider2D box, float x, float y, Vector3 scale)
+        {
+            float w = Math.Abs(box.size.x * scale.x), h = Math.Abs(box.size.y * scale.y);
+            return new Rect(x + box.offset.x * scale.x - w / 2f, y + box.offset.y * scale.y - h / 2f, w, h);
+        }
+
+        /// <summary>What the geometry is now: every collider's live state (a zone load toggles them) and the swapper's colour;
+        /// hashed again only after a collider toggle or restore (<see cref="PhysicsWorld.Generation"/>).</summary>
         int Version()
         {
-            int h = _swapper != null && _swapper.isBlueActive ? 17 : 0;
+            int generation = _sim.Physics.Generation, count = _world.Colliders.Count;
+            bool blue = _swapper != null && _swapper.isBlueActive;
+            if (generation != _versionGeneration || count != _versionCount || blue != _versionBlue)
+                (_version, _versionGeneration, _versionCount, _versionBlue) = (Hash(blue), generation, count, blue);
+            return _version;
+        }
+        int _version, _versionGeneration = -1, _versionCount;
+        bool _versionBlue;
+
+        int Hash(bool blue)
+        {
+            int h = blue ? 17 : 0;
             List<ColliderData> all = _world.Colliders;
             for (int i = 0; i < all.Count; i++)
             {
@@ -363,10 +378,7 @@ namespace IGTAP.EngineSim
         /// <summary>The capture-frame point of a body-local shape vertex at the body's pose now.</summary>
         static Vector2 Pose(Transform t, Vector3 by, Vector2 v)
         {
-            Quaternion q = t.m_Rotation;
-            float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
-            float xx = q.x * x2, yy = q.y * y2, zz = q.z * z2, xy = q.x * y2, wz = q.w * z2;
-            float m00 = 1f - (yy + zz), m01 = xy - wz, m10 = xy + wz, m11 = 1f - (xx + zz);
+            (float m00, float m01, float m10, float m11) = PhysicsWorld.Rotation2D(t.m_Rotation);
             Vector3 p = t.m_Position;
             return new Vector2(p.x - by.x + m00 * v.x + m01 * v.y, p.y - by.y + m10 * v.x + m11 * v.y);
         }

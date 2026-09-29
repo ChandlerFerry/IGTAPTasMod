@@ -39,7 +39,7 @@ namespace IGTAP.EngineSim
             /// <summary>Mid-air inputs between nodes (the Step 0 gaps): in the air, after a coast of <see cref="MidAirDelays"/>
             /// ticks, a double jump or a jump cut, a stick change, a dash or a dash jump with its lock stick either way.</summary>
             public bool MidAir = true;
-            public int[] MidAirDelays = { 2, 4, 6 };
+            public static readonly int[] MidAirDelays = { 2, 4, 6 };
             /// <summary>Omnidash nodes also play the down-dash landing chain as one edge (Worker.BounceChain).</summary>
             public bool Chains = true;
             /// <summary>A Full-TAS window's first goal (the goals reached at its start; -1: the start's own count).</summary>
@@ -103,7 +103,7 @@ namespace IGTAP.EngineSim
         readonly OfflineSolver.ForcedPath _path;
         readonly Options _o;
         readonly Dictionary<Contact, TechPattern[]> _patterns = new Dictionary<Contact, TechPattern[]>();
-        public long Ticks, Expanded, Edges, Captures, Stolen, StolenTicks, Cut;
+        public long Ticks, Expanded, Edges, Stolen, StolenTicks, Cut;
         /// <summary>Stopwatch ticks spent in edge runs and in captures, all workers.</summary>
         public long RunTime, CaptureTime;
         public Route Best { get; private set; }
@@ -176,11 +176,13 @@ namespace IGTAP.EngineSim
             public Vector2 At;
             public string How;
 
-            public List<InputTick> Inputs()
+            /// <summary>The node's inputs from the start, into <paramref name="into"/> (cleared) or a new list.</summary>
+            public List<InputTick> Inputs(List<InputTick> into = null)
             {
                 var parts = new List<InputTick[]>();
                 for (Node n = this; n.Parent != null; n = n.Parent) parts.Add(n.Edge);
-                var all = new List<InputTick>(Tick + 1);
+                List<InputTick> all = into ?? new List<InputTick>(Tick + 1);
+                all.Clear();
                 for (int i = parts.Count - 1; i >= 0; i--) all.AddRange(parts[i]);
                 return all;
             }
@@ -667,7 +669,9 @@ namespace IGTAP.EngineSim
 
             // ---- expansion ----
 
-            List<InputTick> _prefix;
+            // The expanded node's inputs, then an edge's after them (Edge cuts it back to the node's _prefix ticks): no run keeps it.
+            readonly List<InputTick> _inputs = new List<InputTick>();
+            int _prefix;
             Node _node;
             int _commit, _capAt, _waypoints, _lastTick;
             bool _avoided, _replaying;
@@ -682,7 +686,7 @@ namespace IGTAP.EngineSim
                 SimSnapshot state = n.Tick == 0 ? _sim.Start : n.Owner == _index && n.State != null ? n.State : Replay(n);
                 if (state == null) return;
                 if (n.Tick > 0) Cache(n, state);
-                _prefix = n.Inputs();
+                _prefix = n.Inputs(_inputs).Count;
                 _node = n;
                 var predicted = new List<(InputTick coast, int tick, Contact kind)>();
                 foreach (var (ticks, how, coast) in Decisions(n))
@@ -716,7 +720,6 @@ namespace IGTAP.EngineSim
                     if ((n.GuideRoute == -2 || n.GuideRoute == route) && !_p._trailRoutes.Contains(route)) Follow(state, route, n.GuideRoute == -2 ? 0 : n.GuideAt, true);
                 foreach (var (route, at) in _p.Follows(n.Progress, n.At, n.V, n.Physics))
                     if (_p._trailRoutes.Contains(route) || n.GuideRoute != -2 && n.GuideRoute != route) Follow(state, route, at, false);
-                _prefix = null;
                 _node = null;
             }
 
@@ -754,7 +757,7 @@ namespace IGTAP.EngineSim
                     start += skip;
                     var ticks = new List<InputTick>();
                     for (int i = skip; i < p.Ticks.Length; i++) ticks.Add(p.Ticks[i]);
-                    InputTick before = start > n.Tick ? Hold(coast) : n.Last;
+                    InputTick before = start > n.Tick ? coast.Coast() : n.Last;
                     ticks[0] = Edge0(before, ticks[0]);
                     Edge(state, Concat(Coast(coast, start - n.Tick), ticks.ToArray()), p.Mode);
                 }
@@ -773,15 +776,9 @@ namespace IGTAP.EngineSim
             static InputTick[] Coast(InputTick last, int count)
             {
                 var c = new InputTick[Math.Max(0, count)];
-                InputTick k = Hold(last);
+                InputTick k = last.Coast();
                 for (int i = 0; i < c.Length; i++) c[i] = k;
                 return c;
-            }
-
-            /// <summary>The tick after <paramref name="last"/> with the same stick and button, no new edge.</summary>
-            static InputTick Hold(InputTick last)
-            {
-                return new InputTick { x = last.x, y = last.y, held = last.held && !last.release };
             }
 
             static InputTick[] Concat(InputTick[] a, InputTick[] b)
@@ -827,10 +824,10 @@ namespace IGTAP.EngineSim
                         }
                     }
                 if (_p._o.MidAir && !n.Ground && !n.Wall)
-                    foreach (int d in _p._o.MidAirDelays)
+                    foreach (int d in Options.MidAirDelays)
                     {
                         if (d >= _p._o.Cap) continue;
-                        InputTick c = Hold(n.Last);
+                        InputTick c = n.Last.Coast();
                         InputTick[] coast = Coast(n.Last, d);
                         if (down) yield return (Concat(coast, new[] { Stick(c.x, c.y, false, release: true) }), "jump cut +" + d, false);
                         else if (n.AirJumps) yield return (Concat(coast, new[] { Stick(c.x, c.y, true, press: true) }), "double jump +" + d, false);
@@ -1086,13 +1083,13 @@ namespace IGTAP.EngineSim
             {
                 if (ticks.Length == 0) return;
                 Node n = _node;
-                var inputs = new List<InputTick>(_prefix.Count + ticks.Length + _p._o.Cap + 2);
-                inputs.AddRange(_prefix);
+                List<InputTick> inputs = _inputs;
+                inputs.RemoveRange(_prefix, inputs.Count - _prefix);
                 if (!raw) ticks[0] = Edge0(n.Last, ticks[0]);
                 inputs.AddRange(ticks);
                 // After the edge's own ticks: a guide's next ticks, else its last stick and button held.
                 if (tail != null) inputs.AddRange(tail);
-                InputTick coast = Hold(inputs[inputs.Count - 1]);
+                InputTick coast = inputs[inputs.Count - 1].Coast();
                 for (int i = tail?.Count ?? 0; i < _p._o.Cap + 2; i++) inputs.Add(coast);
                 _commit = n.Tick + ticks.Length;
                 _capAt = n.Tick + Math.Max(ticks.Length, _p._o.Cap);
@@ -1133,8 +1130,7 @@ namespace IGTAP.EngineSim
                 OfflineSolver.ForcedPath path = _p._path;
                 if (path == null) return;
                 WorldPos p = _sim.PlayerWorld;
-                if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p)) _waypoints++;
-                foreach (OfflineSolver.Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
+                if (path.Step(p, _sim.Progress, ref _waypoints)) _avoided = true;
             }
 
             bool AfterTick(int tick)
@@ -1180,7 +1176,6 @@ namespace IGTAP.EngineSim
                 n.State = _sim.Capture(tick);
                 Interlocked.Add(ref _p.CaptureTime, Stopwatch.GetTimestamp() - c0);
                 n.State.Waypoints = _waypoints;
-                Interlocked.Increment(ref _p.Captures);
                 if (guided) layer.AddGuided(n);
                 else layer.Add(n, _p._width * 3);
             }
@@ -1260,7 +1255,7 @@ namespace IGTAP.EngineSim
                 }
                 path.Reverse();
                 List<InputTick> inputs = n.Inputs();
-                inputs.Add(inputs.Count > 0 ? Hold(inputs[inputs.Count - 1]) : new InputTick());
+                inputs.Add(inputs.Count > 0 ? inputs[inputs.Count - 1].Coast() : new InputTick());
                 _replaying = true;
                 _replayPath = path;
                 _replayNext = 0;

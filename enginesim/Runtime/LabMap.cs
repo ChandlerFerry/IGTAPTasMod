@@ -143,26 +143,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>The lab's own bounds relative to the anchor (shapes, start and finish).</summary>
-        public (float x0, float y0, float x1, float y1) LocalBounds()
-        {
-            float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
-            foreach (LabShape s in shapes)
-            {
-                var (a, b, c, d) = s.Bounds();
-                x0 = MathF.Min(x0, a); y0 = MathF.Min(y0, b); x1 = MathF.Max(x1, c); y1 = MathF.Max(y1, d);
-            }
-            if (start != null && start.x.HasValue && start.y.HasValue)
-            {
-                x0 = MathF.Min(x0, start.x.Value - 25f); y0 = MathF.Min(y0, start.y.Value - 45f);
-                x1 = MathF.Max(x1, start.x.Value + 25f); y1 = MathF.Max(y1, start.y.Value + 45f);
-            }
-            var (fx, fy, fw, fh) = Finish;
-            x0 = MathF.Min(x0, fx - fw / 2f); y0 = MathF.Min(y0, fy - fh / 2f);
-            x1 = MathF.Max(x1, fx + fw / 2f); y1 = MathF.Max(y1, fy + fh / 2f);
-            return (x0, y0, x1, y1);
-        }
-
         public static LabMapDef Load(string path)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 64 });
@@ -207,7 +187,6 @@ namespace IGTAP.EngineSim
             if (lab.shapes.Count == 0) throw new InvalidDataException("Lab map " + lab.id + " has no shapes.");
             _ = lab.Anchor;
             _ = lab.Finish;
-            lab.LocalBounds();
             return lab;
         }
 
@@ -389,9 +368,7 @@ namespace IGTAP.EngineSim
                     // One chain of every point, as an exported EdgeCollider2D's shapes are.
                     data.Shapes = new[] { new ShapeData
                     {
-                        Type = "Edges", Radius = 0f,
-                        Vertices = shape.points.Select(p => new Vector2(world3.x + p[0], world3.y + p[1])).ToArray(),
-                        UseAdjacentStart = false, UseAdjacentEnd = false, AdjacentStart = Vector2.zero, AdjacentEnd = Vector2.zero,
+                        Type = "Edges", Vertices = shape.points.Select(p => new Vector2(world3.x + p[0], world3.y + p[1])).ToArray(),
                     } };
                     break;
                 }
@@ -433,11 +410,7 @@ namespace IGTAP.EngineSim
 
         static ShapeData Polygon(Vector2[] points)
         {
-            return new ShapeData
-            {
-                Type = "Polygon", Radius = 0f, Vertices = points,
-                UseAdjacentStart = false, UseAdjacentEnd = false, AdjacentStart = Vector2.zero, AdjacentEnd = Vector2.zero,
-            };
+            return new ShapeData { Type = "Polygon", Vertices = points };
         }
 
         static Vector2[] Vertices(float x0, float y0, float x1, float y1)
