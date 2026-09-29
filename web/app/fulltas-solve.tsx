@@ -149,8 +149,9 @@ function lastPull(log: string[]): { lever: string; goal: number; label: string }
   return null;
 }
 
-const LEVERS: Record<string, string> = { window: "window search", lookahead: "look-ahead window", span: "long window", polish: "input polish",
-  graft: "graft from a known route", plan: "contact planner", dropreset: "dropping a quick restart" };
+export const LEVERS: Record<string, string> = { window: "window search", lookahead: "look-ahead window", span: "long window", polish: "input polish",
+  graft: "graft from a known route", plan: "contact planner", dropreset: "dropping a quick restart", combine: "splicing known routes",
+  revive: "reviving a known route", goals: "goal edits" };
 
 function recordItem(e: FullTasEvent, goals: string[]): Item {
   const prev = e.previous as RouteJson, best = e.best as RouteJson, of = goals.length;

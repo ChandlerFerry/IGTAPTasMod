@@ -721,6 +721,23 @@ The log ends with the time-to-gain curve (wall and CPU seconds to each new best,
 pulls, CPU and ticks gained, and the pull order. `fulltas/<run>.auto.jsonl` has every pull (`pull`: lever, goal, budget,
 outcome, gain, CPU, wall), `check`, `record`, `ablation`, `model` and `autoEnd` (the curve).
 
+**The outlook** (`FullTasAutoOutlook.cs`): after every pull, an `outlook` event on stdout only, which the studio's Optimize
+tab shows as "Should it keep going?". The engine also prints a `pullStart` event (lever, goal, budget, and what that
+lever and goal gave this session) as each pull starts. The outlook's chance of a gain comes from when gains came,
+counting every earlier session of the run in its `.auto.jsonl` as search already spent. Gains are treated as a Poisson
+process over the recent half of all search (at least 10 minutes), with a Jeffreys prior. With k gains in that window W,
+P(a gain within t more) = 1 − (W/(W+t))^(k+½), and the median wait is W(2^(1/(k+½)) − 1). Only the recent half counts
+because an anytime search's gains thin out. `verdict`:
+
+- `floor`: the best is at the model's floor (every searched goal at its bound).
+- `exhausted`: the bandit has no arm left.
+- `early`: under 10 minutes of search and no gain yet.
+- `likely`, `possible` or `unlikely`: a chance of a gain in the next hour of ≥ 60%, ≥ 25%, or less.
+
+With `possible`, `unlikely` or `exhausted`, `advice` names the goal with the most expected headroom (when 3 or more are
+searched), the levers and goals this session hasn't pulled, and a `--focus` that left goals out. The Optimize matrix's
+queue rows end with the verdict.
+
 #### Parts: goal-state library, tail windows, combine, scheduler, cost-to-go, macros, goals
 
 ```powershell

@@ -191,6 +191,7 @@ namespace IGTAP.EngineSim.Cli
             _autoCpu0 = CpuSeconds();
             _autoWall0 = _clock.Elapsed;
             Route start = _best;
+            ReadPastSessions();
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = args.Where((a, i) => i > 0 && args[i - 1] == "--ref").ToArray(),
                 focus = new[] { _focusFrom, _focusTo } });
@@ -226,6 +227,7 @@ namespace IGTAP.EngineSim.Cli
             RefitParts();
             // --stray-study: the known routes' dropped finds measured against the stray levers, then out (docs/fulltas.md).
             if (args.Contains("--stray-study")) { StrayStudy(Solve.Option(args, "--study-from", (string)null)); return; }
+            Outlook();
 
             _curve.Add((0, 0, _best.Last, "start", 0));
             bool ablated = false;
@@ -299,7 +301,7 @@ namespace IGTAP.EngineSim.Cli
                 else
                 {
                     List<(Arm arm, double score)> ranked = RankArms();
-                    if (ranked.Count == 0) { Log("auto: no arm left to pull"); break; }
+                    if (ranked.Count == 0) { Log("auto: no arm left to pull"); Outlook(exhausted: true); break; }
                     // The best arm alone when it isn't a window (polish, graft, reset study and plan use every thread); else the best
                     // windows whose goals don't overlap, side by side.
                     if (!Windowish(ranked[0].arm.Lever)) batch.Add((ranked[0].arm, Budget(ranked[0].arm), ranked[0].score));
@@ -663,6 +665,10 @@ namespace IGTAP.EngineSim.Cli
             _pullNo++;
             Log($"auto: pull {_pullNo}: {arm.Lever} at goal {arm.Goal} ({_labels[arm.Goal - 1]}), {(double.IsNaN(score) ? "first-round probe" : $"score {score:0.0000} ticks/CPU s")}, "
                 + $"expected {_model[arm.Goal - 1].Expected:0.0} ticks, arm {arm.Pulls} pulls {arm.Cpu:0} CPU s {arm.Gain:0} gained, budget {budget:0.00} min");
+            // The studio's "searching now" line (stdout only).
+            var spot = Spot(arm.Lever, arm.Goal);
+            Emit(new { type = "pullStart", pull = _pullNo, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget = Math.Round(budget, 2),
+                expected = Math.Round(_model[arm.Goal - 1].Expected, 1), pulls = spot.pulls, cpu = Math.Round(spot.cpu), gained = spot.gain });
         }
 
         /// <summary>One arm on every thread (a polish, graft, reset study or plan pull).</summary>
@@ -777,6 +783,7 @@ namespace IGTAP.EngineSim.Cli
             arm.Cpu += cpu;
             arm.Gain += gain;
             if (gain > 0) arm.Wins++;
+            CountSpot(arm.Lever, arm.Goal, cpu, gain);
             var lc = _leverCost.TryGetValue(arm.Lever, out var was) ? was : (0, 0.0);
             _leverCost[arm.Lever] = (lc.Item1 + 1, lc.Item2 + cpu);
             if (arm.Pull != null) ReportPull(arm.Pull, gain, cpu, gain > 0 ? 0 : arm.Lead);
@@ -800,6 +807,7 @@ namespace IGTAP.EngineSim.Cli
                 if (_refsChanged) SaveRefs();
                 _refsChanged = false;
             }
+            Outlook();
         }
 
         // ---------------------------------------------------------------- the bandit

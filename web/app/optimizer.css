@@ -24,6 +24,31 @@
 .recordingCard p { margin: 13px 0; color: #aac0d7; font-size: 11px; line-height: 1.6; }
 .recordingCard .buttonRow { justify-content: flex-end; }
 .solverLog { margin: 12px 0 0; padding-left: 18px; color: #aac0d7; font-size: 12px; line-height: 1.7; }
+.solverLogBox { margin-top: 14px; }
+.solverLogBox summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+
+.outlookCard { margin-top: 15px; padding: 14px 15px; border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; background: #0c1a2d; }
+.outlookCard.good { border-left-color: var(--green); }
+.outlookCard.maybe { border-left-color: #e8b64c; }
+.outlookCard.bad { border-left-color: var(--red); }
+.outlookCard .eyebrow { margin: 0 0 6px; }
+.outlookHeadline { display: block; font-size: 16px; line-height: 1.4; }
+.outlookCard.good .outlookHeadline { color: #9af0cc; }
+.outlookCard.maybe .outlookHeadline { color: #f5d58c; }
+.outlookCard.bad .outlookHeadline { color: #ff9eae; }
+.outlookAdvice { margin: 8px 0 0; padding-left: 18px; color: #aac0d7; font-size: 13px; line-height: 1.6; }
+.outlookStats { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 12px; }
+.outlookStats > div { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a1627; }
+.outlookStats span,.outlookStats strong,.outlookStats small { display: block; }
+.outlookStats span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+.outlookStats strong { margin: 4px 0; font-size: 15px; }
+.outlookStats small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.outlookNow { margin-top: 12px; font-size: 12px; color: #aac0d7; }
+.outlookNow > span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+.outlookNow ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.6; }
+.outlookNow b { color: var(--cyan); font-weight: 700; }
+.outlookCard .howTo { margin-top: 10px; }
+@media (max-width: 720px) { .outlookStats { grid-template-columns: 1fr 1fr; } }
 
 .passFields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 4px 0 14px; }
 .passFields .field { width: 170px; }

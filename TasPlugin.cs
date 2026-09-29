@@ -66,6 +66,8 @@ namespace IGTAPTasMod
         {
             Instance = this;
             Log = Logger;
+            // The overlay draws on Repaint only and uses no GUILayout: no Layout event, one OnGUI call per frame fewer.
+            useGUILayout = false;
             _libraryPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "routes.json");
             _recordingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "recordings");
             _savestatesPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "savestates");

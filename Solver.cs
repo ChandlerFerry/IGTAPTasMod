@@ -90,6 +90,11 @@ namespace IGTAPTasMod
         JObject _solveWaypoints;
         /// <summary>The running job is Improve (`solve --auto`), not the plain solve: its runs count pulls.</summary>
         bool _solveAuto;
+        /// <summary>Improve's last `outlook` event: its chance of beating the best with more search, and what else to try (null
+        /// before one). Kept after the job ends, so the panel still says why it stopped.</summary>
+        JObject _solveOutlook;
+        /// <summary>Improve's pulls running now (`pullStart` events not yet followed by their `pull`).</summary>
+        readonly List<JObject> _solvePulls = new List<JObject>();
 
         sealed class SolveJob
         {
@@ -559,6 +564,8 @@ namespace IGTAPTasMod
             _turboChecks = _turboSaved = 0;
             _solveBest = _solveBestFarm = float.PositiveInfinity;
             _solveWaypoints = null;
+            _solveOutlook = null;
+            _solvePulls.Clear();
             _solveAuto = false;
             _solverSpeed = "";
             while (_solveOutput.TryDequeue(out _)) { }
@@ -585,7 +592,7 @@ namespace IGTAPTasMod
             job.saved = _turboSaved;
             float best = job.farm ? _solveBestFarm : _solveBest;
             job.result = outcome + (float.IsInfinity(best) ? "" : ", best " + (job.farm ? "farm " : "") + best.ToString("0.00", CultureInfo.InvariantCulture) + "s")
-                + ", " + _turboSaved + " saved";
+                + ", " + _turboSaved + " saved" + OutlookNote();
             if (StartNextSolveJob(_solveIndex + 1)) return;
             if (_solveRepeat)
             {
@@ -687,10 +694,26 @@ namespace IGTAPTasMod
             if (_solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count)
             {
                 _solveQueue[_solveIndex].saved = _turboSaved;
-                _solveQueue[_solveIndex].result = status + ", " + _turboSaved + " saved";
+                _solveQueue[_solveIndex].result = status + ", " + _turboSaved + " saved" + OutlookNote();
             }
             _solverRunning = false;
             _solverStatus = status;
+            _solvePulls.Clear();
+        }
+
+        /// <summary>The outlook's verdict for a queue row (empty before one): whether this target is worth another pass.</summary>
+        string OutlookNote()
+        {
+            if (_solveOutlook == null) return "";
+            string verdict = (string)_solveOutlook["verdict"];
+            double hour = (double?)_solveOutlook["chanceHour"] ?? 0;
+            switch (verdict)
+            {
+                case "floor": return " · can't beat: at the speed floor";
+                case "exhausted": return " · nothing left to try";
+                case "early": return " · too early to tell";
+                default: return " · " + verdict + " to improve (" + Math.Round(hour * 100).ToString(CultureInfo.InvariantCulture) + "% per hour)";
+            }
         }
 
         object BuildSolverWebState()
@@ -698,7 +721,7 @@ namespace IGTAPTasMod
             SolveJob current = _solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count ? _solveQueue[_solveIndex] : null;
             return new {
                 running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = _solverSpeed,
-                farm = current?.farm ?? false, focus = current?.focus, auto = _solveAuto, waypoints = _solveWaypoints,
+                farm = current?.farm ?? false, focus = current?.focus, auto = _solveAuto, waypoints = _solveWaypoints, outlook = _solveOutlook, pulls = _solvePulls,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 bestFarm = float.IsInfinity(_solveBestFarm) ? (float?)null : _solveBestFarm,
@@ -782,6 +805,9 @@ namespace IGTAPTasMod
             process.OutputDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
             process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _solveOutput.Enqueue(e.Data); };
             process.Start();
+            // Below the game: the solve takes nearly every core, and at normal priority 1x playback (280 rendered frames a
+            // second, each a fixed game-time step) lost frames to it. Its children (humanize, confirm) inherit it.
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             _solveProcess = process;
@@ -1029,9 +1055,9 @@ namespace IGTAPTasMod
                 _solverSpeed = m.Groups[1].Value + " runs/s, " + m.Groups[2].Value + " ticks/s offline";
                 return;
             }
-            // Improve (`solve --auto`): its waypoints on every new best, and its events. A pull comes every few seconds: pulls
-            // count (as runs) and set the speed line; its gains show as the offline-best lines below, so the rest is dropped
-            // (it's all in the engine's own log).
+            // Improve (`solve --auto`): its waypoints on every new best, and its events. Pulls count (as runs); `pullStart` and
+            // `pull` keep the list of pulls running now, `outlook` (after every pull) the chance of beating the best; its gains
+            // show as the offline-best lines below, so the rest is dropped (it's all in the engine's own log).
             if (line.StartsWith(WaypointsLine, StringComparison.Ordinal))
             {
                 try { _solveWaypoints = JObject.Parse(line.Substring(WaypointsLine.Length)); }
@@ -1043,11 +1069,18 @@ namespace IGTAPTasMod
                 JObject e;
                 try { e = JObject.Parse(line.Substring(AutoEvent.Length)); }
                 catch (JsonException) { return; }
-                if ((string)e["type"] == "pull")
+                string type = (string)e["type"];
+                if (type == "outlook") _solveOutlook = e;
+                else if (type == "pullStart")
+                {
+                    // Once per pull number: a pull re-announced replaces its entry.
+                    _solvePulls.RemoveAll(p => (long?)p["pull"] == (long?)e["pull"]);
+                    _solvePulls.Add(e);
+                }
+                else if (type == "pull")
                 {
                     _solveRuns = (long?)e["pull"] ?? _solveRuns + 1;
-                    _solverSpeed = "pull " + _solveRuns + ": " + e["lever"] + " at waypoint " + e["goal"] + ", "
-                        + ((long?)e["gain"] > 0 ? "gained " + e["gain"] + " ticks" : "no gain");
+                    _solvePulls.RemoveAll(p => (long?)p["pull"] == _solveRuns);
                 }
                 return;
             }

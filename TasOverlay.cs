@@ -461,20 +461,30 @@ namespace IGTAPTasMod
         const string BadgeText = "TAS";
         static readonly GUIContent BadgeContent = new GUIContent(BadgeText);
         GUIStyle _badgeStyle;
+        // The badge's fit for a box size (its width's font size, the box height in whole pixels): kept, so the font size and
+        // the text layout aren't set and measured twice every frame.
+        int _badgeSize = -1, _badgeHeight = -1;
+        Vector2 _badgeText;
 
         void DrawHitboxBadge(Rect box, Color fill)
         {
             if (box.width < 6f || box.height < 6f) return;
             if (_badgeStyle == null)
                 _badgeStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false, padding = new RectOffset(), margin = new RectOffset() };
-            int size = Mathf.Max(6, Mathf.FloorToInt(box.width * 0.8f));
-            if (_badgeStyle.fontSize != size) _badgeStyle.fontSize = size;
-            Vector2 text = _badgeStyle.CalcSize(BadgeContent);
-            if (text.x > box.height * 0.9f)
+            int size = Mathf.Max(6, Mathf.FloorToInt(box.width * 0.8f)), height = Mathf.FloorToInt(box.height);
+            if (size != _badgeSize || height != _badgeHeight)
             {
-                _badgeStyle.fontSize = Mathf.Max(6, Mathf.FloorToInt(size * box.height * 0.9f / text.x));
-                text = _badgeStyle.CalcSize(BadgeContent);
+                _badgeSize = size;
+                _badgeHeight = height;
+                _badgeStyle.fontSize = size;
+                _badgeText = _badgeStyle.CalcSize(BadgeContent);
+                if (_badgeText.x > height * 0.9f)
+                {
+                    _badgeStyle.fontSize = Mathf.Max(6, Mathf.FloorToInt(size * height * 0.9f / _badgeText.x));
+                    _badgeText = _badgeStyle.CalcSize(BadgeContent);
+                }
             }
+            Vector2 text = _badgeText;
             Vector2 pivot = box.center;
             Rect at = new Rect(pivot.x - text.x / 2f, pivot.y - text.y / 2f, text.x, text.y);
             Color.RGBToHSV(fill, out float hue, out float saturation, out _);
@@ -711,13 +721,7 @@ namespace IGTAPTasMod
             GL.Begin(GL.QUADS);
             foreach (SpikeCollider entry in _spikeColliders)
             {
-                // A static spike's shapes lie inside the bounds they were built from (padded for rounding): off screen there,
-                // none of them would be drawn, so the collider isn't asked anything.
-                if (!entry.moving && entry.shapeCount >= 0 && !view.Overlaps(Rect.MinMaxRect(entry.bounds.min.x - 1f, entry.bounds.min.y - 1f,
-                    entry.bounds.max.x + 1f, entry.bounds.max.y + 1f))) continue;
-                if (entry.collider == null || !entry.collider.enabled || !entry.collider.gameObject.activeInHierarchy) continue;
-                if (!view.Overlaps(BoundsRect(entry.collider.bounds))) continue;
-                if (entry.moving) BuildShapes(entry);
+                if (Culled(entry, view, out _)) continue;
                 bool grazed = _grazeTicks > 0 && _grazeSpikes.Contains(entry.script);
                 foreach (SpikeShape shape in entry.shapes)
                 {
@@ -729,14 +733,12 @@ namespace IGTAPTasMod
             Vector2 origin = CurrentOrigin();
             foreach (SpikeCollider entry in _checkpointColliders)
             {
-                if (entry.collider == null || !entry.collider.enabled || !entry.collider.gameObject.activeInHierarchy) continue;
-                if (!view.Overlaps(BoundsRect(entry.collider.bounds))) continue;
-                if (entry.moving) BuildShapes(entry);
+                if (Culled(entry, view, out Bounds bounds)) continue;
                 // The game writes respawnPoint = checkpoint position - origin on touch; a rebase moves both, so compare loosely.
                 bool active = player != null && (player.respawnPoint - ((Vector2)entry.collider.transform.position - origin)).sqrMagnitude < 1f;
                 foreach (SpikeShape shape in entry.shapes)
                     if (view.Overlaps(shape.bounds)) DrawShape(cam, shape, active ? CheckpointActiveColor : CheckpointColor, half);
-                _checkpointLabels.Add(new KeyValuePair<Rect, bool>(ScreenRect(cam, entry.collider.bounds), active));
+                _checkpointLabels.Add(new KeyValuePair<Rect, bool>(ScreenRect(cam, bounds), active));
             }
             GL.End();
             GL.PopMatrix();
@@ -786,6 +788,24 @@ namespace IGTAPTasMod
                 GL.Vertex(b - n);
                 GL.Vertex(a - n);
             }
+        }
+
+        /// <summary>
+        /// A spike or checkpoint collider not to draw this frame. A static one's shapes lie inside the bounds they were built
+        /// from (padded for rounding): off screen there, the collider isn't asked anything. A moving one's shapes are built
+        /// again only when its bounds moved, not every frame.
+        /// </summary>
+        bool Culled(SpikeCollider entry, Rect view, out Bounds bounds)
+        {
+            bounds = entry.bounds;
+            if (!entry.moving && entry.shapeCount >= 0 && !view.Overlaps(Rect.MinMaxRect(bounds.min.x - 1f, bounds.min.y - 1f,
+                bounds.max.x + 1f, bounds.max.y + 1f))) return true;
+            Collider2D c = entry.collider;
+            if (c == null || !c.enabled || !c.gameObject.activeInHierarchy) return true;
+            bounds = c.bounds;
+            if (!view.Overlaps(BoundsRect(bounds))) return true;
+            if (entry.moving && (bounds != entry.bounds || c.shapeCount != entry.shapeCount)) BuildShapes(entry);
+            return false;
         }
 
         static Rect BoundsRect(Bounds b) { return Rect.MinMaxRect(b.min.x, b.min.y, b.max.x, b.max.y); }

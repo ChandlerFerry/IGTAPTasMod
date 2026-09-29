@@ -590,3 +590,15 @@ ordered as the sections they came from.
   orb, `judged/10_wjdsdjbszip-15.00` for 10 zip, and the `EngineSpeed` corpus seeds' inputs for 14 and 15. The
   502-trace verbose replay corpus is byte-identical to the build before.
 - **Where:** `Simulation.TrackToggles`, `Simulation.Fingerprint`, `SnapshotStore.Load`.
+
+## Walk route played another run than 1x
+
+- **Symptom:** a walk (the studio's Walk route, 10× slower, the human version when as fast) missed where the same route
+  at 1x finished (`1_NONE 1.40 human`, 2026-09-29).
+- **Cause:** the walk slowed `Time.timeScale` to 1/10. The fixed clock's `Time.captureDeltaTime` is scaled by it, so each
+  frame advanced a tenth of the grid step `FixedClockStep` asked for: ten times the frames per tick, every one off 1x's
+  grid, so other interpolation blends, other step-ups and other FixedUpdate write origins. Harmless before interpolation
+  was always on; since then a frame's time is part of the run.
+- **Fix:** a walk leaves `Time.timeScale` alone and paces the wall clock instead: `Application.targetFrameRate` is the
+  paced rate / slowdown (28 fps for 10×), so it plays 1x's exact frames, slower.
+- **Where:** `TasPlugin.PacePlayback`, `PaceWalk`.

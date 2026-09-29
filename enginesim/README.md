@@ -496,6 +496,10 @@ momentum carries through them, and a window is scored on its arrival.
   category or a narrower one runs the plain `solve` first (**Solve**). The plugin launches `solve <start> --seed
   <each library route of the course> [--optional/--no-optional] --threads <cores - 4> --minutes M --auto [--farm]
   [--focus a-b]`; `POST /api/solver/preview` (the start body) returns each job's command without starting anything.
+  Below the counts, the panel's "Should it keep going?" card shows the engine's last `outlook`: the verdict, what to do,
+  the chance of a gain per hour, the median wait for the next gain, the search spent on this target across every Improve,
+  the room to the floor, and the pulls running now (`outlook` and `pullStart`, [`docs/fulltas.md`](../docs/fulltas.md)).
+  The raw engine log is folded under it.
 
 ## Search bench
 

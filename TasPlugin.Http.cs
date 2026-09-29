@@ -386,6 +386,9 @@ namespace IGTAPTasMod
             Add(_fullTasRuns.Count);
             Add(_fullTasSplits.Count);
             foreach (upgradeBox box in _bonusRewardBoxes.Values) Add(box != null ? box.TimesUsed : -1);
+            // The files not while a route plays: the directory scans (hundreds of lab files) would cost 1x playback's paced
+            // frames once a second. What changed on disk meanwhile shows at the first check after it.
+            if (PlaybackActive) return h;
             AddFile(FullTasPath);
             AddFile(FullTasSplitsPath);
             AddDirectory(Path.Combine(EngineSimDir, "fulltas"));

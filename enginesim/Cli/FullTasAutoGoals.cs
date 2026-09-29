@@ -126,6 +126,7 @@ namespace IGTAP.EngineSim.Cli
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                     splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = _labels });
             }
+            Outlook();
             return adopted;
         }
 

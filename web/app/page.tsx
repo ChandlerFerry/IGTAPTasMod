@@ -5,7 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FasterWay, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
@@ -26,7 +26,16 @@ type Course = { id: number; token: string; bonus: boolean; categories: string[];
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[];
   /** The running job: Improve (`solve --auto`) or the plain solve, by farm time or the record, focused on waypoints first..last. */
-  auto?: boolean; farm?: boolean; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null };
+  auto?: boolean; farm?: boolean; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null;
+  /** Improve's outlook after its last pull (the engine's `outlook` event), and the pulls running now (`pullStart`). */
+  outlook?: Outlook | null; pulls?: PullNow[] };
+/** Improve's outlook: the chance more search beats the best (a Poisson rate over the recent half of all search, every Improve
+ * of this target counted), the model's floor and headroom, and what else there is to try. Seconds are search (wall) seconds. */
+type Outlook = { verdict: "early" | "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
+  best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: number; label: string; expected: number; slow: string }[];
+  searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
+  window: number; recent: number; chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[] };
+type PullNow = { pull: number; lever: string; goal: number; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number };
 /**
  * A course target's waypoints (`solve --auto --waypoints-out`): the start gate (record timing: `timerGoal`), goals along its
  * record's (farm: its farm route's) path, then the finish; `rects` their areas in the trace's frame and `world` in the game
@@ -440,7 +449,43 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
     <div className="offlineSummary"><div><span>{solver.farm?"Best farm":"Best"}</span><strong>{(solver.farm?solver.bestFarm:solver.best)!=null?`${(solver.farm?solver.bestFarm:solver.best)!.toFixed(2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}${solver.focus?` · ${waypointSpan(solver.focus)}`:""}`:"Not started"}</small></div><div><span>{solver.auto?"Pulls":"Runs"}</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.auto?"short searches Improve chose":`${solver.finishes.toLocaleString()} timed finishes`}</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
-    {solver.log.length>0&&<ul className="solverLog">{solver.log.map((line,i)=><li key={i}>{line}</li>)}</ul>}
+    {solver.outlook&&<OutlookCard outlook={solver.outlook} pulls={solver.running?solver.pulls??[]:[]}/>}
+    {solver.log.length>0&&<details className="solverLogBox" open={!solver.auto}><summary>Engine log (latest {solver.log.length} lines)</summary><ul className="solverLog">{solver.log.map((line,i)=><li key={i}>{line}</li>)}</ul></details>}
+  </div>;
+}
+
+/** Search time as the panel says it: seconds, minutes, then hours. */
+const searchSpan=(s:number)=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:`${(s/3600).toFixed(1)} h`;
+const pct=(p:number)=>`${Math.round(p*100)}%`;
+
+/** Improve's answer to "should I keep going?": the verdict, what to do, and the numbers behind it. */
+function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
+  const odds=o.verdict!=="early"&&o.verdict!=="floor"&&o.verdict!=="exhausted";
+  const tone=o.verdict==="likely"?"good":o.verdict==="possible"||o.verdict==="early"?"maybe":"bad";
+  const room=o.bestTicks-o.floorTicks;
+  return <div className={`outlookCard ${tone}`}>
+    <p className="eyebrow">SHOULD IT KEEP GOING?</p>
+    <strong className="outlookHeadline">{o.headline}</strong>
+    <ul className="outlookAdvice">{o.advice.map((a,i)=><li key={i}>{a}</li>)}</ul>
+    <div className="outlookStats">
+      <div><span>Chance of a gain</span><strong>{odds?`${pct(o.chanceHour)} per hour`:"—"}</strong>
+        <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":o.verdict==="early"?"not enough search to judge":"more search won't help"}</small></div>
+      <div><span>Next gain</span><strong>{odds?`~${searchSpan(o.medianWait)}`:"—"}</strong>
+        <small>{odds?`median wait at this pace${o.typicalGain!=null?` · gains so far ~${o.typicalGain} ticks each`:""}`:""}</small></div>
+      <div><span>Searched</span><strong>{searchSpan(o.searched)}</strong>
+        <small>{o.sessions} Improve run{o.sessions===1?"":"s"} · {o.gains?`${o.gains} gain${o.gains===1?"":"s"} (−${o.gained} ticks), last ${searchSpan(o.lastGainAgo??0)} ago`:"no gain yet"}</small></div>
+      <div><span>Room to the floor</span><strong>{room} ticks</strong>
+        <small>floor {o.floor.toFixed(2)}s (distance ÷ top speed) · model expects ~{o.headroom} ticks findable</small></div>
+    </div>
+    {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
+      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`run ${p.pulls}× here before (${searchSpan(p.cpu)} CPU), ${p.gained?`−${p.gained} ticks`:"no gain"}`:"first time here"}{p.expected>0?` · ~${p.expected} ticks expected here`:""}</li>)}</ul></div>}
+    <details className="howTo"><summary>How Improve decides</summary><ul>
+      <li>A <b>pull</b> is one short search: one tactic at one {o.unit}, for a minute or two. Improve runs pulls until its minutes are up.</li>
+      <li>Tactics: <b>window search</b> re-finds the inputs between two {o.unit}s; <b>input polish</b> nudges the timing of the inputs the route has; <b>look-ahead</b> and <b>long windows</b> search further on, so a slower arrival that carries more speed can win; <b>graft</b>, <b>combine</b> and <b>revive</b> splice in faster pieces other found routes have.</li>
+      <li>Improve picks the next pull by expected ticks per CPU second: where the model sees slow stretches or another route was faster, and where pulls paid before. A pull that gains nothing makes that spot less likely to be picked again.</li>
+      <li>The chance comes from when gains came: the gains in the recent half of all search on this target (every Improve run counted). Few recent gains, low chance; early gains don&apos;t count much, since a search&apos;s gains thin out.</li>
+      <li>The floor is each {o.unit}&apos;s distance over the fastest speed measured with these unlocks: no route on these {o.unit}s beats it, but it&apos;s optimistic, so being above it doesn&apos;t mean a gain exists.</li>
+    </ul></details>
   </div>;
 }
 

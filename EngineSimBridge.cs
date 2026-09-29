@@ -415,14 +415,15 @@ namespace IGTAPTasMod
 
         void PumpOfflineBests()
         {
-            if (Time.unscaledTime < _offlineBestCheckAt) return;
+            // Not while a route plays or records: it can't judge then, and the directory scan (hundreds of files) would cost
+            // 1x playback's paced frames. The count is taken again after.
+            if (Time.unscaledTime < _offlineBestCheckAt || PlaybackActive || _recorder.IsRecording) return;
             _offlineBestCheckAt = Time.unscaledTime + 5f;
             string dir = Path.Combine(EngineSimDir, "offline-best");
             _offlineWaiting = !Directory.Exists(dir) ? 0 : Directory.GetFiles(dir, "*.json")
                 .Count(p => OfflineBestFile.IsMatch(Path.GetFileName(p)) || OfflineFullTasBestFile.IsMatch(Path.GetFileName(p)));
             if (_offlineWaiting == 0) return;
-            if (CapabilitiesLocked || _solverRunning && _solveProcess == null || PlaybackActive || _recorder.IsRecording
-                || _bootstrapRequest != null || _webServer == null) return;
+            if (CapabilitiesLocked || _solverRunning && _solveProcess == null || _bootstrapRequest != null || _webServer == null) return;
             Movement player = FindWorldMovement();
             if (player == null || IsMenuPlayer(player)) return;
             string solving = !_solverRunning ? null : _solveCourse + "_" + _solveCaps;

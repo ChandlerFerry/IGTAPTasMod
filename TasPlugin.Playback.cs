@@ -71,9 +71,10 @@ namespace IGTAPTasMod
             // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
             if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
             // The cap only paces the wall clock: every frame's game time is the fixed step below (captureDeltaTime), so fast
-            // playback (settings fastPlayback) lifts it and plays the same frames sooner. Not for a walk (its slowdown is
-            // wall-clock pacing) or a probe (its fps is the experiment).
-            int targetFrameRate = _settings.fastPlayback && _walkSlowdown <= 0f && _probe == null ? -1 : _pacedFps;
+            // playback (settings fastPlayback) lifts it and plays the same frames sooner, and a walk lowers it and plays the
+            // same frames slower. Not for a probe (its fps is the experiment).
+            int targetFrameRate = _walkScaled ? Math.Max(1, (int)Math.Round(_pacedFps / _walkSlowdown))
+                : _settings.fastPlayback && _probe == null ? -1 : _pacedFps;
             if (Application.targetFrameRate != targetFrameRate) Application.targetFrameRate = targetFrameRate;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
@@ -109,22 +110,18 @@ namespace IGTAPTasMod
             return (float)(next - since);
         }
 
+        /// <summary>
+        /// A walk plays 1x's frames at 1/slowdown of the paced frame rate (PacePlayback's cap). Time.timeScale stays: the
+        /// fixed clock's captureDeltaTime is scaled by it, so a slowed timeScale took every frame off 1x's grid (other
+        /// interpolation blends, other step-ups and FixedUpdate write origins) and the walk played another run than 1x.
+        /// </summary>
         void PaceWalk()
         {
             if (!PlaybackActive && _pendingReplay == null) _walkSlowdown = 0f;
-            bool on = _walkSlowdown > 0f && _engine.IsRunning && !TurboRunner.Active;
-            if (on)
-            {
-                if (!_walkScaled) _playbackSpeedText = (1f / _walkSlowdown).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "x";
-                _walkScaled = true;
-                if (Time.timeScale != 0f) Time.timeScale = globalStats.baseGameSpeed / _walkSlowdown;
-            }
-            else if (_walkScaled)
-            {
-                _walkScaled = false;
-                _playbackSpeedText = "1x";
-                if (Time.timeScale != 0f) Time.timeScale = globalStats.baseGameSpeed;
-            }
+            bool on = _walkSlowdown > 0f && (_engine.IsRunning || _pendingReplay != null) && !TurboRunner.Active;
+            if (on == _walkScaled) return;
+            _walkScaled = on;
+            _playbackSpeedText = on ? (1f / _walkSlowdown).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "x" : "1x";
         }
 
         private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f)

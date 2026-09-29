@@ -165,6 +165,8 @@ namespace IGTAPTasMod
             process.OutputDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
             process.ErrorDataReceived += (sender, e) => { if (e.Data != null) _fullTasOutput.Enqueue(e.Data); };
             process.Start();
+            // Below the game, as the course solve (Solver.LaunchSolve): 1x playback beside an Improve keeps its frames.
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception) { }
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             _fullTasProcess = process;
@@ -365,6 +367,8 @@ namespace IGTAPTasMod
                     e["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     string type = (string)e["type"];
                     if (type == "status") { _fullTasProgress = e; return; }
+                    // Improve's per-pull outlook and "searching now" lines are the Optimize tab's (Solver.cs).
+                    if (type == "outlook" || type == "pullStart") return;
                     if (FullTasDiskOnlyEvents.Contains(type) || type == "record" && e["lever"] != null) return;
                     _fullTasEvents.Add(e);
                     if (_fullTasEvents.Count > MaxFullTasEvents)
