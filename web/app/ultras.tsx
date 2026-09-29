@@ -89,7 +89,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
     // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
-  // The game's art (web/public/art, tools/render-art.py); without it the level is its collision shapes.
+  // The game's art (web/public/art, untracked: igtap-ultra-map/tools/render-art.py renders it); without it the level
+  // is its collision shapes.
   const [art, setArt] = useState<ArtIndex | null>(null);
   useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
   // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
@@ -258,8 +259,8 @@ export function UltraMap({ load }: { load: (refresh: boolean) => Promise<UltraDa
   const artShown = !!art && layers.art;
   const viewH = view && svg.current ? view.w * svg.current.clientHeight / svg.current.clientWidth : 0;
   const tiles = view && artShown ? artTiles(art, "/art/", world, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
-  // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
-  // under the tree layer.
+  // The trees' own tile set ("tree:grown", igtap-ultra-map/tools/render-art.py) over the level: off in the fresh
+  // world, so it's drawn under the tree layer.
   const treeTiles = view && artShown && layers.tree ? artTiles(art, "/art/", { ...world, tree: "grown" }, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];
   // The decoration (backdrops, pillars, plants: nothing solid), under the level, off by default.
   const bgTiles = view && artShown && layers.background ? artTiles(art, "/art/", { ...world, bg: "on" }, view.x, -(view.y + viewH), view.x + view.w, -view.y, px) : [];

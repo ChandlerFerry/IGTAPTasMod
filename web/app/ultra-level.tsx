@@ -48,9 +48,9 @@ export function StatePicker({ states, pick, onPick, className }: { states: World
     </select></label>)}</>;
 }
 
-// The game's own art (tools/render-art.py): its tilemaps and sprites as an image tile pyramid per world state. Level 0
-// has `scale` pixels per world unit and each next level half that; tile "i,j" of a level covers world x from i to i + 1
-// and y from j to j + 1 tile spans (`tile` / its scale units). `states`: per artKey, per level, tile → image file name.
+// The game's own art (igtap-ultra-map/tools/render-art.py): its tilemaps and sprites as an image tile pyramid per world
+// state. Level 0 has `scale` pixels per world unit and each next level half that; tile "i,j" of a level covers world x
+// from i to i + 1 and y from j to j + 1 tile spans (`tile` / its scale units). `states`: per artKey, per level, tile → image file name.
 // The trees are off until their upgrades are bought, so they have their own tile set under the key with `tree:grown`
 // added to the pick (e.g. "area1:overgrown,tree:grown"), drawn over the level.
 // `icons`: per refill kind, its orb sprite (file, world size, middle from the orb's position), drawn at its marker.

@@ -527,8 +527,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
-  // The game's art (web/public/art, tools/render-art.py; none: the level is its collision shapes). Its tiles load as
-  // they're drawn and redraw the map when they arrive.
+  // The game's art (web/public/art, untracked: igtap-ultra-map/tools/render-art.py renders it; none: the level is its
+  // collision shapes). Its tiles load as they're drawn and redraw the map when they arrive.
   const [art, setArt] = useState<ArtIndex | null>(null);
   useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
   const artImages = useRef(new Map<string, HTMLImageElement>());
@@ -645,8 +645,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     // The decoration (backdrops, pillars, plants: nothing solid) under the level, off by default.
     if (artShown && layers.background) drawArt({ ...worldState, bg: "on" });
     if (artShown) drawArt(worldState);
-    // The trees' own tile set ("tree:grown", tools/render-art.py) over the level: off in the fresh world, so it's drawn
-    // under the tree layer.
+    // The trees' own tile set ("tree:grown", igtap-ultra-map/tools/render-art.py) over the level: off in the fresh
+    // world, so it's drawn under the tree layer.
     if (artShown && layers.tree) drawArt({ ...worldState, tree: "grown" });
     // Over the art, where the level hurts: every spike (overgrowth vines and the hidden spikes too) tinted red.
     if (artShown && !layers.shapes) for (const s of data.solids) {

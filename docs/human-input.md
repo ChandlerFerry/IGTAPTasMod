@@ -417,7 +417,7 @@ orange, the export's `sourceShapes`), only the active colour being solid. Spring
 yellow, with an arrow the way they launch (`transform.up`, what `SpringScript` passes to `Movement.hitSpring`). The
 level is always drawn. **Game art** draws the level with the game's own tilemaps and sprites (spikes, springs, zip
 movers, refill orbs, moss, vines, and the grown tree with its purchase numbers on its own **Tree (grown)** layer), from
-WebP tiles in `web/public/art` that `igtap-ultra-map/tools/render-art.py` renders per world state. Decoration that
+WebP tiles in `web/public/art` (untracked) that `igtap-ultra-map/tools/render-art.py` renders per world state. Decoration that
 neither collides nor does anything (backdrops, pillars, pistons, plants) is its own **Background art** layer, off by
 default. Every spike (overgrowth vines and the hidden spikes too) is tinted red over the art. Only the tiles in view
 load, at the coarsest level that fits the zoom, and the last loaded tiles stay until new ones arrive. The collision
