@@ -1470,10 +1470,9 @@ namespace IGTAP.EngineSim
         public int MovementFingerprint()
         {
             var h = new HashCode();
-            FieldInfo[] fields = FieldState.For(Player.GetType());
             object[] values = FieldValues(Player);
-            for (int i = 0; i < fields.Length; i++)
-                if (!MovementPresentationFields.Contains(fields[i].Name)) AddPortableValue(ref h, values[i]);
+            for (int i = 0; i < Presentation.Length; i++)
+                if (!Presentation[i]) AddPortableValue(ref h, values[i]);
             Transform t = Player.transform;
             h.Add(t.m_Position); h.Add(t.m_LocalScale); h.Add(t.m_Rotation);
             foreach (BoxCollider2D c in _playerColliders) { h.Add(c.m_Offset); h.Add(c.m_Size); h.Add(c.m_ExcludeLayers); h.Add(c.m_Enabled); }
@@ -1483,6 +1482,9 @@ namespace IGTAP.EngineSim
         }
 
         internal static readonly HashSet<string> MovementPresentationFields = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
+        /// <summary>Per player field (<see cref="FieldState.For"/> order): one of <see cref="MovementPresentationFields"/>.</summary>
+        bool[] Presentation => _presentation ??= FieldState.For(Player.GetType()).Select(f => MovementPresentationFields.Contains(f.Name)).ToArray();
+        bool[] _presentation;
 
         static void AddPortableValue(ref HashCode h, object value)
         {

@@ -594,7 +594,7 @@ namespace IGTAP.EngineSim
             {
                 _best = time;
                 _bestRunTicks = runTicks;
-                _bestInputs = inputs.Take(finishTick + 1).ToList();
+                _bestInputs = inputs.GetRange(0, Math.Min(finishTick + 1, inputs.Count));
                 _bestRun = replay;
                 _spliceScan = true;
             }
@@ -1032,8 +1032,8 @@ namespace IGTAP.EngineSim
             {
                 if (from == null) return;
                 var t = new List<InputTick>(at + _bestInputs.Count - bestTick);
-                t.AddRange(run.Take(at));
-                t.AddRange(_bestInputs.Skip(bestTick));
+                t.AddRange(CollectionsMarshal.AsSpan(run)[..Math.Min(at, run.Count)]);
+                if (bestTick < _bestInputs.Count) t.AddRange(CollectionsMarshal.AsSpan(_bestInputs)[Math.Max(0, bestTick)..]);
                 if (t.Count <= at) return;
                 InputTick k = t[at], before = t[at - 1];
                 if (k.held && !before.held) k.press = true;

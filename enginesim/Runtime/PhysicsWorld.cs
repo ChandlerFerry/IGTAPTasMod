@@ -53,6 +53,8 @@ namespace IGTAP.EngineSim
             public bool TransformDirty, ScaleDirty;
             /// <summary>Teleported (SetTransform) since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Shifted;
+            /// <summary>In _movedStatic.</summary>
+            public bool MovedStatic;
             /// <summary>Its place in _bodyList (a snapshot names bodies by it).</summary>
             public int Index;
             public readonly List<ColliderState> Colliders = new List<ColliderState>();
@@ -288,7 +290,9 @@ namespace IGTAP.EngineSim
                 float cx = box.m_Offset.x * scale.x, cy = box.m_Offset.y * scale.y;
                 float hx = box.m_Size.x * MathF.Abs(scale.x) * 0.5f, hy = box.m_Size.y * MathF.Abs(scale.y) * 0.5f;
                 var shape = new b2PolygonShape();
-                shape.Set(new[] { new b2Vec2(cx + hx, cy - hy), new b2Vec2(cx + hx, cy + hy), new b2Vec2(cx - hx, cy + hy), new b2Vec2(cx - hx, cy - hy) }, 4);
+                _box[0] = new b2Vec2(cx + hx, cy - hy); _box[1] = new b2Vec2(cx + hx, cy + hy);
+                _box[2] = new b2Vec2(cx - hx, cy + hy); _box[3] = new b2Vec2(cx - hx, cy - hy);
+                shape.Set(_box, 4);
                 shape.m_radius = _contactOffset + box.edgeRadius;
                 AddFixture(s, body, shape, friction, restitution);
                 return;
@@ -335,6 +339,9 @@ namespace IGTAP.EngineSim
                 }
             }
         }
+
+        // A dynamic box's corners (b2PolygonShape.Set copies them).
+        readonly b2Vec2[] _box = new b2Vec2[4];
 
         ShapeData[] Shapes(ColliderState s)
         {
@@ -719,8 +726,8 @@ namespace IGTAP.EngineSim
             return overlap;
         }
 
-        static bool SameBits(in b2Transform a, in b2Transform b)
-            => MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<b2Transform>(in b)));
+        static bool SameBits<T>(in T a, in T b) where T : unmanaged
+            => MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in b)));
 
         // A contact's touch order and its place in the contact list walk: CollectTouching's sort key.
         readonly struct TouchOrdered
@@ -1374,8 +1381,8 @@ namespace IGTAP.EngineSim
                 foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
                 {
                     if (!Hittable(s)) continue;
-                    for (int c = 0; c < f.m_proxyCount; c++)
-                        if (f.TestPoint(p)) { found = s; count++; }
+                    // A shape of several children (a chain) never holds a point: one test per fixture.
+                    if (f.m_proxyCount > 0 && f.TestPoint(p)) { found = s; count++; }
                 }
             if (count <= 1) return found;
             _inside.Reset(p, layerMask);
@@ -1628,7 +1635,7 @@ namespace IGTAP.EngineSim
         {
             Shift(body);
             if (body.Body.Type() != b2BodyType.Static) return;
-            if (!_movedStatic.Contains(body)) _movedStatic.Add(body);
+            if (!body.MovedStatic) { body.MovedStatic = true; _movedStatic.Add(body); }
             foreach (ColliderState s in body.Colliders) RegridLater(s);
         }
         public Vector2 GetVelocity(Rigidbody2D body) { Settle(); b2Vec2 v = State(body).Body.GetLinearVelocity(); return new Vector2(v.x, v.y); }
@@ -1739,8 +1746,8 @@ namespace IGTAP.EngineSim
             /// <summary>Bit for bit: a -0 is another value to the digest, and a NaN never matches (the capture makes a new list).</summary>
             public bool Is(Transform t)
             {
-                return Same(Position, t.m_Position) && Same(LocalPosition, t.m_LocalPosition) && Same(LocalScale, t.m_LocalScale)
-                    && Same(LossyScale, t.m_LossyScale) && Same(Rotation, t.m_Rotation) && Same(LocalRotation, t.m_LocalRotation);
+                return SameBits(Position, t.m_Position) && SameBits(LocalPosition, t.m_LocalPosition) && SameBits(LocalScale, t.m_LocalScale)
+                    && SameBits(LossyScale, t.m_LossyScale) && SameBits(Rotation, t.m_Rotation) && SameBits(LocalRotation, t.m_LocalRotation);
             }
 
             public void WriteTo(Transform t)
@@ -1749,9 +1756,6 @@ namespace IGTAP.EngineSim
                 t.m_Rotation = Rotation; t.m_LocalRotation = LocalRotation;
             }
 
-            static bool Same(float a, float b) { return BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b); }
-            static bool Same(Vector3 a, Vector3 b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z); }
-            static bool Same(Quaternion a, Quaternion b) { return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z) && Same(a.w, b.w); }
         }
 
         /// <summary>A rebuilt collider as a snapshot holds it: its fixtures and what they were built with.</summary>
@@ -1946,7 +1950,7 @@ namespace IGTAP.EngineSim
         internal int RigidbodyIdOf(b2Body body)
         {
             if (ReferenceEquals(body, _ground)) return -1;
-            foreach (var pair in _bodies) if (ReferenceEquals(pair.Value.Body, body)) return pair.Key.GetInstanceID();
+            if (body.UserData is BodyState s && ReferenceEquals(s.Body, body)) return s.Rigidbody.GetInstanceID();
             throw new NotSupportedException("a snapshot holds a physics body this world doesn't; not saved");
         }
 
@@ -1968,7 +1972,7 @@ namespace IGTAP.EngineSim
             foreach (Built saved in ((PhysicsSnapshot)snapshot).Changed)
             {
                 ColliderState state = saved.State;
-                if (_changed.Contains(state)) continue;
+                if (state.Tracked) continue;
                 // It changed first in the snapshot's world; what this world loaded takes the pristine fixtures' place.
                 state.Tracked = true;
                 _changed.Add(state);

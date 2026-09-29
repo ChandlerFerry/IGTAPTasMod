@@ -176,11 +176,13 @@ namespace IGTAP.EngineSim
             public Vector2 At;
             public string How;
 
-            public List<InputTick> Inputs()
+            /// <summary>The node's inputs from the start, into <paramref name="into"/> (cleared) or a new list.</summary>
+            public List<InputTick> Inputs(List<InputTick> into = null)
             {
                 var parts = new List<InputTick[]>();
                 for (Node n = this; n.Parent != null; n = n.Parent) parts.Add(n.Edge);
-                var all = new List<InputTick>(Tick + 1);
+                List<InputTick> all = into ?? new List<InputTick>(Tick + 1);
+                all.Clear();
                 for (int i = parts.Count - 1; i >= 0; i--) all.AddRange(parts[i]);
                 return all;
             }
@@ -667,7 +669,9 @@ namespace IGTAP.EngineSim
 
             // ---- expansion ----
 
-            List<InputTick> _prefix;
+            // The expanded node's inputs, then an edge's after them (Edge cuts it back to the node's _prefix ticks): no run keeps it.
+            readonly List<InputTick> _inputs = new List<InputTick>();
+            int _prefix;
             Node _node;
             int _commit, _capAt, _waypoints, _lastTick;
             bool _avoided, _replaying;
@@ -682,7 +686,7 @@ namespace IGTAP.EngineSim
                 SimSnapshot state = n.Tick == 0 ? _sim.Start : n.Owner == _index && n.State != null ? n.State : Replay(n);
                 if (state == null) return;
                 if (n.Tick > 0) Cache(n, state);
-                _prefix = n.Inputs();
+                _prefix = n.Inputs(_inputs).Count;
                 _node = n;
                 var predicted = new List<(InputTick coast, int tick, Contact kind)>();
                 foreach (var (ticks, how, coast) in Decisions(n))
@@ -716,7 +720,6 @@ namespace IGTAP.EngineSim
                     if ((n.GuideRoute == -2 || n.GuideRoute == route) && !_p._trailRoutes.Contains(route)) Follow(state, route, n.GuideRoute == -2 ? 0 : n.GuideAt, true);
                 foreach (var (route, at) in _p.Follows(n.Progress, n.At, n.V, n.Physics))
                     if (_p._trailRoutes.Contains(route) || n.GuideRoute != -2 && n.GuideRoute != route) Follow(state, route, at, false);
-                _prefix = null;
                 _node = null;
             }
 
@@ -1086,8 +1089,8 @@ namespace IGTAP.EngineSim
             {
                 if (ticks.Length == 0) return;
                 Node n = _node;
-                var inputs = new List<InputTick>(_prefix.Count + ticks.Length + _p._o.Cap + 2);
-                inputs.AddRange(_prefix);
+                List<InputTick> inputs = _inputs;
+                inputs.RemoveRange(_prefix, inputs.Count - _prefix);
                 if (!raw) ticks[0] = Edge0(n.Last, ticks[0]);
                 inputs.AddRange(ticks);
                 // After the edge's own ticks: a guide's next ticks, else its last stick and button held.

@@ -747,7 +747,8 @@ namespace IGTAP.EngineSim
         }
 
         readonly Dictionary<ulong, Entry> _byHash = new Dictionary<ulong, Entry>();
-        List<Entry> _byTick = new List<Entry>();
+        // By tick, replaced whole on each add (a Find walks the array it read).
+        Entry[] _byTick = Array.Empty<Entry>();
         /// <summary>Workers look states up while a worker's first prefix replay files them.</summary>
         readonly object _gate = new object();
 
@@ -763,8 +764,14 @@ namespace IGTAP.EngineSim
             {
                 if (_byHash.TryGetValue(entry.Hash, out Entry old)) { old.Data = entry.Data; old.Goal = entry.Goal; return; }
                 _byHash[entry.Hash] = entry;
-                _byTick.Add(entry);
-                _byTick.Sort((a, b) => a.Tick.CompareTo(b.Tick));
+                // After the entries of its tick: Find takes at most one per tick (their hashes differ).
+                int at = 0;
+                while (at < _byTick.Length && _byTick[at].Tick <= entry.Tick) at++;
+                var byTick = new Entry[_byTick.Length + 1];
+                Array.Copy(_byTick, byTick, at);
+                byTick[at] = entry;
+                Array.Copy(_byTick, at, byTick, at + 1, _byTick.Length - at);
+                _byTick = byTick;
             }
         }
 
@@ -785,7 +792,7 @@ namespace IGTAP.EngineSim
         public Entry Find(List<InputTick> source, int through, int after)
         {
             Entry[] byTick;
-            lock (_gate) byTick = _byTick.ToArray();
+            lock (_gate) byTick = _byTick;
             Entry best = null;
             ulong hash = BaseHash;
             int next = 0;
