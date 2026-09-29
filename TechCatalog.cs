@@ -17,7 +17,8 @@ namespace IGTAPTasMod
             public string id;
             public string name;
             public string category;
-            /// <summary>The fewest unlocks the tech needs: NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS, or OMNI (the omnidirectional dash: the statue's, or Vman's free box).</summary>
+            /// <summary>The fewest unlocks the tech needs: a category's label (WJ_DS) or another set's (DS_OM: the omnidirectional
+            /// dash, the statue's or Vman's free box, whatever else the run has).</summary>
             public string requires = "NONE";
             public string origin;
             public string description = "";
@@ -49,9 +50,29 @@ namespace IGTAPTasMod
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
         static readonly string[] TechOrigins = { "community", "game", "ours" };
-        static readonly string[] TechRequires = { "NONE", "WJ", "WJ_DS", "WJ_DS_DJ", "WJ_DS_DJ_BS", "OMNI" };
+        /// <summary>techs.json "requires" (<see cref="TechDef.requires"/>): a set of unlocks as its label.</summary>
+        static bool IsTechRequires(string requires) { return Caps.TryParse(requires, out _); }
+
+        /// <summary>The body's "requires": a set of unlocks as its label.</summary>
+        static string RequiredUnlocks(JObject body)
+        {
+            string value = Text(body, "requires");
+            if (!IsTechRequires(value)) throw new InvalidOperationException("requires is a set of unlocks as its label (WJ_DS, DS_OM).");
+            return value;
+        }
+
         const int TechDemoTailTicks = 25;
-        static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|[^_\s/]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ))(?= |$)", RegexOptions.IgnoreCase);
+        // A tech demo's start: a category route's prefix (2_WJ_DS) or a Full-TAS run's (fulltas/VMAN_NONE, its route-name
+        // category fixed); the category part must be one of the categories.
+        static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|(?<token>[^_\s/]+)_(?<label>" + Caps.LabelPattern + @"))(?= |$)", RegexOptions.IgnoreCase);
+
+        /// <summary>The start this name has (a category route's prefix or a Full-TAS run's), or empty when its category part
+        /// is no category.</summary>
+        static Match MatchTechStart(string name)
+        {
+            Match m = TechStart.Match(name ?? "");
+            return !m.Groups["label"].Success || Categories.IsCategory(m.Groups["label"].Value.ToUpperInvariant()) ? m : Match.Empty;
+        }
 
         List<TechDef> _techs = new List<TechDef>();
         readonly string[] _techLabels = (string[])TechNames.Clone();
@@ -139,7 +160,7 @@ namespace IGTAPTasMod
                 if (string.IsNullOrWhiteSpace(t.name)) throw new InvalidDataException("tech " + t.id + " has no name.");
                 if (!TechCategories.Contains(t.category)) throw new InvalidDataException("tech " + t.id + ": category is one of " + string.Join(", ", TechCategories) + ".");
                 if (string.IsNullOrEmpty(t.requires)) t.requires = "NONE";
-                if (!TechRequires.Contains(t.requires)) throw new InvalidDataException("tech " + t.id + ": requires is one of " + string.Join(", ", TechRequires) + ".");
+                if (!IsTechRequires(t.requires)) throw new InvalidDataException("tech " + t.id + ": requires is a set of unlocks as its label (WJ_DS, DS_OM).");
                 if (!TechOrigins.Contains(t.origin)) throw new InvalidDataException("tech " + t.id + ": origin is one of " + string.Join(", ", TechOrigins) + ".");
                 if (t.detector != null && !Enum.IsDefined(typeof(Tech), t.detector)) throw new InvalidDataException("tech " + t.id + ": no detector " + t.detector + ".");
                 if (t.labmap != null && (t.labmap.Length == 0 || t.labmap.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
@@ -179,11 +200,19 @@ namespace IGTAPTasMod
             return string.IsNullOrEmpty(tech.routeId) ? null : _library.macros.Find(m => m.id == tech.routeId);
         }
 
+        /// <summary>The tech whose demo a route plays: the tech trace's (EngineSimTechTrace), a tech probe's, or the one whose demo route it is.</summary>
+        TechDef TechOfRoute(MacroDefinition route)
+        {
+            if (_techStart != null) return _techStart;
+            if (route == null) return null;
+            return route.id == ProbeRouteId ? _probe?.tech : _techs.Find(t => t.routeId == route.id);
+        }
+
         /// <summary>A demo's (or a probe's) own unlocks on top of its start's (the omnidirectional dash), saved with the category's so playback's end puts them back.</summary>
         void ApplyTechAbilities(MacroDefinition route, Movement movement)
         {
             if (route == null || movement == null) return;
-            TechDef tech = _techs.Find(t => t.routeId == route.id);
+            TechDef tech = TechOfRoute(route);
             bool probeOmni = route.id == ProbeRouteId && _probe != null && _probe.omniDash;
             if (!(tech != null && tech.omniDash) && !probeOmni) return;
             if (!_playbackSavedAbilities.ContainsKey("omniDashUnlocked")) _playbackSavedAbilities["omniDashUnlocked"] = GetMovementField(movement, "omniDashUnlocked");
@@ -192,7 +221,7 @@ namespace IGTAPTasMod
 
         bool IsTechDemo(MacroDefinition route)
         {
-            return route != null && _techs.Any(t => t.routeId == route.id);
+            return route != null && (_techs.Any(t => t.routeId == route.id) || route.id == ProbeRouteId && _probe?.tech != null);
         }
 
         MacroDefinition TechPlayable(MacroDefinition route)
@@ -225,8 +254,8 @@ namespace IGTAPTasMod
             }
             if (inputs.Count == 0) throw new InvalidOperationException(source.name + " has no inputs for a demo.");
             TechDef owner = _techs.Find(t => t.routeId == source.id);
-            Match start = TechStart.Match(source.name ?? "");
-            tech.start = owner != null ? owner.start : start.Success ? start.Groups[1].Value : null;
+            Match start = MatchTechStart(source.name);
+            tech.start = owner != null ? owner.start : start.Success ? start.Value : null;
             MacroDefinition route = TechRoute(tech);
             if (route == null)
             {
@@ -323,7 +352,7 @@ namespace IGTAPTasMod
                     string slug = TechSlug(name), id = slug.Length == 0 ? "tech" : slug;
                     for (int n = 2; _techs.Any(t => t.id == id); n++) id = (slug.Length == 0 ? "tech" : slug) + "-" + n;
                     _techs.Add(new TechDef { id = id, name = name, category = category, origin = "ours",
-                        requires = body["requires"] != null ? OneOf(body, "requires", TechRequires) : "NONE" });
+                        requires = body["requires"] != null ? RequiredUnlocks(body) : "NONE" });
                     SaveTechs();
                     return new { ok = true, id };
                 }
@@ -341,7 +370,7 @@ namespace IGTAPTasMod
                     }
                     if (body["category"] != null) tech.category = OneOf(body, "category", TechCategories);
                     if (body["origin"] != null) tech.origin = OneOf(body, "origin", TechOrigins);
-                    if (body["requires"] != null) tech.requires = OneOf(body, "requires", TechRequires);
+                    if (body["requires"] != null) tech.requires = RequiredUnlocks(body);
                     if (body["description"] != null) tech.description = Text(body, "description").Trim();
                     if (body["note"] != null)
                     {
@@ -368,7 +397,7 @@ namespace IGTAPTasMod
                     if (body["start"] != null)
                     {
                         string start = Text(body, "start").Trim();
-                        if (start.Length > 0 && TechStart.Match(start).Length != start.Length)
+                        if (start.Length > 0 && MatchTechStart(start).Length != start.Length)
                             throw new InvalidOperationException("A start is a category route's prefix (2_WJ_DS) or a Full-TAS run's (fulltas/VMAN_NONE).");
                         tech.start = start.Length == 0 ? null : start;
                     }
@@ -470,7 +499,7 @@ namespace IGTAPTasMod
                         string start = Text(body, "start").Trim();
                         string savestateId = Text(body, "savestateId");
                         if (savestateId.Length > 0 && _savestates.Find(c => c.id == savestateId) == null) throw new InvalidOperationException("Savestate not found.");
-                        if (TechStart.Match(start).Length != start.Length || start.Length == 0)
+                        if (MatchTechStart(start).Length != start.Length || start.Length == 0)
                             throw new InvalidOperationException("start is a course category prefix (1_WJ_DS_DJ) or a Full-TAS run's (fulltas/VMAN_NONE).");
                         if (!(body["ticks"] is JArray ticks) || ticks.Count == 0) throw new InvalidOperationException("ticks: the demo's inputs.");
                         tech.omniDash = body["omniDash"] != null && (bool)body["omniDash"];

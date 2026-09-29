@@ -49,6 +49,7 @@ Bullet (http:/www.bulletphysics.com).
 //#define TARGET_FLOAT32_IS_FIXED
 
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
@@ -107,6 +108,18 @@ namespace Box2D
 		{
 			m_pairCount = 0;
 
+			// Only a pair with a proxy on a dynamic body can make a contact (ContactManager.AddPair drops the rest, b2Body.ShouldCollide,
+			// with nothing else changed). When many proxies moved (a FloatingOrigin rebase rebuilds every body-less collider:
+			// thousands), a moved proxy of another body walks the dynamic bodies' proxies instead of the tree: the same overlap
+			// test on the same fat AABBs, so the same pairs minus dropped ones, and the sort below puts them in the same order.
+			List<int> dynamicProxies = null;
+			if (m_moveCount > ScanDynamicAbove)
+			{
+				m_dynamicProxies.Clear();
+				m_tree.CollectLeaves(m_isDynamicProxy ??= IsDynamicProxy, m_dynamicProxies);
+				dynamicProxies = m_dynamicProxies;
+			}
+
 			for (var i = 0; i < m_moveCount; ++i)
 			{
 				m_queryProxyId = m_moveBuffer[i];
@@ -116,6 +129,13 @@ namespace Box2D
 				}
 
 				b2AABB fatAABB = m_tree.GetFatAABB(m_queryProxyId);
+
+				if (dynamicProxies != null && !IsDynamicProxy(m_tree.GetUserData(m_queryProxyId)))
+				{
+					foreach (int proxyId in dynamicProxies)
+						if (m_tree.GetFatAABB(proxyId).Intersects(fatAABB)) QueryCallback(proxyId);
+					continue;
+				}
 
 				m_tree.Query(m_queryCallback ??= QueryCallback, fatAABB);
 			}
@@ -224,6 +244,13 @@ namespace Box2D
 				}
 			}
 		}
+
+		private const int ScanDynamicAbove = 64;
+		private readonly List<int> m_dynamicProxies = new List<int>();
+		private Func<object, bool> m_isDynamicProxy;
+
+		private static bool IsDynamicProxy(object userData)
+			=> userData is FixtureProxy proxy && proxy.fixture?.b2Body?.m_type == b2BodyType.Dynamic;
 
 		private bool QueryCallback(int proxyId)
 		{

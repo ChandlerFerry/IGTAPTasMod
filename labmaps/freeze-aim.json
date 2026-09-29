@@ -4,7 +4,7 @@
   "name": "Freeze aim: dash from a ledge onto a spiked pillar that only the freeze aim lands on",
   "tech": "freeze-aim",
   "techNote": "Stand on the ledge (top y 0, x 100-250) facing right with the omnidash. A ceiling (bottom y 200, x 80-235) and a wall on the ledge's left end (x 80-100) close it in; right of it a spike bed fills the gap (x 276-325, up to y 110) and the pillar (top y 230, x 325-525) has spikes on its face up to y 222. The freeze aim (dash with the stick at rest, (0.35, 0.94) in the freeze: 19° off vertical) leans out from under the ceiling's end, over the spike bed, peaks at (323.7, 301.7) and drops onto the pillar top, in the finish box. A keyboard has no 0.35: a dash turned up in the freeze goes straight up and bonks the ceiling; up-right (green) runs into the spike bed; up in the freeze and right after (magenta) bonks, steers out and falls into the spikes, too low for the step-up. Of 3,556 keyboard tries (every pressed direction and every freeze turn after 0-16 ticks of walking either way, with and without right held after the dash, and right held from 1-11 ticks after for 3-59 ticks) none lands; the closest (yellow: walk left 9 ticks, dash up-right) hits the pillar's spiked face 37 u below its top. Jumps are left out: a comparison of dashes.",
-  "category": "WJ_DS_DJ_BS_OM",
+  "category": "WJ_DS_DJ_BS_ORB_ZIP_OM",
   "anchor": [-1333, -10585],
   "shapes": [
     {"kind": "box", "at": [175, -20], "size": [150, 40], "layer": "Ground", "tag": "Ground"},

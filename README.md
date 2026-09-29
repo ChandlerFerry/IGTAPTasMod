@@ -7,7 +7,8 @@
 3. Presses and releases behave exactly like real button presses (the gate: every buffer must come from a press or
    release `MacroEngine` made within the game's window, counted in physics ticks — `MacroEngine.Clock`).
 4. Keep the game's buffer timers: jump, dash, jump cut (the gate's windows, `Solver.cs` `AuditTick`: `JumpBufferTicks`
-   12, `DashBufferTicks` 8, `JumpCutBufferTicks` 15, each +2 slack).
+   12, `DashBufferTicks` 8, `JumpCutBufferTicks` 15, each +2 slack; a dash the game holds through a wall jump's lock,
+   `DashHoldTicks` 6 after its last hold).
 5. Never write `jumpBuffer`, `dashBuffer`, `jumpCutBuffer` or similar directly (the gate reads the game's own buffers,
    `Solver.cs` `AuditTick`).
 6. Inputs change only on the 50 Hz physics tick.
@@ -21,21 +22,28 @@
 9. The overlay shows `INTERPOLATION ON (280 FPS CLOCK)`.
 10. Unlocks match the category exactly, on every tick (the gate: `wallJumpUnlocked`, `dashUnlocked`/`maxAirDashes`,
     `doubleJumpUnlocked`/`maxAirJumps`, `Solver.cs` `AuditTick`).
-11. Categories stack: `NONE`, `WJ` (wall jump), `WJ_DS` (+ dash), `WJ_DS_DJ` (+ double jump), `WJ_DS_DJ_BS` (+ block
-    swap on dash, `blockSwapUnlocked`), `WJ_DS_DJ_BS_OM` (+ the omnidirectional dash, `omniDashUnlocked`, the OmniDash
-    box's toggle, plus every refill orb and the zip movers: `globalUpgradeDict` `unlockJiggleDrops` 1, `moreRefreshOrbs`
-    2, `zipMoversUnlocked` 1, so dash, jump and full refill orbs are all on).
-12. Every other category has the omnidirectional dash, the refill orbs and the zip movers off.
-13. Below `WJ_DS_DJ_BS` the coloured blocks start unswapped (blue active, as a new game has them; the save's state is
-    put back after); from `WJ_DS_DJ_BS` up the game's own respawn sets them.
+11. A category's label lists its unlocks in a fixed order: `WJ` wall jump, `DS`/`DSn` n air dashes
+    (`dashUnlocked`/`maxAirDashes`), `DJ`/`DJn` n air jumps (`doubleJumpUnlocked`/`maxAirJumps`), `BS` block swap on
+    dash (`blockSwapUnlocked`), `ORB` every refill orb (`globalUpgradeDict` `unlockJiggleDrops` 1, `moreRefreshOrbs`
+    2), `ZIP` the zip movers (`zipMoversUnlocked` 1), `OM` the omnidirectional dash (`omniDashUnlocked`, the OmniDash
+    box's toggle); `NONE` when empty. The registry is [`Categories.cs`](Categories.cs).
+12. Every unlock not in the label is off.
+13. Without `BS` the coloured blocks start unswapped (blue active, as a new game has them; the save's state is
+    put back after); with `BS` the game's own respawn sets them.
 14. Turbo, offline and playback use identical unlocks.
 15. Full-TAS runs gain unlocks only through the game's purchases (the gate: a Full-TAS run is checked against the
     unlocks its own purchases gave so far).
 16. "Don't touch my unlocks" on: never write an unlock.
-17. Bonuses run only in their first category, or up to their `maxCapabilities` in `courses.json`.
-18. Courses and transitions run from `minCapabilities` up to `maxCapabilities`, or up to `WJ_DS_DJ_BS` when it's unset:
-    Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
-19. Every course, bonus and transition also runs in `WJ_DS_DJ_BS_OM`.
+17. Bonuses run only in their first ladder category (`minCapabilities`), or up to their `maxCapabilities` in
+    `courses.json`.
+18. Courses and transitions run the ladder from `minCapabilities` up to `maxCapabilities`, or up to `WJ_DS_DJ_BS` when
+    it's unset: Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
+19. Outside the ladder, every course, bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
+    `WJ_DS_DJ_BS_ORB_ZIP_OM`. `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only where refill orbs are in reach,
+    `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs)):
+    anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. Bonuses 17–21
+    and 23 run no category: their end is an unlock box (refill orbs, clone dust, buy max, the 1x and ∞x Start a VMAN
+    speedrun boxes, block swap on dash), not a bonus stretch.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
     zone 2).
 21. Every quick restart onto a course loads the zone of the start gate nearest it the game's way (`ZoneLoader`, as the
@@ -47,7 +55,8 @@
     `OvergrowthLoadScript.OnLoad`, as the zone loader does); onto Courses 1–5 it sets it back to not overgrown, and
     every other route runs in the save's own state.
 25. Saves wait until the save's state is back.
-26. Their only categories are `WJ_DS_DJ_BS` and `WJ_DS_DJ_BS_OM`; transitions to or from them aren't supported.
+26. Their only categories are `WJ_DS_DJ_BS` and the categories outside the ladder that run there (19); transitions to
+    or from them aren't supported.
 27. Time runs from the course's start gate to end gate.
 28. Finishing a different course never counts.
 29. Score courses by the game timer, not tick counts: that is the runs record (the gate: a replay from the course start
@@ -64,7 +73,9 @@
     checkpoint touched.
 36. Off a course both go to that checkpoint.
 37. Area goals (`at:`) are not checkpoints.
-38. Purchases count only when the game itself buys the box.
+38. Purchases count only when the game itself buys the box. A Full-TAS run buys only its next goal's box unless its
+    `fulltas.json` entry sets `"buys": "loose"` (`VMAN`): then other purchases stand, and a box a later `buy:` goal names,
+    bought early, counts for that goal ([`docs/fulltas.md`](docs/fulltas.md#loose-buys)).
 39. Never replace game logic; patches only read, input, skip saves (and playback's wall-clock reads, exception 2).
 40. Never change Unity's clock or fixed timestep.
 41. Never edit the game's save files.

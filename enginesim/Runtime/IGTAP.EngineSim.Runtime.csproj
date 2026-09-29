@@ -20,6 +20,7 @@
     <Compile Include="..\..\MacroModels.cs" Link="Shared\MacroModels.cs" />
     <Compile Include="..\..\FieldState.cs" Link="Shared\FieldState.cs" />
     <Compile Include="..\..\FullTas.cs" Link="Shared\FullTas.cs" />
+    <Compile Include="..\..\Categories.cs" Link="Shared\Categories.cs" />
   </ItemGroup>
 
   <ItemGroup>

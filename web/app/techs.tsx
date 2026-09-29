@@ -5,7 +5,7 @@ import "./techs.css";
 
 export type TechCategory = "glitchless" | "nmg" | "major";
 export type TechOrigin = "community" | "game" | "ours";
-export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" | "OMNI";
+export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" | "DS_OM";
 export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; confirmed: boolean; omniDash?: boolean; floatingOrigin?: boolean; fastForward?: number; description: string; note?: string | null; detector?: string | null;
   related: string[]; start?: string | null; routeId?: string | null; savestate: boolean; ticks: number; labmap?: string | null };
 export type LabShape = { kind: string; at?: number[] | null; size?: number[] | null; points?: number[][] | null; layer: string; tag: string; trigger: boolean; spike: boolean };
@@ -26,7 +26,7 @@ const CATEGORIES: [TechCategory, string, string][] = [
 ];
 const REQUIRES: [TechRequires, string][] = [
   ["NONE", "No unlocks"], ["WJ", "WJ"], ["WJ_DS", "WJ + DS"], ["WJ_DS_DJ", "WJ + DS + DJ"], ["WJ_DS_DJ_BS", "WJ + DS + DJ + BS"],
-  ["OMNI", "Omnidash"],
+  ["DS_OM", "Omnidash (DS + OM)"],
 ];
 const STATUSES: [boolean, string, string][] = [
   [true, "Confirmed", "Has a reproduction: a demo route that performs it."],

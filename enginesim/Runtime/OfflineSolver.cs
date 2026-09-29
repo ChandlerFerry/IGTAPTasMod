@@ -89,6 +89,9 @@ namespace IGTAP.EngineSim
         int _cells;
         /// <summary>A Full-TAS run's stored goal-boundary states, resumed instead of replaying a cell's prefix over them (null: none).</summary>
         public SnapshotIndex Resume;
+        /// <summary>No quick restarts: no mutation adds or moves one (a Full-TAS reset study: the way on that keeps the momentum).
+        /// The seeds must carry none either. Set before the search starts.</summary>
+        public bool NoResets;
         /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
         public long GoalResumes;
 
@@ -395,6 +398,28 @@ namespace IGTAP.EngineSim
             }).ToList();
         }
 
+        // Per contact: the graft's first tick relative to it (lo..hi), the plain inputs and the omnidash ones (null: all).
+        // Also the planner's primitive windows (Planner).
+        internal static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> GraftsAt = new Dictionary<Contact, (int, int, string[], string[])>
+        {
+            [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
+            [Contact.LeftGround] = (-4, 3, new[] { "jump", "jump", "dashjump", "dashjump", "backdash", "primed" },
+                new[] { "wavedash", "ultra", "superground", "wavejump", "aim" }),
+            [Contact.Landed] = (-4, 1, new[] { "jump", "dashjump", "dashjump", "primed", "primed", "dash" },
+                new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
+            [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
+            [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
+            [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
+            [Contact.WallBehindLeft] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+            [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
+            [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+            [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
+            [Contact.NearGateLeft] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+            [Contact.NearGateRight] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
+            [Contact.WallAboveLeft] = (0, 0, new[] { "rest" }, new[] { "rest" }),
+            [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
+        };
+
         sealed class Worker
         {
             internal const float CellSize = 48f;
@@ -527,8 +552,9 @@ namespace IGTAP.EngineSim
                 _seeds.Enqueue(new List<InputTick>());
                 _restore = new Queue<Memory.Source>(restore);
                 _plateau = plateau?.ToList();
-                _omni = owner.Capabilities == "omni" || owner.Capabilities == "wjdsdjbsom";
-                _dash = _omni || owner.Capabilities == "wjds" || owner.Capabilities == "wjdsdj" || owner.Capabilities == "wjdsdjbs";
+                Caps caps = Caps.Parse(owner.Capabilities);
+                _omni = caps.Omni;
+                _dash = caps.Dash;
                 _goalMode = sim.Goals != null;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
                 {
@@ -544,7 +570,7 @@ namespace IGTAP.EngineSim
                         "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
                         "springdash", "lockstick", "lockstick", "dashturn" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
-                if (_goalMode) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
+                if (_goalMode && !owner.NoResets) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 if (_omni) _kinds = _kinds.Concat(OmniKinds).ToArray();
             }
 
@@ -691,26 +717,6 @@ namespace IGTAP.EngineSim
             const double GraftRate = .5;
             const int GraftCoast = 40;
 
-            // Per contact: the graft's first tick relative to it (lo..hi), the plain inputs and the omnidash ones (null: all).
-            static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> GraftsAt = new Dictionary<Contact, (int, int, string[], string[])>
-            {
-                [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
-                [Contact.LeftGround] = (-4, 3, new[] { "jump", "jump", "dashjump", "dashjump", "backdash", "primed" },
-                    new[] { "wavedash", "ultra", "superground", "wavejump", "aim" }),
-                [Contact.Landed] = (-4, 1, new[] { "jump", "dashjump", "dashjump", "primed", "primed", "dash" },
-                    new[] { "dashbounce", "wavebounce", "superground", "wavedash" }),
-                [Contact.TouchedWall] = (-3, 3, new[] { "jump", "jump", "superbounce", "superbounce", "dash", "primed" }, new[] { "aim", "dashbounce" }),
-                [Contact.LeftWall] = (0, 4, new[] { "jump", "jump", "dashjump" }, new[] { "aim", "wavejump" }),
-                [Contact.CornerHyper] = (-3, 3, new[] { "dashjump" }, new[] { "cornerhyper", "cornerhyper", "cornerultra" }),
-                [Contact.WallBehindLeft] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
-                [Contact.WallBehindRight] = (0, 24, new[] { "wallclip" }, new[] { "wallclip" }),
-                [Contact.WallAheadLeft] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
-                [Contact.WallAheadRight] = (-2, 10, new[] { "turnaway" }, new[] { "turnaway" }),
-                [Contact.NearGateLeft] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
-                [Contact.NearGateRight] = (0, 0, new[] { "gatetap" }, new[] { "gatetap" }),
-                [Contact.WallAboveLeft] = (0, 0, new[] { "rest" }, new[] { "rest" }),
-                [Contact.WallAboveRight] = (0, 0, new[] { "rest" }, new[] { "rest" }),
-            };
 
             void RecordContact(int tick) { _log.Tick(tick, _sim.Player, _gate.NearGate()); }
 
@@ -1068,7 +1074,7 @@ namespace IGTAP.EngineSim
                     int length = _rng.Next(3, 21);
                     int start = inputs.Count;
                     for (int i = 0; i < length; i++) inputs.Add(new InputTick { x = x, y = y, held = start + i < holdEnd });
-                    if (_goalMode && start > 0 && !inputs[start - 1].reset && _rng.NextDouble() < .05)
+                    if (_goalMode && !_owner.NoResets && start > 0 && !inputs[start - 1].reset && _rng.NextDouble() < .05)
                     {
                         InputTick r = inputs[start]; r.reset = true; inputs[start] = r;
                     }
@@ -1208,7 +1214,7 @@ namespace IGTAP.EngineSim
 
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "steep", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce",
-                "wavejump", "superground" };
+                "wavejump", "superground", "bouncechain", "bouncechain" };
             static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
             static readonly int[] BounceHolds = { 3, 6, 10, 16 }, DashJumpHolds = { 2, 5, 10, 16 }, LateHolds = { 0, 2, 5, 10 };
             static readonly int[] Steps = { 1, 1, 2, 3, 5, 8 }, Nudges = { 1, 2, 3, 5, 8 }, Inserts = { 1, 2, 4, 8, 15 }, VerticalSpans = { 1, 3, 6, 12, 25, 50 };
@@ -1257,6 +1263,21 @@ namespace IGTAP.EngineSim
                         // Super ground bounce: a ground super (flat dash, jump in it), then the dash straight down into the ground and its jump.
                         OmniDash(t, at, side, 0f, _rng.Next(1, 7), side);
                         return DashBounce(t, at + 1 + _rng.Next(4, 20), side);
+                    case "bouncechain":
+                    {
+                        // The down-dash landing chain (the old 34.88 s VMAN route over goals 15-17): two hypers (an ultra: each
+                        // adds to the momentum, 876 -> 1609 -> 2929 there), then a dash straight down onto the floor and a jump
+                        // out of the landing, 2-5 times, 3-11 ticks of air between. A jump off the ground keeps the momentum and
+                        // adds half again, more than the air takes (2528 to 5832 over four landings). One dash bounce at a time
+                        // the search had to find each link as its own step, and never kept the chain; from 44.94's state before
+                        // goal 15, 600 random chains of this shape reached 1000 units further in 110 ticks than the route did.
+                        int end = at;
+                        double seed = _rng.NextDouble();
+                        if (seed < .9) end = WaveDash(t, at, side);
+                        if (seed < .7) end = WaveDash(t, end + 1 + _rng.Next(1, 13), side);
+                        for (int k = _rng.Next(2, 6); k > 0; k--) end = DashBounce(t, end + 1 + _rng.Next(3, 12), side);
+                        return end;
+                    }
                     case "wavejump":
                         return OmniDash(t, at, side, 1f, _rng.NextDouble() < .6 ? _rng.Next(1, 11) : 0, side);
                     case "cornerhyper":
@@ -1740,12 +1761,20 @@ namespace IGTAP.EngineSim
                 if (!resources) return key;
                 // A superjump or spike super carries its momentum across the next hundred ticks; an arrival that has it and
                 // one that doesn't are different states, so neither replaces the other.
-                return key | (MomentumBucket(player.momentum.x) << 45) | (MomentumBucket(player.momentum.y) << 48);
+                bool omni = player.omniDashUnlocked;
+                return key | (MomentumBucket(player.momentum.x, omni) << 45) | (MomentumBucket(player.momentum.y, omni) << 48);
             }
 
-            static long MomentumBucket(float m)
+            // With the omnidirectional dash, momentum from chained hypers and down-dash landings reaches thousands (VMAN goals
+            // 15-17: 2528 to 5832 on the old 34.88 s route, against 764-2669 for a hyper or two), and every one past 750 fell
+            // in one bucket, so the slow hyper's earlier arrival replaced the chain's. There the steps are 250, 1000 and 2500.
+            static readonly float[] OmniMomentum = { 250f, 1000f, 2500f };
+
+            static long MomentumBucket(float m, bool omni)
             {
-                return 3 + Math.Sign(m) * Math.Min(3, (int)(Math.Abs(m) / MomentumStep));
+                float a = Math.Abs(m);
+                int level = omni ? (a >= OmniMomentum[2] ? 3 : a >= OmniMomentum[1] ? 2 : a >= OmniMomentum[0] ? 1 : 0) : Math.Min(3, (int)(a / MomentumStep));
+                return 3 + Math.Sign(m) * level;
             }
 
             // Before the timer (a course's untimed set-up), where the player is going is part of the cell: vertical speed in

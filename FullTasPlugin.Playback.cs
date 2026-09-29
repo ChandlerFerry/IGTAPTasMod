@@ -23,7 +23,7 @@ namespace IGTAPTasMod
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
             if (_fullTasPending != null) throw new InvalidOperationException("Busy: " + _fullTasPending.what + ".");
             if (route == null) throw new InvalidOperationException("Full-TAS run " + run.name + " has no route yet.");
-            var tracker = new FullTasTracker(ResolveFullTasGoals(run));
+            var tracker = NewFullTasTracker(run);
             StartNewGame(null, run.Vman, run.savestate, run.RebaseAt);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());

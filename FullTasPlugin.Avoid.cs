@@ -132,11 +132,11 @@ namespace IGTAPTasMod
             int course = Number(body, "course", 0);
             string caps = Text(body, "capabilities");
             CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
-            if (!CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
+            if (!Categories.IsCategory(caps)) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, caps);
             if (!(body["box"] is JArray box) || box.Count != 4) throw new InvalidOperationException("box: [x0, y0, x1, y1] in game-world coordinates.");
             string name = Text(body, "name").Trim();
-            return new { ok = true, changed = EditCourseAvoids(course, caps, CapsLadder.Where(def.HasCategory).ToArray(),
+            return new { ok = true, changed = EditCourseAvoids(course, caps, def.CategoryIds,
                 box.Select(v => (float)v).ToArray(), name.Length == 0 ? null : name, Truthy(body, "on"), Truthy(body, "remove")) };
         }
     }

@@ -257,7 +257,7 @@ namespace IGTAP.EngineSim.Cli
             return events;
         }
 
-        static IEnumerable<float> Grid(Event e)
+        internal static IEnumerable<float> Grid(Event e)
         {
             if (e.Kind == Kind.StickY) return new[] { -1f, 0f, 1f };
             if (e.Value == 0f) return new[] { -1f }.Concat(Partials.Where((_, i) => i % 2 == 0).Reverse().Select(v => -v)).Append(0f)
@@ -292,7 +292,7 @@ namespace IGTAP.EngineSim.Cli
             return works;
         }
 
-        static List<Event> Events(List<InputTick> route, List<InputTick> original)
+        internal static List<Event> Events(List<InputTick> route, List<InputTick> original)
         {
             var events = new List<Event>();
             foreach (bool y in new[] { false, true })
@@ -309,7 +309,7 @@ namespace IGTAP.EngineSim.Cli
             return events.OrderBy(e => e.Tick).ThenBy(e => e.Kind).ToList();
         }
 
-        static List<InputTick> Shift(List<InputTick> route, Event e, int d, out int first)
+        internal static List<InputTick> Shift(List<InputTick> route, Event e, int d, out int first)
         {
             int q = e.Tick + d;
             first = Math.Min(e.Tick, q);
@@ -350,7 +350,7 @@ namespace IGTAP.EngineSim.Cli
             return runs;
         }
 
-        static List<InputTick> SetStick(List<InputTick> route, bool y, int from, int to, float value)
+        internal static List<InputTick> SetStick(List<InputTick> route, bool y, int from, int to, float value)
         {
             var c = new List<InputTick>(route);
             for (int i = from; i < to; i++)
@@ -419,7 +419,7 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        static List<InputTick> DropPress(List<InputTick> route, int p)
+        internal static List<InputTick> DropPress(List<InputTick> route, int p)
         {
             var c = new List<InputTick>(route);
             InputTick a = c[p]; a.press = false; c[p] = a;
@@ -449,7 +449,7 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        static List<InputTick> DropDash(List<InputTick> route, int d)
+        internal static List<InputTick> DropDash(List<InputTick> route, int d)
         {
             var c = new List<InputTick>(route);
             InputTick k = c[d];

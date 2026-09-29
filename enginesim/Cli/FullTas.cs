@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 using FullTasTracker = IGTAPTasMod.FullTasTracker;
+using Caps = IGTAPTasMod.Caps;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -30,8 +31,12 @@ namespace IGTAP.EngineSim.Cli
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal, _onlySegment;
         readonly double _minutes, _windowMinutes, _stallMinutes, _pieceMinutes;
-        readonly bool _submit, _fresh, _unsolved, _resets, _repair;
-        string _name, _caps, _runFile, _closestFile, _outDir;
+        readonly bool _submit, _fresh, _resets, _groupBuys, _resetStudy;
+        /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
+        /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
+        readonly int _lookahead;
+        bool _unsolved;
+        string _name, _runFile, _closestFile, _outDir;
         string[] _labels;
         int _goals;
         float _dt;
@@ -58,7 +63,9 @@ namespace IGTAP.EngineSim.Cli
             public string Name;
             public string[] Goals;
             public bool Standing, Restart;
-            public int Level;
+            /// <summary>The unlocks its saved route was solved with (its "capabilities"); usable in a window whose caps
+            /// cover them.</summary>
+            public Caps Caps;
             public List<InputTick> Inputs;
             /// <summary>Another run's start, where its player stands still before these inputs (null: none).</summary>
             public SeedStart At;
@@ -95,16 +102,61 @@ namespace IGTAP.EngineSim.Cli
             _onlyGoal = Solve.Option(args, "--goal", 0);
             _onlySegment = Solve.Option(args, "--segment", 0);
             _resets = args.Contains("--resets") || _onlySegment > 0;
-            _repair = args.Contains("--repair");
+            _groupBuys = args.Contains("--group-buys");
+            _resetStudy = args.Contains("--reset-study");
+            _lookahead = Math.Max(0, Solve.Option(args, "--lookahead", 0));
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--seed") _seedFiles.Add(args[i + 1]);
             // --seed-list: a file of seed paths, one per line (a run's seeds can pass Windows' 32767-character command line).
             for (int i = 1; i < args.Length - 1; i++)
                 if (args[i] == "--seed-list")
                     _seedFiles.AddRange(File.ReadAllLines(args[i + 1]).Select(l => l.Trim()).Where(l => l.Length > 0));
             for (int i = 1; i < args.Length - 1; i++) if (args[i] == "--harvest") _harvestFiles.Add(args[i + 1]);
+            int transplant = Array.IndexOf(args, "--transplant");
+            if (transplant > 0 && transplant + 1 < args.Length) _transplantFile = args[transplant + 1];
         }
 
-        public static int Run(string[] args) { return new FullTas(args).Search(); }
+        public static int Run(string[] args)
+        {
+            int check = Array.IndexOf(args, "--check");
+            return check > 0 && check + 1 < args.Length ? new FullTas(args).Check(args[check + 1]) : new FullTas(args).Search();
+        }
+
+        /// <summary>
+        /// --check &lt;route.json&gt;: replays a route (a run file's "inputs" or an offline best's "ticks") from the trace's start under
+        /// the trace's goals and prints each goal's input and physics tick, where the replay ended and why. Searches and writes
+        /// nothing: a quick look at an old or foreign route before seeding a solve with it.
+        /// </summary>
+        int Check(string file)
+        {
+            JsonElement header = Solve.ReadHeader(_trace);
+            if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
+            _name = fulltas.GetProperty("name").GetString();
+            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
+            _goals = _labels.Length;
+            _eval = Solve.Creator(_trace, header)();
+            _eval.StrictBuys = true;
+            var bought = new List<string>();
+            _eval.Purchased = path => bought.Add($"{path} (tick {_eval.Engine.PhysicsTicks}, input {_eval.Engine.RunTicks})");
+            _origin = _eval.Start;
+            _dt = _eval.World.FixedDeltaTime;
+            List<InputTick> inputs;
+            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 256 }))
+                inputs = doc.RootElement.TryGetProperty("ticks", out JsonElement ticks) ? ticks.EnumerateArray().Select(InputTick.FromJson).ToList() : Solve.ReadInputs(doc.RootElement);
+            Route r = Evaluate(inputs);
+            long last = 0;
+            for (int g = 0; g < _goals; g++)
+            {
+                long t = g < r.Progress ? r.GoalPhysics[g] : -1;
+                Console.WriteLine($"goal {g + 1,2} {_labels[g],-42} " + (t < 0 ? "-" : $"{t,5} ({(t * _dt).ToString("0.00", CultureInfo.InvariantCulture),6} s, +{t - last,4}) input {r.GoalInput[g]}"));
+                if (t >= 0) last = t;
+            }
+            WorldPos at = _eval.PlayerWorld;
+            Console.WriteLine($"{Path.GetFileName(file)}: {inputs.Count} inputs, {r.Progress} of {_goals} goals"
+                + (r.Progress == _goals ? $", {(r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture)} s ({r.Last} ticks)" : "")
+                + $"; ended after input {_eval.Engine.RunTicks} at {at.x.ToString("0.0", CultureInfo.InvariantCulture)},{at.y.ToString("0.0", CultureInfo.InvariantCulture)}: {r.EndReason}");
+            Console.WriteLine($"purchases ({(_eval.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
+            return 0;
+        }
 
         int Search()
         {
@@ -122,6 +174,16 @@ namespace IGTAP.EngineSim.Cli
                 new Thread(Submitter) { IsBackground = true }.Start();
             }
             new Thread(WatchStdin) { IsBackground = true }.Start();
+            // --transplant FILE: an old route of this run repaired where it fails, before the solve goes on (FullTasTransplant.cs).
+            if (_transplantFile != null) Transplant(_transplantFile);
+            // --reset-study: each reset in the best against the way on without it (FullTasResets.cs); then stops.
+            if (_resetStudy)
+            {
+                ResetStudy();
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
+                Emit(new { type = "done", best = RouteJson(_best) });
+                return 0;
+            }
 
             (int, long) reachFrontier = (-1, -1);
             int reachRound = 0, reachBack = 0;
@@ -176,7 +238,7 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = firstWindow; i < endWindow && !TimeUp; i++)
                 {
                     best = _best;
-                    int limit = _onlyGoal > 0 ? lastGoal : Math.Min(i + _window, best.Progress);
+                    int limit = _onlyGoal > 0 ? lastGoal : Math.Min(i + _window + _lookahead, best.Progress);
                     if (_onlyGoal == 0 && Enumerable.Range(i, limit - i).All(IsLoop)) continue;
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
                     var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
@@ -202,7 +264,6 @@ namespace IGTAP.EngineSim.Cli
             _name = fulltas.GetProperty("name").GetString();
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
-            _caps = header.GetProperty("capabilities").GetString();
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _runFile = Path.Combine(dir, "fulltas", _name + ".json");
             _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
@@ -249,10 +310,18 @@ namespace IGTAP.EngineSim.Cli
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route run = Padded(Evaluate(inputs));
                 int recorded = Recorded(solved, goalInput, _labels, stored);
-                if (run.Progress < recorded && !_repair)
-                    throw new InvalidOperationException($"fulltas/{Path.GetFileName(_runFile)} recorded {recorded} goals, but replayed from {Path.GetFileName(_trace)} "
-                        + $"it reaches {run.Progress} ({(run.Progress < _goals ? _labels[run.Progress] + ": " : "")}{run.EndReason}). The engine plays it differently "
-                        + "(another build: rebuild enginesim) or the start differs; the run file is left as it is. Pass --repair to solve on from the replay anyway.");
+                // The engine plays the saved best differently (another build, a fidelity fix): the solve repairs it from where the
+                // replay stops, after keeping the file as it was (fulltas/<run>.before-repair-<n>-of-<m>.json), so the shorter
+                // replay the solve then saves over it never loses the old route.
+                if (run.Progress < recorded)
+                {
+                    string backup = Path.Combine(Path.GetDirectoryName(_runFile), $"{_name}.before-repair-{recorded}-of-{_goals}.json");
+                    if (!File.Exists(backup)) File.Copy(_runFile, backup);
+                    Log($"fulltas/{Path.GetFileName(_runFile)} recorded {recorded} goals, but replayed from {Path.GetFileName(_trace)} it reaches {run.Progress} "
+                        + $"({(run.Progress < _goals ? _labels[run.Progress] + ": " : "")}{run.EndReason}); repairing from there (the old file is kept as {Path.GetFileName(backup)})");
+                    // The goals it lost are reached again first (its old inputs past the replay's end seed those windows).
+                    _unsolved = true;
+                }
                 if (!Better(_best, run))
                 {
                     _best = run;
@@ -267,6 +336,7 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             LoadKnown(dir);
+            HarvestRuns(dir);
             foreach (string file in _harvestFiles) HarvestRoute(file);
             return from;
         }
@@ -436,9 +506,15 @@ namespace IGTAP.EngineSim.Cli
             string title = kind + " goals " + (first + 1) + "-" + limit + "/" + _goals;
             string span = first == limit - 1 ? _labels[first] : _labels[first] + ".." + _labels[limit - 1];
             List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, new HashSet<string>(_labels.Skip(first).Take(limit - first)),
-                CanRestartAfter(prefix, first));
+                CanRestartAfter(prefix, first), caps);
             foreach (var s in starts) if (!seeds.Any(r => r.SequenceEqual(s.inputs))) seeds.Add(s.inputs);
             if (starts.Count > 0) Log($"{title} {span}: {starts.Count} starts from saved routes");
+            (List<InputTick> chain, int chained) = PieceChain(at, prefix, first, limit);
+            if (chained > 0)
+            {
+                if (!seeds.Any(r => r.SequenceEqual(chain))) seeds.Add(chain);
+                Log($"{title} {span}: library pieces play goals {first + 1}-{first + chained}");
+            }
             int id = ++_windowId;
             // Goals the route logs by the prefix's end: one more than first when the last one is touched in the no-input ticks
             // after its input tick (a dash), which read the next input, so the window takes it again.
@@ -455,7 +531,9 @@ namespace IGTAP.EngineSim.Cli
                 sim.Goals.Limit = limit;
                 return sim;
             };
-            string archiveFile = Path.Combine(_archiveDir, (first + 1) + "-" + limit + "-" + ArchiveHash(prefix, _labels.Skip(first).Take(limit - first)).ToString("x16") + ".json");
+            string archiveFile = Path.Combine(_archiveDir, (first + 1) + "-" + limit + "-" + ArchiveHash(prefix, _labels.Skip(first).Take(limit - first)).ToString("x16")
+                + (_noResets ? "-noreset" : "") + ".json");
+            if (_noResets) seeds.RemoveAll(s => s.Any(t => t.reset));
             var labels = new HashSet<string>(_labels.Skip(first).Take(limit - first));
             List<Seed> walkers = kind == "reach" ? _seeds.Where(s => s.At != null && s.Goals.Any(labels.Contains)).ToList() : new List<Seed>();
             var tried = new HashSet<long>();
@@ -512,6 +590,7 @@ namespace IGTAP.EngineSim.Cli
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
             var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell);
             solver.Resume = _states.Index;
+            solver.NoResets = _noResets;
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
             long windowBest = long.MaxValue;
@@ -525,6 +604,9 @@ namespace IGTAP.EngineSim.Cli
                 {
                     last = _clock.Elapsed;
                     finished = true;
+                    if (atGoal < windowBest)
+                        Log($"{title} {span} finish {Seconds(atGoal):0.00}s ({atGoal} physics ticks) at {(_clock.Elapsed - begin).TotalSeconds:0.0}s, "
+                            + $"{Interlocked.Read(ref solver.Ticks)} ticks simulated");
                     windowBest = Math.Min(windowBest, atGoal);
                     if (atGoal < baseline)
                     {
@@ -554,7 +636,7 @@ namespace IGTAP.EngineSim.Cli
                 if ((_clock.Elapsed - shown).TotalSeconds >= 15)
                 {
                     shown = _clock.Elapsed;
-                    Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates), {Interlocked.Read(ref solver.Runs)} runs, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB");
+                    Log($"{title} {span} best {Describe(_best)} ({found.Count} candidates), {Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Ticks)} ticks, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB");
                     List<List<InputTick>> walked = walks?.Invoke(solver);
                     if (walked?.Count > 0)
                         lock (window)
@@ -632,18 +714,22 @@ namespace IGTAP.EngineSim.Cli
             Solve.Replace(temp, _closestFile);
         }
 
-        /// <summary>What the search presses for these goals, from the player <see cref="_eval"/> holds now and the boxes they buy.</summary>
+        /// <summary>What the search presses for these goals: the unlocks the player <see cref="_eval"/> holds now
+        /// (<see cref="PlayerCaps"/>) plus what the boxes they buy give, as the caps id the solver reads.</summary>
         string WindowCaps(IEnumerable<FullTasGoal> goals)
         {
-            bool dash = _eval.Player.dashUnlocked, omni = dash && _eval.Player.omniDashUnlocked;
+            Caps caps = PlayerCaps.Of(_eval.Player);
             foreach (FullTasGoal goal in goals)
                 foreach (string box in goal.boxes ?? Array.Empty<string>())
-                {
-                    upgradeBox.movementUpgrades? move = _eval.Shop.MovementUpgrade(box);
-                    dash |= move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.freeVmanOmnidash;
-                    omni |= move == upgradeBox.movementUpgrades.freeVmanOmnidash;
-                }
-            return omni ? "omni" : dash ? "wjds" : _caps;
+                    switch (_eval.Shop.MovementUpgrade(box))
+                    {
+                        case upgradeBox.movementUpgrades.wallJump: caps.WallJump = true; break;
+                        case upgradeBox.movementUpgrades.dash: caps.Dashes++; break;
+                        case upgradeBox.movementUpgrades.freeVmanOmnidash: caps.Dashes++; caps.Omni = true; break;
+                        case upgradeBox.movementUpgrades.doubleJump: caps.AirJumps++; break;
+                        case upgradeBox.movementUpgrades.unlockBlockSwap: caps.BlockSwap = true; break;
+                    }
+            return caps.Id;
         }
 
         void Remember((int, string) key, List<InputTick> route)
@@ -764,13 +850,12 @@ namespace IGTAP.EngineSim.Cli
             return (prefix.Count == 0 || !prefix[prefix.Count - 1].reset) && (reached == 0 || !_labels[reached - 1].StartsWith("at:", StringComparison.Ordinal));
         }
 
-        List<(string how, List<InputTick> inputs)> SeedStarts(SimSnapshot at, List<InputTick> prefix, HashSet<string> labels, bool restart)
+        List<(string how, List<InputTick> inputs)> SeedStarts(SimSnapshot at, List<InputTick> prefix, HashSet<string> labels, bool restart, string windowCaps)
         {
             var starts = new List<(string how, List<InputTick> inputs)>();
+            Caps caps = Caps.Parse(windowCaps);
             _eval.Restore(at);
-            Movement player = _eval.Player;
-            int level = !player.wallJumpUnlocked ? 0 : !player.dashUnlocked ? 1 : !player.doubleJumpUnlocked ? 2 : !player.blockSwapUnlocked ? 3 : !player.omniDashUnlocked ? 4 : 5;
-            List<Seed> matching = _seeds.Where(s => s.Level <= level && s.Goals.Any(labels.Contains)).OrderByDescending(s => s.Level).ToList();
+            List<Seed> matching = _seeds.Where(s => s.Caps.IsSubsetOf(caps) && s.Goals.Any(labels.Contains)).OrderByDescending(s => Unlocks(s.Caps)).ToList();
             if (matching.Count == 0) return starts;
             _eval.SetStart(at, prefix.Count);
             _eval.Goals.Limit = _goals;
@@ -811,7 +896,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 string token = bonus.Name.Substring(0, bonus.Name.IndexOf('_'));
                 var list = new List<(string how, List<InputTick> inputs)>();
-                foreach (Seed transition in _seeds.Where(s => s.Level <= level && !s.Standing
+                foreach (Seed transition in _seeds.Where(s => s.Caps.IsSubsetOf(caps) && !s.Standing
                     && s.Name.IndexOf("to" + token + "_", StringComparison.OrdinalIgnoreCase) > 0))
                     foreach (int idle in new[] { 0, 3, 6, 10, 16 })
                     {
@@ -829,6 +914,13 @@ namespace IGTAP.EngineSim.Cli
                     if (tier < list.Count && starts.Count < MaxSeedStarts && !starts.Any(s => s.inputs.SequenceEqual(list[tier].inputs)))
                         starts.Add(list[tier]);
             return starts;
+        }
+
+        /// <summary>How many unlocks a seed's caps have (flags and counts): the order seeds are preferred in, most unlocks first.</summary>
+        static int Unlocks(Caps caps)
+        {
+            return (caps.WallJump ? 1 : 0) + caps.Dashes + caps.AirJumps + (caps.BlockSwap ? 1 : 0) + (caps.Orbs ? 1 : 0)
+                + (caps.Zip ? 1 : 0) + (caps.Omni ? 1 : 0);
         }
 
         /// <summary>
@@ -946,7 +1038,8 @@ namespace IGTAP.EngineSim.Cli
             _eval.Restore(at);
             // The last goal can be touched in the no-input ticks after its input tick (a dash): the seeds' replay takes it again.
             if (_eval.Progress != reached && _eval.Progress != reached - 1) return false;
-            List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, new HashSet<string> { _labels[reached] }, CanRestartAfter(prefix, reached));
+            List<(string how, List<InputTick> inputs)> starts = SeedStarts(at, prefix, new HashSet<string> { _labels[reached] }, CanRestartAfter(prefix, reached),
+                WindowCaps(_runGoals.Goals.Skip(reached).Take(1)));
             string title = $"seeds for goal {reached + 1}/{_goals} {_labels[reached]}";
             RunResult top = null;
             int reaching = 0;
@@ -997,8 +1090,8 @@ namespace IGTAP.EngineSim.Cli
                 Goals = goals.ToArray(),
                 Standing = Flag("standing"),
                 Restart = Flag("restart"),
-                Level = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String ? 0
-                    : Math.Max(0, Array.IndexOf(Solve.Categories, caps.GetString())),
+                Caps = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String
+                    || !Caps.TryParse(caps.GetString(), out Caps seedCaps) ? default(Caps) : seedCaps,
                 Inputs = Solve.ReadInputs(root),
                 At = root.TryGetProperty("trace", out JsonElement trace) && trace.ValueKind == JsonValueKind.String ? StartOf(trace.GetString()) : null,
             };
@@ -1037,9 +1130,16 @@ namespace IGTAP.EngineSim.Cli
                 slower++;
                 if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit) broken = candidate;
             }
+            if (broken == null)
+            {
+                // Faster through the window, and the old route after it still reaches every goal, only later: it was played for the
+                // old state. Re-find the goals from where it falls behind (Repair), rather than dropping the faster window.
+                Route slow = found.Count == 0 ? null : Splice(best, prefixLength, found[found.Count - 1], limit, best);
+                if (slow != null && slow.Progress >= best.Progress && slow.Progress >= limit && slow.GoalPhysics[limit - 1] < best.GoalPhysics[limit - 1]) broken = slow;
+            }
             if (broken != null)
             {
-                Emit(new { type = "note", level = "info", text = $"Faster through goal {limit}, but the old route after it no longer works from there; re-finding goals {limit + 1}-{best.Progress}." });
+                Emit(new { type = "note", level = "info", text = $"Faster through goal {limit}, but the old route after it no longer works as well from there; re-finding goals {limit + 1}-{best.Progress}." });
                 Repair(where, best, broken);
                 return;
             }
@@ -1136,16 +1236,25 @@ namespace IGTAP.EngineSim.Cli
 
         void Repair(string where, Route old, Route run)
         {
+            int resynced = 0;
             while (!TimeUp)
             {
                 if (run.Progress >= old.Progress)
                 {
-                    if (Better(run, _best)) Commit(run, where + ", then re-found the later goals");
-                    else
+                    if (Better(run, _best)) { Commit(run, where + ", then re-found the later goals"); return; }
+                    // Complete but slower: it gets ahead and the old inputs after that lose it again, played from a state they weren't
+                    // made for. Search on from the goal where it first falls behind the best, while that moves forward.
+                    int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => run.GoalPhysics[g] > _best.GoalPhysics[g], -1);
+                    if (behind > resynced)
                     {
-                        Log($"repaired run {Describe(run)} is no better; dropped");
-                        Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." });
+                        Log($"repaired run {Describe(run)} is no better: it falls behind the best at goal {behind + 1}; re-finding from there");
+                        resynced = behind;
+                        run = new Route { Inputs = run.Inputs.Take((int)Math.Min(run.GoalInput[behind - 1], run.Inputs.Count)).ToList(), Progress = behind,
+                            GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, EndReason = run.EndReason };
+                        continue;
                     }
+                    Log($"repaired run {Describe(run)} is no better; dropped");
+                    Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." });
                     return;
                 }
                 if (run.Last >= _best.Last)
@@ -1154,7 +1263,7 @@ namespace IGTAP.EngineSim.Cli
                     Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." });
                     return;
                 }
-                int reached = run.Progress, limit = Math.Min(reached + _window, old.Progress);
+                int reached = run.Progress, limit = Math.Min(reached + _window + _lookahead, old.Progress);
                 int prefixLength = (int)Math.Min(run.GoalInput[reached - 1], run.Inputs.Count);
                 var seeds = new List<List<InputTick>> { run.Inputs.Skip(prefixLength).ToList(), old.Inputs.Skip((int)old.GoalInput[reached - 1]).ToList() };
                 List<List<InputTick>> found = SearchWindow("repair", run, prefixLength, limit, seeds, long.MaxValue, _windowMinutes, 0);

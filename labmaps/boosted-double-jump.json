@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "id": "boosted-double-jump",
+  "name": "Boosted double jump: a hyper over a spiked pillar that only the boosted double jump clears by tick 20",
+  "tech": "boosted-double-jump",
+  "techNote": "Stand on a moss floor (top y 0; moss refills nothing, so the one dash is the only one) facing right with the omnidash. A Ground pillar (x 880-1080, top y 210) has spikes on its face (x 872-880) up to y 202; the finish box is the column over its top (y 210-460). Jump, dash down-right and jump on dash frame 4: the hyper on tick 8 (547 up, 1650 momentum right). Jump again on the next tick: the double jump finds Velocity.y 520 and keeps half of it, 1005 up, while the hyper's momentum carries on; the dot crosses the face 20 u above the top and is in the box on tick 20 (cyan). Nothing else is there by tick 20. The box's edge is that far only for a hyper: a super gives at most 900 momentum after the dash's 11 ticks at 1670 and is at x 785 on tick 20 (dash-jump frames 1-11 swept), and no opening hypers before tick 8 (90 openings swept). From the hyper to tick 20 Velocity.y stays at 200 or more (547, falling 27 a tick, 223 on tick 20), so any double jump in that window is the boosted one; the dash is spent, the moss refills nothing and the only wall is the spiked face. Without it the dot rides the bare hyper arc (y 142 on tick 20) into the spikes (green). The fastest run without it found is a super (dash-jump frame 6), in the box on tick 26 (magenta). After the hyper an exhaustive search proves it: lab solve --forbid-boosted-double-jump --from the demo's first 2 inputs --max-ticks 20 --exact finds no demo; the hyper's 308 distinct states on tick 9 are all cut by the free-flight bound (no double jump under 200 before tick 20, so the collider's top reaches y 190.7 at most, under the box's 210).",
+  "category": "WJ_DS_DJ_BS_ORB_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        450,
+        -20
+      ],
+      "size": [
+        1300,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Moss"
+    },
+    {
+      "kind": "box",
+      "at": [
+        980,
+        85.0
+      ],
+      "size": [
+        200,
+        250
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        876,
+        81.0
+      ],
+      "size": [
+        8,
+        242
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    }
+  ],
+  "start": {
+    "x": 200,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "doubleJumpUnlocked": true,
+      "airJumpsLeft": 1,
+      "maxAirJumps": 1,
+      "blockSwapUnlocked": true
+    }
+  },
+  "finish": [
+    980,
+    335.0,
+    200,
+    250
+  ],
+  "maxTicks": 30,
+  "ghosts": [
+    {
+      "label": "Hyper + boosted double jump"
+    },
+    {
+      "demo": "no-boost",
+      "label": "Hyper, no boosted double jump",
+      "offset": [
+        0,
+        420
+      ]
+    },
+    {
+      "demo": "super",
+      "label": "Fastest without it: super",
+      "offset": [
+        0,
+        840
+      ]
+    }
+  ]
+}

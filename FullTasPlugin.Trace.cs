@@ -54,6 +54,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("format"); w.WriteValue(FullTasTraceFormat);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
+                if (run.LooseBuys) { w.WritePropertyName("buys"); w.WriteValue("loose"); }
                 if (run.rebaseAt != null)
                 {
                     w.WritePropertyName("rebaseAt"); w.WriteStartArray();
@@ -179,6 +180,7 @@ namespace IGTAPTasMod
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
+                    && ((string)header["buys"] == "loose") == run.LooseBuys
                     && RebaseOf(header) == run.RebaseAt
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }

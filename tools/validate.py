@@ -4,7 +4,11 @@ from gamepaths import CONFIG
 
 ROUTES = CONFIG / "routes.json"
 COURSES = CONFIG / "courses.json"
-LABELS = {"NONE": "none", "WJ": "wj", "WJ_DS": "wjds", "WJ_DS_DJ": "wjdsdj", "WJ_DS_DJ_BS": "wjdsdjbs", "WJ_DS_DJ_BS_OM": "wjdsdjbsom"}
+ROUTE_NAME = re.compile(r"([^_\s]+)_([A-Z][A-Z0-9_]*) (?:farm )?[\d.]+")
+
+def state():
+    with urllib.request.urlopen("http://127.0.0.1:17426/api/state", timeout=30) as response:
+        return json.load(response)
 
 def submit(body):
     request = urllib.request.Request("http://127.0.0.1:17426/api/enginesim/submit", json.dumps(body).encode())
@@ -29,10 +33,13 @@ def check(route, body, label):
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     ids = {str(c.get("name") or c["id"]): c["id"] for c in json.load(open(COURSES, encoding="utf-8-sig"))}
+    known = {c["id"] for c in state()["categories"]}
     for m in json.load(open(ROUTES, encoding="utf-8-sig"))["macros"]:
         if m["name"].startswith("fulltas/"):
             print(f"{m['name']:34} {'Full-TAS':16} skipped")
             continue
-        match = re.fullmatch(r"([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (?:farm )?[\d.]+", m["name"])
-        if match and match[1] in ids:
-            check(m, {"course": ids[match[1]], "capabilities": LABELS[match[2]]}, f"C{ids[match[1]]} {LABELS[match[2]]}")
+        match = ROUTE_NAME.fullmatch(m["name"])
+        # A label's id is the label lowercased without underscores; a category the registry doesn't know is skipped.
+        caps = match[2].replace("_", "").lower() if match else None
+        if match and match[1] in ids and caps in known:
+            check(m, {"course": ids[match[1]], "capabilities": caps}, f"C{ids[match[1]]} {caps}")

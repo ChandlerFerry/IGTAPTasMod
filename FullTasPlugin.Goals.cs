@@ -73,8 +73,8 @@ namespace IGTAPTasMod
             bool retired = false;
             foreach (MacroDefinition m in _library.macros)
             {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (!g.Success || !string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
+                Match g = MatchCategoryRoute(m.name);
+                if (!g.Success || !string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
                 if (_fullTasSplits.TryGetValue(m.id, out List<FullTasSplit> splits) ? splits.Select(s => s.label).SequenceEqual(labels) : !changed) continue;
                 FullTasLog("Retired " + m.name + ": solved for other goals than " + run.name + "'s");
                 m.name += " stale";
@@ -99,7 +99,17 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": no savestate " + run.savestate + ".");
             if (run.rebaseAt != null && (run.savestate == null || run.rebaseAt.Length != 2))
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": rebaseAt is a world [x, y] and needs a savestate start.");
+            if (run.buys != null && run.buys != "strict" && run.buys != "loose")
+                throw new InvalidOperationException("Full-TAS run " + run.name + ": buys is \"strict\" or \"loose\", not \"" + run.buys + "\".");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
+        }
+
+        /// <summary>A goal tracker for the run under its buy rule (strict, or loose: <see cref="FullTasTracker.LooseBuys"/>).</summary>
+        FullTasTracker NewFullTasTracker(FullTasRunDef run)
+        {
+            var tracker = new FullTasTracker(ResolveFullTasGoals(run));
+            if (run.LooseBuys) tracker.LooseBuys();
+            return tracker;
         }
 
         FullTasGoal ResolveFullTasGoal(string token)
@@ -165,7 +175,7 @@ namespace IGTAPTasMod
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, buys = old?.buys, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
@@ -182,9 +192,9 @@ namespace IGTAPTasMod
             float bestTime = float.PositiveInfinity;
             foreach (MacroDefinition m in _library.macros)
             {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (!g.Success || !string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
-                float time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
+                Match g = MatchCategoryRoute(m.name);
+                if (!g.Success || !string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
+                float time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture);
                 if (time < bestTime) { best = m; bestTime = time; }
             }
             return best;
@@ -323,7 +333,7 @@ namespace IGTAPTasMod
         {
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot from = NewGameStart(run);
-            tracker = new FullTasTracker(ResolveFullTasGoals(run));
+            tracker = NewFullTasTracker(run);
             _fullTas = tracker;
             _fullTasUnlocks = _newGameUnlocks;
             _silentEvaluation = true;
@@ -362,7 +372,7 @@ namespace IGTAPTasMod
 
         string FullTasViolation(List<SolverTick> inputs, float time)
         {
-            var audit = _audit = new List<string>();
+            var audit = StartAudit();
             for (int i = 1; i < inputs.Count; i++)
                 if (inputs[i].reset && inputs[i - 1].reset)
                 {

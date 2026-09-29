@@ -31,6 +31,8 @@ namespace IGTAPTasMod
             public int fps;
             /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
+            /// <summary>A tech demo's probe (<c>tech</c>): its start, inputs and lab map (a lab demo's start is placed as its playback's is).</summary>
+            public TechDef tech;
             /// <summary>
             /// The pause menu (<see cref="OpenPlaybackPause"/>): opened <c>pauseOffset</c> Movement.Update frames after physics
             /// tick <c>pauseAt</c> (the log's <c>physics</c>: a dash's locked ticks share one input tick; 0: right after the tick,
@@ -66,15 +68,21 @@ namespace IGTAPTasMod
                         throw new InvalidOperationException("Stop playback, recording, the solver or the running probe first.");
                     string name = Text(body, "name").Trim();
                     if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new InvalidOperationException("A probe needs a file-safe name.");
+                    // tech: the demo's own start, inputs and savestate or lab map, unless given.
+                    TechDef tech = body["tech"] == null ? null : FindTech(Text(body, "tech"));
+                    MacroDefinition demo = tech == null ? null : TechRoute(tech) ?? throw new InvalidOperationException(tech.name + " has no demo yet.");
                     string route = Text(body, "route").Trim();
-                    if (!TechStart.IsMatch(route + " ") || TechStart.Match(route).Length != route.Length)
+                    if (route.Length == 0 && tech != null) route = tech.start ?? "";
+                    if (route.Length == 0 || MatchTechStart(route).Length != route.Length)
                         throw new InvalidOperationException("route is a category prefix (1_WJ_DS): it picks the course, zone and unlocks.");
                     string savestateId = Text(body, "savestateId");
+                    if (savestateId.Length == 0 && demo != null) savestateId = demo.savestateId ?? "";
                     if (savestateId.Length > 0 && _savestates.Find(s => s.id == savestateId) == null) throw new InvalidOperationException("Savestate not found.");
-                    List<SolverTick> ticks = body["ticks"] is JArray list ? list.ToObject<List<SolverTick>>() : null;
+                    List<SolverTick> ticks = body["ticks"] is JArray list ? list.ToObject<List<SolverTick>>()
+                        : demo != null ? ToTicks(demo.steps.Where(s => s.enabled).ToList()) : null;
                     FieldInfo[] fields = body["fields"] is JArray names ? names.Select(n => AccessTools.Field(typeof(Movement), (string)n)
                         ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
-                    _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields,
+                    _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields, tech = tech,
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
@@ -290,7 +298,7 @@ namespace IGTAPTasMod
             string file = Path.Combine(ProbesDir, _probe.name + ".json");
             WriteJsonAtomic(file, new
             {
-                _probe.name, _probe.route, _probe.savestateId, capturedSavestateId = _probe.capturedSavestateId,
+                _probe.name, _probe.route, tech = _probe.tech?.id, _probe.savestateId, capturedSavestateId = _probe.capturedSavestateId,
                 result = _engine.Status, targetFrameRate = _probe.fps > 0 ? _probe.fps : MacroEngine.PlaybackFrameRate, vSync = 0,
                 ticks = _probe.ticks, rows = _probe.rows,
             }, false);

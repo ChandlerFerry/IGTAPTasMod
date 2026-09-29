@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace IGTAPTasMod
 {
@@ -139,6 +140,11 @@ namespace IGTAPTasMod
         public int Next;
         public int Limit;
         int _bought;
+        // Loose buys (fulltas.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
+        // names it, and the boxes bought before their goal came up (bit per box), which count toward it once it's current.
+        string[] _named;
+        int[] _lastNaming;
+        ulong _banked;
         public readonly long[] InputTicks, PhysicsTicks;
 
         public FullTasTracker(FullTasGoal[] goals)
@@ -154,6 +160,7 @@ namespace IGTAPTasMod
         {
             Next = 0;
             _bought = 0;
+            _banked = 0;
             for (int i = 0; i < Goals.Length; i++) InputTicks[i] = PhysicsTicks[i] = -1;
         }
 
@@ -172,13 +179,40 @@ namespace IGTAPTasMod
             _startRespawnY = respawnY;
         }
 
-        /// <summary>A tracker for other goals with this one's checkpoint guard (the loop builder's extra laps).</summary>
+        /// <summary>
+        /// Loose buys: a purchase that isn't the current goal's is kept when a later goal names its box, and a buy goal is reached
+        /// as soon as it's current and every box it names is owned (bought for it, or kept from before). Strict (the default):
+        /// only a purchase of the current goal's boxes counts.
+        /// </summary>
+        public void LooseBuys()
+        {
+            var named = new List<string>();
+            var last = new List<int>();
+            for (int g = 0; g < Goals.Length; g++)
+            {
+                if (Goals[g].boxes == null) continue;
+                foreach (string box in Goals[g].boxes)
+                {
+                    int i = named.IndexOf(box);
+                    if (i < 0) { named.Add(box); last.Add(g); }
+                    else last[i] = g;
+                }
+            }
+            if (named.Count > 64) throw new InvalidOperationException("Loose buys track at most 64 boxes; this run's goals name " + named.Count + ".");
+            _named = named.ToArray();
+            _lastNaming = last.ToArray();
+        }
+
+        public bool Loose { get { return _named != null; } }
+
+        /// <summary>A tracker for other goals with this one's checkpoint guard and buy rule (the loop builder's extra laps).</summary>
         public FullTasTracker For(FullTasGoal[] goals)
         {
             var t = new FullTasTracker(goals);
             t._noCheckpoint = _noCheckpoint;
             t._startRespawnX = _startRespawnX;
             t._startRespawnY = _startRespawnY;
+            if (Loose) t.LooseBuys();
             return t;
         }
 
@@ -220,36 +254,62 @@ namespace IGTAPTasMod
         public bool Bought(string path, string id, long input, long physics)
         {
             FullTasGoal g = Current;
-            if (g == null || g.kind != FullTasGoal.Buy && g.kind != FullTasGoal.Reward || g.boxes == null) return false;
+            if (g != null && (g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && g.boxes != null)
+                for (int i = 0; i < g.boxes.Length; i++)
+                    if ((_bought & (1 << i)) == 0 && (g.boxes[i] == id || g.boxes[i] == path))
+                    {
+                        _bought |= 1 << i;
+                        return Owned(g) && Reach(input, physics);
+                    }
+            if (!Loose) return false;
+            int b = Array.IndexOf(_named, id);
+            if (b < 0) b = Array.IndexOf(_named, path);
+            if (b >= 0 && _lastNaming[b] > Next) _banked |= 1UL << b;
+            return false;
+        }
+
+        /// <summary>Whether every box goal g names is bought for it or kept (loose buys).</summary>
+        bool Owned(FullTasGoal g)
+        {
             for (int i = 0; i < g.boxes.Length; i++)
-                if ((_bought & (1 << i)) == 0 && (g.boxes[i] == id || g.boxes[i] == path)) { _bought |= 1 << i; break; }
-            return _bought == (1 << g.boxes.Length) - 1 && Reach(input, physics);
+                if ((_bought & (1 << i)) == 0 && (!Loose || (_banked & 1UL << Array.IndexOf(_named, g.boxes[i])) == 0)) return false;
+            return true;
         }
 
         bool Reach(long input, long physics)
         {
+            FullTasGoal g = Goals[Next];
+            if (Loose && g.boxes != null)
+                for (int i = 0; i < g.boxes.Length; i++)
+                    if ((_bought & (1 << i)) == 0) _banked &= ~(1UL << Array.IndexOf(_named, g.boxes[i]));
             InputTicks[Next] = input;
             PhysicsTicks[Next] = physics;
             Next++;
             _bought = 0;
+            // Loose buys: a buy goal whose boxes were all bought before it came up is reached on the same tick.
+            FullTasGoal then = Current;
+            if (Loose && then != null && (then.kind == FullTasGoal.Buy || then.kind == FullTasGoal.Reward) && then.boxes != null && Owned(then))
+                Reach(input, physics);
             return true;
         }
 
         public sealed class State
         {
             public int Next, Bought;
+            public ulong Banked;
             public long[] InputTicks, PhysicsTicks;
         }
 
         public State Capture()
         {
-            return new State { Next = Next, Bought = _bought, InputTicks = (long[])InputTicks.Clone(), PhysicsTicks = (long[])PhysicsTicks.Clone() };
+            return new State { Next = Next, Bought = _bought, Banked = _banked, InputTicks = (long[])InputTicks.Clone(), PhysicsTicks = (long[])PhysicsTicks.Clone() };
         }
 
         public void Restore(State s)
         {
             Next = s.Next;
             _bought = s.Bought;
+            _banked = s.Banked;
             // The engine farm planner's goal list grows as it plans: a snapshot taken with fewer goals leaves the rest unreached.
             int n = Math.Min(s.InputTicks.Length, InputTicks.Length);
             Array.Copy(s.InputTicks, InputTicks, n);
@@ -257,6 +317,6 @@ namespace IGTAPTasMod
             for (int i = n; i < InputTicks.Length; i++) InputTicks[i] = PhysicsTicks[i] = -1;
         }
 
-        public int Hash() { return Next * 397 ^ _bought; }
+        public int Hash() { return Next * 397 ^ _bought ^ (int)(_banked * 0x9E3779B97F4A7C15UL >> 32); }
     }
 }

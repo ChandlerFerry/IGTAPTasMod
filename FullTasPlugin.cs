@@ -32,7 +32,13 @@ namespace IGTAPTasMod
             [JsonIgnore] public Vector2? RebaseAt { get { return rebaseAt == null || rebaseAt.Length < 2 ? (Vector2?)null : new Vector2(rebaseAt[0], rebaseAt[1]); } }
             /// <summary>Other runs whose offline bests seed this run's solve: from each of their goals on, their inputs are tried where this run reaches that goal.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> seeds;
+            /// <summary>
+            /// "loose": a purchase that isn't the next goal's box stands, and a box a later buy goal names counts toward it once
+            /// it's current (docs/fulltas.md "Loose buys"). Unset or "strict": only the next goal's box may be bought.
+            /// </summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string buys;
             public List<string> goals = new List<string>();
+            [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
         }
 
@@ -126,7 +132,8 @@ namespace IGTAPTasMod
         string FullTasPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas.json"); } }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
-        static string FullTasCategory(string run) { return "fulltas/" + run + "_" + CapabilityLabels["none"]; }
+        /// <summary>A Full-TAS run's route category (README "Route names"): its own unlocks, so the fixed NONE.</summary>
+        static string FullTasCategory(string run) { return "fulltas/" + run + "_" + default(Caps).Label; }
 
         struct FullTasUnlocks
         {

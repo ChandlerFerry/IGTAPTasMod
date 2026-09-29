@@ -3,7 +3,7 @@
   "id": "pauselift-wall",
   "name": "Pauselift from a wall cling up a tall wall",
   "tech": "pauselift",
-  "techNote": "Course 13's setup at engine tick 320 of 13_WJ_DS_DJ_BS_OM 7.32 (the cling on the block's right face, x 11200), on one 2000-unit wall. From the cling, press dash with the stick at rest: from a cling the dash flips away from the wall; tilt toward the wall in the dash freeze (turnX -1), so the turned dash faces the wall while wallJumpFacing still points away and Movement.Update's step-up (806-816) lifts the dot 56 units a frame. Unpaused only the tick's last frames lift (the route's 112); paused on one of them the step-up keeps running every paused frame, up to the wall's top.",
+  "techNote": "Course 13's setup at engine tick 320 of 13_WJ_DS_DJ_BS_ORB_ZIP_OM 7.32 (the cling on the block's right face, x 11200), on one 2000-unit wall. From the cling, press dash with the stick at rest: from a cling the dash flips away from the wall; tilt toward the wall in the dash freeze (turnX -1), so the turned dash faces the wall while wallJumpFacing still points away and Movement.Update's step-up (806-816) lifts the dot 56 units a frame. Unpaused only the tick's last frames lift (the route's 112); paused on one of them the step-up keeps running every paused frame, up to the wall's top.",
   "category": "WJ_DS",
   "anchor": [-1333, -10585],
   "shapes": [

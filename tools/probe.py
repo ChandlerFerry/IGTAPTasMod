@@ -2,6 +2,7 @@
 
   probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--fps N] [--omni]
            [--pause-at N [--pause-offset K] --pause-frames F]
+  probe.py <name> --tech ID [...]   a tech demo as its playback plays it (its start, inputs, savestate or lab map)
   probe.py --show <name>          summarise a probe log already written
 
 route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
@@ -61,8 +62,9 @@ def main():
         return
     parser = argparse.ArgumentParser()
     parser.add_argument("name")
-    parser.add_argument("route")
-    parser.add_argument("ticks")
+    parser.add_argument("route", nargs="?", default="")
+    parser.add_argument("ticks", nargs="?")
+    parser.add_argument("--tech", help="probe this tech's demo (route and ticks default to the demo's)")
     parser.add_argument("--savestate", default="")
     parser.add_argument("--capture-at", type=int)
     parser.add_argument("--omni", action="store_true", help="play with the omnidirectional dash too (restored after)")
@@ -71,8 +73,13 @@ def main():
     parser.add_argument("--pause-offset", type=int, default=0, help="Movement.Update frames after --pause-at before pausing")
     parser.add_argument("--pause-frames", type=int, default=0, help="Movement.Update frames to keep the pause menu open")
     args = parser.parse_args()
-    body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "ticks": json.load(open(args.ticks)),
-            "fps": args.fps, "omniDash": args.omni}
+    if not args.tech and not (args.route and args.ticks):
+        parser.error("route and ticks.json are required without --tech")
+    body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "fps": args.fps, "omniDash": args.omni}
+    if args.ticks:
+        body["ticks"] = json.load(open(args.ticks))
+    if args.tech:
+        body["tech"] = args.tech
     if args.capture_at is not None:
         body["captureAt"] = args.capture_at
     if args.pause_at is not None:

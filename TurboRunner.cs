@@ -302,6 +302,12 @@ namespace IGTAPTasMod
             public (PlatformMover mover, object[] fields, int layer, Vector3 local, (Vector2 position, Vector2 velocity) body)[] movers;
             /// <summary>Every refill orb's fields (its cooldown after a use and whether it is usable).</summary>
             public (JiggleDropScript orb, object[] fields)[] orbs;
+            /// <summary>
+            /// Every spike's live state (spikeScript <c>counter</c>, <c>playerKilled</c>). A restore mutes the callbacks around the
+            /// player's old position, so a run that ended in a spike never got its OnTriggerExit2D reset: without this the next run
+            /// (and a world exported after it) kept <c>playerKilled</c> on and passed through that spike.
+            /// </summary>
+            public (spikeScript spike, int counter, bool killed)[] spikes;
             public (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] routines;
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
@@ -567,7 +573,24 @@ namespace IGTAPTasMod
                     m => (m, FieldState.Capture(m), m.gameObject.layer, m.transform.localPosition, MoverPose(m))),
                 orbs = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     o => (o, FieldState.Capture(o))),
+                spikes = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                    k => (k, SpikeCounter(k), SpikeKilled(k))),
                 routines = CaptureRoutines(next) };
+        }
+
+        static readonly AccessTools.FieldRef<spikeScript, int> SpikeCounter = AccessTools.FieldRefAccess<spikeScript, int>("counter");
+        static readonly AccessTools.FieldRef<spikeScript, bool> SpikeKilled = AccessTools.FieldRefAccess<spikeScript, bool>("playerKilled");
+
+        /// <summary>The spikes' counters and kill flags as the snapshot had them (<see cref="Snapshot.spikes"/>).</summary>
+        static void RestoreSpikes(Snapshot s)
+        {
+            if (s.spikes == null) return;
+            foreach (var (spike, counter, killed) in s.spikes)
+            {
+                if (spike == null) continue;
+                SpikeCounter(spike) = counter;
+                SpikeKilled(spike) = killed;
+            }
         }
 
         /// <summary>The refill orbs as the snapshot had them; their sprites follow (the game's refresh), the usable flag stays the snapshot's.</summary>
@@ -581,6 +604,16 @@ namespace IGTAPTasMod
                 bool usable = OrbUsable(orb);
                 OrbState.Invoke(orb, new object[] { false });
                 OrbUsable(orb) = usable;
+            }
+        }
+
+        /// <summary>Every spike as no touch left it (spikeScript.OnTriggerExit2D: <c>counter</c> 0, <c>playerKilled</c> off).</summary>
+        public static void ClearSpikes()
+        {
+            foreach (spikeScript spike in UnityEngine.Object.FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                SpikeCounter(spike) = 0;
+                SpikeKilled(spike) = false;
             }
         }
 
@@ -616,6 +649,7 @@ namespace IGTAPTasMod
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
             // After the economy: the orbs' sprites follow the refill upgrades the snapshot had.
             RestoreOrbs(s);
+            RestoreSpikes(s);
             s.vman?.Restore();
             // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
             UnityEngine.Random.state = s.random;

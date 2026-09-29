@@ -29,6 +29,11 @@ namespace IGTAP.EngineSim
         /// <summary>The cell size fields build with.</summary>
         public static float CellSize = DefaultCell;
 
+        /// <summary>The player's half size a free cell must leave room for (x, y; zero: none, as `solve --guide` builds): with it a
+        /// cell is free only when the hitbox centred there clears every solid, so a gap the player can't fit through is no way
+        /// (the planner sets its 41x72 hitbox's, on a fine cell).</summary>
+        public static Vector2 Clearance = Vector2.zero;
+
         const int Free = 0, Spike = 1, Solid = 2;
         const int SpikeLayer = 6;
         /// <summary>A step into a spike cell costs this many free steps.</summary>
@@ -90,6 +95,24 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>
+        /// Forced-path avoid boxes (world frame) as walls: a run is cut on entering one, so it is no way to the target (the
+        /// planner sets them; a box that cuts only after a goal, <see cref="OfflineSolver.Box.After"/>, is left out). Per simulation.
+        /// </summary>
+        public void SetAvoid(IReadOnlyList<OfflineSolver.Box> avoid)
+        {
+            lock (_gate)
+            {
+                _avoid = avoid.Where(b => b.After == 0).Select(b =>
+                {
+                    CapturePos a = _sim.ToCapture(new WorldPos(b.X0, b.Y0)), c = _sim.ToCapture(new WorldPos(b.X1, b.Y1));
+                    return new Rect(a.x, a.y, c.x - a.x, c.y - a.y);
+                }).ToList();
+                _built.Clear();
+            }
+        }
+        List<Rect> _avoid = new List<Rect>();
+
+        /// <summary>
         /// How far <paramref name="at"/> (capture frame) is from the target the run scores on now: the current at: goal in
         /// Full-TAS goal mode, else the next forced-path box not yet passed (<paramref name="waypoints"/>: how many the run
         /// has), else the finish box, the finish start's gate or the course's end gate. NaN when the run has no place to
@@ -97,7 +120,20 @@ namespace IGTAP.EngineSim
         /// </summary>
         public float Distance(CapturePos at, int waypoints = int.MaxValue)
         {
-            if (!Target(waypoints, out int key, out List<Rect> boxes)) return float.NaN;
+            return Target(waypoints, out int key, out List<Rect> boxes) ? Measure(at, key, boxes) : float.NaN;
+        }
+
+        /// <summary>How far <paramref name="at"/> is from the target course's start gates (a course run whose timer isn't running
+        /// yet heads there first: the planner's first stage); NaN when the world has none.</summary>
+        public float StartGateDistance(CapturePos at)
+        {
+            List<Rect> boxes = _startGates ?? (_startGates = GateBoxes(_sim.TargetCourse, true));
+            return boxes.Count > 0 ? Measure(at, int.MinValue, boxes) : float.NaN;
+        }
+        List<Rect> _startGates;
+
+        float Measure(CapturePos at, int key, List<Rect> boxes)
+        {
             int version = Version();
             lock (_gate)
             {
@@ -116,21 +152,23 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>Where the run heads now: its boxes, and a key naming them (-1: the finish box, -2: the finish start's gate,
-        /// -3: the course's end gate, -4 - i: forced-path box i, else the at: goal's index), false while the current goal is
-        /// not an at: one.</summary>
+        /// -3: the course's end gate, -4 - i: forced-path box i, else the goal's index: an at: goal's rect, a start: or finish:
+        /// goal's course start or end gates), false while the current goal is none of those (a buy, a reward).</summary>
         bool Target(int waypoints, out int key, out List<Rect> boxes)
         {
             FullTasTracker goals = _sim.Goals;
             if (goals != null)
             {
                 FullTasGoal goal = goals.Current;
-                if (goal == null || goal.kind != FullTasGoal.At) { key = 0; boxes = null; return false; }
+                bool gate = goal != null && (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish) && goal.course != 0;
+                if (goal == null || goal.kind != FullTasGoal.At && !gate) { key = 0; boxes = null; return false; }
                 key = goals.Next;
                 while (_goalBoxes.Count <= key) _goalBoxes.Add(null);
                 boxes = _goalBoxes[key];
                 if (boxes == null)
-                    _goalBoxes[key] = boxes = new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
-                return true;
+                    _goalBoxes[key] = boxes = gate ? GateBoxes(goal.course, goal.kind == FullTasGoal.Start)
+                        : new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
+                return boxes.Count > 0;
             }
             if (waypoints >= 0 && waypoints < _via.Length)
             {
@@ -280,6 +318,14 @@ namespace IGTAP.EngineSim
                 if (c.m_IsTrigger && !spike) continue;
                 for (int s = 0; s < shapes.Length; s++) Raster(field, shapes[s], pose, new Vector3(by.x, by.y, 0f), dilate, spike);
             }
+            // Forced-path avoid boxes cut a run whose centre enters them: their cells are walls.
+            foreach (Rect r in _avoid)
+            {
+                int cx0 = Math.Max(0, Mathf.FloorToInt((r.xMin - field.X0) / field.Cell)), cx1 = Math.Min(field.W - 1, Mathf.FloorToInt((r.xMax - field.X0) / field.Cell));
+                int cy0 = Math.Max(0, Mathf.FloorToInt((r.yMin - field.Y0) / field.Cell)), cy1 = Math.Min(field.H - 1, Mathf.FloorToInt((r.yMax - field.Y0) / field.Cell));
+                for (int cy = cy0; cy <= cy1; cy++)
+                    for (int cx = cx0; cx <= cx1; cx++) field.Cost[cy * field.W + cx] = Solid;
+            }
         }
 
         void Raster(Field field, ShapeData shape, Transform pose, Vector3 by, float dilate, bool spike)
@@ -287,25 +333,27 @@ namespace IGTAP.EngineSim
             Vector2[] vertices = shape.Vertices;
             if (_points.Length < vertices.Length) Array.Resize(ref _points, vertices.Length);
             Vector2[] points = _points;
+            // With a clearance the test runs with y scaled by its x/y ratio, so one radius reaches the half size both ways.
+            float sy = Clearance.x > 0f && Clearance.y > 0f ? Clearance.x / Clearance.y : 1f;
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
             for (int i = 0; i < vertices.Length; i++)
             {
                 Vector2 v = vertices[i];
                 if (pose != null) v = Pose(pose, by, v);
-                points[i] = v;
                 x0 = Math.Min(x0, v.x); y0 = Math.Min(y0, v.y);
                 x1 = Math.Max(x1, v.x); y1 = Math.Max(y1, v.y);
+                points[i] = new Vector2(v.x, v.y * sy);
             }
-            float reach = shape.Radius + dilate, reach2 = reach * reach;
+            float reach = shape.Radius + dilate + Math.Max(0f, Clearance.x), reach2 = reach * reach, reachY = reach / sy;
             int cx0 = Math.Max(0, Mathf.FloorToInt((x0 - reach - field.X0) / field.Cell));
-            int cy0 = Math.Max(0, Mathf.FloorToInt((y0 - reach - field.Y0) / field.Cell));
+            int cy0 = Math.Max(0, Mathf.FloorToInt((y0 - reachY - field.Y0) / field.Cell));
             int cx1 = Math.Min(field.W - 1, Mathf.FloorToInt((x1 + reach - field.X0) / field.Cell));
-            int cy1 = Math.Min(field.H - 1, Mathf.FloorToInt((y1 + reach - field.Y0) / field.Cell));
+            int cy1 = Math.Min(field.H - 1, Mathf.FloorToInt((y1 + reachY - field.Y0) / field.Cell));
             byte mark = spike ? (byte)Spike : (byte)Solid;
             for (int cy = cy0; cy <= cy1; cy++)
                 for (int cx = cx0; cx <= cx1; cx++)
                 {
-                    var at = new Vector2(field.X0 + (cx + .5f) * field.Cell, field.Y0 + (cy + .5f) * field.Cell);
+                    var at = new Vector2(field.X0 + (cx + .5f) * field.Cell, (field.Y0 + (cy + .5f) * field.Cell) * sy);
                     if (DistanceSq(shape, points, vertices.Length, at) > reach2) continue;
                     int i = cy * field.W + cx;
                     if (field.Cost[i] == Free || mark == Solid) field.Cost[i] = mark;

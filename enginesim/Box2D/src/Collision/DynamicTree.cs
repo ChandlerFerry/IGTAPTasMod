@@ -882,6 +882,13 @@ namespace Box2D
 			}
 		}
 
+		/// <summary>The leaves (proxies) whose user data <paramref name="keep"/> accepts, in pool order.</summary>
+		internal void CollectLeaves(Func<object, bool> keep, List<int> into)
+		{
+			for (int i = 0; i < _capacity; i++)
+				if (_nodes[i].Height == 0 && keep(_nodes[i].UserData)) into.Add(i);
+		}
+
 		[SkipLocalsInit]
 		public void Query(Func<int, bool> queryCallback, in b2AABB aabb)
 		{

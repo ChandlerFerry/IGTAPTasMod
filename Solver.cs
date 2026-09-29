@@ -34,10 +34,19 @@ namespace IGTAPTasMod
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
-            [JsonIgnore] public int MinLevel { get { return CapsLevel(minCapabilities); } }
-            [JsonIgnore] public int MaxLevel { get { return !string.IsNullOrEmpty(maxCapabilities) ? CapsLevel(maxCapabilities) : IsBonus ? MinLevel : TopLevel; } }
-            /// <summary>WJ_DS_DJ_BS_OM is every target's (course, bonus or transition), outside its min–max range.</summary>
-            public bool HasCategory(string caps) { int level = CapsLevel(caps); return level == OmniLevel || level >= MinLevel && level <= MaxLevel; }
+            /// <summary>The lowest <see cref="Categories.Ladder"/> step it runs (courses.json's minCapabilities; none when unset).</summary>
+            [JsonIgnore] public int MinStep { get { return Math.Max(0, Categories.LadderStep(minCapabilities)); } }
+            /// <summary>The highest ladder step it runs (README ### Rules 17-18): maxCapabilities, a bonus's own step, or up to
+            /// the ladder's top when it's unset.</summary>
+            [JsonIgnore] public int MaxStep { get { return !string.IsNullOrEmpty(maxCapabilities) ? Math.Max(0, Categories.LadderStep(maxCapabilities)) : IsBonus ? MinStep : Categories.Ladder.Length - 1; } }
+            /// <summary>The category is run here (README ### Rules 17-19, 26): <see cref="CategoryDef.RunsOn"/>.</summary>
+            public bool HasCategory(string idOrLabel)
+            {
+                CategoryDef def = Categories.Find(idOrLabel);
+                return def != null && Categories.IsTarget(Token) && def.RunsOn(Token, MinStep, MaxStep);
+            }
+            /// <summary>Every category it runs, in registry order.</summary>
+            [JsonIgnore] public string[] CategoryIds { get { return Categories.All.Where(d => HasCategory(d.Id)).Select(d => d.Id).ToArray(); } }
         }
 
         sealed class SolverTick
@@ -159,13 +168,21 @@ namespace IGTAPTasMod
 
         static Vector2 Absolute(RawTickSample t) { return new Vector2(t.positionX - t.originX, t.positionY - t.originY); }
 
-        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(NONE|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ))?\b", RegexOptions.IgnoreCase);
+        static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(?<label>" + Caps.LabelPattern + @"))?\b", RegexOptions.IgnoreCase);
         const float BonusArrivalSize = 32f;
+
+        /// <summary>The transition this name is ("Course1_To_Course2", optionally with _WJ_DS), or empty when its category part
+        /// is no category ("Course1_To_Course2_almost" names none).</summary>
+        static Match MatchTransitionName(string name)
+        {
+            Match m = TransitionName.Match(name ?? "");
+            return !m.Groups["label"].Success || Categories.IsCategory(m.Groups["label"].Value.ToUpperInvariant()) ? m : Match.Empty;
+        }
 
         object AddTransitionFromRecording(RecordingDefinition recording)
         {
             if (recording.samples == null || recording.samples.Count == 0) throw new InvalidOperationException("The recording is empty.");
-            Match m = TransitionName.Match(recording.name ?? "");
+            Match m = MatchTransitionName(recording.name);
             if (!m.Success)
                 throw new InvalidOperationException("Name the recording \"Course1_To_Course2\" or \"Course2_To_Bonus2\" (optionally with _WJ, _WJ_DS, ...) first.");
             bool fromBonus = m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase);
@@ -189,9 +206,13 @@ namespace IGTAPTasMod
                 int id = 201;
                 while (_courses.Any(c => c.id == id)) id++;
                 Movement player = FindWorldMovement();
-                int level = m.Groups[5].Success ? CapsLevel(CapsFor(m.Groups[5].Value.ToUpperInvariant())) : player == null ? 0 : Math.Min(TopLevel, SaveUnlockLevel(player));
+                // Its min is always a ladder step (README ### Rules 18): the name's category when it is one of them, else the
+                // largest the save's unlocks have (a course's, capped at the ladder's top).
+                CategoryDef named = !m.Groups["label"].Success ? null : Categories.Find(m.Groups["label"].Value.ToUpperInvariant());
+                string step = named != null && named.Scope == CategoryScope.Range ? named.Id
+                    : player == null ? default(Caps).Id : LadderStepFor(SaveUnlocks(player));
                 transition = new CourseDef { id = id, name = origin + "to" + target, x = start.x, y = start.y, from = origin, to = target,
-                    minCapabilities = CapabilityLabels.Keys.First(k => CapsLevel(k) == level) };
+                    minCapabilities = step };
                 if (!toBonus)
                 {
                     transition.toCourse = int.Parse(target);
@@ -228,7 +249,7 @@ namespace IGTAPTasMod
             if (known != null) { start = new Vector2(known.x, known.y); return true; }
             foreach (RecordingDefinition r in _recordings)
             {
-                Match m = TransitionName.Match(r.name ?? "");
+                Match m = MatchTransitionName(r.name);
                 if (!m.Success || r.samples == null || r.samples.Count == 0 || !m.Groups[1].Value.Equals("bonus", StringComparison.OrdinalIgnoreCase)
                     || "bonus" + m.Groups[2].Value != bonus) continue;
                 start = Absolute(r.samples[0]) + new Vector2(0f, 12f);
@@ -238,18 +259,12 @@ namespace IGTAPTasMod
             return false;
         }
 
-        static readonly Dictionary<string, string> CapabilityLabels = new Dictionary<string, string> {
-            { "none", "NONE" }, { "wj", "WJ" }, { "wjds", "WJ_DS" }, { "wjdsdj", "WJ_DS_DJ" }, { "wjdsdjbs", "WJ_DS_DJ_BS" }, { "wjdsdjbsom", "WJ_DS_DJ_BS_OM" } };
-
         void CheckCategory(int course, string capabilities)
         {
             CourseDef def = _courses.Find(c => c.id == course);
             if (def == null || def.HasCategory(capabilities)) return;
-            string Label(int level) => CapabilityLabels.First(p => CapsLevel(p.Key) == level).Value;
-            throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + CapabilityLabels[capabilities]
-                + " category; it " + (def.MaxLevel == def.MinLevel ? "is only run in " + Label(def.MinLevel)
-                    : "is run in " + Label(def.MinLevel) + " to " + Label(def.MaxLevel))
-                + " and " + Label(OmniLevel) + ".");
+            throw new InvalidOperationException((def.IsBonus ? "Bonus " : "Course ") + def.Token + " has no " + Caps.Parse(capabilities).Label
+                + " category; it is run in " + string.Join(", ", def.CategoryIds.Select(Caps.Parse).Select(c => c.Label)) + ".");
         }
 
         static readonly MethodInfo LoadZoneNow = AccessTools.Method(typeof(ZoneLoader), "_LoadZone");
@@ -257,8 +272,24 @@ namespace IGTAPTasMod
 
         void EnsureZone(CourseDef def)
         {
-            ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
-            if (def == null || loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return;
+            int zone = TargetZone(def, out ZoneLoader loader);
+            if (zone == 0 || zone == loader.activeZone && ZonesSettled()) return;
+            LoadZoneNow.Invoke(loader, new object[] { zone });
+            Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
+        }
+
+        /// <summary>Whether the live world has the course's zone loaded (and only it), as its start state was captured in.</summary>
+        bool ZoneReady(CourseDef def)
+        {
+            int zone = TargetZone(def, out ZoneLoader loader);
+            return zone == 0 || zone == loader.activeZone && ZonesSettled();
+        }
+
+        /// <summary>The zone of the start gate nearest the course's start; 0 when there is no zone loader or no gate nearby.</summary>
+        int TargetZone(CourseDef def, out ZoneLoader loader)
+        {
+            loader = FindAnyObjectByType<ZoneLoader>();
+            if (def == null || loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return 0;
             if (_gateZones.Count == 0 || _gateZones.Exists(g => g.gate == null)) _gateZones = GateZones(zones);
             Vector2 start = new Vector2(def.x, def.y) + CurrentOrigin();
             int zone = 0;
@@ -268,9 +299,7 @@ namespace IGTAPTasMod
                 float d = ((Vector2)gate.transform.position - start).sqrMagnitude;
                 if (d < nearest) { nearest = d; zone = gateZone; }
             }
-            if (zone == 0 || zone == loader.activeZone && ZonesSettled()) return;
-            LoadZoneNow.Invoke(loader, new object[] { zone });
-            Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
+            return zone;
         }
 
         bool IsOvergrownCourse(string token) { return int.TryParse(token, out int id) && _courses.Exists(c => c.id == id && c.overgrown); }
@@ -394,13 +423,13 @@ namespace IGTAPTasMod
         {
             CourseDef def = _courses.Find(c => c.id == course);
             if (def == null) throw new InvalidOperationException("Unknown course " + course + ".");
-            if (!CapabilityLabels.ContainsKey(capabilities ?? "")) throw new InvalidOperationException("Unknown capabilities.");
+            if (!Categories.IsCategory(capabilities ?? "")) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, capabilities);
             string[] known = OptionalBlocks(course).Where(b => b.caps.Contains(capabilities)).Select(b => b.name).ToArray();
             string missing = optional.FirstOrDefault(n => !known.Contains(n));
             if (missing != null) throw new InvalidOperationException("No optional block '" + missing + "' for " + def.Token + " " + capabilities + ".");
             return new SolveJob { course = course, caps = capabilities, optional = optional,
-                label = def.Token + "_" + CapabilityLabels[capabilities] + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional)) };
+                label = def.Token + "_" + Caps.Parse(capabilities).Label + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional)) };
         }
 
         // The body's picked optional blocks, or the course's default-on blocks when it names none.
@@ -618,7 +647,7 @@ namespace IGTAPTasMod
         object[] BuildCourseWebState()
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus,
-                levels = CapsLadder.Where(c.HasCategory).Select(CapsLevel).ToArray(), @from = c.from, to = c.to,
+                categories = c.CategoryIds, @from = c.from, to = c.to,
                 hint = c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
                 optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, on = b.on, capabilities = b.caps }).ToArray() }).ToArray();
         }
@@ -733,7 +762,7 @@ namespace IGTAPTasMod
             int id = Number(body, "course", 0);
             string caps = Text(body, "capabilities");
             CourseDef course = _courses.FirstOrDefault(c => c.id == id);
-            if (course == null || (caps != "none" && CapsLevel(caps) == 0) || !course.HasCategory(caps))
+            if (course == null || !course.HasCategory(caps))
             {
                 request.StatusCode = 400;
                 return new { ok = false, error = "Unknown course " + id + " or capabilities '" + caps + "'." };
@@ -867,8 +896,28 @@ namespace IGTAPTasMod
 
         const int JumpBufferTicks = 12;
         const int DashBufferTicks = 8;
+        // Movement.getPlayerControlledInput holds a buffered dash through a wall jump's first 5 lock ticks: while
+        // wallJumpMovementLockRemaining >= wallJumpMovementLockFrames - 5 it re-arms Invoke("cancelDashBuffer", 0.06f) each
+        // tick, so a press's buffer outlives its 0.12 s. After the last hold it lives 0.06 s = 3 ticks, +1 (the hold runs on
+        // the next tick) +2 slack.
+        const int DashHoldTicks = 6;
         const int JumpCutBufferTicks = 15;
         List<string> _audit;
+        // MacroEngine.Clock of the last audited tick after which the game held a press's dash buffer (DashHoldTicks).
+        int _dashHeldAt;
+
+        List<string> StartAudit()
+        {
+            _dashHeldAt = int.MinValue / 2;
+            return _audit = new List<string>();
+        }
+
+        /// <summary>The next tick's getPlayerControlledInput holds the buffered dash (its first check, Movement.cs 1596).</summary>
+        static bool DashBufferHeld(Movement player)
+        {
+            return player.dashCooldown < 0f && GetMovementBool(player, "dashUnlocked", false)
+                && !(player.wallJumpMovementLockRemaining < player.wallJumpMovementLockFrames - 5f);
+        }
 
         void AuditTick(Movement player, int tick)
         {
@@ -876,8 +925,12 @@ namespace IGTAPTasMod
             int now = _engine.Clock;
             if (GetMovementBool(player, "jumpBuffer", false) && now - _engine.LastJumpPress > JumpBufferTicks)
                 _audit.Add("tick " + tick + ": jump buffered with no jump press within the game's buffer window");
-            if (GetMovementBool(player, "dashBuffer", false) && now - _engine.LastDashPress > DashBufferTicks)
-                _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
+            if (GetMovementBool(player, "dashBuffer", false))
+            {
+                if (now - _engine.LastDashPress > DashBufferTicks && now - _dashHeldAt > DashHoldTicks)
+                    _audit.Add("tick " + tick + ": dash buffered with no dash press within the game's buffer window");
+                else if (DashBufferHeld(player)) _dashHeldAt = now;
+            }
             if (GetMovementBool(player, "jumpCutBuffer", false) && now - _engine.LastJumpRelease > JumpCutBufferTicks)
                 _audit.Add("tick " + tick + ": jump cut buffered with no jump release within the game's buffer window");
             if (_fullTas != null)
@@ -893,22 +946,16 @@ namespace IGTAPTasMod
                     _audit.Add("tick " + tick + ": unlocks differ from the run's purchases (" + u + ")");
                 return;
             }
-            int level = CapsLevel(_solverCaps);
-            if (GetMovementBool(player, "wallJumpUnlocked", false) != (level >= 1)
-                || GetMovementBool(player, "dashUnlocked", false) != (level >= 2)
-                || !Equals(GetMovementField(player, "maxAirDashes"), level >= 2 ? 1 : 0)
-                || GetMovementBool(player, "doubleJumpUnlocked", false) != (level >= 3)
-                || !Equals(GetMovementField(player, "maxAirJumps"), level >= 3 ? 1 : 0)
-                || GetMovementBool(player, "blockSwapUnlocked", false) != (level >= 4)
-                || GetMovementBool(player, "omniDashUnlocked", false) != (level >= 5)
-                || CategoryAbilities(_solverCaps).Any(a => a.field.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal) && !Equals(GetMovementField(player, a.field), a.value)))
-                _audit.Add("tick " + tick + ": unlocks differ from category " + CapabilityLabels[_solverCaps]);
+            // The unlocks must match the category exactly on every tick (README ### Rules 10): the expected values come from
+            // the same list its start applies, less what a run changes on its way (CategoryRunState).
+            if (CategoryAbilities(_solverCaps).Any(a => !CategoryRunState.Contains(a.field) && !Equals(GetMovementField(player, a.field), a.value)))
+                _audit.Add("tick " + tick + ": unlocks differ from category " + Caps.Parse(_solverCaps).Label);
         }
 
         string RouteViolation(List<SolverTick> inputs, float time)
         {
             if (_solverFullTas != null) return FullTasViolation(inputs, time);
-            var audit = _audit = new List<string>();
+            var audit = StartAudit();
             bool finished;
             float replayed;
             try { finished = Evaluate(inputs, out replayed, out _, out _); }
@@ -987,7 +1034,7 @@ namespace IGTAPTasMod
         }
 
         string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
-            : _solverTarget.Token + "_" + CapabilityLabels[_solverCaps]; } }
+            : _solverTarget.Token + "_" + Caps.Parse(_solverCaps).Label; } }
 
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
 
@@ -1016,15 +1063,27 @@ namespace IGTAPTasMod
             return true;
         }
 
-        static readonly Regex CategoryRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) ([\d.]+)$", RegexOptions.IgnoreCase);
-        static readonly Regex FarmRoute = new Regex(@"^([^_\s]+_(?:NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)) farm ([\d.]+)$", RegexOptions.IgnoreCase);
+        // A route name's category part ("4_WJ_DS"): the label is matched in any case but must be one of the categories, so
+        // "4_almost_completed 13.46" is no route.
+        static readonly Regex CategoryRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex FarmRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) farm (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
+        static readonly Regex RoutePrefix = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @"))(?: |$)", RegexOptions.IgnoreCase);
+
+        static Match MatchRoute(Regex pattern, string name)
+        {
+            Match m = pattern.Match(name ?? "");
+            return m.Success && Categories.IsCategory(m.Groups["label"].Value.ToUpperInvariant()) ? m : Match.Empty;
+        }
+        static Match MatchCategoryRoute(string name) { return MatchRoute(CategoryRoute, name); }
+        static Match MatchFarmRoute(string name) { return MatchRoute(FarmRoute, name); }
+        static Match MatchRoutePrefix(string name) { return MatchRoute(RoutePrefix, name); }
 
         static bool RankedRoute(string name, out string key, out float time)
         {
-            Match g = CategoryRoute.Match(name ?? "");
-            bool farm = !g.Success && (g = FarmRoute.Match(name ?? "")).Success;
-            key = g.Success ? g.Groups[1].Value.ToUpperInvariant() + (farm ? " FARM" : "") : null;
-            time = g.Success ? float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture) : 0f;
+            Match g = MatchCategoryRoute(name);
+            bool farm = !g.Success && (g = MatchFarmRoute(name)).Success;
+            key = g.Success ? g.Groups["category"].Value.ToUpperInvariant() + (farm ? " FARM" : "") : null;
+            time = g.Success ? float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture) : 0f;
             return g.Success;
         }
 

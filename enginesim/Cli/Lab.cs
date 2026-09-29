@@ -38,11 +38,18 @@ namespace IGTAP.EngineSim.Cli
                         + "                                         geometry (the world export, off colliders included), far from the routes'\n"
                         + "                                         paths; --lab records the best one (or --index N) as the lab map's anchor\n"
                         + "  lab solve <trace.json> <labmap.json> [--out <file>] [--max-ticks N] [--threads N] [--exact]\n"
-                        + "            [--forbid-jump-not-grounded] [--forbid-wall-coyote-jump]\n"
+                        + "            [--forbid-jump-not-grounded] [--forbid-wall-coyote-jump] [--forbid-boosted-double-jump]\n"
+                        + "            [--from <demo.json> [--from-inputs N]] [--check-bound [--check-depth N]] [--check-rollouts N [--seed S]]\n"
                         + "                                         injects the lab map into the trace's world and searches, exhaustively, for\n"
                         + "                                         the minimum-tick human-legal input sequence from the lab's start to its\n"
                         + "                                         finish box; writes labmaps/<id>.demo.json. The controls: no jump press\n"
-                        + "                                         off solid ground; no wall jump unless the wall rays hit\n"
+                        + "                                         off solid ground; no wall jump unless the wall rays hit; no double jump\n"
+                        + "                                         at Velocity.y 200 or more. --from: every run starts with a demo's first\n"
+                        + "                                         N inputs (all of them without --from-inputs). A state with its dash\n"
+                        + "                                         spent, off ground and wall, whose highest reach by the last tick keeps\n"
+                        + "                                         the collider under the box is cut (the free-flight bound);\n"
+                        + "                                         --check-bound cuts nothing and checks every state against it,\n"
+                        + "                                         --check-rollouts checks it on N random runs instead of searching\n"
                         + "  lab replay <trace.json> <labmap.json> <demo.json> [--out <file>] [--write-path [--path-ticks N]]\n"
                         + "                                         one demo replayed from the lab start, tick by tick; --write-path\n"
                         + "                                         (re)writes the demo's ghost path (--path-ticks N: its own first N\n"
@@ -246,6 +253,30 @@ namespace IGTAP.EngineSim.Cli
             public float X, Y;
             /// <summary>On real ground (onGround with the coyote window reset): the negative control's predicate.</summary>
             public bool SolidGround;
+            /// <summary>The free-flight bound (<see cref="LabFlight"/>): the highest the player's collider top can be on any tick up
+            /// to the search's last (world frame); +infinity where the bound doesn't apply.</summary>
+            public float FlightTop = float.PositiveInfinity;
+            /// <summary>--check-bound: per physics tick from the lab start, the lowest free-flight bound of this node and every
+            /// ancestor (a descendant's actual y above it would prove the bound wrong).</summary>
+            public float[] Envelope;
+            /// <summary>Why the free-flight bound doesn't cover this state (null where it does).</summary>
+            public string FlightWhy;
+        }
+
+        /// <summary>The free-flight bound's settings for Step: the search's last tick, the boost control's double jump gate, and
+        /// --check-bound (keep every state's bound curve to check its descendants against).</summary>
+        sealed class FlightOptions
+        {
+            public int MaxTicks;
+            public bool Boost, Keep;
+        }
+
+        /// <summary>A reason without its numbers, to count states by it.</summary>
+        static string Reason(string why)
+        {
+            if (why == null) return "?";
+            int cut = why.IndexOfAny("0123456789(-".ToCharArray());
+            return (cut > 0 ? why.Substring(0, cut) : why).TrimEnd(' ', ',', ':');
         }
 
         static int Solve(string[] args)
@@ -266,6 +297,33 @@ namespace IGTAP.EngineSim.Cli
             // jumps off a wall stay legal; a wall jump off wall coyote frames (the rays already missing) or off a stored count
             // does not, so a run that finds nothing proves the finish needs one.
             bool wallControl = args.Contains("--forbid-wall-coyote-jump");
+            // The boost control: no double jump that finds Velocity.y at 200 or more (only the 700 gate after a jump that wasn't
+            // a normal one lets it through). Every other jump, a double jump under 200 included, stays legal, so a run that finds
+            // nothing within a bound proves the finish needs the boosted double jump by then.
+            bool boostControl = args.Contains("--forbid-boosted-double-jump");
+            // The free-flight bound (LabFlight): a state with its dash spent, off ground and wall, whose highest reach by the last
+            // tick keeps its collider under the finish box is cut (admissible: LabFlight's summary argues why). --check-bound cuts
+            // nothing and checks the bound instead: no state may ever be above the bound any of its ancestors computed.
+            bool checkBound = args.Contains("--check-bound");
+            // --check-depth N: with --check-bound, expand states only up to tick N (the bounds still run to --max-ticks).
+            int checkDepth = checkBound ? Opt(args, "--check-depth", maxTicks) : maxTicks;
+            // --check-rollouts N [--seed S]: N random runs from the start to --max-ticks instead of the search, each state checked
+            // against the bounds of every earlier state of its run (the bound's long horizons, which a breadth-first check can't reach).
+            int rollouts = Opt(args, "--check-rollouts", 0);
+            var flight = new FlightOptions { MaxTicks = maxTicks, Boost = boostControl, Keep = checkBound || rollouts > 0 };
+            // --from <demo.json> --from-inputs N: the search starts from the state a demo's first N inputs reach (replayed from
+            // the lab start, so the state is the game's own, its pending Invokes included) and every run it finds or rules out
+            // begins with them: a control over everything that can follow a fixed opening.
+            string fromPath = OptS(args, "--from", null);
+            List<InputTick> prefix = null;
+            if (fromPath != null)
+            {
+                using JsonDocument from = JsonDocument.Parse(File.ReadAllText(fromPath));
+                List<InputTick> demoInputs = from.RootElement.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
+                int count = Opt(args, "--from-inputs", demoInputs.Count);
+                if (count < 1 || count > demoInputs.Count) throw new ArgumentException("--from-inputs takes 1 to " + demoInputs.Count + " inputs of " + fromPath + ".");
+                prefix = demoInputs.Take(count).ToList();
+            }
 
             var (sim, trace, _) = Open(tracePath, lab);
             Place(sim, lab);
@@ -273,11 +331,14 @@ namespace IGTAP.EngineSim.Cli
             var (fx, fy, fw, fh) = lab.Finish;
             Vector2 anchor = new Vector2(lab.Anchor.x, lab.Anchor.y);
             if (TouchesAtStart(sim)) throw new InvalidOperationException("The lab's start is inside its finish box.");
+            // The player's collider around the transform over every collider config: the finish is a touch of the box by it.
+            var (colliderTop, colliderBottom, colliderReach) = LabFlight.Extents(sim.Player);
 
             int alphabet = Alphabet(false, true, false).Count;
             Console.WriteLine($"lab {lab.id} at {anchor.x:0.#},{anchor.y:0.#} (world frame) in {Path.GetFileName(tracePath)}: "
                 + $"{lab.shapes.Count} shapes, category {lab.category}; finish box {fw:0}x{fh:0} at {fx:0.#},{fy:0.#} from the anchor; "
-                + $"search to {maxTicks} ticks, alphabet {alphabet} inputs/tick, {(exact ? "bit-exact" : "quantized")} key{(control ? ", control run (no jump press off solid ground)" : "")}{(wallControl ? ", wall control (no wall jump unless the wall rays hit)" : "")}");
+                + $"search to {maxTicks} ticks, alphabet {alphabet} inputs/tick, {(exact ? "bit-exact" : "quantized")} key{(control ? ", control run (no jump press off solid ground)" : "")}{(wallControl ? ", wall control (no wall jump unless the wall rays hit)" : "")}{(boostControl ? ", boost control (no double jump at Velocity.y 200 or more)" : "")}");
+            Console.WriteLine("  " + LabFlight.Describe(sim) + (checkBound ? "; --check-bound: no cut, every state checked against its ancestors' bounds" : ""));
 
             var clock = System.Diagnostics.Stopwatch.StartNew();
             bool startCanDash = GetMovementBool(sim, "dashUnlocked");
@@ -285,10 +346,27 @@ namespace IGTAP.EngineSim.Cli
             var start = new Node { Path = new List<InputTick>(), Ticks = 0, JumpHeld = false, CanDash = startCanDash,
                 Key = KeyOf(sim, exact), MaxY = MaxReach(sim, control), X = startAt.x, Y = startAt.y,
                 SolidGround = GroundCheckGrounds(sim, startAt) };
-            var visited = new Dictionary<string, int> { [start.Key] = 0 };
+            if (prefix != null)
+            {
+                bool held = false;
+                foreach (InputTick k in prefix.Take(prefix.Count - 1)) held = k.press || k.held && !k.release || held && !k.release && !k.press;
+                var opening = new Node { Path = prefix.Take(prefix.Count - 1).ToList(), JumpHeld = held, CanDash = startCanDash,
+                    MaxY = start.MaxY, X = start.X, Y = start.Y, SolidGround = start.SolidGround };
+                SimSnapshot none = null;
+                start = Step(sim, opening, prefix[prefix.Count - 1], ref none, exact, control, wallControl, boostControl, flight, out RunResult openingRun, out _)
+                    ?? throw new InvalidOperationException("The opening (" + prefix.Count + " inputs of " + fromPath + ") "
+                        + (openingRun == null ? "breaks a control" : openingRun.Finished ? "already finishes" : "ends the run: " + openingRun.EndReason) + ".");
+                Console.WriteLine($"  from {Path.GetFileName(fromPath)}'s first {prefix.Count} inputs: physics tick {start.Ticks}, "
+                    + $"{start.X - anchor.x:0.#},{start.Y - anchor.y:0.#} from the anchor; free-flight bound: "
+                    + (float.IsPositiveInfinity(start.FlightTop) ? "none (" + start.FlightWhy + ")" : $"collider top at most {start.FlightTop - anchor.y:0.#} by tick {maxTicks}"));
+            }
+            if (rollouts > 0)
+                return CheckRollouts(sim, start, rollouts, Opt(args, "--seed", 1), maxTicks, exact, control, wallControl, boostControl, flight,
+                    fy + anchor.y - fh / 2f, colliderTop, anchor);
+            var visited = new Dictionary<string, int> { [start.Key] = start.Ticks };
             var buckets = new List<Node>[maxTicks + 64];
             for (int i = 0; i < buckets.Length; i++) buckets[i] = new List<Node>();
-            buckets[0].Add(start);
+            buckets[start.Ticks].Add(start);
             long states = 1, extensions = 0, dead = 0, dupes = 0;
             Node best = null;
             InputTick bestInput = default;
@@ -302,7 +380,10 @@ namespace IGTAP.EngineSim.Cli
             float boxBottom = fy + anchor.y - fh / 2f;
             float bx0 = fx + anchor.x - fw / 2f, bx1 = fx + anchor.x + fw / 2f;
             float by0 = boxBottom, by1 = fy + anchor.y + fh / 2f;
-            long prunedHeight = 0, prunedTime = 0, explored = 0, localDead = 0;
+            long prunedHeight = 0, prunedTime = 0, prunedFlight = 0, explored = 0, localDead = 0, boundChecks = 0, boundViolations = 0;
+            var violations = new List<string>();
+            float highestCut = float.NegativeInfinity;
+            var unbounded = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
             List<Node> bucket = null;
             int bucketTicks = 0, nextNode = -1;
             // Per node of the bucket, in its order: the children kept and the finishes found, merged in that order, so the
@@ -319,12 +400,22 @@ namespace IGTAP.EngineSim.Cli
                 int ticks = bucketTicks;
                 if (node.Ticks != ticks) return;
                 if (Volatile.Read(ref bound) <= ticks + 1) return;
-                // Reachability (admissible: only provably dead states are cut). Height: no inputs can lift the player into
-                // the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
+                // Reachability (admissible: only provably dead states are cut; the finish is a touch of the box by the player's
+                // collider, so each test allows for its extents). Free flight: the dash spent, off ground and wall, the highest
+                // the collider's top can be by the last tick is under the box (LabFlight). Height: no inputs can lift the player
+                // into the finish box (MaxReach over-estimates every rise the game can give). Time: the game's own
                 // maxTranslationSpeed (100 u/physics step) is the most any input can move the player either way, so a state
                 // more than that per remaining tick from the box cannot finish before the bound.
-                if (node.MaxY < boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
-                float dx = MathF.Max(MathF.Max(bx0 - node.X, node.X - bx1), 0f), dy = MathF.Max(MathF.Max(by0 - node.Y, node.Y - by1), 0f);
+                if (float.IsPositiveInfinity(node.FlightTop)) unbounded.AddOrUpdate(Reason(node.FlightWhy), 1, (_, n) => n + 1);
+                else if (!checkBound && node.FlightTop <= boxBottom)
+                {
+                    Interlocked.Increment(ref prunedFlight);
+                    lock (violations) highestCut = MathF.Max(highestCut, node.FlightTop);
+                    return;
+                }
+                if (node.MaxY + colliderTop <= boxBottom) { Interlocked.Increment(ref prunedHeight); return; }
+                float dx = MathF.Max(MathF.Max(bx0 - (node.X + colliderReach), node.X - colliderReach - bx1), 0f);
+                float dy = MathF.Max(MathF.Max(by0 - (node.Y + colliderTop), node.Y + colliderBottom - by1), 0f);
                 if (MathF.Max(dx, dy) > (maxTicks - node.Ticks) * 100f) { Interlocked.Increment(ref prunedTime); return; }
                 SimSnapshot state = null;
                 List<Node> kept = null;
@@ -333,12 +424,35 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (Volatile.Read(ref bound) <= ticks + 1) break;
                     Interlocked.Increment(ref explored);
-                    Node child = Step(worker, node, input, ref state, exact, control, wallControl, out RunResult run, out int stepped);
+                    Node child = Step(worker, node, input, ref state, exact, control, wallControl, boostControl, flight, out RunResult run, out int stepped);
                     if (child == null)
                     {
-                        if (run != null && run.Finished) (done ??= new List<(InputTick, int)>()).Add((input, stepped));
+                        if (run != null && run.Finished)
+                        {
+                            (done ??= new List<(InputTick, int)>()).Add((input, stepped));
+                            // A finish is a touch of the box: the bound's collider top has to reach it on that tick.
+                            if (checkBound && node.Envelope != null && stepped < node.Envelope.Length && node.Envelope[stepped] + colliderTop <= boxBottom)
+                            {
+                                Interlocked.Increment(ref boundViolations);
+                                lock (violations) if (violations.Count < 10) violations.Add($"a finish on tick {stepped} under the bound");
+                            }
+                        }
                         else Interlocked.Increment(ref localDead);
                         continue;
+                    }
+                    if (checkBound && node.Envelope != null)
+                    {
+                        Interlocked.Increment(ref boundChecks);
+                        if (child.Ticks < node.Envelope.Length && child.Y > node.Envelope[child.Ticks])
+                        {
+                            Interlocked.Increment(ref boundViolations);
+                            lock (violations)
+                                if (violations.Count < 10)
+                                    violations.Add($"tick {child.Ticks}: y {child.Y - anchor.y:0.###} above the bound {node.Envelope[child.Ticks] - anchor.y:0.###} after "
+                                        + string.Join(" | ", child.Path.Select(TickText)));
+                        }
+                        child.Envelope ??= (float[])node.Envelope.Clone();
+                        for (int t = 0; t < child.Envelope.Length; t++) child.Envelope[t] = MathF.Min(child.Envelope[t], node.Envelope[t]);
                     }
                     (kept ??= new List<Node>()).Add(child);
                 }
@@ -373,7 +487,7 @@ namespace IGTAP.EngineSim.Cli
             pool.ForEach(t => t.Start());
             try
             {
-                for (int ticks = 0; ticks < buckets.Length && ticks < bound; ticks++)
+                for (int ticks = 0; ticks < buckets.Length && ticks < bound && ticks < checkDepth; ticks++)
                 {
                     bucket = buckets[ticks];
                     bucketTicks = ticks;
@@ -407,9 +521,11 @@ namespace IGTAP.EngineSim.Cli
                             buckets[child.Ticks].Add(child);
                         }
                     }
+                    if (bucket.Count > 0)
+                        Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] tick {ticks}: {bucket.Count:N0} states expanded ({explored:N0} extensions); {states:N0} states, "
+                            + $"{visited.Count:N0} keys, {dead:N0} dead ends, prunes {prunedFlight:N0} flight / {prunedHeight:N0} height / {prunedTime:N0} time, best {(best == null ? "-" : bound.ToString())}"
+                            + (unbounded.IsEmpty ? "" : "; without the free-flight bound so far: " + string.Join(", ", unbounded.OrderByDescending(p => p.Value).Take(4).Select(p => $"{p.Value:N0} {p.Key}"))));
                     bucket.Clear();
-                    if (extensions > 0 && extensions / 5000 != (extensions - explored) / 5000)
-                        Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, tick {ticks}, best {(best == null ? "-" : bound.ToString())}");
                 }
             }
             finally
@@ -419,10 +535,16 @@ namespace IGTAP.EngineSim.Cli
                 pool.ForEach(t => t.Join());
                 phase.Dispose();
             }
+            string boundLine = "free-flight bound: " + (checkBound
+                ? $"checked, not cut (states expanded to tick {checkDepth}): {boundChecks:N0} states against their ancestors' bounds, {boundViolations:N0} above one"
+                : $"{prunedFlight:N0} states cut" + (prunedFlight > 0 ? $" (the highest collider top any of them could reach: {highestCut - anchor.y:0.##}, the box's bottom {boxBottom - anchor.y:0.##})" : "")) + "; states it didn't cover: "
+                + (unbounded.IsEmpty ? "none" : string.Join(", ", unbounded.OrderByDescending(p => p.Value).Select(p => $"{p.Value:N0} {p.Key}")));
+            Console.WriteLine(boundLine);
+            foreach (string v in violations) Console.WriteLine("  BOUND VIOLATED: " + v);
             if (best == null)
             {
-                Console.WriteLine($"No demo within {maxTicks} ticks: {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, prunes {prunedHeight:N0} height / {prunedTime:N0} time, {clock.Elapsed.TotalSeconds:0.0}s");
-                return 1;
+                Console.WriteLine($"No demo within {maxTicks} ticks: {extensions:N0} extensions, {states:N0} states, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, prunes {prunedFlight:N0} flight / {prunedHeight:N0} height / {prunedTime:N0} time, {clock.Elapsed.TotalSeconds:0.0}s");
+                return boundViolations > 0 ? 3 : 1;
             }
 
             List<InputTick> inputs = new List<InputTick>(best.Path);
@@ -445,12 +567,13 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine("tech: " + (signature ?? "NONE FOUND (the demo performs no known tech)"));
             Console.WriteLine($"minimum-tick demo: {inputs.Count} input ticks, finish at physics tick {finishTick}; "
                 + $"{extensions:N0} extensions, {states:N0} states kept, {visited.Count:N0} keys, {dead:N0} dead ends, {dupes:N0} duplicates, "
-                + $"prunes {prunedHeight:N0} height / {prunedTime:N0} time, bound {finishTick} (every state below it exhausted), {clock.Elapsed.TotalSeconds:0.0}s");
+                + $"prunes {prunedFlight:N0} flight / {prunedHeight:N0} height / {prunedTime:N0} time, bound {finishTick} (every state below it exhausted), {clock.Elapsed.TotalSeconds:0.0}s");
 
             var search = new
             {
                 states, explored = extensions, keys = visited.Count, deadEnds = dead, duplicates = dupes,
-                bound = finishTick, complete = true, maxTicks, alphabet, exact, control, wallControl, prunedHeight, prunedTime, tech = signature,
+                bound = finishTick, complete = true, maxTicks, alphabet, exact, control, wallControl, boostControl,
+                from = fromPath == null ? null : Path.GetFileName(fromPath), fromInputs = prefix?.Count, prunedFlight, prunedHeight, prunedTime, tech = signature,
                 quantization = exact ? "none: bit-exact floats (position, velocity, momentum, body, every Movement field)" : "1 u position, 10 u/s velocity and momentum, 1 u counters",
                 seconds = Math.Round(clock.Elapsed.TotalSeconds, 1),
             };
@@ -472,6 +595,76 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
+        /// <summary>
+        /// --check-rollouts: random runs from the start to the last tick (a new press, jump or dash, on 1 input in 8, else an
+        /// input without one; each from the alphabet), each state checked against the lowest free-flight bound any earlier state of its run
+        /// gave for its tick, and a finish against the box. Reports the checks, the violations and the tightest slack seen.
+        /// </summary>
+        static int CheckRollouts(Simulation sim, Node start, int rollouts, int seed, int maxTicks, bool exact, bool control, bool wallControl,
+            bool boostControl, FlightOptions flight, float boxBottom, float colliderTop, Vector2 anchor)
+        {
+            var rng = new System.Random(seed);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            long checks = 0, violations = 0, steps = 0, finishes = 0, bounded = 0;
+            float tightest = float.PositiveInfinity;
+            string tightestAt = null;
+            for (int r = 0; r < rollouts; r++)
+            {
+                Node node = start;
+                float[] envelope = start.Envelope == null ? null : (float[])start.Envelope.Clone();
+                var path = new List<InputTick>();
+                while (node.Ticks < maxTicks)
+                {
+                    List<InputTick> alphabet = Alphabet(node.JumpHeld, node.CanDash, control && !node.SolidGround);
+                    List<InputTick> plain = alphabet.Where(k => !k.dash && !k.press).ToList(), presses = alphabet.Where(k => k.dash || k.press).ToList();
+                    InputTick input = (rng.Next(8) > 0 || presses.Count == 0) && plain.Count > 0 ? plain[rng.Next(plain.Count)] : presses[rng.Next(presses.Count)];
+                    SimSnapshot none = null;
+                    Node child = Step(sim, node, input, ref none, exact, control, wallControl, boostControl, flight, out RunResult run, out int stepped);
+                    steps++;
+                    if (child == null)
+                    {
+                        if (run != null && run.Finished)
+                        {
+                            finishes++;
+                            if (envelope != null && stepped < envelope.Length && envelope[stepped] + colliderTop <= boxBottom)
+                            {
+                                violations++;
+                                Console.WriteLine($"  BOUND VIOLATED: a finish on tick {stepped} under the bound after "
+                                    + string.Join(" | ", node.Path.Append(input).Select(TickText)));
+                            }
+                        }
+                        break;
+                    }
+                    if (envelope != null && child.Ticks < envelope.Length && !float.IsPositiveInfinity(envelope[child.Ticks]))
+                    {
+                        checks++;
+                        float slack = envelope[child.Ticks] - child.Y;
+                        if (slack < tightest) { tightest = slack; tightestAt = $"tick {child.Ticks}, y {child.Y - anchor.y:0.###}"; }
+                        if (slack < 0f)
+                        {
+                            violations++;
+                            if (violations <= 10)
+                                Console.WriteLine($"  BOUND VIOLATED: tick {child.Ticks}: y {child.Y - anchor.y:0.###} above the bound {envelope[child.Ticks] - anchor.y:0.###} after "
+                                    + string.Join(" | ", child.Path.Select(TickText)));
+                        }
+                    }
+                    if (child.Envelope != null)
+                    {
+                        bounded++;
+                        if (envelope == null) envelope = (float[])child.Envelope.Clone();
+                        else for (int t = 0; t < envelope.Length; t++) envelope[t] = MathF.Min(envelope[t], child.Envelope[t]);
+                    }
+                    node = child;
+                }
+                if ((r + 1) % 1000 == 0)
+                    Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] {r + 1:N0} runs, {steps:N0} steps, {checks:N0} checks, {violations:N0} violations");
+            }
+            Console.WriteLine($"free-flight bound check: {rollouts:N0} random runs to tick {maxTicks} (seed {seed}), {steps:N0} steps, {bounded:N0} states with a bound, "
+                + $"{checks:N0} states checked against an earlier state's bound, {violations:N0} above it, {finishes:N0} finishes; tightest slack "
+                + (tightestAt == null ? "-" : $"{tightest:0.###} u ({tightestAt})") + $", {clock.Elapsed.TotalSeconds:0.0}s");
+            return violations > 0 ? 3 : 0;
+        }
+
         static string DefaultDemoPath(string labPath)
         {
             string dir = Path.GetDirectoryName(Path.GetFullPath(labPath));
@@ -483,9 +676,11 @@ namespace IGTAP.EngineSim.Cli
         /// the path from the lab start and captures the node's state as it reaches it (its input tick from.Path.Count); with one
         /// it resumes there, with the same step budget, so a node's path replays once for its whole alphabet.
         /// <paramref name="stepped"/> counts physics ticks from the lab start either way. The wall control
-        /// (<paramref name="wallControl"/>) ends a run whose jump would be a wall jump off no wall (coyote or stored).</summary>
+        /// (<paramref name="wallControl"/>) ends a run whose jump would be a wall jump off no wall (coyote or stored), the boost
+        /// control (<paramref name="boostControl"/>) one whose jump would be a double jump at Velocity.y 200 or more. The child
+        /// carries the free-flight bound (<see cref="LabFlight"/>) to <paramref name="flight"/>'s last tick.</summary>
         static Node Step(Simulation sim, Node from, InputTick input, ref SimSnapshot state, bool exact, bool control, bool wallControl,
-            out RunResult run, out int stepped)
+            bool boostControl, FlightOptions flight, out RunResult run, out int stepped)
         {
             int at = from.Path.Count;
             var path = new List<InputTick>(at + 2);
@@ -497,9 +692,18 @@ namespace IGTAP.EngineSim.Cli
             float maxY = from.MaxY, x = from.X, y = from.Y;
             bool solid = from.SolidGround, illegal = false;
             SimSnapshot resume = state, captured = null;
-            sim.BeforeInput = wallControl ? m => { if (!illegal && WallJumpOffWall(m)) { illegal = true; sim.Engine.Abort("control: a wall jump off no wall"); } } : null;
+            int steps = 0;
+            float flightTop = float.PositiveInfinity;
+            float[] envelope = null;
+            string flightWhy = null;
+            sim.BeforeInput = wallControl || boostControl ? m =>
+            {
+                if (illegal) return;
+                if (wallControl && WallJumpOffWall(m)) { illegal = true; sim.Engine.Abort("control: a wall jump off no wall"); }
+                else if (boostControl && BoostedDoubleJump(m)) { illegal = true; sim.Engine.Abort("control: a boosted double jump"); }
+            } : null;
             // A resumed run has from.Ticks physics ticks behind it: its budget is what is left of the run from the start's.
-            run = sim.Run(path, resume, afterTick: tick =>
+            run = sim.Run(path, resume, onStep: _ => steps++, afterTick: tick =>
             {
                 // tick 0 is the first scheduler tick of a run that starts inside a lock (a dash's or spring's remaining ticks:
                 // no input is consumed there). The new input tick is from.Path.Count + 1.
@@ -515,12 +719,27 @@ namespace IGTAP.EngineSim.Cli
                 WorldPos p = sim.PlayerWorld;
                 x = p.x; y = p.y;
                 solid = GroundCheckGrounds(sim, p);
+                int now = (resume == null ? 0 : from.Ticks) + steps, horizon = flight.MaxTicks - now;
+                float[] curve = horizon >= 1 ? LabFlight.Bound(sim, horizon, flight.Boost, out flightWhy) : null;
+                if (horizon < 1) flightWhy = "no ticks left";
+                if (curve != null)
+                {
+                    float top = LabFlight.Extents(sim.Player).top;
+                    flightTop = float.NegativeInfinity;
+                    for (int t = 1; t < curve.Length; t++) flightTop = MathF.Max(flightTop, curve[t] + top);
+                    if (flight.Keep)
+                    {
+                        envelope = new float[flight.MaxTicks + 1];
+                        Array.Fill(envelope, float.PositiveInfinity);
+                        for (int t = 0; t < curve.Length; t++) envelope[now + t] = curve[t];
+                    }
+                }
                 return false;
             }, extraTicks: resume == null ? 400 : 400 + at - from.Ticks);
             sim.BeforeInput = null;
             if (captured != null) state = captured;
             stepped = (resume == null ? 0 : from.Ticks) + run.Stepped;
-            // A run the wall control ended is dead, never a finish.
+            // A run a control ended is dead, never a finish.
             if (illegal) run = null;
             if (key == null) return null;
             var childPath = new List<InputTick>(at + 1);
@@ -531,11 +750,14 @@ namespace IGTAP.EngineSim.Cli
                 Path = childPath,
                 Ticks = stepped, JumpHeld = input.press || input.held && !input.release || from.JumpHeld && !input.release && !input.press,
                 CanDash = canDash, Key = key, MaxY = maxY, X = x, Y = y, SolidGround = solid,
+                FlightTop = flightTop, FlightWhy = flightWhy, Envelope = envelope,
             };
         }
 
         static readonly FieldInfo JumpBufferField = typeof(Movement).GetField("jumpBuffer", Fields),
-            WallCoyoteField = typeof(Movement).GetField("wallCoyoteFrames", Fields);
+            WallCoyoteField = typeof(Movement).GetField("wallCoyoteFrames", Fields),
+            DashBufferField = typeof(Movement).GetField("dashBuffer", Fields),
+            NormalJumpField = typeof(Movement).GetField("MostRecentUpwardsMoveWasNormalJump", Fields);
 
         /// <summary>
         /// At getPlayerControlledInput's start: the buffered jump is about to be a wall jump (Movement's branch: not grounded,
@@ -547,6 +769,25 @@ namespace IGTAP.EngineSim.Cli
             float wallCoyote = (float)WallCoyoteField.GetValue(m);
             return (bool)JumpBufferField.GetValue(m) && !m.onGround && (m.OnWall || wallCoyote > 0f)
                 && !(m.OnWall && wallCoyote >= m.maxWallCoyoteFrames) && m.wallJumpsLeft > 0 && m.wallJumpUnlocked;
+        }
+
+        /// <summary>
+        /// At getPlayerControlledInput's start: the buffered jump is about to be a boosted double jump. Movement's branches in
+        /// order: a dash press the dash branch takes returns first (1601-1666), a grounded jump is a ground jump (1676), a jump
+        /// with OnWall or wallCoyoteFrames above 0 goes to the wall branch (1707) whether or not a wall jump is left, and the
+        /// air jump (1757-1774) needs wallCoyoteFrames under its max and an air jump left. It is boosted when it finds
+        /// Velocity.y at 200 or more, which only the 700 gate after a jump that wasn't a normal one lets through; it then keeps
+        /// half of it (745 + v/2).
+        /// </summary>
+        static bool BoostedDoubleJump(Movement m)
+        {
+            if ((bool)DashBufferField.GetValue(m) && m.dashCooldown < 0f && m.dashUnlocked
+                && m.wallJumpMovementLockRemaining < m.wallJumpMovementLockFrames - 5f) return false;
+            float wallCoyote = (float)WallCoyoteField.GetValue(m);
+            if (!(bool)JumpBufferField.GetValue(m) || m.onGround || m.OnWall || wallCoyote > 0f) return false;
+            if (!m.doubleJumpUnlocked || !(wallCoyote < m.maxWallCoyoteFrames) || m.airJumpsLeft <= 0) return false;
+            float vy = ((Vector2)VelocityField.GetValue(m)).y;
+            return !(bool)NormalJumpField.GetValue(m) && vy >= 200f && vy < 700f;
         }
 
         /// <summary>Replays inputs from the lab start: the physics tick the finish box is touched on, or -1.</summary>
@@ -586,6 +827,10 @@ namespace IGTAP.EngineSim.Cli
             /// NaN when the tick ran no input: a dash or a freeze), and maxWallCoyoteFrames.</summary>
             public bool InputOnWall;
             public float InputWallCoyote = float.NaN, MaxWallCoyote;
+            /// <summary>The tick's jump is a boosted double jump (<see cref="BoostedDoubleJump"/> at getPlayerControlledInput's
+            /// start), and the Velocity.y it found there.</summary>
+            public bool InputBoostedDoubleJump;
+            public float InputVy = float.NaN;
         }
 
         static TickRow Row(Simulation sim, int tick)
@@ -603,16 +848,25 @@ namespace IGTAP.EngineSim.Cli
         static List<TickRow> Observe(Simulation sim, List<InputTick> inputs)
         {
             var rows = new List<TickRow> { Row(sim, 0) };
-            bool onWall = false;
-            float wallCoyote = float.NaN;
-            sim.BeforeInput = m => { onWall = m.OnWall; wallCoyote = (float)WallCoyoteField.GetValue(m); };
+            bool onWall = false, boosted = false;
+            float wallCoyote = float.NaN, vy = float.NaN;
+            sim.BeforeInput = m =>
+            {
+                onWall = m.OnWall;
+                wallCoyote = (float)WallCoyoteField.GetValue(m);
+                boosted = BoostedDoubleJump(m);
+                vy = ((Vector2)VelocityField.GetValue(m)).y;
+            };
             sim.Run(new List<InputTick>(inputs) { inputs[inputs.Count - 1] }, null, extraTicks: 400, onStep: s =>
             {
                 TickRow row = Row(sim, s + 1);
                 row.InputOnWall = onWall;
                 row.InputWallCoyote = wallCoyote;
+                row.InputBoostedDoubleJump = boosted;
+                row.InputVy = vy;
                 rows.Add(row);
-                wallCoyote = float.NaN;
+                wallCoyote = vy = float.NaN;
+                boosted = false;
             });
             sim.BeforeInput = null;
             return rows;
@@ -692,13 +946,18 @@ namespace IGTAP.EngineSim.Cli
         /// upward speed (a pauselift when it takes more step-ups than one tick's rendered frames give). A wall jump (a wall
         /// jump spent in getPlayerControlledInput) is a wall coyote jump when the contact branch found no wall that tick
         /// (OnWall held, wallCoyoteFrames counting down from maxWallCoyoteFrames), and a stored wall jump when OnWall was off
-        /// and wallCoyoteFrames still above 0 (a count a landing kept: the ground branch never counts it down).
+        /// and wallCoyoteFrames still above 0 (a count a landing kept: the ground branch never counts it down). A boosted
+        /// double jump is an air jump that found Velocity.y at 200 or more (<see cref="BoostedDoubleJump"/>).
         /// </summary>
         static string TechSignature(List<TickRow> rows)
         {
             for (int i = 1; i < rows.Count; i++)
             {
                 TickRow before = rows[i - 1], after = rows[i];
+                if (after.InputBoostedDoubleJump)
+                    return "boosted double jump: tick " + after.Tick + " finds Velocity.y " + after.InputVy.ToString("0") + " and keeps half of it (745 + "
+                        + (after.InputVy / 2f).ToString("0") + "), Velocity.y " + after.Vy.ToString("0") + " after the tick, with momentum ("
+                        + after.Mx.ToString("0") + ", " + after.My.ToString("0") + ") at x " + before.X.ToString("0.#") + ", y " + before.Y.ToString("0.#");
                 // A wall jump spent in getPlayerControlledInput (the contact branch's own SpecialWallJump, the superbounce off a wall,
                 // zeroes wallCoyoteFrames and OnWall first), with no wall found on that tick.
                 if (after.WallJumps < before.WallJumps && (after.InputOnWall ? after.InputWallCoyote < after.MaxWallCoyote : after.InputWallCoyote > 0f))
@@ -853,7 +1112,10 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>The dedupe key of a state: the world pose, velocity and body state quantized, every Movement field, and the
-        /// macro engine's pending input state (a held jump, a dash-jump frame, a lock, the pending Invokes' timers).</summary>
+        /// macro engine's pending input state (a held jump, a dash-jump frame, a lock, the pending Invokes' timers). Exact: the
+        /// pose (world and scene frame), the scale, the Box2D body and the interpolation's ends as float bits too, the player's
+        /// colliders, and every script the run has touched (a spike's grace counter) by instance id and field. Not in it: toggled
+        /// objects (a dash's block swap), coroutines, the RNG and Box2D's warm-start cache.</summary>
         static string KeyOf(Simulation sim, bool exact)
         {
             var sb = new StringBuilder(512);
@@ -863,6 +1125,21 @@ namespace IGTAP.EngineSim.Cli
             var body = sim.Physics.PlayerBody();
             Quantize(sb, body.px, 1f); Quantize(sb, body.py, 1f);
             Quantize(sb, body.vx, 10f); Quantize(sb, body.vy, 10f); Quantize(sb, body.angle, 0.1f);
+            if (exact)
+            {
+                Vector3 scene = sim.Player.transform.position, scale = sim.Player.transform.localScale;
+                foreach (float f in new[] { p.x, p.y, scene.x, scene.y, scene.z, scale.x, scale.y, body.px, body.py, body.angle, body.vx, body.vy, body.w })
+                    sb.Append(BitConverter.SingleToInt32Bits(f)).Append(',');
+                foreach (FieldInfo f in StepEnds) { Vector3 v = (Vector3)f.GetValue(sim); sb.Append(BitConverter.SingleToInt32Bits(v.x)).Append(',').Append(BitConverter.SingleToInt32Bits(v.y)).Append(','); }
+                foreach (BoxCollider2D c in sim.Player.GetComponents<BoxCollider2D>())
+                    AddValue(sb, new object[] { c.offset, c.size, c.excludeLayers.value, c.enabled }, true);
+                foreach (MonoBehaviour script in (HashSet<MonoBehaviour>)TouchedField.GetValue(sim))
+                {
+                    sb.Append(script.GetInstanceID()).Append(':');
+                    foreach (FieldInfo f in FieldState.For(script.GetType())) AddValue(sb, f.GetValue(script), true);
+                }
+                sb.Append('|');
+            }
             foreach (FieldInfo f in MovementFields)
             {
                 if (Simulation.MovementPresentationFields.Contains(f.Name)) continue;
@@ -941,6 +1218,8 @@ namespace IGTAP.EngineSim.Cli
             return sim.PlayerWorld.y + gain;
         }
 
+        static readonly FieldInfo[] StepEnds = { typeof(Simulation).GetField("_stepFrom", Fields), typeof(Simulation).GetField("_stepTo", Fields) };
+        static readonly FieldInfo TouchedField = typeof(Simulation).GetField("_touched", Fields);
         static readonly FieldInfo VelocityField = typeof(Movement).GetField("Velocity", Fields),
             MomentumField = typeof(Movement).GetField("momentum", Fields);
         static readonly FieldInfo[] MovementFields = FieldState.For(typeof(Movement));

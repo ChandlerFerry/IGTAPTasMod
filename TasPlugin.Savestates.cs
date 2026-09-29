@@ -63,13 +63,23 @@ namespace IGTAPTasMod
 
         private bool RestoreRouteStart(MacroDefinition route)
         {
-            LabMapEnsureFor(route);
+            TechDef labTech = LabMapEnsureFor(route);
             Movement movement = FindWorldMovement();
             if (movement != null) _engine.ClearInjectedInput(movement);
             CourseDef named = CourseOfRoute(route.name);
             _runCourse = named;
             EnsureArea1State(named);
             EnsureZone(named);
+            if (movement != null && labTech != null)
+            {
+                try
+                {
+                    PlaceLabDemoStart(labTech, movement);
+                    LeaveCourses(movement);
+                    return true;
+                }
+                catch (Exception ex) { Logger.LogWarning("Lab demo " + labTech.id + ": " + ex.Message + "; using quick restart."); }
+            }
             Savestate savestate = string.IsNullOrEmpty(route.savestateId) ? null : _savestates.Find(c => c.id == route.savestateId);
             if (movement != null && savestate != null)
             {

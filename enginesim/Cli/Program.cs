@@ -27,6 +27,9 @@ namespace IGTAP.EngineSim.Cli
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "solve": return Solve.Run(args.Skip(1).ToArray());
                     case "searchbench": return SearchBench.Run(args.Skip(1).ToArray());
+                    case "plan": return Plan.Run(args.Skip(1).ToArray());
+                    case "polish": return Polish.Command(args.Skip(1).ToArray());
+                    case "coverage": return Coverage.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
@@ -127,14 +130,30 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         each new best also gets a human version (humanize; --no-humanize skips it)\n"
                             + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks)\n"
                             + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
+                            + "                                         --plan [--plan-minutes M]: plan (and polish) first, its route a seed\n"
                             + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
                             + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
                             + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
+                            + "  plan <trace.json> [--threads N] [--minutes M] [--width W] [--max-width W] [--cap K] [--cell C] [--labels L] [--first]\n"
+                            + "       [--guide-route <best.json>]... [--follow-ticks K] [--no-midair] [--no-chains] [--no-polish] [--no-tech-grafts] [--out file]\n"
+                            + "       [--route <best.json> --from-goal N [--to-goal M] [--guide-probe <probe.json>]... [--chain K]] [--profile <route.json>]\n"
+                            + "                                         beam search over exact snapshots (contact nodes, known primitives,\n"
+                            + "                                         guide routes' cost to go and pieces), then polish; a Full-TAS trace plans\n"
+                            + "                                         goals N+1..M of --route and splices its rest (--guide-probe: an old run's\n"
+                            + "                                         1x probe as a trail; --chain K: plan up to K more goals where the rest\n"
+                            + "                                         doesn't follow on); writes <traces>/plan/<label>-<time>.json\n"
+                            + "  polish <trace.json> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--from-goal N [--to-goal M]] [--out file]\n"
+                            + "                                         every input shifted, re-valued, re-framed or dropped in order, strict gains\n"
+                            + "                                         kept until a sweep keeps none, then the plateau families (wider shifts, pairs,\n"
+                            + "                                         stick bands, added presses and dashes); reports the ticks spent\n"
+                            + "  coverage <trace.json> <route-human.json>\n"
+                            + "                                         each input's contact, GraftsAt kind, mined window and planner grid value\n"
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--repair] [--unsolved] [--goal N] [--resets] [--segment N]\n"
+                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N] [--resets] [--segment N]\n"
+                            + "          [--transplant <old route or probe.json>] [--reset-study] [--lookahead N] | --check <route.json>\n"
                             + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
                             + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
@@ -147,10 +166,11 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         over and over; --resets: polish by reset segments (the route cut at its\n"
                             + "                                         quick restarts), each closed by its old restart with the same player state\n"
                             + "                                         after it, the route after it kept; --segment N: only segment N, over and over\n"
-                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p]\n"
+                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
                             + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
                             + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
-                            + "                                         economy; a,b: a first); prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
+                            + "                                         economy; a,b: a first; --group-buys: also two boxes on one walk);\n"
+                            + "                                         prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
                             + "  zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--minutes M] [--out plan.json]\n"
                             + "                                         the buy order from the trace's start (or the route replayed to input N)\n"
                             + "                                         to the zip movers (buytree16), on a model of Area 2's economy; laps from\n"

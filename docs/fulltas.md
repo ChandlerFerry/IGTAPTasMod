@@ -23,8 +23,9 @@ start anyway. A solve also stops when the run file's best, replayed, reaches few
 records (`... recorded N goals, but replayed ... it reaches M`): the engine plays it differently (another build) or the
 start differs, and solving on would save the shorter replay over the best. That happened twice: the moved start rebuilt
 the whole run from goal 1, about 200 s slower, and a build without the buy-max rule below replayed `FalseEnding2-Any%`'s
-409.34 s best to goal 282 of 300 and wrote that back. Rebuild the engine, or pass `--repair` (the studio's solve body
-`repair: true`) when the engine change is meant and the run should be re-found from where the replay stops.
+409.34 s best to goal 282 of 300 and wrote that back. When the engine change is meant (a fidelity fix), the solve now
+repairs on its own: it keeps the file as `fulltas/<run>.before-repair-<n>-of-<m>.json` and re-finds the run from where the
+replay stops.
 
 ## fulltas.json
 
@@ -52,8 +53,27 @@ missed it replayed from the start (`a window route missed its goals ...`). That 
 replays part (from the stored state, after a straight replay, played through), each on a thread of its own. Stored goal
 states carry each type's field layout: a state of another build is dropped and replayed, not misread.
 
-An event that isn't the next goal changes nothing (buying another box, finishing another course). Unlocks come only from
-the game's purchases; the plugin writes none.
+An event that isn't the next goal changes nothing (buying another box, finishing another course), except under loose
+buys (below). Unlocks come only from the game's purchases; the plugin writes none.
+
+### Loose buys
+
+A run's `"buys"` is `"strict"` (the default, also when unset) or `"loose"` (`VMAN`:
+`{ "name": "VMAN", "start": "vman", "buys": "loose", "goals": [...] }`).
+
+- Strict: every purchase is a goal. Offline (`Simulation.StrictBuys`) a purchase that isn't the next goal's box ends the
+  run; see the loop builder's "Every purchase is a goal" below for why.
+- Loose: buys are places the route must reach, and buying more on the way is allowed when it is faster. A purchase that
+  isn't the next goal's box stands and doesn't end the run. When a later `buy:` or `reward:` goal names that box, the
+  purchase is kept for that goal (one purchase per box). Once the goal is current and every box it names is owned (bought
+  for it, or kept from before), it is reached, on that same tick when all of them were bought earlier. `VMAN` is loose so
+  its route can walk through Course 1's and Course 2's `Clone` boxes (free in a Vman world) as the old 34.88 s route did.
+
+The same `FullTasTracker` (`FullTas.cs`, `LooseBuys`) applies the rule in the turbo judge, 1x playback, the offline engine
+(the trace header's `fulltas.buys`, written by the capture; a trace whose `buys` differs from the run's is recaptured),
+every search window, the piece library, polish and `fulltas-plan`. Its state (the kept boxes) is part of every snapshot
+and of the state hash (`Simulation` state dedup); the search's cell key has only the goal progress. The turbo judge
+never ended a run on another box, strict or loose: only the offline engine enforces strict buys.
 
 Run names are letters, digits, `%` and `-` (`ANY%`, `Test-No-Omni-Skip`).
 
@@ -120,6 +140,36 @@ landing that dies on the spikes (it falls in from above) never reaches it. The o
 (`at:20422,15697,4,16,from=top`) did the opposite: every fatal landing in x 20395–20439 counted, so the best reached
 goal 20 on the tick before a spike death and the search for goal 21 started from a dead player, while a living exit
 that slid in from the left missed its `from=top`.
+
+Status (2026-09-29): the record is `fulltas/VMAN_NONE 35.16`, a `polish` of 35.32 (six 1–2 tick re-timings in inputs
+142–594). 35.32 came from two `--transplant` grafts of the old 34.88 s inputs onto 41.34: from 41.34's state at goal 15
+(`at:12500`) the old inputs replay the down-dash landing chain over goals 16–18 again (splits 74/44/93 against 41.34's
+98/109/193; repair windows re-found goals 19–23, 36.62), then the old route's Clone-buying way through Courses 1–2 (loose
+buys: Course 1 `Clone`, Course 2 `Clone` and `CashPerLoop`; `finish:2` at tick 458 against 508) bridged by repair
+windows onto it. It also walks through Course 4's `GLOBALfastCloneChance` box after goal 16. Its splits, against the
+old route's, are 81/48/49/31/82/105/62/37/33/94/145/91/103/70/222/74/44/93/86/55/9/55/97 (35.32): goal 11 (+48, the dash off
+the wall at goal 10 goes up-left and loops back where the old one went up-right; the old inputs die there on this engine)
+and goal 15 (+57) are what's left against the old route; goals 18–20 are now faster than it.
+
+Earlier (2026-09-28, late): the record was `fulltas/VMAN_NONE 45.20`, the second whole-run `polish` sweep over 48.18 (48.54,
+48.42, 48.18 and 46.18 were saved before it that evening; the polish cut held ticks before inputs across goals 1–20).
+The 09-26 route `fulltas/VMAN_NONE 34.88 stale` ran the same goals along the
+same paths on the map, found with the 09-26 engine and turbo; it and the 34.62/34.98 bests now die on Course 1. Its splits were
+81/48/49/30/82/105/61/37/30/94/97/91/103/65/165/74/44/103/127/98/9/54/97 ticks, against 46.18's
+81/48/48/31/92/105/109/52/76/119/151/135/152/60/234/144/89/181/102/99/21/54/126. A 1x probe of an old route (probes\vman-credits-nocrash.json, the same inputs as 34.88 for its first 958 inputs) replayed
+against the judge trace of 48.18 (the player's position and velocity each tick, [Transplant](#transplant)) shows where
+the time goes:
+
+- Goals 15–17 (`at:12500` to Course 4's start, the long floor at y 11659): the old route chains straight-down dashes
+  onto the floor and jumps out of each landing, so its momentum grows 2528 → 3449 → 3879 → 4800 → 5165 → 5832 and it
+  covers 53 and 81 units a tick. The new routes hyper once or twice (momentum 764–2669) and cover 22 and 37. Played from
+  the best's dash at x 12147, where the old route dashed the same way at x 12167, the old inputs reach goal 16 33–39
+  ticks sooner on this engine, then lose the chain after it.
+- `buy:buywj` and Course 2 (goals 4 and 6): the old route bought Course 1's and Course 2's `Clone` boxes on its way
+  through (free in a Vman run). Strict buys refuse that, so the new routes go around them.
+- Goals 9–13 and the column `at:20200.4,13553.8`: the old route moves about 30 units a tick where the new routes move
+  14–21, along the same path. The old inputs from the best's state there reach goal 13 64 ticks sooner (tick 1200 against
+  48.18's 1264); the goals after it were being re-found when the transplant was stopped.
 
 ### Avoids and the map
 
@@ -212,13 +262,34 @@ A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam)
 unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
 snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map.
 
+## Shared goal pieces
+
+Every solve (and `fulltas-plan`) first files every run's saved best in the piece library
+(`archive\fulltas-pieces.json`, see [Loop builder](#loop-builder)), with no `"seeds"` entry needed. A best is
+`fulltas/<run>.json` with its trace `fulltas-<run>.json` beside it. Each best is played from its own trace's start,
+under the trace's goals, on a thread of its own: the game's statics are per thread, and a world load on the solve's
+thread would leave its own simulation on the other world. Each goal it reaches, of any kind (area goals and rewards too),
+is filed as a piece: its inputs from where the goal before left the player, under the goal's label, the player's unlocks
+and that spot. `archive\fulltas-harvested.json` records what was filed, so a best is filed again only when it, its
+trace's start or its trace's goals change (`FalseEnding2-Any%`'s 294 goals take about 40 s, counted in the solve's minutes). `--fresh` skips this.
+
+Each search window (reach or polish) is then seeded with the library's way through its goals: from the window's start,
+for each of its goals in turn, the fastest piece that reaches it from within 48 units with the same unlocks (as the
+builder tries them, restart pads included), until one has none. The log shows `library pieces play goals a-b`. So a
+goal another run reaches from the same spot with the same tech (an `at:` label is its box) is played rather than
+searched. More tech doesn't count as the same: `VMAN`'s way through its tunnel goals (unlocks 83) isn't tried by
+`FalseEnding2-Any%`, which reaches them with an air jump (551). A double jump turns a mid-air jump press into
+another jump, so the inputs wouldn't play the same.
+
 ## Run seeds
 
 `"seeds": ["<run>", ...]` on a run hands those runs' offline bests (`enginesim/fulltas/<run>.json`) to its solve as
 seed routes, once from each goal they reach: the inputs after their goal k, for their goals k+1 on that this run has
 too. When the solve's best reaches one of those goals, the seed's inputs are tried from there (as the course seeds
 are) and spliced in if the whole run gets better, also when that goal is touched in the dash ticks after its input tick.
-Unlocks aren't checked up front: the simulation decides.
+Unlocks aren't checked up front: the simulation decides. Routes reused at the same spot with the same unlocks don't need
+this ([Shared goal pieces](#shared-goal-pieces)). A seed run replays whole stretches from the goal on, and a run's
+start is walked to (below).
 
 A seed from its run's start also carries that run's trace (`"trace"`): its player stood still at the trace's start
 position, facing the start's way, before the first input, and replayed from anywhere else the inputs miss (a start
@@ -368,7 +439,7 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --repair, --threads N, --goal N, --piece-minutes P, --resets, --segment N, --seed FILE, --seed-list FILE
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --resets, --segment N, --seed FILE, --seed-list FILE
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
@@ -397,7 +468,15 @@ inputs past the last unchanged goal the same way.
   compare that end with the goal's tick, so a way had to be 13 ticks faster before it counted.
 - A window's best is spliced into the run with the old tail after it; when the old tail no longer reaches the rest (the
   state differs), the following windows are searched again from the new state (`repair`), seeded with the old tail,
-  and the run is kept only if it ends sooner.
+  and the run is kept only if it ends sooner. The same happens when the old tail still reaches every goal but the run
+  ends later (its inputs were made for the old state), and for a loop stretch rebuilt faster to its last goal (each
+  rebuilt stretch once a solve). A repaired run that is complete but no faster is searched on from the goal where it
+  first falls behind the best, as long as that goal moves forward; before this, all of these were dropped.
+- `--check <route.json>` replays a route (a run file's `inputs` or an offline best's `ticks`) from the trace's start
+  under the trace's goals and prints each goal's physics and input tick and how the replay ended; it searches and
+  writes nothing.
+- `--transplant <old.json>` first repairs an old route of the run (another engine's best that dies on this one) and
+  hands what it finds to the solve, which then goes on as usual ([Transplant](#transplant)).
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -420,6 +499,71 @@ inputs past the last unchanged goal the same way.
   `windowEnd`, `record` (`previous`, `best`), `dropped`, `note`, `gate`, `done`; with `--resets` also `segments` (every
   segment: `n`, goals `first`..`last`, `start` and `reset` inputs, `from`/`to` times, `carries`, `quickRestart`: where
   its Quick Restart sends the player) and `segment` (the one searched next). Times are seconds from the run's start.
+
+### Transplant
+
+```powershell
+& $exe fulltas $traces\fulltas-VMAN.json --transplant ..\probes\vman-credits-nocrash.json --threads 16 --minutes 300 --window-minutes 4 --no-submit
+```
+
+`--transplant FILE` (`enginesim\Cli\FullTasTransplant.cs`) takes an old route of the run: an offline best's `ticks`, a run
+file's `inputs`, or a 1x probe of it (`probes\<name>.json`: its `ticks` and its per-tick `rows`, the player's world
+position, velocity and facing on each physics tick as the old engine played it). With the probe the repair has the old
+route's path to follow; without it, only its goals.
+
+1. The old route is played from the run's start. Where it fails is, with the probe, the first input where it leaves the
+   probe's path: more than 6 units from where the probe's player was within 3 ticks either way, for 3 ticks in a row. A
+   jump's `+5` and a dash's `−20` position writes, pulled back by the frame's lag with interpolation on, put it 5–40
+   units off for one tick and back, so a single tick doesn't count. Without the probe it is where it dies, or where it
+   came nearest the next area goal.
+2. A local repair in the 24 (then 60) inputs before the failure: every single change (1–3 ticks held, 1–2 dropped, a
+   press, release or dash a tick earlier or later, the stick one or two steps along the controller's values: 0,
+   ±0.3–0.8 in 0.05 steps, ±1; README Rules 2), then pairs of changes from the best six. Each is played from the state at
+   the window's start on lanes of their own (a simulation per thread) up to two goals on or 250 inputs past the failure.
+   With the probe it has to reach more goals, the last one sooner, or follow the path more ticks; staying alive longer
+   off the path isn't a repair. The kept change is replayed from the run's start before the next round.
+3. When no change helps (the old path can't be played any more: on a strict run the old `VMAN` route's walk through
+   Course 1's `Clone` box was refused; with loose buys it plays on to `finish:2` at tick 458, against 508, and first fails
+   after it), the old inputs are picked up again at any offset from the repaired
+   route's state at its last goal, the best's state there and the best's at the goal after it; the one that gains a
+   goal soonest goes on.
+4. The repaired route is saved as `fulltas\<run>.transplant.json`, its goals filed as library pieces
+   ([Shared goal pieces](#shared-goal-pieces)) and every goal it reaches seeds the windows from there. Every goal where a
+   graft along the way got there sooner than the best is a *lead*, saved as `fulltas\<run>.lead-<goal>.json` (the graft's
+   inputs up to that goal): a later reanchor from the best's state drops it from the graft itself.
+5. Bridges: from each lead, the biggest first while it is still ahead of the current best, the solve's own repair
+   windows re-find the goals after it (`Repair`, seeded with the best's inputs), and the result is kept when the whole run
+   gets faster. On `VMAN` (loose buys) the graft's lead at goal 12 (tick 923 against 44.94's 1006) bridged to goal 16 at
+   tick 1413 against 1593.
+6. Then for every goal k: the best's state after each of its inputs on the way to goal k is matched against the probe's
+   path (position, velocity at 1/50, facing at 20 units). At the 8 nearest spots (within 40) the old inputs are played on
+   from there, 4 offsets either way. The ones that reach goal k sooner than the best go to the solve's merge. It keeps one
+   when the whole run gets faster, else repairs the goals after it. The old inputs from the best's state at goal k-1 also
+   seed the windows from there.
+
+The old route's down-dash landing chain (goals 15-17) doesn't transplant as inputs: its quick restart at the checkpoint
+(12094.6, 11673) lands in a jump on the old engine, while from the new best's state the same inputs play a ground hyper
+(a restart pressed during a dash is taken only after it), and the old inputs from there reach goal 16 394 ticks after
+goal 15. The search finds it as a move instead: `OfflineSolver`'s omni kind `bouncechain` (an ultra, then 2-5 dashes
+straight down onto the floor, each jumped out of), and with the omnidirectional dash the cell key keeps momentum at 250,
+1000 and 2500 apart (it lumped everything past 750 together).
+
+`probes\vman-credits-nocrash.json` (09-26 10:08, 1x, interpolation off then) is such a probe: a 35.86 s `VMAN` route that
+shares its first 958 inputs with the 34.88 s one.
+
+### Reset study and lookahead
+
+A quick restart throws the player's momentum away. `--reset-study` (`FullTasResets.cs`) takes each reset in the best, in
+order, and searches the way on from the input before it with no resets at all (`OfflineSolver.NoResets`: no mutation adds
+or moves one, and seeds holding one are dropped; its archive is `<first>-<limit>-<hash>-noreset.json`) through the goal the
+reset is in and the two after it. The log's table gives, per reset, the best's and the no-reset way's tick at each of
+those goals and the speed (|Velocity + momentum|) 12 ticks after the last: a *teleport* saves ticks there; a *momentum
+killer* loses to the no-reset way (sooner, or within 12 ticks and 1.25 times as fast). A no-reset way that is sooner or
+faster goes to the merge, which keeps it when the whole run gets faster, else re-finds the goals after it. The study then
+stops. `--resets` (segment mode) isn't for `VMAN`: it keeps every reset.
+
+`--lookahead N` makes each polish and repair window search on N goals past its own last goal and scores it there, so a
+window whose own goal is reached later but with more speed wins when it gains by the goal after next.
 
 ### Reset segments
 
@@ -509,7 +653,8 @@ them together from pieces instead:
 - A piece is the inputs from one state to one goal (a box, a start gate, a finish), filed under the goal's label, the
   player's unlocks and where the player stood, in
   `<traces>\archive\fulltas-pieces.json`. The library is shared by every run, and kept across solves (`--fresh` starts
-  without it); per spot it keeps the 4 shortest.
+  without it); per spot it keeps the 4 shortest. It also holds every goal of every run's best, area goals included,
+  which the search windows play ([Shared goal pieces](#shared-goal-pieces)).
 - For its next goal the builder tries every piece filed within 48 units of the player, and, when the run may quick
   restart there, every piece filed at the spot a restart takes it to, after an idle pad and the restart (pads of 0–24
   ticks, shortest first: a restart keeps `framesSinceLastDash`, so a dash pressed soon after it fires a tick late while
@@ -544,13 +689,15 @@ them together from pieces instead:
   Put an area goal under the box before the buy (`FalseEnding2-Any%`: `at:7951,6950,120,50` then `buy:buydj`). The course
   it would lap is the last `start:`/`finish:` goal's, which after a trip is the wrong one: `FalseEnding2-Any%`'s build lapped
   Course 2 five times for `buydj` from Course 3's shaft before this.
-- Every purchase is a goal: a route buys only the box of its next goal (`Simulation.StrictBuys`, on for every Full-TAS
-  simulation: the builder, every search window and the saved best's replay). A walk that also bought another box spent
+- Every purchase is a goal on a strict run (the default; [Loose buys](#loose-buys) lifts it): a route buys only the box of
+  its next goal (`Simulation.StrictBuys`, on for every Full-TAS simulation: the builder, every search window and the saved
+  best's replay). A walk that also bought another box spent
   Cash and levels the plan counted on, and could cap a box a later goal buys (a build that ran through `FastCloneChance`
   twelve times had nothing left for its `buy:buyfast3` goals; `TrueEnding-ANY%`'s 482.98 s route bought a `buyreward3`
   on its way to Course 3's gate and walked through Course 2's row buying neighbours, so its best stops at goal 127). A
-  strict run finishes 12 ticks after its goal, not at it, so a neighbouring box the player still stands in once its
-  0.2 s cooldown is over also ends it (the search would otherwise hand the next piece a spot where any input buys it). A
+  Full-TAS run (strict or loose) finishes 12 ticks after its last goal, not at it, so a neighbouring box the player still
+  stands in once its 0.2 s cooldown is over also ends a strict one (the search would otherwise hand the next piece a spot
+  where any input buys it). A
   buy goal whose box is inactive (capped, or not unlocked by the goals so far) stops the build at once, with the box's
   state (`Shop.Describe`: bought/cap, cost, what the run holds); before a searched buy the log shows the same state.
 - The build is saved as the run's best every minute and when it stops.
@@ -577,6 +724,13 @@ own steps in the span as library pieces (a polished route passes spots the build
 goals and a line per step (tick, Cash, estimate, box levels); `--out` writes the run's whole goal list with them in
 place of the old stretch (the goals up to and after it kept), for `fulltas.json` by hand. Planning is greedy and takes
 a few seconds a step.
+
+`--group-buys` also weighs two boxes on one walk: for every ordered pair x, y of the stretch's boxes that the run can pay
+for together now, x then y from where x left the player, scored the same way (its end tick, then the target's wait over
+the income after both). "x and y in Z ticks" then competes with "x alone in B ticks" (and a lap): the step from x to y
+is often far shorter than a lap and a second walk. It is off by default because each pair with no library piece between
+its two boxes costs a piece search (`--piece-minutes`) once; a pair with no way is dropped. `plan-fulltas.py` already
+prices walking along a row to the next box (`buy(b, walk_row)`), so it needs no change for this.
 
 Before a piece search the planner replays cheaper ways to the goal (`Borrowed`): the library's pieces for it from any
 distance (the library plays only those within 48 units, and each box of a row leaves the player elsewhere), then the
@@ -622,7 +776,7 @@ earlier `buywj` has the Cash to buy Course 2's `CashPerLoop` box on the walk to 
 to be planned or solved from.
 
 `--harvest FILE` (the solve and `fulltas-plan`) plays a saved route (a `fulltas/<run>.json`: its goals and inputs, goals
-of the run's labels) under its own goals from the run's start and files each of its gates, finishes and buys as a library
+of the run's labels) under its own goals from the run's start and files each of its goals as a library
 piece. After a plan changes the goals, the builder then plays the old route's laps and box walks wherever the player
 stands as it did, and only searches the steps that changed: `FalseEnding-Any%`'s run after the new Course 1 plan (goal
 129 on) was rebuilt in 3 minutes with the 499.42 s route harvested, where the build had done 25 goals in 3 minutes

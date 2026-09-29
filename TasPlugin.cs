@@ -196,7 +196,8 @@ namespace IGTAPTasMod
         static readonly FieldInfo BlockSwapperField = AccessTools.Field(typeof(Movement), "blockSwapper");
 
         // A global upgrade (globalStats.globalUpgradeDict) as a pseudo field of the player, saved and put back with the
-        // unlocks: WJ_DS_DJ_BS_OM has every refill orb and the zip movers on, every other category has them off.
+        // unlocks: ORB has every refill orb on and ZIP the zip movers (README ### Rules 11); every category sets them from
+        // its own unlocks and nothing else turns either on.
         internal const string GlobalUpgradePrefix = "globalUpgradeDict.";
         internal static string GlobalUpgradeField(globalStats.globalUpgradeSet upgrade) { return GlobalUpgradePrefix + upgrade; }
         static readonly MethodInfo RefillOrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
@@ -229,6 +230,8 @@ namespace IGTAPTasMod
         }
 
         bool _newGameSession;
+        // The save's unlocks when a new game replaced its world (SaveUnlocks reports these until the save is loaded again).
+        Caps? _newGameSaveUnlocks;
         int _newGamePhase;
         int _newGameFrame;
         WebStudioRequest _newGameRequest;
@@ -318,9 +321,6 @@ namespace IGTAPTasMod
         }
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
-
-        // WJ_DS_DJ_BS_OM (the last) is WJ_DS_DJ_BS plus the omnidirectional dash: every course, bonus and transition has it, whatever its range.
-        internal static readonly string[] CapsLadder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom" };
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
         private void ClampSelections()

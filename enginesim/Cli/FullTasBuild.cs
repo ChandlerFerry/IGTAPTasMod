@@ -12,7 +12,8 @@ namespace IGTAP.EngineSim.Cli
     // The loop builder (docs/fulltas.md, "Loop builder"): a run's buy:, start: and finish: goals are put together from pieces, short
     // input stretches from one state to one goal, kept in a library shared by every run and reused wherever the player is in the same
     // spot with the same unlocks. Every use is checked by playing it in the run. Only a goal no piece reaches is searched, once; a
-    // buy the run can't pay for yet gets an extra lap of its course first, never a wait at the box.
+    // buy the run can't pay for yet gets an extra lap of its course first, never a wait at the box. Every run's best files all its
+    // goals there too (HarvestRuns), and each search window is seeded with the pieces that play its goals (PieceChain).
     sealed partial class FullTas
     {
         const int MaxExtraLaps = 64, MaxPieceTries = 12, PieceVariants = 4;
@@ -70,6 +71,8 @@ namespace IGTAP.EngineSim.Cli
         FullTasTracker _runGoals;
         readonly List<Piece> _pieces = new List<Piece>();
         string _piecesFile;
+        /// <summary>Set while a harvest files many pieces: they're written once at its end, not once each.</summary>
+        bool _holdPieces;
         /// <summary>Saves the build so far (the frontier build's; null otherwise): called before each piece search, which can take minutes.</summary>
         Action _beforeSearch;
 
@@ -133,7 +136,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (Piece p in _pieces.Where(p => p.Target == target && p.Unlocks == unlocks && Distance(p, at) <= 1f)
                 .OrderBy(p => p.Inputs.Count).Skip(PieceVariants).ToList())
                 _pieces.Remove(p);
-            SavePieces();
+            if (!_holdPieces) SavePieces();
         }
 
         (Vector3 at, int unlocks) Where(SimSnapshot s)
@@ -282,6 +285,26 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
+        /// A search window's library seed: from at (after prefix), goal first on, the fastest library piece for each goal played in the
+        /// run one after another, until one has none or the window's goals are done. Pieces come from every run's best (<see
+        /// cref="HarvestRuns"/>), so a goal another run reaches from the same spot with the same unlocks is played, not searched.
+        /// Returns the inputs and how many goals they reach (0: none).
+        /// </summary>
+        (List<InputTick> inputs, int reached) PieceChain(SimSnapshot at, List<InputTick> prefix, int first, int limit)
+        {
+            var route = prefix.ToList();
+            int k = first;
+            for (; k < limit && at != null; k++)
+            {
+                Step step = BestKnown(at, route, k, new Target { Goal = k, Key = _labels[k] });
+                if (step == null) break;
+                route.AddRange(step.Inputs);
+                at = step.Next;
+            }
+            return (route.GetRange(prefix.Count, route.Count - prefix.Count), k - first);
+        }
+
+        /// <summary>
         /// Every library piece that reaches target from at, as <see cref="BestKnown"/> tries them: as they are, then after each restart
         /// pad up to the first whose pieces beat the fastest so far (or the first with none filed at its spot).
         /// </summary>
@@ -342,10 +365,10 @@ namespace IGTAP.EngineSim.Cli
                 if (rank < 3) foreach (var (pre, _) in restarts) Seed(pre.Concat(p.Inputs).ToList());
             }
             FullTasGoal[] goals = target.Extra ?? (then == null ? new[] { _runGoals.Goals[target.Goal] } : new[] { _runGoals.Goals[target.Goal], _runGoals.Goals[then.Goal] });
-            foreach (var s in SeedStarts(at, prefix, new HashSet<string>(goals.Select(g => g.label)), restarts.Count > 0)) Seed(s.inputs);
-            foreach (List<InputTick> s in extraSeeds) Seed(s);
             _eval.Restore(at);
             string caps = WindowCaps(goals);
+            foreach (var s in SeedStarts(at, prefix, new HashSet<string>(goals.Select(g => g.label)), restarts.Count > 0, caps)) Seed(s.inputs);
+            foreach (List<InputTick> s in extraSeeds) Seed(s);
             string span = target.Extra != null ? target.Key + " (an extra lap for Cash before " + _labels[target.Goal] + ")"
                 : then != null ? _labels[target.Goal] + " + " + _labels[then.Goal] : _labels[target.Goal];
             string title = "piece for goal " + (target.Goal + 1) + (then != null ? "-" + (then.Goal + 1) : "") + "/" + _goals;
@@ -708,9 +731,10 @@ namespace IGTAP.EngineSim.Cli
                 {
                     Route run = Splice(new Route { Inputs = built.Inputs }, built.Inputs.Count, new List<InputTick>(), b, best);
                     if (run != null && Better(run, _best)) Commit(run, $"goals {a + 1}-{b} rebuilt from loop pieces");
-                    else if (run != null && run.Progress >= b && run.Progress < best.Progress && run.GoalPhysics[b - 1] < best.GoalPhysics[b - 1])
+                    else if (run != null && run.Progress >= b && run.GoalPhysics[b - 1] < best.GoalPhysics[b - 1] && _repairedRebuilds.Add(Solve.EncodeTicks(built.Inputs)))
                         Repair($"goals {a + 1}-{b} rebuilt from loop pieces", best, run);
-                    else Log($"rebuilt goals {a + 1}-{b}: the whole run is no faster");
+                    else Log($"rebuilt goals {a + 1}-{b}: the whole run is no faster (" + (run == null ? "its splice didn't replay" : run.Progress < b ? $"replayed, it reaches goal {run.Progress}"
+                        : $"goal {b} at tick {run.GoalPhysics[b - 1]} against the best's {best.GoalPhysics[b - 1]}, the run's end at {(run.Progress == _goals ? run.Last.ToString() : "goal " + run.Progress)}") + ")");
                 }
                 else if (built.Stuck != null) Log($"rebuild of goals {a + 1}-{b} stopped: {built.Stuck}");
                 if (TimeUp) return;
@@ -720,6 +744,9 @@ namespace IGTAP.EngineSim.Cli
                 if (!ImprovePieces(played)) a = b;
             }
         }
+
+        /// <summary>Rebuilt stretches (their inputs) already repaired this solve: a repair re-finds every goal after them, so once.</summary>
+        readonly HashSet<string> _repairedRebuilds = new HashSet<string>();
 
         /// <summary>Pieces ImprovePieces has searched this solve (target, spot and the ways searched from), not searched again.</summary>
         readonly HashSet<string> _searchedPieces = new HashSet<string>();

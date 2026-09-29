@@ -14,6 +14,60 @@ ordered as the sections they came from.
   restore moves the world back to it.
 - **Where:** `TurboRunner.OriginFrame`, `ResumeRebase`, `PutOrigin`.
 
+## The tick after a rebase lost its step
+
+- **Symptom:** `VMAN`'s routes split from turbo at its rebase (tick 1588 of the 39.28 s best: offline 30 units behind and
+  grounded a tick early, then 0.6 units behind); every offline route past it died in turbo (at action 470).
+- **Cause:** a query's sync after `MoveOrigin` moved the player's body to its transform, the first rendered frame's
+  interpolation blend, so the tick lost the rest of its step, and the body stood in the moved world a tick before Unity's
+  does; the next tick's sync then took the transform's FixedUpdate lag blend instead of the step's end.
+- **Fix:** a query after a rebase rebuilds the moved static colliders only; bodies take their transforms at the next
+  physics step's sync, and before it a transform FixedUpdate didn't write goes back to the step's end, as turbo's
+  `Place(player, _stepTo)`. The trace now matches turbo but for 1e-3 units of rounding.
+- **Where:** `PhysicsWorld.SyncMovedWorld`, `Simulation.Run` (`LagForFixedUpdate`).
+
+## Rebase body snap
+
+- **Symptom:** `VMAN` 46.96 finished offline but died at action 486 in turbo and at 1x; `div-vman-46.96` split at tick
+  1675 by 0.00017 u and drifted from there.
+- **Cause:** after a rebase inside the run, turbo's pre-step `Place(player, _stepTo)` writes the transform through the
+  moved parent, which reads back rounded, and the sync moves the body there every tick. Offline kept the exact body.
+- **Fix:** once the run has rebased (`Rebased`), a tick whose FixedUpdate made no write marks the player's transform
+  dirty when its read-back differs from the body. Captures taken after the game's own rebases don't snap (turbo neither).
+  `fulltas-VMAN` positions now match on every tick (body y 7.7e-6 at 1653 and 1731); isolated in a build without it,
+  both VMAN traces split at 1675 and `fulltas-VMAN` at 1590. No other corpus trace changes.
+- **Where:** `Simulation.Run` (after `LagForFixedUpdate`).
+
+## Trigger touch across a pull-back
+
+- **Symptom:** `div-vman-46.96` tick 2140: the landing dash's -20 write pulled the player 16 u out of the rebased
+  `Spikes` composite before the step and the step moved it back in; turbo killed (Stay with `dashActive`), offline sent
+  Enter and the run finished.
+- **Cause (first model, inferred, wrong):** a static body the rebase moved keeps a swept broadphase proxy, so its
+  trigger contacts survive any pull-back. `FindLapsedTouches` tested a side table of swept extents (`_swept`). It fit
+  `div-vman-46.96` only.
+- **Ground truth:** walk into a trigger, then dash on the next input tick, so the dash's pull-back moves the player out
+  before the step and the step moves it back in. Turbo keeps the touch in both cases, and the kill comes on the dash's
+  own step:
+  - `gt-staticspike-prerebase-c3to4`: the main `Spikes` composite, a static `Rigidbody2D`, with no rebase.
+  - `gt-bodyless-dash-freeze-aim` (walk-only control `gt-bodyless-walk-freeze-aim`): the lab spike bed, a body-less
+    `BoxCollider2D` under `LabMap freeze-aim`, after a rebase in the run.
+
+  The swept model died a step late on both (215/214 and 9/8 ticks). `fulltas-TouchGrass-ANY%` tick 31084 points the
+  same way: turbo bought from the body-less upgrade box `global cash` on Stay across a pull-back, and the swept model
+  sent Enter, didn't buy, and split RNG and cash there. The one trigger turbo does let lapse is Course 1's start gate
+  (`Start`, on a dynamic body): `c11-bogus-0.56` (see "Trigger touch lapsed at the step's start").
+- **Fix:** a trigger on a static body or on no body (the ground body) never lapses. Only pairs whose colliders both sit
+  on non-static bodies are tested, and they are tested against the broadphase fat AABBs (`ProxiesOverlap`). The Box2D
+  mechanism behind the static/dynamic difference is not established; the rule is fit to the four ground-truth points.
+  Kinematic bodies are grouped with dynamic ones by inference: no corpus trigger pair has one. The sweep (`SweepProxies`,
+  `_swept`, its snapshot field) is gone. Full corpus (398 traces, verbose) against the swept build: 378 MATCH in both; traces with the
+  same tick count as turbo 353 -> 355, RNG identical on every tick 347 -> 350.
+  Three outputs change, all towards turbo: the two ground-truth dash traces now die on turbo's tick, and TouchGrass's
+  RNG is identical on every tick (cash still splits at 13095, as before). `div-vman-46.96` still MATCHes (death at
+  action 486, now through the static rule), and so do `fulltas-VMAN` and `c11-bogus-0.56` (identical on every tick).
+- **Where:** `PhysicsWorld.FindLapsedTouches` (`OnStaticBody`), `ProxiesOverlap`.
+
 ## Far teleport rebased every other tick
 
 - **Symptom:** a far teleport (a quick restart or death across the map) rebased again every tick or two and the player's
@@ -220,7 +274,7 @@ ordered as the sections they came from.
   (throughput ~1,800 runs/s, 205,000 ticks/s).
 - **Where:** the scene-query grid behind raycasts, point tests and `Collider2D.Distance`.
 
-## Zip movers once unlocked (WJ_DS_DJ_BS_OM)
+## Zip movers once unlocked (WJ_DS_DJ_BS_ORB_ZIP_OM)
 
 - **Symptom:** with `zipMoversUnlocked` on, every Course 7 offline best failed its turbo check (no finish), and the
   offline solver crashed on a mover's end boom (`MissingMethodException: AudioSource.set_minDistance`).
@@ -251,7 +305,7 @@ ordered as the sections they came from.
 
 ## Trigger touch lapsed at the step's start
 
-- **Symptom:** Course 11 `WJ_DS_DJ_BS_OM` offline bests of 0.56–0.96 s (the real route is 4.56 s) all failed their turbo
+- **Symptom:** Course 11 `WJ_DS_DJ_BS_ORB_ZIP_OM` offline bests of 0.56–0.96 s (the real route is 4.56 s) all failed their turbo
   check (no finish): offline, a landing dash into Course 1's start gate started the timer again on the far side of the
   course, 28 ticks from the finish.
 - **Cause:** the landing tick's move reached the gate by 0.2 units (Enter), and the next tick's dash transform write
@@ -262,4 +316,83 @@ ordered as the sections they came from.
   (tested again only for teleported bodies and rebuilt shapes) sends Enter instead of Stay if it overlaps afterwards.
   Scale-rebuilt shapes keep the facing-flip rule. `c11-bogus-0.56` now matches on every tick; the other 264 corpus
   traces replay unchanged. Every Course 11 sub-second best now ends without a finish offline.
+  Later narrowed to triggers on non-static bodies ("Trigger touch across a pull-back").
 - **Where:** `PhysicsWorld.FindLapsedTouches`, `DispatchCallbacks`.
+
+## Start past the rebase threshold, and its interpolation
+
+- **Symptom:** `tools/tech-check.py` split from turbo on tick 0 for lab demos captured with the player placed past
+  FloatingOrigin's Threshold (`freeze-aim`, `boosted-double-jump`: turbo moved the world back after the first step,
+  offline never did), and with the player at rest there, `boosted-double-jump` still split on tick 0 by 0.01 u in
+  `heightOfLastJumpStart` and `lastHyperY`.
+- **Cause:** a trace start carried `rebasing` (MoveOrigin waiting) but `Simulation.LoadStart` dropped it, where turbo's
+  resume runs FloatingOrigin's `LateUpdate` again. And the start's interpolation ends (its last step's `stepFrom`/`stepTo`)
+  were never exported, so offline started at rest while turbo's first FixedUpdate read the blend of the placement tick's
+  fall (0.54 u, alpha 0.98).
+- **Fix:** `LoadStart` arms the rebase again when the start has `rebasing`; the bridge exports `stepFrom`/`stepTo` and
+  `LoadStart` resumes from them while the player stays where the start put it (a moved start, a lab or probe placement,
+  is at rest as before; older traces have none). `boosted-double-jump` matches on every tick to its finish; `high-super`
+  (tick 0 -> 67), `reverse-super` (2 -> 16) and `super-ground-bounce` (2 -> 18) split later, at 1e-5 u of rounding.
+- **Where:** `Simulation.LoadStart`, `Simulation.Capture`, `EngineSimBridge` (trace start).
+
+## Lab demo started from a stale savestate
+
+- **Symptom:** `stored-superbounce`'s turbo trace and 1x playback started on the Course 1 floor walking left, never on
+  the post, so no stored superbounce happened (1x showed only SUPER; `tech-check.py` still matched, turbo against its
+  own wrong start). The boosted double jump's first 1x playback kept a `wallCoyoteFrames` from earlier play.
+- **Cause:** a lab demo's start was a savestate stored when the demo was installed: the lab fields over a copy of the
+  player at that moment (its leftovers included). The game update of 2026-09-28 changed Assembly-CSharp's hash, the
+  savestate was rejected, and the start fell back to the course's quick restart.
+- **Fix:** every lab start is built from the lab files: value-type Movement fields and hitbox colliders from the start
+  trace the demo was solved from (`solvedIn`), the save's own fields kept, then the demo's start placed over it, as
+  `lab replay` does. All 8 lab demos match `lab replay` in turbo (0.05 u until the run's last tick) and show their tech at
+  1x; the boosted double jump lab drops its `OnWall`/`wallCoyoteFrames` pin (`lab replay` identical without it).
+- **Where:** `LabMapService.PlaceLabDemoStart`, `ResetToLabBase`, `TasPlugin.RestoreRouteStart`.
+
+## Spike state leaked between turbo runs
+
+- **Symptom:** `div-vman-46.96.world.json` held `spikeScript.playerKilled = true` on a `Spikes` object, from a gate death
+  before it. A trace captured right after a run that died in a spike exported the same (Course 4 `Spikes` 166318:
+  `counter` 2, `playerKilled` true), and the next turbo run from a cached start kept it too: that spike wouldn't kill.
+- **Cause:** a run that ends in a spike never gets the spike's `OnTriggerExit2D` (the reset): a turbo restore mutes the
+  callbacks around the player's old position while it moves it, and a world export right after the run sees it before
+  any step. Snapshots didn't hold spike state.
+- **Fix:** turbo snapshots keep every spike's `counter` and `playerKilled` and a restore puts them back (a new game's
+  start, fresh, has them clear), and the world export clears them first: no start is inside a spike.
+- **Where:** `TurboRunner.Snapshot.spikes`, `RestoreSpikes`, `ClearSpikes`, `EngineSimExport.WriteWorld`.
+
+## Cached start judged in another zone's world
+
+- **Symptom:** the offline-best pump logged `no finish in turbo` for good routes in their own category:
+  `10_wjdsdjbszip-17.82` right after it judged a Course 4 file (zone 1), and `7_wjds2bszipom-9.10` earlier, which a
+  direct submit then saved.
+- **Cause:** a cached start restores the player and the snapshot's objects, but not which zone the `ZoneLoader` has
+  loaded or the Area 1 state's scenery. After the pump judged a course in the other zone, the cached start ran in the
+  wrong world. `Loaded zone 2 for 10` was logged only after the run, by `ParkAtStart`.
+- **Fix:** a cached start is dropped when the course's zone isn't the loaded one or its Area 1 state isn't set, so the
+  start is captured again, which loads the course's world first.
+- **Where:** `EngineSimBridge.PrepareEngineSimRun`, `ZoneReady`/`TargetZone` in `Solver.cs`.
+
+## Quick-restart start carries the last run's history (open)
+
+- **Symptom:** right after a game launch, `10_WJ_DS_DJ_BS_ZIP 17.84` (the saved record) doesn't finish: submitted
+  twice, no finish at physics tick 288. A freshStart trace moments later finishes 17.84. The pump failed
+  `10_wjdsdjbszip-15.00` the same way seconds after a launch, but a freshStart trace later finishes it at 15.0002
+  (finishTick 742). It is parked in `offline-best/hold-GameOwner2/`, unjudged.
+- **Cause:** the quick restart (`Movement.respawn(true)`) resets position and the run's state, but not a set of Movement
+  history fields, the RNG state or the clone timers. A start captured after a run carries that run's leftovers, and a
+  start captured right after launch has the launch values. Routes solved against a start trace that had leftovers need
+  those leftovers. Start diff, after launch (`go3-bad.json`) vs after other runs (`go3-good.json`), Course 10
+  `wjdsdjbszip`: `facingRight` true/false, `wallJumpFacing` (1,0)/(-1,0), `dashDirection` (0,0)/(-1,0),
+  `wallCoyoteDir` 0/1, `framesSinceLastDash` 119/326, `MostRecentUpwardsMoveWasNormalJump` false/true,
+  `timeSinceLastAfterimage`, `emitWallSlideParticlesThisFrame`, `UnityEngine.Random` state, and
+  `clonesScript.timeSinceLastClone` 10002.85/10010.63. The runs part by 1 u in x at tick 191. The offline start trace
+  `start-c10-wjdsdjbszip.json` has `facingRight` false and `wallJumpFacing` (-1,0). Bonus 5's starts also differ in
+  `heightOfLastJumpStart`, `lastHyperY`, `preDashMomentum` and `finalWallClingTimeLeft`.
+- **Repro:** relaunch the game and bootstrap, then at once `POST /api/enginesim/submit` course 10, `wjdsdjbszip`,
+  with the 17.84 route's ticks: no finish, twice. Then a trace with `freshStart` finishes 17.84.
+- **Proposed fix:** make the category start canonical. When the start is captured, set these history fields, the RNG
+  state and the clone timers to fixed values, as a lab start already does from its start trace. That changes every
+  category's start, so the start traces would have to be recaptured and the saved routes judged again. A Full-TAS run
+  starts from a fresh new game, so VMAN is not affected. Deferred for now.
+- **Where:** `EngineSimBridge.PrepareEngineSimRun` (start capture), `TasPlugin.RestoreRouteStart`.

@@ -11,10 +11,16 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
 
 ## Route names
 
-- Category route (the runs record, game timer): `<course>_<NONE|WJ|WJ_DS|WJ_DS_DJ|WJ_DS_DJ_BS|WJ_DS_DJ_BS_OM> <time>`.
-  `BS` is block swap on dash, `OM` the omnidirectional dash on top of it; Courses 1–5 stop at `WJ_DS_DJ`, Courses 6–10
-  start at `WJ_DS_DJ_BS`. Courses 11–15 are Courses 1–5 overgrown (the game's Course 1–5 gates, Area 1 overgrown) and
-  run only in `WJ_DS_DJ_BS`. Every course (1–15), bonus and transition also runs in `WJ_DS_DJ_BS_OM`.
+- Category route (the runs record, game timer): `<course>_<CAT> <time>`, `CAT` a registered category: the tokens
+  `WJ`, `DS`/`DSn`, `DJ`/`DJn`, `BS`, `ORB`, `ZIP`, `OM` in that order, `NONE` when empty (the registry is
+  [`Categories.cs`](Categories.cs)). The ladder (`NONE`–`WJ_DS_DJ_BS`) runs per the target's `courses.json` range:
+  Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`, Courses 6–10 start at `WJ_DS_DJ_BS`. Courses 11–15 are
+  Courses 1–5 overgrown (the game's Course 1–5 gates, Area 1 overgrown) and run only `WJ_DS_DJ_BS` of the ladder.
+  Outside the ladder every course (1–15), bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
+  `WJ_DS_DJ_BS_ORB_ZIP_OM` (the old omnidash top category of the ladder, every refill orb and the zip movers included;
+  renamed, no alias); `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only on the targets with refill orbs in reach and
+  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19). Bonuses 17–21
+  and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
   start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).

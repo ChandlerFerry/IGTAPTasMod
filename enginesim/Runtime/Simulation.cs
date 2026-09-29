@@ -280,9 +280,12 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// A purchase that isn't the next goal's box ends the run (the Full-TAS loop builder's pieces: a walk that also buys another
-        /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys).
+        /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys). Not on a loose-buys run
+        /// (fulltas.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
         /// </summary>
         internal bool StrictBuys;
+        /// <summary>Every purchase of a Full-TAS run (the box's path), goal or not: `fulltas --check` lists them.</summary>
+        internal Action<string> Purchased;
 
         /// <param name="continuing">A buy-max box's later levels, bought at the ends of the ticks after the touch (a prestige-boosted
         /// course's boxes): they are the touch's own purchase, so they neither reach a goal nor count as a stray buy. One buy goal
@@ -290,8 +293,9 @@ namespace IGTAP.EngineSim
         internal void Bought(string path, string id, bool continuing)
         {
             if (Goals == null || !Engine.IsRunning || continuing) return;
+            Purchased?.Invoke(path);
             FullTasGoal next = Goals.Current;
-            if (StrictBuys && (next?.boxes == null || Array.IndexOf(next.boxes, id) < 0 && Array.IndexOf(next.boxes, path) < 0))
+            if (StrictBuys && !Goals.Loose && (next?.boxes == null || Array.IndexOf(next.boxes, id) < 0 && Array.IndexOf(next.boxes, path) < 0))
             {
                 Engine.Abort("Bought " + path + ", which isn't the next goal's box");
                 return;
@@ -576,6 +580,11 @@ namespace IGTAP.EngineSim
             if (header.TryGetProperty("fulltas", out JsonElement fulltas))
             {
                 SetGoals(fulltas.GetProperty("goals"));
+                if (fulltas.TryGetProperty("buys", out JsonElement buys) && buys.ValueKind == JsonValueKind.String)
+                {
+                    if (buys.GetString() == "loose") Goals.LooseBuys();
+                    else if (buys.GetString() != "strict") throw new InvalidOperationException("fulltas buys is \"strict\" or \"loose\", not \"" + buys.GetString() + "\".");
+                }
                 _savestateStart = fulltas.TryGetProperty("savestate", out JsonElement savestate) && savestate.ValueKind == JsonValueKind.String;
             }
             CheckpointRespawns = header.TryGetProperty("checkpointRespawns", out JsonElement checkpoints) && checkpoints.GetBoolean();
@@ -694,6 +703,20 @@ namespace IGTAP.EngineSim
             MaterializeRebases(Array.Empty<Vector3>());
             _rebasePending = Vector3.zero;
             _rebaseDue = false;
+            // A start captured with FloatingOrigin's MoveOrigin waiting (a lab or savestate placed past its Threshold) has it
+            // armed again from where the player stands, as turbo's resume runs FloatingOrigin.LateUpdate: it moves the world
+            // back after the first physics step.
+            if (start.TryGetProperty("rebasing", out JsonElement rebasing) && rebasing.GetBoolean()) FloatingOriginFrame();
+            // The start's interpolation ends (older traces have none: at rest where it stands).
+            _loadedStepAt = new Vector3(float.NaN, float.NaN, float.NaN);
+            if (start.TryGetProperty("stepFrom", out JsonElement stepFrom) && start.TryGetProperty("stepTo", out JsonElement stepTo))
+            {
+                Vector3 at = Player.transform.m_Position;
+                Vector2 from = World.Vec2(stepFrom), to = World.Vec2(stepTo);
+                _loadedStepFrom = new Vector3(from.x, from.y, at.z);
+                _loadedStepTo = new Vector3(to.x, to.y, at.z);
+                _loadedStepAt = at;
+            }
             // A tech demo's trace starts after its first input tick (the demo starts inside a tick, as its playback does).
             // The start's pending Invokes are due counted from its next tick, which Capture counts from Tick + 1.
             Scheduler.Tick = -1;
@@ -728,6 +751,10 @@ namespace IGTAP.EngineSim
         float _freezeFor = -1f;
         int _pauseFrames, _pauseAfter;
         bool _inRun;
+        /// <summary>The trace start's interpolation ends (its last physics step's start and end, turbo's _stepFrom/_stepTo) and
+        /// where it put the player; a start moved from there (a lab or probe placement) is at rest instead.</summary>
+        Vector3 _loadedStepFrom, _loadedStepTo, _loadedStepAt = new Vector3(float.NaN, float.NaN, float.NaN);
+        bool AtLoadedStart { get { return Player.transform.m_Position == _loadedStepAt; } }
 
         Vector3 BodyPosition()
         {
@@ -736,9 +763,11 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>Before FixedUpdate: the transform holds the last rendered frame's blend (not a write, so the body stays).</summary>
-        void LagForFixedUpdate()
+        Vector3 LagForFixedUpdate()
         {
             Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.LastAlpha));
+            // As stored: the world position reads back through the player's parent, rounded.
+            return Player.transform.m_Position;
         }
 
         /// <summary>After each rendered frame's Movement.Update (probe's per-frame rows, as the plugin's 1x probe logs them):
@@ -815,9 +844,10 @@ namespace IGTAP.EngineSim
                 Rebases = _rebases,
                 RebasePending = _rebasePending,
                 RebaseDue = _rebaseDue,
-                // Outside a run (the trace's start, a probe's moved start) the player is at rest where it stands.
-                StepFrom = _inRun ? _stepFrom : Player.transform.m_Position,
-                StepTo = _inRun ? _stepTo : Player.transform.m_Position,
+                // Outside a run the player is at rest where it stands (a probe's moved start), unless it still stands where a
+                // trace's start put it: that start's own interpolation ends (turbo resumes from them).
+                StepFrom = _inRun ? _stepFrom : AtLoadedStart ? _loadedStepFrom : Player.transform.m_Position,
+                StepTo = _inRun ? _stepTo : AtLoadedStart ? _loadedStepTo : Player.transform.m_Position,
                 Animation = Animation,
             };
         }
@@ -1071,7 +1101,7 @@ namespace IGTAP.EngineSim
                 Scheduler.Resume(Scheduler.Wait.Seconds);
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
                 int rebasesBefore = _rebases.Length;
-                LagForFixedUpdate();
+                Vector3 lag = LagForFixedUpdate();
                 _freezeFor = -1f;
                 _pauseFrames = _pauseAfter = 0;
                 if (Engine.TakeQuickRestart())
@@ -1097,6 +1127,16 @@ namespace IGTAP.EngineSim
                 VmanClock();
                 StepOrbs();
                 Shop.TickCooldowns(World.FixedDeltaTime);
+                // No write: the blend was never the body's, so the sync leaves the body where the step put it (turbo's too). After a
+                // rebase every body syncs to its transform, and the blend there pulled the player back by the frame's lag.
+                // Once a rebase has run in this run, turbo's step-end transform write (Place(player, _stepTo)) moves the body on
+                // every tick to what the transform reads back through the moved parent, rounded (1x too: VMAN 46.96's route died
+                // at action 486 in both while this engine finished it). A capture taken after the game's own rebases doesn't.
+                if (Player.transform.m_Position == lag)
+                {
+                    Player.transform.StoreWorldPosition(_stepTo);
+                    if (Rebased && Player.transform.m_Position != BodyPosition()) Physics.TransformChanged(Player.transform, true);
+                }
                 Physics.SyncTransforms();
                 _stepFrom = BodyPosition();
                 Physics.Simulate(World.FixedDeltaTime);

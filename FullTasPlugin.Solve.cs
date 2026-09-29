@@ -135,7 +135,6 @@ namespace IGTAPTasMod
             if (resets) args.Append(" --resets");
             if (resets && segment > 0) args.Append(" --segment ").Append(segment);
             if (Truthy(body, "fresh")) args.Append(" --fresh");
-            if (Truthy(body, "repair")) args.Append(" --repair");
             if (Truthy(body, "unsolved")) args.Append(" --unsolved");
             if (Truthy(body, "noSubmit")) args.Append(" --no-submit");
             int seeds = WriteFullTasSeeds(run, args);
@@ -195,15 +194,14 @@ namespace IGTAPTasMod
                 if (goals.Count == 0) continue;
                 bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
                 string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;
-                Match category = CategoryRoute.Match(plain);
-                if (!category.Success) category = FarmRoute.Match(plain);
-                string caps = string.IsNullOrEmpty(target?.minCapabilities) ? "none" : target.minCapabilities;
+                Match category = MatchCategoryRoute(plain);
+                if (!category.Success) category = MatchFarmRoute(plain);
+                string caps = string.IsNullOrEmpty(target?.minCapabilities) ? default(Caps).Id : target.minCapabilities;
                 float time = float.MaxValue;
                 if (category.Success)
                 {
-                    caps = CapabilityLabels.OrderByDescending(p => p.Value.Length)
-                        .First(p => category.Groups[1].Value.EndsWith("_" + p.Value, StringComparison.OrdinalIgnoreCase)).Key;
-                    if (!float.TryParse(category.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out time)) time = float.MaxValue;
+                    caps = CapsOf(category.Groups["label"].Value).Id;
+                    if (!float.TryParse(category.Groups["time"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out time)) time = float.MaxValue;
                 }
                 bool standing = target != null, restart = false;
                 List<SolverTick> ticks = ToTicks(route.steps);

@@ -75,8 +75,12 @@ namespace IGTAPTasMod
             // FloatingOrigin move keeps them (a restore puts the world back at the snapshot's origin, TurboRunner.PutOrigin):
             // a far course's runs and restarts rebase, and each recapture there dropped the trace's start. A fresh start recaptures all.
             // A cached start only judges: a run it would save is judged again from a start captured now (Judge).
+            // A snapshot doesn't hold which zone is loaded or the Area 1 state's scenery: after a run on a course in another
+            // zone or Area 1 state (the offline-best pump judges every course's files in turn), a cached start would run in
+            // the wrong world, and a good route would not finish. The start is captured again then, which loads the course's world.
             if (Truthy(body, "freshStart")) _startStates.Clear();
             _startKey = key;
+            if (!ZoneReady(_solverTarget) || !Area1StateReady(_solverTarget)) _startStates.Remove(key);
             _startFresh = !_startStates.TryGetValue(key, out TurboRunner.Snapshot cached);
             if (_startFresh)
             {
@@ -103,7 +107,7 @@ namespace IGTAPTasMod
             int course = Number(body, "course", 0);
             string caps = Text(body, "capabilities");
             CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
-            if (!CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
+            if (!Categories.IsCategory(caps)) throw new InvalidOperationException("Unknown capabilities.");
             CheckCategory(course, caps);
             _solverTarget = def;
             _solverCaps = caps;
@@ -127,8 +131,8 @@ namespace IGTAPTasMod
             int course = Number(body, "course", 0);
             string caps = Text(body, "capabilities");
             CourseDef def = _courses.Find(c => c.id == course) ?? throw new InvalidOperationException("Unknown course " + course + ".");
-            if (caps == null || !CapabilityLabels.ContainsKey(caps)) throw new InvalidOperationException("Unknown capabilities.");
-            string category = def.Token + "_" + CapabilityLabels[caps];
+            if (!Categories.IsCategory(caps)) throw new InvalidOperationException("Unknown capabilities.");
+            string category = def.Token + "_" + Caps.Parse(caps).Label;
             bool human = Truthy(body, "human");
             var newest = OfflineBestFiles(course, caps, human ? HumanBestFile : OfflineBestFile).FirstOrDefault();
             if (newest.path == null) throw new InvalidOperationException("No offline best" + (human ? " with a human version" : "") + " for " + category + ".");
@@ -163,7 +167,7 @@ namespace IGTAPTasMod
                 int id = Number(body, "course", 0);
                 string caps = Text(body, "capabilities");
                 CourseDef course = _courses.FirstOrDefault(c => c.id == id);
-                if (course == null || (caps != "none" && CapsLevel(caps) == 0) || !course.HasCategory(caps))
+                if (course == null || !course.HasCategory(caps))
                 {
                     request.StatusCode = 400;
                     return new { ok = false, error = "Unknown course " + id + " or capabilities '" + caps + "'." };
@@ -220,19 +224,18 @@ namespace IGTAPTasMod
         object EngineSimSlack(WebStudioRequest request, JObject body)
         {
             string name = Text(body, "name") ?? "";
-            Match g = CategoryRoute.Match(name);
-            bool farm = !g.Success && (g = FarmRoute.Match(name)).Success;
+            Match g = MatchCategoryRoute(name);
+            bool farm = !g.Success && (g = MatchFarmRoute(name)).Success;
             if (!g.Success)
             {
                 request.StatusCode = 404;
                 return new { ok = false, error = "No human version for " + name + ": only a category or farm route has one." };
             }
-            string[] category = g.Groups[1].Value.Split(new[] { '_' }, 2);
-            CourseDef course = _courses.Find(c => string.Equals(c.Token, category[0], StringComparison.OrdinalIgnoreCase));
+            CourseDef course = _courses.Find(c => string.Equals(c.Token, g.Groups["token"].Value, StringComparison.OrdinalIgnoreCase));
             if (course != null)
             {
-                string caps = CapsFor(category[1]);
-                float routeTime = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
+                string caps = CapsOf(g.Groups["label"].Value).Id;
+                float routeTime = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture);
                 long farmTicks = FarmTicks(routeTime);
                 foreach (var file in OfflineBestFiles(course.id, caps, HumanSlackFile))
                 {
@@ -265,14 +268,13 @@ namespace IGTAPTasMod
 
         MacroDefinition HumanVersionOf(MacroDefinition route)
         {
-            Match g = CategoryRoute.Match(route.name ?? "");
-            bool farm = !g.Success && (g = FarmRoute.Match(route.name ?? "")).Success;
+            Match g = MatchCategoryRoute(route.name);
+            bool farm = !g.Success && (g = MatchFarmRoute(route.name)).Success;
             if (!g.Success) return null;
-            string[] category = g.Groups[1].Value.Split(new[] { '_' }, 2);
-            CourseDef def = _courses.Find(c => string.Equals(c.Token, category[0], StringComparison.OrdinalIgnoreCase));
+            CourseDef def = _courses.Find(c => string.Equals(c.Token, g.Groups["token"].Value, StringComparison.OrdinalIgnoreCase));
             if (def == null) return null;
-            float routeTime = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture);
-            string caps = CapsFor(category[1]);
+            float routeTime = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture);
+            string caps = CapsOf(g.Groups["label"].Value).Id;
             foreach (var file in OfflineBestFiles(def.id, caps, HumanBestFile))
             {
                 JObject json;
@@ -342,9 +344,9 @@ namespace IGTAPTasMod
             public string rejected;
         }
 
-        static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)\.json$");
-        static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.json$");
-        static readonly Regex HumanSlackFile = new Regex(@"^(\d+)_([a-z]+)-([\d.]+)-human\.slack\.json$");
+        static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)\.json$");
+        static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)-human\.json$");
+        static readonly Regex HumanSlackFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)-human\.slack\.json$");
         const string HumanPlaybackId = "offline-best-human";
         float _offlineBestCheckAt;
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
@@ -372,7 +374,7 @@ namespace IGTAPTasMod
                 int id = int.Parse(m.Groups[1].Value);
                 string caps = m.Groups[2].Value;
                 CourseDef course = _courses.Find(c => c.id == id);
-                if (course == null || !CapabilityLabels.ContainsKey(caps) || id + "_" + caps == solving) return null;
+                if (course == null || !Categories.IsCategory(caps) || id + "_" + caps == solving) return null;
                 DateTime written = File.GetLastWriteTimeUtc(path);
                 if (!_offlineRunTicks.TryGetValue(path, out var known) || known.written != written)
                 {
@@ -384,9 +386,7 @@ namespace IGTAPTasMod
                 }
                 return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
                     runTicks = known.runTicks, farm = !course.IsBonus && !course.IsTransition,
-                    judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>()
-                        : new[] { caps }.Concat(CapabilityLabels.Keys.Where(k => k != caps && course.HasCategory(k)))
-                            .Select(k => (CapabilityLabels[k], new JObject { ["course"] = id, ["capabilities"] = k }, course.Token + "_" + CapabilityLabels[k])).ToList() };
+                    judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>() : CategoryJudgings(course, id, caps) };
             }
             m = OfflineFullTasBestFile.Match(file);
             if (m.Success)
@@ -394,9 +394,21 @@ namespace IGTAPTasMod
                 FullTasRunDef run = _fullTasRuns.Find(r => string.Equals(r.name, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
                 if (run == null) return null;
                 return new OfflineBest { path = path, group = "fulltas-" + run.name, time = float.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
-                    judgings = new List<(string, JObject, string)> { (CapabilityLabels["none"], new JObject { ["fulltas"] = run.name }, FullTasCategory(run.name)) } };
+                    judgings = new List<(string, JObject, string)> { (default(Caps).Label, new JObject { ["fulltas"] = run.name }, FullTasCategory(run.name)) } };
             }
             return null;
+        }
+
+        /// <summary>An offline best's judgings: its own category first, then every other category the target runs (registry order).</summary>
+        static List<(string label, JObject body, string category)> CategoryJudgings(CourseDef course, int id, string caps)
+        {
+            var judgings = new List<(string, JObject, string)>();
+            foreach (string other in new[] { caps }.Concat(course.CategoryIds.Where(k => k != caps)))
+            {
+                string label = Categories.Find(other).Label;
+                judgings.Add((label, new JObject { ["course"] = id, ["capabilities"] = other }, course.Token + "_" + label));
+            }
+            return judgings;
         }
 
         int _offlineWaiting;
@@ -478,9 +490,9 @@ namespace IGTAPTasMod
             float best = float.PositiveInfinity;
             foreach (MacroDefinition m in _library.macros)
             {
-                Match g = CategoryRoute.Match(m.name ?? "");
-                if (g.Success && string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase))
-                    best = Math.Min(best, float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture));
+                Match g = MatchCategoryRoute(m.name);
+                if (g.Success && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase))
+                    best = Math.Min(best, float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture));
             }
             return best;
         }
@@ -490,9 +502,9 @@ namespace IGTAPTasMod
             long best = long.MaxValue;
             foreach (MacroDefinition m in _library.macros)
             {
-                Match g = FarmRoute.Match(m.name ?? "");
-                if (g.Success && string.Equals(g.Groups[1].Value, category, StringComparison.OrdinalIgnoreCase))
-                    best = Math.Min(best, FarmTicks(float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture)));
+                Match g = MatchFarmRoute(m.name);
+                if (g.Success && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase))
+                    best = Math.Min(best, FarmTicks(float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture)));
             }
             return best;
         }
@@ -608,7 +620,7 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = "Stop playback and recording, and let a new game finish loading, first." };
             }
-            SelectSolverTarget(new JObject { ["course"] = def.id, ["capabilities"] = CapsFor(parts[1]) });
+            SelectSolverTarget(new JObject { ["course"] = def.id, ["capabilities"] = CapsOf(parts[1]).Id });
             if (CapabilitiesLocked)
             {
                 request.StatusCode = 409;
@@ -619,7 +631,8 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = "Course " + def.Token + " is loading; retry in a moment." };
             }
-            bool savestate = !string.IsNullOrEmpty(route.savestateId);
+            // A savestate or lab start is off every course (course -1): no course finish ends it.
+            bool savestate = !string.IsNullOrEmpty(route.savestateId) || !string.IsNullOrEmpty(tech.labmap);
             string path = Path.Combine(EngineSimDir, name + ".json"), worldPath = Path.Combine(EngineSimDir, name + ".world.json");
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot first = null;
@@ -735,6 +748,8 @@ namespace IGTAPTasMod
             w.WritePropertyName("angularVelocity"); json.Float(s.angularVelocity);
             w.WritePropertyName("origin"); json.Value(s.origin, 0);
             w.WritePropertyName("rebasing"); w.WriteValue(s.rebasing);
+            w.WritePropertyName("stepFrom"); json.Value(s.stepFrom, 0);
+            w.WritePropertyName("stepTo"); json.Value(s.stepTo, 0);
             w.WritePropertyName("colliders");
             w.WriteStartArray();
             foreach (var c in s.colliders)
@@ -881,8 +896,14 @@ namespace IGTAPTasMod
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
 
+        /// <summary>
+        /// The world as a run starts it. Every spike is cleared first (spikeScript <c>counter</c> 0, <c>playerKilled</c> off): a
+        /// run that ended in a spike leaves them set in the live game until an OnTriggerExit2D that a turbo restore mutes, and
+        /// no start is inside a spike (a turbo start snapshot restores them cleared too, TurboRunner.Snapshot.spikes).
+        /// </summary>
         public static int WriteWorld(string path)
         {
+            TurboRunner.ClearSpikes();
             var gameObjects = new List<GameObject>();
             foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
                 if (go != null && go.scene.IsValid() && (go.hideFlags & HideFlags.HideAndDontSave) == 0) gameObjects.Add(go);

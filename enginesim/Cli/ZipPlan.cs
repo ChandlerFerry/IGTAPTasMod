@@ -1270,7 +1270,7 @@ namespace IGTAP.EngineSim.Cli
             G.makeCourseBuyMax, G.moreWatts, G.moreGP, G.NpCapIsSoftcap, G.compBoostDoublesNP, G.GPAtomsDontResetCourses,
             G.NpGenerationSpeed, G.wattPower, G.moreRefreshOrbs, G.unlockJiggleDrops };
 
-        static readonly Regex RouteName = new Regex(@"^(\d+)_([A-Z_]+) (farm )?(\d+(?:\.\d+)?)( stale)?$");
+        static readonly Regex RouteName = new Regex(@"^(\d+)_(" + Caps.LabelPattern + @") (farm )?(\d+(?:\.\d+)?)( stale)?$");
 
         /// <summary>
         /// Lap times per course from the saved routes (routes.json in the config folder): the record (the game timer, the clones'
@@ -1286,7 +1286,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 string name = m.TryGetProperty("name", out JsonElement n) ? n.GetString() : null;
                 Match r = name == null ? null : RouteName.Match(name);
-                if (r == null || !r.Success || !caps.Contains(r.Groups[2].Value)) continue;
+                if (r == null || !r.Success || !Categories.IsCategory(r.Groups[2].Value) || !caps.Contains(r.Groups[2].Value)) continue;
                 int course = int.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
                 bool farm = r.Groups[3].Success, stale = r.Groups[5].Success;
                 double time = double.Parse(r.Groups[4].Value, CultureInfo.InvariantCulture);
@@ -1308,7 +1308,7 @@ namespace IGTAP.EngineSim.Cli
             var d = new Data();
             Economy economy = sim.Shop.Economy;
             string[] caps = (config.TryGetProperty("categories", out JsonElement cats) ? cats.EnumerateArray().Select(c => c.GetString()) :
-                new[] { "NONE", "WJ", "WJ_DS", "WJ_DS_DJ", "WJ_DS_DJ_BS" }).ToArray();
+                Categories.All.Where(d => d.Scope == CategoryScope.Range).Select(d => d.Label)).ToArray();
             if (config.TryGetProperty("travel", out JsonElement travel))
             {
                 if (travel.TryGetProperty("x", out JsonElement v)) d.TravelX = v.GetDouble();

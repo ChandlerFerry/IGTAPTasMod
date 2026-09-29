@@ -22,6 +22,33 @@ namespace IGTAP.EngineSim
         NearGateLeft, NearGateRight, WallAboveLeft, WallAboveRight
     }
 
+    /// <summary>The unlocks a player holds now, as the <see cref="Caps"/> they make (a Full-TAS window's, what its search may
+    /// press): the Movement's own fields, and the refill orbs and zip movers from the game's global upgrades.</summary>
+    public static class PlayerCaps
+    {
+        public static Caps Of(Movement player)
+        {
+            var caps = new Caps
+            {
+                WallJump = player.wallJumpUnlocked,
+                Dashes = !player.dashUnlocked ? 0 : Math.Max(1, player.maxAirDashes),
+                AirJumps = !player.doubleJumpUnlocked ? 0 : Math.Max(1, player.maxAirJumps),
+                BlockSwap = player.blockSwapUnlocked,
+                Omni = player.omniDashUnlocked,
+            };
+            Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
+            if (upgrades != null)
+            {
+                upgrades.TryGetValue(globalStats.globalUpgradeSet.unlockJiggleDrops, out double jiggle);
+                upgrades.TryGetValue(globalStats.globalUpgradeSet.moreRefreshOrbs, out double refresh);
+                upgrades.TryGetValue(globalStats.globalUpgradeSet.zipMoversUnlocked, out double zip);
+                caps.Orbs = jiggle + refresh > 0;
+                caps.Zip = zip > 0;
+            }
+            return caps;
+        }
+    }
+
     /// <summary>The ray probes a contact is made of, and the Movement getters they need: the same detection the solver's
     /// grafts and the demo miner share.</summary>
     public static class ContactRays
@@ -151,6 +178,31 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < Contacts.Count; i++)
                 if (Contacts[i].tick >= tick) Contacts[kept++] = Contacts[i];
             Contacts.RemoveRange(kept, Contacts.Count - kept);
+        }
+
+        /// <summary>What the next tick's detection compares with (the last tick's contact state), so a run resumed from a
+        /// snapshot taken after that tick sees the same contacts as the run that took it (the planner's edges, <see cref="Planner"/>).</summary>
+        public readonly struct Mark
+        {
+            internal readonly bool Primed, Ground, Wall, Dash, Slide;
+            internal readonly float Behind, Above, Ahead, NearGate;
+            internal readonly int DashStart;
+
+            internal Mark(bool primed, bool ground, bool wall, bool dash, bool slide, float behind, float above, float ahead, float nearGate, int dashStart)
+            {
+                Primed = primed; Ground = ground; Wall = wall; Dash = dash; Slide = slide;
+                Behind = behind; Above = above; Ahead = ahead; NearGate = nearGate; DashStart = dashStart;
+            }
+        }
+
+        public Mark Save() { return new Mark(_primed, _wasGround, _wasWall, _wasDash, _wasSlide, _wasBehind, _wasAbove, _wasAhead, _wasNearGate, _dashStart); }
+
+        /// <summary>Clears the contacts and picks the detection up where <paramref name="m"/> left it.</summary>
+        public void Load(Mark m)
+        {
+            Contacts.Clear();
+            _primed = m.Primed; _wasGround = m.Ground; _wasWall = m.Wall; _wasDash = m.Dash; _wasSlide = m.Slide;
+            _wasBehind = m.Behind; _wasAbove = m.Above; _wasAhead = m.Ahead; _wasNearGate = m.NearGate; _dashStart = m.DashStart;
         }
 
         public void Tick(int tick, Movement player, float gate)
@@ -334,13 +386,10 @@ namespace IGTAP.EngineSim
         public string Tech;          // techs.json id
         public string Name;
         public string Category;      // glitchless | nmg | major
-        public string Requires;      // techs.json "requires": NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS, OMNI
+        public Caps Requires;        // the unlocks the window needs: techs.json "requires" (a Caps label, e.g. DS_OM) plus its own dash presses
         public Contact Kind;
         public int First, Last;      // window offsets around the contact tick
         public InputTick[] Ticks;
-        public int MinLevel;         // category unlock level the window needs (0 none .. 4 block swap)
-        public bool NeedsOmni;       // the omnidirectional dash
-        public bool NeedsDash;       // the window presses dash
         public bool Key;             // the demo's key contact: the one its tech happens at
         public bool Mirrored;        // x values negated for the contact's opposite side
         public int DemoContact;      // the contact's tick in the demo
@@ -386,41 +435,19 @@ namespace IGTAP.EngineSim
         public const int Jitter = 3;
         public const int GraftCoast = 40;
 
-        // The category unlocks ("none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom", or the full-tas "omni") as a level
-        // and the omnidirectional dash on top, as OfflineSolver's Worker reads them.
-        public static (int level, bool omni) Caps(string caps)
-        {
-            switch (caps)
-            {
-                case "wj": return (1, false);
-                case "wjds": return (2, false);
-                case "wjdsdj": return (3, false);
-                case "wjdsdjbs": return (4, false);
-                case "wjdsdjbsom":
-                case "omni": return (5, true);
-                default: return (0, false);
-            }
-        }
-
-        /// <summary>A techs.json "requires" (NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS, OMNI) as the level it needs and the omnidash:
-        /// OMNI needs only the omnidash (the statue's, or Vman's free box), whatever the category level.</summary>
-        public static (int level, bool omni) Requires(string requires)
-        {
-            return requires == "OMNI" ? (0, true) : Caps((requires ?? "").Replace("_", "").ToLowerInvariant());
-        }
-
         /// <summary>The share of picks that take the tech's key window (the contact its demo does the tech at) over the
         /// demo's other contact windows, which are mostly its set-up and travel.</summary>
         public const double KeyShare = .6;
 
-        /// <summary>The patterns ready for one solve's category unlocks, by contact kind and then by tech (read-only once
-        /// prepared): a pick draws the tech first, so a demo with many contacts doesn't crowd out a short one.</summary>
+        /// <summary>The patterns ready for one solve's unlocks (its caps id, <see cref="Caps"/>), by contact kind and then by
+        /// tech (read-only once prepared): those whose <see cref="TechPattern.Requires"/> is a subset of the run's unlocks.
+        /// A pick draws the tech first, so a demo with many contacts doesn't crowd out a short one.</summary>
         public void Prepare(string capabilities)
         {
-            (int level, bool omni) = Caps(capabilities);
+            Caps caps = Caps.Parse(capabilities);
             _ready = new (TechPattern[] key, TechPattern[] all)[Enum.GetValues(typeof(Contact)).Length][];
             for (int i = 0; i < _ready.Length; i++)
-                _ready[i] = Patterns.Where(p => p.Kind == (Contact)i && p.MinLevel <= level && (!p.NeedsOmni || omni))
+                _ready[i] = Patterns.Where(p => p.Kind == (Contact)i && p.Requires.IsSubsetOf(caps))
                     .GroupBy(p => p.Tech, StringComparer.Ordinal)
                     .Select(g => (g.Where(p => p.Key).ToArray(), g.ToArray())).ToArray();
         }
@@ -494,7 +521,15 @@ namespace IGTAP.EngineSim
         }
 
         static readonly JsonSerializerOptions Json = new JsonSerializerOptions { IncludeFields = true, WriteIndented = true,
-            Converters = { new JsonStringEnumConverter() } };
+            Converters = { new JsonStringEnumConverter(), new CapsConverter() } };
+
+        /// <summary>The cache's <see cref="TechPattern.Requires"/> as its caps id ("dsom"); a cache written in another shape
+        /// fails to read and is mined again (<see cref="Load"/>'s try).</summary>
+        sealed class CapsConverter : JsonConverter<Caps>
+        {
+            public override Caps Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => Caps.Parse(reader.GetString());
+            public override void Write(Utf8JsonWriter writer, Caps value, JsonSerializerOptions options) => writer.WriteStringValue(value.Id);
+        }
 
         /// <param name="tracesDir">The trace's own folder (the fallback when there is no configured traces dir).</param>
         /// <param name="refresh">Re-mine instead of reading the cache.</param>
@@ -807,7 +842,7 @@ namespace IGTAP.EngineSim
                     inputs = ToInputs(source.Macro);
                     if (source.Savestate != null) DemoStart.ApplySavestate(sim, source.Savestate);
                     // A demo plays with the omnidirectional dash on top of its start's unlocks (TechCatalog.ApplyTechAbilities).
-                    if (tech.omniDash || tech.requires == "OMNI") DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
+                    if (tech.omniDash || Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
                     sim.SetStart(sim.Capture(0), 0);
                 }
                 demo.InputTicks = inputs.Count;
@@ -881,7 +916,7 @@ namespace IGTAP.EngineSim
                 if (window.Any(k => k.reset) || !window.Any(k => k.press || k.release || k.dash)) continue;
                 var pattern = new TechPattern
                 {
-                    Tech = demo.Tech, Name = demo.Name, Category = demo.Category, Requires = demo.Requires,
+                    Tech = demo.Tech, Name = demo.Name, Category = demo.Category,
                     Kind = kind, First = lo - tick, Last = hi - tick, Ticks = window.ToArray(), DemoContact = tick, DemoStart = demo.Source,
                 };
                 Tag(pattern, demo.Requires);
@@ -905,7 +940,6 @@ namespace IGTAP.EngineSim
                         Tech = pattern.Tech, Name = pattern.Name, Category = pattern.Category, Requires = pattern.Requires,
                         Kind = other, First = pattern.First, Last = pattern.Last, DemoContact = pattern.DemoContact,
                         DemoStart = pattern.DemoStart, Key = pattern.Key, Mirrored = true,
-                        MinLevel = pattern.MinLevel, NeedsOmni = pattern.NeedsOmni, NeedsDash = pattern.NeedsDash,
                         Ticks = pattern.Ticks.Select(Mirror).ToArray(),
                     };
                     demo.Patterns.Add(twin);
@@ -915,11 +949,10 @@ namespace IGTAP.EngineSim
 
         static void Tag(TechPattern pattern, string requires)
         {
-            (int level, bool omni) = Requires(requires);
-            pattern.MinLevel = level;
-            pattern.NeedsOmni = omni;
-            pattern.NeedsDash = pattern.Ticks.Any(k => k.dash || k.dashJump > 0 || k.springDash > 0);
-            if (pattern.NeedsDash) pattern.MinLevel = Math.Max(pattern.MinLevel, 2);
+            Caps caps = Caps.Parse(requires);
+            // The window presses dash: it needs the dash unlock on top of the tech's own label.
+            if (pattern.Ticks.Any(k => k.dash || k.dashJump > 0 || k.springDash > 0)) caps.Dashes = Math.Max(caps.Dashes, 1);
+            pattern.Requires = caps;
         }
 
         static Contact Mirror(Contact kind)
@@ -994,7 +1027,7 @@ namespace IGTAP.EngineSim
                 foreach (TechPattern p in demo.Patterns)
                     Console.WriteLine("  " + (p.Key ? "key " : "    ") + (p.Mirrored ? "mirrored " : "") + p.Kind + " @" + p.DemoContact
                         + ": " + p.First + ".." + p.Last + " -> " + p.Ticks.Length + " ticks"
-                        + (p.NeedsOmni ? " [omni]" : "") + (p.MinLevel > 0 ? " [level " + p.MinLevel + "]" : ""));
+                        + (p.Requires.Id == "none" ? "" : " [needs " + p.Requires.Label + "]"));
                 foreach (TechPattern p in demo.Patterns.Where(p => p.Key))
                     Console.WriteLine("      " + Format(p));
             }

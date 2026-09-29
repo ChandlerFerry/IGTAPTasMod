@@ -234,23 +234,117 @@ namespace IGTAPTasMod
         /// the tech trace's turbo run alike (which shows no ghosts). A 1x playback ends in the lab's hand play at its start
         /// (<see cref="ReturnToHandPlay"/>), not back where the lab was loaded from; one started from hand play (or from the
         /// playback before it) keeps that session's before-state, so Unload still puts back what loading the lab changed.
+        /// Returns the demo's tech when it plays on a lab map (its start is then <see cref="PlaceLabDemoStart"/>), else null.
         /// </summary>
-        internal void LabMapEnsureFor(MacroDefinition route)
+        internal TechDef LabMapEnsureFor(MacroDefinition route)
         {
-            TechDef tech = _techStart ?? (route == null ? null : _techs.Find(t => t.routeId == route.id));
-            if (tech == null || string.IsNullOrEmpty(tech.labmap)) return;
+            TechDef tech = TechOfRoute(route);
+            if (tech == null || string.IsNullOrEmpty(tech.labmap)) return null;
             string playing = _techStart == null && !_silentEvaluation ? tech.labDemo ?? "" : null;
             LabMapDef lab = LoadLabMap(tech.labmap);
             // A tech trace's turbo run reuses a plain injection (one it left); a 1x playback always injects afresh, its ghosts'
             // clock starting with its first tick and its end going back to hand play.
-            if (playing == null && _lab != null && _lab.Id == tech.labmap && !_lab.Hand && _lab.Ghosts.Count == 0) return;
+            if (playing == null && _lab != null && _lab.Id == tech.labmap && !_lab.Hand && _lab.Ghosts.Count == 0) return tech;
             LabSession carried = null;
             if (playing != null && _lab != null && _lab.Id == tech.labmap && (_lab.Hand || _lab.ReturnToHand)) carried = DetachLab();
             else if (_lab != null) RestoreLab(_lab.Id != tech.labmap ? "another lab map" : _lab.Hand ? "the demo plays without the hand-play floor" : "the demo starts afresh");
             InjectLab(lab, false, playing);
-            if (playing == null) return;
+            if (playing == null) return tech;
             _lab.ReturnToHand = true;
             if (carried != null) CarryLabState(carried, _lab);
+            return tech;
+        }
+
+        /// <summary>
+        /// A lab demo's start, built from its lab file each time (no stored savestate, which a game update's new assembly hash
+        /// rejects, and which kept whatever state the player had when the demo was installed): the player's Movement reset to
+        /// the start the demo was solved from (<see cref="ResetToLabBase"/>), then placed at the demo's own start (else the lab's)
+        /// with its fields, as `lab replay` places the offline one over that trace's start.
+        /// </summary>
+        void PlaceLabDemoStart(TechDef tech, Movement player)
+        {
+            LabMapDef lab = _lab?.Lab ?? LoadLabMap(tech.labmap);
+            string demoFile = tech.labmap + (string.IsNullOrEmpty(tech.labDemo) ? "" : "." + tech.labDemo) + ".demo.json";
+            JObject demo = CachedLabJson(demoFile) ?? throw new InvalidOperationException("Lab map " + tech.labmap + " has no demo " + demoFile + ".");
+            LabStartDef start = demo["start"] is JObject own ? own.ToObject<LabStartDef>() : lab.start;
+            ResetToLabBase(player, (string)demo["solvedIn"]);
+            SavestateResult placed = SavestateService.Restore(player, PlacedSavestate(LabStartBody(lab, start)), MacroLibrary.CurrentSchemaVersion);
+            if (!placed.Success) throw new InvalidOperationException("Lab start: " + placed.Message);
+        }
+
+        /// <summary>
+        /// Movement fields a lab start's reset keeps from the live player: the save's (Movement.save: the respawn point, the
+        /// light) and the session's (course reset point, checkpoint respawns, the menu, pause and init flags, the block swap's
+        /// respawn colour).
+        /// </summary>
+        static readonly HashSet<string> LabBaseKept = new HashSet<string> { "respawnPoint", "courseResetPoint", "isRespawningAtCheckpoints",
+            "lightActive", "lightRadius", "init", "isOnMainMenu", "GamePaused", "DEBUG_startingCourse", "isBlueActiveOnRespawn" };
+
+        /// <summary>The start trace a lab demo is solved from when its demo names none (`lab solve`'s usual one).</summary>
+        const string LabBaseTrace = "start-c1-none.json";
+
+        readonly Dictionary<string, (DateTime written, List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
+            new Dictionary<string, (DateTime, List<(FieldInfo, object)>, JArray)>();
+
+        /// <summary>
+        /// Every value-type Movement field (and the hitbox colliders) set to a start trace's (enginesim/&lt;trace&gt;, the one the
+        /// lab demo was solved from: its `solvedIn`), all but <see cref="LabBaseKept"/>: no leftover of earlier play (a
+        /// wallCoyoteFrames, a dash's timers) reaches the lab start, and the in-game start is the offline one. Object references
+        /// and lists stay the live player's.
+        /// </summary>
+        void ResetToLabBase(Movement player, string trace)
+        {
+            string path = Path.Combine(EngineSimDir, string.IsNullOrEmpty(trace) ? LabBaseTrace : trace);
+            if (!File.Exists(path))
+                throw new InvalidOperationException("A lab start is placed over the start trace its demo was solved from, and " + path
+                    + " is missing: capture it (tools/enginesim-capture.py start 1 NONE).");
+            DateTime written = File.GetLastWriteTimeUtc(path);
+            if (!_labBases.TryGetValue(path, out var based) || based.written != written)
+            {
+                JObject start;
+                using (var reader = new JsonTextReader(new StreamReader(path)) { MaxDepth = 256 })
+                    start = (JObject)JObject.Load(reader)["start"] ?? throw new InvalidOperationException(path + " has no start.");
+                var fields = new List<(FieldInfo, object)>();
+                foreach (JArray entry in start["movement"].OfType<JArray>())
+                {
+                    if ((string)entry[0] != "Movement" || LabBaseKept.Contains((string)entry[1])) continue;
+                    FieldInfo field = AccessTools.Field(typeof(Movement), (string)entry[1]);
+                    if (field == null || field.IsStatic || field.IsLiteral || field.IsInitOnly) continue;
+                    if (LabBaseValue(field.FieldType, entry[2], out object value)) fields.Add((field, value));
+                }
+                based = (written, fields, start["colliders"] as JArray);
+                _labBases[path] = based;
+            }
+            foreach (var (field, value) in based.fields) field.SetValue(player, value);
+            BoxCollider2D[] colliders = player.GetComponents<BoxCollider2D>();
+            if (based.colliders != null)
+                for (int i = 0; i < colliders.Length && i < based.colliders.Count; i++)
+                {
+                    JArray c = (JArray)based.colliders[i];
+                    colliders[i].offset = new Vector2((float)c[0], (float)c[1]);
+                    colliders[i].size = new Vector2((float)c[2], (float)c[3]);
+                    colliders[i].excludeLayers = (int)c[4];
+                    colliders[i].enabled = (bool)c[5];
+                }
+        }
+
+        /// <summary>A start trace's field value (EngineSimJson: numbers, "Infinity"/"NaN" strings, {x, y[, z]} vectors, enums as
+        /// numbers) as the field's type; false for what a trace can't give back (object references, lists, nulls).</summary>
+        static bool LabBaseValue(Type type, JToken token, out object value)
+        {
+            value = null;
+            if (token == null || token.Type == JTokenType.Null) return false;
+            if (type == typeof(float)) { value = token.Type == JTokenType.String ? float.Parse((string)token, CultureInfo.InvariantCulture) : (float)token; return true; }
+            if (type == typeof(double)) { value = token.Type == JTokenType.String ? double.Parse((string)token, CultureInfo.InvariantCulture) : (double)token; return true; }
+            if (type == typeof(int)) { value = (int)token; return true; }
+            if (type == typeof(bool)) { value = (bool)token; return true; }
+            if (type.IsEnum) { value = Enum.ToObject(type, (int)token); return true; }
+            if (token is JObject v && v["$ref"] == null)
+            {
+                if (type == typeof(Vector2)) { value = new Vector2((float)v["x"], (float)v["y"]); return true; }
+                if (type == typeof(Vector3)) { value = new Vector3((float)v["x"], (float)v["y"], (float?)v["z"] ?? 0f); return true; }
+            }
+            return false;
         }
 
         /// <summary>Removes the injected lab without putting anything back (the session goes on in another injection).</summary>
@@ -463,20 +557,22 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// Puts the player at the injected lab's start to play it by hand (its <c>hand.start</c>, standing, when it has one): the lab
-        /// category's unlocks (put back on restore, never autosaved while the lab is injected), then that start as a lab savestate
-        /// restored in place (not kept on disk). A death or quick restart respawns there too until the lab is restored.
+        /// Puts the player at the injected lab's start to play it by hand (its <c>hand.start</c>, standing, when it has one): the
+        /// Movement reset to the start trace its main demo was solved from (<see cref="ResetToLabBase"/>), the lab category's
+        /// unlocks (put back on restore, never autosaved while the lab is injected), then that start as a lab savestate restored
+        /// in place (not kept on disk). A death or quick restart respawns there too until the lab is restored.
         /// </summary>
         void PlaceAtLabStart()
         {
             Movement player = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
             LabMapDef lab = _lab.Lab;
-            string caps = CapsFor(lab.category ?? "NONE");
-            if (Array.IndexOf(CapsLadder, caps) < 0) throw new InvalidOperationException("Lab map " + lab.id + " has an unknown category " + lab.category + ".");
+            CategoryDef category = Categories.Find(lab.category ?? default(Caps).Label);
+            if (category == null) throw new InvalidOperationException("Lab map " + lab.id + " has an unknown category " + lab.category + ".");
             LabStartDef at = lab.hand?.start ?? lab.start;
             _engine.ClearInjectedInput(player);
-            if (_lab.SavedAbilities == null) _lab.SavedAbilities = ApplyAbilities(player, caps);
-            else ApplyAbilities(player, caps);
+            if (_lab.SavedAbilities == null) _lab.SavedAbilities = ApplyAbilities(player, category.Id);
+            ResetToLabBase(player, (string)CachedLabJson(lab.id + ".demo.json")?["solvedIn"]);
+            ApplyAbilities(player, category.Id);
             if (_lab.CourseResetPointBefore == null) _lab.CourseResetPointBefore = player.courseResetPoint;
             if (_lab.RespawnPointBefore == null) _lab.RespawnPointBefore = player.respawnPoint;
             Savestate start = PlacedSavestate(LabStartBody(lab, at));
@@ -487,7 +583,7 @@ namespace IGTAPTasMod
             player.respawnPoint = new Vector2(lab.anchor[0] + (at.x ?? 0f), lab.anchor[1] + (at.y ?? 0f) + 12f);
             Physics2D.SyncTransforms();
             SnapCameraAtPlaybackStart(player);
-            Logger.LogInfo("Player placed at lab " + lab.id + "'s " + (lab.hand?.start != null ? "hand-play start" : "start") + " with " + lab.category + " unlocks.");
+            Logger.LogInfo("Player placed at lab " + lab.id + "'s " + (lab.hand?.start != null ? "hand-play start" : "start") + " with " + category.Label + " unlocks.");
         }
 
         /// <summary>A lab start as a <c>/api/savestates/place</c> body: the start relative to the lab's anchor, in the world frame.</summary>
@@ -547,8 +643,8 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// Installs a tech's lab demo (labmaps/&lt;id&gt;.demo.json's inputs, or labmaps/&lt;id&gt;.&lt;labDemo&gt;.demo.json for one of
-        /// the lab's other demos) as its demo route, with its start placed by the lab savestate <c>place</c> mechanism (its id is
-        /// the route's savestate: every playback starts there): the demo's own <c>start</c> when it has one, else the lab's.
+        /// the lab's other demos) as its demo route. The route has no savestate: every playback builds its start from the lab
+        /// (<see cref="PlaceLabDemoStart"/>: the demo's own <c>start</c> when it has one, else the lab's).
         /// </summary>
         void InstallLabDemo(TechDef tech, JObject body)
         {
@@ -563,10 +659,9 @@ namespace IGTAPTasMod
             if (ticks == null || ticks.Count == 0) throw new InvalidOperationException("Lab map " + id + "'s demo has no inputs.");
             string start = Text(body, "start");
             if (start.Length == 0) start = tech.start ?? "";
-            if (TechStart.Match(start).Length != start.Length || start.Length == 0)
+            if (MatchTechStart(start).Length != start.Length || start.Length == 0)
                 throw new InvalidOperationException("start is a course category prefix (1_WJ_DS) matching the lab map's category " + lab.category + ".");
-            LabStartDef demoStart = demo["start"] is JObject own ? own.ToObject<LabStartDef>() : lab.start;
-            Savestate placed = PlaceSavestate(LabStartBody(lab, demoStart));
+            if (demo["start"] != null && !(demo["start"] is JObject)) throw new InvalidOperationException(demoFile + ": start is an object (the lab start's format).");
             tech.labmap = id;
             tech.labDemo = labDemo.Length > 0 ? labDemo : null;
             tech.start = start;
@@ -579,7 +674,7 @@ namespace IGTAPTasMod
             }
             string replaced = route.savestateId;
             route.name = "tech/" + tech.name;
-            route.savestateId = placed.id;
+            route.savestateId = "";
             route.steps = ToSteps(ticks);
             SaveLibrary();
             DropSavestate(replaced);

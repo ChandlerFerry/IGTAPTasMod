@@ -65,10 +65,36 @@ namespace IGTAP.EngineSim.Cli
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
+            // --plan: the planner (and the timing polish) first, within this solve's time; its route seeds the search.
+            var clock = Stopwatch.StartNew();
+            if (args.Contains("--plan"))
+            {
+                var options = new Planner.Options { Threads = threads, Width = Math.Max(48, 2 * threads), Seconds = Option(args, "--plan-minutes", minutes / 3) * 60.0 };
+                // The seeds that finish guide it (their cost to go); unseeded, the field's distance does.
+                options.Guides.AddRange(seeds.Where(s => s.Count > 0));
+                void PlanLog(string line) => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}");
+                (float cell, Vector2 clearance) = (DistanceField.CellSize, DistanceField.Clearance);
+                Plan.Field(args);
+                Planner.Route planned = Plan.Plan1(create, caps, forced, mined, options, PlanLog, out Planner planner);
+                (DistanceField.CellSize, DistanceField.Clearance) = (cell, clearance);
+                if (planned != null)
+                {
+                    var polish = new Polish(create, forced, threads, PlanLog);
+                    Polish.Result polished;
+                    try { polished = polish.Run(planned.Inputs); }
+                    finally { polish.Stop(); }
+                    seeds.Add(polished.Inputs);
+                    PlanLog($"plan seed {polished.Time:0.00}s ({polished.RunTicks} physics ticks): planner {planner.Ticks} ticks, polish {polished.Ticks} ticks");
+                    if (logJson != null)
+                        File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time = polished.Time, runTicks = polished.RunTicks,
+                            ticks = planner.Ticks + polished.Ticks, how = "plan" }) + "\n");
+                }
+                else PlanLog($"plan: no finish ({planner.Ticks} ticks)");
+            }
             var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0), rng: rng);
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
-            var clock = Stopwatch.StartNew();
+            clock.Restart();
             var pending = new BlockingQueue();
             TimeSpan lastBest = TimeSpan.Zero;
             Humanize.Background humanize = args.Contains("--no-humanize") ? null
@@ -507,8 +533,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        internal static readonly string[] Categories = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs", "wjdsdjbsom" };
-
         static void SubmitOther(HttpClient http, Target target, string caps, float time, List<InputTick> inputs, Stopwatch clock)
         {
             string body = target.Body(caps, inputs);
@@ -549,7 +573,7 @@ namespace IGTAP.EngineSim.Cli
             while (true)
             {
                 var (time, runTicks, inputs) = pending.Take();
-                foreach (string other in Categories.Where(c => c != target.Caps))
+                foreach (string other in IGTAPTasMod.Categories.All.Select(d => d.Id).Where(id => id != target.Caps))
                     SubmitOther(http, target, other, time, inputs, clock);
                 string body = target.Body(target.Caps, inputs);
                 try

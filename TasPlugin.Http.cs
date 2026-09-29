@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using BepInEx;
@@ -322,7 +323,7 @@ namespace IGTAPTasMod
 
         private static void RejectCategoryName(string name)
         {
-            if (Regex.IsMatch(name ?? "", @"^[^_\s]+_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ) (farm )?[\d.]+$", RegexOptions.IgnoreCase))
+            if (MatchCategoryRoute(name).Success || MatchFarmRoute(name).Success)
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
@@ -392,12 +393,19 @@ namespace IGTAPTasMod
             return h;
         }
 
+        /// <summary>A caps object (the web API's): what a set of unlocks has.</summary>
+        static object CapsWebState(Caps caps)
+        {
+            return new { wallJump = caps.WallJump, dashes = caps.Dashes, airJumps = caps.AirJumps,
+                blockSwap = caps.BlockSwap, orbs = caps.Orbs, zip = caps.Zip, omni = caps.Omni };
+        }
+
         private object BuildLiveWebState()
         {
             MacroDefinition selected = SelectedMacro;
             Movement player = FindWorldMovement();
             return new { connected = true, version = PluginVersion, staticVersion = WebStateVersion(), engineStatus = _engine.Status,
-                unlockLevel = player == null ? (int?)null : SaveUnlockLevel(player),
+                saveUnlocks = player == null ? null : CapsWebState(SaveUnlocks(player)),
                 paused = IsGamePaused(player),
                 capabilitiesLocked = _settings.lockCapabilities,
                 overlayShown = _settings.showOverlay,
@@ -446,7 +454,8 @@ namespace IGTAPTasMod
                     sampleCount = recording.samples.Count, actionCount = recording.semanticSteps.Count,
                     courseTimeSeconds = recording.courseTimeSeconds, actions = actions });
             }
-            return new { staticVersion = version, routes = routes, recordings = recordings, savestates = savestates,
+            return new { staticVersion = version, categories = Categories.All.Select(c => new { id = c.Id, label = c.Label, caps = CapsWebState(c.Caps) }).ToArray(),
+                routes = routes, recordings = recordings, savestates = savestates,
                 courses = BuildCourseWebState(), fullTas = new { runs = BuildFullTasRunsWebState() }, techs = BuildTechStaticWebState() };
         }
 

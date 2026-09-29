@@ -310,6 +310,11 @@ namespace IGTAPTasMod
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
             if (savestate != null && _savestates.Find(s => s.id == savestate) == null) throw new InvalidOperationException("No savestate " + savestate + ".");
+            if (!_newGameSession)
+            {
+                Movement saved = FindWorldMovement();
+                _newGameSaveUnlocks = saved == null || IsMenuPlayer(saved) ? (Caps?)null : SaveUnlocks(saved);
+            }
             _newGameSession = true;
             globalStats.difficultyLevel = 0;
             Time.timeScale = 1f;
@@ -494,40 +499,45 @@ namespace IGTAPTasMod
                     + (run.savestate == null ? "" : "\"savestate\": \"" + run.savestate + "\"") + "} first.");
             return _newGameStart;
         }
-        internal static int OmniLevel { get { return CapsLadder.Length - 1; } }
-        internal static int TopLevel { get { return OmniLevel - 1; } }
-
-        internal static int CapsLevel(string caps)
+        /// <summary>A name's category part as unlocks ("WJ_DS" in any case, or an id): throws when it stands for none.</summary>
+        internal static Caps CapsOf(string label)
         {
-            return Math.Max(0, Array.IndexOf(CapsLadder, caps));
+            return Caps.TryParse(label, out Caps caps) ? caps : Caps.Parse(label == null ? "" : label.ToUpperInvariant());
         }
 
-        internal static string CapsFor(string label)
+        /// <summary>The largest step of <see cref="Categories.Ladder"/> this unlock set has (README ### Rules 18): courses.json's
+        /// minCapabilities/maxCapabilities name these, never anything above the ladder's top.</summary>
+        internal static string LadderStepFor(Caps unlocks)
         {
-            return label.Replace("_", "").ToLowerInvariant();
+            for (int i = Categories.Ladder.Length - 1; i > 0; i--)
+                if (Caps.Parse(Categories.Ladder[i]).IsSubsetOf(unlocks)) return Categories.Ladder[i];
+            return Categories.Ladder[0];
         }
 
+        /// <summary>The fields a category sets from its own unlocks (README ### Rules 10-13): the player's abilities, the refill
+        /// orbs and zip movers it has, and the coloured blocks' start below block swap.</summary>
         internal static IEnumerable<(string field, object value)> CategoryAbilities(string caps)
         {
-            int level = CapsLevel(caps);
-            int dashes = level >= 2 ? 1 : 0;
-            int jumps = level >= 3 ? 1 : 0;
-            bool omni = level >= 5;
-            var abilities = new List<(string, object)> { ("wallJumpUnlocked", level >= 1), ("dashUnlocked", level >= 2),
-                ("maxAirDashes", dashes), ("airDashesLeft", dashes),
-                ("doubleJumpUnlocked", level >= 3), ("maxAirJumps", jumps), ("airJumpsLeft", jumps),
-                ("blockSwapUnlocked", level >= 4), ("omniDashUnlocked", omni),
-                // WJ_DS_DJ_BS_OM has every refill upgrade and the zip movers (README ### Rules 12): the orbs' unlock box and the
-                // "more orbs" box (1 each) plus Area 1's overgrowth (+1 more orbs, upgradeBox.cs:836), so every orb's
-                // ActivationSequence (0-2) is under their sum and dash, jump and full refill orbs are all on.
-                (GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops), omni ? 1.0 : 0.0),
-                (GlobalUpgradeField(globalStats.globalUpgradeSet.moreRefreshOrbs), omni ? 2.0 : 0.0),
-                (GlobalUpgradeField(globalStats.globalUpgradeSet.zipMoversUnlocked), omni ? 1.0 : 0.0) };
-            // Below block swap the blocks start unswapped, as a new game has them (Movement.Start: blue active); with it the
+            Caps unlocks = Caps.Parse(caps);
+            var abilities = new List<(string, object)> { ("wallJumpUnlocked", unlocks.WallJump), ("dashUnlocked", unlocks.Dash),
+                ("maxAirDashes", unlocks.Dashes), ("airDashesLeft", unlocks.Dashes),
+                ("doubleJumpUnlocked", unlocks.DoubleJump), ("maxAirJumps", unlocks.AirJumps), ("airJumpsLeft", unlocks.AirJumps),
+                ("blockSwapUnlocked", unlocks.BlockSwap), ("omniDashUnlocked", unlocks.Omni),
+                // ORB has every refill orb (README ### Rules 11): the orbs' unlock box and the "more orbs" box (1 each) plus
+                // Area 1's overgrowth (+1 more orbs, upgradeBox.cs:836), so every orb's ActivationSequence (0-2) is under their
+                // sum and dash, jump and full refill orbs are all on. ZIP has the zip movers. Nothing else turns either on.
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops), unlocks.Orbs ? 1.0 : 0.0),
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.moreRefreshOrbs), unlocks.Orbs ? 2.0 : 0.0),
+                (GlobalUpgradeField(globalStats.globalUpgradeSet.zipMoversUnlocked), unlocks.Zip ? 1.0 : 0.0) };
+            // Without block swap the blocks start unswapped, as a new game has them (Movement.Start: blue active); with it the
             // game's own respawn sets them (isBlueActiveOnRespawn).
-            if (level < 4) abilities.Add((BlueActiveField, true));
+            if (!unlocks.BlockSwap) abilities.Add((BlueActiveField, true));
             return abilities;
         }
+
+        /// <summary>What a run changes on its way: a category sets these at its start but nothing holds them all run, so the
+        /// gate compares the unlocks only (README ### Rules 10).</summary>
+        internal static readonly string[] CategoryRunState = { "airDashesLeft", "airJumpsLeft", BlueActiveField };
 
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps)
         {
@@ -572,24 +582,32 @@ namespace IGTAPTasMod
 
         private void ApplyCategoryAbilities(MacroDefinition route, Movement movement)
         {
-            Match category = Regex.Match(route.name ?? "", @"^([^_\s]+)_(NONE|WJ_DS_DJ_BS_OM|WJ_DS_DJ_BS|WJ_DS_DJ|WJ_DS|WJ)(?: |$)");
+            Match category = MatchRoutePrefix(route.name);
             if (!category.Success || movement == null) return;
-            string caps = CapsFor(category.Groups[2].Value);
-            foreach (var (field, value) in ApplyAbilities(movement, caps))
+            foreach (var (field, value) in ApplyAbilities(movement, CapsOf(category.Groups["label"].Value).Id))
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 
-        private int SaveUnlockLevel(Movement movement)
+        /// <summary>The save's own unlocks (the values a playback's start saved first; while a new game holds the world, the
+        /// save's from before it loaded), whatever set: not necessarily a category's.</summary>
+        private Caps SaveUnlocks(Movement movement)
         {
+            if (_newGameSession && _newGameSaveUnlocks.HasValue) return _newGameSaveUnlocks.Value;
             Func<string, object> saved = field => _playbackSavedAbilities.TryGetValue(field, out object value) ? value : GetMovementField(movement, field);
             Func<string, bool> on = field => saved(field) is bool b && b;
-            Func<string, bool> some = field => saved(field) is int n && n > 0;
-            if (!on("wallJumpUnlocked")) return 0;
-            if (!on("dashUnlocked") || !some("maxAirDashes")) return 1;
-            if (!on("doubleJumpUnlocked") || !some("maxAirJumps")) return 2;
-            if (!on("blockSwapUnlocked")) return 3;
-            if (!on("omniDashUnlocked")) return 4;
-            return 5;
+            Func<string, int> count = field => saved(field) is int n ? n : 0;
+            Func<string, double> upgrade = field => saved(field) is double d ? d : 0.0;
+            return new Caps
+            {
+                WallJump = on("wallJumpUnlocked"),
+                Dashes = on("dashUnlocked") ? count("maxAirDashes") : 0,
+                AirJumps = on("doubleJumpUnlocked") ? count("maxAirJumps") : 0,
+                BlockSwap = on("blockSwapUnlocked"),
+                Orbs = upgrade(GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops)) >= 1.0
+                    && upgrade(GlobalUpgradeField(globalStats.globalUpgradeSet.moreRefreshOrbs)) >= 2.0,
+                Zip = upgrade(GlobalUpgradeField(globalStats.globalUpgradeSet.zipMoversUnlocked)) >= 1.0,
+                Omni = on("omniDashUnlocked"),
+            };
         }
 
         private void RestorePlaybackAbilities()

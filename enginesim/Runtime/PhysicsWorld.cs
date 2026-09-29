@@ -35,12 +35,7 @@ namespace IGTAP.EngineSim
             public bool Rescaled;
             /// <summary>Rebuilt since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Reshaped;
-            public readonly List<int> GridSlots = new List<int>();
             public bool Regrid;
-            // What its grid slots were built from: these fixtures (this many children) at this body pose.
-            public b2Fixture[] GridFixtures = Array.Empty<b2Fixture>();
-            public int GridChildren = -1;
-            public b2Transform GridPose;
         }
 
         sealed class BodyState
@@ -405,9 +400,19 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// A query after FloatingOrigin moved the world sees it moved, as the game's do (a 1x probe of Test-Pillar-Ghost: the
-        /// FixedUpdate after MoveOrigin read the spiked wall where it now is, not the geometry left at the old place).
+        /// FixedUpdate after MoveOrigin read the spiked wall where it now is, not the geometry left at the old place). Bodies take
+        /// their moved transforms only at the next physics step's sync, as Unity's do: a query sync that moved the player's body
+        /// took the first rendered frame's interpolation blend and lost the rest of the tick's step (30 units on VMAN's rebase),
+        /// and grounded the player a tick before turbo does.
         /// </summary>
-        void SyncMovedWorld() { if (_worldMoved) SyncTransforms(); }
+        void SyncMovedWorld()
+        {
+            if (!_worldMoved || _staticsMoved) return;
+            _staticsMoved = true;
+            for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
+        }
+
+        bool _staticsMoved;
 
         void AddFixture(ColliderState s, b2Body body, b2Shape shape, float friction, float restitution)
         {
@@ -510,7 +515,9 @@ namespace IGTAP.EngineSim
             {
                 _worldMoved = false;
                 for (int i = 0; i < _bodyList.Length; i++) _bodyList[i].TransformDirty = true;
-                for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
+                if (!_staticsMoved)
+                    for (int i = 0; i < _colliderList.Length; i++) { ColliderState s = _colliderList[i]; if (s.Body == null) Rebuild(s); }
+                _staticsMoved = false;
             }
             for (int bi = 0; bi < _bodyList.Length; bi++)
             {
@@ -684,11 +691,14 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// The trigger pairs touching after the last step whose touch lapsed at this step's start: Box2D collides a step's
-        /// contacts before it moves the bodies, so a pair that stops overlapping there (a transform write between the steps
-        /// moved a body out, or a shape was rebuilt away from the other) ends its touch, and overlapping again after the
-        /// step's move begins a new one: Enter, not Stay (turbo: a dash's interpolation pull-back out of a start gate the
-        /// last step's move had just reached starts no timer, `startGate` running on Stay only). Shapes rebuilt for a new
-        /// scale keep the older rule (their start-of-step touch doesn't count; see the facing-flip entry in docs/fidelity-log.md).
+        /// contacts before it moves the bodies and destroys those whose broadphase proxies no longer overlap there (a transform
+        /// write between the steps moved a body out, or a shape was rebuilt away from the other); overlapping again after the
+        /// step's move begins a new contact: Enter, not Stay (turbo: a dash's interpolation pull-back out of Course 1's start
+        /// gate, on a dynamic body, the last step's move had just reached starts no timer, `startGate` running on Stay only).
+        /// A trigger on a static body or on none (the ground body) never lapses: its touch goes on across any pull-back, rebase
+        /// or not (turbo: a dash's pull-back out of the static `Spikes` composite killed on the step that moved back in, with
+        /// Stay; a body-less upgrade box bought on Stay). Shapes rebuilt for a new scale keep the older rule (their
+        /// start-of-step touch doesn't count; see the facing-flip entry in docs/fidelity-log.md).
         /// </summary>
         void FindLapsedTouches()
         {
@@ -696,26 +706,32 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _pairsBefore.Count; i++)
             {
                 Pair p = _pairsBefore[i];
-                if (!p.Trigger || p.A.Rescaled || p.B.Rescaled) continue;
+                if (!p.Trigger || p.A.Rescaled || p.B.Rescaled || OnStaticBody(p.A) || OnStaticBody(p.B)) continue;
                 // Unmoved and unrebuilt, both shapes stand where the last step left them: its overlap test still holds.
-                bool overlapping = Moved(p.A) || Moved(p.B) ? Overlap(p.A, p.B) : p.Overlapped;
+                bool overlapping = Moved(p.A) || Moved(p.B) ? ProxiesOverlap(p.A, p.B) : p.Overlapped;
                 if (!overlapping) _lapsed.Add(p);
             }
         }
+
+        static bool OnStaticBody(ColliderState s) => s.Body == null || s.Body.Body.Type() == b2BodyType.Static;
 
         static bool Moved(ColliderState s) => s.Reshaped || s.Body != null && s.Body.Shifted;
 
         // The two proxies' vertex buffers of this world's overlap and distance queries (b2DistanceProxy.Set).
         readonly b2Vec2[] _proxyBufferA = new b2Vec2[2], _proxyBufferB = new b2Vec2[2];
 
-        bool Overlap(ColliderState a, ColliderState b)
+        /// <summary>Some child proxies of the two overlap in the broadphase: Box2D's Collide keeps their contact.</summary>
+        bool ProxiesOverlap(ColliderState a, ColliderState b)
         {
+            b2BroadPhase broadPhase = _b2.m_contactManager.m_broadPhase;
             foreach (b2Fixture fa in a.Fixtures)
-                foreach (b2Fixture fb in b.Fixtures)
-                    for (int ia = 0, na = fa.GetShape().GetChildCount(); ia < na; ia++)
-                        for (int ib = 0, nb = fb.GetShape().GetChildCount(); ib < nb; ib++)
-                            if (b2TestOverlap(fa.GetShape(), ia, fb.GetShape(), ib, fa.GetBody().GetTransform(), fb.GetBody().GetTransform(),
-                                _proxyBufferA, _proxyBufferB)) return true;
+                for (int ia = 0; ia < fa.m_proxyCount; ia++)
+                {
+                    b2AABB aabbA = broadPhase.GetFatAABB(fa.m_proxies[ia].proxyId);
+                    foreach (b2Fixture fb in b.Fixtures)
+                        for (int ib = 0; ib < fb.m_proxyCount; ib++)
+                            if (Box2D.Collision.TestOverlap(aabbA, broadPhase.GetFatAABB(fb.m_proxies[ib].proxyId))) return true;
+                }
             return false;
         }
 
@@ -876,14 +892,57 @@ namespace IGTAP.EngineSim
 
         const float CellSize = 64f;
         struct StaticShape { public b2Fixture Fixture; public int Child; public ColliderState State; public b2AABB Box; }
-        StaticShape[] _static = Array.Empty<StaticShape>();
-        int _staticCount;
-        readonly Stack<int> _freeSlots = new Stack<int>();
         readonly List<ColliderState> _regrid = new List<ColliderState>();
-        List<int>[] _cells;
         int[] _seen = Array.Empty<int>();
-        int _stamp, _cellsX, _cellsY;
-        float _gridX, _gridY;
+        int _stamp;
+
+        /// <summary>
+        /// The static shapes' query grid: a slot per child proxy of every static fixture (Static), listed in each 64-unit cell
+        /// its box covers. A layout puts the cells in one array (CellStart/CellSlots, a counting sort over the slots); a
+        /// shape regridded since is listed in Extra; a slot freed by a regrid stays listed where it was, skipped (its Fixture
+        /// is null), until the next layout. A cell's order doesn't matter to its queries (each takes a lone hit, else asks
+        /// Box2D, or a minimum).
+        /// </summary>
+        sealed class Grid
+        {
+            public StaticShape[] Static = Array.Empty<StaticShape>();
+            public int StaticCount, Dead;
+            public int[] CellStart = Array.Empty<int>(), CellFill = Array.Empty<int>(), CellSlots = Array.Empty<int>();
+            public List<int>[] Extra = Array.Empty<List<int>>();
+            public readonly List<int> ExtraUsed = new List<int>();
+            public float X, Y;
+            public int CellsX, CellsY;
+            // Per collider (by Id): its slots, and what they hold: these fixtures (this many children; -1 for a collider
+            // off the grid, on a body that isn't static) at this body pose.
+            public readonly List<int>[] Slots;
+            public readonly b2Fixture[][] Fixtures;
+            public readonly int[] Children;
+            public readonly b2Transform[] Poses;
+
+            public Grid(int colliders)
+            {
+                Slots = new List<int>[colliders];
+                Fixtures = new b2Fixture[colliders][];
+                Children = new int[colliders];
+                Poses = new b2Transform[colliders];
+                for (int i = 0; i < colliders; i++) { Slots[i] = new List<int>(); Fixtures[i] = Array.Empty<b2Fixture>(); Children[i] = -1; }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ReadOnlySpan<int> Built(int c) => new ReadOnlySpan<int>(CellSlots, CellStart[c], CellStart[c + 1] - CellStart[c]);
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ReadOnlySpan<int> Added(int c) => CollectionsMarshal.AsSpan(Extra[c]);
+        }
+
+        Grid _grid;
+        // Grids laid out before, newest first: a restore back across a FloatingOrigin rebase returns every static shape to
+        // where one of them has it, and that grid is taken back instead of laid out again (Matches checks every collider).
+        readonly List<Grid> _spareGrids = new List<Grid>();
+        const int SpareGrids = 2;
+        // A regrid that changes this many shapes lays the grid out again (a rebase, a restore across one) instead.
+        const int LayOutAbove = 1024;
+
         // The fixtures of non-static bodies by layer, built again (into the same lists) at the first query after a rebuild or
         // restore marks them dirty.
         readonly List<(b2Fixture fixture, ColliderState state)>[] _movers = new List<(b2Fixture, ColliderState)>[32];
@@ -909,7 +968,7 @@ namespace IGTAP.EngineSim
 
         void RegridLater(ColliderState s)
         {
-            if (_cells == null || s.Regrid) return;
+            if (_grid == null || s.Regrid) return;
             s.Regrid = true;
             _regrid.Add(s);
         }
@@ -917,20 +976,59 @@ namespace IGTAP.EngineSim
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void EnsureGrid()
         {
-            if (_cells == null || _regrid.Count != 0) UpdateGrid();
+            if (_grid == null || _regrid.Count != 0) UpdateGrid();
         }
 
         void UpdateGrid()
         {
-            if (_cells == null) { BuildGrid(); return; }
+            if (_grid == null)
+            {
+                _grid = new Grid(_colliderList.Length);
+                LayOut(_grid);
+                return;
+            }
+            Grid g = _grid;
+            int stale = 0;
+            foreach (ColliderState s in _regrid) if (!Holds(g, s)) stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
+            if (stale > LayOutAbove)
+            {
+                foreach (ColliderState s in _regrid) s.Regrid = false;
+                _regrid.Clear();
+                // The current grid is whole (no regrid touched it): it becomes a spare.
+                Grid back = null;
+                foreach (Grid spare in _spareGrids)
+                    if (Matches(spare)) { back = spare; break; }
+                if (back != null) _spareGrids.Remove(back);
+                else if (_spareGrids.Count == SpareGrids) { back = _spareGrids[SpareGrids - 1]; _spareGrids.RemoveAt(SpareGrids - 1); LayOut(back); }
+                else LayOut(back = new Grid(_colliderList.Length));
+                _spareGrids.Insert(0, g);
+                _grid = back;
+                return;
+            }
             bool inBounds = true;
             foreach (ColliderState s in _regrid)
             {
                 s.Regrid = false;
-                if (inBounds) inBounds = Regrid(s);
+                if (inBounds) inBounds = Regrid(g, s);
             }
             _regrid.Clear();
-            if (!inBounds) BuildGrid();
+            // Freed slots cost every query that walks their cells: past half the slots, lay the grid out again.
+            if (!inBounds || g.Dead > g.StaticCount / 2) LayOut(g);
+        }
+
+        /// <summary>The grid holds the collider as it is now: the same fixtures (a fixture's shape never changes) at the same
+        /// body pose, or none for a collider on a body that isn't static.</summary>
+        bool Holds(Grid g, ColliderState s)
+        {
+            if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return g.Children[s.Id] < 0 && g.Slots[s.Id].Count == 0;
+            return Gridded(g, s);
+        }
+
+        bool Matches(Grid g)
+        {
+            for (int i = 0; i < _colliderList.Length; i++)
+                if (!Holds(g, _colliderList[i])) return false;
+            return true;
         }
 
         static b2AABB GridBox(b2Fixture f, int child)
@@ -941,74 +1039,113 @@ namespace IGTAP.EngineSim
             return box;
         }
 
-        void BuildGrid()
+        void LayOut(Grid g)
         {
-            foreach (ColliderState s in _colliders.Values) { s.GridSlots.Clear(); s.Regrid = false; }
+            foreach (ColliderState s in _regrid) s.Regrid = false;
             _regrid.Clear();
-            _freeSlots.Clear();
-            _staticCount = 0;
+            for (int i = 0; i < g.Slots.Length; i++) g.Slots[i].Clear();
+            g.StaticCount = 0;
+            g.Dead = 0;
             bool first = true;
             float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
+            void Cover(in b2AABB box)
+            {
+                if (first) { minX = box.lowerBound.x; minY = box.lowerBound.y; maxX = box.upperBound.x; maxY = box.upperBound.y; first = false; }
+                minX = MathF.Min(minX, box.lowerBound.x); minY = MathF.Min(minY, box.lowerBound.y);
+                maxX = MathF.Max(maxX, box.upperBound.x); maxY = MathF.Max(maxY, box.upperBound.y);
+            }
             for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
             {
                 if (body.Type() != b2BodyType.Static) continue;
+                // A static body whose transform moved (a rebase: the next sync moves every body) is covered where it goes too,
+                // so its regrid then stays inside the grid (a translation: its boxes move by the same amount, plus a margin).
+                float dx = 0f, dy = 0f;
+                if (body.UserData is BodyState moving && (_worldMoved || moving.TransformDirty))
+                {
+                    Vector3 to = moving.Rigidbody.transform.m_Position;
+                    b2Vec2 at = body.GetPosition();
+                    dx = to.x - at.x; dy = to.y - at.y;
+                }
                 for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
                     for (int c = 0; c < f.m_proxyCount; c++)
                     {
                         b2AABB box = GridBox(f, c);
-                        if (first) { minX = box.lowerBound.x; minY = box.lowerBound.y; maxX = box.upperBound.x; maxY = box.upperBound.y; first = false; }
-                        minX = MathF.Min(minX, box.lowerBound.x); minY = MathF.Min(minY, box.lowerBound.y);
-                        maxX = MathF.Max(maxX, box.upperBound.x); maxY = MathF.Max(maxY, box.upperBound.y);
+                        Cover(box);
+                        if (dx != 0f || dy != 0f)
+                            Cover(new b2AABB { lowerBound = new b2Vec2(box.lowerBound.x + dx - 2f, box.lowerBound.y + dy - 2f),
+                                upperBound = new b2Vec2(box.upperBound.x + dx + 2f, box.upperBound.y + dy + 2f) });
+                        var state = (ColliderState)f.UserData;
+                        int i = NewSlot(g);
+                        g.Static[i] = new StaticShape { Fixture = f, Child = c, State = state, Box = box };
+                        g.Slots[state.Id].Add(i);
                     }
             }
-            _gridX = minX; _gridY = minY;
-            _cellsX = (int)((maxX - minX) / CellSize) + 1;
-            _cellsY = (int)((maxY - minY) / CellSize) + 1;
-            _cells = new List<int>[_cellsX * _cellsY];
-            for (int i = 0; i < _cells.Length; i++) _cells[i] = new List<int>();
-            for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
+            g.X = minX; g.Y = minY;
+            g.CellsX = (int)((maxX - minX) / CellSize) + 1;
+            g.CellsY = (int)((maxY - minY) / CellSize) + 1;
+            int cells = g.CellsX * g.CellsY;
+            if (g.CellStart.Length != cells + 1)
             {
-                if (body.Type() != b2BodyType.Static) continue;
-                for (b2Fixture f = body.GetFixtureList(); f != null; f = f.GetNext())
-                    for (int c = 0; c < f.m_proxyCount; c++)
-                        AddShape(f, c, (ColliderState)f.UserData, GridBox(f, c));
+                g.CellStart = new int[cells + 1];
+                g.CellFill = new int[cells];
+                g.Extra = new List<int>[cells];
+                g.ExtraUsed.Clear();
             }
-            foreach (ColliderState s in _colliders.Values)
-                if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) NoteGrid(s);
-                else s.GridChildren = -1;
-        }
-
-        bool Regrid(ColliderState s)
-        {
-            bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
-            if (isStatic && Gridded(s)) return true;
-            foreach (int i in s.GridSlots)
+            else Array.Clear(g.CellStart);
+            foreach (int c in g.ExtraUsed) g.Extra[c].Clear();
+            g.ExtraUsed.Clear();
+            // Counting sort: each cell's count, its start, then the slots in slot order.
+            int[] start = g.CellStart;
+            for (int i = 0; i < g.StaticCount; i++)
             {
-                CellRange(_static[i].Box, out int x0, out int y0, out int x1, out int y1);
+                CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
                 for (int y = y0; y <= y1; y++)
                     for (int x = x0; x <= x1; x++)
-                    {
-                        // A cell's order doesn't matter to its queries: swap-remove, no shift.
-                        List<int> cell = _cells[y * _cellsX + x];
-                        int at = cell.IndexOf(i);
-                        if (at < 0) continue;
-                        cell[at] = cell[cell.Count - 1];
-                        cell.RemoveAt(cell.Count - 1);
-                    }
-                _static[i] = default;
-                _freeSlots.Push(i);
+                        start[y * g.CellsX + x + 1]++;
             }
-            s.GridSlots.Clear();
-            if (!isStatic) { s.GridChildren = -1; return true; }
-            float right = _gridX + _cellsX * CellSize, top = _gridY + _cellsY * CellSize;
+            for (int c = 0; c < cells; c++) start[c + 1] += start[c];
+            if (g.CellSlots.Length < start[cells]) g.CellSlots = new int[System.Math.Max(start[cells], 2 * g.CellSlots.Length)];
+            Array.Copy(start, g.CellFill, cells);
+            for (int i = 0; i < g.StaticCount; i++)
+            {
+                CellRange(g, g.Static[i].Box, out int x0, out int y0, out int x1, out int y1);
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                        g.CellSlots[g.CellFill[y * g.CellsX + x]++] = i;
+            }
+            foreach (ColliderState s in _colliderList)
+                if ((s.Body?.Body ?? _ground).Type() == b2BodyType.Static) NoteGrid(g, s);
+                else { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); }
+        }
+
+        int NewSlot(Grid g)
+        {
+            if (g.StaticCount == g.Static.Length) Array.Resize(ref g.Static, System.Math.Max(256, g.Static.Length * 2));
+            if (g.StaticCount >= _seen.Length) Array.Resize(ref _seen, g.Static.Length);
+            return g.StaticCount++;
+        }
+
+        bool Regrid(Grid g, ColliderState s)
+        {
+            bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
+            if (isStatic && Gridded(g, s)) return true;
+            List<int> slots = g.Slots[s.Id];
+            foreach (int i in slots)
+            {
+                g.Static[i] = default;
+                g.Dead++;
+            }
+            slots.Clear();
+            if (!isStatic) { g.Children[s.Id] = -1; g.Fixtures[s.Id] = Array.Empty<b2Fixture>(); return true; }
+            float right = g.X + g.CellsX * CellSize, top = g.Y + g.CellsY * CellSize;
             foreach (b2Fixture f in s.Fixtures)
                 for (int c = 0; c < f.m_proxyCount; c++)
                 {
                     b2AABB box = GridBox(f, c);
-                    if (box.lowerBound.x < _gridX || box.lowerBound.y < _gridY || box.upperBound.x >= right || box.upperBound.y >= top) return false;
-                    AddShape(f, c, s, box);
+                    if (box.lowerBound.x < g.X || box.lowerBound.y < g.Y || box.upperBound.x >= right || box.upperBound.y >= top) return false;
+                    AddShape(g, f, c, s, box);
                 }
-            NoteGrid(s);
+            NoteGrid(g, s);
             return true;
         }
 
@@ -1019,11 +1156,11 @@ namespace IGTAP.EngineSim
             return children;
         }
 
-        void NoteGrid(ColliderState s)
+        void NoteGrid(Grid g, ColliderState s)
         {
-            s.GridFixtures = s.Fixtures.ToArray();
-            s.GridChildren = Children(s);
-            s.GridPose = (s.Body?.Body ?? _ground).GetTransform();
+            g.Fixtures[s.Id] = s.Fixtures.ToArray();
+            g.Children[s.Id] = Children(s);
+            g.Poses[s.Id] = (s.Body?.Body ?? _ground).GetTransform();
         }
 
         /// <summary>
@@ -1031,49 +1168,44 @@ namespace IGTAP.EngineSim
         /// at the same body pose. A restore marks the colliders of every static body ever moved (after a FloatingOrigin rebase:
         /// the big composites among them) and of every rebuilt collider for a regrid; most are unchanged.
         /// </summary>
-        bool Gridded(ColliderState s)
+        bool Gridded(Grid g, ColliderState s)
         {
-            if (s.Fixtures.Count != s.GridFixtures.Length || Children(s) != s.GridChildren) return false;
-            for (int k = 0; k < s.GridFixtures.Length; k++)
-                if (!ReferenceEquals(s.Fixtures[k], s.GridFixtures[k])) return false;
-            b2Transform now = (s.Body?.Body ?? _ground).GetTransform();
-            return now.p.x == s.GridPose.p.x && now.p.y == s.GridPose.p.y && now.q == s.GridPose.q;
+            b2Fixture[] held = g.Fixtures[s.Id];
+            if (s.Fixtures.Count != held.Length || Children(s) != g.Children[s.Id]) return false;
+            for (int k = 0; k < held.Length; k++)
+                if (!ReferenceEquals(s.Fixtures[k], held[k])) return false;
+            b2Transform now = (s.Body?.Body ?? _ground).GetTransform(), pose = g.Poses[s.Id];
+            return now.p.x == pose.p.x && now.p.y == pose.p.y && now.q == pose.q;
         }
 
-        void AddShape(b2Fixture f, int child, ColliderState s, in b2AABB box)
+        void AddShape(Grid g, b2Fixture f, int child, ColliderState s, in b2AABB box)
         {
-            int i;
-            if (_freeSlots.Count > 0) i = _freeSlots.Pop();
-            else
-            {
-                if (_staticCount == _static.Length)
-                {
-                    int size = System.Math.Max(256, _static.Length * 2);
-                    Array.Resize(ref _static, size);
-                    Array.Resize(ref _seen, size);
-                }
-                i = _staticCount++;
-            }
-            _static[i] = new StaticShape { Fixture = f, Child = child, State = s, Box = box };
-            s.GridSlots.Add(i);
-            CellRange(box, out int x0, out int y0, out int x1, out int y1);
+            int i = NewSlot(g);
+            g.Static[i] = new StaticShape { Fixture = f, Child = child, State = s, Box = box };
+            g.Slots[s.Id].Add(i);
+            CellRange(g, box, out int x0, out int y0, out int x1, out int y1);
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    _cells[y * _cellsX + x].Add(i);
+                {
+                    int c = y * g.CellsX + x;
+                    List<int> added = g.Extra[c] ??= new List<int>();
+                    if (added.Count == 0) g.ExtraUsed.Add(c);
+                    added.Add(i);
+                }
         }
 
         const float InvCellSize = 1f / CellSize;
 
         // Floor-free, same cells: x / 64 == x * (1 / 64f) exactly (a power of two); below 0 a lower bound clamps to 0 and an
         // upper bound's range is empty either way, and at or above 0 (or NaN) truncation is Floor.
-        void CellRange(in b2AABB box, out int x0, out int y0, out int x1, out int y1)
+        static void CellRange(Grid g, in b2AABB box, out int x0, out int y0, out int x1, out int y1)
         {
-            float lx = (box.lowerBound.x - _gridX) * InvCellSize, ly = (box.lowerBound.y - _gridY) * InvCellSize;
-            float ux = (box.upperBound.x - _gridX) * InvCellSize, uy = (box.upperBound.y - _gridY) * InvCellSize;
+            float lx = (box.lowerBound.x - g.X) * InvCellSize, ly = (box.lowerBound.y - g.Y) * InvCellSize;
+            float ux = (box.upperBound.x - g.X) * InvCellSize, uy = (box.upperBound.y - g.Y) * InvCellSize;
             x0 = System.Math.Max(0, (int)lx);
             y0 = System.Math.Max(0, (int)ly);
-            x1 = ux < 0f ? -1 : System.Math.Min(_cellsX - 1, (int)ux);
-            y1 = uy < 0f ? -1 : System.Math.Min(_cellsY - 1, (int)uy);
+            x1 = ux < 0f ? -1 : System.Math.Min(g.CellsX - 1, (int)ux);
+            y1 = uy < 0f ? -1 : System.Math.Min(g.CellsY - 1, (int)uy);
         }
 
         // Accept's trigger half. A mover list holds only its own layer's colliders (every Layer write marks _movers dirty), so the
@@ -1084,19 +1216,18 @@ namespace IGTAP.EngineSim
         ColliderState FindInside(b2Vec2 p, int layerMask)
         {
             EnsureGrid();
+            Grid g = _grid;
             ColliderState found = null;
             int count = 0;
             // CellRange of the point alone: its one cell, or none.
-            float cx = (p.x - _gridX) * InvCellSize, cy = (p.y - _gridY) * InvCellSize;
+            float cx = (p.x - g.X) * InvCellSize, cy = (p.y - g.Y) * InvCellSize;
             int x = (int)cx, y = (int)cy;
-            if (!(cx < 0f) && !(cy < 0f) && x < _cellsX && y < _cellsY)
-                foreach (int i in CollectionsMarshal.AsSpan(_cells[y * _cellsX + x]))
-                {
-                    ref StaticShape s = ref _static[i];
-                    if (!Contains(s.Box, p) || !Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
-                    found = s.State;
-                    count++;
-                }
+            if (!(cx < 0f) && !(cy < 0f) && x < g.CellsX && y < g.CellsY)
+            {
+                int cell = y * g.CellsX + x;
+                Inside(g, g.Built(cell), p, layerMask, ref found, ref count);
+                Inside(g, g.Added(cell), p, layerMask, ref found, ref count);
+            }
             if (_moversDirty) BuildMovers();
             for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
                 foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
@@ -1111,27 +1242,53 @@ namespace IGTAP.EngineSim
             return _inside.Hit;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        void Inside(Grid g, ReadOnlySpan<int> slots, b2Vec2 p, int layerMask, ref ColliderState found, ref int count)
+        {
+            StaticShape[] shapes = g.Static;
+            foreach (int i in slots)
+            {
+                ref StaticShape s = ref shapes[i];
+                if (s.Fixture == null || !Contains(s.Box, p) || !Accept(s.State, layerMask) || !s.Fixture.TestPoint(p)) continue;
+                found = s.State;
+                count++;
+            }
+        }
+
+        /// <summary>The cell's slots the segment may hit, each once per query (_seen); false once a second hit shows.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        bool RayCell(Grid g, ReadOnlySpan<int> slots, b2Vec2 p1, b2Vec2 p2, int layerMask, in b2RayCastInput input, ref int count)
+        {
+            StaticShape[] shapes = g.Static;
+            foreach (int i in slots)
+            {
+                if (_seen[i] == _stamp) continue;
+                _seen[i] = _stamp;
+                ref StaticShape s = ref shapes[i];
+                if (s.Fixture == null || SegmentMisses(s.Box, p1, p2)) continue;
+                if (Accept(s.State, layerMask) && RayHit(s.Fixture, s.Child, s.State, input) && ++count > 1) return false;
+            }
+            return true;
+        }
+
         bool FindRayHit(b2Vec2 p1, b2Vec2 p2, int layerMask)
         {
             EnsureGrid();
+            Grid g = _grid;
             _ray.Reset(layerMask);
             b2RayCastInput input;
             input.maxFraction = 1.0f;
             input.p1 = p1;
             input.p2 = p2;
             int count = 0;
-            CellRange(new b2AABB { lowerBound = b2Vec2.Min(p1, p2), upperBound = b2Vec2.Max(p1, p2) }, out int x0, out int y0, out int x1, out int y1);
+            CellRange(g, new b2AABB { lowerBound = b2Vec2.Min(p1, p2), upperBound = b2Vec2.Max(p1, p2) }, out int x0, out int y0, out int x1, out int y1);
             _stamp++;
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    foreach (int i in CollectionsMarshal.AsSpan(_cells[y * _cellsX + x]))
-                    {
-                        if (_seen[i] == _stamp) continue;
-                        _seen[i] = _stamp;
-                        ref StaticShape s = ref _static[i];
-                        if (SegmentMisses(s.Box, p1, p2)) continue;
-                        if (Accept(s.State, layerMask) && RayHit(s.Fixture, s.Child, s.State, input) && ++count > 1) return false;
-                    }
+                {
+                    int cell = y * g.CellsX + x;
+                    if (!RayCell(g, g.Built(cell), p1, p2, layerMask, input, ref count) || !RayCell(g, g.Added(cell), p1, p2, layerMask, input, ref count)) return false;
+                }
             if (_moversDirty) BuildMovers();
             for (uint layers = (uint)layerMask & _moverLayers; layers != 0; layers &= layers - 1)
                 foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
@@ -1281,6 +1438,7 @@ namespace IGTAP.EngineSim
         bool NearbyDistance(ColliderState sa, ColliderState sb, out float best)
         {
             EnsureGrid();
+            Grid g = _grid;
             best = float.PositiveInfinity;
             b2AABB box = default;
             bool first = true;
@@ -1294,19 +1452,30 @@ namespace IGTAP.EngineSim
                 }
             box.lowerBound -= new b2Vec2(NearbyRange, NearbyRange);
             box.upperBound += new b2Vec2(NearbyRange, NearbyRange);
-            CellRange(box, out int x0, out int y0, out int x1, out int y1);
+            CellRange(g, box, out int x0, out int y0, out int x1, out int y1);
             _stamp++;
             for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    foreach (int i in _cells[y * _cellsX + x])
-                    {
-                        if (_seen[i] == _stamp || _static[i].State != sb) continue;
-                        _seen[i] = _stamp;
-                        foreach (b2Fixture fa in sa.Fixtures)
-                            for (int ca = 0; ca < fa.GetShape().GetChildCount(); ca++)
-                                best = MathF.Min(best, ChildDistance(fa, ca, _static[i].Fixture, _static[i].Child));
-                    }
+                {
+                    int cell = y * g.CellsX + x;
+                    NearbyCell(g, g.Built(cell), sa, sb, ref best);
+                    NearbyCell(g, g.Added(cell), sa, sb, ref best);
+                }
             return best < NearbyRange - 1f;
+        }
+
+        void NearbyCell(Grid g, ReadOnlySpan<int> slots, ColliderState sa, ColliderState sb, ref float best)
+        {
+            StaticShape[] shapes = g.Static;
+            foreach (int i in slots)
+            {
+                // A freed slot's State is null, never sb.
+                if (_seen[i] == _stamp || shapes[i].State != sb) continue;
+                _seen[i] = _stamp;
+                foreach (b2Fixture fa in sa.Fixtures)
+                    for (int ca = 0; ca < fa.GetShape().GetChildCount(); ca++)
+                        best = MathF.Min(best, ChildDistance(fa, ca, shapes[i].Fixture, shapes[i].Child));
+            }
         }
 
         public Vector2 GetPosition(Rigidbody2D body) { Settle(); b2Vec2 p = State(body).Body.GetPosition(); return new Vector2(p.x, p.y); }
@@ -1394,7 +1563,7 @@ namespace IGTAP.EngineSim
         sealed class PhysicsSnapshot
         {
             public object World;
-            public bool TransformDirty, ScaleDirty, WorldMoved;
+            public bool TransformDirty, ScaleDirty, WorldMoved, StaticsMoved;
             public Vector3[] BuiltScales;
             public Pair[] Touching;
             public (ColliderState state, b2Fixture[] fixtures)[] Changed;
@@ -1420,7 +1589,7 @@ namespace IGTAP.EngineSim
             var builtScales = new Vector3[_player.Colliders.Count];
             for (int i = 0; i < builtScales.Length; i++) builtScales[i] = _player.Colliders[i].BuiltScale;
             return new PhysicsSnapshot { World = _b2.SaveState(), TransformDirty = _player.TransformDirty, ScaleDirty = _player.ScaleDirty, WorldMoved = _worldMoved,
-                Touching = _pairsBefore.ToArray(), BuiltScales = builtScales, Changed = _changedCapture };
+                StaticsMoved = _staticsMoved, Touching = _pairsBefore.ToArray(), BuiltScales = builtScales, Changed = _changedCapture };
         }
 
         public void Restore(object snapshot)
@@ -1458,6 +1627,7 @@ namespace IGTAP.EngineSim
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
             _player.TransformDirty = s.TransformDirty;
             _worldMoved = s.WorldMoved;
+            _staticsMoved = s.StaticsMoved;
             _player.ScaleDirty = s.ScaleDirty;
             for (int i = 0; i < _player.Colliders.Count; i++) _player.Colliders[i].BuiltScale = s.BuiltScales[i];
             _touching.Clear();

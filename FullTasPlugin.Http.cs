@@ -230,7 +230,7 @@ namespace IGTAPTasMod
                 try { labels = ResolveFullTasGoals(r).Select(goal => goal.label).ToArray(); }
                 catch (Exception ex) { error = ex.Message; labels = (r.goals ?? new List<string>()).ToArray(); }
                 MacroDefinition best = FullTasBestRoute(r.name);
-                Match g = best == null ? null : CategoryRoute.Match(best.name);
+                Match g = best == null ? null : MatchCategoryRoute(best.name);
                 List<FullTasSplit> splits;
                 if (best == null || !_fullTasSplits.TryGetValue(best.id, out splits)) splits = new List<FullTasSplit>();
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
@@ -238,7 +238,7 @@ namespace IGTAPTasMod
                 FullTasClosest closest = FullTasClosestAttempt(r.name, labels);
                 return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, tokens = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
-                    best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups[2].Value, CultureInfo.InvariantCulture), splits = splits },
+                    best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, faster = offline.faster },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     playable = best != null || offline != null && offline.inputs.Count > 0,

@@ -68,7 +68,8 @@ namespace IGTAP.EngineSim
         public string tech;
         /// <summary>What the lab shows: the field describing the tech demonstrated.</summary>
         public string techNote;
-        /// <summary>The unlocks the lab's demo runs with (NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS, WJ_DS_DJ_BS_OM).</summary>
+        /// <summary>The unlocks the lab's demo runs with, as a Caps label (Categories.cs: NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS,
+        /// WJ_DS_DJ_BS_ORB_ZIP_OM, ...).</summary>
         public string category = "NONE";
         /// <summary>The lab's root in the world frame.</summary>
         public float[] anchor;
