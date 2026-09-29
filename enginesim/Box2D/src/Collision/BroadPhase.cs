@@ -98,12 +98,6 @@ namespace Box2D
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public b2AABB GetFatAABB(int proxyId) => m_tree.GetFatAABB(proxyId);
 
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		public int GetProxyCount() => m_proxyCount;
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		public int GetTreeHeight() => m_tree.Height;
-
 		public void UpdatePairs(Action<object, object> AddPair)
 		{
 			m_pairCount = 0;
@@ -182,12 +176,6 @@ namespace Box2D
 			m_tree.RayCast(RayCastCallback, in input);
 		}
 
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		public void ShiftOrigin(in b2Vec2 newOrigin)
-		{
-			m_tree.ShiftOrigin(in newOrigin);
-		}
-
 		public int CreateProxy(in b2AABB aabb, object userData)
 		{
 			int proxyId = m_tree.CreateProxy(aabb, userData);
@@ -212,11 +200,6 @@ namespace Box2D
 			{
 				BufferMove(proxyId);
 			}
-		}
-
-		public void TouchProxy(int proxyId)
-		{
-			BufferMove(proxyId);
 		}
 
 

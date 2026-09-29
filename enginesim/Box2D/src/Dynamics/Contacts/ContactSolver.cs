@@ -226,7 +226,7 @@ namespace Box2D
 				}
 
 				// If we have two points, then prepare the block solver.
-				if (vc.pointCount == 2 && b2Settings.BlockSolve)
+				if (vc.pointCount == 2)
 				{
 					VelocityConstraintPoint vcp1 = vc.points[0];
 					VelocityConstraintPoint vcp2 = vc.points[1];
@@ -359,7 +359,7 @@ namespace Box2D
 				}
 
 				// Solve normal constraints
-				if (pointCount == 1 || b2Settings.BlockSolve == false)
+				if (pointCount == 1)
 				{
 					for (var j = 0; j < pointCount; ++j)
 					{

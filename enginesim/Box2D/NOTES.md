@@ -87,7 +87,7 @@ tunable.
 | Area | 2.3.x (Unity lineage) | 2.4.1 | Control |
 |---|---|---|---|
 | Contact restitution threshold | global `b2Settings.velocityThreshold = 1.0f` (solver: `vRel < -velocityThreshold`) | per-fixture `restitutionThreshold` mixed per contact (`b2MixRestitutionThreshold`) | port keeps the 2.3.x global (matches Unity). Per-fixture variant NOT ported. |
-| Island velocity integration | `v += h * (gravityScale * gravity + invMass * force)` | `v += h * invMass * (gravityScale * mass * gravity + force)` (different rounding: `invMass * mass != 1.0`) | `b2Settings.useLegacyGravityIntegration` (default **true** = 2.3.x) |
+| Island velocity integration | `v += h * (gravityScale * gravity + invMass * force)` | `v += h * invMass * (gravityScale * mass * gravity + force)` (different rounding: `invMass * mass != 1.0`) | port keeps 2.3.x (matches Unity). |
 | GJK `b2Distance` simplex | barycentrics w/ `GetClosestPoint` divergence check | simplex rewritten (different barycentrics, radii handling reworked) | no flag (deep re-port); port lineage ≈ 2.3-era. **Next suspect for residual ulp diffs.** |
 | `b2TimeOfImpact` | separation function formulas + pure bisection root finder | reworked separation + secant/bisection mixed root finder | no flag (deep re-port) |
 | `b2DynamicTree`/`b2BroadPhase` | `m_path`, old insert/move heuristics, pairs sorted by (proxyIdA, proxyIdB) | AVL rebalance, hugeAABB move proxy, moved-flag pair dedup, pairs in query order | structural; `UpdatePairs` sorts like 2.3.x (contact creation order), the rest is 2.4.1 |
@@ -101,47 +101,39 @@ the solver/island/transform expression order was repaired to be literal C++
 
 ## Public API (namespace `Box2D`, C++ v2 names)
 
-`b2World(b2Vec2 gravity)`, `CreateBody(b2BodyDef)`, `DestroyBody`, `Step(float dt,
-int velocityIterations, int positionIterations)`, `SetContactListener`,
-`SetContactFilter` (`b2ContactFilter.ShouldCollide(b2Fixture, b2Fixture)`),
-`SetContactListener(b2ContactListener)` (Begin/End/Pre/Post), `RayCast`/`QueryAABB`
-(delegates on `b2World` + `b2RayCastCallback`/`b2QueryCallback` class adapters),
-`GetBodyList`/`GetContactList`/`GetBodyCount`/`GetContactCount`/`GetGravity`/
-`SetGravity`/`SetAutoClearForces`/`GetAutoClearForces`/`ClearForces`/
-`SetContinuousPhysics`/`SetSubStepping`/`SetWarmStarting`/`SetAllowSleeping`,
-`SetDestructionListener`, `SetDebugDraw`.
+Only what the offline engine calls is kept (joints, listeners, debug draw, forces/impulses and
+the setters it never uses were removed).
 
-`b2Body`: `CreateFixture(b2FixtureDef)` (returns `b2Fixture`), `SetTransform`,
-`GetTransform`/`GetPosition`/`GetAngle`/`GetWorldCenter`/`GetLocalCenter`,
-`Set/GetLinearVelocity`, `Set/GetAngularVelocity`, `ApplyForce(ToCenter)`,
-`ApplyTorque`, `ApplyLinearImpulse(ToCenter)`, `ApplyAngularImpulse`, `SetType`
-(`b2BodyType.b2_staticBody/b2_kinematicBody/b2_dynamicBody`), `Set/IsBullet`,
-`Set/IsFixedRotation`, `Set/IsSleepingAllowed`, `Set/IsAwake`, `Set/IsEnabled`,
-`Set/GetGravityScale`, `Set/GetLinearDamping`, `Set/GetAngularDamping`,
-`GetFixtureList`/`GetContactList`/`GetNext`, `GetMass`/`GetInertia`/`GetMassData`/
-`SetMassData`, `GetWorldPoint/Vector`, `GetLocalPoint/Vector`, `UserData` (object,
-settable).
+`b2World(b2Vec2 gravity)`, `CreateBody(b2BodyDef)`, `Step(float dt, int velocityIterations,
+int positionIterations)`, `SetContactFilter` (`b2ContactFilter.ShouldCollide(b2Fixture,
+b2Fixture)`), `RayCast`/`QueryAABB` (delegates on `b2World` + `b2RayCastCallback`/
+`b2QueryCallback` class adapters; `QueryAABB(out b2Fixture[], aabb, max)`), `GetBodyList`/
+`GetContactList`/`GetBodyCount`/`GetContactCount`/`GetContactManager`/`ClearForces`/
+`SetContinuousPhysics`/`SetSubStepping`.
+
+`b2Body`: `CreateFixture(b2FixtureDef)` (returns `b2Fixture`), `DestroyFixture`,
+`SetTransform`, `GetTransform`/`GetPosition`/`GetAngle`, `Set/GetLinearVelocity`,
+`Set/GetAngularVelocity`, `ResetMassData`, `Type()`, `IsBullet`, `Set/IsAwake`, `IsEnabled`,
+`GetFixtureList`/`GetContactList`/`GetNext`/`GetWorld`, `UserData` (object, settable).
 
 `b2Fixture`: `GetBody`/`GetShape`/`GetNext`, `IsSensor`, `TestPoint(in b2Vec2)`,
-`RayCast(out b2RayCastOutput, in b2RayCastInput, int childIndex)`, `GetAABB(int)`,
-`Get/SetFilterData(b2Filter { categoryBits, maskBits, groupIndex })`,
-`Get/SetFriction`, `Get/SetRestitution`, `Get/SetDensity`, `GetChildCount`,
-`UserData` (object, settable).
+`RayCast(out b2RayCastOutput, in b2RayCastInput, int childIndex)`, `GetMassData`,
+`m_filter` (`b2Filter { categoryBits, maskBits, groupIndex }`), `m_friction`/
+`m_restitution`/`m_density`, `UserData` (object, settable).
 
 Shapes: `b2PolygonShape.SetAsBox(hx, hy)` / `SetAsBox(hx, hy, in center, angle)` /
 `bool Set(b2Vec2[] points, int count)` (true = valid hull); `b2CircleShape` (`m_p`,
-`m_radius`); `b2EdgeShape.SetTwoSided(v1, v2)` / `SetOneSided(v0..v3)` (+2.3-style
-ghost fields `m_vertex0/m_vertex3`); `b2ChainShape.CreateLoop(b2Vec2[])`,
-`CreateChain(b2Vec2[], in prev, in next)`, `CreateChain(b2Vec2[] verts, int count,
-in prev, in next)`, `GetChildEdge`. All shapes: **`m_radius` is a public mutable
-field** (Unity sets polygon radius = contact offset + edge radius).
+`m_radius`); `b2EdgeShape.SetTwoSided(v1, v2)` (+2.3-style ghost fields
+`m_vertex0/m_vertex3`); `b2ChainShape.CreateChain(b2Vec2[], in prev, in next)`,
+`CreateChain(b2Vec2[] verts, int count, in prev, in next)`, `GetChildEdge`. All shapes:
+**`m_radius` is a public mutable field** (Unity sets polygon radius = contact offset + edge
+radius).
 
 `b2Contact`: `GetFixtureA/B`, `GetChildIndexA/B`, `IsTouching`, `IsEnabled`,
 `SetEnabled`, `GetManifold() → b2Manifold` (live object; `points[i].normalImpulse/
 tangentImpulse/id`), `GetWorldManifold(b2WorldManifold)` (fills the caller's
 `normal`, `points`, `separations`, as C++; left as it was for a manifold without
-points), `GetNext`, `Get/SetFriction`, `Get/SetRestitution`,
-`Get/SetTangentSpeed`, `Update(b2ContactListener)`.
+points), `GetNext`, `Update()`.
 
 Static functions (`using static Box2D.b2Collision;` for bare names):
 `b2Distance(out b2DistanceOutput, ref b2SimplexCache, in b2DistanceInput)`,
@@ -238,5 +230,5 @@ port's `c0 + beta * (c - c0)` rounds differently).
   introsort) no longer allocate, nor do the manifolds: each contact keeps two, `Update` evaluates
   into the spare (`b2Manifold.Reset`/`NewPoint` give a new one's values) and keeps the old one to
   match ids.
-- `b2Draw`/`DebugDraw` exists for parity but is unused by the offline engine.
-- Joints ARE ported (every type `b2Joint.Create` dispatches) but unused by the offline engine so far.
+- Joints, contact/destruction listeners and debug draw are not ported (the offline engine has
+  no use for them; the base port's were removed unused).

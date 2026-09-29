@@ -34,12 +34,6 @@ namespace Box2D
 {
     public static partial class Math
     {
-        public const ushort USHRT_MAX = ushort.MaxValue;
-        public const byte UCHAR_MAX = byte.MaxValue;
-        public const int RAND_LIMIT = 32767;
-
-        private static readonly Random s_rnd = new Random();
-
         /// <summary>
         ///  This function is used to ensure that a floating point number is
         ///  not a NaN or infinity.
@@ -47,73 +41,6 @@ namespace Box2D
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsValid(float x) =>
             !(float.IsNaN(x) || float.IsNegativeInfinity(x) || float.IsPositiveInfinity(x));
-
-        /// <summary>
-        ///  This is a approximate yet fast inverse square-root.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float InvSqrt(float x)
-        {
-            Convert convert = default;
-            convert.x = x;
-            float xhalf = 0.5f * x;
-            convert.i = 0x5f3759df - (convert.i >> 1);
-            x = convert.x;
-            x = x * (1.5f - xhalf * x * x);
-            return x;
-        }
-
-        [Obsolete("Use MathF.Sqrt", true)]
-        public static float Sqrt(float x) => MathF.Sqrt(x);
-
-        /// <summary>
-        ///  Random number in range [-1,1]
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float Random()
-        {
-            float r = s_rnd.Next() & RAND_LIMIT;
-            r /= RAND_LIMIT;
-            r = 2.0f * r - 1.0f;
-            return r;
-        }
-
-        /// <summary>
-        ///  Random floating point number in range [lo, hi]
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float Random(float lo, float hi)
-        {
-            float r = s_rnd.Next() & RAND_LIMIT;
-            r /= RAND_LIMIT;
-            r = (hi - lo) * r + lo;
-            return r;
-        }
-
-        /// <summary>
-        ///  "Next Largest Power of 2
-        ///  Given a binary integer value x, the next largest power of 2 can be computed by a SWAR algorithm
-        ///  that recursively "folds" the upper bits into the lower bits. This process yields a bit vector with
-        ///  the same most significant 1 as x, but all 1's below it. Adding 1 to that value yields the next
-        ///  largest power of 2. For a 32-bit value:"
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static uint NextPowerOfTwo(uint x)
-        {
-            x |= x >> 1;
-            x |= x >> 2;
-            x |= x >> 4;
-            x |= x >> 8;
-            x |= x >> 16;
-            return x + 1;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsPowerOfTwo(uint x)
-        {
-            bool result = x > 0 && (x & (x - 1)) == 0;
-            return result;
-        }
 
         /// <summary>
         ///  C++ b2MulT(b2Mat22, b2Vec2) literal: (b2Dot(v, ex), b2Dot(v, ey)).
@@ -171,18 +98,6 @@ namespace Box2D
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 MulT(b2Transform T, b2Vec2 v) => MulT(T.q, v - T.p);
 
-        /// <summary>
-        ///  Multiply a matrix times a vector.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector3 Mul(Mat33 A, Vector3 v) => v.X * A.ex + v.Y * A.ey + v.Z * A.ez;
-
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 Mul(b2Rot q, b2Vec2 v) => new b2Vec2(q.c * v.X - q.s * v.Y, q.s * v.X + q.c * v.Y);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 MulT(b2Rot q, b2Vec2 v) => new b2Vec2(q.c * v.X + q.s * v.Y, -q.s * v.X + q.c * v.Y);
 
 
         // v2 = A.q.b2Rot(B.q.b2Rot(v1) + B.p) + A.p
@@ -207,18 +122,5 @@ namespace Box2D
             return C;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 Mul22(in Mat33 A, in b2Vec2 v) =>
-            new b2Vec2(A.ex.X * v.X + A.ey.X * v.Y, A.ex.Y * v.X + A.ey.Y * v.Y);
-
-        [StructLayout(LayoutKind.Explicit)]
-        public struct Convert
-        {
-            [FieldOffset(0)]
-            public float x;
-
-            [FieldOffset(0)]
-            public int i;
-        }
     }
 }

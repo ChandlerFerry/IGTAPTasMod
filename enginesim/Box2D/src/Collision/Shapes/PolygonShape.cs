@@ -469,7 +469,5 @@ namespace Box2D
             massData.I += massData.mass * (b2Vec2.Dot(massData.center, massData.center) - b2Vec2.Dot(center, center));
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public b2Vec2[] GetVertices() => m_vertices[..m_count];
     }
 }

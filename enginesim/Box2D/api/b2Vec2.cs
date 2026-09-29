@@ -28,8 +28,6 @@ namespace Box2D
 
         public static readonly b2Vec2 Zero = new b2Vec2(0f, 0f);
         public static readonly b2Vec2 One = new b2Vec2(1f, 1f);
-        public static readonly b2Vec2 UnitX = new b2Vec2(1f, 0f);
-        public static readonly b2Vec2 UnitY = new b2Vec2(0f, 1f);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public float Length() => MathF.Sqrt(x * x + y * y);
@@ -72,9 +70,6 @@ namespace Box2D
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 Negate(b2Vec2 value) => new b2Vec2(-value.x, -value.y);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Min(b2Vec2 a, b2Vec2 b) => new b2Vec2(a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -82,17 +77,6 @@ namespace Box2D
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Abs(b2Vec2 value) => new b2Vec2(MathF.Abs(value.x), MathF.Abs(value.y));
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 Reflect(b2Vec2 vector, b2Vec2 normal)
-        {
-            float dot = vector.x * normal.x + vector.y * normal.y;
-            return new b2Vec2(vector.x - 2f * dot * normal.x, vector.y - 2f * dot * normal.y);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static b2Vec2 Transform(b2Vec2 v, b2Rot q) =>
-            new b2Vec2(q.c * v.x - q.s * v.y, q.s * v.x + q.c * v.y);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static b2Vec2 Transform(b2Vec2 v, System.Numerics.Matrix3x2 m) =>
