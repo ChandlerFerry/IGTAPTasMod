@@ -44,7 +44,7 @@ namespace IGTAP.EngineSim.Cli
             int Old(int g) => g < 0 ? 0 : (int)b.GoalInput[g];
             // b's last restart since the goal before: a restart's input moves only with the cuts before it, while a touch can come
             // on another input as the Cash does.
-            int LastReset(int g) { for (int i = Old(g) - 1; i > Old(g - 1); i--) if (b.Inputs[i].reset) return i; return -1; }
+            int LastReset(int g) { for (int i = Math.Min(Old(g), b.Inputs.Count) - 1; i > Old(g - 1); i--) if (b.Inputs[i].reset) return i; return -1; }
             var sites = Enumerable.Range(start, count - start).Where(g => LastReset(g) > 0).Append(count).ToList();
             int at = start == 0 ? 0 : Old(start - 1) + shift;
             sim.SetStart(origin, 0);

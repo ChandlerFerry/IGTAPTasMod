@@ -102,17 +102,20 @@ namespace IGTAP.EngineSim.Cli
             double c0 = CpuSeconds();
             var w0 = _clock.Elapsed;
             List<RunLap> laps = Laps(best);
-            var edits = new List<GoalEdit>();
-            edits.AddRange(DropEdits(best, laps));
-            edits.AddRange(AddEdits(best, _model?.Count == _goals ? _model : null));
-            edits.AddRange(RegroupEdits(best));
-            List<GoalEdit> records = RecordEdits(best, laps);
-            edits.AddRange(records);
-            List<GoalEdit> inserts = InsertEdits(best, laps);
-            edits.AddRange(inserts);
-            edits.AddRange(PayoutEdits(best, laps));
-            edits.AddRange(LadderEdits(best, laps));
-            edits.RemoveAll(e => FullTasGoal.EditRefused(_labels, e.Labels) != null);
+            var edits = new List<GoalEdit>(RewardInsertEdits());
+            if (edits.Count == 0)
+            {
+                edits.AddRange(DropEdits(best, laps));
+                edits.AddRange(AddEdits(best, _model?.Count == _goals ? _model : null));
+                edits.AddRange(RegroupEdits(best));
+                List<GoalEdit> records = RecordEdits(best, laps);
+                edits.AddRange(records);
+                List<GoalEdit> inserts = InsertEdits(best, laps);
+                edits.AddRange(inserts);
+                edits.AddRange(PayoutEdits(best, laps));
+                edits.AddRange(LadderEdits(best, laps));
+            }
+            edits.RemoveAll(e => e.Kind != "reward" && FullTasGoal.EditRefused(_labels, e.Labels) != null);
             // An edit is its whole spliced route: one played before (this session or an earlier one) plays the same way again.
             int played = edits.RemoveAll(e => _editsTried.Contains(EditKey(e)));
             if (edits.Count == 0)
@@ -229,7 +232,51 @@ namespace IGTAP.EngineSim.Cli
         {
             var byLabel = new Dictionary<string, FullTasGoal>();
             foreach (FullTasGoal g in _runGoals.Goals) byLabel.TryAdd(g.label, g);
-            return labels.Select(l => byLabel.TryGetValue(l, out FullTasGoal g) ? g : Grouped(l, byLabel)).ToArray();
+            return labels.Select(l => byLabel.TryGetValue(l, out FullTasGoal g) ? g : _insertedGoals.TryGetValue(l, out var x) ? x.goal : Grouped(l, byLabel)).ToArray();
+        }
+
+        /// <summary>--insert-goal reward:bonusN@K (repeatable): a reward goal the run doesn't have, put in at goal K (1-based; the goals
+        /// from K on move one on), its header entry (the bonus's end rect from the config folder's courses.json) and goal (the box
+        /// nearest that rect, as the game resolves it).</summary>
+        readonly Dictionary<string, (int at, JsonNode header, FullTasGoal goal)> _insertedGoals = new Dictionary<string, (int, JsonNode, FullTasGoal)>();
+
+        void InsertGoalOption(string option)
+        {
+            string[] p = option.Split('@');
+            if (p.Length != 2 || !p[0].StartsWith("reward:bonus", StringComparison.Ordinal) || !int.TryParse(p[1], out int at))
+                throw new ArgumentException($"--insert-goal {option}: reward:bonusN@K");
+            string token = p[0].Substring("reward:".Length);
+            string courses = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(_trace))), "courses.json");
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(courses));
+            JsonElement c = doc.RootElement.EnumerateArray().FirstOrDefault(e => e.TryGetProperty("name", out JsonElement n) && n.GetString() == token);
+            if (c.ValueKind != JsonValueKind.Object) throw new ArgumentException($"--insert-goal {option}: no {token} in {courses}");
+            float x = c.GetProperty("endX").GetSingle(), y = c.GetProperty("endY").GetSingle(), w = c.GetProperty("endW").GetSingle(), h = c.GetProperty("endH").GetSingle();
+            _eval.Restore(_origin); // the box positions in the start's frame, the rect's (a replay may have rebased the world)
+            string box = _eval.Shop.NearestBox(x, y, FullTasGoal.RewardBoxRange) ?? throw new ArgumentException($"--insert-goal {option}: no upgrade box near {token}'s end");
+            var header = new JsonObject { ["label"] = p[0], ["kind"] = FullTasGoal.Reward, ["course"] = 0, ["boxes"] = new JsonArray(box), ["rect"] = new JsonArray(x, y, w, h) };
+            _insertedGoals[p[0]] = (at, header, new FullTasGoal { label = p[0], kind = FullTasGoal.Reward, boxes = new[] { box }, x = x, y = y, w = w, h = h });
+            Log($"auto goals: --insert-goal {p[0]} at goal {at} (box {box})");
+        }
+
+        /// <summary>
+        /// The --insert-goal edits the run's goals don't have yet: the best's inputs under the list with the reward goal put in. The
+        /// old way on doesn't buy its box, so it is re-found as an investment from the goal before it (<see cref="InvestRepair"/>),
+        /// as an inserted record lap is. It adds a reward goal to the skeleton, so the game won't adopt the list from a judged
+        /// route (<see cref="FullTasGoal.EditRefused"/>): put it in fulltas.json by hand. While one is due a pull offers nothing else.
+        /// </summary>
+        IEnumerable<GoalEdit> RewardInsertEdits()
+        {
+            foreach (var (label, (at, _, _)) in _insertedGoals)
+            {
+                if (_labels.Contains(label) || at < 2 || at > _goals) continue;
+                int k = at - 1;
+                int[] oldOf = Enumerable.Range(0, k).Append(-1).Concat(Enumerable.Range(k, _goals - k)).ToArray();
+                yield return new GoalEdit
+                {
+                    Kind = "reward", Key = $"reward:{label}@{at}", Text = $"Inserted {label} at goal {at} (before {_labels[k]})", Inputs = _best.Inputs,
+                    OldOf = oldOf, Labels = oldOf.Select(o => o < 0 ? label : _labels[o]).ToArray(), First = k, Last = k,
+                };
+            }
         }
 
         static FullTasGoal Grouped(string label, Dictionary<string, FullTasGoal> byLabel)
@@ -457,7 +504,7 @@ namespace IGTAP.EngineSim.Cli
                     p = new Route { Inputs = r.Inputs, Progress = e.Refind, GoalInput = r.GoalInput, GoalPhysics = r.GoalPhysics, GoalHeld = r.GoalHeld, EndReason = r.EndReason };
                 }
                 else if (results[i].route != null || p == null
-                    || !(e.Kind == "insert" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || (e.Kind == "payout" || e.Kind == "ladder") && PayoutMayPay(e, p, best))) continue;
+                    || !(e.Kind == "insert" || e.Kind == "reward" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || (e.Kind == "payout" || e.Kind == "ladder") && PayoutMayPay(e, p, best))) continue;
                 picks.Add((e, p));
             }
             return picks.GroupBy(x => (x.e.Kind, x.e.Refind > 0))
@@ -1440,6 +1487,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (string l in labels)
             {
                 if (byLabel.TryGetValue(l, out JsonNode g)) { goals.Add(g.DeepClone()); continue; }
+                if (_insertedGoals.TryGetValue(l, out var x)) { goals.Add(x.header.DeepClone()); continue; }
                 string[] parts = l.Substring("buy:".Length).Split('+');
                 JsonNode first = byLabel["buy:" + parts[0]].DeepClone();
                 first["label"] = l;
