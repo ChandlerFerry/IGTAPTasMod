@@ -1493,9 +1493,14 @@ a lap of the stretch's course, each box the stretch buys (when the run can pay f
 choice is played with the loop builder's pieces (a piece search only when none plays, `--piece-minutes`), and scored by
 when it would buy the target: its end tick, plus the Cash the target still needs over the income laps would earn from
 there, plus the walk to the target. The income is the course's lap reward over a lap (the best's own back-to-back
-laps) plus the clones' income measured standing still after a quick restart for 2000 ticks: one lap's clone payouts
-are too few to average their rolls, and picking the best of several one-lap guesses bought every box to its cap (Course
-3: `buydj` 1718 ticks later than the best). It never waits at a box: laps fill. A lap's gate piece is the one after which
+laps) plus the clones' income measured standing still after a quick restart, over the whole clone laps of the course
+that fit in 2000 ticks: one lap's clone payouts are too few to average their rolls, and picking the best of several
+one-lap guesses bought every box to its cap (Course 3: `buydj` 1718 ticks later than the best). On build 25630570 a
+record lap leaves the pool in step (below), paying in one bunch a lap, so a window cut mid-lap was off by up to a bunch.
+Each step's line also prints the income by formula (`CloneIncome`, a cross-check): on screen every slot refills the
+frame after its clone pays, so min(C, path frames) clones fly and pay C x pay / T, less 1.5 frames a lap (0.993-0.997
+at the 280 fps clock's 300 frames a second); off screen a course pays ceil(pay C / T) every 50 ticks (300 frames); the
+rolls are averaged. It never waits at a box: laps fill. A lap's gate piece is the one after which
 the finish comes soonest, not the fastest to the gate: the fastest gate piece crossed Course 1's gate where only a slow
 finish piece played, and the plan's laps took 248 ticks from the box for the best's 107. Before planning it files the best's
 own steps in the span as library pieces (a polished route passes spots the builder never filed). It prints the planned
@@ -1528,7 +1533,22 @@ stretch on top of a planned route, capture the start again with its goals first.
 A clone pays at its path's end, and its path is the course's best time, so every step also offers a **record lap**: the
 gate crossed, a quick restart to the course's reset point, and each saved course route (`--seed`) for the course played
 from standing there after 0-40 idle ticks; the one leaving the lowest best time wins, and the estimate weighs the faster
-clones. A route that misses from there is searched once per course from the restart, seeded with it. Course 2: the
+clones. A record lap is a **break** (`updateClonePath`): every clone in flight pays in full at once. On build 25630570,
+while the course keeps Start's spawn reserve (its 10000 s timer, from its first clone to its first tick off screen, never
+back), the pool refills one a frame (52 clones in 0.17 s), so it runs in step and the next break pays C (1 - o / T')
+more payouts (o the restart's overhead, T' the new path: Course 2's 52 clones at 1.9 s with o 0.5 s, about 38). Once
+the reserve is gone the pool refills one an interval, and a break's C / 2 is an advance the emptier pool pays back over
+T': worth it only right before a Cash-bound buy.
+
+A record lap also offers **ladders** (`--ladder-max K`, default 12, 1 for none): K back-to-back record laps from the
+quick restart, the fastest lap slowed by K-1, ..., 1, 0 ticks, so each finish is a break; K is at most the ticks
+between the course's best before and the fastest lap. The laps after the first are played as the record lap's way
+again (no break in the engine: its time is already the best) plus K(K-1)/2 idle ticks for the slowing, and each of
+their K-1 breaks is credited with C (1 - o / T') payouts (the model; none without the reserve, read from the course's
+spawn timer). The goals part's ladder edit builds the slowed
+laps. A picked ladder's credit goes into the plan's Cash (and into the states piece searches replay to), the log
+prints every K's end, credit and estimate (`ladders at tick N: ...`), and `--route` is not written while the plan has
+one (its stand-in laps don't earn the credit). A route that misses from there is searched once per course from the restart, seeded with it. Course 2: the
 `2_WJ 2.20` route dies on its spikes from the restart (its recording takes them on the last grace tick, and the restart
 differs from its start by hundredths of a unit), and the seeded search, which scores the finish tick and not the
 course timer, finds a 2.44 s lap, the one `FalseEnding-Any%` already runs. A 2.20 s lap from the restart needs a search
@@ -1586,7 +1606,8 @@ once it stops finding. The search's workers replay that route, then start from t
 (the run's goals to the place, then the set's) and its Cash, neither of which a replay reaches (each entry's goals are
 built from the run's, not the previous entry's list); the search tracks every goal of the set and a way is cut at the
 set's last box. Every place's single buys are measured first, then every place's pairs, then the triples, so a run cut
-short has whole sizes done.
+short has whole sizes done. A buy-max box's entry ends on its touch (the goal's tick); its levels land one a physics
+tick after it (L levels over L - 1 ticks, build 25630570) while the walk goes on.
 
 The output is `fulltas/<run>.buytable.json`, cached per run and trace: `places` (`id`, `name`, `kind` of `start`,
 `restart`, `gate`, `finish` or `box`, the `box` label where it is one, `x`/`y`, `caps`, `tick` the snapshot's own physics
@@ -1606,11 +1627,17 @@ python tools/plan-buytable.py --table $traces\fulltas\FalseEnding-Any%.buytable.
 `plan-buytable.py` chooses a buy phase's buy order and grouping from the measured time-to-buy table
 ([Buy table](#buy-table)): the engine's ticks from each place the run stands at (the phase's start, the start gate,
 the finish, each box's spot, the quick restart's landing) to buy each box and each ordered set of 2-3 boxes in one pass.
-On top of it runs `plan_fulltas.py`'s Course 2 economy (clone pool and spawn gate, the pre-2026-09-30 build's
-([Clones and buy-max](#clones-and-buy-max-build-25630570)); box costs, lap rewards, Course 1's clones off screen),
-and a Dijkstra search over its states (tick first, the model's dominance on box levels, place and
+On top of it runs `plan_fulltas.py`'s Course 2 economy on build 25630570 ([Clones and
+buy-max](#clones-and-buy-max-build-25630570): a bought clone flies on the next frame and every clone pays once a path
+plus 1.5 frames, a break pays every clone in flight and the pool runs on in step; box costs, lap rewards, Course 1's
+clones off screen every 50 ticks; the later phases lose a course's reserve once the run leaves it with clones, and then
+a bought clone waits half an interval and a break refills the pool over a life; a buy-max touch buys what the Cash pays
+on the touch, a level a tick while the player walks on), and a Dijkstra search over its states (tick first, the model's
+dominance on box levels, place and
 Cash) finds the goal list that buys the target soonest. Each step is a lap (`start:2 finish:2`, or `finish:2` from the
-gate), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
+gate), a ladder of K such laps (`--fast-lap N`, the fastest known lap's course-timer ticks, and `--ladder-max`, as the
+[engine farm planner](#engine-farm-planner)'s; `plan_fulltas.py` takes the same two for Course 2 and plans the later
+courses' ladders on their own laps), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
 restart and a walk from its landing, whichever the table has cheaper. Until the plan first crosses Course 2's gate (a
 box bought on the way from the phase's start), a quick restart lands at the checkpoint before the course: those restarts
 use the phase's earliest landing and its measured walks (its gate walk is ~404 ticks against 25 from Course 2's own), so
