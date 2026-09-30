@@ -41,6 +41,8 @@ namespace IGTAPTasMod
         private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
+        // Run route from a tick: playback runs fast (no wall-clock wait, the same frames) until the run has played this many ticks.
+        private int _fastUntilTick;
         private Rigidbody2D _playerBody;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
@@ -120,15 +122,18 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
             PatchOptional(typeof(Movement), "TimeStop", nameof(BeforeOverlayTimeStop), null);
+            PatchOptional(typeof(clonesScript), "Update", nameof(BeforeProbeCloneUpdate), null);
+            PatchOptional(typeof(clonesScript), "SpawnClone", nameof(BeforeProbeSpawn), nameof(AfterProbeSpawn));
+            PatchProbeRng();
             PatchOptional(typeof(FloatingOrigin), "MoveRootTransforms", nameof(BeforeMoveRootTransforms), nameof(AfterMoveRootTransforms));
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();
             InstallTasHoldPoint();
             foreach (var drawer in new[] { AccessTools.Method(typeof(PlayerAnimationEventProxy), "RelayFootstep"),
-                         AccessTools.Method(typeof(FloatingNumberScript), "spawnNewFloatingNumber") })
-                _harmony.Patch(drawer, prefix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(BeforePresentationDraw))),
-                    postfix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(AfterPresentationDraw))));
+                         AccessTools.Method(typeof(FloatingNumberScript), "spawnNewFloatingNumber"), AccessTools.Method(typeof(ObjectBobber), "OnEnable") })
+                _harmony.Patch(drawer, prefix: new HarmonyMethod(AccessTools.Method(typeof(PresentationDraw), nameof(PresentationDraw.Before))),
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(PresentationDraw), nameof(PresentationDraw.After))));
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 
@@ -300,6 +305,9 @@ namespace IGTAPTasMod
 
         float _clockFrame, _clockNext;
         double _clockTotal;
+        readonly System.Diagnostics.Stopwatch _paceClock = new System.Diagnostics.Stopwatch();
+        double _paceDue;
+        const double MaxPaceDebt = 0.1;
 
         private void Update()
         {

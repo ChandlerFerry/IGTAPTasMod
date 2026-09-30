@@ -302,7 +302,7 @@ namespace IGTAP.EngineSim.Cli
                 float d = OfflineSolver.GoalDistance(_eval);
                 if (!float.IsNaN(d) && !(d >= nearest)) { nearest = d; nearestAt = _eval.Engine.RunTicks; }
             });
-            var route = new Route { Inputs = g.Inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, EndReason = r.EndReason };
+            var route = new Route { Inputs = g.Inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
             int end = (int)Math.Min(_eval.Engine.RunTicks, g.Inputs.Count - 1);
             bool died = r.EndReason != null && r.EndReason != "Solver run ended" && !r.EndReason.StartsWith("Full-TAS", StringComparison.Ordinal);
             int fail = died || nearestAt < 0 ? end : (int)Math.Min(nearestAt, g.Inputs.Count - 1);

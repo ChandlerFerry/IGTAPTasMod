@@ -2,7 +2,10 @@
 
 import { useState, type ReactNode } from "react";
 
-export type FullTasSplit = { label: string; ticks: number };
+/** A goal's arrival: its physics tick (game frames) and the frames the run had stood still in by then (dash freezes, pauses). */
+export type FullTasSplit = { label: string; ticks: number; held?: number };
+/** Live time: what the run takes at 1x, ticks at 0.02 s plus held frames at 1/280 s (MacroEngine.LiveSeconds). */
+export const liveSeconds = (s: FullTasSplit) => s.ticks * 0.02 + (s.held ?? 0) / 280;
 export type RouteJson = { progress: number; time: number | null; splits: number[] };
 export type FullTasEvent = { type: string; at: number } & Record<string, unknown>;
 export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; error?: boolean; run?: string; finished?: boolean; time?: number | null; saved?: boolean;

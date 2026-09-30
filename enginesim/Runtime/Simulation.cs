@@ -87,10 +87,12 @@ namespace IGTAP.EngineSim
         public float Time;
         public int FinishTick;
         public long PhysicsTicks;
+        /// <summary>Frames the run stood still in (dash freezes, pauses): its live time is PhysicsTicks and these (MacroEngine.LiveSeconds).</summary>
+        public long HeldFrames;
         public int Stepped;
         public string EndReason;
         public int Progress;
-        public long[] GoalInputTicks, GoalPhysicsTicks;
+        public long[] GoalInputTicks, GoalPhysicsTicks, GoalHeldFrames;
     }
 
     public sealed class SimSnapshot
@@ -284,6 +286,9 @@ namespace IGTAP.EngineSim
         internal FullTasTracker Goals { get; private set; }
         public long InputBase;
         public int Progress { get { return Goals == null ? 0 : Goals.Next; } }
+        /// <summary>The course timer of the last course finish (courseScript.stopTracking's currentPathTime): the lap's own time,
+        /// whether or not it beat the course's best time.</summary>
+        public float LastCourseTime;
 
         /// <summary>
         /// Tracks these goals from now on (an extra lap the run doesn't list, searched as its own goals). Snapshots restored after
@@ -303,11 +308,12 @@ namespace IGTAP.EngineSim
         void GoalEvent(bool reached)
         {
             if (!reached || !Goals.Done || !Engine.IsRunning) return;
-            if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (README ### Rules 31).
+            if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(Engine.PhysicsTicks, Engine.HeldFrames));
             else if (_finishIn < 0)
             {
                 _finishIn = StrictFinishTicks;
-                _finishTimeAtGoal = Engine.PhysicsTicks * World.FixedDeltaTime;
+                _finishTimeAtGoal = MacroEngine.LiveSeconds(Engine.PhysicsTicks, Engine.HeldFrames);
             }
         }
 
@@ -333,7 +339,7 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Bought " + path + ", which isn't the next goal's box");
                 return;
             }
-            GoalEvent(Goals.Bought(path, id, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+            GoalEvent(Goals.Bought(path, id, InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
         }
 
         public SimSnapshot Advance(IReadOnlyList<InputTick> prefix)
@@ -364,6 +370,7 @@ namespace IGTAP.EngineSim
             float time = PathTime(course);
             Tracking(course) = false;
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
+            if (savePositionData) LastCourseTime = time;
             if (savePositionData) Shop.CourseFinished(course, time);
             if (!(savePositionData && VmanScript.isCurrentlyVman))
             {
@@ -373,7 +380,7 @@ namespace IGTAP.EngineSim
             }
             if (Goals != null)
             {
-                if (savePositionData && Engine.IsRunning) GoalEvent(Goals.CourseFinished(course.courseNumber, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                if (savePositionData && Engine.IsRunning) GoalEvent(Goals.CourseFinished(course.courseNumber, InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
             }
             else if (savePositionData && (TargetCourse == 0 || course.courseNumber == TargetCourse))
                 Engine.CompleteFromGame("Course finish detected", time);
@@ -916,6 +923,9 @@ namespace IGTAP.EngineSim
             for (int k = 0; k < Frames.Alphas.Length; k++)
             {
                 int repeats = MacroEngine.FrameRepeats(k, Frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                // The repeats are frames the run stands still in: its live time (turbo counts its loop's the same way; at 1x
+                // the plugin counts the frames whose Update ran at timeScale 0).
+                Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
                     Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Alphas[k]));
@@ -1320,7 +1330,7 @@ namespace IGTAP.EngineSim
                 if (Goals != null && Engine.IsRunning)
                 {
                     if (startGoal != null && !startWasTracking && Goals.Current == goal && Tracking(startGoal))
-                        GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                        GoalEvent(Goals.CourseStarted(goal.course, InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
                     FullTasGoal now = Goals.Current;
                     ScenePos goalAt = now != null ? FromCapture(new CapturePos(now.x, now.y)) : default;
                     if (_rebases.Length != rebasesBefore)
@@ -1330,7 +1340,7 @@ namespace IGTAP.EngineSim
                     }
                     if (now != null && now.kind == FullTasGoal.At && Touches(goalAt.x, goalAt.y, now.w, now.h)
                         && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
-                        GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks));
+                        GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
                 }
                 // A quick restart in the strict finish's ticks after an area goal takes that goal back (FullTasTracker): the run
                 // then hasn't reached its goals, and finishing anyway handed the solver windows that missed them on replay.
@@ -1358,10 +1368,12 @@ namespace IGTAP.EngineSim
                 FinishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick)),
                 Stepped = stepped,
                 PhysicsTicks = Engine.PhysicsTicks,
+                HeldFrames = Engine.HeldFrames,
                 EndReason = _endReason,
                 Progress = Progress,
                 GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
                 GoalPhysicsTicks = Goals == null ? null : (long[])Goals.PhysicsTicks.Clone(),
+                GoalHeldFrames = Goals == null ? null : (long[])Goals.HeldFrames.Clone(),
             };
         }
 

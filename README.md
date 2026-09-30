@@ -66,7 +66,11 @@
     must finish in the recorded time, `Solver.cs` `RouteViolation`).
 30. A course's farm time counts physics ticks from the route start (the quick restart) to the finish (the gate: the
     replay's physics tick count must match).
-31. Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included.
+31. Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included. A Full-TAS run is timed in live
+    time, what it takes at 1x: its physics ticks at 0.02 s plus the frames it stood still in (a dash freeze's, a pause's,
+    1/280 s each on the 280 fps clock; `MacroEngine.HeldFrames`, `MacroEngine.LiveSeconds`), and reported with both,
+    live time and game frames (the ticks). Turbo, the offline engine and 1x count the same frames (the gate: a replay's
+    live time must match).
 32. Nothing after the finish is part of the route.
 33. No teleports, position offsets or moving the player.
 34. Only reset: the game's quick restart, `Movement.respawn(true)` (the gate refuses "a quick restart on two ticks in a
@@ -135,9 +139,11 @@
     engine alike; the timer is back on after the run. A course's clones pay its reward as last updated, so the phase
     decides the Cash.
 11. Relaxes rule 39. Presentation doesn't draw the Full-TAS RNG: the run animation's footstep event
-    (`PlayerAnimationEventProxy.RelayFootstep`, on rendered frames) and a floating number (`spawnNewFloatingNumber`),
-    which turbo and the offline engine don't play, play and put `UnityEngine.Random`'s state back after them
-    (`TasPlugin.BeforePresentationDraw`/`AfterPresentationDraw`), so the fixed seed's draws are the same at 1x as judged.
+    (`PlayerAnimationEventProxy.RelayFootstep`, on rendered frames), a floating number (`spawnNewFloatingNumber`) and a
+    text bobber's bob phase (`ObjectBobber.OnEnable`: the statue's text, a buy-max box's "buy N" text, which its multibuy
+    timer turns on at 1x only) play and put `UnityEngine.Random`'s state back after them
+    (`TasPlugin.PresentationDraw`; the offline engine makes no bobber draw in a Full-TAS
+    run, `Economy.Activate`), so the fixed seed's draws are the same at 1x as judged.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:
@@ -180,14 +186,18 @@ only when the live state's `staticVersion` changes: with every command, every fi
 second of a file the offline solver or the lab tools write. `GET /api/state` is both in one, for tools. Selecting a
 route saves it to `settings.json` (`selectedRouteId`), not the whole `routes.json`.
 
+1x playback runs in real time: each frame waits until the wall clock reaches the fixed clock's time since the start
+(`WaitForFixedClock`: every frame's step summed, a dash freeze's frames included), and the frames after a late one
+catch up, up to 0.1 s behind. It does not use a 280 fps cap: six frames make a 0.02 s tick, so a cap would play at
+0.933x. Real time is the route's time plus its dash freezes, as long as the game renders the ~310 fps it needs.
 **Fast** next to **Run route** (`POST /api/settings/fast-playback {"on": true}`, settings `fastPlayback`, off by
-default) lifts the 280 fps cap on real frames in 1x playback (`Application.targetFrameRate`), so a route plays as fast
-as the game renders. The simulation is unchanged: each frame's game time is the fixed clock's step
-(`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock, and vsync off,
-`Time.maximumDeltaTime` and the wall-clock patches stay as they are. A walk (its slowdown is paced by the wall clock)
-and a probe (`ProbeRunner`, its frame rate is what it measures) keep the cap.
+default) drops the wait, so a route plays as fast as the game renders. The simulation is unchanged: each frame's game
+time is the fixed clock's step (`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock,
+and vsync off, `Time.maximumDeltaTime` and the wall-clock patches stay as they are. A walk waits for its slowdown times
+the fixed clock. A probe (`ProbeRunner`, its frame rate is what it measures) keeps Unity's cap
+(`Application.targetFrameRate`).
 
-A playback that holds 280 fps plays in its game time; a slower frame rate plays the same frames, only later. While a
+A slower frame rate plays the same frames, only later. While a
 playback lists its ticks, the overlay draws its input panel, pad and velocity panel into a texture once a physics tick
 (`TasOverlayCache.cs`) and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP and the nudge are drawn
 live. Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
@@ -222,7 +232,8 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   ([`enginesim/README.md`](enginesim/README.md#suggest)) and lists edits that reach the same spot sooner; apply splices one in.
 - **Share**: a code (`IGTAS1:` + base64url gzip), `.igtas.json` or `.tas` text, with the savestate if any. An import is a
   plain route (a record's name gets ` shared`).
-- **Hotkeys** (game focused): `]` advance, `[` rewind, `\` play/hold, `'` re-record, F8 close.
+- **Hotkeys**, in the game or the studio's TAS tab: `]` advance, `[` rewind (in the studio Shift for ten ticks), `\` play/hold,
+  `'` re-record; F8 (game) closes. The tab's input box turbos to an input tick and holds there.
 - **Placed loadstates** (Savestates tab): a copy of the player now or of a savestate with x, y, speed or facing replaced,
   and optionally the world rebased around a point after the restore (`RebaseWorldAround`, the Full-TAS `rebaseAt`'s moves),
   for floating-origin tests.

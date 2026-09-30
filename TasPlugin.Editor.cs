@@ -140,6 +140,8 @@ namespace IGTAPTasMod
             finally
             {
                 if (waited) AudioListener.pause = false;
+                // The hold isn't pace debt: play on from now, not in a rush to catch up (WaitForFixedClock).
+                if (waited) _paceDue = _paceClock.Elapsed.TotalSeconds;
             }
         }
 

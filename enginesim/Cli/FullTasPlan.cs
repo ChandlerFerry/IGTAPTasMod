@@ -333,7 +333,7 @@ namespace IGTAP.EngineSim.Cli
                 _eval.SetStart(start, 0);
                 _eval.Goals.Limit = _goals;
                 RunResult r = _eval.Run(inputs, null, null, 1000000);
-                _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
+                _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames };
                 Log($"harvest {Path.GetFileName(file)}: plays {r.Progress} of its {labels.Length} goals");
                 Harvest(start, new List<InputTick>(), 0, r.Progress);
             }
@@ -423,7 +423,7 @@ namespace IGTAP.EngineSim.Cli
                     sim.SetStart(start, 0);
                     sim.Goals.Limit = _goals;
                     RunResult r = sim.Run(inputs, null, null, 1000000);
-                    _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks };
+                    _best = new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames };
                     Log($"harvest run {run}: its best plays {r.Progress} of its {labels.Length} goals");
                     Harvest(start, new List<InputTick>(), 0, r.Progress);
                 });

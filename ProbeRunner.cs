@@ -140,7 +140,7 @@ namespace IGTAPTasMod
                 paused = movement.pauseMenu != null && movement.pauseMenu.menuOpen,
                 camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
                 cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
-                random = Array.ConvertAll(EngineSimExport.RandomStateFields, f => (int)f.GetValue((object)UnityEngine.Random.state)),
+                random = CourseStart.Words(UnityEngine.Random.state),
                 physics = _engine.PhysicsTicks, input = _engine.RunTicks,
                 x = p.x - origin.x, y = p.y - origin.y, vx = v.x, vy = v.y, mx = m.x, my = m.y, bvx = body.x, bvy = body.y,
                 bodyX = bodyAt.x, bodyY = bodyAt.y, interpolation = _playerBody != null ? _playerBody.interpolation.ToString() : null,
@@ -149,6 +149,80 @@ namespace IGTAPTasMod
                 dashDir = new[] { d.x, d.y }, originX = origin.x, originY = origin.y,
                 lastHyperY = TechLastHyperYField == null ? (float?)null : (float)TechLastHyperYField.GetValue(movement),
                 fields, movers,
+            });
+        }
+
+        // A probe's clone log (rows of kind "clone"): every clonesScript.SpawnClone with the clonesScripts whose Update ran
+        // before it in the same frame. Turbo and enginesim step the courses' clones lowest instance id first; a spawn's rolls
+        // come off the one RNG, so a frame where two courses spawn in another order hands them each other's rolls.
+        static int _cloneOrderFrame = -1;
+        static readonly List<int> _cloneOrder = new List<int>();
+        static readonly FieldInfo CloneCourse = AccessTools.Field(typeof(clonesScript), "course"), CloneOnScreen = AccessTools.Field(typeof(clonesScript), "onScreen"),
+            CloneDivisor = AccessTools.Field(typeof(clonesScript), "nextOffscreenCloneDivisor"), CloneNextDue = AccessTools.Field(typeof(clonesScript), "nextCloneDue");
+        static double _spawnCash;
+        static int[] _spawnRandom;
+        static float _spawnDivisor;
+
+        bool ProbeLogsClones { get { return _probe != null && _probe.started && _engine.IsRunning && _engine.ActiveMacro != null && _engine.ActiveMacro.id == ProbeRouteId; } }
+
+        private static void BeforeProbeCloneUpdate(clonesScript __instance)
+        {
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            if (Time.frameCount != _cloneOrderFrame) { _cloneOrderFrame = Time.frameCount; _cloneOrder.Clear(); }
+            _cloneOrder.Add(__instance.GetInstanceID());
+        }
+
+        private static void BeforeProbeSpawn(clonesScript __instance)
+        {
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            _spawnCash = globalStats.currencyLookup[globalStats.Currencies.Cash];
+            _spawnRandom = CourseStart.Words(UnityEngine.Random.state);
+            _spawnDivisor = (float)CloneDivisor.GetValue(__instance);
+        }
+
+        private static void AfterProbeSpawn(clonesScript __instance)
+        {
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            var course = CloneCourse.GetValue(__instance) as courseScript;
+            Instance._probe.rows.Add(new
+            {
+                kind = "clone", frame = Time.frameCount, physics = Instance._engine.PhysicsTicks, input = Instance._engine.RunTicks,
+                course = course != null ? course.courseNumber : -1, id = __instance.GetInstanceID(), onScreen = CloneOnScreen.GetValue(__instance),
+                divisor = _spawnDivisor, nextDue = CloneNextDue.GetValue(__instance), cashBefore = _spawnCash, cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
+                random = _spawnRandom, order = Time.frameCount == _cloneOrderFrame ? _cloneOrder.ToArray() : new int[0],
+            });
+        }
+
+        // A probe's RNG log (rows of kind "rng"): each call of a game method that draws UnityEngine.Random (the ones the decompiled
+        // game has: audio picks, lights' and animators' Start, bobbers' and boxes' OnEnable, a zip mover's state, a course's Start,
+        // Movement.playSFX) with the draws it made, so a run's draws line up with turbo's and enginesim's by frame and object.
+        static readonly (Type type, string method)[] ProbeRngCallers =
+        {
+            (typeof(Audio), "PlayAudio"), (typeof(Audio), "PlayAudioAtPoint"), (typeof(Audio), "PlayAudioSetPitch"),
+            (typeof(JiggleDropScript), "Start"), (typeof(LightFlicker), "Start"), (typeof(playerLightFlickerVariant), "Start"),
+            (typeof(RandomAnimSpeedComponent), "Start"), (typeof(ObjectBobber), "OnEnable"), (typeof(courseScript), "Start"),
+            (typeof(upgradeBox), "OnEnable"), (typeof(Movement), "playSFX"),
+        };
+        void PatchProbeRng()
+        {
+            foreach (var (type, method) in ProbeRngCallers) PatchOptional(type, method, nameof(BeforeProbeRng), nameof(AfterProbeRng));
+        }
+
+        private static void BeforeProbeRng(out UnityEngine.Random.State __state)
+        {
+            __state = UnityEngine.Random.state;
+        }
+
+        private static void AfterProbeRng(object __instance, MethodBase __originalMethod, UnityEngine.Random.State __state)
+        {
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            UnityEngine.Random.State after = UnityEngine.Random.state;
+            if (__state.Equals(after)) return;
+            Instance._probe.rows.Add(new
+            {
+                kind = "rng", frame = Time.frameCount, physics = Instance._engine.PhysicsTicks, input = Instance._engine.RunTicks,
+                method = __originalMethod.DeclaringType.Name + "." + __originalMethod.Name, obj = (__instance as Component)?.gameObject.name,
+                random = CourseStart.Words(after),
             });
         }
 

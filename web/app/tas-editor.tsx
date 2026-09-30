@@ -126,6 +126,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
   const [view, setView] = useState<"grid" | "text">("grid");
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
+  const [goTo, setGoTo] = useState("");
   const [shareOut, setShareOut] = useState<{ code: string; name: string; fileName: string; document: unknown; text: string } | null>(null);
 
   useEffect(() => {
@@ -137,6 +138,25 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
 
   const busy = tas.phase === "starting" || tas.phase === "recording";
   const cmd = (path: string, body: unknown = {}) => onCommand(path, body);
+
+  // The game's hotkeys, here too (Shift: ten ticks). By physical key, so Shift+] is still ]; not while typing.
+  const keys = useRef({ tas, busy, speed, recordSpeed, cmd });
+  keys.current = { tas, busy, speed, recordSpeed, cmd };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.repeat || t?.closest("input, textarea, select, [contenteditable]")) return;
+      const { tas, busy, speed, recordSpeed, cmd } = keys.current, n = e.shiftKey ? 10 : 1;
+      if (e.code === "BracketRight") { if (!busy && !tas.ended) cmd("/tas/advance", { ticks: n }); }
+      else if (e.code === "BracketLeft") { if (!busy) cmd("/tas/rewind", { ticks: n }); }
+      else if (e.code === "Backslash") { if (tas.phase === "playing") cmd("/tas/hold"); else if (!busy && !tas.ended) cmd("/tas/play", { slowdown: speed }); }
+      else if (e.code === "Quote") { if (tas.phase === "recording") cmd("/tas/record/stop"); else if (!busy && !tas.ended) cmd("/tas/record", { slowdown: recordSpeed }); }
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const edit = (from: number, deleteCount: number, insert: TasTick[]) => cmd("/tas/edit", { from, deleteCount, ticks: insert });
   const category = categories.find(c => c.id === tas.capabilities);
   const course = courses.find(c => c.id === tas.course);
@@ -176,6 +196,10 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       </div>
       <div className="tasTransport">
         <button disabled={busy} title="To the start (input 0)" onClick={() => cmd("/tas/seek", { tick: 0 })}>⏮</button>
+        <form className="tasGoTo" onSubmit={e => { e.preventDefault(); if (goTo !== "") cmd("/tas/seek", { tick: Math.max(0, Math.min(tas.tickCount, Number(goTo))) }); }}>
+          <input type="number" min={0} max={tas.tickCount} value={goTo} placeholder="input" title="Turbo to this input tick and hold there" onChange={e => setGoTo(e.target.value)}/>
+          <button disabled={busy || goTo === ""}>Go</button>
+        </form>
         <button disabled={busy} title="Back 10 physics ticks" onClick={() => cmd("/tas/rewind", { ticks: 10 })}>◀◀</button>
         <button disabled={busy} title="Back one physics tick  [" onClick={() => cmd("/tas/rewind", { ticks: 1 })}>◀ 1</button>
         <button disabled={busy || !!tas.ended} title="One physics tick  ]" onClick={() => cmd("/tas/advance", { ticks: 1 })}>1 ▶</button>
@@ -194,7 +218,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}>Grid</button>
         <button className={view === "text" ? "active" : ""} onClick={openText}>Text</button>
       </div>
-      <p className="tasKeys">In game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind · <kbd>\</kbd> play/hold · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close. Held, the game waits before its next physics tick: nothing moves until you advance.</p>
+      <p className="tasKeys">Here or in game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind (here <kbd>Shift</kbd> for 10) · <kbd>\</kbd> play/hold · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close (in game). Held, the game waits before its next physics tick: nothing moves until you advance.</p>
       {note && <div className="errorBanner tasNotice">{note}<button onClick={() => setNote("")}>×</button></div>}
     </div>
 

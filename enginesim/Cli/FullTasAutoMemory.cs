@@ -34,11 +34,12 @@ namespace IGTAP.EngineSim.Cli
                 revive = _reviveTried.Select(kv => new { key = Hex(kv.Key), n = kv.Value }),
                 revivedOn = _revivedOn.Select(Hex),
                 edits = _editsTried.Select(Hex),
+                lapSearched = _lapSearched,
                 studied = _studied.Select(x => new[] { x.goal, x.offset }),
                 planDead = _planDead,
                 grafted = _grafted.Where(g => keyOf.ContainsKey(g.Item1)).Select(g => new { key = Hex(keyOf[g.Item1]), goal = g.Item2 }),
                 arms = _arms.Values.Where(a => a.Pulls > 0).Select(a => new { lever = a.Lever, goal = a.Goal, pulls = a.Pulls, wins = a.Wins, cpu = a.Cpu, gain = a.Gain }),
-                spots = _spots.Select(kv => new { lever = kv.Key.Item1, goal = kv.Key.Item2, kv.Value.pulls, kv.Value.cpu, kv.Value.gain }),
+                spots = _spots.Select(kv => new { lever = kv.Key.Item1, goal = kv.Key.Item2, kv.Value.pulls, kv.Value.cpu, kv.Value.gain, kv.Value.misses }),
                 levers = _leverCost.Select(kv => new { lever = kv.Key, kv.Value.pulls, kv.Value.cpu }),
                 merged = (ReferenceEquals(_mergedOn, _best) ? _merged : new HashSet<ulong>()).Select(Hex),
                 polished = ReferenceEquals(_polishedBest, _best) ? _polished : new HashSet<int>(),
@@ -58,6 +59,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (JsonElement h in All("combine")) _combineTried.Add(FromHex(h.GetString()));
                 foreach (JsonElement r in All("revive")) _reviveTried[FromHex(r.GetProperty("key").GetString())] = r.GetProperty("n").GetInt32();
                 foreach (JsonElement h in All("edits")) _editsTried.Add(FromHex(h.GetString()));
+                if (m.TryGetProperty("lapSearched", out JsonElement searched)) foreach (JsonElement s in searched.EnumerateArray()) _lapSearched.Add(s.GetString());
                 if (m.TryGetProperty("revivedOn", out JsonElement on)) foreach (JsonElement h in on.EnumerateArray()) _revivedOn.Add(FromHex(h.GetString()));
                 foreach (JsonElement s in All("studied")) _studied.Add((s[0].GetInt32(), s[1].GetInt32()));
                 foreach (JsonElement k in All("planDead")) _planDead.Add(k.GetInt32());
@@ -71,7 +73,9 @@ namespace IGTAP.EngineSim.Cli
                     _arms[(arm.Lever, arm.Goal)] = arm;
                 }
                 foreach (JsonElement s in All("spots"))
-                    _spots[(s.GetProperty("lever").GetString(), s.GetProperty("goal").GetInt32())] = (s.GetProperty("pulls").GetInt32(), s.GetProperty("cpu").GetDouble(), s.GetProperty("gain").GetInt64());
+                    _spots[(s.GetProperty("lever").GetString(), s.GetProperty("goal").GetInt32())] = (s.GetProperty("pulls").GetInt32(), s.GetProperty("cpu").GetDouble(), s.GetProperty("gain").GetInt64(),
+                        // A memory saved before misses were kept: every pull a miss unless the spot gained.
+                        s.TryGetProperty("misses", out JsonElement mi) ? mi.GetInt32() : s.GetProperty("gain").GetInt64() > 0 ? 0 : s.GetProperty("pulls").GetInt32());
                 foreach (JsonElement l in All("levers")) _leverCost[l.GetProperty("lever").GetString()] = (l.GetProperty("pulls").GetInt32(), l.GetProperty("cpu").GetDouble());
                 bool same = m.GetProperty("best").GetString() == Hex(BestKey());
                 if (same)

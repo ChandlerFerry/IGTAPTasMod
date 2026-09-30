@@ -56,7 +56,8 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   new game (a `"start": "vman"` run: the Vman speedrun's world) with the run's goals in the header (`fulltas.goals`);
   `IGTAP.EngineSim fulltas <trace>` searches the whole run in windows of goals and sends complete, faster runs to
   `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json>` only replays a route (a run file's `inputs` or an
-  offline best's `ticks`) and prints each goal's physics and input tick and how it ended.
+  offline best's `ticks`) and prints each goal's physics and input tick, its live time and held frames (dash freezes,
+  pauses; a Full-TAS run's time is live time, README `### Rules` 31), and how it ended.
 
 `tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.
@@ -492,12 +493,16 @@ momentum carries through them, and a window is scored on its arrival.
   capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
   while that target improves) with each one's split, and **Show map** draws them numbered. Click a waypoint
   (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its
-  category or a narrower one runs the plain `solve` first (**Solve**). The plugin launches `solve <start> --seed
+  category or a narrower one runs the plain `solve` first (**Solve**); so does an Improve whose routes all come from a
+  narrower category and none finishes this one (an added `OM` or `ORB` changes what the same inputs do: Course 10's
+  `WJ_DS_DJ_BS_ZIP` route dies in `WJ_DS_DJ_BS_ORB_ZIP_OM`). The plugin launches `solve <start> --seed
   <each library route of the course> [--optional/--no-optional] --threads <cores - 4> --minutes M --auto [--farm]
   [--focus a-b]`; `POST /api/solver/preview` (the start body) returns each job's command without starting anything.
   Below the counts, the panel's "Should it keep going?" card shows the engine's last `outlook`: the verdict, what to do,
-  the chance of a gain per hour, the median wait for the next gain, the search spent on this target across every Improve,
-  the room to the floor, and the pulls running now (`outlook` and `pullStart`, [`docs/fulltas.md`](../docs/fulltas.md)).
+  the chance of a gain per hour and within the run's remaining minutes, the median wait, what the odds rest on (the
+  folder's other Improve runs and their gains past a dry spell this long), the search spent on this target across every
+  Improve, the room to the floor, and the pulls running now with how often such pulls gained before (`outlook` and
+  `pullStart`, [`docs/fulltas.md`](../docs/fulltas.md)).
   The raw engine log is folded under it.
 
 ## Search bench
@@ -634,6 +639,16 @@ it at 50 or more: playback runs at most one physics tick per frame (`Time.maximu
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
 position and `layer`, 7 Ground, 0 while `MakeIntangible` holds it).
+
+A probe of a route also logs the RNG's consumers, to find where 1x and the engine split on Cash: a `clone` row for every
+`clonesScript.SpawnClone` (course, instance id, on screen, the offscreen divisor before, `nextDue` after, Cash before
+and after, the RNG state before, and the clonesScripts whose `Update` ran earlier in that frame), and an `rng` row for
+every call of a game method that drew (`Audio.PlayAudio*`, `Movement.playSFX`, the `Start` of lights, animators and
+refill orbs, `ObjectBobber.OnEnable`, `upgradeBox.OnEnable`, `courseScript.Start`) with the object's name and the state
+after. Their offline counterpart is `fulltas <trace> --check <route> --ticks-out FILE`: a JSON line per physics tick
+(position, velocity, Cash, each course's reward, reward tier and comp boost, the RNG state), per clone spawn (course, on
+screen, divisor, fastness and bigness rolled, payout) and per draw (the engine method that drew). Compare Cash as the
+sequence of values each side takes, not tick by tick: 1x's physics count runs ahead through dash freezes.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

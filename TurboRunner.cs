@@ -979,6 +979,9 @@ namespace IGTAPTasMod
                     for (int k = 0; k < frames.Alphas.Length; k++)
                     {
                         int repeats = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                        // The repeats are frames the run stands still in: its live time (MacroEngine.HeldFrames), counted as the
+                        // offline engine and 1x count them.
+                        TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));

@@ -189,7 +189,9 @@ namespace IGTAPTasMod
         string[] _named;
         int[] _lastNaming;
         ulong _banked;
-        public readonly long[] InputTicks, PhysicsTicks;
+        // Per goal reached: the input tick, the physics tick (its game frames) and the frames the run had stood still in by
+        // then (dash freezes, pauses: MacroEngine.HeldFrames), the last two its live time (MacroEngine.LiveSeconds).
+        public readonly long[] InputTicks, PhysicsTicks, HeldFrames;
 
         public FullTasTracker(FullTasGoal[] goals)
         {
@@ -197,6 +199,7 @@ namespace IGTAPTasMod
             Limit = goals.Length;
             InputTicks = new long[goals.Length];
             PhysicsTicks = new long[goals.Length];
+            HeldFrames = new long[goals.Length];
             Reset();
         }
 
@@ -205,7 +208,7 @@ namespace IGTAPTasMod
             Next = 0;
             _bought = 0;
             _banked = 0;
-            for (int i = 0; i < Goals.Length; i++) InputTicks[i] = PhysicsTicks[i] = -1;
+            for (int i = 0; i < Goals.Length; i++) InputTicks[i] = PhysicsTicks[i] = HeldFrames[i] = -1;
         }
 
         public bool Done { get { return Next >= Limit; } }
@@ -269,33 +272,33 @@ namespace IGTAPTasMod
 
         public FullTasGoal Current { get { return Next < Goals.Length && Next < Limit ? Goals[Next] : null; } }
 
-        public bool CourseStarted(int course, long input, long physics)
+        public bool CourseStarted(int course, long input, long physics, long held)
         {
             FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.Start && g.course == course && Reach(input, physics);
+            return g != null && g.kind == FullTasGoal.Start && g.course == course && Reach(input, physics, held);
         }
 
-        public bool CourseFinished(int course, long input, long physics)
+        public bool CourseFinished(int course, long input, long physics, long held)
         {
             FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics);
+            return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics, held);
         }
 
-        public bool Touched(long input, long physics)
+        public bool Touched(long input, long physics, long held)
         {
             FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.At && Reach(input, physics);
+            return g != null && g.kind == FullTasGoal.At && Reach(input, physics, held);
         }
 
         public void QuickRestarted()
         {
             if (Next == 0 || Next > Limit || Goals[Next - 1].kind != FullTasGoal.At) return;
             Next--;
-            InputTicks[Next] = PhysicsTicks[Next] = -1;
+            InputTicks[Next] = PhysicsTicks[Next] = HeldFrames[Next] = -1;
             _bought = 0;
         }
 
-        public bool Bought(string path, string id, long input, long physics)
+        public bool Bought(string path, string id, long input, long physics, long held)
         {
             FullTasGoal g = Current;
             if (g != null && (g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && g.boxes != null)
@@ -303,7 +306,7 @@ namespace IGTAPTasMod
                     if ((_bought & (1 << i)) == 0 && (g.boxes[i] == id || g.boxes[i] == path))
                     {
                         _bought |= 1 << i;
-                        return Owned(g) && Reach(input, physics);
+                        return Owned(g) && Reach(input, physics, held);
                     }
             if (!Loose) return false;
             int b = Array.IndexOf(_named, id);
@@ -320,7 +323,7 @@ namespace IGTAPTasMod
             return true;
         }
 
-        bool Reach(long input, long physics)
+        bool Reach(long input, long physics, long held)
         {
             FullTasGoal g = Goals[Next];
             if (Loose && g.boxes != null)
@@ -328,12 +331,13 @@ namespace IGTAPTasMod
                     if ((_bought & (1 << i)) == 0) _banked &= ~(1UL << Array.IndexOf(_named, g.boxes[i]));
             InputTicks[Next] = input;
             PhysicsTicks[Next] = physics;
+            HeldFrames[Next] = held;
             Next++;
             _bought = 0;
             // Loose buys: a buy goal whose boxes were all bought before it came up is reached on the same tick.
             FullTasGoal then = Current;
             if (Loose && then != null && (then.kind == FullTasGoal.Buy || then.kind == FullTasGoal.Reward) && then.boxes != null && Owned(then))
-                Reach(input, physics);
+                Reach(input, physics, held);
             return true;
         }
 
@@ -341,12 +345,13 @@ namespace IGTAPTasMod
         {
             public int Next, Bought;
             public ulong Banked;
-            public long[] InputTicks, PhysicsTicks;
+            public long[] InputTicks, PhysicsTicks, HeldFrames;
         }
 
         public State Capture()
         {
-            return new State { Next = Next, Bought = _bought, Banked = _banked, InputTicks = (long[])InputTicks.Clone(), PhysicsTicks = (long[])PhysicsTicks.Clone() };
+            return new State { Next = Next, Bought = _bought, Banked = _banked, InputTicks = (long[])InputTicks.Clone(), PhysicsTicks = (long[])PhysicsTicks.Clone(),
+                HeldFrames = (long[])HeldFrames.Clone() };
         }
 
         public void Restore(State s)
@@ -358,7 +363,8 @@ namespace IGTAPTasMod
             int n = Math.Min(s.InputTicks.Length, InputTicks.Length);
             Array.Copy(s.InputTicks, InputTicks, n);
             Array.Copy(s.PhysicsTicks, PhysicsTicks, n);
-            for (int i = n; i < InputTicks.Length; i++) InputTicks[i] = PhysicsTicks[i] = -1;
+            Array.Copy(s.HeldFrames, HeldFrames, n);
+            for (int i = n; i < InputTicks.Length; i++) InputTicks[i] = PhysicsTicks[i] = HeldFrames[i] = -1;
         }
 
         public int Hash() { return Next * 397 ^ _bought ^ (int)(_banked * 0x9E3779B97F4A7C15UL >> 32); }

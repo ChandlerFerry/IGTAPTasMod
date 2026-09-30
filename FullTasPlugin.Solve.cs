@@ -27,7 +27,7 @@ namespace IGTAPTasMod
                 {
                     JObject o = JObject.Parse(File.ReadAllText(p));
                     return new FullTasOfflineFile { goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
-                        inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
+                        held = o["goalHeldFrames"]?.ToObject<List<long>>(), inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
                 });
             }
             catch (Exception ex)
@@ -43,9 +43,9 @@ namespace IGTAPTasMod
             if (file == null) return null;
             var offline = new FullTasOffline { splits = new List<FullTasSplit>() };
             for (int i = 0; i < labels.Count && i < file.goals.Count && i < file.ticks.Count && file.ticks[i] >= 0 && file.goals[i] == labels[i]; i++)
-                offline.splits.Add(new FullTasSplit { label = labels[i], ticks = file.ticks[i] });
+                offline.splits.Add(new FullTasSplit { label = labels[i], ticks = file.ticks[i], held = file.held != null && i < file.held.Count ? Math.Max(0, file.held[i]) : 0 });
             offline.reached = offline.splits.Count;
-            offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].ticks * Time.fixedDeltaTime;
+            offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].Live;
             int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
             offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);

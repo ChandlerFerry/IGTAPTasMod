@@ -79,19 +79,18 @@ namespace IGTAPTasMod
         // (spawnNewFloatingNumber, six draws; turbo spawns none). In a Full-TAS run they play but give the RNG back, so the fixed
         // seed's draws (clone rolls) are the same at 1x as judged (README exception 11). Movement's own PlayFootstep calls (a
         // landing, in the physics step) draw as before, in all three.
-        static UnityEngine.Random.State _beforePresentation;
-        static bool _presentationHeld;
-
-        static void BeforePresentationDraw()
+        // Harmony keys __state by the patch's class, and ObjectBobber.OnEnable also takes the probe's RNG patch (TasPlugin's).
+        static class PresentationDraw
         {
-            _presentationHeld = Instance != null && Instance._fullTas != null;
-            if (_presentationHeld) _beforePresentation = UnityEngine.Random.state;
-        }
+            internal static void Before(out UnityEngine.Random.State? __state)
+            {
+                __state = Instance != null && Instance._fullTas != null ? UnityEngine.Random.state : (UnityEngine.Random.State?)null;
+            }
 
-        static void AfterPresentationDraw()
-        {
-            if (_presentationHeld) UnityEngine.Random.state = _beforePresentation;
-            _presentationHeld = false;
+            internal static void After(UnityEngine.Random.State? __state)
+            {
+                if (__state.HasValue) UnityEngine.Random.state = __state.Value;
+            }
         }
 
         private void PatchWallClock()

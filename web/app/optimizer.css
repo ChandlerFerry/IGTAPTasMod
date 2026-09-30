@@ -37,7 +37,7 @@
 .outlookCard.maybe .outlookHeadline { color: #f5d58c; }
 .outlookCard.bad .outlookHeadline { color: #ff9eae; }
 .outlookAdvice { margin: 8px 0 0; padding-left: 18px; color: #aac0d7; font-size: 13px; line-height: 1.6; }
-.outlookStats { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 12px; }
+.outlookStats { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; margin-top: 12px; }
 .outlookStats > div { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a1627; }
 .outlookStats span,.outlookStats strong,.outlookStats small { display: block; }
 .outlookStats span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }

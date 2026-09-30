@@ -65,14 +65,28 @@ namespace UnityEngine
             set { _s0 = (uint)value.s0; _s1 = (uint)value.s1; _s2 = (uint)value.s2; _s3 = (uint)value.s3; }
         }
 
+        /// <summary>A diagnostic (enginesim fulltas --check --ticks-out): called on each draw with the game method that made it.</summary>
+        [ThreadStatic] public static Action<string> Drawn;
+
         public static uint Draw()
         {
+            if (Drawn != null) Drawn(Caller());
             unchecked
             {
                 uint t = _s0 ^ (_s0 << 11);
                 _s0 = _s1; _s1 = _s2; _s2 = _s3;
                 return _s3 = (_s3 ^ (_s3 >> 19)) ^ (t ^ (t >> 8));
             }
+        }
+
+        static string Caller()
+        {
+            foreach (System.Diagnostics.StackFrame f in new System.Diagnostics.StackTrace(2, false).GetFrames())
+            {
+                System.Reflection.MethodBase m = f.GetMethod();
+                if (m != null && m.DeclaringType != typeof(Random)) return m.DeclaringType?.Name + "." + m.Name;
+            }
+            return "?";
         }
 
         public static float value { get { return (Draw() & 0x7FFFFFu) / 8388607f; } }
