@@ -694,3 +694,29 @@ ordered as the sections they came from.
   `reEnableNormalCollider`, which a savestate can't restore), gives the camera back to the player, restores the zoom
   (`camSize`, 0 in older savestates) and snaps with the look-down of the restored speed.
 - **Where:** `SavestateService.Restore`, `SnapCamera`, `Savestate.camSize`.
+
+## Buy-max levels bought once a tick
+
+- **Symptom:** a 1x probe of `fulltas/FalseEnding-Any%_NONE 361.68` (`fe36168fix`) split from offline Cash at physics tick
+  15216, `buy:buyclone2` right after `buy:buystatue` (the statue made Course 2's boxes buy-max). Both sides paid the same
+  costs in the same order (64,314, 77,820, 94,163, 113,938, 137,865, ... 29 levels of Course 2's clone box), but 1x paid
+  seven on the touch's tick (Cash -856,766) and six on each tick after (-2,487,077, -7,805,541, -24,497,159), offline two
+  (-142,134) and then one a tick (-94,163, -113,938, ...). Offline Cash then stayed off 1x's on every tick to the end of
+  the replay (243.48e9 against 247.54e9 at tick 16,413, 1.6% short), and the RNG states parted at tick 15219 and never
+  rejoined.
+- **Cause:** `IE_BuyMax` buys a level, then `yield return new WaitForEndOfFrame()`, so it buys one level per rendered
+  frame. 1x renders six frames per 0.02 s tick on the 280 fps clock (probe frames 96549-96554 are tick 15216's), so it
+  buys the touch's level in the physics step and one at each frame's end. Turbo (`TurboRunner.EndOfFrame`) and the engine
+  (`Shop.EndOfFrame`) resumed it once per tick, after all six frames: the 29 levels took 28 ticks there against 5 at 1x,
+  so Course 2's extra clones (and their payouts) came about 23 ticks late. The 40-level touch that matched turbo tick for
+  tick (`enginesim/README.md`, Fidelity facts) showed the engine matched turbo, not 1x.
+- **Fix:** both resume the buy-max routines after every rendered frame's Update and clone step, in the tick's frame grid
+  (a dash freeze's or pause's repeats included: each is a rendered frame with its own end of frame). Offline, `fulltas
+  --check ... --ticks-out` of the 361.68 route gives 1x's Cash on every tick of the probe: 17,352 ticks compared (offline
+  tick p against the probe's tick row p + 1), largest relative difference 1.5e-13, none differing; before, 1,198 ticks
+  from 15216 on. The RNG state differs on 1,116 of them in runs of 1-4 ticks (861 single), the same 919 ticks up to 15215 as
+  before the fix, and none stays apart. Goal ticks, live times, held frames and purchases of `FalseEnding-Any%`, `FE-C2A`
+  and `FE-C2DS` (282, 282 and 280 goals) are unchanged. The turbo edit is the same change in `TurboRunner.Run`; it isn't
+  replayed yet (it needs the plugin redeployed). `--ticks-out` now runs to the route's end (its 400 extra ticks had ended it
+  at tick 16,413 of the probe's 17,353).
+- **Where:** `Simulation.InterpolatedFrames` (`Shop.EndOfFrame`), `TurboRunner.Run` (`EndOfFrame`), `FullTas.Check`.

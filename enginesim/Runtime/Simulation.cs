@@ -326,7 +326,7 @@ namespace IGTAP.EngineSim
         /// <summary>Every purchase of a Full-TAS run (the box's path), goal or not: `fulltas --check` lists them.</summary>
         internal Action<string> Purchased;
 
-        /// <param name="continuing">A buy-max box's later levels, bought at the ends of the ticks after the touch (a prestige-boosted
+        /// <param name="continuing">A buy-max box's later levels, bought at the ends of the frames after the touch (a prestige-boosted
         /// course's boxes): they are the touch's own purchase, so they neither reach a goal nor count as a stray buy. One buy goal
         /// per touch of such a box.</param>
         internal void Bought(string path, string id, bool continuing)
@@ -937,6 +937,9 @@ namespace IGTAP.EngineSim
                     }
                     Shop.StepClones(repeat == repeats ? Frames.Step(k) : 0f);
                     OnFrame?.Invoke(Frames.Alphas[k], repeat > 0);
+                    // Each rendered frame ends with WaitForEndOfFrame: a buy-max box's IE_BuyMax buys one level per frame (every frame
+                    // of the tick's grid, freeze and pause repeats included), after that frame's Update and clone step.
+                    Shop.EndOfFrame();
                 }
             }
             Player.transform.StoreWorldPosition(_stepTo);
@@ -1319,7 +1322,6 @@ namespace IGTAP.EngineSim
                 }
                 InterpolatedFrames();
                 Scheduler.Resume(Scheduler.Wait.Frame);
-                Shop.EndOfFrame();
                 Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();
                 if (Engine.IsRunning && TargetFinish.W > 0f && TouchesReward())

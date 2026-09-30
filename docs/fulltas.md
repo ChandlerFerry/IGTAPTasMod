@@ -790,9 +790,9 @@ end with the verdict.
 & $exe fulltas $traces\fulltas-FalseEnding-Any%.json --auto --minutes 10 --window-minutes 0.5 --threads 16 --no-submit   # --parts LIST, --tail-minutes t, --combine-repair-minutes m, --library-runs R (150)
 ```
 
-`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`
+`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`
 (`tail`, `combine`, `ctg`, `macros` and `stray` need `lib`); `--parts none` is the loop above as it was (the measured
-baseline). The default is set by the measurements below, and has every part.
+baseline). The default is set by the measurements below, and has every part except `wallreset` (opt-in: add it to the list).
 
 1. **Goal-state library** (`lib`, `enginesim\Cli\FullTasAutoLib.cs`, contracts in `FullTasAutoContracts.cs`). Every run the loop
    plays from the start (the starting best, each window find spliced with the old tail, every stitched or waited run, every
@@ -891,8 +891,21 @@ baseline). The default is set by the measurements below, and has every part.
    every 5 minutes; it plays every edit of the best on a copy, in parallel:
    - **Drops**: the last lap (start and finish goals, the inputs from the quick restart before the gate to the next step's)
      of each run of back-to-back laps of a course, and its last two.
-   - **Adds**: one more lap after a run of laps in place of as many idle ticks, where the best stands idle 20 ticks or
-     more before its next buy.
+   - **Adds**: 1..N more laps of a course in place of a wait (a lap earns its reward, standing earns nothing): n copies of
+     the nearest lap before an idle stretch of 20 ticks or more (its quick restart to its finish) are put in at that lap's
+     finish, and the idle stretch, up to the next lap goal of any course and on either side of the quick restart, is cut
+     out; the goals after it put back only the idle ticks they miss. n runs while the laps take fewer ticks than the wait
+     (n laps of L ticks, wait W, n * L < W; a run that takes as many ticks or more can't be shorter, and only a shorter run
+     is adopted). On `FalseEnding-Any%` that is the 112 idle ticks after Course 1's last lap (goal 85, a 107-tick lap)
+     before the quick restart to `buy:buywj`: N = 1, at most 5 ticks. Its other waits fit no lap (Course 1's 25 ticks at
+     goal 51; Course 3's 22-34 ticks between buys, a Course 3 lap being 185-204), and the wait before `buy:buydj` isn't
+     idle ticks (a walk of 480 inputs with loops in it). The lap offered plays 5 ticks ahead at every goal from
+     `buy:buywj` to goal 240 of 284 with no wait put back (`--check`), then its extra Cash buys a Course 3 box early on
+     the walk to goal 241 (`buy:buyglobalreward3`, a stray buy) and no wait passes it. An add whose partial run stops
+     ahead of the best (`AddAhead`) is therefore re-found as an investment, as an inserted record lap is (the two that
+     get furthest, 150 CPU s a goal left): from the 360.17 s best, `--parts goals` on 8 threads re-found goals 241-284
+     in 463 s wall (3545 CPU s) and adopted 284 goals at 358.69 s (17202 ticks, -74; the fresh check kept it, and
+     `--check` of the route under the 284-goal list reaches every goal).
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
@@ -976,6 +989,64 @@ baseline). The default is set by the measurements below, and has every part.
    287 goals, 170 s); pull 5 found nothing more. The game judged the 367.26 s route in turbo from its submission (its
    `goalsFrom` held the game's 292-goal list), saved it as the record and made its 287 goals the run's, keeping
    `fulltas.json.20260929-063956.bak`.
+
+6. **Wall-coyote restart** (`wallreset`, opt-in; `enginesim\Cli\FullTasAutoWallReset.cs`; the Tech tab's *Wall coyote restart*,
+   `techs.json` `wall-coyote-restart`, and the community's `checkpoint-midair-walljump`): a quick restart leaves
+   `wallCoyoteFrames` and `wallJumpsLeft` as a wall cling set them, and the ground never counts the first down, so a cling
+   just before a restart starts the lap with a stored wall jump. Engine numbers (`lab replay` of `checkpoint-midair-walljump`,
+   WJ): cling at input 24 (`OnWall`, count 7); the restart at input 25 keeps count 7 and `wallJumpsLeft` 4, `OnWall` off
+   (the ground tick clears it), `onGround` on; the count holds at 7 on the ground; the ground jump at input 28 comes first
+   (`jumpBuffer && onGround` is checked before the wall branch; Velocity.y 805) and starts it down 6, 5, 4, 3, 2; the jump
+   pressed again on input 34 (count 1 at the check) is a wall jump off no wall, Velocity (−460, 730), and on input 36 it no
+   longer fires (the lab's `late` demo). It goes against the facing of the tick before, and peaks 292 u above the floor
+   against a jump's 258. With a dash 1-5 ticks before it is the superbounce's boost (`stored-superbounce`).
+   `fulltas <trace> --wallreset-study` lists every quick restart of the best with the player's state and count, and which
+   holds of the stick either way for the last 1-10 ticks before it leave a count above 0 (buttons as they were). On
+   `FalseEnding-Any%` (360.17 s): 157 restarts, 107 after `buy:buywj`, nearly all in mid-air right after a buy; 7 carry a
+   count already (Course 3's `buyreward3` row: a cling at 9200,7084 before goals 179, 220, 223 and 244, and the restarts
+   7 ticks later with 1-2 left); none of the 157 has a stick hold that gives one (0 of 3,140), so the cling needs another
+   way into the box, not a change at the end, and the part searches. It takes each new best's restarts after the wall jump
+   is unlocked, by their goal g, the one with a cling nearest first, and pulls a window over goals g..g+2 (`--window-minutes`)
+   whose `OfflineSolver` grafts the tech's mined windows (`TechGrafts`, restricted to `checkpoint-midair-walljump` and
+   `wall-coyote-restart` at `TouchedWall`, `LeftWall`, `WallAheadLeft/Right`: the stick into the wall, the restart, 0-3 idle
+   ticks, the ground jump held 1-4, the wall jump) at the wall contacts of its runs, merged like any window's finds
+   (`MergeAuto`), at most `--wallreset-minutes` (5) a pass, once per restart (memory `wallStudied`). `Explore` hands its
+   solver `_mined`: the other Full-TAS windows have never grafted tech windows. Status: it builds and the windows mine
+   (`techgrafts`), but the pass has not been run in a loop yet; its measured effect on the run is open.
+
+7. **Idle under the box** (`idle`; `enginesim\Cli\FullTasAutoIdle.cs`): every wait for Cash stands under the box it waits
+   for, so the blanks in a route are where the route waits. The wait fix puts a buy's idle ticks before the quick restart
+   ahead of it (the restart puts the player back as the old route had it, so the join is exact), which leaves the wait
+   wherever that restart was: `FalseEnding-Any%` stood 112 ticks at the end of a Course 1 lap before restarting for
+   `buy:buywj` (goal 86), and 15-25 before each `buy:buyclone` restart (goals 30, 33, 52). A box is bought from below:
+   its `BoxCollider2D` trigger is a thin strip under the sprite (goal 30's: x 1483..1611, y -209..-203), entered by
+   jumping up into it. At the start and after each new best, per buy goal, the idle runs of 8 ticks or more since the
+   goal before that end further than the player's half width from that x-range are taken out and put back under it:
+   - **Stands.** The ground spots after the last quick restart within 120 units of the trigger, and the last ground spot
+     run on up to 60 ticks with the stick toward the trigger; a stand is one where 12 idle ticks after it leave the player
+     at rest inside the trigger's x-range (the route's jump-off spot is short of it: goal 30's left the ground at
+     x 1670, the range ends at 1611). The 6 nearest the edge the route comes from, at least 6 units apart, are tried.
+   - **Ways in.** From a stand, w idle ticks and then the route's own inputs on (a spot on the route's own way), or a jump
+     straight up (or with the stick toward the trigger), held to the touch, then the route's inputs from its old touch. w:
+     the fewest that touch (looked at every 4th tick, then the ticks before), up to the fewest that touch when the old
+     route did (binary search from snapshots at the stand, `Simulation.Advance`; a run that no longer touches counts as
+     later). The whole run is replayed at that w (and the next 2): a touch on the old tick leaves the Cash as it was, but the
+     removed wait also skipped what happened in it (likely the fall's landing sound: 5 RNG draws at input 4903 of the old route), so the clones' rolls shift
+     and a later goal can stray into another box (goals 86 and 92: 237 and 96 of 282 goals). A run that misses gets the
+     wait fix with stray re-timing (`Retime`, on for this call whatever the parts), and the fewest w that reaches every goal
+     is searched down from there. Kept goal by goal when the whole run reaches every goal and is no slower than the run;
+     then Commit (the fresh check) when faster, else the run is the best from then on.
+
+   Measured on `FalseEnding-Any%` (360.35 s, one pass, `--threads 4`, 20 buy goals with far waits of 8+ ticks tried, 43 s wall
+   after the start on an idle machine, 7 CPU s): goal 30's 17 ticks after the Course 1 lap became a run of 8 ticks on past the last ground
+   spot (rests at x 1581.6) and a jump straight up, the buy at tick 1941 against 1950: 9 ticks faster, 360.17 s (the fresh
+   check kept it). Goal 52's 25 ticks became 17 standing at x 1581.6 (inputs 3103-3119, the jump at 3120), the buy at
+   the old tick 3126; goal 33's 15 became 7, also at the old tick. Goal 86 (112 ticks) and 92 (9) reach every goal
+   only with re-timing (goal 86: 360.35 s against 360.17 s, 9 ticks slower, not taken; goal 92: none passes): their waits stay.
+   Course 3's dash hops (goals 220-245: 9-29 idle ticks in the air after a dash, then a quick restart) found no stand: the
+   spawn after the last restart isn't on the ground before the dash, so no ground spot is looked at. Open: stands at that
+   spawn (ground run 340 units to the triggers, about 37 ticks), and re-tuning the tail after a move in Course 3 so goals
+   86 and 92 can move too.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 
@@ -1339,9 +1410,10 @@ clone chances are 0) and the statue (`unlockPrestige`: a global clone multiplier
 box — the statue and Course 4's `buyprestige4` — also runs `BoostOldCourses`: each old course's reward tier becomes the
 buying course's tier plus its own mod and its reward updates, and its boxes gain half their cap multiplier, become
 buy-max and turn back on. A buy-max box's touch buys what `GetNumPlayerCouldBuy` counts (`IE_BuyMax`): the first during
-the tick's physics, the next at that tick's end, then one at the end of every following tick while affordable (one frame
-per tick, `TurboRunner.EndOfFrame`, `Shop.EndOfFrame`). Real-time playback renders more frames per tick and so buys
-faster. Such a touch is one buy goal: the levels bought after the first continue it, so they neither reach a goal nor end
+the tick's physics, then one at the end of every rendered frame while affordable (six frames a tick on the 280 fps
+clock, a dash freeze's or pause's repeats each one more: `Simulation.InterpolatedFrames`, `TurboRunner.Run`; a probe of
+`FalseEnding-Any%` 361.68 paid the statue's 29 `buyclone2` levels in 5 ticks, and the engine now matches its Cash on every
+tick). Such a touch is one buy goal: the levels bought after the first continue it, so they neither reach a goal nor end
 a strict run as a stray buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with one goal each after the
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends

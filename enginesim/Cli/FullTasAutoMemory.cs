@@ -36,6 +36,7 @@ namespace IGTAP.EngineSim.Cli
                 edits = _editsTried.Select(Hex),
                 lapSearched = _lapSearched,
                 studied = _studied.Select(x => new[] { x.goal, x.offset }),
+                wallStudied = _wallStudied.Select(x => new[] { x.goal, x.offset }),
                 planDead = _planDead,
                 grafted = _grafted.Where(g => keyOf.ContainsKey(g.Item1)).Select(g => new { key = Hex(keyOf[g.Item1]), goal = g.Item2 }),
                 arms = _arms.Values.Where(a => a.Pulls > 0).Select(a => new { lever = a.Lever, goal = a.Goal, pulls = a.Pulls, wins = a.Wins, cpu = a.Cpu, gain = a.Gain }),
@@ -62,6 +63,7 @@ namespace IGTAP.EngineSim.Cli
                 if (m.TryGetProperty("lapSearched", out JsonElement searched)) foreach (JsonElement s in searched.EnumerateArray()) _lapSearched.Add(s.GetString());
                 if (m.TryGetProperty("revivedOn", out JsonElement on)) foreach (JsonElement h in on.EnumerateArray()) _revivedOn.Add(FromHex(h.GetString()));
                 foreach (JsonElement s in All("studied")) _studied.Add((s[0].GetInt32(), s[1].GetInt32()));
+                if (m.TryGetProperty("wallStudied", out JsonElement wall)) foreach (JsonElement s in wall.EnumerateArray()) _wallStudied.Add((s[0].GetInt32(), s[1].GetInt32()));
                 foreach (JsonElement k in All("planDead")) _planDead.Add(k.GetInt32());
                 Dictionary<ulong, string> howOf = _refs.GroupBy(r => r.Key).ToDictionary(g => g.Key, g => g.First().How);
                 foreach (JsonElement g in All("grafted"))

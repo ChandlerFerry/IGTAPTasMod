@@ -96,7 +96,7 @@ namespace IGTAP.EngineSim.Cli
             List<RunLap> laps = Laps(best);
             var edits = new List<GoalEdit>();
             edits.AddRange(DropEdits(best, laps));
-            edits.AddRange(AddEdits(best, laps));
+            edits.AddRange(AddEdits(best));
             edits.AddRange(RegroupEdits(best));
             List<GoalEdit> records = RecordEdits(best, laps);
             edits.AddRange(records);
@@ -164,8 +164,9 @@ namespace IGTAP.EngineSim.Cli
             }
             // Inserted record laps are investments: the lap costs ticks and the way on starts elsewhere, so none plays through as
             // spliced. The two that get furthest (then soonest) are re-found under their goals, held to a CPU budget, not to the best.
+            // So is an add that stops ahead of the best (its extra Cash buys a box early on the way on).
             if (!adopted && ReferenceEquals(_best, best))
-                foreach (int i in Enumerable.Range(0, edits.Count).Where(i => results[i].route == null && results[i].partial != null && (edits[i].Kind == "insert" || edits[i].Kind == "payout" && PayoutMayPay(edits[i], results[i].partial, best)))
+                foreach (int i in Enumerable.Range(0, edits.Count).Where(i => results[i].route == null && results[i].partial != null && (edits[i].Kind == "insert" || edits[i].Kind == "add" && AddAhead(edits[i], results[i].partial, best) || edits[i].Kind == "payout" && PayoutMayPay(edits[i], results[i].partial, best)))
                     .OrderByDescending(i => results[i].partial.Progress).ThenBy(i => results[i].partial.GoalPhysics[results[i].partial.Progress - 1]).Take(InvestTries))
                 {
                     if (!ReferenceEquals(_best, best) || TimeUp) break;
@@ -183,8 +184,8 @@ namespace IGTAP.EngineSim.Cli
                 wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score = double.NaN });
             if (gain > 0)
             {
-                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", win.edit.First));
-                AutoWrite(new { type = "record", lever = "goals", goal = win.edit.First, gain, time = _best.LiveSeconds, ticks = _best.Last,
+                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", win.edit?.First ?? 0));
+                AutoWrite(new { type = "record", lever = "goals", goal = win.edit?.First ?? 0, gain, time = _best.LiveSeconds, ticks = _best.Last,
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                     splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = _labels });
             }
@@ -314,41 +315,79 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// Adds: where the route stands idle before its next buy (20 ticks or more after a run of laps), one more lap of that
-        /// course in place of as many of those idle ticks (a lap earns its reward and sets no worse a path; standing earns nothing).
+        /// Adds: more laps of a course in place of a wait (standing waiting for Cash is worse than lapping: a lap earns its reward).
+        /// n laps, a copy of the nearest lap before the wait (its quick restart to its finish), are put in right after that lap's
+        /// finish (the player stands where a run of laps has it, so the copy plays as it did), and one stretch of idle ticks (20 or
+        /// more) after it, up to the next lap goal of any course, is cut out: on the restart's near side or beyond it. n runs 1..N
+        /// while the laps still take fewer ticks than the wait (n laps of L ticks, the wait W: n * L &lt; W; a run that takes as
+        /// many ticks or more can't be shorter, and nothing else is adopted). FalseEnding-Any%: 112 idle ticks after Course 1's
+        /// last lap (a 107-tick lap), before the quick restart to <c>buy:buywj</c>, N = 1; its other waits (Course 1's 25 ticks
+        /// at goal 51, Course 3's 22-34 ticks between buys, for a Course 3 lap is 185-204) fit no lap. The laps earn their reward
+        /// earlier, so the wait needs fewer ticks: <see cref="Played"/> puts back only what the goals after them miss.
         /// </summary>
-        IEnumerable<GoalEdit> AddEdits(Route best, List<RunLap> laps)
+        IEnumerable<GoalEdit> AddEdits(Route best)
         {
             const int MinIdle = 20;
-            foreach (List<RunLap> block in Blocks(laps))
+            List<InputTick> all = best.Inputs;
+            for (int k = 0; k + 1 < _goals; k++)
             {
-                RunLap l = block[block.Count - 1];
-                int next = l.K + 2;
-                if (next >= _goals) continue;
-                int end = (int)Math.Min(best.GoalInput[next], best.Inputs.Count);
-                // The longest run of idle inputs (the stick at rest, no press) between the lap and that goal.
-                int bestAt = -1, bestLen = 0;
-                for (int i = l.B; i < end;)
+                FullTasGoal s = _runGoals.Goals[k], f = _runGoals.Goals[k + 1];
+                if (s.kind != FullTasGoal.Start || f.kind != FullTasGoal.Finish || s.course != f.course || k + 2 >= _goals) continue;
+                // The lap: from the quick restart before its gate (after the goal before) to its finish.
+                int a = (int)Math.Min(best.GoalInput[k], all.Count) - 1;
+                while (a >= 0 && !all[a].reset) a--;
+                int fin = (int)Math.Min(best.GoalInput[k + 1], all.Count);
+                if (a < 0 || k > 0 && a < best.GoalInput[k - 1] || fin <= a) continue;
+                int lap = fin - a;
+                // The stretch after it, to the next goal that starts or finishes a lap.
+                int stop = k + 2;
+                while (stop < _goals && _runGoals.Goals[stop].kind != FullTasGoal.Start && _runGoals.Goals[stop].kind != FullTasGoal.Finish) stop++;
+                int end = stop < _goals ? (int)Math.Min(best.GoalInput[stop], all.Count) : all.Count;
+                for (int i = fin; i < end;)
                 {
-                    if (!Idle(best.Inputs[i])) { i++; continue; }
+                    if (!Idle(all[i])) { i++; continue; }
                     int j = i;
-                    while (j < end && Idle(best.Inputs[j])) j++;
-                    if (j - i > bestLen) { bestAt = i; bestLen = j - i; }
+                    while (j < end && Idle(all[j])) j++;
+                    if (j - i >= MinIdle)
+                        for (int n = 1; n * lap < j - i; n++) yield return AddLaps(best, k, a, fin, i, j, n);
                     i = j;
                 }
-                if (bestLen < MinIdle) continue;
-                int lap = l.B - l.A, rm = Math.Min(bestLen, lap);
-                var inputs = best.Inputs.Take(l.B).Concat(best.Inputs.Skip(l.A).Take(lap)).Concat(best.Inputs.Skip(l.B).Take(bestAt - l.B))
-                    .Concat(best.Inputs.Skip(bestAt + rm)).ToList();
-                int[] oldOf = Enumerable.Range(0, l.K + 2).Concat(new[] { -1, -1 }).Concat(Enumerable.Range(l.K + 2, _goals - l.K - 2)).ToArray();
-                yield return new GoalEdit
-                {
-                    Kind = "add", Key = $"add:{l.K}", Inputs = inputs, NewAt = bestAt + lap, OldAt = bestAt + rm, OldOf = oldOf,
-                    Labels = oldOf.Select((k, i) => k >= 0 ? _labels[k] : _labels[l.K + (i - l.K - 2)]).ToArray(), Saves = rm - lap,
-                    First = l.K + 1, Last = l.K + 2,
-                    Text = $"Added a Course {l.Course} lap after goal {l.K + 2} in place of {rm} of the {bestLen} idle ticks before goal {next + 1} ({_labels[next]})",
-                };
             }
+        }
+
+        /// <summary>The best with n copies of the lap of goals K, K+1 (inputs [a, fin)) put in at its finish and the idle inputs
+        /// [from, to) cut out.</summary>
+        GoalEdit AddLaps(Route best, int k, int a, int fin, int from, int to, int n)
+        {
+            List<InputTick> all = best.Inputs;
+            int lap = fin - a;
+            var inputs = new List<InputTick>(all.Count + n * lap - (to - from));
+            inputs.AddRange(all.GetRange(0, fin));
+            for (int m = 0; m < n; m++) inputs.AddRange(all.GetRange(a, lap));
+            inputs.AddRange(all.GetRange(fin, from - fin));
+            inputs.AddRange(all.GetRange(to, all.Count - to));
+            int[] oldOf = Enumerable.Range(0, k + 2).Concat(Enumerable.Repeat(-1, 2 * n)).Concat(Enumerable.Range(k + 2, _goals - k - 2)).ToArray();
+            int before = k + 2;
+            while (before + 1 < _goals && best.GoalInput[before] <= from) before++;
+            return new GoalEdit
+            {
+                Kind = "add", Key = $"add:{k}:{from}:{n}", Inputs = inputs, NewAt = from + n * lap, OldAt = to, OldOf = oldOf,
+                Labels = oldOf.Select((o, i) => _labels[o >= 0 ? o : k + (i - k - 2) % 2]).ToArray(), Saves = (to - from) - n * lap,
+                First = k + 1, Last = k + 2,
+                Text = $"Added {(n == 1 ? "a Course " + _runGoals.Goals[k].course + " lap" : n + " Course " + _runGoals.Goals[k].course + " laps")} after goal {k + 2} in place of {to - from} idle ticks at input {from} "
+                    + $"(before goal {before + 1}, {_labels[before]}; a lap is {lap} ticks)",
+            };
+        }
+
+        /// <summary>An add's partial run is worth re-finding as an investment when it stops ahead of the best: the last goal it
+        /// reached (an old goal, not one of the added laps') comes sooner than the best's there. Its extra Cash then buys a box on
+        /// the way on that the old inputs only brushed (FalseEnding-Any%'s Course 1 lap after goal 85: 5 ticks ahead through goal
+        /// 240, then a Course 3 stray buy).</summary>
+        static bool AddAhead(GoalEdit e, Route partial, Route best)
+        {
+            int p = partial.Progress - 1;
+            int og = p >= 0 ? e.OldOf[p] : -1;
+            return og >= 0 && partial.GoalPhysics[p] < best.GoalPhysics[og];
         }
 
         static bool Idle(InputTick t) { return t.Equals(new InputTick { held = t.held }) && t.x == 0f && t.y == 0f; }
