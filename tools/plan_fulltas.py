@@ -19,7 +19,7 @@ C1_BUYS = 20
 C1_CLONES = 9
 C1_PATH = 82
 CLONE_PATH = 110
-CASH = 713 + (490 + 406) // 51 * 11
+CASH = 713 + (490 + 406) // 50 * 11
 ARRIVE = 418
 BONUS1_TICK = 8182
 GLOBAL0 = 1
@@ -35,7 +35,18 @@ REPEAT = 22
 ROW_STEP = 7
 CAP = {"R": 45, "C": 35, "M": 10, "G": 2, "D": 1}
 TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglobalreward2", "D": "buyds"}
-OFFSCREEN = 51
+# Off screen a course spawns (and pays) once its timer reaches 1 s, reset to 0: 300 rendered frames on the 280 fps clock's
+# grid (six a physics tick), 50 ticks.
+OFFSCREEN = 50
+# Game build 25630570: on screen a spawn keeps the timer's overshoot (Start's 10000 never runs down), so a free slot fills
+# on the next rendered frame and every clone in flight runs its path and one to two frames more: 1.5 frames a lap on
+# average, of six a tick.
+FRAMES = 6
+LIFE_EXTRA = 1.5 / FRAMES
+# The fastest known Course 2 lap from its gate (ticks, which the course timer counts): a ladder of K record laps runs it
+# slowed by K-1, ..., 1, 0 ticks, each lap a break (None: no ladders). --fast-lap, --ladder-max.
+FAST_LAP = None
+LADDER_MAX = 12
 TAIL = ["start:2", "finish:2", "reward:bonus2", "start:3", "reward:bonus3", "start:3", "finish:3"]
 FOREVER = 10 ** 8
 
@@ -81,37 +92,18 @@ C1_PAY = offscreen_pay(reward(1, 0, C1_BUYS, C1_GLOBAL), 0, C1_CLONES, C1_PATH)
 def move(a, b):
     return REPEAT + ROW_STEP * max(abs(ROW[a] - ROW[b]) - 1, 0)
 
-def since_table(n):
-    acc, out = 0.0, [0.0]
-    for _ in range(n):
-        acc = f32(acc + f32(0.02))
-        out.append(acc)
-    return out
+def clone_life(path):
+    """Ticks a clone takes to run path ticks and be back in flight (build 25630570, on screen)."""
+    return path + LIFE_EXTRA
 
-SINCE = since_table(4096)
+def run_clones(active, path, t0, T):
+    """Payouts in [t0, T) of clones in flight since the ticks in active (each pays once a life and flies on at once)."""
+    life = clone_life(path)
+    return sum(max(0, math.ceil((T - a) / life) - 1) - max(0, math.ceil((t0 - a) / life) - 1) for a in active)
 
-def gate(clones):
-    return bisect.bisect_left(SINCE, f32(SINCE[CLONE_PATH] / clones))
-
-def run_clones(active, pool, last, n, t0, T):
-    active, pool = list(active), list(pool)
-    wait = gate(n) if n else FOREVER
-    life = CLONE_PATH + 1
-    pays, u = 0, t0
-    while True:
-        pay = active[0] + life if active else FOREVER
-        spawn = max(u, pool[0], last + wait) if pool else FOREVER
-        if spawn <= pay and spawn < T:
-            pool.pop(0)
-            active.append(spawn)
-            last = u = spawn
-        elif pay < T:
-            active.pop(0)
-            bisect.insort(pool, pay + 1)
-            pays += 1
-            u = pay
-        else:
-            return pays, tuple(active), tuple(pool), last
+def respawn(t, n):
+    """A break: every clone in flight has paid, and the pool refills one a rendered frame from t on."""
+    return tuple(t + i / FRAMES for i in range(n))
 
 def wait_for(s, cost, deadline):
     """Advances s to the tick it can pay cost, before deadline. deadline None: only if it can pay on arrival; a plan never
@@ -132,12 +124,12 @@ def wait_for(s, cost, deadline):
     return True
 
 class State:
-    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "active", "pool", "last", "c1next", "where", "prev", "tokens", "what")
+    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "active", "c1next", "where", "prev", "tokens", "what")
 
     def child(self):
         s = State.__new__(State)
         s.t, s.cash, s.n, s.N, s.m, s.g, s.P = self.t, self.cash, self.n, self.N, self.m, self.g, self.P
-        s.active, s.pool, s.last, s.c1next, s.where = self.active, self.pool, self.last, self.c1next, self.where
+        s.active, s.c1next, s.where = self.active, self.c1next, self.where
         s.prev, s.tokens, s.what = self, (), ""
         return s
 
@@ -151,28 +143,49 @@ class State:
         return clone_pay(self.reward2(), self.m)
 
     def rate(self):
-        return self.N * self.pay2() / self.P + C1_PAY / OFFSCREEN
+        return self.N * self.pay2() / clone_life(self.P) + C1_PAY / OFFSCREEN
 
     def c1(self, T):
         return (T - 1 - self.c1next) // OFFSCREEN + 1 if self.c1next < T else 0
 
     def income(self, T):
-        return self.c1(T) * C1_PAY + run_clones(self.active, self.pool, self.last, self.N, self.t, T)[0] * self.pay2()
+        return self.c1(T) * C1_PAY + run_clones(self.active, self.P, self.t, T) * self.pay2()
 
     def advance(self, T):
-        pays, self.active, self.pool, self.last = run_clones(self.active, self.pool, self.last, self.N, self.t, T)
         k = self.c1(T)
-        self.cash += k * C1_PAY + pays * self.pay2()
+        self.cash += k * C1_PAY + run_clones(self.active, self.P, self.t, T) * self.pay2()
         self.c1next += k * OFFSCREEN
         self.t = T
+
+    def finish(self, path):
+        """Course 2's finish after a lap whose course timer is path ticks: the lap reward, and on a new best the break
+        (updateClonePath): every clone in flight pays in full at once and the pool runs the new path in step."""
+        self.cash += self.reward2()
+        if path < self.P:
+            self.cash += self.N * self.pay2()
+            self.active, self.P = respawn(self.t, self.N), path
 
     def lap(self):
         s = self.child()
         s.advance(s.t + (LAP if s.where == "gate" else LEAD + LAP))
-        s.cash += s.reward2()
+        s.finish(LAP)
         s.tokens = ("finish:2",) if s.where == "gate" else ("start:2", "finish:2")
         s.what = "lap"
         s.where = "done"
+        return s
+
+    def ladder(self, K):
+        """K back-to-back record laps from the quick restart: the fastest lap slowed by K-1, ..., 1, 0 ticks, each a
+        break (docs/fulltas.md, "Engine farm planner"). None when the slowest isn't under the best path."""
+        if FAST_LAP is None or FAST_LAP + K - 1 >= self.P:
+            return None
+        s = self.child()
+        for k in range(K):
+            path = FAST_LAP + K - 1 - k
+            s.advance(s.t + (0 if k == 0 and s.where == "gate" else LEAD) + path)
+            s.finish(path)
+        s.tokens = (("finish:2",) if self.where == "gate" else ("start:2", "finish:2")) + ("start:2", "finish:2") * (K - 1)
+        s.what, s.where = f"ladder {K}", "done"
         return s
 
     def buy(self, b, walk_row, force=False):
@@ -190,7 +203,8 @@ class State:
             s.n += 1
         elif b == "C":
             s.N += 1
-            s.pool = tuple(sorted(s.pool + (s.t,)))
+            # The new clone's slot fills on the next rendered frame.
+            s.active = s.active + (s.t,)
         elif b == "M":
             s.m += 1
         elif b == "G":
@@ -202,12 +216,16 @@ class State:
 
 def start_state(cash):
     s = State.__new__(State)
-    s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, CLONE_PATH + 2
-    s.active, s.pool, s.last, s.c1next, s.where = (), (), -FOREVER, OFFSCREEN // 2, "gate"
+    s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, CLONE_PATH
+    s.active, s.c1next, s.where = (), OFFSCREEN // 2, "gate"
     s.prev, s.tokens, s.what = None, (), ""
     s.advance(ARRIVE)
     s.tokens, s.what = ("start:2",), "restart, bonus1to2 to Course 2's start gate"
     return s
+
+def key(s):
+    """The dominance key: box levels, place and the clones' path (a shorter path is another economy)."""
+    return (s.n, s.N, s.m, s.g, s.where, s.P)
 
 def dominated(best, s):
     levels = (s.n, s.N, s.m, s.g)
@@ -215,7 +233,7 @@ def dominated(best, s):
     for i in range(-1, 4):
         up = levels if i < 0 else levels[:i] + (levels[i] + 1,) + levels[i + 1:]
         for w in places:
-            e = best.get(up + (w,))
+            e = best.get(up + (w, s.P))
             if e is not None and e[0] + e[1] * s.t >= s.cash:
                 return True
     return False
@@ -232,14 +250,14 @@ def search(s0):
         if dominated(best, s):
             continue
         rate = s.rate()
-        best[(s.n, s.N, s.m, s.g, s.where)] = (s.cash - rate * s.t, rate)
+        best[key(s)] = (s.cash - rate * s.t, rate)
         expanded += 1
         for x in stage1_options(s):
             heapq.heappush(heap, (x.t, next(order), x))
     raise SystemExit("dash is never affordable")
 
 def stage1_options(s, force=False):
-    options = [s.lap()]
+    options = [s.lap()] + [s.ladder(k) for k in range(2, LADDER_MAX + 1)]
     for b in "RCMGD":
         options.append(s.buy(b, False, force))
         if s.where in ROW:
@@ -320,6 +338,11 @@ class Course:
         self.boxes = boxes
         self.level = {k: 0 for k in boxes}
         self.capmult = 1.0
+        # A boosted course's local boxes are buy-max boxes (BoostOldCourses).
+        self.buymax = False
+        # Start's 10000 s spawn reserve: a free slot fills the next frame. The course's first off-screen spawn resets the timer to
+        # 0 for good (once it has clones and a path), and then a slot fills only once the timer reaches the interval.
+        self.reserve = True
         self.P = None
         self.reward = 0
 
@@ -335,7 +358,7 @@ class Course:
         if not n or not self.P:
             return 0.0
         roll = roll_mult(self.level.get("F", 0), self.level.get("B", 0), glob["max_fast"], glob["max_big"])
-        return n * math.ceil(self.reward * (0.1 + glob["gm"] * 0.2 + self.level.get("M", 0) * 0.1)) * roll / self.P
+        return n * math.ceil(self.reward * (0.1 + glob["gm"] * 0.2 + self.level.get("M", 0) * 0.1)) * roll / clone_life(self.P)
 
     def on_row(self, k):
         return k in self.boxes and self.boxes[k].off is None
@@ -437,17 +460,35 @@ class LateState:
         return self.ph.pay(self.lv, self.g)
 
     def rate(self):
-        return self.ph.other_rate + (len(self.clones) * self.pay() / self.P if self.P else 0.0)
+        return self.ph.other_rate + (len(self.clones) * self.pay() / clone_life(self.P) if self.P else 0.0)
 
     def income(self, T):
+        """Cash over [t, T): the other courses' rate, and each clone's pay spread over its life from its spawn."""
         w = self.ph.other_rate * (T - self.t)
         if self.clones and self.P:
-            w += self.pay() / self.P * sum(T - max(a, self.t) for a in self.clones if a < T)
+            w += self.pay() / clone_life(self.P) * sum(T - max(a, self.t) for a in self.clones if a < T)
         return w
 
     def advance(self, T):
         self.cash += self.income(T)
         self.t = T
+
+    def finish(self, path):
+        """The course's finish after a lap whose timer is path ticks: its reward, and on a new best the break
+        (updateClonePath): every clone in flight pays in full at once, the part of its lap it hadn't run (the spread
+        income counted the rest), and the pool runs the new path in step."""
+        ph = self.ph
+        self.cash += ph.reward(self.lv, self.g)
+        if self.P is not None and path >= self.P:
+            return
+        if self.P is not None:
+            life = clone_life(self.P)
+            self.cash += self.pay() * sum(1 - (self.t - a) % life / life for a in self.clones if a <= self.t)
+        self.P = path
+        n = len(self.clones)
+        # The reserve refills the pool one a frame (in step); without it one an interval, over a whole life: the break's Cash
+        # is then an advance the emptier pool pays back over the next life.
+        self.clones = respawn(self.t, n) if ph.c.reserve else tuple(self.t + i * clone_life(path) / n for i in range(n))
 
     def done(self):
         return (self.lapped or not self.ph.need_lap) and all(l >= r for l, r in zip(self.lv, self.ph.req))
@@ -456,14 +497,26 @@ class LateState:
         ph = self.ph
         s = self.child()
         s.advance(s.t + (ph.lap if s.where == "gate" else ph.c.lead + ph.lap))
-        s.cash += ph.reward(s.lv, s.g)
-        if s.P is None or ph.lap < s.P:
-            s.P = ph.lap
-            n = len(s.clones)
-            s.clones = tuple(s.t + (i + 1) * s.P // max(n, 1) for i in range(n))
+        s.finish(ph.lap)
         n = ph.c.number
         s.tokens = (f"finish:{n}",) if s.where == "gate" else (f"start:{n}", f"finish:{n}")
         s.what, s.where, s.lapped = "lap", "done", True
+        return s
+
+    def ladder(self, K):
+        """K back-to-back record laps from the quick restart: the phase's lap slowed by K-1, ..., 1, 0 ticks, each a break
+        (docs/fulltas.md, "Engine farm planner"). None when the slowest isn't under the best path."""
+        ph = self.ph
+        if self.P is None or ph.lap + K - 1 >= self.P:
+            return None
+        s = self.child()
+        for k in range(K):
+            path = ph.lap + K - 1 - k
+            s.advance(s.t + (0 if k == 0 and s.where == "gate" else ph.c.lead) + path)
+            s.finish(path)
+        n = ph.c.number
+        s.tokens = ((f"finish:{n}",) if self.where == "gate" else (f"start:{n}", f"finish:{n}")) + (f"start:{n}", f"finish:{n}") * (K - 1)
+        s.what, s.where, s.lapped = f"ladder {K}", "done", True
         return s
 
     def buy(self, i, walk_row, force=False):
@@ -480,19 +533,29 @@ class LateState:
         cost = box.cost(s.lv[i])
         if not wait_for(s, cost, deadline):
             return None
+        # A buy-max touch buys what the Cash pays for on the touch (GetNumPlayerCouldBuy), one level a physics tick
+        # (IE_BuyMax, build 25630570): the last level k - 1 ticks after the touch. The player walks on meanwhile.
+        n = 1
+        if c.buymax and box.kind in "RCMFB":
+            while s.lv[i] + n < ph.caps[i] and cost + box.cost(s.lv[i] + n) <= s.cash:
+                cost += box.cost(s.lv[i] + n)
+                n += 1
         s.cash -= cost
-        s.lv = s.lv[:i] + (s.lv[i] + 1,) + s.lv[i + 1:]
-        if box.kind == "C" and s.P:
-            s.clones = s.clones + (s.t + s.P,)
+        s.lv = s.lv[:i] + (s.lv[i] + n,) + s.lv[i + 1:]
+        if box.kind == "C":
+            # A new clone's slot fills on the next rendered frame after its level is bought.
+            wait = 0 if c.reserve or not s.P else clone_life(s.P) / (len(s.clones) + n) / 2
+            s.clones = s.clones + tuple(s.t + j + wait for j in range(n))
         elif box.kind == "G":
             s.g += 1
         s.tokens = (box.goal,)
-        s.what = ("" if walk_row else "restart, ") + box.token + (f" (waits {s.t - arrived})" if s.t > arrived else "")
+        s.what = (("" if walk_row else "restart, ") + box.token + (f" x{n} (buy-max, {n - 1} ticks)" if n > 1 else "")
+                  + (f" (waits {s.t - arrived})" if s.t > arrived else ""))
         s.where = k
         return s
 
 def late_options(s, force=False):
-    options = [s.lap()]
+    options = [s.lap()] + [s.ladder(k) for k in range(2, LADDER_MAX + 1)]
     c = s.ph.c
     for i, k in enumerate(s.ph.keys):
         options.append(s.buy(i, False, force))
@@ -558,9 +621,13 @@ class Late:
             self.t += ticks
             if what == "restart, Course 2 lap":
                 self.cash += cs[2].reward
-                cs[2].P = min(cs[2].P, LATE_LAP[2][0])
+                if LATE_LAP[2][0] < cs[2].P:
+                    # A break: the clones in flight (half way through on average) all pay in full.
+                    self.cash += cs[2].rate(self.glob) * clone_life(cs[2].P) / 2
+                    cs[2].P = LATE_LAP[2][0]
             self.g += dg
             self.say(f"  tick {self.t:6d}  {what:44s} -> {self.cash:12.4g} W  G {self.g}")
+        cs[2].reserve = False
         cs[3].P = LATE_LAP[3][0]
         cs[3].update_reward(self.g)
         self.cash += cs[3].reward
@@ -571,12 +638,14 @@ class Late:
             c = self.cs[n]
             c.rtier = box_tier + c.mod
             c.capmult += 0.5
+            c.buymax = True
             c.update_reward(self.g)
 
     def trip_breaker(self):
         cs, c5 = self.cs, self.cs[5]
         for n in (1, 2, 3, 4):
             cs[n].capmult += 0.5
+            cs[n].buymax = True
         for n in (1, 2, 3):
             c = cs[n]
             tier = c5.tier + c.tier + c.breaker[0]
@@ -622,13 +691,21 @@ class Late:
         self.g += 1
         self.tokens.append(goal)
         self.where = "done"
+        self.off_screen(0)
         self.say(f"  tick {self.t:6d}  {goal} ({ticks} ticks)" + " " * 20 + f"-> {self.cash:12.4g} W  G {self.g}")
         self.steps.append((goal, t0, self.t, self.cash, 1))
+
+    def off_screen(self, here):
+        """Every course but here with clones and a path has been off screen: its reserve is gone."""
+        for n, c in self.cs.items():
+            if n != here and c.level.get("C", 0) and c.P:
+                c.reserve = False
 
     def phase(self, course, keys, required, need_lap, name, given=None):
         cs, c = self.cs, self.cs[course]
         if course != self.here:
             self.travel(course)
+        self.off_screen(course)
         keys = [k for k in keys if k in c.boxes]
         if required == "caps":
             required = {k: c.cap(k) for k in keys}
@@ -637,7 +714,8 @@ class Late:
         t0 = self.t
         s0.ph, s0.t, s0.cash, s0.lv, s0.g, s0.P = ph, t0, self.cash, tuple(c.level[k] for k in keys), self.g, c.P
         n = c.level.get("C", 0)
-        s0.clones = tuple(t0 + (i + 1) * c.P // n for i in range(n)) if n and c.P else ()
+        # The clones already fly, in whatever phase their buys left them: spread over one life.
+        s0.clones = tuple(t0 - i * clone_life(c.P or 0) / n for i in range(n)) if n else ()
         s0.where, s0.lapped, s0.prev, s0.tokens, s0.what = self.where, False, None, (), ""
         if given is None:
             end, steps = late_greedy(s0, self.lap_income)
@@ -661,7 +739,7 @@ class Late:
         c.P = end.P
         c.update_reward(self.g)
         self.glob["max_fast"], self.glob["max_big"] = cs[3].level["S"], cs[4].level["Z"]
-        laps = sum(1 for r in rows if r.what == "lap")
+        laps = sum(1 for r in rows for x in r.tokens if x.startswith("finish:"))
         self.say(f"  tick {self.t:6d}  Course {course}: {name} ({laps} laps, levels {dict(zip(keys, end.lv))}, {steps} steps)"
                  f" -> {self.cash:12.4g} W  G {self.g}")
         self.steps.append((f"Course {course}: {name}", t0, self.t, self.cash, len(goals)))
@@ -973,7 +1051,7 @@ def write_run(run_name, goals):
           + (" unchanged" if old == run["goals"] else f" first change at goal {changed + 1}"))
 
 def main():
-    global LAP, LEAD, ARRIVE, CLONE_PATH, REPEAT, ROW_STEP, BONUS1_TICK
+    global LAP, LEAD, ARRIVE, CLONE_PATH, REPEAT, ROW_STEP, BONUS1_TICK, FAST_LAP, LADDER_MAX
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="main", help="the fulltas.json run --measure reads, --write replaces, or --any-pct follows")
     ap.add_argument("--measure", action="store_true",
@@ -985,6 +1063,9 @@ def main():
     ap.add_argument("--clone-path", type=int, default=CLONE_PATH, help="Course 2's best run (game timer) in ticks: the clones' path")
     ap.add_argument("--repeat", type=int, default=REPEAT, help="ticks between two buys of one Course 2 box")
     ap.add_argument("--row-step", type=int, default=ROW_STEP, help="extra ticks per Course 2 box row crossed")
+    ap.add_argument("--fast-lap", type=int, default=FAST_LAP,
+                    help="the fastest known Course 2 lap (course timer, ticks): Course 2's ladders run it slowed (default: none)")
+    ap.add_argument("--ladder-max", type=int, default=LADDER_MAX, help="the most record laps in one ladder (1: no ladders)")
     ap.add_argument("--write", action="store_true",
                     help="replace --run's goals after reward:bonus1 in fulltas.json (through buy:buyds when goals of its own follow);"
                          " with --dj-farm, only its Course 3 farm")
@@ -998,6 +1079,7 @@ def main():
                     help="--dj-farm: ticks from buy:buyds to Course 3's start gate (default: from --run's offline best)")
     a = ap.parse_args()
     LAP, LEAD, ARRIVE, CLONE_PATH, REPEAT, ROW_STEP = a.lap, a.lead, a.arrive, a.clone_path, a.repeat, a.row_step
+    FAST_LAP, LADDER_MAX = a.fast_lap, a.ladder_max
     if a.measure:
         m = measure(a.run)
         a.cash, ARRIVE, LAP, LEAD, CLONE_PATH = m["cash"], m["arrive"], m["lap"], m["lead"], m["clone_path"]
@@ -1016,7 +1098,7 @@ def main():
     print("Formulas (cross-check with Economy.UpdateReward / DestroyClone / SpawnClone):")
     print("  Course 2 reward, n cashPerLoop buys x G global:", {g: [reward(4, 2, n, g) for n in range(5)] for g in (0, 1, 2, 3)})
     print("  Course 1 reward (20 buys) x G:", [reward(1, 0, C1_BUYS, g) for g in range(4)],
-          " its 9 clones off screen per 51 ticks:", [offscreen_pay(reward(1, 0, C1_BUYS, g), 0, C1_CLONES, C1_PATH) for g in range(4)])
+          f" its 9 clones off screen per {OFFSCREEN} ticks:", [offscreen_pay(reward(1, 0, C1_BUYS, g), 0, C1_CLONES, C1_PATH) for g in range(4)])
     print("  Course 2 clone pay at reward 560 x mult buys:", [clone_pay(560, m) for m in range(5)])
     print(f"Start: reward:bonus1 with {a.cash} W, G {GLOBAL0}; Course 2 at its start gate {ARRIVE} ticks later"
           f" (lap {LAP}, lead {LEAD}, repeat buy {REPEAT} + {ROW_STEP} per extra row, clone path {CLONE_PATH})")
@@ -1032,8 +1114,7 @@ def main():
     tokens = [t for r in rows for t in r.tokens]
     laps = 0
     for r in rows:
-        if r.what == "lap":
-            laps += 1
+        laps += sum(1 for x in r.tokens if x == "finish:2")
         print(f"  tick {r.t:5d}  {r.what:44s} -> {r.cash:9.0f} W  reward {r.reward2():6d}  clones {r.N:2d}"
               f"  mult {mult(r.m):.1f}  global {GLOBAL0 + r.g}")
     buys = {b: sum(1 for t in tokens if t == "buy:" + TOKEN[b]) for b in "RCMG"}
@@ -1045,7 +1126,7 @@ def main():
 
     mid = rows[len(rows) // 2]
     c2_lap_rate = mid.reward2() / (LEAD + LAP)
-    c2_rate = c2_lap_rate + mid.N * mid.pay2() / mid.P
+    c2_rate = c2_lap_rate + mid.N * mid.pay2() / clone_life(mid.P)
     c1_lap_rate = reward(1, 0, C1_BUYS, GLOBAL0 + mid.g) / (C1_PATH + 26)
     c1_max = offscreen_pay(reward(1, 0, 40, GLOBAL0 + 2), 0, 35, C1_PATH) / OFFSCREEN
     print(f"Course 1 check at tick {mid.t}: a Course 1 lap earns {c1_lap_rate:.2f} W/tick against Course 2's {c2_lap_rate:.1f}"

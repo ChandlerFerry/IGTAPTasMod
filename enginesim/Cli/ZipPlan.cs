@@ -206,9 +206,9 @@ namespace IGTAP.EngineSim.Cli
 
         // Expected payout per second of one course's clones in one currency, frame by frame as clonesScript.Update steps them
         // (one per rendered frame). Off screen (SpawnClone's else branch) a clone spawns
-        // once timeSinceLastClone reaches 1 s and pays ceil(value (2j+1) / the previous spawn's interval); on screen one spawns
-        // once it reaches the rolled interval, if the pool has one free (the oldest clone leaves on the frame after its spawn
-        // check), and pays ceil(value (2j+1)) at its path's end.
+        // once timeSinceLastClone reaches 1 s and pays ceil(value (2j+1) / the previous spawn's interval). On screen (game build
+        // 25630570: a spawn keeps the timer's overshoot) the pool stays full: a freed slot spawns again on the next frame, so
+        // each slot pays ceil(value (2j+1)) once per its clone's path in frames plus one, and at most one spawns a frame.
         static double ClonePay(Data d, double value, double path, int count, double[] fast, double[] big, bool onscreen)
         {
             if (value <= 0) return 0;
@@ -216,20 +216,13 @@ namespace IGTAP.EngineSim.Cli
             float baseInterval = (float)path / count;
             if (onscreen)
             {
-                double pay = 0, frames = 0;
+                double pay = 0, cycle = 0, samples = Math.Round(path / 0.02);
                 for (int j = 0; j < big.Length; j++) pay += big[j] * Math.Ceiling(value * (2 * j + 1));
                 for (int i = 0; i < fast.Length; i++)
                     for (int j = 0; j < big.Length; j++)
-                    {
-                        if (fast[i] * big[j] == 0) continue;
-                        float due = (float)(baseInterval / (1.0 + i * (double)0.35f));
-                        due = (float)(due / Math.Pow(0.75, j));
-                        frames += fast[i] * big[j] * Math.Max(1.0, Math.Ceiling(due / frame - 1e-6));
-                    }
-                // A full pool: `count` spawns take no longer than the path, so each spawn waits a frame for the oldest to leave.
-                double pathFrames = Math.Round(path / 0.02) * 0.02 / frame;
-                if (count * frames <= pathFrames + 1e-9) frames += 1;
-                return pay / (frames * frame);
+                        if (fast[i] * big[j] != 0)
+                            cycle += fast[i] * big[j] * (Math.Ceiling(samples * 0.02 / ((1.0 + i * 0.35) * Math.Pow(0.75, j)) / frame - 1e-6) + 1);
+                return Math.Min(count, cycle) * pay / (cycle * frame);
             }
             double sum = 0;
             for (int j = 0; j < big.Length; j++)
