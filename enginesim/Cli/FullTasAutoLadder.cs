@@ -400,6 +400,9 @@ namespace IGTAP.EngineSim.Cli
                 Log($"ladder study: {edits[i].Text}: " + (r == null ? $"{why ?? "not played"} (reached goal {p?.Progress ?? 0} of {edits[i].Labels.Length})"
                     : $"{Describe(r)}, {r.Last - best.Last:+0;-0} ticks, {r.LiveSeconds - best.LiveSeconds:+0.00;-0.00} s live{(why == null ? "" : ", " + why)}") + $"; laps {pays[i]}");
             }
+            // A held-back run (the best's own goals) that beats the best is a best of its own: saved as any (the run file, offline-best).
+            Route won = spots.SelectMany(s => s.Ladders).Select(l => l.basis).Where(b => b != null && b.Progress == _goals && b.Live < best.Live).OrderBy(b => b.Live).FirstOrDefault();
+            if (won != null) Commit(won, "ladder study: earlier laps held back, the waits re-timed");
         }
 
         /// <summary>The edit played (<see cref="Played"/>) and, when it plays through, the waits from goal <see cref="GoalEdit.Retune"/>
