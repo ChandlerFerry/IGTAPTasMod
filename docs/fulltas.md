@@ -967,6 +967,13 @@ baseline). The default is set by the measurements below, and has every part exce
      (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
      on 357.73 s the same to +9. A Course 2 lap earned about what the clones pay while standing: none paid (on the
      pre-2026-09-30 build).
+   - **Inserted reward goals** (`--insert-goal reward:bonusN@K`, repeatable): a bonus the run doesn't take, put in at goal K
+     (its box: the one nearest the bonus's end rect in `courses.json`), re-found as an investment from the goal before it.
+     While one is due a pull offers nothing else. It adds a reward goal to the skeleton, so the game won't adopt the list
+     from a judged route (`EditRefused`): put it in `fulltas.json` by hand. Bonus 5's box (`buyfree3`, free) is +1 global
+     cashPerLoop level, as bonuses 1-3 are: every reward goes with 3 + 2n (n global levels), 15 -> 17 at Course 3's
+     start. On the 350.35 s record, `reward:bonus5@174` (after bonus 2: from bonus 2's quick restart at Checkpoint (3),
+     120 ticks to the box and a quick restart back) is 2.65 s behind at `start:3` and re-found to 348.50 s (one pull).
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
