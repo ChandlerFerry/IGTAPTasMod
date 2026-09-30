@@ -267,12 +267,14 @@ namespace IGTAP.EngineSim.Cli
                                 sim.Goals.Limit = labels.Length;
                                 gates[j.K] = g = sim.Advance(best.Inputs.GetRange(0, gate));
                             }
-                            SlowLap v = g == null || s.T + k - j.Time > MaxHoldBack ? null
-                                : SlowOne(sim, g, gate, SnapshotIndex.Hash(best.Inputs, gate, start), best.Inputs[gate - 1], best.Inputs.GetRange(gate, end - gate), j.K + 2, (int)(s.T + k - j.Time));
-                            if (v == null) { hold = null; break; }
+                            // Exactly T+K when a lap gives it, else the next slower time that one does (any time past T+K-1 is broken).
+                            SlowLap v = null;
+                            for (long want = s.T + k; v == null && g != null && want - j.Time <= MaxHoldBack; want++)
+                                v = SlowOne(sim, g, gate, SnapshotIndex.Hash(best.Inputs, gate, start), best.Inputs[gate - 1], best.Inputs.GetRange(gate, end - gate), j.K + 2, (int)(want - j.Time));
+                            if (v == null) { s.Why = $"{k} laps: the lap at goals {j.K + 1}-{j.K + 2} ({j.Time} ticks) can't be held back to {s.T + k} or up to {j.Time + MaxHoldBack}"; hold = null; break; }
                             hold.Add((j, v));
                         }
-                        if (hold == null) { s.Why = $"{k} laps: an earlier lap can't be held back to {s.T + k}"; break; }
+                        if (hold == null) break;
                     }
                     // The run with them held back, each followed by the waits after it re-timed (a best short of the end: up to where it stops).
                     Route basis = null;
@@ -315,7 +317,7 @@ namespace IGTAP.EngineSim.Cli
                     ops.Add((a, end, rungs.SelectMany(r => r.Lap).ToList()));
                     IEnumerable<int> cut = s.Block == null ? Enumerable.Empty<int>() : s.Block.SelectMany(l => new[] { l.K, l.K + 1 });
                     string text = $"Ladder: {k} Course {s.Course} laps {Where(s, true)}, {t + k - 1}..{t} ticks on the course timer against its {s.Before} ({s.How})"
-                        + (hold.Count == 0 ? "" : $"; held back {Plural(hold.Count, "lap")} to {t + k} (goals {string.Join(", ", hold.Select(h => $"{h.j.K + 1}-{h.j.K + 2}"))})");
+                        + (hold.Count == 0 ? "" : $"; held back {Plural(hold.Count, "lap")} to {t + k}+ (goals {string.Join(", ", hold.Select(h => $"{h.j.K + 1}-{h.j.K + 2}"))})");
                     GoalEdit e = Spliced(b, ops, cut, "ladder", $"ladder:{s.Course}:{s.First}:{s.A}:{k}", text,
                         hold.Count == 0 ? s.First + 1 : hold.Min(h => h.j.K) + 1, s.First + 2 * k);
                     // The ladder's 2K goals go where the block's were (or before old goal First); the waits from its first quick restart on
