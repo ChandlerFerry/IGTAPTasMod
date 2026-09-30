@@ -23,6 +23,7 @@
   <ItemGroup>
     <None Include="forced-paths.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="zip-plan.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="searchbench-grafts.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\techs.json" Link="techs.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\labmaps\*.json" Link="labmaps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

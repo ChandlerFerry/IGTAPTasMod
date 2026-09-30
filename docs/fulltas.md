@@ -1161,6 +1161,14 @@ route's goals 186-266 made 379.40 s, each in under 20 s. Judged in turbo (GameOw
 then went 378.94, 378.74, 378.72, 378.50, 378.48, 378.46 (bin6, windows), then 377.80 (stray study), 376.76 and 376.70
 (combine's splice-in repair); candidates after 378.74 had not been judged when this was written.
 
+**Regression bench.** A change to the grafts or the window search is measured on `searchbench --suite grafts --seeds 3
+--minutes 1 --threads 4` ([enginesim/README.md](../enginesim/README.md#planted-waste-suite---suite-grafts)): wastes
+planted in known-good windows of the `FalseEnding-Any%` 355.92 record and course records (a super chain played as dash
+and run, a jump into a ceiling, a cancelling dash pair, a filler restart), each searched from the planted route as
+`fulltas --goal` (or `solve`) and scored on whether it gets back within 2 ticks and the CPU it takes, plus the record's
+own windows at goals 174, 270 and 275, where the waste was seen by eye. The baseline recovers every planted waste in the
+minute and beats the record's split at goals 270 and 275 (window-local), not at 174.
+
 ### Reset segments
 
 Terms: a *goal* is one of the run's Full-TAS goals (numbered, where to go next); a *Checkpoint* is the game's
