@@ -53,7 +53,8 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
 ## Studio
 
 A **Techs here** panel under Held tick: a status line (waiting / searching, n found / none / error) and one button per
-tech named by its name, soonest first, with when it starts (dimmed past half a second). Hovering a button opens its compass: the directions found, arrows in a 3×3 grid; the diagonals
+tech named by its name, soonest first, with when it starts (dimmed past half a second; those starting over a second
+away are hidden behind **Show n more**). Hovering a button opens its compass: the directions found, arrows in a 3×3 grid; the diagonals
 with steep freeze aims take the wheel to step 45° → 19° → 17°, and a dashed arrow is a direction that plays the same as
 another. Hovering the button shows the soonest direction bright, an arrow that variant; a click tries it. A click on the button itself tries the tech's soonest direction.
 

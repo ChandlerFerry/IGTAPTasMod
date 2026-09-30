@@ -651,6 +651,8 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
 const COMPASS = ["UL", "U", "UR", "L", "", "R", "DL", "D", "DR"];
 /** Input ticks after which a tech's button is dimmed: it starts after a walk of more than half a second. */
 const LATER = 25;
+/** Input ticks after which a tech is hidden until "Show more": it starts more than a second away. */
+const FAR = 50;
 const ARROW: Record<string, string> = { UL: "↖", U: "↑", UR: "↗", L: "←", "": "•", R: "→", DL: "↙", D: "↓", DR: "↘" };
 const hoverTech = (tech?: string, v?: TasTechVariant) => call("/tas/techs/hover", !tech ? {} : v ? { tech, dir: v.dir, angle: v.angle ?? null } : { tech }).catch(() => {});
 
@@ -663,6 +665,7 @@ const hoverTech = (tech?: string, v?: TasTechVariant) => call("/tas/techs/hover"
 function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: boolean; busy: boolean; onTry: (tech: string, v: TasTechVariant) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const [steep, setSteep] = useState<Record<string, number>>({});
+  const [all, setAll] = useState(false);
   // The wheel steps a diagonal's aims; the page mustn't scroll under it (React's wheel listener is passive).
   const compass = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -672,10 +675,12 @@ function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: bo
     el.addEventListener("wheel", stop, { passive: false });
     return () => el.removeEventListener("wheel", stop);
   }, [open]);
-  const list = techs.list ?? [];
+  const found = techs.list ?? [];
+  const soon = (t: { variants: TasTechVariant[] }) => Math.min(...t.variants.map(v => v.start));
+  const far = found.filter(t => soon(t) > FAR).length, list = all ? found : found.filter(t => soon(t) <= FAR);
   const status = techs.unavailable ?? (!held ? "Hold on a tick: the techs that fit there appear after a second."
-    : techs.error ? null : techs.running ? `Searching… ${list.length} found` : !techs.done ? "Waiting for the tick to settle…"
-    : list.length ? `${list.length} techs fit here (${techs.tried} tried). Hover one to see it in game.` : `No techs fit here (${techs.tried} tried).`);
+    : techs.error ? null : techs.running ? `Searching… ${found.length} found` : !techs.done ? "Waiting for the tick to settle…"
+    : found.length ? `${found.length} techs fit here (${techs.tried} tried). Hover one to see it in game.` : `No techs fit here (${techs.tried} tried).`);
   return <div className="panel"><p className="eyebrow">TECHS HERE</p>
     {status && <p className="tasHint">{status}</p>}
     {techs.error && <p className="tasError">{techs.error}</p>}
@@ -703,6 +708,7 @@ function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: bo
           </div>}
         </div>;
       })}
+      {far > 0 && <button className="techsMore" onClick={() => setAll(!all)}>{all ? `Hide ${far} starting over a second away` : `Show ${far} more (starting over a second away)`}</button>}
     </div>}
   </div>;
 }

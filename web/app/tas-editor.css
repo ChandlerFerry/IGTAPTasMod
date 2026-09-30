@@ -113,6 +113,7 @@
 .techWrap > button { padding: 6px 10px; }
 .techWrap > button small { margin-left: 6px; font-weight: 500; color: var(--muted); }
 .techWrap > button.later { opacity: .6; }
+.techsMore { background: transparent; border-style: dashed; color: var(--muted); padding: 6px 10px; }
 .techCompass { position: absolute; top: 100%; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(3, 38px); gap: 3px; padding: 6px;
   background: #0c1d33; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0008; }
 .techCompass > * { height: 34px; padding: 0; display: grid; place-items: center; font-size: 16px; line-height: 1; }
