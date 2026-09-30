@@ -54,7 +54,7 @@ namespace IGTAPTasMod
             Movement player = _overlayPlayer;
             if (cam == null || floating == null || player == null) return;
             Vector2 origin = floating.currentOrigin;
-            float lastHyper = TechRead<float>(TechLastHyperYField, player);
+            float lastHyper = DebugFields.LastHyperY(player);
             int floats = _techCounts[(int)Tech.FloatUltra];
             if (!ReferenceEquals(floating, _originOverlayInstance) || _originOverlayRebases < 0)
             {
@@ -220,7 +220,13 @@ namespace IGTAPTasMod
             // Bottom right: the velocity panel holds the top right.
             var map = new Rect(Screen.width - width - 16f * scale, Screen.height - height - 16f * scale, width, height);
             Fill(new Rect(map.x, map.y - row * 2, map.width, map.height + row * 2), PanelBack);
-            Label(new Rect(map.x + 6f * scale, map.y - row * 2, map.width - 12f * scale, row), "THE SPHERE MOVES WITH YOU (" + threshold.ToString("#,0") + " u)", _overlaySmall, OriginMoveColor);
+            int thresholdBits = System.BitConverter.SingleToInt32Bits(threshold);
+            if (thresholdBits != _originMapThreshold || _originMapTitle == null)
+            {
+                _originMapThreshold = thresholdBits;
+                _originMapTitle = "THE SPHERE MOVES WITH YOU (" + threshold.ToString("#,0") + " u)";
+            }
+            Label(new Rect(map.x + 6f * scale, map.y - row * 2, map.width - 12f * scale, row), _originMapTitle, _overlaySmall, OriginMoveColor);
             Label(new Rect(map.x + 6f * scale, map.y - row, map.width - 12f * scale, row), "green half: cross → float ultra   red half: no   ● crossings", _overlaySmall, PanelText);
             float unitsPerPixel = OriginMapWorld.width / width;
             material.SetPass(0);
@@ -242,10 +248,9 @@ namespace IGTAPTasMod
                 }
                 for (int s = 0; s < 256; s++)
                 {
-                    float a0 = s * Mathf.PI / 128f, a1 = (s + 1) * Mathf.PI / 128f;
                     Color side = s < 128 ? OriginAboveColor : OriginBelowColor;
                     GL.Color(new Color(side.r, side.g, side.b, alpha));
-                    MapLine(c + new Vector2(Mathf.Cos(a0), Mathf.Sin(a0)) * threshold, c + new Vector2(Mathf.Cos(a1), Mathf.Sin(a1)) * threshold);
+                    MapLine(c + new Vector2(MapCircleCos[s], MapCircleSin[s]) * threshold, c + new Vector2(MapCircleCos[s + 1], MapCircleSin[s + 1]) * threshold);
                 }
                 if (i == last)
                 {
@@ -277,8 +282,35 @@ namespace IGTAPTasMod
                     || !OriginMapWorld.Contains(new Vector2(course.x, course.y))) continue;
                 Vector2 at = new Vector2(map.x + (course.x - OriginMapWorld.xMin) / unitsPerPixel, map.yMax - (course.y - OriginMapWorld.yMin) / unitsPerPixel);
                 Fill(new Rect(at.x - 2f, at.y - 2f, 4f, 4f), MutedColor);
-                Label(new Rect(at.x + 4f, at.y - row / 2f, 60f * scale, row), "C" + course.id, _overlaySmall, MutedColor);
+                Label(new Rect(at.x + 4f, at.y - row / 2f, 60f * scale, row), CourseMapLabel(course.id), _overlaySmall, MutedColor);
             }
+        }
+
+        int _originMapThreshold;
+        string _originMapTitle;
+        static readonly Dictionary<int, string> CourseMapLabels = new Dictionary<int, string>();
+
+        /// <summary>A course's minimap label ("C12"), built once per id.</summary>
+        static string CourseMapLabel(int id)
+        {
+            if (!CourseMapLabels.TryGetValue(id, out string label)) CourseMapLabels[id] = label = "C" + id;
+            return label;
+        }
+
+        // The minimap circles' and the sphere edge's unit directions, computed once with the expressions the draw used every
+        // frame (the same floats): MapCircle* at s·π/128 for s 0..256; Sphere*0 at i·step and Sphere*1 at i·step + step.
+        static readonly float[] MapCircleCos = CircleTable(257, s => Mathf.Cos(s * Mathf.PI / 128f)), MapCircleSin = CircleTable(257, s => Mathf.Sin(s * Mathf.PI / 128f));
+        const float OriginSphereStep = 2f * Mathf.PI / OriginSphereSegments;
+        static readonly float[] SphereCos0 = CircleTable(OriginSphereSegments, i => Mathf.Cos(i * OriginSphereStep)),
+            SphereSin0 = CircleTable(OriginSphereSegments, i => Mathf.Sin(i * OriginSphereStep)),
+            SphereCos1 = CircleTable(OriginSphereSegments, i => { float a0 = i * OriginSphereStep; return Mathf.Cos(a0 + OriginSphereStep); }),
+            SphereSin1 = CircleTable(OriginSphereSegments, i => { float a0 = i * OriginSphereStep; return Mathf.Sin(a0 + OriginSphereStep); });
+
+        static float[] CircleTable(int count, System.Func<int, float> value)
+        {
+            var table = new float[count];
+            for (int i = 0; i < count; i++) table[i] = value(i);
+            return table;
         }
 
         static void MapLine(Vector2 a, Vector2 b)
@@ -311,7 +343,7 @@ namespace IGTAPTasMod
             GL.Begin(GL.QUADS);
             if (sideways)
             {
-                foreach (float side in new[] { -1f, 1f })
+                foreach (float side in SphereSides)
                 {
                     float x = side * threshold;
                     if (x < view.xMin || x > view.xMax) continue;
@@ -321,12 +353,11 @@ namespace IGTAPTasMod
             }
             else
             {
-                float step = 2f * Mathf.PI / OriginSphereSegments, outer = threshold + OriginSphereBand;
+                float outer = threshold + OriginSphereBand;
                 for (int i = 0; i < OriginSphereSegments; i++)
                 {
-                    float a0 = i * step, a1 = a0 + step;
-                    var d0 = new Vector2(Mathf.Cos(a0), Mathf.Sin(a0));
-                    var d1 = new Vector2(Mathf.Cos(a1), Mathf.Sin(a1));
+                    var d0 = new Vector2(SphereCos0[i], SphereSin0[i]);
+                    var d1 = new Vector2(SphereCos1[i], SphereSin1[i]);
                     Vector2 p0 = d0 * threshold, p1 = d1 * threshold;
                     if (!view.Contains(p0) && !view.Contains(p1)) continue;
                     OriginQuad(cam, p0, p1, d1 * outer, d0 * outer, p0.y + p1.y > 0f ? OriginAboveColor : OriginBelowColor, half);
@@ -336,6 +367,8 @@ namespace IGTAPTasMod
             GL.PopMatrix();
             GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
         }
+
+        static readonly float[] SphereSides = { -1f, 1f };
 
         /// <summary>One piece of the sphere: the edge a–b as a solid line, the band a–b–c–d outside it faint.</summary>
         static void OriginQuad(Camera cam, Vector2 a, Vector2 b, Vector2 c, Vector2 d, Color color, float half)

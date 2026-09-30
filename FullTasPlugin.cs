@@ -104,6 +104,12 @@ namespace IGTAPTasMod
         List<FullTasRunDef> _fullTasRuns = new List<FullTasRunDef>();
         DateTime _fullTasWritten;
         float _fullTasCheckAt;
+        // fulltas.json's write time (ticks; 0: no file), read on a pool thread for PumpFullTas's once-a-second check (a hand
+        // edit reloads it): -1 until a read lands. _fullTasStatOf is _fullTasWritten when that read started; a plugin write
+        // since then makes the read stale. _fullTasStatBusy is 1 while a read runs.
+        long _fullTasStat = -1;
+        DateTime _fullTasStatOf;
+        int _fullTasStatBusy;
         Dictionary<string, List<FullTasSplit>> _fullTasSplits = new Dictionary<string, List<FullTasSplit>>();
 
         FullTasTracker _fullTas;
@@ -130,6 +136,11 @@ namespace IGTAPTasMod
         readonly List<JObject> _fullTasPulls = new List<JObject>();
         string _fullTasSolveError, _fullTasCommand;
         const int MaxFullTasEvents = 400, MaxFullTasLog = 300;
+        // Bumped on every change of _fullTasEvents and _fullTasLog: the studio's live state serialises each list again only then
+        // (FullTasListJson), not on every check (400 events and 300 lines stay there after a solve).
+        int _fullTasEventsVersion, _fullTasLogVersion;
+        string _fullTasEventsJson, _fullTasLogJson;
+        int _fullTasEventsJsonAt = -1, _fullTasLogJsonAt = -1;
         /// <summary>--auto's bookkeeping events: on disk in fulltas/&lt;run&gt;.auto.jsonl, not sent to the studio (a model is 300 rows;
         /// a pull comes every few seconds and would push the records out of the capped list). Its own "record" (with a lever)
         /// duplicates the solver's record event, which carries both routes; its "goals" (an adopted goal list) and "goalEdit" (each

@@ -44,6 +44,8 @@ namespace IGTAPTasMod
         // Run route from a tick: playback runs fast (no wall-clock wait, the same frames) until the run has played this many ticks.
         private int _fastUntilTick;
         private Rigidbody2D _playerBody;
+        // The Movement _playerBody was fetched for (KeepInterpolation): a reference check per tick instead of two gameObject lookups.
+        private Movement _playerBodyOwner;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
         /// <summary>The canonical FloatingOrigin reference the last quick restart onto a course, bonus or transition start put the world at; null otherwise.</summary>
@@ -52,10 +54,9 @@ namespace IGTAPTasMod
         private int _brakeTicks = -1;
         private float _brakeAxis;
         const int MaxBrakeTicks = 150;
-        private static readonly FieldInfo MovMomentumField = AccessTools.Field(typeof(Movement), "momentum");
-        private static readonly FieldInfo MovOnGroundField = AccessTools.Field(typeof(Movement), "onGround");
-        private static readonly FieldInfo CourseCurrentPathTimeField = AccessTools.Field(typeof(courseScript), "currentPathTime");
-        private static readonly FieldInfo CourseTrackingField = AccessTools.Field(typeof(courseScript), "tracking");
+        // Read by the studio's live state (every push) and the course hooks: typed refs, as FieldInfo.GetValue boxes.
+        private static readonly AccessTools.FieldRef<courseScript, float> CourseCurrentPathTime = AccessTools.FieldRefAccess<courseScript, float>("currentPathTime");
+        private static readonly AccessTools.FieldRef<courseScript, bool> CourseTracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
 
         private WebStudioRequest _bootstrapRequest;
         private int _bootstrapPhase;
@@ -84,7 +85,7 @@ namespace IGTAPTasMod
             _engine.AttemptEnded += OnAttemptEnded;
             _engine.RefreshRewards = RefreshFullTasRewards;
             Application.runInBackground = true;
-            _webServer = new WebStudioServer();
+            _webServer = new WebStudioServer(BuildLiveWebState, WebStateVersion, BuildStaticWebState);
             try
             {
                 _webServer.Start(Path.Combine(Paths.PluginPath, "IGTAPTasWeb"));
@@ -149,6 +150,9 @@ namespace IGTAPTasMod
         static readonly MethodInfo CourseFixedUpdateMethod = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly MethodInfo VmanFixedUpdateMethod = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly List<MonoBehaviour> DeferredFixedUpdates = new List<MonoBehaviour>();
+        // The same scripts, for the membership check each deferred FixedUpdate makes (List.Contains was a scan of every course
+        // already waiting). The same comparer as the list's (UnityEngine.Object.Equals, GetHashCode: the instance id).
+        static readonly HashSet<MonoBehaviour> DeferredQueued = new HashSet<MonoBehaviour>();
         // Their FixedUpdate as open delegates (made on first use, after the patches: a call goes through
         // BeforeOrderedFixedUpdate as Unity's does), and a reused copy of the list to run them from.
         static Action<courseScript> _courseFixedUpdate;
@@ -202,6 +206,20 @@ namespace IGTAPTasMod
                 if (fallback == null) fallback = m;
             }
             return fallback ?? all[0];
+        }
+
+        // The studio's live state reads the world player on every push (every 33 ms or more), and FindWorldMovement is a full
+        // FindObjectsByType scan. The push keeps the last world player it found while that one lives and is still the world
+        // one (a scene load destroys it, the bootstrap's flip makes a menu player the world one). It can only differ from a
+        // scan while two world players are loaded at once, when the scan's pick is arbitrary anyway; display only.
+        Movement _livePlayer;
+
+        private Movement LiveWorldMovement()
+        {
+            if (_livePlayer != null && !IsMenuPlayer(_livePlayer)) return _livePlayer;
+            Movement found = FindWorldMovement();
+            _livePlayer = found != null && !IsMenuPlayer(found) ? found : null;
+            return found;
         }
 
         // The coloured blocks' state (colouredBlockSwapper.isBlueActive) as a pseudo field of the player, so a category start
@@ -286,7 +304,8 @@ namespace IGTAPTasMod
         // is no longer fresh, and the next Full-TAS run loads a new one.
         Vector2 _newGameOrigin;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
-        bool FreshGameInWorld { get { return FreshGame && _newGamePlayer == FindWorldMovement() && CurrentOrigin() == _newGameOrigin; } }
+        // The origin first: it is a field read, the world player a scan of every Movement.
+        bool FreshGameInWorld { get { return FreshGame && CurrentOrigin() == _newGameOrigin && _newGamePlayer == FindWorldMovement(); } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
         static readonly FieldInfo SaveloaderIsLoading = AccessTools.Field(typeof(Saveloader), "isLoading");
@@ -345,6 +364,19 @@ namespace IGTAPTasMod
 
         /// <summary>The open TAS editor session (TasPlugin.Editor.cs), or null.</summary>
         TasSession _tas;
+        // TasBoundary's clock (TasPlugin.Editor.cs), restarted at every tick boundary it checks: one Stopwatch, not one a tick.
+        readonly System.Diagnostics.Stopwatch _tasHoldClock = new System.Diagnostics.Stopwatch();
+        // DrawTechPaths' hovered tech's variants in draw order (TasTechVariants, TasPlugin.Techs.cs), kept while the tech and its
+        // grouping stay.
+        List<TasTechVariant> _techsDrawn;
+        TasTechs _techsDrawnFrom;
+        string _techsDrawnTech;
+        int _techsDrawnGrouping;
+
+        // Movement's fields by name, as AccessTools.Field finds them (null: none), looked up once (MovementField,
+        // TasPlugin.Session.cs): the studio's live state and the solver's per-tick audit read some every push or tick. Main
+        // thread only, as every caller is.
+        static readonly Dictionary<string, FieldInfo> MovementFields = new Dictionary<string, FieldInfo>();
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
         private void ClampSelections()

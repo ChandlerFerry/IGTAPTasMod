@@ -32,7 +32,9 @@ namespace IGTAPTasMod
                 _library = loaded;
                 int selected = string.IsNullOrEmpty(_settings.selectedRouteId) ? -1 : _library.macros.FindIndex(r => r.id == _settings.selectedRouteId);
                 if (selected >= 0) _library.selectedIndex = selected;
-                if (NormalizeLibraryFrameTiming(_library) | PruneSlowerRoutes()) SaveLibrary();
+                bool recovered = RecoverTasJournal();
+                if (NormalizeLibraryFrameTiming(_library) | PruneSlowerRoutes() | recovered) SaveLibrary();
+                if (recovered) DeleteTasJournal();
             }
             catch (Exception ex)
             {
@@ -186,6 +188,48 @@ namespace IGTAPTasMod
         {
             WriteJsonAtomic(_libraryPath, _library, true);
             if (_settings.selectedRouteId != (SelectedMacro?.id ?? "")) SaveSelection();
+        }
+
+        /// <summary>The open TAS session's route (TasPlugin.Editor.cs TasJournal): written on every edit instead of routes.json.</summary>
+        private string TasJournalPath { get { return Path.Combine(Path.GetDirectoryName(_libraryPath), "tas-session.json"); } }
+
+        private void WriteTasJournal(MacroDefinition route)
+        {
+            try
+            {
+                string temporary = TasJournalPath + ".tmp";
+                File.WriteAllText(temporary, JsonConvert.SerializeObject(route));
+                ReplaceAtomic(temporary, TasJournalPath);
+            }
+            catch (Exception ex) { Logger.LogError("Could not write the TAS session journal: " + ex); }
+        }
+
+        private void DeleteTasJournal()
+        {
+            try { if (File.Exists(TasJournalPath)) File.Delete(TasJournalPath); }
+            catch (Exception ex) { Logger.LogError("Could not delete the TAS session journal: " + ex); }
+        }
+
+        /// <summary>A session the game stopped before closing: its journaled route replaces the library's copy (by id).</summary>
+        private bool RecoverTasJournal()
+        {
+            if (!File.Exists(TasJournalPath)) return false;
+            try
+            {
+                MacroDefinition route = JsonConvert.DeserializeObject<MacroDefinition>(File.ReadAllText(TasJournalPath));
+                ValidateLibrary(new MacroLibrary { macros = new List<MacroDefinition> { route } });
+                int index = _library.macros.FindIndex(r => r.id == route.id);
+                if (index >= 0) _library.macros[index] = route;
+                else _library.macros.Add(route);
+                Logger.LogInfo("TAS session journal recovered: " + route.name + " (" + route.steps.Count + " steps)");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("TAS session journal rejected: " + ex.Message);
+                Quarantine(TasJournalPath);
+                return false;
+            }
         }
 
         /// <summary>

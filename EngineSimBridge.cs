@@ -406,17 +406,42 @@ namespace IGTAPTasMod
         }
 
         int _offlineWaiting;
+        // The offline bests waiting, counted on a pool thread (the directory listing, beside the offline solver's own writes,
+        // could stall a paced frame every 5 s): -1 while that count runs, which _offlineCounting is set for.
+        int _offlineCount = -1;
+        bool _offlineCounting;
 
         void PumpOfflineBests()
         {
-            // Not while a route plays or records: it can't judge then, and the directory scan (hundreds of files) would cost
-            // 1x playback's paced frames. The count is taken again after.
-            if (Time.unscaledTime < _offlineBestCheckAt || PlaybackActive || _recorder.IsRecording) return;
-            _offlineBestCheckAt = Time.unscaledTime + 5f;
+            if (!_offlineCounting)
+            {
+                // Not while a route plays or records: it can't judge then, and the directory scan (hundreds of files) would
+                // cost 1x playback's paced frames. The count is taken again after.
+                if (Time.unscaledTime < _offlineBestCheckAt || PlaybackActive || _recorder.IsRecording) return;
+                _offlineBestCheckAt = Time.unscaledTime + 5f;
+                string scanned = Path.Combine(EngineSimDir, "offline-best");
+                _offlineCount = -1;
+                _offlineCounting = true;
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    int count = 0;
+                    try
+                    {
+                        count = !Directory.Exists(scanned) ? 0 : Directory.GetFiles(scanned, "*.json")
+                            .Count(p => OfflineBestFile.IsMatch(Path.GetFileName(p)) || OfflineFullTasBestFile.IsMatch(Path.GetFileName(p)));
+                    }
+                    // A directory that went mid-scan: none waiting until the next count.
+                    catch (Exception) { }
+                    System.Threading.Volatile.Write(ref _offlineCount, count);
+                });
+                return;
+            }
+            int waiting = System.Threading.Volatile.Read(ref _offlineCount);
+            if (waiting < 0) return;
+            _offlineCounting = false;
+            _offlineWaiting = waiting;
+            if (_offlineWaiting == 0 || PlaybackActive || _recorder.IsRecording) return;
             string dir = Path.Combine(EngineSimDir, "offline-best");
-            _offlineWaiting = !Directory.Exists(dir) ? 0 : Directory.GetFiles(dir, "*.json")
-                .Count(p => OfflineBestFile.IsMatch(Path.GetFileName(p)) || OfflineFullTasBestFile.IsMatch(Path.GetFileName(p)));
-            if (_offlineWaiting == 0) return;
             if (CapabilitiesLocked || _solverRunning && _solveProcess == null || _bootstrapRequest != null || _webServer == null) return;
             Movement player = FindWorldMovement();
             if (player == null || IsMenuPlayer(player)) return;

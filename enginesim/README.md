@@ -492,8 +492,9 @@ momentum carries through them, and a window is scored on its arrival.
   ticks); `--waypoints-out FILE` writes it and exits without searching (the studio's list). `--focus a-b` numbers goals
   in that list.
 - **Studio.** The Optimize tab's **Improve** runs this (`Solver.cs` `CourseSolveArgs`): the Improve a course panel
-  improves one target, record or farm (**Timing**), and the Improve many matrix queues ticked record and farm times.
-  Clicking a time opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
+  improves one target, record or farm (**Timing**), and the Improve many matrix queues the picked cells, one course and
+  category each (a picked cell is highlighted): each runs Improve on the record, and every candidate is judged for the
+  farm time too, so one job improves both. A cell's ↗ opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
   capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
   while that target improves) with each one's split, and **Show map** draws them numbered. Click a waypoint
   (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its

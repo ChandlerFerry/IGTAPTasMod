@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./tas-editor.css";
 import { TONE, inputName, toneOf, type SlackInput, type SlackReply } from "./human-slack";
-
-const API = "http://127.0.0.1:17426/api";
+import { request as call } from "./studio-socket";
 
 type Command = (path: string, body?: unknown) => Promise<boolean>;
 
@@ -32,14 +31,6 @@ type CourseLite = { id: number; token: string; bonus: boolean; categories: strin
 type CategoryLite = { id: string; label: string };
 type RouteLite = { id: string; name: string };
 type SavestateLite = { id: string; name: string };
-
-async function call(path: string, body?: unknown) {
-  const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body) });
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `Request failed (${response.status})`);
-  return data;
-}
 
 // A controller's stick (docs/human-input.md): x 0, ±1 or a part tilt 0.3..0.8; y 0 or ±1.
 const PARTIALS = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8];
@@ -79,6 +70,32 @@ function fixEdges(ticks: TasTick[], from: number, to: number) {
     if (t.held) t.press = !before;
     else if (i <= to && !isTap(t)) { t.press = false; t.release = false; }
   }
+}
+
+// Keyboard input's game keys, by physical key (KeyboardEvent.code): arrows or WASD the stick, Space jump, X dash.
+type GameKey = "left" | "right" | "up" | "down" | "jump" | "dash";
+const GAME_KEYS: Record<string, GameKey> = { ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right", ArrowUp: "up", KeyW: "up",
+  ArrowDown: "down", KeyS: "down", Space: "jump", KeyX: "dash" };
+const GAME_KEY_ORDER: GameKey[] = ["left", "right", "up", "down", "jump", "dash"];
+const GAME_KEY_LABEL: Record<GameKey, string> = { left: "←", right: "→", up: "↑", down: "↓", jump: "Jump", dash: "Dash" };
+/** The keys down (codes), and whether jump or dash went down since the last advance wrote an input (a tap between two). */
+type Pad = { down: Set<string>; jumpTap: boolean; dashTap: boolean };
+const emptyPad = (): Pad => ({ down: new Set(), jumpTap: false, dashTap: false });
+
+/**
+ * The input tick the keys give: the stick, jump held (fixEdges sets its press), or on the first tick of an advance a jump
+ * tapped and let go since the last one (press and release), and a dash pressed since the last one.
+ */
+function padTick(p: Pad, first: boolean): TasTick {
+  const on = new Set([...p.down].map(code => GAME_KEYS[code]));
+  const x = (on.has("right") ? 1 : 0) - (on.has("left") ? 1 : 0), y = (on.has("up") ? 1 : 0) - (on.has("down") ? 1 : 0);
+  const t: TasTick = {};
+  if (x) t.x = x;
+  if (y) t.y = y;
+  if (on.has("jump")) t.held = true;
+  else if (first && p.jumpTap) { t.press = true; t.release = true; }
+  if (first && p.dashTap) t.dash = true;
+  return t;
 }
 
 export function TasEditor({ tas, routes, courses, categories, savestates, onCommand, onImprove, onPlace }: {
@@ -195,27 +212,98 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
   const busy = tas.phase === "starting" || tas.phase === "recording";
   const cmd = (path: string, body: unknown = {}) => onCommand(path, body);
 
-  // The game's hotkeys, here too (Shift: ten ticks). By physical key, so Shift+] is still ]; not while typing.
-  const keys = useRef({ tas, busy, speed, recordSpeed, cmd });
-  keys.current = { tas, busy, speed, recordSpeed, cmd };
+  // Keyboard input: the page takes game keys (GAME_KEYS) and each advance writes what they hold into the input it plays.
+  const [keyboard, setKeyboard] = useState(false);
+  useEffect(() => setKeyboard(window.localStorage.getItem("tasKeyboard") === "1"), []);
+  const toggleKeyboard = () => setKeyboard(on => { window.localStorage.setItem("tasKeyboard", on ? "0" : "1"); return !on; });
+  const [heldKeys, setHeldKeys] = useState<string>("");
+  const pad = useRef<Pad>(emptyPad());
+  // When a keyboard advance was sent: the next waits for the session to move (its cursor is stale till then), 1.5 s at most.
+  const pending = useRef(0);
+  // Advances pressed meanwhile queue up, each with the keys as they were at its press, and go one per move.
+  const queued = useRef<{ n: number; p: Pad }[]>([]);
+  const advanceNow = useRef<(n: number, p: Pad) => void>(() => {});
   useEffect(() => {
+    pending.current = 0;
+    const next = queued.current.shift();
+    if (next) advanceNow.current(next.n, next.p);
+  }, [tas.physics]);
+
+  // The game's hotkeys, here too (Shift: ten ticks). By physical key, so Shift+] is still ]; not while typing.
+  const keys = useRef({ tas, busy, speed, recordSpeed, cmd, keyboard, ticks, setTicks });
+  keys.current = { tas, busy, speed, recordSpeed, cmd, keyboard, ticks, setTicks };
+  useEffect(() => {
+    const show = () => { const on = new Set([...pad.current.down].map(code => GAME_KEYS[code])); setHeldKeys(GAME_KEY_ORDER.filter(k => on.has(k)).map(k => GAME_KEY_LABEL[k]).join(" ")); };
+    /** Advance n physics ticks; with keyboard input on, the n inputs from the cursor become what the keys (p) held first. */
+    const advance = async (n: number, p: Pad) => {
+      const { tas, busy, cmd, keyboard, ticks, setTicks } = keys.current;
+      if (busy || tas.ended) return;
+      if (keyboard) {
+        if (Date.now() - pending.current < 1500) { queued.current.push({ n, p }); return; }
+        pending.current = Date.now();
+        const at = tas.cursor, next = ticks.slice();
+        next.splice(at, Math.min(n, next.length - at), ...Array.from({ length: n }, (_, i) => padTick(p, i === 0)));
+        if (next[at + n]) next[at + n] = { ...next[at + n] };  // fixEdges sets its press: a copy, not the shown tick
+        fixEdges(next, at, at + n - 1);
+        // A tick whose buttons and stick are what it had keeps its extras (dash-jump, aims, locks...).
+        const keyOf = (t?: TasTick) => t && [t.x ?? 0, t.y ?? 0, !!t.held, !!t.press, !!t.release, !!t.dash].join();
+        const count = Math.min(n + 1, next.length - at), old = ticks.slice(at, at + count);
+        for (let i = 0; i < old.length; i++) if (keyOf(next[at + i]) === keyOf(old[i])) next[at + i] = old[i];
+        const put = next.slice(at, at + count);
+        if (put.length !== old.length || put.some((t, i) => t !== old[i])) {
+          setTicks(next);
+          if (!await cmd("/tas/edit", { from: at, deleteCount: old.length, ticks: put })) { pending.current = 0; queued.current = []; return; }
+        }
+      }
+      if (!await cmd("/tas/advance", { ticks: n })) { pending.current = 0; queued.current = []; }
+    };
+    advanceNow.current = advance;
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (e.ctrlKey || e.altKey || e.metaKey || e.repeat || t?.closest("input, textarea, select, [contenteditable]")) return;
-      const { tas, busy, speed, recordSpeed, cmd } = keys.current, n = e.shiftKey ? 10 : 1;
-      if (e.code === "BracketRight" || e.code === "ArrowRight") { if (!busy && !tas.ended) cmd("/tas/advance", { ticks: n }); }
-      else if (e.code === "BracketLeft" || e.code === "ArrowLeft") { if (!busy) cmd("/tas/rewind", { ticks: n }); }
-      else if (e.code === "Backslash" || e.code === "Space") {
+      if (e.ctrlKey || e.altKey || e.metaKey || (e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+      const { tas, busy, speed, recordSpeed, cmd, keyboard } = keys.current, n = e.shiftKey ? 10 : 1;
+      const game = keyboard ? GAME_KEYS[e.code] : undefined;
+      if (game) {
+        // Game keys are the page's only: no scroll, no button click, no piano-roll selection.
+        e.preventDefault(); e.stopPropagation();
+        (document.activeElement as HTMLElement | null)?.blur();
+        if (e.repeat) return;
+        pad.current.down.add(e.code);
+        if (game === "jump") pad.current.jumpTap = true;
+        if (game === "dash") pad.current.dashTap = true;
+        show();
+        return;
+      }
+      if (e.repeat) return;
+      if (e.code === "BracketRight" || (!keyboard && e.code === "ArrowRight")) {
+        // The keys as they are now; a tap between two advances goes in once.
+        const p = pad.current;
+        advance(n, { down: new Set(p.down), jumpTap: p.jumpTap, dashTap: p.dashTap });
+        p.jumpTap = p.dashTap = false;
+        show();
+      }
+      else if (e.code === "BracketLeft" || (!keyboard && e.code === "ArrowLeft")) { if (!busy) cmd("/tas/rewind", { ticks: n }); }
+      else if (e.code === "Backslash" || (!keyboard && e.code === "Space")) {
         // Space would scroll the page, or click the focused button on its keyup: blur it so the key only plays/holds.
         if (e.code === "Space") (document.activeElement as HTMLElement | null)?.blur();
         if (tas.phase === "playing") cmd("/tas/hold"); else if (!busy && !tas.ended) cmd("/tas/play", { slowdown: speed }); }
       else if (e.code === "Quote") { if (tas.phase === "recording") cmd("/tas/record/stop"); else if (!busy && !tas.ended) cmd("/tas/record", { slowdown: recordSpeed }); }
       else return;
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!keys.current.keyboard || !GAME_KEYS[e.code]) return;
+      e.preventDefault(); e.stopPropagation();
+      pad.current.down.delete(e.code);
+      show();
+    };
+    const release = () => { pad.current = emptyPad(); show(); };
+    // Capture: ahead of the piano roll's own keys (arrows select rows there).
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", release);
+    return () => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKeyUp, true); window.removeEventListener("blur", release); };
   }, []);
+  useEffect(() => { pad.current = emptyPad(); setHeldKeys(""); }, [keyboard]);
   const edit = (from: number, deleteCount: number, insert: TasTick[]) => cmd("/tas/edit", { from, deleteCount, ticks: insert });
   const playTo = (until: number) => cmd("/tas/play", until > tas.cursor ? { slowdown: speed, until } : { slowdown: speed, until, from: Math.max(0, until - LEAD_IN) });
   const category = categories.find(c => c.id === tas.capabilities);
@@ -277,8 +365,13 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         <span className="tasSep"/>
         <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}>Grid</button>
         <button className={view === "text" ? "active" : ""} onClick={openText}>Text</button>
+        <span className="tasSep"/>
+        <button className={keyboard ? "active" : ""} aria-pressed={keyboard} title="Type game inputs here: hold keys, then ] writes them into the input it plays" onClick={toggleKeyboard}>⌨ Keyboard input</button>
+        {keyboard && <span className={`tasPad ${heldKeys ? "on" : ""}`} title="What the next ] writes">{heldKeys || "no keys"}</span>}
       </div>
-      <p className="tasKeys">Here or in game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind (here also <kbd>→</kbd> <kbd>←</kbd>, <kbd>Shift</kbd> for 10) · <kbd>\</kbd> play/hold (here also <kbd>Space</kbd>) · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close (in game). Held, the game waits before its next physics tick: nothing moves until you advance.</p>
+      {keyboard
+        ? <p className="tasKeys">Keyboard input: hold <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> stick · <kbd>Space</kbd> jump · <kbd>X</kbd> dash, then <kbd>]</kbd> writes them into the input it plays and advances (<kbd>Shift</kbd> for 10). A jump or dash pressed and let go between two advances goes in too. <kbd>[</kbd> rewind · <kbd>\</kbd> play/hold · <kbd>&apos;</kbd> re-record. Held, the game waits before its next physics tick: nothing moves until you advance.</p>
+        : <p className="tasKeys">Here or in game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind (here also <kbd>→</kbd> <kbd>←</kbd>, <kbd>Shift</kbd> for 10) · <kbd>\</kbd> play/hold (here also <kbd>Space</kbd>) · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close (in game). Held, the game waits before its next physics tick: nothing moves until you advance.</p>}
       {note && <div className="errorBanner tasNotice">{note}<button onClick={() => setNote("")}>×</button></div>}
     </div>
 

@@ -60,12 +60,15 @@ namespace IGTAPTasMod
         const float FlushGap = 1f;
 
         static readonly FieldInfo TrainerGroundMaskField = AccessTools.Field(typeof(Movement), "groundRaycastLayer");
+        // Read every frame while the trainer is shown (BackGap): by reference, not FieldInfo.GetValue's boxed copy.
+        static readonly AccessTools.FieldRef<Movement, LayerMask> TrainerGroundMask = TrainerGroundMaskField == null ? null
+            : AccessTools.FieldRefAccess<Movement, LayerMask>(TrainerGroundMaskField);
         static readonly FieldInfo TrainerJumpActionField = AccessTools.Field(typeof(Movement), "jumpAction");
 
         /// <summary>The back's gap to the wall behind (the hitbox reaches 15.5 u behind the centre: width 41, offset 5 forward).</summary>
         static float BackGap(Movement p, int wallSide)
         {
-            int mask = TrainerGroundMaskField != null && TrainerGroundMaskField.GetValue(p) is LayerMask m ? m.value : Physics2D.DefaultRaycastLayers;
+            int mask = TrainerGroundMask != null ? TrainerGroundMask(p).value : Physics2D.DefaultRaycastLayers;
             RaycastHit2D hit = Physics2D.Raycast(p.transform.position, new Vector2(wallSide, 0f), 400f, mask);
             return hit.collider == null ? -1f : Mathf.Max(0f, hit.distance - 15.5f);
         }
@@ -92,9 +95,13 @@ namespace IGTAPTasMod
         int _trainerStyleHeight;
 
         static readonly FieldInfo TrainerWallCoyoteField = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
+        static readonly AccessTools.FieldRef<Movement, float> TrainerWallCoyote = TrainerWallCoyoteField == null ? null
+            : AccessTools.FieldRefAccess<Movement, float>(TrainerWallCoyoteField);
         static readonly FieldInfo TrainerWaitingField = AccessTools.Field(typeof(Movement), "WaitingForDashInput");
         static readonly FieldInfo TrainerDashDirectionField = AccessTools.Field(typeof(Movement), "dashDirection");
         static readonly FieldInfo TrainerFreezeField = AccessTools.Field(typeof(Movement), "dashTimeStopTime");
+        static readonly AccessTools.FieldRef<Movement, float> TrainerFreeze = TrainerFreezeField == null ? null
+            : AccessTools.FieldRefAccess<Movement, float>(TrainerFreezeField);
         static readonly FieldInfo TrainerDashActionField = AccessTools.Field(typeof(Movement), "dashAction");
         static readonly FieldInfo TrainerPauseActionField = AccessTools.Field(typeof(pauseMenuScript), "pauseAction");
 
@@ -117,7 +124,7 @@ namespace IGTAPTasMod
             float now = Time.unscaledTime;
             bool paused = p.pauseMenu != null && p.pauseMenu.menuOpen;
             bool frozen = Time.timeScale == 0f && !paused;
-            float wallCoyote = TrainerWallCoyoteField != null ? (float)TrainerWallCoyoteField.GetValue(p) : 0f;
+            float wallCoyote = TrainerWallCoyote != null ? TrainerWallCoyote(p) : 0f;
             tr.Clinging = p.OnWall && wallCoyote >= p.maxWallCoyoteFrames && !p.dashActive;
             if (tr.Clinging) tr.WallSide = p.transform.localScale.x < 0f ? -1 : 1;
             bool facingAway = (p.transform.localScale.x < 0f ? -1 : 1) == -tr.WallSide;
@@ -265,7 +272,7 @@ namespace IGTAPTasMod
             if (_trainerTitle == null || _trainerStyleHeight != Screen.height) BuildTrainerStyles(scale);
             // The freeze as it happened on this dash once it has ended (live), else the last one measured, else the game's setting.
             float freeze = tr.Active && tr.FreezeEnd >= 0f ? tr.FreezeEnd - tr.DashAt
-                : tr.Freeze > 0f ? tr.Freeze : TrainerFreezeField != null ? (float)TrainerFreezeField.GetValue(p) : 0.05f;
+                : tr.Freeze > 0f ? tr.Freeze : TrainerFreeze != null ? TrainerFreeze(p) : 0.05f;
             bool measured = tr.WindowFrom >= 0f;
             // The pause window, timed from the end of the freeze. Before any attempt: the lifts come in the frames before the
             // dash's second physics tick after the freeze.
@@ -340,10 +347,17 @@ namespace IGTAPTasMod
             Label(new Rect(x, y, w, 26f * scale), message, _trainerText, s < 0 ? TrainerRed : s >= 3 ? TrainerGreen : TrainerWaiting);
         }
 
+        // The chips' measuring content, its text set per chip: a new GUIContent per chip was garbage on every drawn frame.
+        static readonly GUIContent TrainerChipContent = new GUIContent();
+
         float ChipsWidth(string[] chips, float scale)
         {
             float w = -10f * scale;
-            foreach (string chip in chips) w += _trainerText.CalcSize(new GUIContent(chip)).x + 28f * scale + 10f * scale;
+            foreach (string chip in chips)
+            {
+                TrainerChipContent.text = chip;
+                w += _trainerText.CalcSize(TrainerChipContent).x + 28f * scale + 10f * scale;
+            }
             return w;
         }
 
@@ -352,7 +366,8 @@ namespace IGTAPTasMod
         {
             for (int i = 0; i < chips.Length; i++)
             {
-                float width = _trainerText.CalcSize(new GUIContent(chips[i])).x + 28f * scale;
+                TrainerChipContent.text = chips[i];
+                float width = _trainerText.CalcSize(TrainerChipContent).x + 28f * scale;
                 Color fill = states[i] > 0 ? new Color(0.15f, 0.6f, 0.25f, 0.95f) : states[i] < 0 ? new Color(0.7f, 0.18f, 0.15f, 0.95f) : new Color(1f, 1f, 1f, 0.12f);
                 var chip = new Rect(x, y, width, 34f * scale);
                 Fill(chip, fill);
@@ -369,7 +384,7 @@ namespace IGTAPTasMod
         /// </summary>
         void DrawTrainerTimeline(Rect r, PauseliftTrainer tr, float freeze, float from, float to)
         {
-            float setting = TrainerFreezeField != null ? (float)TrainerFreezeField.GetValue(tr.Player) : 0.05f;
+            float setting = TrainerFreeze != null ? TrainerFreeze(tr.Player) : 0.05f;
             float span = setting + 0.025f + 3f * Time.fixedDeltaTime + 0.02f;
             float barY = r.y + r.height * 0.1f, barH = r.height * 0.45f;
             Fill(new Rect(r.x, barY, r.width, barH), new Color(1f, 1f, 1f, 0.08f));

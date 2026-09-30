@@ -241,7 +241,9 @@ namespace IGTAPTasMod
         static Rect PlayerBounds(Movement player)
         {
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
-            foreach (BoxCollider2D box in player.GetComponents<BoxCollider2D>())
+            // Every physics tick (FullTasAreaGoal): the colliders into the one shared list, not a new array each tick.
+            player.GetComponents(TouchBoxes);
+            foreach (BoxCollider2D box in TouchBoxes)
             {
                 if (!box.enabled) continue;
                 Bounds b = box.bounds;

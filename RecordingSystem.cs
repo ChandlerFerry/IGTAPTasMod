@@ -9,18 +9,15 @@ namespace IGTAPTasMod
 {
     internal sealed class InputRecorder
     {
-        private static readonly FieldInfo JumpBuffer = AccessTools.Field(typeof(Movement), "jumpBuffer");
-        private static readonly FieldInfo JumpCutBuffer = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
-        private static readonly FieldInfo DashBuffer = AccessTools.Field(typeof(Movement), "dashBuffer");
-        private static readonly FieldInfo OnGround = AccessTools.Field(typeof(Movement), "onGround");
-        private static readonly FieldInfo OnWall = AccessTools.Field(typeof(Movement), "OnWall");
-        private static readonly FieldInfo WallCoyote = AccessTools.Field(typeof(Movement), "wallCoyoteFrames");
-        private static readonly FieldInfo WallSide = AccessTools.Field(typeof(Movement), "wallCoyoteDir");
-        private static readonly FieldInfo JumpAction = AccessTools.Field(typeof(Movement), "jumpAction");
-        private static readonly FieldInfo DashAction = AccessTools.Field(typeof(Movement), "dashAction");
-        private static readonly FieldInfo FramesSinceLastDash = AccessTools.Field(typeof(Movement), "framesSinceLastDash");
-        private static readonly FieldInfo DashDirection = AccessTools.Field(typeof(Movement), "dashDirection");
-        private static readonly FieldInfo FacingRight = AccessTools.Field(typeof(Movement), "facingRight");
+        // Read every tick while recording: typed refs, as FieldInfo.GetValue boxes each read.
+        private static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer");
+        private static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
+        private static readonly AccessTools.FieldRef<Movement, bool> DashBuffer = AccessTools.FieldRefAccess<Movement, bool>("dashBuffer");
+        private static readonly AccessTools.FieldRef<Movement, float> WallCoyote = AccessTools.FieldRefAccess<Movement, float>("wallCoyoteFrames");
+        private static readonly AccessTools.FieldRef<Movement, float> WallSide = AccessTools.FieldRefAccess<Movement, float>("wallCoyoteDir");
+        private static readonly AccessTools.FieldRef<Movement, InputAction> JumpAction = AccessTools.FieldRefAccess<Movement, InputAction>("jumpAction");
+        private static readonly AccessTools.FieldRef<Movement, InputAction> DashAction = AccessTools.FieldRefAccess<Movement, InputAction>("dashAction");
+        private static readonly AccessTools.FieldRef<Movement, Vector2> DashDirection = AccessTools.FieldRefAccess<Movement, Vector2>("dashDirection");
 
         private bool _lastJump;
         private bool _lastCut;
@@ -44,9 +41,9 @@ namespace IGTAPTasMod
         public void SeedEdges(Movement movement)
         {
             if (movement == null) return;
-            _lastJump = Read<bool>(JumpBuffer, movement);
-            _lastCut = Read<bool>(JumpCutBuffer, movement);
-            _lastDash = Read<bool>(DashBuffer, movement);
+            _lastJump = JumpBuffer(movement);
+            _lastCut = JumpCutBuffer(movement);
+            _lastDash = DashBuffer(movement);
         }
 
         public RecordingDefinition Stop(string reason)
@@ -96,11 +93,12 @@ namespace IGTAPTasMod
         public void FixedTick(Movement movement)
         {
             if (!IsRecording || movement == null) return;
-            bool jump = Read<bool>(JumpBuffer, movement);
-            bool cut = Read<bool>(JumpCutBuffer, movement);
-            bool dash = Read<bool>(DashBuffer, movement);
-            InputAction jumpAction = Read<InputAction>(JumpAction, movement);
-            InputAction dashAction = Read<InputAction>(DashAction, movement);
+            bool jump = JumpBuffer(movement);
+            bool cut = JumpCutBuffer(movement);
+            bool dash = DashBuffer(movement);
+            InputAction jumpAction = JumpAction(movement);
+            InputAction dashAction = DashAction(movement);
+            Vector2 origin = TasPlugin.CurrentOrigin();
             Vector3 position = movement.transform.position;
             Current.samples.Add(new RawTickSample {
                 tick = _tick++,
@@ -109,9 +107,9 @@ namespace IGTAPTasMod
                 jumpReleased = cut && !_lastCut, dashPressed = dash && !_lastDash,
                 dashHeld = dashAction != null ? dashAction.IsPressed() : dash,
                 positionX = position.x, positionY = position.y,
-                originX = TasPlugin.CurrentOrigin().x, originY = TasPlugin.CurrentOrigin().y,
-                onGround = Read<bool>(OnGround, movement), onWall = Read<bool>(OnWall, movement),
-                wallCoyoteFrames = Read<float>(WallCoyote, movement), wallSide = Read<float>(WallSide, movement)
+                originX = origin.x, originY = origin.y,
+                onGround = movement.onGround, onWall = movement.OnWall,
+                wallCoyoteFrames = WallCoyote(movement), wallSide = WallSide(movement)
             });
             _lastJump = jump;
             _lastCut = cut;
@@ -121,15 +119,15 @@ namespace IGTAPTasMod
         public void DashFrame(Movement movement)
         {
             if (!IsRecording || movement == null || Current.samples.Count == 0) return;
-            bool jump = Read<bool>(JumpBuffer, movement);
+            bool jump = JumpBuffer(movement);
             RawTickSample dash = Current.samples[Current.samples.Count - 1];
             if (jump && !_lastJump && dash.dashPressed && dash.dashJumpFrame == 0)
-                dash.dashJumpFrame = Math.Max(1, (int)Read<float>(FramesSinceLastDash, movement));
+                dash.dashJumpFrame = Math.Max(1, (int)movement.framesSinceLastDash);
             // The dash's first frame after its start: facing is still the way it started, dashDirection is the way the stick
             // held in its freeze turned it (a dash started with the stick at rest waits for one).
-            if (dash.dashPressed && !dash.dashTurnX.HasValue && !dash.dashTurnY.HasValue && Read<float>(FramesSinceLastDash, movement) == 1f)
+            if (dash.dashPressed && !dash.dashTurnX.HasValue && !dash.dashTurnY.HasValue && movement.framesSinceLastDash == 1f)
             {
-                Vector2 turned = Read<Vector2>(DashDirection, movement);
+                Vector2 turned = DashDirection(movement);
                 if (turned.y != 0f && dash.moveX == 0f && dash.moveY == 0f)
                 {
                     // An omnidash aimed in its freeze: dashDirection is the normalized (x, ±1) NormaliseInput passed, so x is
@@ -137,17 +135,10 @@ namespace IGTAPTasMod
                     dash.dashTurnX = turned.x / Mathf.Abs(turned.y);
                     dash.dashTurnY = Mathf.Sign(turned.y);
                 }
-                else if (turned.y == 0f && turned.x != 0f && Mathf.Sign(turned.x) != (Read<bool>(FacingRight, movement) ? 1f : -1f))
+                else if (turned.y == 0f && turned.x != 0f && Mathf.Sign(turned.x) != (movement.facingRight ? 1f : -1f))
                     dash.dashTurnX = Mathf.Sign(turned.x);
             }
             _lastJump = jump;
-        }
-
-        private static T Read<T>(FieldInfo field, object instance)
-        {
-            if (field == null) return default(T);
-            object value = field.GetValue(instance);
-            return value is T ? (T)value : default(T);
         }
     }
 

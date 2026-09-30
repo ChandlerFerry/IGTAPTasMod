@@ -20,8 +20,9 @@ namespace IGTAPTasMod
     {
         private object HandleWebRequest(WebStudioRequest request)
         {
-            // Any command can change what GET /api/state/static returns.
-            if (request.Method != "GET") BumpWebState();
+            // Any command can change what GET /api/state/static returns, but an open TAS session's own commands (step, seek, edit,
+            // hover...) change only the live part: its route reaches routes.json, and the static part, when the session closes.
+            if (request.Method != "GET" && !TasSessionCommand(request.Path)) BumpWebState();
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
             // An avoid box drawn on a course's search map edits forced-paths.json (a new partial file, not the engine bridge).
             if (request.Path == "/api/enginesim/avoid") return HandleCourseAvoid(body);
@@ -336,24 +337,39 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
-        // The studio polls GET /api/state/live (the small, fast-changing part) and fetches GET /api/state/static (routes,
-        // recordings, savestates, courses, Full-TAS runs, techs) again only when the live part's staticVersion changes
-        // (_webStateVersion). It changes with every command (any request but a GET), every write through WriteJsonAtomic,
-        // and within a second of anything else the static part reads (WebStateStamp). GET /api/state is both parts in one,
-        // for tools.
+        /// <summary>A command to the open TAS session (TasPlugin.Editor.cs HandleTas past its session check): not open, new,
+        /// from-best, close or share/*, which add routes or write routes.json.</summary>
+        static bool TasSessionCommand(string path)
+        {
+            if (!path.StartsWith("/api/tas/", StringComparison.Ordinal)) return false;
+            string command = path.Substring("/api/tas/".Length);
+            return command != "open" && command != "new" && command != "from-best" && command != "close" && !command.StartsWith("share/", StringComparison.Ordinal);
+        }
+
+        // The studio's socket (GET /api/ws, WebStudioServer.PushState) gets the live part (BuildLiveWebState, small and
+        // fast-changing) whenever its JSON changes, checked every 33 ms at most, and the static part (routes, recordings,
+        // savestates, courses, Full-TAS runs, techs) again only when staticVersion (_webStateVersion) changes. It changes
+        // with every command but an open TAS session's own (TasSessionCommand), every write through WriteJsonAtomic, and
+        // within a second of anything else the static part reads (WebStateStamp). GET /api/state/live and
+        // GET /api/state/static serve the same parts over HTTP, GET /api/state both in one, for tools.
         void BumpWebState() { _webStateVersion++; }
 
         long WebStateVersion()
         {
-            if (Time.unscaledTime >= _webStateCheckAt)
+            // A file scan finished since the last check is folded in at once, not a second later.
+            long files = System.Threading.Interlocked.Read(ref _webStateFiles);
+            bool due = Time.unscaledTime >= _webStateCheckAt;
+            if (due || files != _webStateFilesSeen)
             {
-                _webStateCheckAt = Time.unscaledTime + 1f;
-                long stamp = WebStateStamp();
+                if (due) _webStateCheckAt = Time.unscaledTime + 1f;
+                _webStateFilesSeen = files;
+                long stamp = WebStateStamp(files);
                 if (stamp != _webStateStamp)
                 {
                     _webStateStamp = stamp;
                     BumpWebState();
                 }
+                if (due && !PlaybackActive) StartWebStateFileScan();
             }
             return _webStateVersion;
         }
@@ -362,23 +378,13 @@ namespace IGTAPTasMod
         /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
         /// lab tools write (Full-TAS bests, closest attempts, faster ways, traces, lab maps and demos, forced-paths.json),
         /// fulltas.json edited by hand, the lists' sizes, playback, recording and solving starting or ending, the scene, and
-        /// the bonus reward boxes' purchases (the courses' hints).
+        /// the bonus reward boxes' purchases (the courses' hints). The files come as <paramref name="files"/>, the last
+        /// <see cref="StartWebStateFileScan"/>'s hash.
         /// </summary>
-        long WebStateStamp()
+        long WebStateStamp(long files)
         {
             long h = 17;
             void Add(long value) { h = h * 31 + value; }
-            void AddFile(string path) { Add(File.GetLastWriteTimeUtc(path).Ticks); }
-            void AddDirectory(string dir)
-            {
-                if (!Directory.Exists(dir)) { Add(0); return; }
-                foreach (FileInfo file in new DirectoryInfo(dir).GetFiles("*.json"))
-                {
-                    Add(file.Name.GetHashCode());
-                    Add(file.LastWriteTimeUtc.Ticks);
-                    Add(file.Length);
-                }
-            }
             Add(PlaybackActive ? 1 : 0);
             Add(_recorder.IsRecording ? 1 : 0);
             Add(_solverRunning ? 1 : 0);
@@ -392,16 +398,55 @@ namespace IGTAPTasMod
             Add(_fullTasRuns.Count);
             Add(_fullTasSplits.Count);
             foreach (upgradeBox box in _bonusRewardBoxes.Values) Add(box != null ? box.TimesUsed : -1);
-            // The files not while a route plays: the directory scans (hundreds of lab files) would cost 1x playback's paced
-            // frames once a second. What changed on disk meanwhile shows at the first check after it.
+            // The files not while a route plays: a static state rebuilt for them would cost 1x playback's paced frames. What
+            // changed on disk meanwhile shows at the first check after it.
             if (PlaybackActive) return h;
-            AddFile(FullTasPath);
-            AddFile(FullTasSplitsPath);
-            AddDirectory(Path.Combine(EngineSimDir, "fulltas"));
-            foreach (FullTasRunDef run in _fullTasRuns) Add(File.Exists(FullTasTracePath(run.name)) ? 1 : 0);
-            AddDirectory(LabMapsDir);
-            if (ForcedPathsFile != null) AddFile(ForcedPathsFile);
+            Add(files);
             return h;
+        }
+
+        // The files' part of WebStateStamp, hashed on a pool thread (stat calls on hundreds of lab and solver files took the
+        // main thread's frame once a second) and read by the next check; _webStateFilesBusy is 1 while a scan runs.
+        long _webStateFiles, _webStateFilesSeen;
+        int _webStateFilesBusy;
+
+        /// <summary>Hashes the files WebStateStamp watches off the main thread; the paths are taken here, on it.</summary>
+        void StartWebStateFileScan()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _webStateFilesBusy, 1, 0) != 0) return;
+            string fullTas = FullTasPath, splits = FullTasSplitsPath, fullTasDir = Path.Combine(EngineSimDir, "fulltas"), labs = LabMapsDir,
+                forced = ForcedPathsFile;
+            string[] traces = new string[_fullTasRuns.Count];
+            for (int i = 0; i < traces.Length; i++) traces[i] = FullTasTracePath(_fullTasRuns[i].name);
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    long h = 17;
+                    void Add(long value) { h = h * 31 + value; }
+                    void AddFile(string path) { Add(File.GetLastWriteTimeUtc(path).Ticks); }
+                    void AddDirectory(string dir)
+                    {
+                        if (!Directory.Exists(dir)) { Add(0); return; }
+                        foreach (FileInfo file in new DirectoryInfo(dir).GetFiles("*.json"))
+                        {
+                            Add(file.Name.GetHashCode());
+                            Add(file.LastWriteTimeUtc.Ticks);
+                            Add(file.Length);
+                        }
+                    }
+                    AddFile(fullTas);
+                    AddFile(splits);
+                    AddDirectory(fullTasDir);
+                    foreach (string trace in traces) Add(File.Exists(trace) ? 1 : 0);
+                    AddDirectory(labs);
+                    if (forced != null) AddFile(forced);
+                    System.Threading.Interlocked.Exchange(ref _webStateFiles, h);
+                }
+                // A file that went mid-scan: the next scan, a second later, takes them again.
+                catch (Exception) { }
+                finally { System.Threading.Interlocked.Exchange(ref _webStateFilesBusy, 0); }
+            });
         }
 
         /// <summary>A caps object (the web API's): what a set of unlocks has.</summary>
@@ -414,7 +459,7 @@ namespace IGTAPTasMod
         private object BuildLiveWebState()
         {
             MacroDefinition selected = SelectedMacro;
-            Movement player = FindWorldMovement();
+            Movement player = LiveWorldMovement();
             return new { connected = true, version = PluginVersion, staticVersion = WebStateVersion(), engineStatus = _engine.Status,
                 saveUnlocks = player == null ? null : CapsWebState(SaveUnlocks(player)),
                 paused = IsGamePaused(player),
@@ -426,7 +471,7 @@ namespace IGTAPTasMod
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState(), tas = BuildTasLiveState() };
+                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState(), tas = BuildTasLiveState(player) };
         }
 
         private object BuildStaticWebState()

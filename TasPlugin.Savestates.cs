@@ -167,7 +167,7 @@ namespace IGTAPTasMod
         /// </summary>
         static void LeaveCourses(Movement movement)
         {
-            foreach (courseScript course in FindObjectsByType<courseScript>(FindObjectsSortMode.None)) CourseTrackingField.SetValue(course, false);
+            foreach (courseScript course in FindObjectsByType<courseScript>(FindObjectsSortMode.None)) CourseTracking(course) = false;
             movement.courseResetPoint = Vector2.zero;
         }
 
@@ -186,7 +186,11 @@ namespace IGTAPTasMod
         /// </summary>
         private void KeepInterpolation(Movement movement)
         {
-            if (_playerBody == null || _playerBody.gameObject != movement.gameObject) _playerBody = movement.GetComponent<Rigidbody2D>();
+            if (_playerBody == null || !ReferenceEquals(_playerBodyOwner, movement))
+            {
+                _playerBody = movement.GetComponent<Rigidbody2D>();
+                _playerBodyOwner = movement;
+            }
             if (_playerBody != null && _playerBody.interpolation != RigidbodyInterpolation2D.Interpolate)
                 _playerBody.interpolation = RigidbodyInterpolation2D.Interpolate;
         }

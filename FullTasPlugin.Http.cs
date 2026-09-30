@@ -21,6 +21,7 @@ namespace IGTAPTasMod
         {
             _fullTasLog.Add(line);
             if (_fullTasLog.Count > MaxFullTasLog) _fullTasLog.RemoveRange(0, _fullTasLog.Count - MaxFullTasLog);
+            _fullTasLogVersion++;
             Logger.LogInfo("Full-TAS: " + line);
         }
 
@@ -111,10 +112,22 @@ namespace IGTAPTasMod
 
         void PumpFullTas()
         {
-            if (Time.unscaledTime >= _fullTasCheckAt && _fullTas == null && _fullTasPending == null && !_silentEvaluation)
+            bool idle = _fullTas == null && _fullTasPending == null && !_silentEvaluation;
+            long written = System.Threading.Interlocked.Exchange(ref _fullTasStat, -1);
+            if (written > 0 && idle && _fullTasWritten == _fullTasStatOf && written != _fullTasWritten.Ticks) LoadFullTas();
+            if (Time.unscaledTime >= _fullTasCheckAt && idle && System.Threading.Interlocked.CompareExchange(ref _fullTasStatBusy, 1, 0) == 0)
             {
                 _fullTasCheckAt = Time.unscaledTime + 1f;
-                if (File.Exists(FullTasPath) && File.GetLastWriteTimeUtc(FullTasPath) != _fullTasWritten) LoadFullTas();
+                _fullTasStatOf = _fullTasWritten;
+                string path = FullTasPath;
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    long ticks = 0;
+                    try { if (File.Exists(path)) ticks = File.GetLastWriteTimeUtc(path).Ticks; }
+                    catch (Exception) { }
+                    System.Threading.Interlocked.Exchange(ref _fullTasStat, ticks);
+                    System.Threading.Interlocked.Exchange(ref _fullTasStatBusy, 0);
+                });
             }
             PumpFullTasPending();
             PumpFullTasSolve();
@@ -255,7 +268,8 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             return new {
                 solve = new { running = _fullTasProcess != null, name = _fullTasSolveRun, status = _fullTasSolveStatus, error = _fullTasSolveError,
-                    command = _fullTasCommand, events = _fullTasEvents, progress = _fullTasProgress, log = _fullTasLog,
+                    command = _fullTasCommand, events = FullTasListJson(_fullTasEvents, _fullTasEventsVersion, ref _fullTasEventsJson, ref _fullTasEventsJsonAt),
+                    progress = _fullTasProgress, log = FullTasListJson(_fullTasLog, _fullTasLogVersion, ref _fullTasLogJson, ref _fullTasLogJsonAt),
                     outlook = _fullTasOutlook, pulls = _fullTasPulls },
                 lastResult = _fullTasLastResult,
                 goalsOverlay = _settings.fullTasGoalsRun,
@@ -263,6 +277,20 @@ namespace IGTAPTasMod
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
                     next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks,
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };
+        }
+
+        /// <summary>
+        /// A solve list (events, log) as the raw JSON the serialiser would write for it, serialised again only when its
+        /// <paramref name="version"/> moved: the live state is checked every 33 ms and the lists stay full after a solve.
+        /// </summary>
+        static JRaw FullTasListJson(object list, int version, ref string json, ref int jsonAt)
+        {
+            if (json == null || jsonAt != version)
+            {
+                json = JsonConvert.SerializeObject(list);
+                jsonAt = version;
+            }
+            return new JRaw(json);
         }
     }
 }

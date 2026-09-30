@@ -710,12 +710,28 @@ namespace IGTAPTasMod
             Logger.LogInfo("Lab map " + lab.Id + " restored (" + why + ").");
         }
 
+        // The active scene's name by its handle: Scene.name makes a new string on every call, and PumpLabMap compares it every
+        // frame. A loaded scene keeps its handle and name; another scene (a reload of the same one too) has another handle.
+        int _labSceneHandle;
+        string _labSceneName;
+
+        string ActiveSceneName()
+        {
+            Scene scene = SceneManager.GetActiveScene();
+            if (_labSceneName == null || scene.handle != _labSceneHandle)
+            {
+                _labSceneHandle = scene.handle;
+                _labSceneName = scene.name;
+            }
+            return _labSceneName;
+        }
+
         /// <summary>Restores the lab map on a scene change or at a playback's end (plugin Update).</summary>
         void PumpLabMap()
         {
             if (_lab == null) return;
             if (_lab.Ghosts.Count > 0) AnimateLabGhosts();
-            if (!string.Equals(_lab.Scene, SceneManager.GetActiveScene().name, StringComparison.Ordinal))
+            if (!string.Equals(_lab.Scene, ActiveSceneName(), StringComparison.Ordinal))
             {
                 RestoreLab("scene change");
                 return;

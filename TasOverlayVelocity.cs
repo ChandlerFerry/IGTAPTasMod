@@ -16,6 +16,8 @@ namespace IGTAPTasMod
         const float MaxNudge = 100f, NudgeLingerSeconds = 1.5f;
         string _nudgeText;
         float _nudgeTime = float.NegativeInfinity;
+        // What _nudgeText was built from: each axis rounded (Axis), int.MinValue for an axis left out (0).
+        int _nudgeTextX = int.MaxValue, _nudgeTextY = int.MaxValue;
 
         void SampleVelocity(Movement player)
         {
@@ -27,7 +29,13 @@ namespace IGTAPTasMod
             Vector2 nudge = (Vector2)player.transform.position - _positionBeforeTick;
             if (nudge.sqrMagnitude > 1e-4f && nudge.sqrMagnitude < MaxNudge * MaxNudge)
             {
-                _nudgeText = (nudge.x != 0f ? Axis(nudge.x, "←", "→") + "  " : "") + (nudge.y != 0f ? Axis(nudge.y, "↓", "↑") : "");
+                int x = nudge.x != 0f ? Mathf.RoundToInt(nudge.x) : int.MinValue, y = nudge.y != 0f ? Mathf.RoundToInt(nudge.y) : int.MinValue;
+                if (x != _nudgeTextX || y != _nudgeTextY)
+                {
+                    _nudgeTextX = x;
+                    _nudgeTextY = y;
+                    _nudgeText = (nudge.x != 0f ? Axis(nudge.x, "←", "→") + "  " : "") + (nudge.y != 0f ? Axis(nudge.y, "↓", "↑") : "");
+                }
                 _nudgeTime = Time.unscaledTime;
             }
         }
@@ -55,31 +63,45 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<clonesScript, List<GameObject>> OverlayActiveClones = AccessTools.FieldRefAccess<clonesScript, List<GameObject>>("activeClones");
         static readonly AccessTools.FieldRef<clonesScript, int> OverlayCloneCount = AccessTools.FieldRefAccess<clonesScript, int>("cloneCount");
         static readonly AccessTools.FieldRef<clonesScript, courseScript> OverlayCloneCourse = AccessTools.FieldRefAccess<clonesScript, courseScript>("course");
-        clonesScript[] _overlayClones = new clonesScript[0];
-        float _overlayClonesScanTime = float.NegativeInfinity;
+        clonesScript[] _overlayClones;
+        int _overlayClonesGeneration;
         clonesScript _peakClones;
         int _peakCloneCount;
         string _clonesText = "";
+        // What _clonesText was built from (the course, the clones on screen, bought, the peak): built again only on a change.
+        courseScript _clonesTextCourse;
+        int _clonesTextCourseNumber, _clonesTextActive = -1, _clonesTextBought, _clonesTextPeak;
 
         void SampleClones()
         {
-            if (Time.unscaledTime - _overlayClonesScanTime >= SpikeScanSeconds)
+            // The courses' clone scripts are found once per scene load or unload (the game creates none at run time), inactive
+            // ones too; one on an inactive object counts as absent, as a find that leaves those out would have it.
+            int generation = SceneGeneration;
+            if (_overlayClones == null || generation != _overlayClonesGeneration)
             {
-                _overlayClonesScanTime = Time.unscaledTime;
-                _overlayClones = FindObjectsByType<clonesScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                _overlayClonesGeneration = generation;
+                _overlayClones = FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             }
             clonesScript best = null;
             int active = 0;
             foreach (clonesScript c in _overlayClones)
             {
-                int n = c == null || !c.onScreen ? 0 : OverlayActiveClones(c)?.Count ?? 0;
+                int n = c == null || !c.onScreen || !c.gameObject.activeInHierarchy ? 0 : OverlayActiveClones(c)?.Count ?? 0;
                 if (n > active) { best = c; active = n; }
             }
-            if (best == null) { _peakClones = null; _peakCloneCount = 0; _clonesText = ""; return; }
+            if (best == null) { _peakClones = null; _peakCloneCount = 0; _clonesText = ""; _clonesTextActive = -1; return; }
             if (!ReferenceEquals(best, _peakClones)) { _peakClones = best; _peakCloneCount = 0; }
             _peakCloneCount = Mathf.Max(_peakCloneCount, active);
             courseScript course = OverlayCloneCourse(best);
-            _clonesText = (course != null ? "C" + course.courseNumber + "  " : "") + active + " / " + OverlayCloneCount(best) + "   (peak " + _peakCloneCount + ")";
+            int bought = OverlayCloneCount(best), number = course != null ? course.courseNumber : int.MinValue;
+            if (ReferenceEquals(course, _clonesTextCourse) && number == _clonesTextCourseNumber && active == _clonesTextActive && bought == _clonesTextBought
+                && _peakCloneCount == _clonesTextPeak) return;
+            _clonesTextCourse = course;
+            _clonesTextCourseNumber = number;
+            _clonesTextActive = active;
+            _clonesTextBought = bought;
+            _clonesTextPeak = _peakCloneCount;
+            _clonesText = (course != null ? "C" + course.courseNumber + "  " : "") + active + " / " + bought + "   (peak " + _peakCloneCount + ")";
         }
 
         static string Axis(float v, string negative, string positive)
@@ -88,10 +110,23 @@ namespace IGTAPTasMod
             return n == 0 ? "0" : (n < 0 ? negative : positive) + " " + Mathf.Abs(n).ToString("N0");
         }
 
+        // The whole units each _velocityText was built from (Axis rounds), and the ratio _velocityRatioText shows: a tick
+        // builds a text again only when what it reads changed.
+        readonly int[] _velocityRounded = new int[8];
+        float _velocityRatio = float.NaN;
+
         void SetVelocityText(int part, Vector2 v)
         {
-            _velocityText[2 * part] = Axis(v.x, "←", "→");
-            _velocityText[2 * part + 1] = Axis(v.y, "↓", "↑");
+            SetAxisText(2 * part, v.x, "←", "→");
+            SetAxisText(2 * part + 1, v.y, "↓", "↑");
+        }
+
+        void SetAxisText(int slot, float v, string negative, string positive)
+        {
+            int n = Mathf.RoundToInt(v);
+            if (_velocityText[slot] != null && n == _velocityRounded[slot]) return;
+            _velocityRounded[slot] = n;
+            _velocityText[slot] = Axis(v, negative, positive);
         }
 
         void BuildVelocityText()
@@ -102,7 +137,16 @@ namespace IGTAPTasMod
             SetVelocityText(1, _velocityMomentum);
             SetVelocityText(2, _velocityPlatform);
             SetVelocityText(3, total);
-            _velocityRatioText = _velocityCap > 0f ? (Mathf.Abs(total.x) / _velocityCap).ToString("0.00") + "×" : "";
+            if (!(_velocityCap > 0f)) _velocityRatioText = "";
+            else
+            {
+                float ratio = Mathf.Abs(total.x) / _velocityCap;
+                if (_velocityRatioText == null || _velocityRatioText.Length == 0 || ratio != _velocityRatio)
+                {
+                    _velocityRatio = ratio;
+                    _velocityRatioText = ratio.ToString("0.00") + "×";
+                }
+            }
         }
 
         static readonly string[] VelocityPartNames = { "RUN", "MOMENTUM", "PLATFORM" };
@@ -155,10 +199,8 @@ namespace IGTAPTasMod
                 y += rowHeight;
                 if (i != 1) continue;
                 Label(new Rect(x, y, labelWidth, rowHeight), "NUDGE", _overlaySmall, MutedColor);
-                // Its value fades on the wall clock, so a cached panel (DrawCachedPanels) leaves it to the live pass.
-                Rect nudge = new Rect(xColumn, y, 2 * columnWidth, rowHeight);
-                if (_panelCaching) _nudgeRect = nudge;
-                else DrawNudge(nudge);
+                // Its value fades on the wall clock: the panel is cached (DrawCachedPanels), which draws it live over the cache.
+                _nudgeRect = new Rect(xColumn, y, 2 * columnWidth, rowHeight);
                 y += rowHeight;
             }
 
@@ -175,7 +217,7 @@ namespace IGTAPTasMod
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _clonesText, _overlayText, MutedColor);
             y += rowHeight;
             Label(new Rect(x, y, labelWidth, rowHeight), "SEED (unoptimized)", _overlaySmall, MutedColor);
-            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), SeedText, _overlayText, MutedColor);
             DrawDebugSection(panel, x, y + rowHeight, scale);
         }
 
@@ -189,5 +231,6 @@ namespace IGTAPTasMod
 
         /// <summary>Interpolation stays on; playback runs on the fixed clock that turbo and enginesim model (MacroEngine.FrameGrid).</summary>
         static readonly string InterpolationText = "ON (" + MacroEngine.PlaybackFrameRate.ToString(CultureInfo.InvariantCulture) + " FPS CLOCK)";
+        static readonly string SeedText = FullTasSeed.ToString(CultureInfo.InvariantCulture);
     }
 }

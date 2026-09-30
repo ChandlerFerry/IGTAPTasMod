@@ -8,8 +8,7 @@ import { TechPanel, type TechState } from "./techs";
 import { PlaceLoadstate, TasEditor, type PlacePrefill, type TasLive } from "./tas-editor";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
 import { artTiles, capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
-
-const API = "http://127.0.0.1:17426/api";
+import { request, subscribe } from "./studio-socket";
 
 type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
 type Route = { id: string; name: string; actionCount: number; actions: Action[] };
@@ -57,29 +56,19 @@ type StudioState = {
   techs?: TechState;
   tas?: TasLive | null;
 };
-// GET /state/static: the heavy part, fetched again only when /state/live's staticVersion changes.
+// The static part (GET /state/static), pushed again when its staticVersion changes.
 type StaticState = { staticVersion: number; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
   fullTas?: Pick<FullTasState, "runs">; techs?: Pick<TechState, "list" | "detectors" | "labs"> };
-// GET /state/live: everything else, polled.
+// The live part (GET /state/live): everything else, pushed whenever it changes.
 type LiveState = Omit<StudioState, "routes" | "categories" | "courses" | "recordings" | "savestates" | "fullTas" | "techs"> & { staticVersion: number;
   fullTas?: Omit<FullTasState, "runs">; techs?: Pick<TechState, "injectedLab" | "seen"> };
 
 const emptyState: StudioState = { connected: false, version: "", engineStatus: "Connecting…", running: false, recording: false, paused: false, capabilitiesLocked: false, overlayShown: true, selectedRouteId: "", routes: [], categories: [], recordings: [], savestates: [], solver: { running: false, status: "Idle", course: 0, capabilities: "", evaluations: 0, finishes: 0, turboChecks: 0, turboSaved: 0, best: null, log: [], courses: [1, 2, 3] } };
 
-// The next live poll goes out this long after the last one's answer.
-const LIVE_POLL_MS = 250;
-
 function mergeState(s: StaticState, l: LiveState): StudioState {
   return { ...l, routes: s.routes, categories: s.categories, courses: s.courses, recordings: s.recordings, savestates: s.savestates,
     fullTas: s.fullTas && l.fullTas ? { ...s.fullTas, ...l.fullTas } : undefined,
     techs: s.techs && l.techs ? { ...s.techs, ...l.techs } : undefined };
-}
-
-async function request(path: string, body?: unknown) {
-  const response = await fetch(`${API}${path}`, { method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `Request failed (${response.status})`);
-  return data;
 }
 
 // Module-level so the Ultra map's load effect doesn't rerun on every render.
@@ -94,43 +83,24 @@ export default function Studio() {
   const [placePrefill, setPlacePrefill] = useState<PlacePrefill | null>(null);
   const saveUnlocks = state.connected ? state.saveUnlocks ?? null : null;
 
-  // The static part and the refresh that fetched it; a refresh's answer is shown only if no later one was shown already.
-  const staticState = useRef<{ from: number; data: StaticState } | null>(null);
-  const refreshes = useRef(0), shown = useRef(0);
-  const refresh = useCallback(async () => {
-    const id = ++refreshes.current;
-    try {
-      const live: LiveState = await request("/state/live");
-      let data = staticState.current?.data;
-      if (!data || data.staticVersion !== live.staticVersion) {
-        const fetched: StaticState = await request("/state/static");
-        const known = staticState.current;
-        if (known && id < known.from) data = known.data;
-        else { staticState.current = { from: id, data: fetched }; data = fetched; }
-      }
-      if (id < shown.current) return;
-      shown.current = id;
-      setState(mergeState(data, live)); setError("");
-    }
-    catch {
-      // A restarted game counts its versions from the start again.
-      staticState.current = null;
-      if (id < shown.current) return;
-      shown.current = id;
-      setState(s => ({ ...s, connected: false, engineStatus: "Game plugin offline" }));
-    }
-  }, []);
-
-  // Polls one at a time: the next goes out LIVE_POLL_MS after the last one's answer.
+  // The plugin pushes both parts over the studio socket (studio-socket.ts); each merges with the other's last.
   useEffect(() => {
-    let alive = true, timer = 0;
-    const poll = async () => { await refresh(); if (alive) timer = window.setTimeout(poll, LIVE_POLL_MS); };
-    poll();
-    return () => { alive = false; window.clearTimeout(timer); };
-  }, [refresh]);
+    let staticPart: StaticState | null = null, livePart: LiveState | null = null;
+    return subscribe({
+      static(data) { staticPart = data as StaticState; if (livePart) setState(mergeState(staticPart, livePart)); },
+      live(data) { livePart = data as LiveState; if (staticPart) setState(mergeState(staticPart, livePart)); },
+      status(connected) {
+        if (connected) { setError(""); return; }
+        // A restarted game counts its versions from the start again.
+        staticPart = livePart = null;
+        setState(s => ({ ...s, connected: false, engineStatus: "Game plugin offline" }));
+      },
+    });
+  }, []);
   const route = useMemo(() => state.routes.find(r => r.id === state.selectedRouteId) ?? state.routes[0], [state]);
+  // A command's reply comes after the state it left (WebStudioServer.Pump), so that state shows when it resolves.
   const command = async (path: string, body: unknown = {}) => {
-    try { setError(""); await request(path, body); await refresh(); return true; }
+    try { setError(""); await request(path, body); return true; }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
   };
   return <main className="shell">
@@ -1029,8 +999,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   </div>;
 }
 
-/** One matrix target: a course and category's record, or (courses only) its farm time; `time` its current best. */
-type SolveTarget = { key: string; body: CourseTarget; time?: number };
+/** One matrix target: a course and category. Improve checks every candidate for both times, so one job improves the record
+ * and (courses only; bonuses and transitions are timed in ticks) the farm time together. */
+type SolveTarget = { key: string; body: CourseTarget; time?: number; farmTime?: number; lapless: boolean };
 
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
 function usePasses(): [Passes, (update: Partial<Passes>) => void] {
@@ -1075,37 +1046,40 @@ function SolveMatrix({routes,courses,categories,solver,open,onOpen,onCommand}:{r
     ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
     ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]] as [string, Course[]][])
     .map(([label, list]): [string, Course[]] => [label, list.filter(c => c.categories.length > 0)]);
-  // Per category: the record target, and the farm target where a farm time is its own (bonuses and transitions are timed in
+  // Per category the one target: its record, with the farm time shown where it is its own (bonuses and transitions are timed in
   // ticks, so their record is their farm time).
-  const cells = (c: Course): SolveTarget[][] => categories.map(cat => !c.categories.includes(cat.id) ? []
-    : [{ key: `c:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id, farm: false }, time: best.get(`${c.id}:${cat.id}`)?.time },
-      ...(c.bonus || c.to ? [] : [{ key: `f:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id, farm: true }, time: farm.get(`${c.id}:${cat.id}`)?.time }])]);
-  const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).flat()));
+  const cells = (c: Course): (SolveTarget | null)[] => categories.map(cat => !c.categories.includes(cat.id) ? null
+    : { key: `c:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id, farm: false }, time: best.get(`${c.id}:${cat.id}`)?.time,
+      farmTime: farm.get(`${c.id}:${cat.id}`)?.time, lapless: !!(c.bonus || c.to) });
+  const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter((t): t is SolveTarget => t != null)));
   const queue = all.filter(t => selected.has(t.key));
-  const target = (t: SolveTarget) => { const opened = open?.course === t.body.course && open.capabilities === t.body.capabilities && open.farm === t.body.farm;
-    return <span key={t.key} className={`matrixCell ${t.body.farm ? "farm" : ""} ${selected.has(t.key) ? "on" : ""} ${opened ? "opened" : ""}`}>
-      <input type="checkbox" checked={selected.has(t.key)} title={`Improve ${t.body.farm ? "the farm time" : "the record"} in the batch`} onChange={() => toggle([t.key])} />
-      <button title={`${t.time != null ? `${t.body.farm ? "Farm" : "Record"} ${t.time.toFixed(2)}s` : "No route yet"}. Opens its route and waypoints in Improve a course.`} onClick={() => onOpen(t.body)}>
-        {t.body.farm ? "farm " : ""}{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</button></span>; };
+  const cell = (t: SolveTarget | null, level: number) => {
+    if (!t) return <td key={level} className="na" />;
+    const on = selected.has(t.key), opened = open?.course === t.body.course && open.capabilities === t.body.capabilities;
+    const times = `Record ${t.time != null ? `${t.time.toFixed(2)}s` : "none yet"}${t.lapless ? "" : `, farm ${t.farmTime != null ? `${t.farmTime.toFixed(2)}s` : "none yet"}`}`;
+    return <td key={level} className={`matrixCell ${on ? "on" : ""} ${opened ? "opened" : ""}`} role="button" tabIndex={0} aria-pressed={on}
+      title={`${times}. Click to ${on ? "drop it from" : "add it to"} the batch.`} onClick={() => toggle([t.key])}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle([t.key]); } }}>
+      <div className="matrixTimes"><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span>{!t.lapless && <small>farm {t.farmTime != null ? `${t.farmTime.toFixed(2)}s` : "—"}</small>}</div>
+      <button className="matrixOpen" title="Open its route and waypoints in Improve a course" aria-label="Open in Improve a course"
+        onClick={e => { e.stopPropagation(); onOpen(t.body); }} onKeyDown={e => e.stopPropagation()}>↗</button></td>; };
   const progress = solver.queue ?? [];
   return <div className="panel offlinePanel solveMatrix"><div className="panelTitle"><div><p className="eyebrow">BATCH</p><h2>Improve many</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{solver.running ? progressText(solver) || "Improving" : "Idle"}</span></div>
-    <p className="lede">Tick records and farm times; each one improves in turn.</p><details className="howTo"><summary>How it works</summary><ol><li>Click a time to open its route and waypoints.</li><li>Row or column headers tick whole groups.</li><li>Record: the game timer. Farm: restart to finish.</li><li>A target without a route gets a first solve.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li></ol></details>
+    <p className="lede">Pick cells; each improves its record and farm time together, in turn.</p><details className="howTo"><summary>How it works</summary><ol><li>Click a cell to add it to the batch; click again to drop it.</li><li>Row or column headers pick whole groups.</li><li>↗ opens its route and waypoints.</li><li>Every candidate is judged for both times: the record (game timer) and the farm time (restart to finish).</li><li>A target without a route gets a first solve.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li></ol></details>
     <div className="matrixTools">
       <button className="secondary" onClick={() => select(new Set(all.map(t => t.key)))}>All</button>
       <button className="secondary" onClick={() => select(new Set(all.filter(t => t.time != null).map(t => t.key)))} title="Only targets that already have a route">With a time</button>
-      <button className="secondary" onClick={() => select(new Set(all.filter(t => !t.body.farm).map(t => t.key)))} title="Every record target, no farm times">Records</button>
-      <button className="secondary" onClick={() => select(new Set(all.filter(t => t.body.farm).map(t => t.key)))} title="Every farm time">Farms</button>
       <button className="secondary" onClick={() => select(new Set())}>None</button>
     </div>
     <PassFields passes={passes} update={updatePasses} disabled={solver.running} />
     <div className="matrixScroll"><table className="matrix">
-      <thead><tr><th />{categories.map((cat, level) => <th key={cat.id}><button title={`${cat.label} — ${describeCaps(cat.caps)}. Ticks every target in this column.`} onClick={() => toggle(groups.flatMap(([, list]) => list.flatMap(c => cells(c)[level])).map(t => t.key))}>{cat.label}</button></th>)}</tr></thead>
+      <thead><tr><th />{categories.map((cat, level) => <th key={cat.id}><button title={`${cat.label} — ${describeCaps(cat.caps)}. Picks every target in this column.`} onClick={() => toggle(groups.flatMap(([, list]) => list.flatMap(c => cells(c)[level] ?? [])).map(t => t.key))}>{cat.label}</button></th>)}</tr></thead>
       <tbody>
         {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={categories.length + 1}>{label}</th></tr>
           {list.map(c => <tr key={c.id}>
-            <th><button title={placeTitle(c)} onClick={() => toggle(cells(c).flat().map(t => t.key))}>{courseLabel(c, c.id)}</button></th>
-            {cells(c).map((ts, level) => <td key={level} className={ts.length ? "" : "na"}>{ts.length > 0 && <div className="matrixPair">{ts.map(target)}</div>}</td>)}
+            <th><button title={`${placeTitle(c)}. Picks every target in this row.`} onClick={() => toggle(cells(c).flatMap(t => t ? [t.key] : []))}>{courseLabel(c, c.id)}</button></th>
+            {cells(c).map(cell)}
           </tr>)}
         </Fragment>)}
       </tbody>

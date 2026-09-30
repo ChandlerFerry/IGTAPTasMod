@@ -17,6 +17,14 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
+        /// <summary>Movement's field <paramref name="name"/> as AccessTools.Field finds it (null: none), cached in MovementFields.</summary>
+        static FieldInfo MovementField(string name)
+        {
+            FieldInfo f;
+            if (!MovementFields.TryGetValue(name, out f)) MovementFields[name] = f = AccessTools.Field(typeof(Movement), name);
+            return f;
+        }
+
         private static object GetMovementField(Movement movement, string name)
         {
             try
@@ -24,7 +32,7 @@ namespace IGTAPTasMod
                 if (name == BlueActiveField) return BlockSwapperField?.GetValue(movement) is colouredBlockSwapper swapper && swapper != null ? swapper.isBlueActive : (object)null;
                 if (name.StartsWith(GlobalUpgradePrefix, StringComparison.Ordinal))
                     return globalStats.globalUpgradeDict != null && globalStats.globalUpgradeDict.TryGetValue(GlobalUpgradeOf(name), out double level) ? level : (object)null;
-                FieldInfo f = AccessTools.Field(typeof(Movement), name);
+                FieldInfo f = MovementField(name);
                 return f == null ? null : f.GetValue(movement);
             }
             catch { return null; }
@@ -54,7 +62,7 @@ namespace IGTAPTasMod
                         RefreshRefillOrbs();
                     return;
                 }
-                FieldInfo f = AccessTools.Field(typeof(Movement), name);
+                FieldInfo f = MovementField(name);
                 if (f != null) f.SetValue(movement, value);
             }
             catch { }

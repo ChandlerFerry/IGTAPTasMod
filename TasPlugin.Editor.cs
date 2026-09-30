@@ -62,7 +62,8 @@ namespace IGTAPTasMod
             public bool finished;
             public float endTime;
             public int endPhysics;
-            /// <summary>The route's inputs changed in this session (it is saved only then: opening a route leaves it as it was).</summary>
+            /// <summary>The route changed since the library was last written: its edits sit in the session journal
+            /// (tas-session.json, TasJournal) and routes.json is written once, when the session closes.</summary>
             public bool dirty;
             public Process suggest;
             public System.Collections.Concurrent.ConcurrentQueue<string> suggestOutput;
@@ -77,6 +78,8 @@ namespace IGTAPTasMod
             public System.Collections.Concurrent.ConcurrentQueue<string> techsOutput;
             public string techsFile;
             public long techsRead, heldSince;
+            /// <summary>When TasReadTechs last read the search's file (Stopwatch ticks).</summary>
+            public long techsPolled;
             public int techsAt = -1, techsVersion = -1, heldAt = -1;
             public readonly Dictionary<int, TasTechs> techsCache = new Dictionary<int, TasTechs>();
             /// <summary>The tech whose paths are drawn, and its variant drawn bright (hoverDir null: none).</summary>
@@ -143,7 +146,8 @@ namespace IGTAPTasMod
             // No FixedUpdate this frame: the fixed clock puts frames half a frame off every tick, so this never wavers.
             if (Time.timeAsDouble - Time.fixedTimeAsDouble < Time.fixedDeltaTime) return;
             bool waited = false;
-            var clock = Stopwatch.StartNew();
+            Stopwatch clock = _tasHoldClock;
+            clock.Restart();
             long keepAlive = 0;
             try
             {
@@ -371,6 +375,14 @@ namespace IGTAPTasMod
 
         static List<SolverTick> CloneTicks(List<SolverTick> ticks) { return ticks.Select(t => t.Clone()).ToList(); }
 
+        /// <summary>The route as edited, to the session journal (a few KB, not the whole library): LoadLibrary puts it back if
+        /// the game stops before the session closes.</summary>
+        void TasJournal(TasSession s)
+        {
+            s.dirty = true;
+            WriteTasJournal(s.route);
+        }
+
         void TasPushUndo(TasSession s)
         {
             s.undo.Add(CloneTicks(s.ticks));
@@ -385,14 +397,13 @@ namespace IGTAPTasMod
         void TasTicksChanged(TasSession s, int first, bool reseek = true)
         {
             s.version++;
-            s.dirty = true;
             // A snapshot at input `first` may have pressed it already (a wall touch in a dash lock presses the next input early).
             TasGreen start = s.greenzone.FirstOrDefault();
             s.greenzone.RemoveAll(g => g != start && g.input >= first);
             TasCutTrace(s, first);
             if (first < s.suggestUntil) { s.suggestions = null; s.suggestStale = s.suggest != null; }
             s.route.steps = ToSteps(s.ticks);
-            SaveLibrary();
+            TasJournal(s);
             if (!reseek) return;
             if (s.starting) { s.refeed = true; return; }
             int cursor = (int)_engine.RunTicks;
@@ -526,6 +537,8 @@ namespace IGTAPTasMod
             if (s == null) return;
             // A re-record's ticks so far stay (its tail was dropped when it started).
             if (s.recording) { s.recordStop = reason; TasEndRecord(s); }
+            // routes.json is the whole library (over a hundred MB): written once here, not on every edit.
+            if (s.dirty) { SaveLibrary(); DeleteTasJournal(); }
             _tas = null;
             _walkSlowdown = 0f;
             if (s.suggest != null) { try { if (!s.suggest.HasExited) s.suggest.Kill(); s.suggest.Dispose(); } catch (Exception) { } }
@@ -651,7 +664,6 @@ namespace IGTAPTasMod
                 s.suggestions = JObject.Parse(File.ReadAllText(s.suggestFile));
             }
             catch (Exception ex) { s.suggestError = ex.Message; }
-            BumpWebState();
         }
 
         // ---- web ----
@@ -786,7 +798,7 @@ namespace IGTAPTasMod
                     if (note.Length > 0) s.route.markers.Add(new RouteMarker { tick = tick, note = note });
                     s.route.markers.Sort((a, b) => a.tick.CompareTo(b.tick));
                     s.version++;
-                    SaveLibrary();
+                    TasJournal(s);
                     break;
                 }
                 case "ticks":
@@ -805,7 +817,7 @@ namespace IGTAPTasMod
                     s.route.markers = markers;
                     s.version++;
                     TasSetTicks(s, ticks);
-                    SaveLibrary();
+                    TasJournal(s);
                     break;
                 }
                 case "suggest": TasSuggest(s); break;
@@ -838,11 +850,12 @@ namespace IGTAPTasMod
             return unique;
         }
 
-        object BuildTasLiveState()
+        /// <summary>The session's part of the studio's live state; <paramref name="player"/> is the world player (FindWorldMovement)
+        /// BuildLiveWebState already found.</summary>
+        object BuildTasLiveState(Movement player)
         {
             TasSession s = _tas;
             if (s == null) return null;
-            Movement player = FindWorldMovement();
             Match category = MatchRoutePrefix(s.route.name);
             CourseDef course = category.Success && string.IsNullOrEmpty(s.route.savestateId) ? CourseOfRoute(s.route.name) : null;
             object state = null;
@@ -853,7 +866,7 @@ namespace IGTAPTasMod
                 Rigidbody2D body = player.GetComponent<Rigidbody2D>();
                 float? courseTime = null;
                 foreach (courseScript c in FindObjectsByType<courseScript>(FindObjectsSortMode.None))
-                    if (CourseTrackingField.GetValue(c) is bool tracking && tracking && CourseCurrentPathTimeField.GetValue(c) is float t) courseTime = t;
+                    if (CourseTracking(c)) courseTime = CourseCurrentPathTime(c);
                 state = new {
                     x = at.x, y = at.y, vx = body != null ? body.linearVelocity.x : 0f, vy = body != null ? body.linearVelocity.y : 0f,
                     velX = player.Velocity.x, velY = player.Velocity.y,

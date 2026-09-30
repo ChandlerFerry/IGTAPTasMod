@@ -231,7 +231,7 @@ namespace IGTAPTasMod
         private static bool BeforeOrderedFixedUpdate(MonoBehaviour __instance)
         {
             if (Instance == null || TurboRunner.Active || _runningDeferred || !Instance._engine.IsRunning || _playerFixedTime == Time.fixedTime) return true;
-            if (!DeferredFixedUpdates.Contains(__instance)) DeferredFixedUpdates.Add(__instance);
+            if (DeferredQueued.Add(__instance)) DeferredFixedUpdates.Add(__instance);
             return false;
         }
 
@@ -260,6 +260,7 @@ namespace IGTAPTasMod
             {
                 _runningDeferred = false;
                 DeferredFixedUpdates.Clear();
+                DeferredQueued.Clear();
                 DeferredRunning.Clear();
             }
         }
@@ -318,10 +319,10 @@ namespace IGTAPTasMod
         private static void BeforeCourseStart(courseScript __instance)
         {
             if (Instance == null || __instance == null || !Instance._engine.IsRunning) return;
-            Instance._fullTasStartWasTracking = CourseTrackingFlag.GetValue(__instance) is bool was && was;
+            Instance._fullTasStartWasTracking = CourseTracking(__instance);
             CourseDef course = Instance.RunCourse;
             if (course == null || course.toCourse <= 0 || __instance.courseNumber != course.toCourse) return;
-            if (CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking) return;
+            if (CourseTracking(__instance)) return;
             Instance._engine.CompleteFromGame(MacroEngine.TransitionFinishReason, Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
         }
 
@@ -334,7 +335,7 @@ namespace IGTAPTasMod
                     Instance._overlayCourse = __instance.courseNumber.ToString();
                 Instance._recorder.MarkCourseStart();
                 if (Instance._fullTas != null && __instance != null && Instance._engine.IsRunning && !Instance._fullTasStartWasTracking
-                    && CourseTrackingFlag.GetValue(__instance) is bool tracking && tracking)
+                    && CourseTracking(__instance))
                     Instance.FullTasCourseStarted(__instance.courseNumber);
             }
             if (Instance != null && Instance._recorder.IsRecording) Log.LogInfo("Recording: authoritative course start detected");
@@ -344,14 +345,13 @@ namespace IGTAPTasMod
         {
             if (Instance == null) return;
             CourseDef target = Instance.RunCourse;
-            bool timing = __instance != null && CourseTrackingField != null && CourseTrackingField.GetValue(__instance) is bool tracking && tracking;
+            bool timing = __instance != null && CourseTracking(__instance);
             Instance._fullTasFinishCourse = Instance._fullTas != null && timing ? __instance.courseNumber : -1;
             Instance._pendingCourseWasTracking = timing && Instance._fullTas == null
                 && (!Instance._silentEvaluation
                     || target != null && !target.HasFinish && !target.IsTransition && __instance.courseNumber == target.GameCourse);
-            if (!savePositionData || __instance == null || CourseCurrentPathTimeField == null) return;
-            object value = CourseCurrentPathTimeField.GetValue(__instance);
-            Instance._pendingCourseTime = value is float ? (float)value : 0f;
+            if (!savePositionData || __instance == null) return;
+            Instance._pendingCourseTime = CourseCurrentPathTime(__instance);
         }
 
         private static void AfterCourseFinish(bool savePositionData)

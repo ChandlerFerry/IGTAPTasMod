@@ -179,12 +179,16 @@ plugin-only build.
 
 ## Studio
 
-The plugin serves the studio at `http://127.0.0.1:17426/`. The studio polls `GET /api/state/live` (playback, recording,
-settings, the Optimize solver, the Full-TAS solve and playback, the Tech tab's last playback) a quarter second after each
-answer, and fetches `GET /api/state/static` (routes, recordings, savestates, courses, Full-TAS runs, techs and lab maps)
-only when the live state's `staticVersion` changes: with every command, every file the plugin writes, and within a
-second of a file the offline solver or the lab tools write. `GET /api/state` is both in one, for tools. Selecting a
-route saves it to `settings.json` (`selectedRouteId`), not the whole `routes.json`.
+The plugin serves the studio at `http://127.0.0.1:17426/`. The studio keeps one WebSocket open to `/api/ws`
+(`WebStudioServer.cs`, `web/app/studio-socket.ts`) and connects again when it drops. The plugin pushes the live state
+(`{"type": "live"}`, what `GET /api/state/live` returns: playback, recording, settings, the Optimize solver, the Full-TAS
+solve and playback, the Tech tab's last playback) whenever it changes, checked every 33 ms at most, and the static state
+(`{"type": "static"}`, what `GET /api/state/static` returns: routes, recordings, savestates, courses, Full-TAS runs,
+techs and lab maps) when its `staticVersion` changes: with every command but an open TAS session's own, every file the
+plugin writes, and within a second of a file the offline solver or the lab tools write. The studio sends its commands
+over the socket too (`{"id", "method", "path", "body"}`, answered `{"type": "reply", "id", "status", "data"}` after the
+state they left). The HTTP API stays for tools; `GET /api/state` is both parts in one. Selecting a route saves it to
+`settings.json` (`selectedRouteId`), not the whole `routes.json`.
 
 1x playback runs in real time: each frame waits until the wall clock reaches the fixed clock's time since the start
 (`WaitForFixedClock`: every frame's step summed, a dash freeze's frames included), and the frames after a late one
@@ -197,10 +201,11 @@ and vsync off, `Time.maximumDeltaTime` and the wall-clock patches stay as they a
 the fixed clock. A probe (`ProbeRunner`, its frame rate is what it measures) keeps Unity's cap
 (`Application.targetFrameRate`).
 
-A slower frame rate plays the same frames, only later. While a
-playback lists its ticks, the overlay draws its input panel, pad and velocity panel into a texture once a physics tick
-(`TasOverlayCache.cs`) and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP and the nudge are drawn
-live. Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
+A slower frame rate plays the same frames, only later. In every mode (a listed playback, hand play, turbo) the overlay
+draws its input panel, pad and velocity panel into a texture once a physics tick, or when a setting, the unlocks or a
+displayed count changes (`TasOverlayCache.cs`), and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP
+and the nudge are drawn live, and the pad too when no route lists its ticks (hand play shows the buttons held now).
+Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
 
 ## TAS editor
 
@@ -234,7 +239,13 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   undo/redo, markers (go to one to load that point; each shows its segment's inputs and ticks). Sticks are a
   controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press. A
   **Human version** session colours each input number by its humanize slack (red exact, amber window, violet band, green
-  free; hover for the input), on the rows whose inputs are still the human version's.
+  free; hover for the input), on the rows whose inputs are still the human version's. Edits go to the session journal
+  (`tas-session.json`, the one route) and routes.json, the whole library, is written once when the session closes; a
+  journal left by a game that stopped first is put back at the next start.
+- **Keyboard input** (the TAS tab's **⌨ Keyboard input**): the page takes game keys, arrows or WASD the stick, Space
+  jump, X dash (no page scroll, no row selection), and each `]` writes what they hold into the input it plays, then
+  advances (Shift: ten inputs); a jump or dash pressed and let go between two advances goes in on the first. A tick
+  whose stick and buttons don't change keeps its extras. Arrows and Space aren't hotkeys then: `]` `[` `\` are.
 - **Re-record** drops the inputs from the held tick and records the controller (`InputRecorder`) at a slowdown; on stop
   its ticks go in and the session seeks to their end: what is kept is what replays. A death or finish stops it.
 - **Techs here** (course and category sessions): a second after a tick is held, `enginesim techs`

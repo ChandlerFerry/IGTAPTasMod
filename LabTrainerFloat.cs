@@ -34,13 +34,20 @@ namespace IGTAPTasMod
         static readonly FieldInfo TrainerFinalClingField = AccessTools.Field(typeof(Movement), "isFinalWallClingActive");
         static readonly FieldInfo TrainerFinalClingTimeField = AccessTools.Field(typeof(Movement), "finalWallClingTime");
         static readonly FieldInfo TrainerJumpBufferField = AccessTools.Field(typeof(Movement), "jumpBuffer");
+        // Read on every physics tick while the trainer is shown: by reference, not FieldInfo.GetValue's boxed copy.
+        static readonly AccessTools.FieldRef<Movement, bool> TrainerFinalCling = TrainerFinalClingField == null ? null
+            : AccessTools.FieldRefAccess<Movement, bool>(TrainerFinalClingField);
+        static readonly AccessTools.FieldRef<Movement, bool> TrainerJumpBuffer = TrainerJumpBufferField == null ? null
+            : AccessTools.FieldRefAccess<Movement, bool>(TrainerJumpBufferField);
+        static readonly AccessTools.FieldRef<Movement, float> TrainerFinalClingTime = TrainerFinalClingTimeField == null ? null
+            : AccessTools.FieldRefAccess<Movement, float>(TrainerFinalClingTimeField);
 
         FloatTrainer _floatTrainer;
 
         /// <summary>The float's length in ticks: finalWallClingTime (0.7 s) over the physics step.</summary>
         static int FloatTicks(Movement p)
         {
-            float time = TrainerFinalClingTimeField != null ? (float)TrainerFinalClingTimeField.GetValue(p) : 0.7f;
+            float time = TrainerFinalClingTime != null ? TrainerFinalClingTime(p) : 0.7f;
             return Mathf.RoundToInt(time / Time.fixedDeltaTime);
         }
 
@@ -55,7 +62,7 @@ namespace IGTAPTasMod
             int tick = Mathf.RoundToInt(Time.fixedTime / Time.fixedDeltaTime);
             if (tick == tr.LastTick) return;
             tr.LastTick = tick;
-            bool flag = TrainerFinalClingField != null && (bool)TrainerFinalClingField.GetValue(p);
+            bool flag = TrainerFinalCling != null && TrainerFinalCling(p);
             int facing = p.transform.localScale.x < 0f ? -1 : 1;
 
             if (flag && !tr.WasFlag && p.wallJumpsLeft < 0)
@@ -78,7 +85,7 @@ namespace IGTAPTasMod
                     tr.JumpSpeed = p.Velocity.y;
                 }
                 // A press while still facing the moss: no wall jump (none left) and no double jump take it, so it is spent there.
-                if (flag && tr.TurnTick < 0 && TrainerJumpBufferField != null && (bool)TrainerJumpBufferField.GetValue(p)) tr.EarlyPress = true;
+                if (flag && tr.TurnTick < 0 && TrainerJumpBuffer != null && TrainerJumpBuffer(p)) tr.EarlyPress = true;
                 if (!flag && tr.WasFlag) tr.FlagEndTick = tick;
                 float y = p.transform.position.y - CurrentOrigin().y - (_lab.Lab.anchor != null ? _lab.Lab.anchor[1] : 0f);
                 if (tr.JumpTick >= 0 && y > tr.Peak) tr.Peak = y;

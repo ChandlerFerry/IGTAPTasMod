@@ -436,9 +436,22 @@ namespace IGTAPTasMod
             return result;
         }
 
+        // The build's metadata never changes: read once (a reflection lookup that allocated its attributes on every use, the
+        // goals overlay's ForcedPaths among them).
+        static string _engineSimExe;
+        static bool _engineSimExeRead;
+
         static string EngineSimExe
         {
-            get { return typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value; }
+            get
+            {
+                if (!_engineSimExeRead)
+                {
+                    _engineSimExe = typeof(TasPlugin).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "EngineSimExe")?.Value;
+                    _engineSimExeRead = true;
+                }
+                return _engineSimExe;
+            }
         }
 
         SolveJob CourseJob(JObject item)
@@ -743,10 +756,19 @@ namespace IGTAPTasMod
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 bestFarm = float.IsInfinity(_solveBestFarm) ? (float?)null : _solveBestFarm,
-                log = _solverLog.AsEnumerable().Reverse().Take(12).ToArray(),
+                log = LatestSolverLog(),
                 courses = _courses.Select(c => c.id).ToArray(),
                 minutes = _solveMinutes, repeat = _solveRepeat, pass = _solvePass,
                 queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
+        }
+
+        /// <summary>The last 12 lines of the solver's log, newest first. The log isn't capped (a long solve writes thousands of
+        /// lines), and Reverse() copied all of it on every studio check.</summary>
+        string[] LatestSolverLog()
+        {
+            var lines = new string[Math.Min(12, _solverLog.Count)];
+            for (int i = 0; i < lines.Length; i++) lines[i] = _solverLog[_solverLog.Count - 1 - i];
+            return lines;
         }
 
         object[] BuildCourseWebState()
@@ -914,7 +936,12 @@ namespace IGTAPTasMod
         /// <summary>The course's last start capture (the solve's, else the studio's), or null before its first solve.</summary>
         string CourseTrace(CourseDef course, string caps)
         {
-            return new[] { "optimize-c", "start-c" }.Select(p => Path.Combine(EngineSimDir, p + course.Token + "-" + caps + ".json")).FirstOrDefault(File.Exists);
+            // The files come and go within a session (a solve writes them), so each call looks again; only the LINQ is gone (the
+            // TAS session's techs check calls this on every studio push).
+            string optimize = Path.Combine(EngineSimDir, "optimize-c" + course.Token + "-" + caps + ".json");
+            if (File.Exists(optimize)) return optimize;
+            string start = Path.Combine(EngineSimDir, "start-c" + course.Token + "-" + caps + ".json");
+            return File.Exists(start) ? start : null;
         }
 
         /// <summary>

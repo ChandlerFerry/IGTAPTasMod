@@ -13,6 +13,9 @@ namespace IGTAPTasMod
 
         readonly List<tripBreakerScript> _lightBreakers = new List<tripBreakerScript>();
         float _nextBreakerSearch;
+        // The scene generation (SceneGeneration) of the last search: the game creates no breaker at run time, so with none
+        // destroyed since and no scene loaded or unloaded, a search on the timer would find the same set and is skipped.
+        int _breakerSearchGeneration = -1;
 
         void BreakerLightsFrame()
         {
@@ -25,8 +28,13 @@ namespace IGTAPTasMod
             if ((_lightBreakers.Count == 0 || _lightBreakers.Exists(b => b == null)) && Time.unscaledTime >= _nextBreakerSearch)
             {
                 _nextBreakerSearch = Time.unscaledTime + 1f;
-                _lightBreakers.Clear();
-                _lightBreakers.AddRange(FindObjectsByType<tripBreakerScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+                int generation = SceneGeneration;
+                if (generation != _breakerSearchGeneration || _lightBreakers.Count > 0)
+                {
+                    _breakerSearchGeneration = generation;
+                    _lightBreakers.Clear();
+                    _lightBreakers.AddRange(FindObjectsByType<tripBreakerScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+                }
             }
             foreach (tripBreakerScript breaker in _lightBreakers)
             {
@@ -34,7 +42,9 @@ namespace IGTAPTasMod
                 GameObject all = BreakerAllLights(breaker), global = BreakerGlobalLight(breaker);
                 if (global != null && !global.activeSelf) global.SetActive(true);
                 if (all != null && !all.activeSelf) all.SetActive(true);
-                foreach (GameObject area in BreakerAreaLights(breaker) ?? new GameObject[0])
+                GameObject[] areas = BreakerAreaLights(breaker);
+                if (areas == null) continue;
+                foreach (GameObject area in areas)
                     if (area != null && !area.activeSelf) area.SetActive(true);
             }
         }
@@ -48,6 +58,8 @@ namespace IGTAPTasMod
                     if (light.activeSelf != on) light.SetActive(on);
             }
             _lightBreakers.Clear();
+            // Forcing again searches afresh: the empty list no longer says the scene has no breaker.
+            _breakerSearchGeneration = -1;
         }
 
         // The breaker's lights as the game's own code leaves them, whatever the forcing shows. OvergrowthLoadScript.OnLoad

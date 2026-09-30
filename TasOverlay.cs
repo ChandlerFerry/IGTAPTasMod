@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -45,7 +44,7 @@ namespace IGTAPTasMod
         bool _manualJump1Press, _manualJump2Press, _manualDash1Press, _manualDash2Press, _manualRelease;
         // A respawn since the last listed row: the next row the list adds draws a line above it.
         RowBreak _pendingBreak;
-        static readonly FieldInfo JumpCutBufferField = AccessTools.Field(typeof(Movement), "jumpCutBuffer");
+        static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
         GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
         int _overlayStyleHeight;
 
@@ -54,6 +53,8 @@ namespace IGTAPTasMod
         long _lastDropTick;
         const float DroppedFramesLingerSeconds = 10f;
         float _droppedFramesShownUntil;
+        // DrawDroppedFrames' text, built again (null) only when a drop or a new route changes its numbers.
+        string _droppedFramesBanner;
 
         void OverlayFrame()
         {
@@ -70,6 +71,7 @@ namespace IGTAPTasMod
             _droppedFrames += ticks - 1;
             _worstFrameTicks = Mathf.Max(_worstFrameTicks, ticks);
             _lastDropTick = _engine.PhysicsTicks;
+            _droppedFramesBanner = null;
             _droppedFramesShownUntil = Time.unscaledTime + DroppedFramesLingerSeconds;
         }
 
@@ -126,7 +128,7 @@ namespace IGTAPTasMod
             row.dash1Press = now - _liveDash1At < LiveFlashSeconds;
             row.dash2Press = now - _liveDash2At < LiveFlashSeconds;
             row.jumpRelease = now - _liveReleaseAt < LiveFlashSeconds;
-            row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+            row.jumpCut = JumpCutBuffer(player);
             return row;
         }
 
@@ -162,6 +164,8 @@ namespace IGTAPTasMod
         void OverlayTick(Movement player)
         {
             _overlayPlayer = player;
+            // Every tick can change the list, the velocity and the pad: the cached panels (DrawCachedPanels) are drawn again.
+            _panelCacheDirty = true;
             if (!OverlayListsRun)
             {
                 _overlayLastTick = 0;
@@ -177,6 +181,7 @@ namespace IGTAPTasMod
                     _overlayManual = _manualRestart = false;
                     _pendingBreak = RowBreak.None;
                     _lastDropTick = 0;
+                    _droppedFramesBanner = null;
                     _ticksSinceFrame = 0;
                     _padJump1 = _padJump2 = _padJump2Newer = _padDash1Last = false;
                     _overlayRoute = _engine.ActiveMacroName;
@@ -205,7 +210,7 @@ namespace IGTAPTasMod
                     row.stickText = StickText(row.x, row.y);
                     row.jumpPress = jumpPress;
                     row.jumpRelease = jumpRelease;
-                    row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+                    row.jumpCut = JumpCutBuffer(player);
                     row.dash = dash;
                     AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
                     _inputRows.Add(row);
@@ -296,7 +301,7 @@ namespace IGTAPTasMod
             row.stickText = StickText(row.x, row.y);
             row.jumpPress = jumpPress;
             row.jumpRelease = _manualRelease;
-            row.jumpCut = JumpCutBufferField != null && (bool)JumpCutBufferField.GetValue(player);
+            row.jumpCut = JumpCutBuffer(player);
             row.dash = dash;
             row.jump1 = jump1;
             row.jump2 = jump2;
@@ -328,12 +333,40 @@ namespace IGTAPTasMod
             row.dash2Press = row.dash2;
         }
 
-        static string StickText(float x, float y)
+        // The last stick's text: a route or a player holds one stick over many ticks, so a listed tick rarely builds it again.
+        float _stickTextX = float.NaN, _stickTextY = float.NaN;
+        string _stickText;
+
+        string StickText(float x, float y)
         {
+            if (x == _stickTextX && y == _stickTextY) return _stickText;
             string text = x < 0f ? "←" : x > 0f ? "→" : "";
             if (x != 0f && Mathf.Abs(x) < 1f) text += " " + Mathf.RoundToInt(Mathf.Abs(x) * 100f) + "%";
             if (y != 0f) text += (text.Length > 0 ? " " : "") + (y > 0f ? "↑" : "↓") + (Mathf.Abs(y) < 1f ? " " + Mathf.RoundToInt(Mathf.Abs(y) * 100f) + "%" : "");
-            return text.Length > 0 ? text : "·";
+            _stickTextX = x;
+            _stickTextY = y;
+            return _stickText = text.Length > 0 ? text : "·";
+        }
+
+        static int _sceneGeneration;
+        static bool _sceneGenerationHooked;
+
+        /// <summary>
+        /// Counts scene loads and unloads (hooked on first use). The scan caches below compare it: the game creates no spike,
+        /// checkpoint, clone course or breaker at run time, so a scene's set changes only with a load or an unload.
+        /// </summary>
+        static int SceneGeneration
+        {
+            get
+            {
+                if (!_sceneGenerationHooked)
+                {
+                    _sceneGenerationHooked = true;
+                    UnityEngine.SceneManagement.SceneManager.sceneLoaded += (scene, mode) => _sceneGeneration++;
+                    UnityEngine.SceneManagement.SceneManager.sceneUnloaded += scene => _sceneGeneration++;
+                }
+                return _sceneGeneration;
+            }
         }
 
         int _menuCanvasScene = -1;
@@ -364,12 +397,14 @@ namespace IGTAPTasMod
 
         private void OnGUI()
         {
+            // Only Repaint draws (useGUILayout is off, so the other events are input): they skip even the checks below.
+            if (Event.current.type != EventType.Repaint) return;
             // Under the game's pause menu nothing anchored in the world is drawn (it would sit on top of the menu): the lab
             // ghosts' key and badges, spikes, checkpoints, the hitbox and the graze. The screen panels stay.
             bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown, ghosts = LabGhostOverlayShown;
             bool techs = TechPathsShown;
             if (!origin) ResetOriginOverlay();
-            if (!(_settings.showOverlay || goals || origin || trainer || ghosts || techs) || Event.current.type != EventType.Repaint) return;
+            if (!(_settings.showOverlay || goals || origin || trainer || ghosts || techs)) return;
             bool menu = GameMenuOpen;
             ghosts &= !menu;
             float scale = Screen.height / 1080f;
@@ -388,25 +423,19 @@ namespace IGTAPTasMod
                 DrawHitbox(scale);
                 DrawGraze(scale);
             }
-            if (OverlayListsRun) DrawCachedPanels(scale);
-            else
-            {
-                InputRow live = LiveRow(_overlayPlayer);
-                if (_inputRows.Count > 0) DrawInputPanel(scale, live);
-                else if (live != null) DrawInputPad(InputPadRect(PanelScale(scale)), live, PanelScale(scale));
-                if (_overlayPlayer != null) DrawVelocityPanel(scale);
-            }
+            DrawCachedPanels(scale);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
         }
 
         void DrawDroppedFrames(float scale)
         {
-            string text = "DROPPING FRAMES · " + _droppedFrames + " tick" + (_droppedFrames == 1 ? "" : "s") + " without a frame · worst "
-                + _worstFrameTicks + " ticks/frame · last at tick " + _lastDropTick;
+            if (_droppedFramesBanner == null)
+                _droppedFramesBanner = "DROPPING FRAMES · " + _droppedFrames + " tick" + (_droppedFrames == 1 ? "" : "s") + " without a frame · worst "
+                    + _worstFrameTicks + " ticks/frame · last at tick " + _lastDropTick;
             float width = 760 * scale, height = 40 * scale;
             Rect box = new Rect((Screen.width - width) / 2f, 16 * scale, width, height);
             Fill(box, new Color(0.55f, 0f, 0f, 0.85f));
-            Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), text, _overlayText, Color.white);
+            Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), _droppedFramesBanner, _overlayText, Color.white);
         }
 
         void BuildOverlayStyles(float scale)
@@ -441,11 +470,11 @@ namespace IGTAPTasMod
             return new Rect(0f, Screen.height - PadHeight * scale, PanelWidth * scale, PadHeight * scale);
         }
 
-        static readonly FieldInfo NormalColliderField = AccessTools.Field(typeof(Movement), "normalCollider");
+        static readonly AccessTools.FieldRef<Movement, BoxCollider2D> NormalCollider = AccessTools.FieldRefAccess<Movement, BoxCollider2D>("normalCollider");
 
         static BoxCollider2D Hurtbox(Movement player, List<BoxCollider2D> buffer)
         {
-            object body = NormalColliderField == null ? null : NormalColliderField.GetValue(player);
+            BoxCollider2D body = NormalCollider(player);
             player.GetComponents(buffer);
             foreach (BoxCollider2D box in buffer)
                 if (box.enabled && !ReferenceEquals(box, body)) return box;
@@ -509,10 +538,10 @@ namespace IGTAPTasMod
             return Rect.MinMaxRect(Mathf.Min(a.x, b.x), Screen.height - Mathf.Max(a.y, b.y), Mathf.Max(a.x, b.x), Screen.height - Mathf.Min(a.y, b.y));
         }
 
-        static readonly FieldInfo SpikeCounterField = AccessTools.Field(typeof(spikeScript), "counter");
-        static readonly FieldInfo SpikeGraceField = AccessTools.Field(typeof(spikeScript), "graceFrames");
-        static readonly FieldInfo SpikeOnDashField = AccessTools.Field(typeof(spikeScript), "killPlayerOnDash");
-        static readonly FieldInfo SpikeKilledField = AccessTools.Field(typeof(spikeScript), "playerKilled");
+        static readonly AccessTools.FieldRef<spikeScript, int> SpikeCounter = AccessTools.FieldRefAccess<spikeScript, int>("counter");
+        static readonly AccessTools.FieldRef<spikeScript, int> SpikeGrace = AccessTools.FieldRefAccess<spikeScript, int>("graceFrames");
+        static readonly AccessTools.FieldRef<spikeScript, bool> SpikeOnDash = AccessTools.FieldRefAccess<spikeScript, bool>("killPlayerOnDash");
+        static readonly AccessTools.FieldRef<spikeScript, bool> SpikeKilled = AccessTools.FieldRefAccess<spikeScript, bool>("playerKilled");
 
         sealed class SpikeShape
         {
@@ -554,6 +583,8 @@ namespace IGTAPTasMod
         int _lastGrazeTicks, _lastGrazeLimit;
         bool _lastGrazeKilled;
         float _lastGrazeTime = float.NegativeInfinity;
+        // DrawGraze's text: null after SampleSpikes changes a value it shows.
+        string _grazeText;
 
         static long FixedStep() { return (long)System.Math.Round(Time.fixedTimeAsDouble / Time.fixedDeltaTime); }
 
@@ -582,10 +613,10 @@ namespace IGTAPTasMod
                 {
                     spikeScript spike = c.GetComponent<spikeScript>();
                     if (spike == null || !spike.enabled || !_grazeSpikes.Add(spike)) continue;
-                    int counter = (int)SpikeCounterField.GetValue(spike);
+                    int counter = SpikeCounter(spike);
                     ticks = Mathf.Max(ticks, counter + 1);
-                    killed |= (bool)SpikeKilledField.GetValue(spike);
-                    limit = Mathf.Min(limit, dashing && (bool)SpikeOnDashField.GetValue(spike) ? 1 : (int)SpikeGraceField.GetValue(spike) + 1);
+                    killed |= SpikeKilled(spike);
+                    limit = Mathf.Min(limit, dashing && SpikeOnDash(spike) ? 1 : SpikeGrace(spike) + 1);
                 }
                 _grazeHurtbox = hurtbox.bounds;
             }
@@ -596,22 +627,46 @@ namespace IGTAPTasMod
                 _lastGrazeKilled = _grazeKilled;
                 _lastGrazeTime = Time.unscaledTime;
             }
+            int grazeLimit = ticks > 0 ? limit : 0;
+            bool grounded = player.onGround;
+            // DrawGraze's text is built again only when what it shows changed (the lingering text follows a change of ticks).
+            if (ticks != _grazeTicks || grazeLimit != _grazeLimit || killed != _grazeKilled || dashing != _grazeDashing || grounded != _grazeGrounded)
+                _grazeText = null;
             _grazeTicks = ticks;
-            _grazeLimit = ticks > 0 ? limit : 0;
+            _grazeLimit = grazeLimit;
             _grazeKilled = killed;
             _grazeDashing = dashing;
-            _grazeGrounded = player.onGround;
+            _grazeGrounded = grounded;
         }
 
+        // The scene's spikes and checkpoints, inactive ones too: found again only after a scene load or unload, or a lab
+        // injection (InjectLab adds its spikes before it sets _lab), not with every rescan.
+        spikeScript[] _spikeScripts;
+        checkpointScript[] _checkpointScripts;
+        int _spikeScriptsGeneration;
+        LabSession _spikeScriptsLab;
+
+        /// <summary>
+        /// Every SpikeScanSeconds: the colliders of the spikes and checkpoints on active objects (what a find that leaves out
+        /// inactive objects returns), their shapes built again where they changed.
+        /// </summary>
         void ScanSpikes()
         {
             _spikeScanTime = Time.unscaledTime;
+            int generation = SceneGeneration;
+            if (_spikeScripts == null || generation != _spikeScriptsGeneration || !ReferenceEquals(_lab, _spikeScriptsLab))
+            {
+                _spikeScriptsGeneration = generation;
+                _spikeScriptsLab = _lab;
+                _spikeScripts = FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                _checkpointScripts = FindObjectsByType<checkpointScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            }
             _spikeColliders.Clear();
-            foreach (spikeScript spike in FindObjectsByType<spikeScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
-                ScanColliders(spike, spike, _spikeColliders);
+            foreach (spikeScript spike in _spikeScripts)
+                if (spike != null && spike.gameObject.activeInHierarchy) ScanColliders(spike, spike, _spikeColliders);
             _checkpointColliders.Clear();
-            foreach (checkpointScript checkpoint in FindObjectsByType<checkpointScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
-                ScanColliders(checkpoint, null, _checkpointColliders);
+            foreach (checkpointScript checkpoint in _checkpointScripts)
+                if (checkpoint != null && checkpoint.gameObject.activeInHierarchy) ScanColliders(checkpoint, null, _checkpointColliders);
         }
 
         void ScanColliders(Component owner, spikeScript spike, List<SpikeCollider> into)
@@ -822,18 +877,21 @@ namespace IGTAPTasMod
             Movement player = _overlayPlayer;
             Camera cam = Camera.main;
             if (player == null || cam == null) return;
-            string text;
+            // The text (_grazeText) is built once per change, not every frame.
             Color color;
             if (_grazeTicks > 0)
             {
-                text = _grazeKilled ? "SPIKE ✗ " + _grazeTicks + "/" + _grazeLimit : "SPIKE " + _grazeTicks + "/" + _grazeLimit;
-                if (_grazeDashing) text += " · DASH";
-                if (_grazeGrounded) text += " · GROUNDED";
+                if (_grazeText == null)
+                {
+                    _grazeText = _grazeKilled ? "SPIKE ✗ " + _grazeTicks + "/" + _grazeLimit : "SPIKE " + _grazeTicks + "/" + _grazeLimit;
+                    if (_grazeDashing) _grazeText += " · DASH";
+                    if (_grazeGrounded) _grazeText += " · GROUNDED";
+                }
                 color = _grazeKilled ? KilledColor : GraceColor;
             }
             else if (Time.unscaledTime - _lastGrazeTime < GrazeLingerSeconds)
             {
-                text = _lastGrazeKilled ? "SPIKE ✗" : "SPIKE GRACE " + _lastGrazeTicks + "/" + _lastGrazeLimit;
+                if (_grazeText == null) _grazeText = _lastGrazeKilled ? "SPIKE ✗" : "SPIKE GRACE " + _lastGrazeTicks + "/" + _lastGrazeLimit;
                 color = _lastGrazeKilled ? KilledColor : GraceColor;
                 color.a = 1f - (Time.unscaledTime - _lastGrazeTime) / GrazeLingerSeconds;
             }
@@ -844,22 +902,30 @@ namespace IGTAPTasMod
             float width = 360 * scale, height = 28 * scale;
             Rect label = new Rect(r.center.x - width / 2, r.yMin - height - 6 * scale, width, height);
             Fill(new Rect(label.x + width / 2 - 130 * scale, label.y, 260 * scale, height), new Color(0f, 0f, 0f, 0.55f * color.a));
-            Label(label, text, _overlayGraze, color);
+            Label(label, _grazeText, _overlayGraze, color);
         }
 
         FullTasRunDef _goalOverlayRun;
         FullTasGoal[] _goalOverlayGoals;
+        // Each goal's label as drawn ("3  label"), built with the goals.
+        string[] _goalOverlayLabels;
 
         void DrawFullTasGoals(float scale)
         {
             Camera cam = Camera.main;
-            FullTasRunDef run = _fullTasRuns?.Find(r => string.Equals(r.name, _settings.fullTasGoalsRun, System.StringComparison.OrdinalIgnoreCase));
+            // A loop rather than List.Find: Find's predicate would be a new closure every frame.
+            FullTasRunDef run = null;
+            if (_fullTasRuns != null)
+                foreach (FullTasRunDef candidate in _fullTasRuns)
+                    if (string.Equals(candidate.name, _settings.fullTasGoalsRun, System.StringComparison.OrdinalIgnoreCase)) { run = candidate; break; }
             if (cam == null || run == null) return;
             if (!ReferenceEquals(run, _goalOverlayRun))
             {
                 _goalOverlayRun = run;
                 try { _goalOverlayGoals = ResolveFullTasGoals(run); }
                 catch (System.InvalidOperationException) { _goalOverlayGoals = new FullTasGoal[0]; }
+                _goalOverlayLabels = new string[_goalOverlayGoals.Length];
+                for (int i = 0; i < _goalOverlayGoals.Length; i++) _goalOverlayLabels[i] = (i + 1) + "  " + _goalOverlayGoals[i].label;
             }
             FullTasTracker tracker = _fullTasPlay != null && _fullTasPlay.run.name == run.name ? _fullTasPlay.tracker : null;
             Vector2 origin = CurrentOrigin();
@@ -894,7 +960,7 @@ namespace IGTAPTasMod
                 if ((g.from & FullTasGoal.FromRight) != 0) Fill(new Rect(r.xMax, r.yMin, thick, r.height), color);
                 if ((g.from & FullTasGoal.FromBottom) != 0) Fill(new Rect(r.xMin, r.yMax, r.width, thick), color);
                 if ((g.from & FullTasGoal.FromTop) != 0) Fill(new Rect(r.xMin, r.yMin - thick, r.width, thick), color);
-                Label(new Rect(r.xMin + 4 * scale, r.yMin - labelHeight, Mathf.Max(r.width, 420 * scale), labelHeight), (i + 1) + "  " + g.label, _overlaySmall, color);
+                Label(new Rect(r.xMin + 4 * scale, r.yMin - labelHeight, Mathf.Max(r.width, 420 * scale), labelHeight), _goalOverlayLabels[i], _overlaySmall, color);
             }
         }
 
@@ -975,7 +1041,8 @@ namespace IGTAPTasMod
             if (!any) Segment(x, y, height, gap, "NONE", _overlayTitle, MutedColor);
         }
 
-        void DrawInputPanel(float screenScale, InputRow liveInput)
+        /// <summary>The input list; with <paramref name="withPad"/>, the pad under it showing the newest listed tick.</summary>
+        void DrawInputPanel(float screenScale, bool withPad)
         {
             float scale = PanelScale(screenScale);
             if (_overlayClock == null)
@@ -1039,11 +1106,11 @@ namespace IGTAPTasMod
                 float bottom = listTop + (n + 1) * rowHeight;
                 Fill(new Rect(panel.x, bottom - breakLine / 2f, width - 1, breakLine), rowBreak == RowBreak.Death ? KilledColor : GoalNextColor);
             }
-            DrawInputPad(InputPadRect(scale), liveInput ?? _inputRows[_inputRows.Count - 1], scale);
+            if (withPad) DrawInputPad(InputPadRect(scale), _inputRows[_inputRows.Count - 1], scale);
         }
 
         const float PadHeight = 230f, PadStickHeight = 150f;
-        static readonly FieldInfo GroundTypeField = AccessTools.Field(typeof(Movement), "currentGroundType");
+        static readonly AccessTools.FieldRef<Movement, int> GroundType = AccessTools.FieldRefAccess<Movement, int>("currentGroundType");
         static readonly string[] PadCountNames = { "DASH", "AIR JUMP", "WALL JUMP" };
         static readonly float[] PadCountWeights = { 0.27f, 0.35f, 0.38f };
         static readonly Color MossColor = Hex(0x9ccf5a, 1f);
@@ -1096,7 +1163,7 @@ namespace IGTAPTasMod
             }
             y += line + gap;
             float flag = (inner - 3 * gap) / 4f;
-            bool moss = GroundTypeField != null && System.Convert.ToInt32(GroundTypeField.GetValue(p)) == 1;
+            bool moss = GroundType(p) == 1;
             PadButton(new Rect(x, y, flag, line), "GROUND", p.onGround, p.onGround, GraceColor);
             PadButton(new Rect(x + (flag + gap), y, flag, line), "WALL", p.OnWall, p.OnWall, WallJumpColor);
             PadButton(new Rect(x + 2 * (flag + gap), y, flag, line), "DASHING", p.dashActive, p.dashActive, DashColor);

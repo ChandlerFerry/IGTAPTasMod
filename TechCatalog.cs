@@ -246,7 +246,11 @@ namespace IGTAPTasMod
             if (_techStart != null) return _techStart;
             if (route == null) return null;
             if (route.id == LabDemoRouteId) return _labPlay;
-            return route.id == ProbeRouteId ? _probe?.tech : _techs.Find(t => t.routeId == route.id);
+            if (route.id == ProbeRouteId) return _probe?.tech;
+            // A loop, not Find(lambda): the overlay asks on every Repaint while a route runs.
+            foreach (TechDef t in _techs)
+                if (t.routeId == route.id) return t;
+            return null;
         }
 
         /// <summary>A probe's own unlocks on top of its start's (the omnidirectional dash), saved with the category's so playback's end puts them back.</summary>
@@ -259,7 +263,12 @@ namespace IGTAPTasMod
 
         bool IsTechDemo(MacroDefinition route)
         {
-            return route != null && (route.id == LabDemoRouteId || _techs.Any(t => t.routeId == route.id) || route.id == ProbeRouteId && _probe?.tech != null);
+            if (route == null) return false;
+            if (route.id == LabDemoRouteId) return true;
+            // A loop, not Any(lambda): the overlay asks on every idle tick of a playback.
+            foreach (TechDef t in _techs)
+                if (t.routeId == route.id) return true;
+            return route.id == ProbeRouteId && _probe?.tech != null;
         }
 
         MacroDefinition TechPlayable(MacroDefinition route)

@@ -19,6 +19,8 @@ namespace IGTAPTasMod
         // Real time left in the running Movement.TimeStop freezes (timeScale 0, not paused); the longest one wins.
         float _timeStopLeft;
 
+        // Movement's private fields the overlay reads every frame or tick (the DEBUG rows, the tech detectors): typed field
+        // references, no reflection or boxing per read.
         static class DebugFields
         {
             public static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer"),
@@ -28,6 +30,9 @@ namespace IGTAPTasMod
                 WallCoyote = AccessTools.FieldRefAccess<Movement, float>("wallCoyoteFrames"), DashFrames = AccessTools.FieldRefAccess<Movement, float>("dashFramesRemaining"),
                 LastHyperY = AccessTools.FieldRefAccess<Movement, float>("lastHyperY"), PlatformCoyote = AccessTools.FieldRefAccess<Movement, float>("movingPlatformCoyote");
             public static readonly AccessTools.FieldRef<Movement, int> DashBounce = AccessTools.FieldRefAccess<Movement, int>("DashBounceFrames");
+            public static readonly AccessTools.FieldRef<Movement, bool> FinalCling = AccessTools.FieldRefAccess<Movement, bool>("isFinalWallClingActive");
+            public static readonly AccessTools.FieldRef<Movement, Vector2> DashDirection = AccessTools.FieldRefAccess<Movement, Vector2>("dashDirection"),
+                PreDashMomentum = AccessTools.FieldRefAccess<Movement, Vector2>("preDashMomentum"), WallJumpFacing = AccessTools.FieldRefAccess<Movement, Vector2>("wallJumpFacing");
         }
 
         private static void BeforeOverlayTimeStop(float duration)
@@ -135,10 +140,16 @@ namespace IGTAPTasMod
             _debugBuilt = true;
         }
 
+        // The POS values its X and Y texts were built from, bit for bit: moving along one axis builds only that axis' text.
+        int _pairXBits, _pairYBits;
+
         void Pair(int row, Vector2 v)
         {
-            _debugX[row] = "X " + D2(v.x);
-            _debugY[row] = "Y " + D2(v.y);
+            int x = BitConverter.SingleToInt32Bits(v.x), y = BitConverter.SingleToInt32Bits(v.y);
+            if (_debugX[row] == null || x != _pairXBits) _debugX[row] = "X " + D2(v.x);
+            if (_debugY[row] == null || y != _pairYBits) _debugY[row] = "Y " + D2(v.y);
+            _pairXBits = x;
+            _pairYBits = y;
         }
 
         static string D2(float v) { return v.ToString("0.00", CultureInfo.InvariantCulture); }
@@ -155,16 +166,14 @@ namespace IGTAPTasMod
             y += 8 * scale;
             Fill(new Rect(panel.x, y, panel.width, 1), PanelLine);
             y += 1 + 8 * scale;
-            if (_panelCaching)
-            {
-                _debugPanel = panel;
-                _debugTop = new Vector2(x, y);
-            }
+            // The panel is always cached (DrawCachedPanels): the live rows are drawn over it every frame from here.
+            _debugPanel = panel;
+            _debugTop = new Vector2(x, y);
             float row = DebugRowHeight(scale);
             for (int i = 0; i < DebugLabels.Length; i++, y += row)
             {
                 Label(new Rect(x, y, 92 * scale, row), DebugLabels[i], _overlaySmall, MutedColor);
-                if (!(_panelCaching && DebugLiveRows[i])) DrawDebugValue(i, panel, x, y, scale);
+                if (!DebugLiveRows[i]) DrawDebugValue(i, panel, x, y, scale);
             }
         }
 

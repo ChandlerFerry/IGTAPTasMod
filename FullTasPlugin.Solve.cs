@@ -142,6 +142,7 @@ namespace IGTAPTasMod
             _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
+            _fullTasEventsVersion++;
             _fullTasProgress = null;
             _fullTasOutlook = null;
             _fullTasPulls.Clear();
@@ -345,11 +346,13 @@ namespace IGTAPTasMod
                         int drop = _fullTasEvents.FindIndex(1, x => !FullTasKeptEvents.Contains((string)x["type"]));
                         _fullTasEvents.RemoveAt(drop < 0 ? 1 : drop);
                     }
+                    _fullTasEventsVersion++;
                     return;
                 }
             }
             _fullTasLog.Add(line);
             if (_fullTasLog.Count > MaxFullTasLog) _fullTasLog.RemoveRange(0, _fullTasLog.Count - MaxFullTasLog);
+            _fullTasLogVersion++;
             Logger.LogInfo("fulltas: " + line);
         }
 

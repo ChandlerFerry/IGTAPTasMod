@@ -14,6 +14,8 @@
 .tasGoTo { display: flex; gap: 4px; }
 .tasGoTo input { width: 70px; background: #0c1d33; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
 .tasSep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.tasPad { min-width: 96px; padding: 6px 10px; border: 1px dashed #34506f; border-radius: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.tasPad.on { border-style: solid; border-color: var(--cyan); background: #0f3a52; color: var(--text); }
 .tasKeys { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
 .tasKeys kbd { background: #172b46; border: 1px solid #34506f; border-radius: 4px; padding: 1px 5px; color: white; }
 .tasHint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 10px; }

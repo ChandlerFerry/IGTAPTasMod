@@ -34,6 +34,12 @@ namespace IGTAPTasMod
             public Vector2[] path;
             /// <summary>Shown variants only: the other directions that play this very path (TasGroupTechs).</summary>
             public List<TasTechVariant> same;
+            /// <summary>Its shapes as DrawTechPaths draws them (world positions: the path plus <see cref="shapesOrigin"/>), built
+            /// again only when the origin moves; and its label there, for the tick length <see cref="labelStep"/>.</summary>
+            public SpikeShape leadShape, pathShape, startShape;
+            public Vector2 shapesOrigin;
+            public string label;
+            public float labelStep;
         }
 
         /// <summary>The techs found for one held input tick: the best variant per tech, direction and angle, and those shown
@@ -43,6 +49,8 @@ namespace IGTAPTasMod
             public readonly List<TasTechVariant> variants = new List<TasTechVariant>(), shown = new List<TasTechVariant>();
             public bool done;
             public int tried;
+            /// <summary>Counts TasGroupTechs' rebuilds of <see cref="shown"/>: DrawTechPaths' order of it is kept until this changes.</summary>
+            public int grouping;
             public string error;
         }
 
@@ -92,7 +100,6 @@ namespace IGTAPTasMod
             int threads = Mathf.Clamp(SystemInfo.processorCount / 2, 1, 4);
             s.techs = StartEngineSim("techs " + Quote(trace) + " " + Quote(file) + " --at " + at + " --caps " + caps + " --threads " + threads
                 + " --out " + Quote(s.techsFile), s.techsOutput);
-            BumpWebState();
         }
 
         void TasStopTechs(TasSession s)
@@ -109,6 +116,11 @@ namespace IGTAPTasMod
             TasTechs found;
             if (!s.techsCache.TryGetValue(s.techsAt, out found)) { TasStopTechs(s); return; }
             bool exited = s.techs.HasExited;
+            // The search's file grows a few lines a second: read at most every 33 ms (the studio's push), not every frame and
+            // hold poll, and at once when the search ends.
+            long now = Stopwatch.GetTimestamp();
+            if (!exited && now - s.techsPolled < Stopwatch.Frequency / 30) return;
+            s.techsPolled = now;
             string text = "";
             try
             {
@@ -152,9 +164,7 @@ namespace IGTAPTasMod
                     found.error = output.Length > 0 ? output : "enginesim techs stopped without a result";
                 }
                 TasStopTechs(s);
-                changed = true;
             }
-            if (changed) BumpWebState();
         }
 
         /// <summary>A tech's variants in the studio's order: its compass's (dir, then the 45° aim, then steeper).</summary>
@@ -172,6 +182,7 @@ namespace IGTAPTasMod
         static void TasGroupTechs(TasTechs found)
         {
             found.shown.Clear();
+            found.grouping++;
             foreach (TasTechVariant v in found.variants.OrderBy(v => v.angle != null ? 3 : v.dir.Length).ThenBy(v => Array.IndexOf(TechDirOrder, v.dir)))
             {
                 v.same = new List<TasTechVariant>();
@@ -267,6 +278,34 @@ namespace IGTAPTasMod
 
         bool TechPathsShown { get { TasSession s = _tas; return s != null && s.hoverTech != null; } }
 
+        List<TasTechVariant> DrawnTechVariants(TasTechs found, string tech)
+        {
+            if (_techsDrawn == null || found != _techsDrawnFrom || tech != _techsDrawnTech || found.grouping != _techsDrawnGrouping)
+            {
+                _techsDrawn = TasTechVariants(found, tech);
+                _techsDrawnFrom = found;
+                _techsDrawnTech = tech;
+                _techsDrawnGrouping = found.grouping;
+            }
+            return _techsDrawn;
+        }
+
+        /// <summary>A variant's shapes at <paramref name="origin"/>: its lead-in (none when it has no lead), its path from the
+        /// lead on, and the box where the tech starts. Built once per origin (a rebase moves it), not every frame.</summary>
+        static void TechShapes(TasTechVariant v, Vector2 origin)
+        {
+            if (v.pathShape != null && v.shapesOrigin.x == origin.x && v.shapesOrigin.y == origin.y) return;
+            int lead = Mathf.Clamp(v.lead, 0, v.path.Length - 1);
+            Vector2[] points = v.path.Select(p => p + origin).ToArray();
+            SpikeShape leadShape = lead > 0 ? new SpikeShape { points = points.Take(lead + 1).ToArray() } : null;
+            SpikeShape pathShape = new SpikeShape { points = points.Skip(lead).ToArray() };
+            Vector2 at = points[lead];
+            v.startShape = new SpikeShape { closed = true, points = new[] { at + new Vector2(-8f, -8f), at + new Vector2(8f, -8f), at + new Vector2(8f, 8f), at + new Vector2(-8f, 8f) } };
+            v.leadShape = leadShape;
+            v.pathShape = pathShape;
+            v.shapesOrigin = origin;
+        }
+
         /// <summary>The hovered tech's paths in world space (the engine's origin-free positions plus the current origin): its
         /// other directions faint, the hovered one bright (red when it dies in its coast); the lead-in (the continuation before
         /// the tech's inputs) thin, and a box where the tech starts.</summary>
@@ -277,7 +316,7 @@ namespace IGTAPTasMod
             Camera cam = Camera.main;
             Material material = OverlayMaterial();
             if (found == null || cam == null || material == null) return;
-            List<TasTechVariant> variants = TasTechVariants(found, s.hoverTech);
+            List<TasTechVariant> variants = DrawnTechVariants(found, s.hoverTech);
             Vector2 origin = CurrentOrigin();
             Rect pixels = cam.pixelRect;
             material.SetPass(0);
@@ -285,32 +324,38 @@ namespace IGTAPTasMod
             GL.Viewport(pixels);
             GL.LoadPixelMatrix(pixels.xMin, pixels.xMax, Screen.height - pixels.yMin, Screen.height - pixels.yMax);
             GL.Begin(GL.QUADS);
+            // The hovered one named below: the first hovered in draw order.
+            TasTechVariant named = null;
             for (int pass = 0; pass < 2; pass++)
                 for (int i = 0; i < variants.Count; i++)
                 {
                     bool hovered = variants[i].dir == s.hoverDir && variants[i].angle == s.hoverAngle;
                     if (hovered != (pass == 1)) continue;
                     TasTechVariant v = variants[i];
+                    if (hovered && named == null) named = v;
                     Color color = !hovered ? TechPathColor : v.died ? TechPathDied : TechPathHovered;
                     float half = Mathf.Max(.75f, scale) * (hovered ? 2f : 1f);
-                    int lead = Mathf.Clamp(v.lead, 0, v.path.Length - 1);
-                    Vector2[] points = v.path.Select(p => p + origin).ToArray();
-                    if (lead > 0) DrawShape(cam, new SpikeShape { points = points.Take(lead + 1).ToArray() }, color, half * .5f);
-                    DrawShape(cam, new SpikeShape { points = points.Skip(lead).ToArray() }, color, half);
-                    Vector2 at = points[lead];
-                    DrawShape(cam, new SpikeShape { closed = true, points = new[] { at + new Vector2(-8f, -8f), at + new Vector2(8f, -8f), at + new Vector2(8f, 8f), at + new Vector2(-8f, 8f) } }, color, half);
+                    TechShapes(v, origin);
+                    if (v.leadShape != null) DrawShape(cam, v.leadShape, color, half * .5f);
+                    DrawShape(cam, v.pathShape, color, half);
+                    DrawShape(cam, v.startShape, color, half);
                 }
             GL.End();
             GL.PopMatrix();
             GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
             // The hovered one's name by its start box, for a player looking at the game rather than the studio.
-            TasTechVariant named = variants.FirstOrDefault(v => v.dir == s.hoverDir && v.angle == s.hoverAngle);
             if (named == null || _overlayText == null) return;
             Vector3 box = cam.WorldToScreenPoint(named.path[Mathf.Clamp(named.lead, 0, named.path.Length - 1)] + origin);
-            string arrow;
-            TechArrows.TryGetValue(named.dir, out arrow);
-            string text = named.name + (arrow != null ? " " + arrow : "") + (named.angle != null ? " " + named.angle.Value.ToString("0.#") + "°" : "")
-                + (named.start > 0 ? "  in " + (named.start * Time.fixedDeltaTime).ToString("0.00") + " s" : "") + (named.died ? "  (dies after)" : "");
+            string text = named.label;
+            if (text == null || named.labelStep != Time.fixedDeltaTime)
+            {
+                string arrow;
+                TechArrows.TryGetValue(named.dir, out arrow);
+                text = named.name + (arrow != null ? " " + arrow : "") + (named.angle != null ? " " + named.angle.Value.ToString("0.#") + "°" : "")
+                    + (named.start > 0 ? "  in " + (named.start * Time.fixedDeltaTime).ToString("0.00") + " s" : "") + (named.died ? "  (dies after)" : "");
+                named.label = text;
+                named.labelStep = Time.fixedDeltaTime;
+            }
             OverlayMeasure.text = text;
             Vector2 size = _overlayText.CalcSize(OverlayMeasure);
             var r = new Rect(box.x + 14 * scale, Screen.height - box.y - size.y - 14 * scale, size.x, size.y);

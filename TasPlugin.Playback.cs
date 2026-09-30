@@ -32,10 +32,10 @@ namespace IGTAPTasMod
         private void Brake(Movement movement)
         {
             if (_engine.IsRunning || ++_brakeTicks > MaxBrakeTicks) { _brakeTicks = -1; return; }
-            float momentumX = ((Vector2)MovMomentumField.GetValue(movement)).x;
+            float momentumX = movement.momentum.x;
             if (_brakeTicks == 1) _brakeAxis = Mathf.Abs(momentumX) > 1f ? -Mathf.Sign(momentumX) : 0f;
             if (momentumX * _brakeAxis >= -1f) _brakeAxis = 0f;
-            if (_brakeAxis == 0f && (bool)MovOnGroundField.GetValue(movement)
+            if (_brakeAxis == 0f && movement.onGround
                 && Mathf.Abs(movement.GetComponent<Rigidbody2D>().linearVelocity.x) <= 1f)
             {
                 _brakeTicks = -1;

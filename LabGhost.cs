@@ -184,7 +184,10 @@ namespace IGTAPTasMod
             // paced playback, so the ghosts stay beside the player whatever the wall clock does; the wall clock's in hand play.
             _lab.GhostClock += Time.timeScale > 0f ? Time.deltaTime : FixedFrameStep();
             float ticks = _lab.GhostClock / Time.fixedDeltaTime;
-            float cycle = _lab.Ghosts.Max(g => g.Path.Count) - 1 + GhostHoldTicks;
+            // A loop, not Max: this runs every rendered frame.
+            int longest = int.MinValue;
+            foreach (LabGhost g in _lab.Ghosts) longest = Mathf.Max(longest, g.Path.Count);
+            float cycle = longest - 1 + GhostHoldTicks;
             int loop = (int)(ticks / cycle);
             foreach (LabGhost g in _lab.Ghosts) AnimateLabGhost(g, ticks - loop * cycle, loop);
         }
@@ -265,16 +268,28 @@ namespace IGTAPTasMod
         void DrawLabGhostLegend(float scale)
         {
             float pad = 10f * scale, swatch = 18f * scale, gap = 30f * scale;
-            float height = Mathf.Max(swatch, _overlayText.CalcSize(new GUIContent("Ag")).y) + pad;
-            var items = _lab.Ghosts.Where(g => !string.IsNullOrEmpty(g.Label))
-                .Select(g => (g, width: _overlayText.CalcSize(new GUIContent(g.Label)).x)).ToList();
-            if (items.Count == 0) return;
-            float total = items.Sum(i => swatch + 8f * scale + i.width) + gap * (items.Count - 1) + pad * 2f;
+            float height = Mathf.Max(swatch, _overlayText.CalcSize(LegendLineContent).y) + pad;
+            // Each labelled ghost's label width, in _lab.Ghosts' order; the sum in double, as Enumerable.Sum adds floats.
+            _ghostLegendWidths.Clear();
+            double sum = 0;
+            foreach (LabGhost g in _lab.Ghosts)
+            {
+                if (string.IsNullOrEmpty(g.Label)) continue;
+                OverlayMeasure.text = g.Label;
+                float labelWidth = _overlayText.CalcSize(OverlayMeasure).x;
+                _ghostLegendWidths.Add(labelWidth);
+                sum += swatch + 8f * scale + labelWidth;
+            }
+            if (_ghostLegendWidths.Count == 0) return;
+            float total = (float)sum + gap * (_ghostLegendWidths.Count - 1) + pad * 2f;
             float x = (Screen.width - total) / 2f, y = Screen.height - height - 16f * scale;
             Fill(new Rect(x, y, total, height), new Color(0f, 0f, 0f, 0.65f));
             x += pad;
-            foreach (var (g, width) in items)
+            int item = 0;
+            foreach (LabGhost g in _lab.Ghosts)
             {
+                if (string.IsNullOrEmpty(g.Label)) continue;
+                float width = _ghostLegendWidths[item++];
                 Fill(new Rect(x, y + (height - swatch) / 2f, swatch, swatch), new Color(g.Tint.r, g.Tint.g, g.Tint.b, 1f));
                 x += swatch + 8f * scale;
                 Label(new Rect(x, y, width + 4f * scale, height), g.Label, _overlayText, Color.white);
@@ -282,9 +297,24 @@ namespace IGTAPTasMod
             }
         }
 
-        bool LabGhostOverlayShown { get { return _lab != null && _lab.Ghosts.Any(g => !string.IsNullOrEmpty(g.Label) || !string.IsNullOrEmpty(g.Badge)); } }
+        static readonly GUIContent LegendLineContent = new GUIContent("Ag");
+        readonly List<float> _ghostLegendWidths = new List<float>();
+
+        /// <summary>A ghost has a label (the key) or a badge to draw. A loop: Any would allocate an enumerator on every OnGUI.</summary>
+        bool LabGhostOverlayShown
+        {
+            get
+            {
+                if (_lab == null) return false;
+                foreach (LabGhost g in _lab.Ghosts)
+                    if (!string.IsNullOrEmpty(g.Label) || !string.IsNullOrEmpty(g.Badge)) return true;
+                return false;
+            }
+        }
 
         GUIStyle _ghostBadgeStyle;
+        // The badge outline's four offsets, scaled by its width (o) where drawn.
+        static readonly Vector2[] BadgeOutline = { new Vector2(-1f, 0f), new Vector2(1f, 0f), new Vector2(0f, -1f), new Vector2(0f, 1f) };
 
         /// <summary>
         /// Each ghost's badge (the lab's <c>ghosts</c>, "KB" for a keyboard's inputs) on its head, bold white with a dark outline,
@@ -303,8 +333,8 @@ namespace IGTAPTasMod
                 Vector3 s = cam.WorldToScreenPoint(g.Sprite.position + new Vector3(0f, 14f * g.Sprite.lossyScale.y, 0f));
                 if (s.z < 0f) continue;
                 var at = new Rect(s.x - w / 2f, Screen.height - s.y - h / 2f, w, h);
-                foreach (Vector2 d in new[] { new Vector2(-o, 0f), new Vector2(o, 0f), new Vector2(0f, -o), new Vector2(0f, o) })
-                    Label(new Rect(at.x + d.x, at.y + d.y, w, h), g.Badge, _ghostBadgeStyle, new Color(0f, 0f, 0f, 0.9f));
+                foreach (Vector2 d in BadgeOutline)
+                    Label(new Rect(at.x + d.x * o, at.y + d.y * o, w, h), g.Badge, _ghostBadgeStyle, new Color(0f, 0f, 0f, 0.9f));
                 Label(at, g.Badge, _ghostBadgeStyle, Color.white);
             }
         }

@@ -67,14 +67,18 @@
 .matrix tbody th { color: var(--text); font-weight: 600; }
 .matrixSection th { padding-top: 10px; background: #0b1c31; color: var(--muted); font-size: 10px; letter-spacing: .1em; }
 .matrix td.na { background: repeating-linear-gradient(135deg, transparent 0 6px, #0f1d31 6px 12px); }
-.matrixCell { display: inline-flex; justify-content: flex-start; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; }
-.matrixCell input { accent-color: var(--cyan); margin: 0; }
-.matrixCell.on { color: var(--text); }
-.matrixPair { display: flex; flex-direction: column; gap: 2px; }
-.matrixCell button { padding: 1px 4px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.matrixCell button:hover { color: var(--cyan); }
-.matrixCell.farm { font-size: 11px; }
-.matrixCell.opened button { background: #123955; color: var(--cyan); }
+.matrix td.matrixCell { position: relative; padding: 5px 24px 5px 8px; color: var(--muted); cursor: pointer; user-select: none; font-variant-numeric: tabular-nums; transition: background .12s, box-shadow .12s, color .12s; }
+.matrix td.matrixCell:hover { background: #10243c; color: #aac0d7; }
+.matrix td.matrixCell:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.matrix td.matrixCell.on { background: #0f3a52; color: var(--text); box-shadow: inset 0 0 0 1px #2b87ad, inset 3px 0 0 var(--cyan); }
+.matrix td.matrixCell.on:hover { background: #13465f; }
+.matrix td.matrixCell.opened { box-shadow: inset 0 0 0 2px var(--cyan); }
+.matrix td.matrixCell.on.opened { box-shadow: inset 0 0 0 2px var(--cyan), inset 3px 0 0 var(--cyan); }
+.matrixTimes { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.matrixTimes small { font-size: 10px; opacity: .75; }
+.matrixOpen { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); padding: 1px 4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.matrix td.matrixCell:hover .matrixOpen, .matrix td.matrixCell.opened .matrixOpen, .matrixOpen:focus-visible { opacity: 1; }
+.matrixOpen:hover { background: #123955; color: var(--cyan); }
 .matrixQueue { margin: 14px 0 0; padding-left: 22px; font-size: 12px; line-height: 1.7; color: var(--muted); }
 .matrixQueue li strong { margin-right: 8px; color: #aac0d7; }
 .matrixQueue li.active strong, .matrixQueue li.active span { color: var(--cyan); }
