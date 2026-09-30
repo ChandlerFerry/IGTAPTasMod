@@ -691,18 +691,15 @@ namespace IGTAPTasMod
     {
         const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
-        internal static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
-
         // MacroEngine's step list is the whole route being played (17k entries on a Full-TAS run): nothing reads it back from
         // a trace, and written with every tick it made a Full-TAS trace 3.8 GB, past what the offline engine can read.
         static readonly FieldInfo EngineSteps = typeof(MacroEngine).GetField("_steps", InstanceFields);
 
         static void WriteRandom(EngineSimJson json, UnityEngine.Random.State state)
         {
-            object boxed = state;
             JsonTextWriter w = json.W;
             w.WriteStartArray();
-            foreach (FieldInfo field in RandomStateFields) w.WriteValue((int)field.GetValue(boxed));
+            foreach (int word in CourseStart.Words(state)) w.WriteValue(word);
             w.WriteEndArray();
         }
 

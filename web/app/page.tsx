@@ -29,13 +29,16 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
   auto?: boolean; farm?: boolean; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null;
   /** Improve's outlook after its last pull (the engine's `outlook` event), and the pulls running now (`pullStart`). */
   outlook?: Outlook | null; pulls?: PullNow[] };
-/** Improve's outlook: the chance more search beats the best (a Poisson rate over the recent half of all search, every Improve
- * of this target counted), the model's floor and headroom, and what else there is to try. Seconds are search (wall) seconds. */
+/** Improve's outlook: the chance more search beats the best (the folder's other Improve runs, past a dry spell as long as
+ * this one, updated with this target's own gains), the model's floor and headroom, and what else there is to try. Seconds
+ * are search (wall) seconds. */
 type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
   best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: number; label: string; expected: number; slow: string }[];
   searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
-  window: number; recent: number; chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[] };
-type PullNow = { pull: number; lever: string; goal: number; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number };
+  chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[];
+  basis: { runs: number; search: number; gains: number; spell: number; spellGains: number; spellSearch: number } };
+type PullNow = { pull: number; lever: string; goal: number; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number;
+  misses: number; history: { pulls: number; gains: number } };
 /**
  * A course target's waypoints (`solve --auto --waypoints-out`): the start gate (record timing: `timerGoal`), goals along its
  * record's (farm: its farm route's) path, then the finish; `rects` their areas in the trace's frame and `world` in the game
@@ -178,7 +181,7 @@ export default function Studio() {
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
       <div className="content">
-        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.length ? route.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />) : <div className="emptyState"><span className="orbit">●</span><h2>No inputs yet</h2><p>Record a run to fill this route.</p></div>}</div></div>}
+        {tab === "timeline" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">FIXED-TICK SEQUENCE</p><h2>Route timeline</h2></div><span className="hint">Changes save immediately</span></div><FrameTimeline actions={route?.actions ?? []} running={!!state.running} onPlayFrom={fromTick => command("/routes/run", { fromTick })}/><HumanSlackTimeline routeName={route?.name} load={loadSlack}/><div className="timeline">{route?.actions.length ? route.actions.map((action, index) => <ActionCard key={action.id} action={action} index={index} onSave={(updates) => command("/actions/update", { actionIndex: index, ...updates })} />) : <div className="emptyState"><span className="orbit">●</span><h2>No inputs yet</h2><p>Record a run to fill this route.</p></div>}</div></div>}
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.label.replace(/^Exact /,"")} ${action.durationTicks}f`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
@@ -340,14 +343,21 @@ function RouteSidebar({routes,courses,categories,activeId,saveUnlocks,onCommand}
 }
 function DirectionText(direction:number) { return direction < 0 ? "←" : direction > 0 ? "→" : "neutral"; }
 function Field({label,children}:{label:string,children:React.ReactNode}) { return <label className="field"><span>{label}</span>{children}</label>; }
-function FrameTimeline({actions}:{actions:Action[]}) {
+function FrameTimeline({actions,running,onPlayFrom}:{actions:Action[];running:boolean;onPlayFrom:(fromTick:number)=>void}) {
   const frames=actions.flatMap((action,actionIndex)=>action.enabled?Array.from({length:Math.max(1,action.durationTicks)},(_,actionFrame)=>({action,actionIndex,actionFrame})):[]);
+  // Frames picked to play at 1x (first..last); the run skips ahead fast to the frame before them.
+  const [picked,setPicked]=useState<[number,number]|null>(null);
+  useEffect(()=>setPicked(null),[actions]);
+  const pick=(frame:number,shift:boolean)=>setPicked(p=>shift&&p?[Math.min(p[0],frame),Math.max(p[1],frame)]:p&&p[0]===frame&&p[1]===frame?null:[frame,frame]);
+  const from=picked?Math.max(0,picked[0]-1):0;
   return <section className="frameTimeline" aria-label="Frame-by-frame route inputs">
-    <div className="frameTimelineHeader"><div><strong>Inputs by frame</strong><span>Scroll left → right · one column per physics frame</span></div><div className="frameLegend"><span>J↓ press</span><span>J hold</span><span>J↑ release</span><span>D dash</span></div></div>
-    <div className="frameScroller"><div className="frameTrack">{frames.map(({action,actionIndex,actionFrame},frameIndex)=><FrameCell key={`${action.id}-${actionFrame}`} frame={frameIndex+1} action={action} actionIndex={actionIndex} actionFrame={actionFrame}/>)}</div></div>
+    <div className="frameTimelineHeader"><div><strong>Inputs by frame</strong><span>Scroll left → right · one column per physics frame · click a frame to play from it, shift-click extends</span></div>
+      {picked&&<div className="buttonRow"><span className="hint">Frames {picked[0]===picked[1]?picked[0]:`${picked[0]}–${picked[1]}`}</span><button className="secondary" disabled={running} onClick={()=>onPlayFrom(from)} title={`Skips fast to frame ${from}, then plays at 1x`}>▶ Play from {from}</button><button className="secondary" onClick={()=>setPicked(null)}>Clear</button></div>}
+      <div className="frameLegend"><span>J↓ press</span><span>J hold</span><span>J↑ release</span><span>D dash</span></div></div>
+    <div className="frameScroller"><div className="frameTrack">{frames.map(({action,actionIndex,actionFrame},frameIndex)=><FrameCell key={`${action.id}-${actionFrame}`} frame={frameIndex+1} action={action} actionIndex={actionIndex} actionFrame={actionFrame} picked={!!picked&&frameIndex+1>=picked[0]&&frameIndex+1<=picked[1]} onPick={shift=>pick(frameIndex+1,shift)}/>)}</div></div>
   </section>;
 }
-function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:Action;actionIndex:number;actionFrame:number}) {
+function FrameCell({frame,action,actionIndex,actionFrame,picked,onPick}:{frame:number;action:Action;actionIndex:number;actionFrame:number;picked:boolean;onPick:(shift:boolean)=>void}) {
   const raw=action.type==="RAWINPUT";
   const move=raw?(action.rawMoveX??action.direction):action.type==="WALLJUMP"?(actionFrame===0?-action.direction:(action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?action.wallJumpHoldDirection:action.direction)):action.direction;
   const inputs:string[]=[];
@@ -358,7 +368,7 @@ function FrameCell({frame,action,actionIndex,actionFrame}:{frame:number;action:A
   if(raw&&action.rawJumpReleased) inputs.push("J↑");
   if((raw&&action.rawDashPressed)||(!raw&&actionFrame===0&&action.type==="DASH")) inputs.push("D↓");
   else if(raw&&action.rawDashHeld) inputs.push("D");
-  return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
+  return <div className={`frameCell actionTone${actionIndex%6} ${actionFrame===0?"actionStart":""} ${picked?"picked":""}`} title={`Frame ${frame} · action ${actionIndex+1}: ${action.label}`} onClick={e=>onPick(e.shiftKey)}><b>{frame}</b><span>{inputs.length?inputs.join(" "):"·"}</span><small>{actionFrame===0?`A${actionIndex+1}`:""}</small></div>;
 }
 function ActionCard({action,index,onSave}:{action:Action;index:number;onSave:(u:Record<string,unknown>)=>void}) { const [duration,setDuration]=useState(action.durationTicks); useEffect(()=>setDuration(action.durationTicks),[action.durationTicks]); const hold=action.type==="WALLJUMP"?` · post-launch ${action.wallJumpHoldDirection>=-1&&action.wallJumpHoldDirection<=1?DirectionText(action.wallJumpHoldDirection):"auto"}`:""; return <div className={`actionCard ${!action.enabled ? "disabled" : ""}`}><b>{index+1}</b><div className="actionMain"><strong>{action.label}</strong><small>Physics frames{hold}</small></div><select value={action.type} onChange={e=>onSave({type:e.target.value})}>{["RAWINPUT","MOVE","JUMP","DASH","WAIT","WALLJUMP"].map(type=><option key={type} value={type}>{type==="RAWINPUT"?"EXACT INPUT":type}</option>)}</select><div className="direction">{action.direction < 0 ? "←" : action.direction > 0 ? "→" : "•"}</div><div className="inlineInput"><input type="number" min="1" value={duration} onChange={e=>setDuration(Number(e.target.value))}/><span>f</span></div><button onClick={()=>onSave({durationTicks:duration})}>Save</button><button className="secondary" onClick={()=>onSave({enabled:!action.enabled})}>{action.enabled ? "Disable" : "Enable"}</button></div>; }
 /** A waypoint in words: the start gate, the finish, or an area goal by its center in the world frame (the map's) and the
@@ -455,7 +465,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
 }
 
 /** Search time as the panel says it: seconds, minutes, then hours. */
-const searchSpan=(s:number)=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:`${(s/3600).toFixed(1)} h`;
+const searchSpan=(s:number)=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:s<172800?`${(s/3600).toFixed(1)} h`:"days";
 const pct=(p:number)=>`${Math.round(p*100)}%`;
 
 /** Improve's answer to "should I keep going?": the verdict, what to do, and the numbers behind it. */
@@ -471,19 +481,21 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
       <div><span>Chance of a gain</span><strong>{odds?`${pct(o.chanceHour)} per hour`:"—"}</strong>
         <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":"more search won't help"}</small></div>
       <div><span>Next gain</span><strong>{odds?`~${searchSpan(o.medianWait)}`:"—"}</strong>
-        <small>{odds?`median wait at this pace${o.typicalGain!=null?` · gains so far ~${o.typicalGain} ticks each`:""}`:""}</small></div>
-      <div><span>Searched</span><strong>{searchSpan(o.searched)}</strong>
+        <small>{odds?`median wait${o.typicalGain!=null?` · gains ~${o.typicalGain} ticks each`:""}`:""}</small></div>
+      <div><span>Based on</span><strong>{o.basis.runs?`${o.basis.runs} other run${o.basis.runs===1?"":"s"}`:"no other runs"}</strong>
+        <small>{o.basis.runs?`${o.basis.gains} gain${o.basis.gains===1?"":"s"} in ${searchSpan(o.basis.search)} of their search; past ${searchSpan(o.basis.spell)} without one: ${o.basis.spellGains} in ${searchSpan(o.basis.spellSearch)}`:"no recorded Improve here yet, so the odds lean on a flat guess"}</small></div>
+      <div><span>This target</span><strong>{searchSpan(o.searched)} searched</strong>
         <small>{o.sessions} Improve run{o.sessions===1?"":"s"} · {o.gains?`${o.gains} gain${o.gains===1?"":"s"} (−${o.gained} ticks), last ${searchSpan(o.lastGainAgo??0)} ago`:"no gain yet"}</small></div>
       <div><span>Room to the floor</span><strong>{room} ticks</strong>
-        <small>floor {o.floor.toFixed(2)}s (moving at top speed, dropping the laps spare cash covers) · model expects ~{o.headroom} ticks findable</small></div>
+        <small>floor {o.floor.toFixed(2)}s (top speed on every {o.unit}; optimistic) · the model's guess: ~{o.headroom} ticks findable</small></div>
     </div>
     {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
-      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`run ${p.pulls}× here before (${searchSpan(p.cpu)} CPU), ${p.gained?`−${p.gained} ticks`:"no gain"}`:"first time here"}{p.expected>0?` · ~${p.expected} ticks expected here`:""}</li>)}</ul></div>}
+      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`${p.misses?`${p.misses} miss${p.misses===1?"":"es"} in a row here`:`−${p.gained} ticks here`} (${searchSpan(p.cpu)} CPU)`:"first time here"} · {p.history.pulls?`such pulls gained ${p.history.gains} of ${p.history.pulls} times`:"no record of such pulls"}</li>)}</ul></div>}
     <details className="howTo"><summary>How Improve decides</summary><ul>
       <li>A <b>pull</b> is one short search: one tactic at one {o.unit}, for a minute or two. Improve runs pulls until its minutes are up.</li>
       <li>Tactics: <b>window search</b> re-finds the inputs between two {o.unit}s; <b>input polish</b> nudges the timing of the inputs the route has; <b>look-ahead</b> and <b>long windows</b> search further on, so a slower arrival that carries more speed can win; <b>graft</b>, <b>combine</b> and <b>revive</b> splice in faster pieces other found routes have.</li>
       <li>Improve picks the next pull by expected ticks per CPU second: where the model sees slow stretches or another route was faster, and where pulls paid before. A pull that gains nothing makes that spot less likely to be picked again.</li>
-      <li>The chance comes from when gains came: the gains in the recent half of all search on this target (every Improve run counted). Few recent gains, low chance; early gains don&apos;t count much, since a search&apos;s gains thin out.</li>
+      <li>The chance comes from the other Improve runs recorded in this folder: how often they gained once they had gone as long without a gain as this target has now. This target&apos;s own gains then raise it, recent ones most. A few seconds of search can&apos;t swing it; a gain or a long dry spell does. &ldquo;Such pulls gained x of y times&rdquo; counts every recorded pull of that tactic after as many misses in a row at its spot.</li>
       <li>The floor is each {o.unit}&apos;s distance over the fastest speed measured with these unlocks: no route on these {o.unit}s beats it, but it&apos;s optimistic, so being above it doesn&apos;t mean a gain exists.</li>
     </ul></details>
   </div>;
@@ -1150,6 +1162,10 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   useEffect(() => setPicked(null), [name]);
+  /** Play from this frame: turbo up to it, 1x from there. */
+  const [fromFrame, setFromFrame] = useState("");
+  const splitTicks = (run?.best?.splits ?? run?.offline?.splits ?? []).map(s => s.ticks);
+  useEffect(() => { if (picked) setFromFrame(String(picked[0] > 1 ? splitTicks[picked[0] - 2] ?? "" : 0)); }, [picked]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
     <p className="lede">The game plugin doesn&apos;t report Full-TAS runs.</p></div>;
   const solve: FullTasSolveState = fullTas.solve ?? { running: false, status: "", log: [] };
@@ -1201,6 +1217,8 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <div className="buttonRow">
             <button className="secondary" disabled={busy || !run} title="Starts a trace and world capture from a fresh game." onClick={() => onCommand("/fulltas/capture", { name })}>Capture start</button>
             <button className="secondary" disabled={busy || !(run?.playable ?? run?.best)} title={run?.best ? "Plays the saved best in real time from a new game." : "Plays the offline best so far; stops at its last goal."} onClick={() => onCommand("/fulltas/play", { name })}>Play</button>
+            <span className="inlineInput"><input type="number" min="0" value={fromFrame} placeholder="frame" title="Frame to skip to in turbo; picking a goal fills in its start" onChange={e => setFromFrame(e.target.value)}/></span>
+            <button className="secondary" disabled={busy || !(run?.playable ?? run?.best) || !(Number(fromFrame) > 0)} title={`Skips to frame ${fromFrame} in turbo, then plays at 1x`} onClick={() => onCommand("/fulltas/play", { name, fromTick: Number(fromFrame) })}>▶ Play from {fromFrame || "…"}</button>
             <button className="secondary" disabled={running || !run?.closest} title={run?.closest ? `Plays the closest attempt (${run.closest.reached}/${run.goals.length} goals, ${tickText(run.closest.ticks)}).` : "No attempt yet; Reach missing goals creates one."} onClick={() => onCommand("/fulltas/play", { name, closest: true })}>Test best</button>
             <button className="secondary" disabled={!run?.traceReady} title="Draws search windows, best route, goals and avoid boxes." onClick={() => onMap(name)}>Show map</button>
             <label className={`capabilityLock executable ${run && fullTas.goalsOverlay === name ? "on" : ""}`} title="In game: shows this run's goal boxes; reached ones turn green.">

@@ -46,11 +46,13 @@ namespace IGTAPTasMod
 
         /// <summary>The RNG state (xorshift128 words s0-s3) every category start draws from.</summary>
         static readonly int[] RandomState = { -959912050, 848757813, -1712370445, -552349168 };
-        static readonly FieldInfo[] RandomWords =
+        static readonly FieldInfo[] RandomWords = typeof(Random.State).GetFields(Fields);
+
+        /// <summary>An RNG state's words s0-s3 (private in the game's Unity).</summary>
+        internal static int[] Words(Random.State state)
         {
-            typeof(Random.State).GetField("s0", Fields), typeof(Random.State).GetField("s1", Fields),
-            typeof(Random.State).GetField("s2", Fields), typeof(Random.State).GetField("s3", Fields),
-        };
+            return System.Array.ConvertAll(RandomWords, f => (int)f.GetValue(state));
+        }
 
         /// <summary><c>clonesScript.timeSinceLastClone</c> as <c>clonesScript.Start</c> leaves it.</summary>
         const float CloneTimer = 10000f;

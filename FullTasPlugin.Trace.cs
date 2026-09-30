@@ -49,7 +49,6 @@ namespace IGTAPTasMod
                 w.WritePropertyName("checkpointRespawns"); w.WriteValue(CheckpointRespawns);
                 w.WritePropertyName("fulltas"); w.WriteStartObject();
                 w.WritePropertyName("name"); w.WriteValue(run.name);
-                w.WritePropertyName("seed"); w.WriteValue(FullTasSeed);
                 w.WritePropertyName("startSetup"); w.WriteValue(FullTasStartSetup);
                 w.WritePropertyName("format"); w.WriteValue(FullTasTraceFormat);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }

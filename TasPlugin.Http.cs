@@ -168,7 +168,7 @@ namespace IGTAPTasMod
             if (request.Path == "/api/routes/run")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
-                ReplaySelected(Number(body, "startDelayTicks", 0));
+                ReplaySelected(Number(body, "startDelayTicks", 0), 0f, Number(body, "fromTick", 0));
                 return new { ok = true };
             }
             if (request.Path == "/api/routes/walk")

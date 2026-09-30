@@ -40,10 +40,13 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>One lap of the best: goals K (start:N) and K+1 (finish:N) (0-based), played from the quick restart at input A
-        /// to the input before the quick restart at B that starts the step after it.</summary>
+        /// to the input before the quick restart at B that starts the step after it. A walk-in lap (<see cref="WalkIn"/>) has no
+        /// quick restart before its gate: A is where a record lap puts one, just after the walk touches the gate (the restart then
+        /// lands at this course's start), and B is the next quick restart after its finish (-1: none before the goal after).</summary>
         sealed class RunLap
         {
             public int K, A, B, Course;
+            public bool WalkIn;
         }
 
         /// <summary>The earlier goal lists of this run (oldest first: the trace's), which the current one was derived from by
@@ -60,9 +63,18 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A goals pull tries its edits again only after a new best and this long since the last pull (it replays every
         /// lap edit of the run: about a CPU minute a pull on FalseEnding-Any%), or at once after it adopted one.</summary>
         const double GoalsEveryMinutes = 5;
-        const int MaxPadFixes = 6, RecordRoutes = 12, RecordReached = 4;
+        const int MaxPadFixes = 6, RecordRoutes = 12, RecordReached = 4, InvestTries = 2;
         /// <summary>A record lap's repair budget: CPU seconds per goal it re-finds (its lead where it stops is a few ticks).</summary>
         const double RecordRepairCpuPerGoal = 20;
+        /// <summary>A walk-in lap's quick restart goes 0..WalkInRestarts-1 inputs after the walk touches the gate.</summary>
+        const int WalkInRestarts = 4;
+        /// <summary>The best's own laps of a course a record lap tries (the shortest, one per distinct input list).</summary>
+        const int OwnLapRoutes = 6;
+        /// <summary>--record-search-minutes: the wall minutes (every thread) a goals pull searches a lap from the quick restart for a
+        /// course and unlock set with no saved -restart lap (once per run; 0: never).</summary>
+        double _recordSearchMinutes = 2;
+        /// <summary>The (course, unlock set) keys a goals pull already searched a restart lap for (kept in the memory).</summary>
+        readonly HashSet<string> _lapSearched = new HashSet<string>();
 
         bool GoalsDue()
         {
@@ -88,6 +100,9 @@ namespace IGTAP.EngineSim.Cli
             edits.AddRange(RegroupEdits(best));
             List<GoalEdit> records = RecordEdits(best, laps);
             edits.AddRange(records);
+            List<GoalEdit> inserts = InsertEdits(best, laps);
+            edits.AddRange(inserts);
+            edits.AddRange(PayoutEdits(best, laps));
             edits.RemoveAll(e => FullTasGoal.EditRefused(_labels, e.Labels) != null);
             // An edit is its whole spliced route: one played before (this session or an earlier one) plays the same way again.
             int played = edits.RemoveAll(e => _editsTried.Contains(EditKey(e)));
@@ -99,7 +114,8 @@ namespace IGTAP.EngineSim.Cli
             _pullNo++;
             int pull = _pullNo;
             Log($"auto: pull {pull}: goals, {edits.Count} goal-list edits of {laps.Count} laps ({edits.Count(e => e.Kind == "drop")} drops, {edits.Count(e => e.Kind == "add")} adds, "
-                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {records.Count} record laps), each played on a copy with waits before the quick restarts it needs");
+                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks), "
+                + "each played on a copy with waits before the quick restarts it needs");
             var results = new (Route route, Route partial, string why)[edits.Count];
             RunOnThreads(edits.Count, (sim, origin, tracker, i) =>
             {
@@ -134,7 +150,7 @@ namespace IGTAP.EngineSim.Cli
                     return k == 0 ? null : new Route { Inputs = p.Inputs.Take((int)Math.Min(p.GoalInput[k - 1], p.Inputs.Count)).ToList(), Progress = k,
                         GoalInput = p.GoalInput, GoalPhysics = p.GoalPhysics, GoalHeld = p.GoalHeld, EndReason = p.EndReason };
                 }
-                var ahead = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "record" && results[i].partial != null)
+                var ahead = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "record" || edits[i].Kind == "payout") && results[i].partial != null)
                     .Select(i => (i, p: Cut(results[i].partial))).Where(c => c.p != null && c.p.Progress < best.Progress && c.p.Progress >= edits[c.i].Last)
                     .OrderByDescending(c => c.p.Progress).ToList();
                 foreach (var (i, p) in ahead)
@@ -146,6 +162,15 @@ namespace IGTAP.EngineSim.Cli
                     finally { _repairFloorCpu = 0; }
                 }
             }
+            // Inserted record laps are investments: the lap costs ticks and the way on starts elsewhere, so none plays through as
+            // spliced. The two that get furthest (then soonest) are re-found under their goals, held to a CPU budget, not to the best.
+            if (!adopted && ReferenceEquals(_best, best))
+                foreach (int i in Enumerable.Range(0, edits.Count).Where(i => results[i].route == null && results[i].partial != null && (edits[i].Kind == "insert" || edits[i].Kind == "payout" && PayoutMayPay(edits[i], results[i].partial, best)))
+                    .OrderByDescending(i => results[i].partial.Progress).ThenBy(i => results[i].partial.GoalPhysics[results[i].partial.Progress - 1]).Take(InvestTries))
+                {
+                    if (!ReferenceEquals(_best, best) || TimeUp) break;
+                    if (adopted = InvestRepair(edits[i], results[i].partial, best)) break;
+                }
             for (int i = 0; i < edits.Count; i++) if (results[i] != default) _editsTried.Add(EditKey(edits[i]));
             SaveMemory();
             string outcome = win.route == null ? $"no edit of {edits.Count} beats the best" : $"{win.edit.Text}: {Describe(win.route)}";
@@ -239,26 +264,34 @@ namespace IGTAP.EngineSim.Cli
         static string Plural(int n, string what) { return n == 1 ? "1 " + what : n + " " + what + "s"; }
 
         /// <summary>The best with laps dropped (their goals and their inputs from the quick restart before the gate to the next step's).</summary>
-        GoalEdit Drop(Route best, List<RunLap> drop, string kind, string text, List<InputTick> head = null, int headAt = 0, int oldFrom = 0)
+        GoalEdit Drop(Route best, List<RunLap> drop, string kind, string text)
         {
-            var cut = new HashSet<int>(drop.SelectMany(l => new[] { l.K, l.K + 1 }));
+            return Spliced(best, drop.Select(l => (l.A, l.B, new List<InputTick>())).ToList(), drop.SelectMany(l => new[] { l.K, l.K + 1 }), kind,
+                kind + ":" + string.Join(",", drop.Select(l => l.K)), text, drop.Min(l => l.K) + 1, drop.Max(l => l.K) + 2);
+        }
+
+        /// <summary>The best with stretches of its inputs replaced: old inputs [from, to) by <c>with</c> (empty: cut), the goals in
+        /// <paramref name="cut"/> (0-based) taken off the list.</summary>
+        GoalEdit Spliced(Route best, List<(int from, int to, List<InputTick> with)> ops, IEnumerable<int> cut, string kind, string key, string text, int first, int last)
+        {
             var inputs = new List<InputTick>(best.Inputs.Count);
-            int newAt = 0, oldAt = oldFrom;
-            if (head != null) { inputs.AddRange(head); newAt = headAt; }
-            foreach (RunLap l in drop.OrderBy(l => l.A))
+            int newAt = 0, oldAt = 0;
+            long saves = 0;
+            foreach (var (from, to, with) in ops.OrderBy(o => o.from))
             {
-                inputs.AddRange(best.Inputs.Skip(oldAt).Take(l.A - oldAt));
+                inputs.AddRange(best.Inputs.GetRange(oldAt, from - oldAt));
+                inputs.AddRange(with);
                 newAt = inputs.Count;
-                oldAt = l.B;
+                oldAt = to;
+                saves += to - from - with.Count;
             }
-            inputs.AddRange(best.Inputs.Skip(oldAt));
-            int[] oldOf = Enumerable.Range(0, _goals).Where(k => !cut.Contains(k)).ToArray();
+            inputs.AddRange(best.Inputs.GetRange(oldAt, best.Inputs.Count - oldAt));
+            var gone = new HashSet<int>(cut);
+            int[] oldOf = Enumerable.Range(0, _goals).Where(k => !gone.Contains(k)).ToArray();
             return new GoalEdit
             {
-                Kind = kind, Text = text, Inputs = inputs, NewAt = newAt, OldAt = oldAt, OldOf = oldOf,
-                Labels = oldOf.Select(k => _labels[k]).ToArray(), Saves = drop.Sum(l => (long)(l.B - l.A)),
-                First = drop.Min(l => l.K) + 1, Last = drop.Max(l => l.K) + 2,
-                Key = kind + ":" + string.Join(",", drop.Select(l => l.K)),
+                Kind = kind, Key = key, Text = text, Inputs = inputs, NewAt = newAt, OldAt = oldAt, OldOf = oldOf,
+                Labels = oldOf.Select(k => _labels[k]).ToArray(), Saves = saves, First = first, Last = last,
             };
         }
 
@@ -390,72 +423,236 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// Record laps: a lap of the best replaced by a quick restart, a few idle ticks and a saved course route played from standing
-        /// at the course's reset point (offline-best, its judged routes included), when that lap leaves the course a faster best
-        /// time: the clones' path, so every clone pays more from then on. Costs ticks once; pays when the laps the extra income
-        /// makes unneeded go: each is offered with the last 0-3 laps of the course's run of laps before the stretch's next unlock
-        /// or area goal dropped. At the course's last lap before its first clone buy, and at its first lap after one.
+        /// Record laps: a lap of the best replaced by a quick restart, a few idle ticks and a faster lap played from standing at the
+        /// course's reset point, when that lap leaves the course a faster best time: the clones' path, so every clone pays more from
+        /// then on. The laps played there: the course's saved routes (offline-best, its judged routes included) and the best's own laps
+        /// of the course. Costs ticks once; pays when the laps the extra income makes unneeded go. Each is offered alone, with the same
+        /// lap in place of the slower laps right after it (the rest of that visit's back-to-back laps), and each of those with the last
+        /// 1-3 laps of the course's run of laps before the stretch's next unlock or area goal dropped. Tried at the course's last lap
+        /// before its first clone buy, its first lap after one, its first lap after each unlock buy (new unlocks: a faster way) and
+        /// every lap the best walks into (no quick restart before the gate: the walk is kept to the gate, then a quick restart;
+        /// FalseEnding-Any%'s first Course 2 lap with the dash walked in from the boxes in 103 ticks, where a lap from the restart
+        /// takes 84). A course and unlock set with no lap saved from the restart gets one searched first (--record-search-minutes,
+        /// once per run: <see cref="SearchRecordLap"/>).
         /// </summary>
         List<GoalEdit> RecordEdits(Route best, List<RunLap> laps)
         {
             var edits = new List<GoalEdit>();
             LoadCourseRoutes();
-            if (_courseRoutes.Count == 0) return edits;
+            List<RunLap> walkIns = WalkInLaps(best);
+            List<RunLap> all = laps.Concat(walkIns).OrderBy(l => l.K).ThenBy(l => l.A).ToList();
             var spots = new List<RunLap>();
-            foreach (int course in laps.Select(l => l.Course).Distinct())
+            void Spot(RunLap l) { if (l != null && !spots.Contains(l)) spots.Add(l); }
+            int[] unlocks = Enumerable.Range(0, _goals).Where(k => _runGoals.Goals[k].kind == FullTasGoal.Buy && !FullTasGoal.IsEconomy(_labels[k])).ToArray();
+            foreach (int course in all.Select(l => l.Course).Distinct())
             {
-                if (!_courseRoutes.Any(r => r.course == course)) continue;
                 string clone = course == 1 ? "buyclone" : "buyclone" + course;
                 int firstClone = Array.FindIndex(_labels, l => l.StartsWith("buy:", StringComparison.Ordinal) && l.Substring(4).Split('+').Contains(clone));
-                RunLap before = laps.LastOrDefault(l => l.Course == course && (firstClone < 0 || l.K < firstClone));
-                RunLap after = firstClone < 0 ? null : laps.FirstOrDefault(l => l.Course == course && l.K > firstClone);
-                foreach (RunLap l in new[] { before, after }) if (l != null && !spots.Contains(l)) spots.Add(l);
-            }
-            if (spots.Count == 0) return edits;
-            var found = new (List<InputTick> lap, int fin, string how)?[spots.Count];
-            var why = new string[spots.Count];
-            RunOnThreads(spots.Count, (sim, origin, tracker, i) =>
-            {
-                sim.UseGoals(tracker.For(_runGoals.Goals));
-                found[i] = RecordLapOf(sim, origin, best, spots[i], out why[i]);
-            });
-            List<List<RunLap>> blocks = Blocks(laps);
-            for (int i = 0; i < spots.Count; i++)
-            {
-                if (found[i] == null)
+                Spot(laps.LastOrDefault(l => l.Course == course && (firstClone < 0 || l.K < firstClone)));
+                if (firstClone >= 0) Spot(laps.FirstOrDefault(l => l.Course == course && l.K > firstClone));
+                foreach (int u in unlocks)
                 {
-                    Log($"auto goals: no record lap at goals {spots[i].K + 1}-{spots[i].K + 2} (Course {spots[i].Course}): {why[i] ?? "not played"}");
-                    continue;
+                    RunLap next = all.FirstOrDefault(l => l.Course == course && l.K > u);
+                    if (next != null) foreach (RunLap l in all.Where(l => l.K == next.K)) Spot(l);
                 }
+            }
+            foreach (RunLap l in walkIns) Spot(l);
+            if (spots.Count == 0) return edits;
+            Dictionary<int, List<(string name, List<InputTick> inputs)>> own = all.Select(l => l.Course).Distinct().ToDictionary(c => c, c => OwnLaps(best, c));
+            var found = new List<(List<InputTick> lap, int fin, float path, long tick, string how)>[spots.Count];
+            var why = new string[spots.Count];
+            var capsAt = new Caps?[spots.Count];
+            void Play(List<int> which) => RunOnThreads(which.Count, (sim, origin, tracker, j) =>
+            {
+                int i = which[j];
+                sim.UseGoals(tracker.For(_runGoals.Goals));
+                found[i] = RecordLapOf(sim, origin, best, spots[i], own[spots[i].Course], out capsAt[i], out why[i]);
+            });
+            Play(Enumerable.Range(0, spots.Count).ToList());
+            // A course and unlock set with no lap saved from the quick restart: one searched (from its earliest spot), then its spots
+            // played again with it. The search's file is the run's from then on (offline-best), so this happens once per unlock set;
+            // the memory keeps the ones that found nothing.
+            if (_recordSearchMinutes > 0)
+            {
+                var again = new List<int>();
+                foreach (var key in Enumerable.Range(0, spots.Count).Where(i => capsAt[i] != null).GroupBy(i => (course: spots[i].Course, caps: capsAt[i].Value.Id)))
+                {
+                    string id = $"{key.Key.course}_{key.Key.caps}";
+                    if (TimeUp) break;
+                    if (_lapSearched.Contains(id) || _courseRoutes.Any(r => r.course == key.Key.course && r.caps.Id == key.Key.caps && r.name.Contains("-restart"))) continue;
+                    _lapSearched.Add(id);
+                    RunLap from = spots[key.OrderBy(i => spots[i].K).ThenBy(i => spots[i].A).First()];
+                    TimeSpan until = _clock.Elapsed + TimeSpan.FromMinutes(_recordSearchMinutes);
+                    if (!SearchRecordLap(from, best, () => TimeUp || _clock.Elapsed >= until, false)) continue;
+                    _courseRoutes = null;
+                    LoadCourseRoutes();
+                    again.AddRange(key);
+                }
+                SaveMemory();
+                if (again.Count > 0) Play(again);
+            }
+            for (int i = 0; i < spots.Count; i++)
+                if (found[i] == null)
+                    Log($"auto goals: no record lap at goals {spots[i].K + 1}-{spots[i].K + 2}{(spots[i].WalkIn ? $" (walked in, a quick restart at input {spots[i].A})" : "")} (Course {spots[i].Course}): {why[i] ?? "not played"}");
+            // A walk-in lap is tried with its restart at each of a few inputs after the gate: of all of them, the fastest lap and the
+            // soonest finish.
+            var keep = new List<(int i, (List<InputTick> lap, int fin, float path, long tick, string how) way)>();
+            foreach (var g in Enumerable.Range(0, spots.Count).Where(i => found[i] != null).GroupBy(i => spots[i].K))
+            {
+                keep.AddRange(g.Where(i => !spots[i].WalkIn).SelectMany(i => found[i].Select(w => (i, w))));
+                var walked = g.Where(i => spots[i].WalkIn).SelectMany(i => found[i].Select(w => (i, w))).ToList();
+                if (walked.Count == 0) continue;
+                var fastest = walked.OrderBy(x => x.w.path).ThenBy(x => x.w.tick).First();
+                var soonest = walked.OrderBy(x => x.w.tick).ThenBy(x => x.w.path).First();
+                keep.Add(fastest);
+                if (soonest.w.tick < fastest.w.tick) keep.Add(soonest);
+            }
+            List<List<RunLap>> blocks = Blocks(laps);
+            foreach (var (i, way) in keep)
+            {
                 RunLap l = spots[i];
-                var (lapInputs, fin, how) = found[i].Value;
+                var (lapInputs, _, _, _, how) = way;
                 int oldAfter = (int)Math.Min(best.GoalInput[l.K + 1], best.Inputs.Count);
-                List<InputTick> head = best.Inputs.Take(l.A).Concat(lapInputs).ToList();
-                string text = $"Record Course {l.Course} lap at goals {l.K + 1}-{l.K + 2} ({how})";
+                string text = $"Record Course {l.Course} lap at goals {l.K + 1}-{l.K + 2}{(l.WalkIn ? " (walked in: a quick restart at the gate)" : "")} ({how})";
+                // The same lap in place of each slower lap right after it (back to back, same course).
+                var follow = new List<(int, int, List<InputTick>)>();
+                var followed = new List<RunLap>();
+                for (RunLap cur = l, f; (f = laps.FirstOrDefault(x => x.Course == l.Course && x.K == cur.K + 2)) != null; cur = f)
+                {
+                    int to = (int)Math.Min(best.GoalInput[f.K + 1], best.Inputs.Count);
+                    if (lapInputs.Count >= to - f.A) continue;
+                    follow.Add((f.A, to, lapInputs));
+                    followed.Add(f);
+                }
                 // The course's last run of laps before the next goal that isn't economy (an unlock buy, an area or reward goal).
                 int stop = Enumerable.Range(l.K + 2, _goals - l.K - 2).FirstOrDefault(k => !FullTasGoal.IsEconomy(_labels[k]), _goals);
-                List<RunLap> block = blocks.LastOrDefault(b => b[0].Course == l.Course && b[0].K > l.K + 1 && b[b.Count - 1].K + 1 < stop);
-                for (int m = 0; m <= Math.Min(3, block?.Count ?? 0); m++)
+                foreach (bool withFollow in followed.Count == 0 ? new[] { false } : new[] { false, true })
                 {
-                    if (m == 0)
+                    var ops = new List<(int, int, List<InputTick>)> { (l.A, oldAfter, lapInputs) };
+                    if (withFollow) ops.AddRange(follow);
+                    int lastK = withFollow ? followed[followed.Count - 1].K : l.K;
+                    string t = withFollow ? $"{text}; the same lap at {Goals(followed)}" : text;
+                    string key = $"record:{l.K}:{l.A}" + (withFollow ? ":f" + followed.Count : "");
+                    List<RunLap> block = blocks.LastOrDefault(b => b[0].Course == l.Course && b[0].K > lastK + 1 && b[b.Count - 1].K + 1 < stop);
+                    for (int m = 0; m <= Math.Min(3, block?.Count ?? 0); m++)
                     {
-                        var inputs = head.Concat(best.Inputs.Skip(oldAfter)).ToList();
-                        edits.Add(new GoalEdit
-                        {
-                            Kind = "record", Key = $"record:{l.K}", Text = text, Inputs = inputs, NewAt = head.Count, OldAt = oldAfter,
-                            OldOf = Enumerable.Range(0, _goals).ToArray(), Labels = _labels.ToArray(), Saves = oldAfter - l.A - lapInputs.Count, First = l.K + 1, Last = l.K + 2,
-                        });
-                        continue;
+                        List<RunLap> drop = m == 0 ? new List<RunLap>() : block.Skip(block.Count - m).ToList();
+                        edits.Add(Spliced(best, ops.Concat(drop.Select(d => (d.A, d.B, new List<InputTick>()))).ToList(), drop.SelectMany(d => new[] { d.K, d.K + 1 }), "record",
+                            m == 0 ? key : key + ":" + string.Join(",", drop.Select(d => d.K)),
+                            m == 0 ? t : $"{t}; dropped {Plural(m, $"Course {l.Course} lap")} ({Goals(drop)})", l.K + 1, m == 0 ? lastK + 2 : drop.Max(d => d.K) + 2));
                     }
-                    List<RunLap> drop = block.Skip(block.Count - m).ToList();
-                    GoalEdit e = Drop(best, drop, "record", $"{text}; dropped {Plural(m, $"Course {l.Course} lap")} ({Goals(drop)})", head, head.Count, oldAfter);
-                    e.Key = $"record:{l.K}:" + string.Join(",", drop.Select(d => d.K));
-                    e.First = l.K + 1;
-                    e.Saves += oldAfter - l.A - lapInputs.Count;
-                    edits.Add(e);
                 }
             }
             return edits;
+        }
+
+        /// <summary>
+        /// Inserts: a record lap right after an unlock buy, as start:N finish:N goals after it: a quick restart as the buy is made,
+        /// 0-40 idle ticks and the course's lap there (<see cref="InsertLapOf"/>) when it beats the course's best time. The clones
+        /// then run that path through everything after (FalseEnding-Any%: Course 2's lap with the dash right after buy:buyds,
+        /// before the run leaves Course 2, not on the drop back after the statue). Offered alone and with the course's next visit's
+        /// laps dropped (its back-to-back laps, walked-in or not, first after the next unlock buy: with the record path set, the
+        /// return there only buys; the quick restart that ended that visit is kept, so the run goes on from where it lands). The
+        /// best's way on starts from the buy's box, not the lap's finish, so an insert is re-found as an investment
+        /// (<see cref="InvestRepair"/>). Tried for every course the run laps after the buy.
+        /// </summary>
+        List<GoalEdit> InsertEdits(Route best, List<RunLap> laps)
+        {
+            var edits = new List<GoalEdit>();
+            LoadCourseRoutes();
+            int[] unlocks = Enumerable.Range(0, _goals - 1).Where(k => _runGoals.Goals[k].kind == FullTasGoal.Buy && !FullTasGoal.IsEconomy(_labels[k])).ToArray();
+            // Every lap of the run, a walked-in one once (its restart at the gate).
+            List<RunLap> all = laps.Concat(WalkInLaps(best).GroupBy(l => l.K).Select(g => g.First())).OrderBy(l => l.K).ToList();
+            var specs = unlocks.SelectMany(k => all.Where(l => l.K > k).Select(l => l.Course).Distinct().Select(c => (k, c))).ToList();
+            if (specs.Count == 0) return edits;
+            Dictionary<int, List<(string name, List<InputTick> inputs)>> own = all.Select(l => l.Course).Distinct().ToDictionary(c => c, c => OwnLaps(best, c));
+            string[] Labels((int k, int c) s) => _labels.Take(s.k + 1).Concat(new[] { $"start:{s.c}", $"finish:{s.c}" }).Concat(_labels.Skip(s.k + 1)).ToArray();
+            var found = new List<(List<InputTick> lap, int fin, float path, long tick, string how)>[specs.Count];
+            var why = new string[specs.Count];
+            RunOnThreads(specs.Count, (sim, origin, tracker, i) =>
+            {
+                sim.UseGoals(tracker.For(GoalsOf(Labels(specs[i]))));
+                found[i] = InsertLapOf(sim, origin, best, specs[i].k, specs[i].c, own[specs[i].c], out why[i]);
+            });
+            for (int i = 0; i < specs.Count; i++)
+            {
+                var (k, c) = specs[i];
+                if (found[i] == null)
+                {
+                    Log($"auto goals: no Course {c} lap to insert after goal {k + 1} ({_labels[k]}): {why[i] ?? "not played"}");
+                    continue;
+                }
+                int head = (int)Math.Min(best.GoalInput[k], best.Inputs.Count);
+                // The course's next visit: its first laps after the next unlock buy, back to back.
+                int next = unlocks.FirstOrDefault(u => u > k, -1);
+                var visit = new List<RunLap>();
+                for (RunLap l = next < 0 ? null : all.FirstOrDefault(x => x.Course == c && x.K > next); l != null; l = all.FirstOrDefault(x => x.Course == c && x.K == l.K + 2))
+                    visit.Add(l);
+                foreach (var way in found[i])
+                    foreach (bool drop in visit.Count == 0 ? new[] { false } : new[] { false, true })
+                    {
+                        var ops = new List<(int, int, List<InputTick>)> { (head, head, way.lap) };
+                        var cut = new List<int>();
+                        if (drop)
+                        {
+                            // From the goal before the visit's first gate to its end: the quick restart that ended it, or a quick
+                            // restart in place of its last lap's finish (FalseEnding-Any%: after the statue's Course 2 buys the
+                            // restart lands at the top, by the shaft to buy:buydj, not at Course 2's gate).
+                            RunLap last = visit[visit.Count - 1];
+                            int from = (int)Math.Min(best.GoalInput[visit[0].K - 1], best.Inputs.Count);
+                            ops.Add(last.B >= 0 ? (from, last.B, new List<InputTick>())
+                                : (from, (int)Math.Min(best.GoalInput[last.K + 1], best.Inputs.Count), new List<InputTick> { new InputTick { reset = true } }));
+                            cut.AddRange(visit.SelectMany(l => new[] { l.K, l.K + 1 }));
+                        }
+                        string text = $"Inserted a Course {c} record lap after goal {k + 1} ({_labels[k]}; {way.how})"
+                            + (drop ? $"; dropped its next visit's {Plural(visit.Count, "lap")} ({Goals(visit)})" : "");
+                        GoalEdit e = Spliced(best, ops, cut, "insert", $"insert:{k}:{c}:{way.tick}" + (drop ? ":drop" : ""), text, k + 2, k + 3);
+                        // The two new goals go right after goal k.
+                        int at = Array.IndexOf(e.OldOf, k) + 1;
+                        e.OldOf = e.OldOf.Take(at).Concat(new[] { -1, -1 }).Concat(e.OldOf.Skip(at)).ToArray();
+                        e.Labels = e.OldOf.Select((o, j) => o >= 0 ? _labels[o] : j == at ? $"start:{c}" : $"finish:{c}").ToArray();
+                        edits.Add(e);
+                    }
+            }
+            return edits;
+        }
+
+        /// <summary>The laps the best walks into: no quick restart between the goal before and the gate (start:N), then the finish
+        /// (finish:N). Each is offered with a quick restart 0..WalkInRestarts-1 inputs after the walk touches the gate.</summary>
+        List<RunLap> WalkInLaps(Route best)
+        {
+            var laps = new List<RunLap>();
+            List<InputTick> inputs = best.Inputs;
+            for (int k = 1; k + 1 < _goals; k++)
+            {
+                FullTasGoal s = _runGoals.Goals[k], f = _runGoals.Goals[k + 1];
+                if (s.kind != FullTasGoal.Start || f.kind != FullTasGoal.Finish || s.course != f.course) continue;
+                int from = (int)Math.Min(best.GoalInput[k - 1], inputs.Count), gate = (int)Math.Min(best.GoalInput[k], inputs.Count);
+                int fin = (int)Math.Min(best.GoalInput[k + 1], inputs.Count);
+                if (inputs.GetRange(from, gate - from).Any(t => t.reset)) continue;
+                int b = fin;
+                while (b < inputs.Count && !inputs[b].reset) b++;
+                if (b >= inputs.Count || k + 2 < _goals && b >= best.GoalInput[k + 2]) b = -1;
+                for (int d = 0; d < WalkInRestarts && gate + d < fin; d++)
+                    laps.Add(new RunLap { K = k, A = gate + d, B = b, Course = s.course, WalkIn = true });
+            }
+            return laps;
+        }
+
+        /// <summary>The best's own laps of a course from their quick restart (the inputs after it, through the finish goal's), the
+        /// OwnLapRoutes shortest distinct ones.</summary>
+        List<(string name, List<InputTick> inputs)> OwnLaps(Route best, int course)
+        {
+            var seen = new HashSet<ulong>();
+            var laps = new List<(string, List<InputTick>)>();
+            foreach (RunLap l in Laps(best).Where(l => l.Course == course).OrderBy(l => best.GoalInput[l.K + 1] - l.A))
+            {
+                List<InputTick> lap = best.Inputs.GetRange(l.A + 1, (int)Math.Min(best.GoalInput[l.K + 1], best.Inputs.Count) - l.A - 1);
+                if (!seen.Add(SnapshotIndex.Hash(lap, lap.Count))) continue;
+                laps.Add(($"the best's lap at goals {l.K + 1}-{l.K + 2}", lap));
+                if (laps.Count == OwnLapRoutes) break;
+            }
+            return laps;
         }
 
         /// <summary>The saved course routes (offline-best and offline-best/judged beside the trace: &lt;course&gt;_&lt;caps&gt;-&lt;time&gt;[-restart][-human].json,
@@ -492,91 +689,171 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// Lap l replayed as a quick restart, 0-MaxRecordPad idle ticks and each saved route of its course whose unlocks the player
-        /// has there (the first pad that reaches the lap's finish); the one that leaves the course the fastest best time (then the
-        /// soonest finish) when that beats the best's own lap. Returns the lap's inputs (from the restart to its finish goal's input),
-        /// or null.
+        /// Lap l replayed as a quick restart, 0-MaxRecordPad idle ticks and each lap it can play there (the first pad that reaches the
+        /// lap's finish): the saved routes of its course whose unlocks the player has (fastest first, until RecordReached play), then
+        /// the best's own laps of the course (<paramref name="own"/>: a walk-in lap is often the slowest of its visit). When one beats
+        /// the course's best time after the best's own lap: the one that leaves it fastest (then the soonest finish), and the one that
+        /// finishes soonest while still beating it (a faster time can cost ticks: FalseEnding-Any%'s 1.50 s Course 2 lap from the
+        /// restart finishes 9 ticks after its 1.68 s one). Each is the lap's inputs (from the restart to its finish goal's input);
+        /// null when none beats it. <paramref name="caps"/> is the player's unlock set there (null when the best doesn't get there).
         /// </summary>
-        (List<InputTick> lap, int fin, string how)? RecordLapOf(Simulation sim, SimSnapshot origin, Route best, RunLap l, out string why)
+        List<(List<InputTick> lap, int fin, float path, long tick, string how)> RecordLapOf(Simulation sim, SimSnapshot origin, Route best, RunLap l,
+            List<(string name, List<InputTick> inputs)> own, out Caps? caps, out string why)
         {
             int finishGoal = l.K + 2;
             why = null;
+            caps = null;
             sim.SetStart(origin, 0);
             sim.Goals.Limit = finishGoal;
             SimSnapshot at = sim.Advance(best.Inputs.GetRange(0, l.A));
             if (at == null) { why = $"the best ends before input {l.A}"; return null; }
             sim.Restore(at);
-            Caps caps = PlayerCaps.Of(sim.Player);
+            Caps has = PlayerCaps.Of(sim.Player);
+            caps = has;
             float Path() => (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == l.Course));
             sim.SetStart(at, l.A);
             RunResult old = sim.Run(best.Inputs.GetRange(l.A, (int)best.GoalInput[l.K + 1] - l.A), null, null, 400);
             if (old.Progress < finishGoal) { why = $"the best's own lap replays to goal {old.Progress} ({old.EndReason})"; return null; }
             float before = Path();
-            (List<InputTick> lap, int fin, float path, long tick, string how)? pick = null;
-            InputTick restart = best.Inputs[l.A];
+            InputTick restart = l.WalkIn ? new InputTick { reset = true } : best.Inputs[l.A];
             var tried = new List<string>();
-            int reached = 0;
-            foreach (var r in _courseRoutes.Where(r => r.course == l.Course && r.caps.IsSubsetOf(caps)))
-            {
-                string end = null;
-                // Pad -1: the route's first tick rides on the restart's (its stick only). A saved route's start stands one settling
-                // tick behind a run's restart landing (Course 2's 2.20 s route dies on its spikes from pad 0, plays from here).
-                InputTick first = r.inputs[0], merged = restart;
-                merged.x = first.x;
-                merged.y = first.y;
-                bool stickOnly = first.Equals(new InputTick { x = first.x, y = first.y });
-                for (int pad = stickOnly ? -1 : 0; pad <= MaxRecordPad; pad++)
-                {
-                    var lap = new List<InputTick>(1 + Math.Max(0, pad) + r.inputs.Count) { pad < 0 ? merged : restart };
-                    for (int i = 0; i < pad; i++) lap.Add(new InputTick());
-                    lap.AddRange(pad < 0 ? r.inputs.Skip(1) : r.inputs);
-                    sim.SetStart(at, l.A);
-                    sim.Goals.Limit = finishGoal;
-                    RunResult rr = sim.Run(lap, null, null, 400);
-                    if (rr.Progress < finishGoal) { end ??= $"{rr.Progress - l.K} of the lap's 2 goals ({rr.EndReason})"; continue; }
-                    int fin = (int)rr.GoalInputTicks[finishGoal - 1];
-                    float path = Path();
-                    end = $"{path:0.00}s after {pad} idle ticks";
-                    reached++;
-                    if (pick == null || path < pick.Value.path || path == pick.Value.path && rr.GoalPhysicsTicks[finishGoal - 1] < pick.Value.tick)
-                        pick = (lap.GetRange(0, fin - l.A), fin, path, rr.GoalPhysicsTicks[finishGoal - 1], $"{r.name} after {pad} idle ticks, best time {before:0.00}s -> {path:0.00}s");
-                    break;
-                }
-                tried.Add($"{r.name}: {end}");
-                // The routes come fastest first: the first few that play set the best time a record lap can.
-                if (reached == RecordReached) break;
-            }
-            if (pick != null && pick.Value.path < before) return (pick.Value.lap, pick.Value.fin, pick.Value.how);
-            why = $"best time {before:0.00}s ({caps.Label}); " + (tried.Count == 0 ? "no saved route of these unlocks" : string.Join("; ", tried));
+            var ways = LapWays(sim, at, l.A, restart, finishGoal, l.Course, has, own, before, tried);
+            if (ways != null) return ways;
+            why = $"best time {before:0.00}s ({has.Label}); " + (tried.Count == 0 ? "no lap of these unlocks to play" : string.Join("; ", tried));
             return null;
         }
 
         /// <summary>
-        /// --record-lap K: a search for the lap whose finish is goal K, from where the best's quick restart before it lands, scored on
-        /// the course timer. The search runs without the run's goals, so the solver judges it as a course solve does (the course's
-        /// path time) and not by the goal's tick: a lap that crosses the gate later and faster wins. Seeded with the course's saved
-        /// routes (as saved and without their first tick) and the best's own lap. The fastest lap is written to offline-best beside
-        /// the trace as &lt;course&gt;_&lt;caps&gt;-&lt;time&gt;-restart.json with its human version, which record laps then play after the
-        /// restart (pad 0).
+        /// From state <paramref name="at"/> (input <paramref name="a"/>): the restart tick, 0-MaxRecordPad idle ticks and each lap of
+        /// the course (the first pad that reaches <paramref name="finishGoal"/>): the saved routes whose unlocks the player has (fastest
+        /// first, until RecordReached play), then <paramref name="own"/>. When one leaves the course's best time under
+        /// <paramref name="before"/>: the fastest (then the soonest finish), and the soonest finish that still beats it; else null.
         /// </summary>
+        List<(List<InputTick> lap, int fin, float path, long tick, string how)> LapWays(Simulation sim, SimSnapshot at, int a, InputTick restart, int finishGoal,
+            int course, Caps has, List<(string name, List<InputTick> inputs)> own, float before, List<string> tried)
+        {
+            float Path() => (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == course));
+            (List<InputTick> lap, int fin, float path, long tick, string how)? pick = null, soon = null;
+            bool Try(string name, List<InputTick> route)
+            {
+                string end = null;
+                // Pad -1: the route's first tick rides on the restart's (its stick only). A saved route's start stands one settling
+                // tick behind a run's restart landing (Course 2's 2.20 s route dies on its spikes from pad 0, plays from here).
+                InputTick first = route[0], merged = restart;
+                merged.x = first.x;
+                merged.y = first.y;
+                bool stickOnly = first.Equals(new InputTick { x = first.x, y = first.y });
+                bool reached = false;
+                for (int pad = stickOnly ? -1 : 0; pad <= MaxRecordPad; pad++)
+                {
+                    var lap = new List<InputTick>(1 + Math.Max(0, pad) + route.Count) { pad < 0 ? merged : restart };
+                    for (int i = 0; i < pad; i++) lap.Add(new InputTick());
+                    lap.AddRange(pad < 0 ? route.Skip(1) : route);
+                    sim.SetStart(at, a);
+                    sim.Goals.Limit = finishGoal;
+                    RunResult rr = sim.Run(lap, null, null, 400);
+                    if (rr.Progress < finishGoal) { end ??= $"{rr.Progress - (finishGoal - 2)} of the lap's 2 goals ({rr.EndReason})"; continue; }
+                    int fin = (int)rr.GoalInputTicks[finishGoal - 1];
+                    float path = Path();
+                    end = $"{path:0.00}s after {pad} idle ticks";
+                    reached = true;
+                    long tick = rr.GoalPhysicsTicks[finishGoal - 1];
+                    // The finish can come in the idle ticks the run plays after the lap's inputs (a dash carries it over the line).
+                    while (lap.Count < fin - a) lap.Add(new InputTick());
+                    var way = (lap.GetRange(0, fin - a), fin, path, tick, $"{name} after {pad} idle ticks, best time {before:0.00}s -> {path:0.00}s");
+                    if (pick == null || path < pick.Value.path || path == pick.Value.path && tick < pick.Value.tick) pick = way;
+                    if (path < before && (soon == null || tick < soon.Value.tick || tick == soon.Value.tick && path < soon.Value.path)) soon = way;
+                    break;
+                }
+                tried.Add($"{name}: {end}");
+                return reached;
+            }
+            int reachedSaved = 0;
+            // The saved routes come fastest first: the first few that play set the best time a record lap can.
+            foreach (var r in _courseRoutes.Where(r => r.course == course && r.caps.IsSubsetOf(has)))
+                if (Try(r.name, r.inputs) && ++reachedSaved == RecordReached) break;
+            foreach (var (name, inputs) in own) if (inputs.Count > 0) Try(name, inputs);
+            if (pick == null || pick.Value.path >= before) return null;
+            var ways = new List<(List<InputTick>, int, float, long, string)> { pick.Value };
+            if (soon.Value.tick < pick.Value.tick) ways.Add(soon.Value);
+            return ways;
+        }
+
+        /// <summary>
+        /// A lap after goal k (0-based) under the edited goals (start:N, finish:N right after it): a quick restart as the best reaches
+        /// goal k, then <see cref="LapWays"/> against the course's best time there. Null (and why) when the best doesn't get there or
+        /// no lap of the course finishes from where the restart lands faster than its best time.
+        /// </summary>
+        List<(List<InputTick> lap, int fin, float path, long tick, string how)> InsertLapOf(Simulation sim, SimSnapshot origin, Route best, int k, int course,
+            List<(string name, List<InputTick> inputs)> own, out string why)
+        {
+            why = null;
+            int head = (int)Math.Min(best.GoalInput[k], best.Inputs.Count);
+            sim.SetStart(origin, 0);
+            sim.Goals.Limit = k + 3;
+            SimSnapshot at = sim.Advance(best.Inputs.GetRange(0, head));
+            if (at == null) { why = $"the best ends before input {head}"; return null; }
+            sim.Restore(at);
+            Caps has = PlayerCaps.Of(sim.Player);
+            float before = (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == course));
+            var tried = new List<string>();
+            var ways = LapWays(sim, at, head, new InputTick { reset = true }, k + 3, course, has, own, before, tried);
+            if (ways == null) why = $"best time {before:0.00}s ({has.Label}); " + (tried.Count == 0 ? "no lap of these unlocks to play" : string.Join("; ", tried));
+            return ways;
+        }
+
+        /// <summary>--record-lap K: <see cref="SearchRecordLap"/> for the lap whose finish is goal K (from its quick restart, or for
+        /// a lap the best walks into from a quick restart as the walk touches the gate), for --minutes on every thread, and its
+        /// human version.</summary>
         void RecordLapSearch(int finish)
         {
-            int k = finish - 2, a = k < 0 ? -1 : (int)_best.GoalInput[k] - 1;
-            while (a >= 0 && !_best.Inputs[a].reset) a--;
-            if (k < 0 || finish > _goals || _runGoals.Goals[k].kind != FullTasGoal.Start || _runGoals.Goals[k + 1].kind != FullTasGoal.Finish
-                || _runGoals.Goals[k].course != _runGoals.Goals[k + 1].course || a < 0 || k > 0 && a < _best.GoalInput[k - 1])
-                throw new ArgumentException($"--record-lap {finish}: goal {finish} isn't the finish of a lap (a quick restart, a start and a finish goal) of the best");
-            var l = new RunLap { K = k, A = a, Course = _runGoals.Goals[k].course };
-            List<InputTick> prefix = _best.Inputs.GetRange(0, l.A + 1);
+            int k = finish - 2;
+            RunLap l = k < 0 || finish > _goals ? null
+                : Laps(_best).FirstOrDefault(x => x.K == k) ?? RestartLap(_best, k) ?? WalkInLaps(_best).FirstOrDefault(x => x.K == k);
+            if (l == null)
+                throw new ArgumentException($"--record-lap {finish}: goal {finish} isn't the finish of a lap (a start and a finish goal, from a quick restart or walked into) of the best");
+            SearchRecordLap(l, _best, () => TimeUp, true);
+        }
+
+        /// <summary>A lap of the best from a quick restart after the goal before it, with or without a quick restart after its finish
+        /// (B = -1: none), or null.</summary>
+        RunLap RestartLap(Route best, int k)
+        {
+            if (k + 1 >= _goals || _runGoals.Goals[k].kind != FullTasGoal.Start || _runGoals.Goals[k + 1].kind != FullTasGoal.Finish
+                || _runGoals.Goals[k].course != _runGoals.Goals[k + 1].course) return null;
+            int a = (int)Math.Min(best.GoalInput[k], best.Inputs.Count) - 1;
+            while (a >= 0 && !best.Inputs[a].reset) a--;
+            if (a < 0 || k > 0 && a < best.GoalInput[k - 1]) return null;
+            return new RunLap { K = k, A = a, B = -1, Course = _runGoals.Goals[k].course };
+        }
+
+        /// <summary>
+        /// A search for lap l's lap from where its quick restart lands, scored on the course timer, until <paramref name="stop"/>.
+        /// The search runs without the run's goals, so the solver judges it as a course solve does (the course's path time) and not
+        /// by the goal's tick: a lap that crosses the gate later and faster wins. Seeded with the course's saved routes of the unlocks
+        /// the player has there (as saved and without their first tick) and the best's own laps of the course. The fastest lap is
+        /// written to offline-best beside the trace as &lt;course&gt;_&lt;caps&gt;-&lt;time&gt;-restart.json (with its human version when
+        /// <paramref name="humanize"/>), which record laps then play after the restart (pad 0). Returns whether a lap finished.
+        /// </summary>
+        bool SearchRecordLap(RunLap l, Route best, Func<bool> stop, bool humanize)
+        {
+            List<InputTick> prefix = best.Inputs.GetRange(0, l.A);
+            prefix.Add(l.WalkIn ? new InputTick { reset = true } : best.Inputs[l.A]);
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = _goals;
-            _eval.Restore(_eval.Advance(prefix));
+            SimSnapshot there = _eval.Advance(prefix);
+            if (there == null)
+            {
+                Log($"record lap at goals {l.K + 1}-{l.K + 2}: the best with a quick restart at input {l.A} ends before it; no search");
+                return false;
+            }
+            _eval.Restore(there);
             string caps = PlayerCaps.Of(_eval.Player).Id;
             LoadCourseRoutes();
             var seeds = _courseRoutes.Where(r => r.course == l.Course && r.caps.IsSubsetOf(Caps.Parse(caps)))
                 .SelectMany(r => new[] { r.inputs, r.inputs.Skip(1).ToList() }).ToList();
-            seeds.Add(_best.Inputs.GetRange(l.A + 1, (int)_best.GoalInput[l.K + 1] - l.A - 1));
-            string title = $"record lap {l.K + 1}-{finish}";
+            seeds.AddRange(OwnLaps(best, l.Course).Select(o => o.inputs));
+            string title = $"record lap {l.K + 1}-{l.K + 2}";
             // Each worker replays the prefix in its own world (a snapshot is its world's).
             Simulation Create()
             {
@@ -592,15 +869,15 @@ namespace IGTAP.EngineSim.Cli
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lock (guard) found = (time, runTicks, inputs, how);
-                Log($"record lap at goals {l.K + 1}-{finish} (Course {l.Course}, {caps}): {time:0.00}s via {how}, finish at tick {runTicks}");
+                Log($"record lap at goals {l.K + 1}-{l.K + 2} (Course {l.Course}, {caps}): {time:0.00}s via {how}, finish at tick {runTicks}");
             };
-            Log($"record lap at goals {l.K + 1}-{finish}: searching Course {l.Course} ({caps}) from the restart at input {l.A} for {_minutes:0.#} min on {_threads} threads, {seeds.Count} seeds");
+            Log($"record lap at goals {l.K + 1}-{l.K + 2}: searching Course {l.Course} ({caps}) from the {(l.WalkIn ? "quick restart at the gate" : "restart")} at input {l.A} on {_threads} threads, {seeds.Count} seeds");
             Thread[] threads = solver.Start(_threads);
-            while (!TimeUp) Thread.Sleep(250);
+            while (!stop()) Thread.Sleep(250);
             solver.Stop();
             foreach (Thread t in threads) t.Join(60000);
-            if (found == null) { Log($"record lap at goals {l.K + 1}-{finish}: no lap finished"); return; }
-            var (best, ticks, lap, _) = found.Value;
+            if (found == null) { Log($"record lap at goals {l.K + 1}-{l.K + 2}: no lap finished"); return false; }
+            var (time, ticks, lap, _) = found.Value;
             // The solver keeps the inputs it was given; a finish in the idle ticks after them needs those ticks written too, as a
             // record lap cuts its route at the finish's input. (Replayed here, not in Improved: a simulation made on a solver
             // worker's thread takes over that thread's game hooks from the worker's own.)
@@ -609,12 +886,43 @@ namespace IGTAP.EngineSim.Cli
             if (rr.Finished) lap = idled.GetRange(0, rr.FinishTick + 1);
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "offline-best");
             Directory.CreateDirectory(outDir);
-            string file = Path.Combine(outDir, $"{l.Course}_{caps}-{best.ToString("0.00", CultureInfo.InvariantCulture)}-restart.json");
-            File.WriteAllText(file, JsonSerializer.Serialize(new { course = l.Course, capabilities = caps, time = best, runTicks = ticks, ticks = lap.Select(t => t.ToJson()) }));
-            Log($"record lap at goals {l.K + 1}-{finish}: {best:0.00}s, {lap.Count} inputs after the restart -> {Path.GetFileName(file)}");
-            var humanize = new Humanize.Background(Create, null, l.Course, caps, _threads, line => Log("record lap: " + line));
-            humanize.Set(file, lap);
-            humanize.Finish();
+            string file = Path.Combine(outDir, $"{l.Course}_{caps}-{time.ToString("0.00", CultureInfo.InvariantCulture)}-restart.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(new { course = l.Course, capabilities = caps, time, runTicks = ticks, ticks = lap.Select(t => t.ToJson()) }));
+            Log($"record lap at goals {l.K + 1}-{l.K + 2}: {time:0.00}s, {lap.Count} inputs after the restart -> {Path.GetFileName(file)}");
+            if (_submit) SubmitCourseLap(l.Course, caps, time, lap);
+            if (humanize)
+            {
+                var human = new Humanize.Background(Create, null, l.Course, caps, _threads, line => Log("record lap: " + line));
+                human.Set(file, lap);
+                human.Finish();
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// A lap found from the run's quick restart is a course route too: the restart lands where the category's quick restart
+        /// starts it (FalseEnding-Any%'s 2_wjds-1.50-restart was saved as 2_WJ_DS 1.50 over the 1.62 record, as it is). The game
+        /// judges it from the course start and saves it when it is a new record or farm best; the reply is logged.
+        /// </summary>
+        void SubmitCourseLap(int course, string caps, float time, List<InputTick> lap)
+        {
+            string body = JsonSerializer.Serialize(new { course, capabilities = caps, ticks = lap.Select(t => t.ToJson()) });
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                string reply;
+                try { reply = Solve.Post(http, "/api/enginesim/submit", body); }
+                catch (Exception ex) { Log($"record lap: {time:0.00}s as Course {course} {caps} not sent: {ex.GetBaseException().Message}"); return; }
+                // A new best's start reloads from a quick restart, and a playback holds the game: both clear in a moment.
+                if (reply.Contains("retry in a moment") || reply.Contains("loading"))
+                {
+                    Thread.Sleep(3000);
+                    continue;
+                }
+                Log($"record lap: {time:0.00}s as Course {course} {caps}: {reply}");
+                return;
+            }
+            Log($"record lap: {time:0.00}s as Course {course} {caps}: the game stayed busy");
         }
 
         // ---------------------------------------------------------------- playing an edit
@@ -710,11 +1018,7 @@ namespace IGTAP.EngineSim.Cli
             string[] from = _labels;
             SwitchGoals(e.Labels);
             // Commit compares with the best under these goals: the old route's end with its goal ticks where the goals are its.
-            long[] physics = e.OldOf.Select((k, i) => k >= 0 ? old.GoalPhysics[k] : old.GoalPhysics[Math.Max(0, e.OldOf.Take(i).LastOrDefault(x => x >= 0))]).ToArray();
-            physics[physics.Length - 1] = old.End;
-            long[] held = old.GoalHeld == null ? null : e.OldOf.Select((k, i) => k >= 0 ? old.GoalHeld[k] : old.GoalHeld[Math.Max(0, e.OldOf.Take(i).LastOrDefault(x => x >= 0))]).ToArray();
-            if (held != null) held[held.Length - 1] = old.GoalHeld[old.Progress - 1];
-            var standIn = new Route { Inputs = old.Inputs, Progress = _goals, GoalInput = Enumerable.Repeat((long)old.Inputs.Count, _goals).ToArray(), GoalPhysics = physics, GoalHeld = held, EndReason = old.EndReason };
+            Route standIn = StandIn(e, old, false);
             _best = standIn;
             _goalLineage.Add(from);
             string words = $"{e.Text}: -{(old.LiveSeconds - route.LiveSeconds).ToString("0.00", CultureInfo.InvariantCulture)} s";
@@ -729,6 +1033,69 @@ namespace IGTAP.EngineSim.Cli
                 return false;
             }
             Log($"auto goals: ADOPTED {e.Text}: {from.Length} -> {_goals} goals, {old.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
+            AutoWrite(new { type = "goals", text = words, from = from.Length, to = _goals, goals = _labels, time = _best.LiveSeconds, gain = old.Last - _best.Last });
+            RestartOnGoals();
+            return true;
+        }
+
+        /// <summary>The old best under an edit's goals: each goal's tick (and, with <paramref name="mapInputs"/>, its input) the
+        /// old goal's it maps to, a goal the old list doesn't have the one before's; the end is the old end.</summary>
+        Route StandIn(GoalEdit e, Route old, bool mapInputs)
+        {
+            long[] Map(long[] of) => e.OldOf.Select((k, i) => k >= 0 ? of[k] : of[Math.Max(0, e.OldOf.Take(i).LastOrDefault(x => x >= 0))]).ToArray();
+            long[] physics = Map(old.GoalPhysics);
+            physics[physics.Length - 1] = old.End;
+            long[] held = old.GoalHeld == null ? null : Map(old.GoalHeld);
+            if (held != null) held[held.Length - 1] = old.GoalHeld[old.Progress - 1];
+            long[] input = mapInputs ? Map(old.GoalInput) : Enumerable.Repeat((long)old.Inputs.Count, e.Labels.Length).ToArray();
+            return new Route { Inputs = old.Inputs, Progress = e.Labels.Length, GoalInput = input, GoalPhysics = physics, GoalHeld = held, EndReason = old.EndReason };
+        }
+
+        /// <summary>A goals edit being re-found (<see cref="InvestRepair"/>): the repair's hopeless test keeps only its CPU budget.</summary>
+        bool _investing;
+        /// <summary>An investment's repair budget: CPU seconds per goal it re-finds. At 60, FalseEnding-Any%'s Course 2 lap after
+        /// buy:buyds (110 goals to re-find) ran out at goal 250 of 284, each repair window running its whole half minute.</summary>
+        const double InvestCpuPerGoal = 150;
+
+        /// <summary>
+        /// An investment: an edit that costs ticks where it changes the goals and pays later through Cash (a record lap inserted
+        /// right after an unlock buy: its clones run the faster path through everything after), whose old way on no longer plays
+        /// from where the change leaves the player. Its goals become the run's for the repair: the goals after where its partial
+        /// run stops are re-found as a window's repair does (the old best's inputs as seeds), except that falling behind the best
+        /// at a goal doesn't end it: an investment is behind until its income pays. It ends when its CPU budget is spent
+        /// (InvestCpuPerGoal a goal left) or it has every goal; kept only when the whole run then beats the best (the fresh
+        /// check, as every best). The goals change back when it isn't kept.
+        /// </summary>
+        bool InvestRepair(GoalEdit e, Route partial, Route old)
+        {
+            if (partial == null || partial.Progress < e.Last || TimeUp) return false;
+            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
+            var hooks = (collect: _collect, hopeless: _hopeless);
+            string[] from = _labels;
+            SwitchGoals(e.Labels);
+            Route standIn = StandIn(e, old, true);
+            _best = standIn;
+            _goalLineage.Add(from);
+            var run = new Route { Inputs = partial.Inputs.Take((int)Math.Min(partial.GoalInput[partial.Progress - 1], partial.Inputs.Count)).ToList(), Progress = partial.Progress,
+                GoalInput = partial.GoalInput, GoalPhysics = partial.GoalPhysics, GoalHeld = partial.GoalHeld, EndReason = partial.EndReason };
+            Log($"auto goals: {e.Text}: {partial.GoalPhysics[partial.Progress - 1] - standIn.GoalPhysics[partial.Progress - 1]:+0;-0} ticks against the best at goal {partial.Progress}, "
+                + $"where its old way on stops; re-finding goals {partial.Progress + 1}-{_goals} as an investment ({InvestCpuPerGoal * (_goals - partial.Progress):0} CPU s)");
+            _investing = true;
+            // Its references are numbered by these goals, not the loop's.
+            _collect = null;
+            _repairFloorCpu = InvestCpuPerGoal * (_goals - partial.Progress);
+            _goalsEdit = e.Text;
+            try { Repair("goals: " + e.Text, standIn, run); }
+            finally { _investing = false; _repairFloorCpu = 0; _goalsEdit = null; (_collect, _hopeless) = hooks; }
+            if (ReferenceEquals(_best, standIn))
+            {
+                _goalLineage.RemoveAt(_goalLineage.Count - 1);
+                (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+                Log($"auto goals: {e.Text}: re-found, no faster than the best; the goals stay");
+                return false;
+            }
+            string words = $"{e.Text}: -{(old.LiveSeconds - _best.LiveSeconds).ToString("0.00", CultureInfo.InvariantCulture)} s";
+            Log($"auto goals: ADOPTED {words}: {from.Length} -> {_goals} goals, {old.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
             AutoWrite(new { type = "goals", text = words, from = from.Length, to = _goals, goals = _labels, time = _best.LiveSeconds, gain = old.Last - _best.Last });
             RestartOnGoals();
             return true;

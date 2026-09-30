@@ -302,9 +302,10 @@ namespace IGTAP.EngineSim.Cli
         /// (needs lib); combine: the known routes' faster goal runs spliced into each new best (needs lib); sched: the pull
         /// scheduler; ctg: the cost-to-go (needs lib); macros: macro seeds (needs lib); stray: a run that dies on a stray buy is
         /// re-timed as a whole (Retime) and its tail windows avoid the stray box (StrayAvoid) (needs lib); goals: the economy
-        /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs).</summary>
+        /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs); idle:
+        /// each buy's waits for Cash moved under its box (FullTasAutoIdle.cs).</summary>
         /// <summary>Every part, all on by default.</summary>
-        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals" };
+        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals", "idle" };
         HashSet<string> _parts = new HashSet<string>(AllParts);
         /// <summary>--parts stray's two halves (the stray study switches them one at a time).</summary>
         bool _strayRetime, _strayAvoid;

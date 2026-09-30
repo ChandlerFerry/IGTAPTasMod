@@ -177,6 +177,33 @@ namespace IGTAP.EngineSim.Cli
                 + (r.Progress == _goals ? $", {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({r.Last} ticks, {r.Held(r.Progress)} held frames)" : "")
                 + $"; ended after input {_eval.Engine.RunTicks} at {at.x.ToString("0.0", CultureInfo.InvariantCulture)},{at.y.ToString("0.0", CultureInfo.InvariantCulture)}: {r.EndReason}");
             Console.WriteLine($"purchases ({(_eval.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
+            // --ticks-out FILE: every physics tick of the replay (physics and input count, world position, velocity, Cash) as JSON
+            // lines, to line up with a 1x probe (tools/probe.py, rows by `physics`) where the two split.
+            int ticksOut = Array.IndexOf(_args, "--ticks-out");
+            if (ticksOut > 0 && ticksOut + 1 < _args.Length)
+            {
+                using var w = new StreamWriter(_args[ticksOut + 1]);
+                _eval.SetStart(_origin, 0);
+                _eval.Goals.Limit = _goals;
+                if (_eval.Shop.Economy != null)
+                    _eval.Shop.Economy.Spawned = (course, id, onScreen, divisor, i, j, pay) =>
+                    {
+                        UnityEngine.Random.State s = UnityEngine.Random.state;
+                        w.WriteLine(JsonSerializer.Serialize(new { kind = "clone", physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, course, id, onScreen, divisor, i, j, pay,
+                            random = new[] { s.s0, s.s1, s.s2, s.s3 } }));
+                    };
+                UnityEngine.Random.Drawn = caller => w.WriteLine(JsonSerializer.Serialize(new { kind = "rng", physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, caller }));
+                _eval.Run(inputs, null, null, 400, _ =>
+                {
+                    WorldPos p = _eval.PlayerWorld;
+                    UnityEngine.Random.State rng = UnityEngine.Random.state;
+                    w.WriteLine(JsonSerializer.Serialize(new { physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, goal = _eval.Progress, x = p.x, y = p.y,
+                        vx = _eval.Player.Velocity.x, vy = _eval.Player.Velocity.y, cash = _eval.Shop.CashNow,
+                        rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
+                        random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
+                });
+                Console.WriteLine($"ticks -> {_args[ticksOut + 1]}");
+            }
             // --chain-vs OLD: the chaining check (FullTasAutoLib.cs) of this route against an older one.
             int vs = Array.IndexOf(_args, "--chain-vs");
             if (vs > 0 && vs + 1 < _args.Length)
@@ -240,7 +267,7 @@ namespace IGTAP.EngineSim.Cli
                 int reached = best.Progress;
                 if (reached < _goals && (_unsolved || reached == 0))
                 {
-                    if (SeedFrontier()) continue;
+                    if (SeedFrontier() || GraftKnownTails()) continue;
                     if (IsLoop(reached))
                     {
                         stopped = BuildFrontier();
@@ -1106,6 +1133,95 @@ namespace IGTAP.EngineSim.Cli
             }
             Commit(run, "from a saved route (" + chosen.how + ")");
             return true;
+        }
+
+        (int, long) _graftedFrontier = (-1, -1);
+        List<(string name, string[] labels, long[] goalInput, List<InputTick> inputs)> _knownRuns;
+        /// <summary>A known tail is grafted from the frontier and up to this many goals before it.</summary>
+        const int GraftBack = 8, GraftShift = 4;
+
+        /// <summary>
+        /// Reach by known tails: where the best stops, the goals after it as another saved route of this run played them (the run
+        /// file's copies fulltas/&lt;run&gt;.*.json, each with its goal list and goal ticks: the solve's .before-repair-* backups, older
+        /// bests kept by hand). From goal i (the frontier, then up to GraftBack goals before it): the best's inputs to goal i, then
+        /// that route's from where it reached the same goal with the same goals from there to the end, its start shifted by
+        /// -GraftShift..+GraftShift inputs. Kept when the whole run reaches further or as far sooner (Better). Once per frontier.
+        /// FalseEnding-Any%: after a goals edit the reach windows stalled in the ending (goals 277-280), which the old route's
+        /// ending from buy:buydj on finished once spliced in by hand.
+        /// </summary>
+        bool GraftKnownTails()
+        {
+            Route best = _best;
+            int reached = best.Progress;
+            (int, long) frontier = (reached, reached == 0 ? 0L : best.GoalPhysics[reached - 1]);
+            if (reached == 0 || reached == _goals || _graftedFrontier == frontier) return false;
+            _graftedFrontier = frontier;
+            _knownRuns ??= KnownRuns();
+            if (_knownRuns.Count == 0) return false;
+            (List<InputTick> inputs, int progress, long tick, string how) top = (null, reached, best.GoalPhysics[reached - 1], null);
+            for (int i = reached; i >= Math.Max(1, reached - GraftBack) && !TimeUp; i--)
+            {
+                int prefixLength = (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
+                List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+                SimSnapshot at = null;
+                foreach (var (name, labels, goalInput, inputs) in _knownRuns)
+                {
+                    int j = labels.Length - (_goals - i);
+                    if (j < 1 || j > goalInput.Length || labels[j - 1] != _labels[i - 1] || !labels.Skip(j).SequenceEqual(_labels.Skip(i))) continue;
+                    if (at == null)
+                    {
+                        _eval.SetStart(_origin, 0);
+                        _eval.Goals.Limit = _goals;
+                        if ((at = _eval.Advance(prefix)) == null) break;
+                    }
+                    for (int s = 0; s <= 2 * GraftShift; s++)
+                    {
+                        int shift = (s + 1) / 2 * (s % 2 == 0 ? -1 : 1);
+                        int from = (int)goalInput[j - 1] + shift;
+                        if (from < 0 || from >= inputs.Count || prefixLength > 0 && prefix[prefixLength - 1].reset && inputs[from].reset) continue;
+                        List<InputTick> tail = inputs.GetRange(from, inputs.Count - from);
+                        _eval.SetStart(at, prefixLength);
+                        _eval.Goals.Limit = _goals;
+                        RunResult r = _eval.Run(tail);
+                        if (r.Progress == 0) continue;
+                        long tick = r.GoalPhysicsTicks[r.Progress - 1];
+                        if (r.Progress > top.progress || r.Progress == top.progress && tick < top.tick)
+                            top = (prefix.Concat(tail).ToList(), r.Progress, tick, $"{name}'s goals {i + 1}-{_goals} from its input {from} (its goal {j}{(shift == 0 ? "" : $" {shift:+0;-0} inputs")})");
+                    }
+                }
+                if (top.progress == _goals) break;
+            }
+            Route run = top.inputs == null ? null : Evaluate(top.inputs);
+            if (run == null || !Better(run, best))
+            {
+                Log($"known tails for goal {reached + 1}/{_goals}: none of {_knownRuns.Count} saved routes of this run gets further from goals {Math.Max(1, reached - GraftBack)}-{reached}");
+                return false;
+            }
+            Commit(run, "a known tail: " + top.how);
+            return true;
+        }
+
+        /// <summary>The run file's copies beside it (fulltas/&lt;run&gt;.*.json) that carry their goals and goal ticks.</summary>
+        List<(string, string[], long[], List<InputTick>)> KnownRuns()
+        {
+            var runs = new List<(string, string[], long[], List<InputTick>)>();
+            string dir = Path.GetDirectoryName(_runFile);
+            if (!Directory.Exists(dir)) return runs;
+            foreach (string file in Directory.GetFiles(dir, _name + ".*.json").OrderBy(f => f, StringComparer.Ordinal))
+            {
+                if (Path.GetFileName(file).StartsWith(_name + ".auto", StringComparison.Ordinal)) continue;
+                try
+                {
+                    using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 256 });
+                    JsonElement root = doc.RootElement;
+                    if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("goals", out JsonElement goals) || !root.TryGetProperty("goalInputTicks", out JsonElement ticks)
+                        || !root.TryGetProperty("inputs", out _)) continue;
+                    runs.Add((Path.GetFileName(file), goals.EnumerateArray().Select(g => g.GetString()).ToArray(), ticks.EnumerateArray().Select(t => t.GetInt64()).ToArray(), Solve.ReadInputs(root)));
+                }
+                catch (Exception ex) when (ex is IOException || ex is JsonException || ex is InvalidOperationException) { }
+            }
+            Log($"known tails: {runs.Count} saved routes of {_name} beside its run file");
+            return runs;
         }
 
         static Seed ReadSeed(string path)

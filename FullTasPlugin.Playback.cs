@@ -17,7 +17,7 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route, int? expectedGoals = null)
+        void StartFullTasPlayback(FullTasRunDef run, MacroDefinition route, int? expectedGoals = null, int fromTick = 0)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
@@ -29,7 +29,7 @@ namespace IGTAPTasMod
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
             int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0);
             TechDef tech = _techs.Find(t => t.routeId == route.id);
-            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = tech?.fastForward ?? 0 };
+            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = fromTick > 0 ? fromTick : tech?.fastForward ?? 0, fastForwardFrames = fromTick > 0 };
         }
 
         void BeginFullTasPlayback(Movement movement)
@@ -53,7 +53,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A demo's fast-forward (plugin Update, outside the physics loop): its first input ticks in turbo, the way the gate replays
+        /// A demo's fast-forward, or a play from a tick (plugin Update, outside the physics loop): its first input ticks in turbo, the way the gate replays
         /// a run, so it starts at 1x where the tech begins, in the world the run made (boxes, unlocks, economy, FloatingOrigin
         /// rebases), which a savestate can't hold.
         /// </summary>
@@ -64,12 +64,13 @@ namespace IGTAPTasMod
             int until = play.fastForward;
             play.fastForward = 0;
             Movement player = FindWorldMovement();
-            TurboRunner.Run(player, () => _engine.IsRunning && _engine.RunTicks < until, until * 4 + 1000, () =>
+            bool frames = play.fastForwardFrames;
+            TurboRunner.Run(player, () => _engine.IsRunning && (frames ? _engine.PhysicsTicks : _engine.RunTicks) < until, until * 4 + 1000, () =>
             {
                 _engine.Clock++;
                 _engineSimTickHook?.Invoke(player);
             });
-            Logger.LogInfo("Fast-forwarded " + play.route.name + " to input tick " + _engine.RunTicks + " in turbo.");
+            Logger.LogInfo("Fast-forwarded " + play.route.name + " to " + (frames ? "frame " + _engine.PhysicsTicks : "input tick " + _engine.RunTicks) + " in turbo.");
         }
 
         void FinishFullTasPlayback(bool success, string reason)

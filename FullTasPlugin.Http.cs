@@ -143,7 +143,7 @@ namespace IGTAPTasMod
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
                     if (!Truthy(body, "closest"))
                     {
-                        StartFullTasPlayback(run, FullTasPlayableRoute(run));
+                        StartFullTasPlayback(run, FullTasPlayableRoute(run), null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
                     FullTasClosest closest = FullTasClosestAttempt(run.name, ResolveFullTasGoals(run).Select(g => g.label).ToList())

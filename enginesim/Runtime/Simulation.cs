@@ -286,6 +286,9 @@ namespace IGTAP.EngineSim
         internal FullTasTracker Goals { get; private set; }
         public long InputBase;
         public int Progress { get { return Goals == null ? 0 : Goals.Next; } }
+        /// <summary>The course timer of the last course finish (courseScript.stopTracking's currentPathTime): the lap's own time,
+        /// whether or not it beat the course's best time.</summary>
+        public float LastCourseTime;
 
         /// <summary>
         /// Tracks these goals from now on (an extra lap the run doesn't list, searched as its own goals). Snapshots restored after
@@ -367,6 +370,7 @@ namespace IGTAP.EngineSim
             float time = PathTime(course);
             Tracking(course) = false;
             player.GetComponent<Movement>().courseResetPoint = Vector2.zero;
+            if (savePositionData) LastCourseTime = time;
             if (savePositionData) Shop.CourseFinished(course, time);
             if (!(savePositionData && VmanScript.isCurrentlyVman))
             {

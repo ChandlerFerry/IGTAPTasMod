@@ -419,8 +419,7 @@ ticks (`buy:buyds` −41 ticks with the clone 700 ticks before the bonus and a 1
 Unity's RNG is deterministic for the runs: every Full-TAS new game starts it from one fixed seed (the plugin's
 `FullTasSeed`, `UnityEngine.Random.InitState` at the fresh new game right before its start snapshot, and again before a
 real-time playback's first tick). The snapshot therefore carries the seeded `UnityEngine.Random.State`
-(`"random": [s0, s1, s2, s3]` in the trace's start state and after every tick, and the trace header's `fulltas` carries
-the `seed`), so the turbo judge, the trace and the offline search all start from the same state. The seed is fixed and
+(`"random": [s0, s1, s2, s3]` in the trace's start state and after every tick), so the turbo judge, the trace and the offline search all start from the same state. The seed is fixed and
 unoptimized (`SEED (unoptimized) <value>` on the overlay); nothing user-settable writes the RNG.
 
 Real-time play makes draws a turbo run never does: the `Start` of objects a run turns on (lights, plants), each box's
@@ -522,8 +521,14 @@ inputs past the last unchanged goal the same way.
   budget (`--window-minutes` × round). A reach window ends as soon as it finds a route to its goal: that route is
   spliced in and saved right away, and the next window searches on from it (the rest of the budget isn't spent). After
   3 rounds without the goal, or when the builder finds no way to a goal, the solve stops with an error saying which
-  goal (it doesn't search on all night: a different plan, goal list or avoid box is needed). Polishing starts once a
-  run reaches every goal.
+  goal (it doesn't search on all night: a different plan, goal list or avoid box is needed). Before its reach windows,
+  each new frontier tries the **known tails** (`GraftKnownTails`): the run file's copies beside it
+  (`fulltas/<run>.*.json` with their goals and goal ticks: the `.before-repair-*` backups, older bests kept by hand)
+  whose goals from some goal i to the end are the run's, spliced as the best's inputs to goal i and theirs from where
+  they reached it (shifted -4..+4 inputs), from the frontier and up to 8 goals before it; the furthest (then soonest)
+  is kept when the whole run is better. After a goals edit the reach windows stalled in `FalseEnding-Any%`'s ending
+  (goals 277-280), which the old route's ending from `buy:buydj` on finished when spliced in by hand. Polishing starts
+  once a run reaches every goal.
 - Polishing: first the loop goals are rebuilt from the piece library and the best's own ways, stretch by stretch (kept
   when the whole run gets faster). Then each piece the best plays there is searched for a faster one (`--window-minutes`,
   most-played first, each at most once a solve), from the best's own states, and when any is found the stretch is
@@ -542,7 +547,8 @@ inputs past the last unchanged goal the same way.
   first falls behind the best, as long as that goal moves forward; before this, all of these were dropped.
 - `--check <route.json>` replays a route (a run file's `inputs` or an offline best's `ticks`) from the trace's start
   under the trace's goals and prints each goal's physics and input tick, its live time and held frames, and how the
-  replay ended; it searches and writes nothing.
+  replay ended; it searches and writes nothing. `--ticks-out FILE` also writes the replay's physics ticks, clone spawns
+  and RNG draws as JSON lines, to line up with a 1x probe ([enginesim/README.md](../enginesim/README.md#probe)).
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -609,10 +615,12 @@ under the box), the way back into a box between two of its buys. With the schedu
 between two buys of the same box once, after the scheduler's windows run out (they never pull the reset study), and
 not at a buy with no spare Cash. Studied first, they held `FalseEnding-Any%`'s windows off for 8 minutes for nothing.
 
-`--record-lap K` searches the lap finishing at goal K from where the best's quick restart before it lands, scored on the
-course timer (the course's path time), and writes it to `offline-best` as `<course>_<caps>-<time>-restart.json` for record
-laps. A record lap also tries a saved route with its first tick on the restart's own tick (its stick only): a saved route
-starts one settling tick behind a run's restart landing (Course 2's 2.20 s route dies on its spikes one tick later).
+`--record-lap K` searches the lap finishing at goal K from where the best's quick restart before it lands (for a lap the
+best walks into, a quick restart as the walk touches the gate), scored on the course timer (the course's path time), for
+`--minutes`, and writes it to `offline-best` as `<course>_<caps>-<time>-restart.json` for record laps, with its human
+version. The goals part runs the same search on its own (see Record laps under [Auto](#auto)). A record lap also tries a
+saved route with its first tick on the restart's own tick (its stick only): a saved route starts one settling tick
+behind a run's restart landing (Course 2's 2.20 s route dies on its spikes one tick later).
 
 `--lookahead N` makes each polish and repair window search on N goals past its own last goal and scores it there, so a
 window whose own goal is reached later but with more speed wins when it gains by the goal after next.
@@ -733,22 +741,46 @@ pulls, CPU and ticks gained, and the pull order. `fulltas/<run>.auto.jsonl` has 
 outcome, gain, CPU, wall), `check`, `record`, `model` and `autoEnd` (the curve).
 
 **The outlook** (`FullTasAutoOutlook.cs`): after every pull, an `outlook` event on stdout only, which the studio shows as
-"Should it keep going?" (the Optimize tab for a course, the Full-TAS tab's Improve for a run). The engine also prints a `pullStart` event (lever, goal, budget, and what that
-lever and goal gave this session) as each pull starts. The outlook's chance of a gain comes from when gains came,
-counting every earlier session of the run in its `.auto.jsonl` as search already spent. Gains are treated as a Poisson
-process over the recent half of all search, with a Jeffreys prior. With k gains in that window W,
-P(a gain within t more) = 1 − (W/(W+t))^(k+½), and the median wait is W(2^(1/(k+½)) − 1). Only the recent half counts
-because an anytime search's gains thin out. `verdict`:
+"Should it keep going?" (the Optimize tab for a course, the Full-TAS tab's Improve for a run). The engine also prints a
+`pullStart` event as each pull starts: lever, goal, budget, what that lever and goal gave this session, its misses in a
+row there (`misses`), and `history`: how many pulls of that lever after as many misses at their spot (5+ counted
+together) gained, over every `.auto.jsonl` in the folder.
+
+The chance of a gain rests on the other Improve runs in the same folder (`course-auto/fulltas` for courses, `fulltas`
+for Full-TAS runs): their dry spells, the search from a start or a gain to the next gain or to the run's end. With g the
+search since this target's last gain (every earlier session counted; since the start with none), their dry spells longer
+than g hold k gains in E seconds of search past g. Gains are a Poisson process whose rate has a gamma prior of shape
+(k + ½)·P/(E + P) over P = 1800 s, updated with this target's gains and search, each weighted e^(−age/(0.3 × all
+search)). With shape a and scale b, P(a gain within t more) = 1 − (b/(b+t))^a and the median wait is b(2^(1/a) − 1).
+The event's `basis` has the numbers (`runs`, `search`, `gains`, `spell` = g, `spellGains` = k, `spellSearch` = E).
+
+The model it replaced (a Poisson rate over the recent half of this target's own search, Jeffreys prior) read 20 s of
+search as "92% an hour" and one early gain as "100%". Backtest over the 55 recorded `.auto.jsonl` (2026-09-30), a
+checkpoint every 30 s of search, each run scored against the others, Brier score of "a gain within the next H" (lower is
+better; always guessing the base rate scores p(1−p)):
+
+| runs | H | old | new | base rate |
+|---|---|---|---|---|
+| courses (0 gains) | 5 min | 0.273 | 0.002 | 0 |
+| courses | 10 min | 0.419 | 0.005 | 0 |
+| Full-TAS | 5 min | 0.235 | 0.229 | 0.248 |
+| Full-TAS | 10 min | 0.189 | 0.178 | 0.231 |
+| Full-TAS | 20 min | 0.167 | 0.139 | 0.183 |
+
+Full-TAS at 10 min, binned by the new chance: 0–20% gained 23% of the time, 20–40% 21%, 40–60% 60%, 60–80% 78%,
+80–100% 87%. In the same logs `polish` never gained (0 of 1448 pulls) and course Improves gained once in 1371 pulls;
+a window pull at a spot that had missed 3 times or more gained 1 of 294 times.
+
+`verdict`:
 
 - `floor`: the best is at the model's floor (every searched goal at its bound).
 - `exhausted`: the bandit has no arm left.
-- `likely`, `possible` or `unlikely`: a chance of a gain in the next hour of ≥ 60%, ≥ 25%, or less. `likely` needs a gain
-  in the window: with none, the chance is the prior's half gain alone (62% an hour after 20 minutes), what too
-  little search can't rule out, so it reads `possible` ("Unproven") at most.
+- `likely`, `possible` or `unlikely`: a chance of a gain in the next hour of ≥ 60%, ≥ 25%, or less. The first advice line
+  gives the median wait and the chance within the run's remaining minutes.
 
-With `possible`, `unlikely` or `exhausted`, `advice` names the goal with the most expected headroom (when 3 or more are
-searched), the levers and goals this session hasn't pulled, and a `--focus` that left goals out. The Optimize matrix's
-queue rows end with the verdict.
+With `unlikely` or `exhausted`, `advice` names the goal with the most expected headroom (when 3 or more are searched),
+the levers and goals this session hasn't pulled, and a `--focus` that left goals out. The Optimize matrix's queue rows
+end with the verdict.
 
 #### Parts: goal-state library, tail windows, combine, scheduler, cost-to-go, macros, goals
 
@@ -861,12 +893,57 @@ baseline). The default is set by the measurements below, and has every part.
      more before its next buy.
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
-   - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a saved course route of that course
-     (`offline-best` and `offline-best\judged` beside the trace, the 12 fastest of each unlock set the player holds
-     there, fastest first, until 4 play from the restart) when it leaves the course a faster best time: the clones' path,
-     so every clone pays more from then on. Tried at the course's last lap before its first clone buy and its first lap
-     after one, each alone and with the last 1-3 laps of the course's last run of laps before the next goal that isn't
-     economy dropped.
+   - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
+     course routes of that course (`offline-best` and `offline-best\judged` beside the trace, the 12 fastest of each
+     unlock set the player holds there, fastest first, until 4 play from the restart) and the best's own laps of the
+     course (the 6 shortest), when it leaves the course a faster best time: the clones' path, so every clone pays more
+     from then on. Each spot offers two laps when they differ: the one that leaves the fastest best time, and the one
+     that finishes soonest while still beating it (a faster time can cost ticks: `2_wjds-1.50-restart` crosses the
+     line 9 ticks after the best's own 1.68 s lap from the same restart). Tried at the course's last lap before its
+     first clone buy, its first lap after one, its first lap after each unlock buy (new unlocks, a faster way), and
+     every lap the best walks into (no quick restart before the gate): the walk is kept to the gate and a quick restart
+     goes 0-3 inputs after it, the fastest and the soonest of those kept.
+     `FalseEnding-Any%`'s first Course 2 lap with the dash walked in from the boxes in 103 ticks; its next lap, from a
+     quick restart, took 84. Each is offered alone, with the same lap in place of each slower lap right after it (the
+     visit's back-to-back laps), and each of those with the last 1-3 laps of the course's last run of laps before the
+     next goal that isn't economy dropped. A course and unlock set with no `-restart` lap saved gets one searched first
+     (the `--record-lap` search from its earliest spot, `--record-search-minutes`, default 2, on every thread; 0: off),
+     once per run (the memory's `lapSearched`), and its spots are played again with it. The lap found is sent to the
+     game as a course route too (not with `--no-submit`): the run's quick restart lands where the category starts, so
+     it is judged as `<course>_<CAT>` and saved when it's a record (`2_wjds-1.50-restart` became `2_WJ_DS 1.50` over
+     1.62).
+   - **Inserted record laps**: `start:N finish:N` right after an unlock buy, played as a quick restart there, 0-40 idle
+     ticks and the course's fastest lap from where it lands (saved routes and the best's own laps, when it beats the
+     course's best time), for every course the run laps after the buy. The clones then run that path through everything
+     after: `FalseEnding-Any%`'s Course 2 lap with the dash right after `buy:buyds`, before the run leaves Course 2, not
+     on the drop back after the statue. Each is offered alone and with the course's next visit dropped (its back-to-back
+     laps first after the next unlock buy, cut from the goal before them to the quick restart that ended them, or to a
+     quick restart in place of the last finish: after the statue's Course 2 buys the restart lands at the top, by the
+     shaft to `buy:buydj`). The best's way on starts at the buy's box, not the lap's finish, so none plays as spliced:
+     the two that get furthest (then soonest) are re-found as **investments**. The edit's goals become the run's for it,
+     the goals after where its partial run stops are repaired as a window's are (the old best's inputs as seeds), and
+     falling behind the best doesn't end it (an investment is behind until its income pays; the model's bounds and
+     cost-to-go are the old goals'): only its CPU budget does (150 CPU s a goal left), or the whole run then not
+     beating the best (the fresh check, as every best). The goals change back when it isn't kept. First run on the
+     361.68 s best: the Course 2 lap after `buyds` cost 121 ticks at its finish; each repair reached goal 250 of 284 on
+     a 60 CPU s budget, which is why it's 150 now.
+   - **Payout breaks** (`FullTasAutoPayout.cs`, the Tech tab's *Record-break payout*): a finish that beats the course's
+     best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`).
+     A lap at the best time without beating it pays nothing extra. This edit plays every earlier lap that set or tied the
+     best time (back to the last prestige that reset it, at most 40) one tick slower, so a later lap f breaks the record
+     and the clones in flight pay there, up to one best time sooner. A lap f slower than the best time plays the lap that
+     set it again (both from a quick restart): the record held back to f. Each slowed lap is its own lap with one tick
+     added that holds the input before it (no new press), put in at each point after the gate: of those whose course
+     timer comes out slower, the one that finishes soonest. Offered at the last lap of each run of back-to-back laps, at
+     the one or two laps before it with the laps after it dropped, and at the last with the last lap of one of the next
+     three runs of laps dropped; the 48 with the fewest slowed laps play. A break that doesn't play through spliced is
+     re-found as an investment, as an inserted record lap is, when it is behind the best by less than the best time it
+     breaks where its old way on stops (the clones' Cash comes forward by at most that). Adopted edits stack: the next
+     pull can break again one lap earlier (the slowed laps one more tick slower), so a course climbs down a ladder of
+     best times, one payout each. On `FalseEnding-Any%` (359.46 s, 2026-09-30) none paid: its only breaks are Course 1's
+     1.40 s lap (goals 22-23) or Course 3's 3.80 s lap (goals 193-194) held back, which costs 101-155 ticks (the record
+     lap plays twice and the clones run the slower path in between), the earlier Cash makes the walks through the box
+     rows buy a box early, and the two re-found as investments (142 and 166 ticks behind) came out no faster.
 
    An edit that misses a goal after the change gets idle ticks before the last quick restart ahead of that goal (every 5
    up to its lead there plus 60, then each below the first that passes: a stray buy isn't monotone in the wait), up to 6

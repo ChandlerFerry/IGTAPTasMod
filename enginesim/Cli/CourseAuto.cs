@@ -78,7 +78,24 @@ namespace IGTAP.EngineSim.Cli
             foreach (var p in played)
                 Console.WriteLine($"{p.how}: " + (p.result.Finished ? $"record {p.result.Time:0.00}s, farm {p.result.RunTicks * .02:0.00}s ({p.result.RunTicks} ticks)" : "no finish (" + p.result.EndReason + ")"));
             var finishing = played.Where(p => p.result.Finished).ToList();
-            if (finishing.Count == 0) throw new InvalidOperationException("--auto improves a complete route: neither the trace's route nor a --seed finishes the course");
+            if (finishing.Count == 0)
+            {
+                if (run.WaypointsFile != null)
+                    throw new InvalidOperationException("--auto improves a complete route: neither the trace's route nor a --seed finishes the course");
+                // Only a narrower category's routes (the seeds) and none finishes here (an added OM or ORB changes what the same
+                // inputs do): nothing to improve yet, so the plain solve finds a first finish, those routes still its seeds.
+                Console.WriteLine("--auto: neither the trace's route nor a --seed finishes the course; solving for a first finish instead");
+                var plain = new List<string>();
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] == "--auto" || args[i] == "--farm") continue;
+                    if (args[i] == "--focus") { i++; continue; }
+                    plain.Add(args[i]);
+                }
+                if (!plain.Contains("--stall-minutes"))
+                    plain.AddRange(new[] { "--stall-minutes", Math.Min(5.0, Solve.Option(args, "--minutes", 60.0) / 2).ToString(CultureInfo.InvariantCulture) });
+                return Solve.Run(plain.ToArray());
+            }
             var best = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
                 : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
 

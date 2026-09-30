@@ -85,8 +85,10 @@ namespace IGTAPTasMod
             public FullTasTracker tracker;
             public int expected;
             public bool waitingForNewGame = true, started;
-            /// <summary>Input ticks still to run in turbo before 1x (a tech demo's fastForward: it starts where the tech begins).</summary>
+            /// <summary>Ticks still to run in turbo before 1x: a tech demo's fastForward in input ticks (it starts where the tech
+            /// begins), a play from a frame in game frames (physics ticks, as the splits count them: <see cref="fastForwardFrames"/>).</summary>
             public int fastForward;
+            public bool fastForwardFrames;
         }
 
         sealed class FullTasPending

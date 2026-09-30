@@ -139,9 +139,11 @@
     engine alike; the timer is back on after the run. A course's clones pay its reward as last updated, so the phase
     decides the Cash.
 11. Relaxes rule 39. Presentation doesn't draw the Full-TAS RNG: the run animation's footstep event
-    (`PlayerAnimationEventProxy.RelayFootstep`, on rendered frames) and a floating number (`spawnNewFloatingNumber`),
-    which turbo and the offline engine don't play, play and put `UnityEngine.Random`'s state back after them
-    (`TasPlugin.BeforePresentationDraw`/`AfterPresentationDraw`), so the fixed seed's draws are the same at 1x as judged.
+    (`PlayerAnimationEventProxy.RelayFootstep`, on rendered frames), a floating number (`spawnNewFloatingNumber`) and a
+    text bobber's bob phase (`ObjectBobber.OnEnable`: the statue's text, a buy-max box's "buy N" text, which its multibuy
+    timer turns on at 1x only) play and put `UnityEngine.Random`'s state back after them
+    (`TasPlugin.PresentationDraw`; the offline engine makes no bobber draw in a Full-TAS
+    run, `Economy.Activate`), so the fixed seed's draws are the same at 1x as judged.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:

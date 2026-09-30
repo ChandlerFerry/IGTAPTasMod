@@ -205,6 +205,8 @@ namespace IGTAP.EngineSim.Cli
             _strayRetime = _strayAvoid = Part("stray");
             _tailMinutes = Solve.Option(args, "--tail-minutes", _windowMinutes);
             _combineRepairMinutes = Solve.Option(args, "--combine-repair-minutes", _tailMinutes / 3);
+            // The goals part's record laps: a lap searched from the quick restart for each course and unlock set with none saved.
+            _recordSearchMinutes = Solve.Option(args, "--record-search-minutes", _recordSearchMinutes);
             // A focus is goals picked by number: the goals part, which renumbers them, stays off.
             bool focused = ReadFocus(args);
             if (focused && _parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");
@@ -222,7 +224,7 @@ namespace IGTAP.EngineSim.Cli
             _autoCpu0 = CpuSeconds();
             _autoWall0 = _clock.Elapsed;
             Route start = _best;
-            ReadPastSessions();
+            ReadHistory();
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = Solve.Args(args, "--ref").ToArray(),
                 focus = new[] { _focusFrom, _focusTo } });
@@ -273,6 +275,12 @@ namespace IGTAP.EngineSim.Cli
                 if (GoalsDue())
                 {
                     if (GoalsPull()) Probe();
+                    continue;
+                }
+                // Every new best (and the start): each buy's waits for Cash moved under its box (--parts idle).
+                if (Part("idle") && !ReferenceEquals(_idledFor, _best))
+                {
+                    IdlePull();
                     continue;
                 }
                 // Every new best (and the start): the known routes' faster goal runs spliced into it (--parts combine).
@@ -641,10 +649,13 @@ namespace IGTAP.EngineSim.Cli
             _pullNo++;
             Log($"auto: pull {_pullNo}: {arm.Lever} at goal {arm.Goal} ({_labels[arm.Goal - 1]}), {(double.IsNaN(score) ? "first-round probe" : $"score {score:0.0000} ticks/CPU s")}, "
                 + $"expected {_model[arm.Goal - 1].Expected:0.0} ticks, arm {arm.Pulls} pulls {arm.Cpu:0} CPU s {arm.Gain:0} gained, budget {budget:0.00} min");
-            // The studio's "searching now" line (stdout only).
+            // The studio's "searching now" line (stdout only), with how often such a pull (this lever after as many misses at its
+            // spot) gained in every recorded run in this folder.
             var spot = Spot(arm.Lever, arm.Goal);
+            var record = LeverRecord(arm.Lever, spot.misses);
             Emit(new { type = "pullStart", pull = _pullNo, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget = Math.Round(budget, 2),
-                expected = Math.Round(_model[arm.Goal - 1].Expected, 1), pulls = spot.pulls, cpu = Math.Round(spot.cpu), gained = spot.gain });
+                expected = Math.Round(_model[arm.Goal - 1].Expected, 1), pulls = spot.pulls, cpu = Math.Round(spot.cpu), gained = spot.gain,
+                misses = spot.misses, history = new { pulls = record.pulls, gains = record.gains } });
         }
 
         /// <summary>One arm on every thread (a polish, graft, reset study or plan pull).</summary>
@@ -1088,26 +1099,33 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// A repaired run can't win any more: even at every later goal's lower bound it ends no sooner than the best, or it is more
-        /// than --repair-slack ticks behind the best at its last goal (the window's gain is gone and more).
+        /// than --repair-slack ticks behind the best at its last goal (the window's gain is gone and more), or its CPU budget is
+        /// spent. An investment (<see cref="InvestRepair"/>) is held to its budget alone.
         /// </summary>
         string Hopeless(Route run)
         {
             int p = run.Progress;
             if (p == 0 || p > _best.Progress) return null;
             long at = run.Clock(p);
-            if (_bounds != null)
+            // An investment (a goals edit being re-found) is behind until its income pays, and the model's bounds and cost-to-go are
+            // the old goals': only its budget ends it.
+            if (!_investing)
             {
-                long floor = at + Enumerable.Range(p, Math.Max(0, _goals - p)).Sum(j => _bounds[j]);
-                if (floor >= _best.Last) return $"at goal {p} (tick {at}) even the later goals' lower bounds end at tick {floor}, no sooner than the best's {_best.Last}";
+                if (_bounds != null)
+                {
+                    long floor = at + Enumerable.Range(p, Math.Max(0, _goals - p)).Sum(j => _bounds[j]);
+                    if (floor >= _best.Last) return $"at goal {p} (tick {at}) even the later goals' lower bounds end at tick {floor}, no sooner than the best's {_best.Last}";
+                }
+                long behind = at - _best.Clock(p);
+                if (behind > _repairSlack) return $"{behind} ticks behind the best at goal {p} (--repair-slack {_repairSlack})";
+                string ctgBound = CostToGoBound(run);
+                if (ctgBound != null) return ctgBound;
             }
-            long behind = at - _best.Clock(p);
-            if (behind > _repairSlack) return $"{behind} ticks behind the best at goal {p} (--repair-slack {_repairSlack})";
-            string ctgBound = CostToGoBound(run);
-            if (ctgBound != null) return ctgBound;
             if (_repairAt is (double cpu, long lead))
             {
                 double spent = CpuSeconds() - cpu, budget = Math.Max(_repairCpuPerTick * lead, _repairFloorCpu);
-                if (spent >= budget) return $"its budget is spent ({spent:0} CPU s for a {lead}-tick lead, --repair-cpu-per-tick {_repairCpuPerTick})";
+                if (spent >= budget)
+                    return $"its budget is spent ({spent:0} CPU s for a {lead}-tick lead, --repair-cpu-per-tick {_repairCpuPerTick}) at goal {p}, {at - _best.Clock(p):+0;-0} ticks against the best there";
                 // The next window gets what's left of it, on every thread.
                 _repairMinutes = Math.Clamp((budget - spent) / (60.0 * _threads), 0.05, _repairMax);
             }

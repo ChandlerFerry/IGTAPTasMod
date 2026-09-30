@@ -92,7 +92,8 @@ namespace IGTAPTasMod
             // A frame whose Update ran with time stopped (a dash freeze, the pause menu) is one the run stands still in: its live
             // time (MacroEngine.HeldFrames), the frames turbo and the offline engine repeat (MacroEngine.FrameRepeats).
             if (Time.timeScale == 0f) _engine.CountHeldFrames(1);
-            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback ? 0f : 1f);
+            bool skipping = _fastUntilTick > 0 && (_pendingReplay != null || _engine.RunTicks < _fastUntilTick);
+            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f);
             _clockNext = FixedClockStep(_pacedFps);
             Time.captureDeltaTime = _clockNext;
         }
@@ -152,7 +153,7 @@ namespace IGTAPTasMod
             _playbackSpeedText = on ? (1f / _walkSlowdown).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "x" : "1x";
         }
 
-        private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f)
+        private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f, int fromTick = 0)
         {
             MacroDefinition macro = TechPlayable(SelectedMacro);
             if (macro == null) return;
@@ -160,9 +161,10 @@ namespace IGTAPTasMod
             Match fullTasRoute = FullTasRouteName.Match(macro.name ?? "");
             if (fullTasRoute.Success)
             {
-                StartFullTasPlayback(FindFullTasRun(fullTasRoute.Groups[1].Value), macro);
+                StartFullTasPlayback(FindFullTasRun(fullTasRoute.Groups[1].Value), macro, null, fromTick);
                 return;
             }
+            _fastUntilTick = Mathf.Max(0, fromTick);
             EnsureGameUnpaused();
             _pendingReplay = walkSlowdown > 0f ? HumanVersionOf(macro) ?? macro : macro;
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
@@ -170,6 +172,7 @@ namespace IGTAPTasMod
 
         private void OnAttemptEnded(bool success, string reason)
         {
+            _fastUntilTick = 0;
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
                 FinishFullTasPlayback(success, reason);

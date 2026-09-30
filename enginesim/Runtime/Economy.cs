@@ -272,8 +272,13 @@ namespace IGTAP.EngineSim
             return i;
         }
 
+        /// <summary>A diagnostic (--check --ticks-out): each clone spawn as it is rolled, (course, instance id, on screen, divisor
+        /// before, fastness i, bigness j, payout or 0 on screen), to line up with a 1x probe's clone rows.</summary>
+        public Action<int, int, bool, float, int, int, double> Spawned;
+
         bool SpawnClone(Clones c)
         {
+            float divisorBefore = c.V.OffscreenDivisor;
             if (c.Local < 0) return Unmodeled("clones without local upgrades");
             double chance = Local(c.Local, localUpgrades.localUpgradeSet.fastCloneChance) * 5.0
                 + Global(globalStats.globalUpgradeSet.fastCloneChance) * 8.0;
@@ -285,6 +290,7 @@ namespace IGTAP.EngineSim
             c.V.NextDue = (float)((double)c.V.NextDue / Mathf.Pow(0.75f, j));
             if (c.V.OnScreen)
             {
+                Spawned?.Invoke(c.Course?.courseNumber ?? -1, c.Script.GetInstanceID(), true, divisorBefore, i, j, 0.0);
                 if (c.V.Pooled > 0 && c.Active.Count < c.V.Count)
                 {
                     c.V.OffscreenDivisor = 1f;
@@ -297,7 +303,9 @@ namespace IGTAP.EngineSim
             }
             if (c.V.Count <= 0) return true;
             if ((object)c.Course == null) return Unmodeled("clones without a course");
-            Earned += Math.Ceiling(Pay(c, j) / (double)c.V.OffscreenDivisor);
+            double pay = Math.Ceiling(Pay(c, j) / (double)c.V.OffscreenDivisor);
+            Earned += pay;
+            Spawned?.Invoke(c.Course.courseNumber, c.Script.GetInstanceID(), false, divisorBefore, i, j, pay);
             if (!ColourCheck(c)) return false;
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
             c.V.SinceLast = 0f;
@@ -678,16 +686,19 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// SetActive(true) as the game runs it: the OnEnable of every behaviour it wakes runs at once, and two of them draw
         /// UnityEngine.Random: upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay),
-        /// ObjectBobber.OnEnable once. Start (LightFlicker, RandomAnimSpeedComponent, JiggleDropScript) waits for the next
-        /// frame's Start pass, which a turbo run never reaches, so its draws are not made here.
+        /// ObjectBobber.OnEnable once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (README exception
+        /// 11: a buy-max box's "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker,
+        /// RandomAnimSpeedComponent, JiggleDropScript) waits for the next frame's Start pass, which a turbo run never reaches,
+        /// so its draws are not made here.
         /// </summary>
-        static void Activate(GameObject g)
+        void Activate(GameObject g)
         {
             bool was = g.activeInHierarchy;
             g.SetActive(true);
             if (was || !g.activeInHierarchy) return;
             foreach (upgradeBox b in g.GetComponentsInChildren<upgradeBox>(false))
                 if (b.enabled) { UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); }
+            if (_sim.Goals != null) return;
             foreach (ObjectBobber b in g.GetComponentsInChildren<ObjectBobber>(false))
                 if (b.enabled) UnityEngine.Random.Draw();
         }

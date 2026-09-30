@@ -153,7 +153,7 @@ ordered as the sections they came from.
   calls in the physics step draw as before. Clone state (timers, pointers, counts) then matches 1x on every tick of the
   356.64 s inputs (16,675 ticks). A dash freeze logs the tick's physics count twice in both (turbo's trace and a probe):
   compare by the engine's physics count, not the trace's `tick`.
-- **Where:** `MacroEngine.FrameGrid`, `TasPlugin.BeforePresentationDraw`/`AfterPresentationDraw`.
+- **Where:** `MacroEngine.FrameGrid`, `TasPlugin.PresentationDraw`.
 
 ## Course rewards refreshed only at 1x
 
@@ -169,6 +169,26 @@ ordered as the sections they came from.
   exception 10. The 356.64 s inputs now die at action 5257 in turbo and offline alike, Cash and RNG identical on every
   tick (`div-fe-356.64`).
 - **Where:** `MacroEngine.CountPhysicsTick`, `FullTasPlugin.Playback.cs`, `Simulation`, `Economy.RefreshReward`.
+
+## Buy-max box texts drew on the invoke clock
+
+- **Symptom:** `fulltas/FalseEnding-Any%_NONE 361.78` (judged in turbo) died at 1x at action 5354 after 271 goals, on the
+  climb to `buy:buydj`. A 1x probe matched offline Cash on every tick to physics tick 14994, 88 ticks after
+  `buy:buystatue`, where Course 3's off-screen clone paid 768.8M at 1x and 1037.9M offline (1.35x: the previous spawn's
+  fast-clone roll). Clone Update order was the same (lowest instance id first), and the RNG states matched as sets.
+- **Cause:** the statue turns Courses 1 and 2's boxes into buy-max boxes. Each box's `updateMultibuyText` runs from an
+  `InvokeRepeating` (Unity's invoke clock, a 0.2-0.4 s rate) and turns its "buy N" text on (`setBoxText`), and that
+  text's `ObjectBobber.OnEnable` draws `UnityEngine.Random`. At 1x these draws came one at a time on the timer's
+  frames (ticks 14906-14916); turbo doesn't run the invoke clock, and offline made them when the box was touched. The
+  count of draws caught up by tick 14930, but Course 3's roll at 14944 fell between them: 60 at 1x (no fast clone), under
+  40 offline. Found with the probe's new `clone` and `rng` rows (every `SpawnClone`, and every call of a game method
+  that draws, with its frame) against `fulltas --check --ticks-out`'s spawn and draw rows.
+- **Fix:** `ObjectBobber.OnEnable` is presentation (a text's bob phase): in a Full-TAS run its draw is given back at 1x and
+  in turbo like a footstep's (`TasPlugin.PresentationDraw`, README exception 11). The engine never made the
+  texts' draws (it models a box's touch, not its multibuy timer) and now skips the statue text's too in a Full-TAS run
+  (`Economy.Activate`), so the statue text's draw goes in all three.
+- **Where:** `TasPlugin.Awake` (presentation drawers), `Economy.Activate`, `ProbeRunner` (`clone`, `rng` rows),
+  `FullTas.Check` (`--ticks-out`).
 
 ## Clones stepped once a tick
 
