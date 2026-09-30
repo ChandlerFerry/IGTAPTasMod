@@ -239,8 +239,10 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   its ticks go in and the session seeks to their end: what is kept is what replays. A death or finish stops it.
 - **Techs here** (course and category sessions): a second after a tick is held, `enginesim techs`
   ([`enginesim/README.md`](enginesim/README.md#techs)) lists the named techs whose key window works from there, one button
-  each. Hovering one draws its directions' paths in game (the held tick is seeked again, so its last 1x tick draws them)
-  and opens its compass; an arrow, or the button for the soonest, puts its inputs in at the held tick and plays them.
+  each, soonest first with when it starts. Hovering one draws its directions' paths in game (the held tick is seeked
+  again, so its last 1x tick draws them; the walk before the tech thin, a box and its name where it starts) and opens
+  its compass (a dashed arrow plays the same as another); an arrow, or the button for the soonest, puts its inputs in at
+  the held tick and plays them.
 - **Suggest** (course and category sessions) runs `enginesim suggest` on the route up to the held tick
   ([`enginesim/README.md`](enginesim/README.md#suggest)) and lists edits that reach the same spot sooner; apply splices one in.
 - **Share**: a code (`IGTAS1:` + base64url gzip), `.igtas.json` or `.tas` text, with the savestate if any. An import is a

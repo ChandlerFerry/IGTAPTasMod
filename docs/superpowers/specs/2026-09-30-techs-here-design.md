@@ -35,13 +35,17 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
 - **Automatic.** A held course/category session starts `techs` for the held input tick once it has stayed there 1 s.
   Moving on or editing kills it; results are kept per input tick until the inputs change, so going back is instant.
 - **Best per direction.** The plugin keeps, per tech and direction (and angle), the variant that starts soonest, then
-  the fastest.
+  the fastest. Directions that play the same path (within 0.5 u every step) are one move, shown by the simplest input
+  (a cardinal before a diagonal before a steep aim) with the others listed as the same: a ground dash aimed down-right
+  plays as one aimed right (a quarter of the omnidash's variants at Course 4 input 100).
 - **Live state** (`tas.techs`): `at`, `running`, `unavailable`, `done`, `tried`, `error`, and per tech its name and
   variants (`dir`, `angle`, `start`, `died`); not the ticks or paths.
 - **Hover** (`POST /api/tas/techs/hover {tech, dir, angle}`; `{}` clears): the overlay draws every variant of that tech
   faint and the hovered one bright, in world space (path + the game's current origin). A held session renders no frames,
   so the hover re-seeks the held physics tick (`seekPhysics = physics`): its last tick plays at 1x, and those frames
-  draw the paths.
+  draw the paths, the lead-in (the continuation before the tech) thin, a box where the tech starts and its name there.
+  Through the re-seek the session still reports that tick, held (`redrawAt`), and a hover that arrives during one
+  redraws once more after it.
 - **Try it** (`POST /api/tas/techs/apply {tech, dir, angle, slowdown}`; a variant is named by its direction, since a
   running search adds variants): the session's inputs from the held tick are replaced
   by the variant's (undoable), and it plays from the held tick to the variant's end at the given speed, then holds.
@@ -49,9 +53,9 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
 ## Studio
 
 A **Techs here** panel under Held tick: a status line (waiting / searching, n found / none / error) and one button per
-tech named by its name. Hovering a button opens its compass: the directions found, arrows in a 3×3 grid; the diagonals
-with steep freeze aims take the wheel to step 45° → 19° → 17°. Hovering an arrow shows that variant in game; a
-click tries it. A click on the button itself tries the tech's soonest direction.
+tech named by its name, soonest first, with when it starts (dimmed past half a second). Hovering a button opens its compass: the directions found, arrows in a 3×3 grid; the diagonals
+with steep freeze aims take the wheel to step 45° → 19° → 17°, and a dashed arrow is a direction that plays the same as
+another. Hovering the button shows the soonest direction bright, an arrow that variant; a click tries it. A click on the button itself tries the tech's soonest direction.
 
 ## Not in scope
 

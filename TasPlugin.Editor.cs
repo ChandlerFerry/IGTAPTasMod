@@ -82,6 +82,11 @@ namespace IGTAPTasMod
             /// <summary>The tech whose paths are drawn, and its variant drawn bright (hoverDir null: none).</summary>
             public string hoverTech, hoverDir;
             public float? hoverAngle;
+            /// <summary>The held input tick a redraw re-seek (TasTechsHover) is rebuilding, -1 none: the studio sees it still held
+            /// there rather than the seek's ticks.</summary>
+            public int redrawAt = -1;
+            /// <summary>The hover changed during a redraw: one more once it holds.</summary>
+            public bool redrawAgain;
 
             /// <summary>A savestate start: it holds first after input 0, so input 0 presses nothing (TasQuiet).</summary>
             public bool SavestateStart { get { return !string.IsNullOrEmpty(route.savestateId); } }
@@ -205,6 +210,8 @@ namespace IGTAPTasMod
             s.playUntil = int.MaxValue;
             s.release = 0;
             s.held = true;
+            s.redrawAt = -1;
+            if (s.redrawAgain) TasRedraw(s);
             return true;
         }
 
@@ -860,9 +867,9 @@ namespace IGTAPTasMod
             return new {
                 open = true, routeId = s.route.id, name = s.route.name, savestateId = s.route.savestateId,
                 course = course?.id, capabilities = course != null ? CapsOf(category.Groups["label"].Value).Id : null,
-                phase = s.starting ? "starting" : s.recording ? "recording" : s.playing ? "playing" : s.held ? "held" : "running",
+                phase = s.starting ? "starting" : s.recording ? "recording" : s.playing ? "playing" : s.held || s.redrawAt >= 0 ? "held" : "running",
                 // The engine plays no input while the recorder has the controller.
-                cursor = s.recording && _recorder.Current != null ? s.recordFrom + _recorder.Current.samples.Count : (int)_engine.RunTicks, physics = s.physics, tickCount = s.ticks.Count, baseInput = s.BaseInput,
+                cursor = s.recording && _recorder.Current != null ? s.recordFrom + _recorder.Current.samples.Count : TasHeldAt(s), physics = s.physics, tickCount = s.ticks.Count, baseInput = s.BaseInput,
                 rerecords = s.route.rerecords, version = s.version, canUndo = s.undo.Count > 0, canRedo = s.redo.Count > 0,
                 slowdown = s.slowdown, greenzone = s.greenzone.Select(g => g.input).ToArray(), traced = s.trace.Count, traceVersion = s.traceVersion,
                 playUntil = s.playing && s.playUntil != int.MaxValue ? s.playUntil : (int?)null,

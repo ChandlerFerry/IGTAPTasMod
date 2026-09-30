@@ -32,12 +32,15 @@ namespace IGTAPTasMod
             public bool died;
             public List<SolverTick> ticks;
             public Vector2[] path;
+            /// <summary>Shown variants only: the other directions that play this very path (TasGroupTechs).</summary>
+            public List<TasTechVariant> same;
         }
 
-        /// <summary>The techs found for one held input tick (the best variant per tech, direction and angle).</summary>
+        /// <summary>The techs found for one held input tick: the best variant per tech, direction and angle, and those shown
+        /// (one per distinct path).</summary>
         sealed class TasTechs
         {
-            public readonly List<TasTechVariant> variants = new List<TasTechVariant>();
+            public readonly List<TasTechVariant> variants = new List<TasTechVariant>(), shown = new List<TasTechVariant>();
             public bool done;
             public int tried;
             public string error;
@@ -139,6 +142,7 @@ namespace IGTAPTasMod
                 if (same < 0) found.variants.Add(v);
                 else if (v.start < found.variants[same].start || v.start == found.variants[same].start && v.speed > found.variants[same].speed) found.variants[same] = v;
             }
+            if (changed) TasGroupTechs(found);
             if (exited)
             {
                 if (!found.done)
@@ -153,18 +157,44 @@ namespace IGTAPTasMod
             if (changed) BumpWebState();
         }
 
-        /// <summary>A tech's variants in the studio's order: its compass's (dir, then steepest first).</summary>
+        /// <summary>A tech's variants in the studio's order: its compass's (dir, then the 45° aim, then steeper).</summary>
         static readonly string[] TechDirOrder = { "", "U", "UR", "R", "DR", "D", "DL", "L", "UL" };
 
+        /// <summary>A tech's shown variants, in compass order.</summary>
         List<TasTechVariant> TasTechVariants(TasTechs found, string tech)
         {
-            return found.variants.Where(v => v.tech == tech).OrderBy(v => Array.IndexOf(TechDirOrder, v.dir)).ThenBy(v => v.angle ?? 90f).ToList();
+            return found.shown.Where(v => v.tech == tech).OrderBy(v => Array.IndexOf(TechDirOrder, v.dir)).ThenBy(v => v.angle == null ? 0f : 90f - v.angle.Value).ToList();
         }
+
+        /// <summary>A tech's directions that play the same path (within 0.5 u every step) are one move: the simplest input shows
+        /// it (a cardinal before a diagonal before a steep aim), the rest are listed as the same. A ground dash aimed down-right
+        /// plays as one aimed right: a quarter of the omnidash's variants were such repeats.</summary>
+        static void TasGroupTechs(TasTechs found)
+        {
+            found.shown.Clear();
+            foreach (TasTechVariant v in found.variants.OrderBy(v => v.angle != null ? 3 : v.dir.Length).ThenBy(v => Array.IndexOf(TechDirOrder, v.dir)))
+            {
+                v.same = new List<TasTechVariant>();
+                TasTechVariant shown = found.shown.FirstOrDefault(o => o.tech == v.tech && SamePath(o.path, v.path));
+                if (shown != null) shown.same.Add(v);
+                else found.shown.Add(v);
+            }
+        }
+
+        static bool SamePath(Vector2[] a, Vector2[] b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) if ((a[i] - b[i]).sqrMagnitude > .25f) return false;
+            return true;
+        }
+
+        /// <summary>The input tick the session holds (through a redraw re-seek, the tick it is rebuilding).</summary>
+        int TasHeldAt(TasSession s) { return s.redrawAt >= 0 ? s.redrawAt : (int)_engine.RunTicks; }
 
         TasTechs TasTechsHere(TasSession s)
         {
             TasTechs found;
-            return s.techsCache.TryGetValue((int)_engine.RunTicks, out found) ? found : null;
+            return s.techsCache.TryGetValue(TasHeldAt(s), out found) ? found : null;
         }
 
         object TasTechsLive(TasSession s)
@@ -172,12 +202,13 @@ namespace IGTAPTasMod
             TasTechs found = TasTechsHere(s);
             return new
             {
-                at = (int)_engine.RunTicks, running = s.techs != null && s.techsAt == (int)_engine.RunTicks, unavailable = TasTechsUnavailable(s, out _, out _),
+                at = TasHeldAt(s), running = s.techs != null && s.techsAt == TasHeldAt(s), unavailable = TasTechsUnavailable(s, out _, out _),
                 done = found?.done ?? false, tried = found?.tried ?? 0, error = found?.error,
-                list = found == null ? null : found.variants.Select(v => v.tech).Distinct().Select(tech => new
+                list = found == null ? null : found.shown.Select(v => v.tech).Distinct().Select(tech => new
                 {
-                    tech, name = found.variants.First(v => v.tech == tech).name,
-                    variants = TasTechVariants(found, tech).Select(v => new { v.dir, v.angle, v.start, v.died }).ToArray(),
+                    tech, name = found.shown.First(v => v.tech == tech).name,
+                    variants = TasTechVariants(found, tech).Select(v => new { v.dir, v.angle, v.start, v.died,
+                        same = v.same.Select(o => new { o.dir, o.angle }).ToArray() }).ToArray(),
                 }).OrderBy(t => t.variants.Min(v => v.start)).ToArray(),
             };
         }
@@ -203,7 +234,17 @@ namespace IGTAPTasMod
             s.hoverTech = tech;
             s.hoverDir = tech == null ? null : dir;
             s.hoverAngle = angle;
-            if (s.held && !s.starting && s.physics > 0 && s.seekInput < 0 && s.seekPhysics < 0) s.seekPhysics = s.physics;
+            if (s.redrawAt >= 0) s.redrawAgain = true;
+            else if (s.held) TasRedraw(s);
+        }
+
+        /// <summary>Rebuilds the held physics tick (its last tick at 1x), so its frames draw the hovered paths.</summary>
+        void TasRedraw(TasSession s)
+        {
+            s.redrawAgain = false;
+            if (s.starting || s.physics <= 0 || s.seekInput >= 0 || s.seekPhysics >= 0) return;
+            s.seekPhysics = s.physics;
+            s.redrawAt = (int)_engine.RunTicks;
         }
 
         /// <summary>POST /api/tas/techs/apply {tech, dir, angle, slowdown}: the inputs from the held tick become the variant's
@@ -262,6 +303,22 @@ namespace IGTAPTasMod
             GL.End();
             GL.PopMatrix();
             GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
+            // The hovered one's name by its start box, for a player looking at the game rather than the studio.
+            TasTechVariant named = variants.FirstOrDefault(v => v.dir == s.hoverDir && v.angle == s.hoverAngle);
+            if (named == null || _overlayText == null) return;
+            Vector3 box = cam.WorldToScreenPoint(named.path[Mathf.Clamp(named.lead, 0, named.path.Length - 1)] + origin);
+            string arrow;
+            TechArrows.TryGetValue(named.dir, out arrow);
+            string text = named.name + (arrow != null ? " " + arrow : "") + (named.angle != null ? " " + named.angle.Value.ToString("0.#") + "°" : "")
+                + (named.start > 0 ? "  in " + (named.start * Time.fixedDeltaTime).ToString("0.00") + " s" : "") + (named.died ? "  (dies after)" : "");
+            OverlayMeasure.text = text;
+            Vector2 size = _overlayText.CalcSize(OverlayMeasure);
+            var r = new Rect(box.x + 14 * scale, Screen.height - box.y - size.y - 14 * scale, size.x, size.y);
+            Fill(new Rect(r.x - 6 * scale, r.y - 2 * scale, r.width + 12 * scale, r.height + 4 * scale), new Color(.03f, .06f, .12f, .85f));
+            Label(r, text, _overlayText, named.died ? TechPathDied : TechPathHovered);
         }
+
+        static readonly Dictionary<string, string> TechArrows = new Dictionary<string, string> {
+            { "U", "↑" }, { "UR", "↗" }, { "R", "→" }, { "DR", "↘" }, { "D", "↓" }, { "DL", "↙" }, { "L", "←" }, { "UL", "↖" } };
     }
 }

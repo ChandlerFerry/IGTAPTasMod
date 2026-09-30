@@ -25,7 +25,7 @@ export type TasLive = { open: boolean; routeId: string; name: string; savestateI
 /** `tas.techs`: Techs here (TasPlugin.Techs.cs), the techs whose key window works from the held input tick, per direction. */
 export type TasTechsLive = { at: number; running: boolean; unavailable?: string | null; done: boolean; tried: number; error?: string | null;
   list?: { tech: string; name: string; variants: TasTechVariant[] }[] | null };
-export type TasTechVariant = { dir: string; angle?: number | null; start: number; died: boolean };
+export type TasTechVariant = { dir: string; angle?: number | null; start: number; died: boolean; same?: { dir: string; angle?: number | null }[] };
 export type PlacePrefill = { x?: number; y?: number; vx?: number; vy?: number; rebaseAtX?: number; rebaseAtY?: number };
 
 type CourseLite = { id: number; token: string; bonus: boolean; categories: string[]; to?: string };
@@ -649,13 +649,16 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
 }
 
 const COMPASS = ["UL", "U", "UR", "L", "", "R", "DL", "D", "DR"];
+/** Input ticks after which a tech's button is dimmed: it starts after a walk of more than half a second. */
+const LATER = 25;
 const ARROW: Record<string, string> = { UL: "↖", U: "↑", UR: "↗", L: "←", "": "•", R: "→", DL: "↙", D: "↓", DR: "↘" };
 const hoverTech = (tech?: string, v?: TasTechVariant) => call("/tas/techs/hover", !tech ? {} : v ? { tech, dir: v.dir, angle: v.angle ?? null } : { tech }).catch(() => {});
 
 /**
- * Techs here: one button per tech that works from the held tick (a click tries its soonest direction). Hovering it draws
- * all its directions in game and opens its compass; an arrow shows and tries that direction, the wheel on a diagonal steps
- * through its steep freeze aims.
+ * Techs here: one button per tech that works from the held tick, soonest first, with when it starts (a click tries its
+ * soonest direction). Hovering it draws all its directions in game, that one bright, and opens its compass; an arrow shows
+ * and tries that direction, the wheel on a diagonal steps through its steep freeze aims, and a dim arrow is a direction
+ * that plays the same as another.
  */
 function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: boolean; busy: boolean; onTry: (tech: string, v: TasTechVariant) => void }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -679,16 +682,20 @@ function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: bo
     {held && !techs.unavailable && <div className="techsHere">
       {list.map(t => {
         const soonest = t.variants.reduce((a, b) => b.start < a.start ? b : a);
-        return <div key={t.tech} className="techWrap" onMouseEnter={() => { setOpen(t.tech); hoverTech(t.tech); }} onMouseLeave={() => { setOpen(null); hoverTech(); }}>
-          <button disabled={busy} title={`Try it (${ARROW[soonest.dir]}, starts ${soonest.start} input ticks from here)`} onClick={() => onTry(t.tech, soonest)}>{t.name}</button>
+        return <div key={t.tech} className="techWrap" onMouseEnter={() => { setOpen(t.tech); hoverTech(t.tech, soonest); }} onMouseLeave={() => { setOpen(null); hoverTech(); }}>
+          <button disabled={busy} className={soonest.start > LATER ? "later" : ""} title={`Try it: ${ARROW[soonest.dir]}${soonest.angle != null ? ` ${soonest.angle}°` : ""}, starting ${soonest.start} input ticks from here`}
+            onClick={() => onTry(t.tech, soonest)}>{t.name}<small>{soonest.start ? `${(soonest.start * TICK).toFixed(2)} s` : "now"}</small></button>
           {open === t.tech && t.variants.some(v => v.dir) && <div className="techCompass" ref={compass}>
             {COMPASS.map(dir => {
               const here = t.variants.filter(v => v.dir === dir);
+              const alias = here.length ? null : t.variants.find(v => v.same?.some(o => o.dir === dir));
+              if (alias) return <button key={dir} disabled={busy} className="alias" title={`Plays the same as ${ARROW[alias.dir]}${alias.angle != null ? ` ${alias.angle}°` : ""}`}
+                onMouseEnter={() => hoverTech(t.tech, alias)} onMouseLeave={() => hoverTech(t.tech, soonest)} onClick={() => onTry(t.tech, alias)}>{ARROW[dir]}</button>;
               if (!here.length) return <span key={dir} className="empty">{ARROW[dir]}</span>;
               const key = `${t.tech}|${dir}`, v = here[(steep[key] ?? 0) % here.length];
               return <button key={dir} disabled={busy} className={v.died ? "died" : ""}
                 title={`${v.angle != null ? `${v.angle}° from vertical · ` : ""}starts in ${v.start} input ticks${v.died ? " · dies after it" : ""}${here.length > 1 ? " · wheel: steeper aims" : ""}`}
-                onMouseEnter={() => hoverTech(t.tech, v)} onMouseLeave={() => hoverTech(t.tech)} onClick={() => onTry(t.tech, v)}
+                onMouseEnter={() => hoverTech(t.tech, v)} onMouseLeave={() => hoverTech(t.tech, soonest)} onClick={() => onTry(t.tech, v)}
                 onWheel={e => { if (here.length < 2) return; const n = ((steep[key] ?? 0) + (e.deltaY > 0 ? 1 : here.length - 1)) % here.length; setSteep({ ...steep, [key]: n }); hoverTech(t.tech, here[n]); }}>
                 {ARROW[dir]}{here.length > 1 && <small>{v.angle != null ? `${Math.round(v.angle)}°` : "45°"}</small>}
               </button>;
