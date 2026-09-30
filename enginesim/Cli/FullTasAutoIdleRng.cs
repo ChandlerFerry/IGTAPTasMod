@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 
 namespace IGTAP.EngineSim.Cli
@@ -109,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
         /// <paramref name="touchBy"/> (the plain wait's: the jump in comes as the Cash does). Returns the fastest run and its hops,
         /// or null when none completes.
         /// </summary>
-        (Route, string) RngTickets(Route current, int g, List<InputTick> run, int ws, int we, SimSnapshot state, int stateAt, Zone zone, long touchBy)
+        (Route, string) RngTickets(Route current, int g, List<InputTick> run, int ws, int we, SimSnapshot state, int stateAt, Zone zone, long touchBy, bool fixTail = false, int retuneFrom = -1)
         {
             // Hops go on released idle ticks (a jump let go on the first one keeps its release).
             if (ws < we && run[ws].release) ws++;
@@ -162,14 +163,29 @@ namespace IGTAP.EngineSim.Cli
             if (tickets.Count == 0) return (null, null);
             var results = new Route[tickets.Count];
             Solve.Workers(_threads, tickets.Count, () => { Simulation sim = _create(); return (sim, sim.Start); },
-                (s, i) => results[i] = Retune(s.sim, s.Start, current, tickets[i].inputs, g + 1))();
+                (s, i) => results[i] = Retune(s.sim, s.Start, current, tickets[i].inputs, retuneFrom < 0 ? g + 1 : retuneFrom))();
+            string fixedHow = "";
+            if (fixTail && !results.Any(r => r != null && r.Progress == _goals))
+            {
+                // The way on from the new touch re-found (TailFix) from the plain wait's, then every class's wait with that way on.
+                Route fixedRun = TailFix(current, tickets[0].inputs, g);
+                if (fixedRun != null)
+                {
+                    int at = (int)fixedRun.GoalInput[g];
+                    results[0] = fixedRun;
+                    Solve.Workers(_threads, tickets.Count - 1, () => { Simulation sim = _create(); return (sim, sim.Start); },
+                        (s, i) => results[i + 1] = Retune(s.sim, s.Start, fixedRun, tickets[i + 1].inputs.Take(at).Concat(fixedRun.Inputs.Skip(at)).ToList(), g + 1))();
+                    fixedHow = ", the way on re-found";
+                }
+            }
             int best = -1;
             for (int i = 0; i < results.Length; i++)
                 if (results[i] != null && results[i].Progress == _goals && results[i].GoalPhysics[g] <= touchBy && (best < 0 || results[i].Live < results[best].Live)) best = i;
             int done = results.Count(r => r != null && r.Progress == _goals && r.GoalPhysics[g] <= touchBy), faster = results.Count(r => r != null && r.Progress == _goals && r.GoalPhysics[g] <= touchBy && r.Live < current.Live);
             Log($"auto: idle rng: goal {g + 1} ({_labels[g]}): {w} idle ticks at inputs {ws}-{we - 1}, {schedules.Count} hop schedules, {tickets.Count} RNG classes, "
-                + $"{done} complete re-timed, {faster} faster than {Describe(current)}" + (best < 0 ? "" : $"; best {Describe(results[best])} ({tickets[best].how})"));
-            return best < 0 ? (null, null) : (results[best], $"{tickets[best].how} in {w} idle ticks under the box, the waits after re-timed");
+                + $"{done} complete re-timed, {faster} faster than {Describe(current)}" + (best < 0 ? "" : $"; best {Describe(results[best])} ({tickets[best].how})")
+                + (done > 0 ? "" : $"; the plain wait as it is: {Describe(Evaluate(tickets[0].inputs))} ({Evaluate(tickets[0].inputs).EndReason})"));
+            return best < 0 ? (null, null) : (results[best], $"{tickets[best].how} in {w} idle ticks under the box{fixedHow}, the waits after re-timed");
         }
 
         /// <summary>
@@ -238,11 +254,20 @@ namespace IGTAP.EngineSim.Cli
         /// did in between (restarts and dashes to a far box, loops, jumps) goes, and the idle ticks under the box are the RNG's
         /// (RngTickets). Returns the fastest re-timed run and how, or null.
         /// </summary>
-        (Route, string) WalkIn(Route current, int g, int from, int buy, SimSnapshot at)
+        (Route, string) WalkIn(Route current, int g, int from, int buy, SimSnapshot at, List<InputTick> lead = null, string leadHow = null)
         {
             if (at == null || buy <= from) return (null, null);
-            bool held = from > 0 && current.Inputs[from - 1].held;
-            Pose[] start = PoseTrace(at, from, new List<InputTick> { new InputTick { release = held } });
+            lead ??= new List<InputTick>();
+            bool held = lead.Count > 0 ? lead[lead.Count - 1].held : from > 0 && current.Inputs[from - 1].held;
+            SimSnapshot afterLead = at;
+            if (lead.Count > 0)
+            {
+                _eval.SetStart(at, from);
+                _eval.Goals.Limit = _goals;
+                afterLead = _eval.Advance(lead);
+                if (afterLead == null) return (null, null);
+            }
+            Pose[] start = PoseTrace(afterLead, from + lead.Count, new List<InputTick> { new InputTick { release = held } });
             Zone zone = BoxZone(_runGoals.Goals[g]);
             if (float.IsNaN(zone.x0)) return (null, null);
             var step = new InputTick { x = zone.Middle < start[1].x ? -1f : 1f };
@@ -257,33 +282,48 @@ namespace IGTAP.EngineSim.Cli
             {
                 Pose rest = default;
                 List<InputTick> list = Walk(run, RestTicks);
-                _eval.SetStart(at, from);
+                _eval.SetStart(afterLead, from + lead.Count);
                 _eval.Goals.Limit = _goals;
+                bool seen = false;
+                // Past the list: a run stops with its inputs, and its last tick reports nothing then.
                 _eval.Run(list, null, tick =>
                 {
-                    if (tick == list.Count) rest = new Pose { ground = _eval.Player.onGround, x = _eval.PlayerWorld.x };
-                    return true;
-                }, 0);
-                if (rest.ground && zone.Under(rest.x)) stand = run;
+                    if (tick < list.Count) return true;
+                    rest = new Pose { ground = _eval.Player.onGround, x = _eval.PlayerWorld.x, y = _eval.PlayerWorld.y };
+                    seen = true;
+                    return false;
+                });
+                if (!seen) break;
+                if (rest.ground && zone.Under(rest.x) && rest.y < zone.y0) stand = run;
                 else if (step.x < 0f && rest.x < zone.x0 || step.x > 0f && rest.x > zone.x1) break;
             }
-            if (stand < 0) return (null, null);
+            if (stand < 0)
+            {
+                if (leadHow != null) Log($"auto: stand window: goal {g + 1} ({_labels[g]}): no rest under the trigger (x {zone.x0:0}-{zone.x1:0}) from ({start[1].x:0},{start[1].y:0})");
+                return (null, null);
+            }
+            // The jump in holds the stick the run held into the box: the way on after the buy starts from that motion.
+            float stick = current.Inputs[Math.Max(from, buy - 1)].x;
             List<InputTick> Jump(int w)
             {
                 List<InputTick> list = Walk(stand, w);
-                list.Add(new InputTick { held = true, press = true });
-                for (int i = 0; i < JumpFall; i++) list.Add(new InputTick { held = true });
+                list.Add(new InputTick { held = true, press = true, x = stick });
+                for (int i = 0; i < JumpFall; i++) list.Add(new InputTick { held = true, x = stick });
                 return list;
             }
             (long input, long physics) Play(List<InputTick> list)
             {
-                _eval.SetStart(at, from);
+                _eval.SetStart(afterLead, from + lead.Count);
                 _eval.Goals.Limit = g + 1;
                 RunResult rr = _eval.Run(list, null, null, 0);
                 return rr.Progress >= g + 1 ? (rr.GoalInputTicks[g], rr.GoalPhysicsTicks[g]) : (-1, -1);
             }
             int low = FirstWait(w => Play(Jump(w)).input, buy - from + WaitSlack);
-            if (low < 0) return (null, null);
+            if (low < 0)
+            {
+                if (leadHow != null) Log($"auto: stand window: goal {g + 1} ({_labels[g]}): at rest under the trigger after {stand} ticks on, no jump touches");
+                return (null, null);
+            }
             var (touch, physics) = Play(Jump(low));
             List<InputTick> tail = current.Inputs.Skip(buy).ToList();
             if (tail.Count > 0)
@@ -292,9 +332,220 @@ namespace IGTAP.EngineSim.Cli
                 if (!t0.held && !t0.release) { t0.release = true; tail[0] = t0; }
                 else if (t0.held && !t0.press) return (null, null);
             }
-            List<InputTick> whole = current.Inputs.Take(from).Concat(Jump(low).Take((int)touch - from)).Concat(tail).ToList();
-            var (r, how) = RngTickets(current, g, whole, from + stand, from + stand + low, at, from, zone, physics);
-            return r == null ? (null, null) : (r, $"walked in ({stand} ticks), {how}");
+            int on = from + lead.Count;
+            List<InputTick> whole = current.Inputs.Take(from).Concat(lead).Concat(Jump(low).Take((int)touch - on)).Concat(tail).ToList();
+            int ws = on + stand;
+            var (r, how) = RngTickets(current, g, whole, ws, ws + low, afterLead, on, zone, physics, leadHow != null);
+            return r == null ? (null, null) : (r, $"{leadHow ?? ""}{(leadHow == null ? "" : ", ")}walked in ({stand} ticks), {how}");
+        }
+
+        /// <summary>
+        /// <paramref name="whole"/> (goal g reached, then a run of <paramref name="current"/>'s inputs that no longer follows on) with
+        /// its way on re-found: up to 3 rounds of a window from the last goal it reaches through the two after it (the solver,
+        /// seeded with the run's own way there, --stand-minutes), spliced with the run's inputs after them and re-timed. Returns
+        /// the complete run, or null.
+        /// </summary>
+        Route TailFix(Route current, List<InputTick> whole, int g)
+        {
+            Route r = Evaluate(whole);
+            for (int round = 0; round < 3 && r.Progress < _goals && r.Progress > g && !TimeUp; round++)
+            {
+                int p = r.Progress, touch = (int)Math.Min(r.GoalInput[p - 1], r.Inputs.Count), limit = Math.Min(_goals, p + 2);
+                List<InputTick> prefix = r.Inputs.GetRange(0, touch);
+                int oldFrom = (int)current.GoalInput[p - 1], oldTo = (int)Math.Min(current.GoalInput[limit - 1], current.Inputs.Count);
+                var seed = current.Inputs.GetRange(oldFrom, Math.Min(current.Inputs.Count, oldTo + 20) - oldFrom);
+                Simulation Create()
+                {
+                    Simulation sim = _create();
+                    SimSnapshot s0 = sim.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
+                    sim.SetStart(s0, touch);
+                    sim.Goals.Limit = limit;
+                    return sim;
+                }
+                _eval.SetStart(_origin, 0);
+                _eval.Goals.Limit = _goals;
+                _eval.Restore(_eval.Advance(prefix));
+                string caps = WindowCaps(_runGoals.Goals.Skip(p).Take(limit - p));
+                List<InputTick> found = null;
+                long foundAt = long.MaxValue;
+                RunResult through = null;
+                // On a thread of its own: a simulation made on this one would take over _eval's game hooks.
+                Solve.OnThread(() =>
+                {
+                    var solver = new OfflineSolver(Create, caps, new List<List<InputTick>> { seed });
+                    var guard = new object();
+                    solver.Improved += (time, runTicks, inputs, how) => { lock (guard) if (runTicks < foundAt) (found, foundAt) = (inputs, runTicks); };
+                    DateTime stop = DateTime.UtcNow.AddMinutes(_standMinutes);
+                    Thread[] threads = solver.Start(_threads);
+                    while (DateTime.UtcNow < stop && !TimeUp) Thread.Sleep(250);
+                    solver.Stop();
+                    foreach (Thread t in threads) t.Join(60000);
+                    if (found != null) through = Create().Run(found, null, null);
+                });
+                if (found == null || through == null || through.Progress < limit)
+                {
+                    Log($"auto: idle tail: goals {p + 1}-{limit} from the touch of goal {p} (input {touch}): no way through in {_standMinutes:0.#} min");
+                    return null;
+                }
+                List<InputTick> candidate = prefix.Concat(found.Take((int)(through.GoalInputTicks[limit - 1] - touch))).Concat(current.Inputs.Skip(oldTo)).ToList();
+                Log($"auto: idle tail: goals {p + 1}-{limit} re-found from the touch of goal {p}: goal {limit} at tick {through.GoalPhysicsTicks[limit - 1]} against {current.GoalPhysics[limit - 1]}");
+                r = limit < _goals ? Retune(_eval, _origin, current, candidate, limit) ?? Evaluate(candidate) : Evaluate(candidate);
+            }
+            return r.Progress == _goals ? r : null;
+        }
+
+        /// <summary>
+        /// Goal g's wait before its last quick restart spent under the box: the idle ticks before that restart (the route waits
+        /// there, then restarts and dashes in: its way on after the buy follows from that dash) start with a walk toward the
+        /// trigger until the player rests under it, and the rest of them stand there; the restart and the approach after it stay.
+        /// The standing ticks go to RngTickets, re-timed from goal g on (the wait's length is the restart's re-timing). Returns the
+        /// fastest run and how, or null.
+        /// </summary>
+        (Route, string) UnderBoxWait(Route current, int g, int from, int buy, Func<int, SimSnapshot> snapshot)
+        {
+            int last = -1;
+            for (int i = buy - 1; i > from; i--) if (current.Inputs[i].reset) { last = i; break; }
+            if (last < 0) return (null, null);
+            int s = last;
+            while (s > from && Idle(current.Inputs[s - 1])) s--;
+            if (last - s < IdleWaitRun) return (null, null);
+            SimSnapshot at = snapshot(s);
+            if (at == null) return (null, null);
+            Pose[] start = PoseTrace(at, s, new List<InputTick> { new InputTick() });
+            Zone zone = BoxZone(_runGoals.Goals[g]);
+            if (float.IsNaN(zone.x0)) return (null, null);
+            var step = new InputTick { x = zone.Middle < start[1].x ? -1f : 1f };
+            bool held = s > 0 && current.Inputs[s - 1].held;
+            List<InputTick> Walk(int run)
+            {
+                var list = Enumerable.Repeat(step, run).Concat(Enumerable.Repeat(new InputTick(), last - s - run)).ToList();
+                if (held && list.Count > 0) { InputTick t = list[0]; t.release = true; list[0] = t; }
+                return list;
+            }
+            int stand = -1;
+            for (int run = 0; run + RestTicks <= last - s && stand < 0; run++)
+            {
+                Pose rest = default;
+                bool seen = false;
+                List<InputTick> list = Walk(run).Take(run + RestTicks).ToList();
+                _eval.SetStart(at, s);
+                _eval.Goals.Limit = _goals;
+                // Past the list: a run stops with its inputs, and its last tick reports nothing then.
+                _eval.Run(list, null, tick =>
+                {
+                    if (tick < list.Count) return true;
+                    rest = new Pose { ground = _eval.Player.onGround, x = _eval.PlayerWorld.x, y = _eval.PlayerWorld.y };
+                    seen = true;
+                    return false;
+                });
+                if (!seen) break;
+                if (rest.ground && zone.Under(rest.x) && rest.y < zone.y0) stand = run;
+                else if (step.x < 0f && rest.x < zone.x0 || step.x > 0f && rest.x > zone.x1) break;
+            }
+            if (stand < 0) return (null, null);
+            List<InputTick> whole = current.Inputs.Take(s).Concat(Walk(stand)).Concat(current.Inputs.Skip(last)).ToList();
+            var (r, how) = RngTickets(current, g, whole, s + stand, last, at, s, zone, long.MaxValue, false, g);
+            return r == null ? (null, null) : (r, $"the wait before the restart under the box ({stand} ticks walked, {last - s - stand} standing), {how}");
+        }
+
+        /// <summary>A buy's stretch this long or longer (inputs) gets a stand window when no walk-in beats the run; its budget in
+        /// minutes (--stand-minutes).</summary>
+        const int StandWindowMin = 120;
+        double _standMinutes = 1.0;
+
+        /// <summary>
+        /// Goal g's buy reached by a search: a window from the touch of the goal before (input <paramref name="from"/>, <paramref name="at"/>
+        /// its state) whose only goal is a stand under the box, a line at the height the run last stood at within reach of the
+        /// trigger, as wide as the trigger; scored at the earliest arrival (the solver's, seeded with the run's own way). Then idle
+        /// ticks there and a jump straight up that touches as the Cash comes (the fewest), the run's inputs from its old touch
+        /// after, and the idle ticks go to RngTickets. For a buy no walk reaches (a climb, a far box). Returns the fastest
+        /// re-timed run and how, or null.
+        /// </summary>
+        (Route, string) StandWindow(Route current, int g, int from, int buy, SimSnapshot at)
+        {
+            if (at == null || buy <= from) { Log($"auto: stand window: goal {g + 1} ({_labels[g]}): no stretch ({from}..{buy})"); return (null, null); }
+            double c0 = CpuSeconds();
+            Pose[] poses = PoseTrace(at, from, current.Inputs.GetRange(from, buy - from));
+            Zone zone = BoxZone(_runGoals.Goals[g]);
+            if (float.IsNaN(zone.x0)) { Log($"auto: stand window: goal {g + 1} ({_labels[g]}): no box trigger"); return (null, null); }
+            // The run's own wait for the box when it stands within 200 units of the trigger (the statue's: 32 to its right): walked
+            // in from there, with no search.
+            int waitAt = -1;
+            for (int i = from; i < buy;)
+            {
+                if (!Idle(current.Inputs[i])) { i++; continue; }
+                int j = i;
+                while (j < buy && Idle(current.Inputs[j])) j++;
+                if (j - i >= IdleWaitRun && poses[i - from + 1].ground && Math.Abs(poses[i - from + 1].x - zone.Middle) < 200f && (waitAt < 0 || j - i > 0)) waitAt = i;
+                i = j;
+            }
+            if (waitAt > from)
+            {
+                var (own, ownHow) = WalkIn(current, g, from, buy, at, current.Inputs.GetRange(from, waitAt - from), $"the run's own way to its wait at input {waitAt}");
+                if (own != null) return (own, ownHow);
+            }
+            // The floor under the box: where the run stood nearest the trigger below it (its last such spot), else straight down
+            // from the trigger (a raycast past triggers and the player).
+            int stood = Enumerable.Range(1, buy - from).Where(t => poses[t].ground && poses[t].y < zone.y0 && poses[t].y > zone.y0 - 400f)
+                .OrderBy(t => Math.Abs(poses[t].x - zone.Middle)).ThenByDescending(t => t).FirstOrDefault();
+            float lineY = stood > 0 ? poses[stood].y : float.NaN, lineH = 4f;
+            if (stood == 0)
+            {
+                ScenePos o = _eval.ToScene(new WorldPos(zone.Middle, zone.y0 - 1f));
+                var ray = new UnityEngine.Vector2(o.x, o.y);
+                for (int i = 0; i < 8; i++)
+                {
+                    UnityEngine.RaycastHit2D hit = UnityEngine.Physics2D.Raycast(ray, UnityEngine.Vector2.down, 1000f);
+                    if (!hit) break;
+                    if (!hit.collider.isTrigger && hit.collider.GetComponent<Movement>() == null)
+                    {
+                        // A line as tall as the player standing on it.
+                        lineY = _eval.ToWorld(new ScenePos(o.x, hit.point.y)).y + zone.playerTall / 2f;
+                        lineH = zone.playerTall;
+                        break;
+                    }
+                    ray = hit.point + UnityEngine.Vector2.down * 0.5f;
+                }
+            }
+            if (float.IsNaN(lineY)) { Log($"auto: stand window: goal {g + 1} ({_labels[g]}): no floor under the trigger"); return (null, null); }
+            var line = new FullTasGoal { label = $"at:{zone.Middle},{lineY},{zone.x1 - zone.x0},{lineH}", kind = FullTasGoal.At, x = zone.Middle, y = lineY, w = zone.x1 - zone.x0, h = lineH };
+            List<InputTick> prefix = current.Inputs.GetRange(0, from);
+            Simulation Create()
+            {
+                Simulation sim = _create();
+                SimSnapshot s0 = sim.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
+                sim.SetStart(s0, from);
+                // The run's goals up to g, then the line in place of the buy (a snapshot carries its goal count).
+                sim.UseGoals(new IGTAPTasMod.FullTasTracker(_runGoals.Goals.Take(g).Append(line).ToArray()));
+                return sim;
+            }
+            _eval.Restore(at);
+            string caps = WindowCaps(Enumerable.Empty<FullTasGoal>());
+            List<InputTick> found = null;
+            long foundAt = long.MaxValue;
+            RunResult arrival = null;
+            // On a thread of its own: a simulation made on this one would take over _eval's game hooks.
+            Solve.OnThread(() =>
+            {
+                var solver = new OfflineSolver(Create, caps, new List<List<InputTick>> { current.Inputs.GetRange(from, buy - from) });
+                var guard = new object();
+                solver.Improved += (time, runTicks, inputs, how) => { lock (guard) if (runTicks < foundAt) (found, foundAt) = (inputs, runTicks); };
+                DateTime stop = DateTime.UtcNow.AddMinutes(_standMinutes);
+                Thread[] threads = solver.Start(_threads);
+                while (DateTime.UtcNow < stop && !TimeUp) Thread.Sleep(250);
+                solver.Stop();
+                foreach (Thread t in threads) t.Join(60000);
+                if (found != null) arrival = Create().Run(found, null, null);
+            });
+            if (found == null) { Log($"auto: stand window: goal {g + 1} ({_labels[g]}): no arrival at {line.label} in {_standMinutes:0.#} min"); return (null, null); }
+            if (arrival.Progress < g + 1) { Log($"auto: stand window: goal {g + 1} ({_labels[g]}): the arrival doesn't replay ({arrival.EndReason})"); return (null, null); }
+            List<InputTick> reach = found.Take((int)(arrival.GoalInputTicks[g] - from)).ToList();
+            string arrived = $"a window to a stand under the box ({reach.Count} inputs, arrival at tick {arrival.GoalPhysicsTicks[g]} against the run's touch at {current.GoalPhysics[g]}, {CpuSeconds() - c0:0} CPU s)";
+            Log($"auto: stand window: goal {g + 1} ({_labels[g]}): {arrived}");
+            // The arrival can come in a dash: idle ticks to let it end (a dash's ticks take no input) before the walk.
+            bool heldAt = reach.Count > 0 && reach[reach.Count - 1].held;
+            reach.AddRange(Enumerable.Range(0, RestTicks).Select(i => new InputTick { release = i == 0 && heldAt }));
+            return WalkIn(current, g, from, buy, at, reach, arrived);
         }
 
         /// <summary>--rng-study: the best's waits for Cash and what draws the RNG in them, then the best re-timed (Retune); then stops.</summary>
@@ -333,6 +584,23 @@ namespace IGTAP.EngineSim.Cli
                     }
                     i = j;
                 }
+            }
+            foreach (int k in Solve.Args(_args, "--under").SelectMany(a => a.Split(',')).Select(int.Parse))
+            {
+                int g = k - 1, from = (int)best.GoalInput[g - 1];
+                SimSnapshot Snap(int i) { _eval.SetStart(_origin, 0); _eval.Goals.Limit = _goals; return _eval.Advance(best.Inputs.GetRange(0, i)); }
+                var (w, how) = UnderBoxWait(best, g, from, (int)best.GoalInput[g], Snap);
+                Log($"rng study: under the box at goal {k}: {(w == null ? "nothing complete" : Describe(w) + ", " + how)}");
+                if (w != null && w.Live < _best.Live) Commit(w, $"under the box at goal {k}");
+            }
+            foreach (int k in Solve.Args(_args, "--stand").SelectMany(a => a.Split(',')).Select(int.Parse))
+            {
+                int g = k - 1, from = (int)best.GoalInput[g - 1];
+                _eval.SetStart(_origin, 0);
+                _eval.Goals.Limit = _goals;
+                var (w, how) = StandWindow(best, g, from, (int)best.GoalInput[g], _eval.Advance(best.Inputs.GetRange(0, from)));
+                Log($"rng study: stand window at goal {k}: {(w == null ? "nothing complete" : Describe(w) + ", " + how)}");
+                if (w != null && w.Live < _best.Live) Commit(w, $"stand window at goal {k}");
             }
             double c0 = CpuSeconds();
             Route re = Retune(_eval, _origin, best, best.Inputs, 0);

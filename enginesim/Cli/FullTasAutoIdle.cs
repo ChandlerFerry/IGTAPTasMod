@@ -42,7 +42,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A box's trigger (its colliders' union, world frame) and the player's half width.</summary>
         struct Zone
         {
-            public float x0, x1, y0, y1, playerHalf;
+            public float x0, x1, y0, y1, playerHalf, playerTall;
             public bool Under(float x) { return x >= x0 && x <= x1; }
             public bool Near(float x) { return x >= x0 - playerHalf && x <= x1 + playerHalf; }
             public float Middle { get { return (x0 + x1) / 2f; } }
@@ -109,8 +109,19 @@ namespace IGTAP.EngineSim.Cli
                 List<InputTick> inputs = current.Inputs;
                 int from = g == 0 ? 0 : (int)Math.Min(current.GoalInput[g - 1], inputs.Count);
                 int buy = (int)Math.Min(current.GoalInput[g], inputs.Count);
-                // Walking to the box and standing under it, when that beats the run's way there (a restart and dash to a far box, a
-                // loop, a jump that doesn't gain).
+                // Standing under the box for the wait before a restart and dash in (the way on after the buy kept), or walking to the
+                // box and standing under it, when that beats the run's way there (a restart and dash to a far box, a loop, a jump
+                // that doesn't gain).
+                if (g > 0 && UnderBoxWait(current, g, from, buy, Snapshot) is (Route under, string underHow) && under != null && under.Live < current.Live)
+                {
+                    tried++;
+                    moved++;
+                    saved += current.Last - under.Last;
+                    notes.Add($"goal {g + 1} ({_labels[g]}): {underHow}");
+                    Log($"auto: idle under the box: {notes[notes.Count - 1]}: {Describe(under)}");
+                    current = under;
+                    continue;
+                }
                 if (g > 0)
                 {
                     var (walked, walkHow) = WalkIn(current, g, from, buy, Snapshot(from));
@@ -450,10 +461,14 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             if (x0 > x1) return zone;
-            float half = 0f;
+            float half = 0f, tall = 0f;
             foreach (UnityEngine.BoxCollider2D c in _eval.Player.GetComponents<UnityEngine.BoxCollider2D>())
-                if (!c.isTrigger && c.enabled) half = Math.Max(half, c.size.x * Math.Abs(_eval.Player.transform.lossyScale.x) / 2f);
-            return new Zone { x0 = x0, x1 = x1, y0 = y0, y1 = y1, playerHalf = half };
+                if (!c.isTrigger && c.enabled)
+                {
+                    half = Math.Max(half, c.size.x * Math.Abs(_eval.Player.transform.lossyScale.x) / 2f);
+                    tall = Math.Max(tall, c.size.y * Math.Abs(_eval.Player.transform.lossyScale.y));
+                }
+            return new Zone { x0 = x0, x1 = x1, y0 = y0, y1 = y1, playerHalf = half, playerTall = tall };
         }
     }
 }
