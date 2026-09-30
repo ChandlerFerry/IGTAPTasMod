@@ -619,6 +619,8 @@ namespace IGTAP.EngineSim
         {
             public bool Spike;
             public float Overhang, Slope;
+            /// <summary>A surface over the player's head (its normal within 45° of straight down): a head bonk (the waste audit).</summary>
+            public bool Ceiling;
         }
         public PlayerTouches PlayerTouch;
         const float SlantedNormal = .02f;
@@ -646,6 +648,7 @@ namespace IGTAP.EngineSim
                     // Box2D's normal points from fixture A to B; the player sees the other surface's normal (toward itself).
                     bool selfIsB = ((ColliderState)c.GetFixtureB().UserData).Body == _player;
                     float nx = selfIsB ? _worldManifold.normal.x : -_worldManifold.normal.x, ny = selfIsB ? _worldManifold.normal.y : -_worldManifold.normal.y;
+                    if (ny < -.7f) touch.Ceiling = true;
                     if (MathF.Abs(nx) < SlantedNormal || MathF.Abs(ny) < SlantedNormal) continue;
                     float side = nx > 0f ? -1f : 1f;
                     if (ny < 0f) touch.Overhang = side;

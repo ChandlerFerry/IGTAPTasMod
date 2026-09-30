@@ -551,6 +551,8 @@ inputs past the last unchanged goal the same way.
   under the trace's goals and prints each goal's physics and input tick, its live time and held frames, and how the
   replay ended; it searches and writes nothing. `--ticks-out FILE` also writes the replay's physics ticks, clone spawns
   and RNG draws as JSON lines, to line up with a 1x probe ([enginesim/README.md](../enginesim/README.md#probe)).
+  `--waste-audit <route.json> [--expect a-b,...]` replays a route the same way and prints its waste audit (Parts 8 under
+  [Auto](#auto)); `--expect` lists physics tick spans each finding must overlap, and exits 1 when one is missed.
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -719,7 +721,8 @@ without it). On `FalseEnding-Any%` with `--focus 181-186` every pull of a 2-minu
   expected headroom went from 908 to 392 ticks, `buydj`'s climb from 139 to 7.
 - *Expected* headroom of goal k = 0.6 × (the known routes' lead there: a shorter split, or an arrival lead the goal
   itself made, i.e. its lead less the previous goal's, so a lead carried through later goals counts once) + 0.3 ×
-  (deficit + slack) + 0.05 × gap (not for economy goals), its movement part held to the spare Cash above. Goals rank by
+  (deficit + slack) + 0.05 × gap (not for economy goals) + 0.5 × the waste audit's ticks there (`--parts waste`), its
+  movement part held to the spare Cash above. Goals rank by
   it. The outlook's floor is the best less every searched goal's gap within the spare Cash (an economy goal's slack
   instead); the repair's hopeless test keeps the distance bounds.
 
@@ -730,8 +733,9 @@ gate or an area rect of at most 300×300; scored at a large area box a window wi
 next goals can't use, as Vman4 saw on `VMAN` goals 10-14 and 15-18; twice a window's budget), `dropreset` (the reset study of the next quick restart in goal k not studied yet), `graft` (a
 known route that does goal k better: reached sooner, its way there kept and the later goals re-found as the transplant's
 bridges do; a shorter split, its inputs picked up from the best's states nearest its path by position, velocity and
-facing, the transplant's splices), and `plan` (the contact planner on goal k's window, the best's window as its guide; a
-goal whose plan finds no finish is dropped from the plan lever). First every goal label (a lap phase: every
+facing, the transplant's splices), `plan` (the contact planner on goal k's window, the best's window as its guide; a
+goal whose plan finds no finish is dropped from the plan lever), and `waste` (a window from goal k to the goal after its
+last waste finding, Parts 8, seeded with each finding undone; prior 0.5 × the audit's ticks there). First every goal label (a lap phase: every
 `buy:buyclone2` is one) gets one window probe of `--probe-minutes` (half of `--window-minutes`) at its goal with the most
 expected headroom, most expected first (one per goal took longer than 10 minutes on `FalseEnding-Any%`'s 300 goals). Then each pull takes the arm with the most expected
 ticks per CPU second, (lever share × expected + ticks gained) / (the lever's CPU seconds per pull + CPU seconds spent on
@@ -833,8 +837,8 @@ end with the verdict.
 & $exe fulltas $traces\fulltas-FalseEnding-Any%.json --auto --minutes 10 --window-minutes 0.5 --threads 16 --no-submit   # --parts LIST, --tail-minutes t, --combine-repair-minutes m, --library-runs R (150)
 ```
 
-`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`
-(`tail`, `combine`, `ctg`, `macros` and `stray` need `lib`); `--parts none` is the loop above as it was (the measured
+`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`,
+`wallreset`, `waste`, `grafts` (`tail`, `combine`, `ctg`, `macros` and `stray` need `lib`); `--parts none` is the loop above as it was (the measured
 baseline). The default is set by the measurements below, and has every part except `wallreset` (opt-in: add it to the list).
 
 1. **Goal-state library** (`lib`, `enginesim\Cli\FullTasAutoLib.cs`, contracts in `FullTasAutoContracts.cs`). Every run the loop
@@ -1090,7 +1094,7 @@ baseline). The default is set by the measurements below, and has every part exce
    `wall-coyote-restart` at `TouchedWall`, `LeftWall`, `WallAheadLeft/Right`: the stick into the wall, the restart, 0-3 idle
    ticks, the ground jump held 1-4, the wall jump) at the wall contacts of its runs, merged like any window's finds
    (`MergeAuto`), at most `--wallreset-minutes` (5) a pass, once per restart (memory `wallStudied`). `Explore` hands its
-   solver `_mined`: the other Full-TAS windows have never grafted tech windows. The pass runs before the goals part (behind
+   solver `_mined` (the other windows get the whole library from `--parts grafts`, item 9). The pass runs before the goals part (behind
    it, a goals pull's investments took all 20 minutes and the pass never ran), and mines on a thread of its own (mining on
    the loop's thread took over its Simulation's thread-static hooks: the first pass saw every run end at once, 0 restarts).
    Status: opt-in. Measured, A/B at the same time, `--minutes 20 --threads 5` each, private copies of the 358.69 s run
@@ -1192,6 +1196,103 @@ baseline). The default is set by the measurements below, and has every part exce
    Cash is there at 10394). `buy:buystatue` (goal 262, 411 idle ticks, 27 clone rolls) and `buy:buydj` (goal 268, the
    shaft): no walk-in (1,500 units off; a climb), so their waits get no tickets. A clean approach there needs a window to a
    stand under the box, not a walk.
+
+8. **Waste audit** (`waste`; `enginesim\Cli\FullTasAutoWaste.cs`; `fulltas <trace> --waste-audit <route.json> [--expect a-b,..]
+   [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; a model of another route, the goals
+   part's `ModelOf`, audits that route, and the best is audited again when next asked for) the best is replayed tick by
+   tick (place, Velocity, the stick in effect, ground, wall, dash, a ceiling touched: `PhysicsWorld.PlayerTouch.Ceiling`, a
+   contact whose normal is within 45° of straight down) and scanned for what a person watching it calls silly. Every
+   measure is live time, a dash's freeze frames included. A finding is a span, its raw ticks (the span's live ticks less
+   what its goal's own pace, the deficit's 80th percentile, makes of its progress) and its stake (raw held to the target
+   buy's spare Cash: a Cash-bound stretch loses nothing to waste). Kinds:
+   - `bonk`: Velocity.y from 300+ to under 30% of it in a tick against a ceiling, not in a dash, no goal within 3 ticks (a box
+     is bought by jumping into its underside); the span runs to the landing.
+   - `stall`: 3+ ticks with the stick at least half held and x moving under 0.5 u a tick (not a cling a jump press uses
+     within 2 ticks).
+   - `dashpair`: two dashes within 60 ticks, each 100+ u sideways, opposite ways, netting under 35% of their sum.
+   - `filler`: restarts at most 60 ticks apart with no goal but a start gate between them; the span reaches back to the goal
+     before when it is at most 30 ticks before the first.
+   - `away`: a restart landing 150+ u further from the next box than the player was, that buys it 15+ ticks later than
+     staying would (the box's 10-tick buy cooldown, or the walk from where the player was). A restart and a dash back into a
+     box 500 u off (the quick rebuy) is 8 later and isn't flagged.
+   - `walk`: a buy with spare Cash walked to from 150+ u (from the goal before or the last restart) on a path longer than
+     1.25 × the walk distance + 60.
+   - `slow`: flat ground (under 150 u of rise over 50 ticks) where movement pays (no lap, spare Cash), sideways progress
+     toward the goal per live tick under 0.9 × what the flat allows: with the dash, the super chain played from the span's
+     start (6 cycles of `FalseEnding-Any%` 354.72 s's flat cycle, the best of 0-4 ticks' wait, after its first 20 ticks; a
+     chain under 9.2 u a tick there, a wall or a gap, says nothing); without it, the run's fastest flat 10 ticks with those
+     unlocks.
+   - `laps`: the last lap of each run of back-to-back laps of a course; its stake is the model's economy slack there, and
+     its lever the goals part's lap drop (no arm).
+
+   Each goal's stake adds 0.5 × it to the goal's movement headroom (held to the spare Cash with the rest) and gives it a
+   `waste` arm: a window from the goal to the goal after its last finding. Every window over a finding's goal is seeded with
+   each finding undone: a filler chain's inputs cut (its last restart right after the goal before), the away restart
+   dropped, the dash pair's dashes dropped, the bonking jump dropped, slow flat ground played as the super chain (the
+   probe's wait, cycles over the span's inputs). Such a window's tech grafts (item 9) take half its explore runs, their
+   contact in the findings' input span 3 picks in 4 (`OfflineSolver.GraftFocus`).
+
+   Acceptance, the six spots a person saw in the 355.92 s record (280 goals, `fulltas-FE-WASTE.json` a copy of FE-CMB's
+   trace), 11 s:
+
+   ```powershell
+   & $exe fulltas $traces\fulltas-FE-WASTE.json --waste-audit "$traces\handback\fulltas-FalseEnding-Any%-RNG-355.92.json" --expect 10288-10327,12343-12381,13691-13793,15166-15338,15338-15926,16300-16450
+   ```
+
+   ```
+   waste audit: 95 findings (bonk 14, stall 10, away 23, laps 3, filler 20, slow 5, walk 11, dashpair 9), stake 1509 ticks at 45 goals
+   expect 10288-10327: flagged by stall goal 174 10307-10312 stake 0
+   expect 12343-12381: flagged by dashpair goal 208 12323-12353 stake 28, filler goal 210 12346-12381 stake 39
+   expect 13691-13793: flagged by filler goal 248 13687-13707 stake 0, away goal 248 13690-13793 stake 0, filler goal 249 13793-13848 stake 0
+   expect 15166-15338: flagged by laps goal 268 15242-15338 stake 0
+   expect 15338-15926: flagged by laps goal 268 ..., away goal 270 15352-15926 stake 10, walk goal 270 15353-15926 stake 10, stall goal 270 15609-15618 stake 4, dashpair goal 270 15625-15650 stake 10, dashpair goal 270 15707-15802 stake 10, bonk goal 270 15771-15801 stake 10, stall goal 270 15808-15812 stake 2
+   expect 16300-16450: flagged by slow goal 275 16302-16572 stake 55
+   expect: all as expected
+   ```
+
+   At 10297 Velocity.y goes 589 to 50 on the jump cut of the release at 10296, with no ceiling touched; the waste there is the
+   stall against a box's side at 10307-10312, and `buy:buyds` holds its price 0 ticks before it buys (Cash-bound, as C:
+   goal 248's restart lands 882 u from the box it stood under, and buys 0 ticks after the price). E is held to `buy:buydj`'s
+   10 spare ticks. F reads 19.4 u a live tick against 24.3 for the chain. On the 354.72 s route (the chain on that flat)
+   `--clean slow:16295-16542` is clean.
+
+   The loop's model of the goals part: after an investment that isn't kept the goals change back, and the loop's simulation
+   is made again (`RebindEval`): the one saved had lost the thread's game statics and engine hooks to SwitchGoals' new
+   Simulation, so every run of it ended at no goal. Both arms of a 20-minute A/B from 355.92 s (with the goals part) lost
+   their last 7 minutes to it: every window find was dropped as "merged onto this best already" (MergeAuto now says when
+   finds replay short of the window's goal) and the end model was empty.
+
+9. **Tech grafts in every window** (`grafts`, on by default, also in a plain `fulltas` solve; `--no-tech-grafts` turns them
+   off, `--graft-rate r` sets the share): the tech library (`TechGrafts.Load`, `--tech-dir`, `--tech-cache`: the Tech tab's
+   mined demos and whatever else fills its `Patterns`, and the super chain of item 8 as a window at a landing chained into
+   itself up to 8 cycles), loaded once on a thread of its own, goes to every Full-TAS window's `OfflineSolver`: the window
+   arms, `Explore` (reach, polish, repair and the goals part's investments) and the tail windows; the wallreset part's own
+   subset replaces it in its windows. Each solver gets the patterns whose techs.json `requires` the unlocks at the window's
+   first goal (the model's row) and the window's unlock buys meet, as its own instance (`Prepare` isn't shared), grafted on
+   0.15 of its explore runs with a contact (`OfflineSolver.GraftRate`; 0.5 over audit findings).
+
+   Measured, `--auto`, 3 threads each, side by side, 20 minutes (private copies FE-WASTE/FE-WASTE0 from 355.92 s, with the
+   goals part; FE-WASTE2/FE-WASTE3 from 355.67 s, 278 goals, without it):
+
+   | Arms | Curve (wall s: time) | Grafts |
+   |---|---|---|
+   | from 355.92, defaults + `waste,grafts` | 226: 355.67 (goals) | 37,376 in 22 windows, 1 find via a graft (landing-tick-jump), none kept |
+   | from 355.92, defaults | 221: 355.67 (goals) | - |
+   | from 355.67, `lib,tail,combine,sched,ctg,macros,stray,idle,waste,grafts` | 538: 355.62 (window 254), 600: 355.61 (idle 244), 775: 355.47 (combine 240), 968: 355.25 (combine 41), 1017: 355.18 (idle) | 68,069 in 40 windows (1-4% of runs), finds via grafts: gc-wall-clip 1, roof-squeeze 1, none kept |
+   | from 355.67, the same without `waste,grafts` | 199: 355.65, 329: 355.61, 436: 355.55, 621: 355.54, 856: 355.34, 1017: 355.30 | - |
+
+   The goals part's two pulls took 13 of the first pair's 20 minutes (both dropped the post-statue Course 2 lap, spot D).
+   In the second pair the audit's probe order put goals 41 and 254 in the first round: goal 41's window (the `away` finding:
+   a restart 431 u from the box the player stood under, bought 48 ticks later) found the split 49 -> 23, which combine kept
+   (-11 ticks); goal 254's (a `dashpair`) -2. Neither arm pulled a `waste` arm in 20 minutes on 3 threads (the first-round
+   probes and combine took the time). A 5-minute `--focus 272-274` run on 6 threads from the second pair's 355.30 made
+   354.55 s by windows and a lookahead on the ending's flat (-38 ticks), none by a graft or the chain seed.
+
+   Planted-waste bench (`searchbench --suite grafts --seeds 2 --minutes 1 --threads 6`, the Full-TAS cases, arms
+   `--no-tech-grafts` and the default; median CPU s to the target, median best less the target): fe176-bonk 0.29/-4 and
+   0.19/-3; fe270-dashpair 17.8/+1 and 37.6/+2; fe-c3lap-restart 2.8/0 and 3.1/0; fe174-open neither (Cash-bound);
+   fe270-open 30.6/0 and 95.2/-1; fe275-open 9.8/0 and 11.3/-3. The grafts reach a planted waste's target no sooner (the
+   dash-pair climb later) and end the open flat and climb windows 1-3 ticks lower.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 

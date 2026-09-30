@@ -149,6 +149,9 @@ namespace IGTAP.EngineSim.Cli
         public static int Run(string[] args)
         {
             int check = Array.IndexOf(args, "--check");
+            // --waste-audit <route.json>: the waste audit of a route (FullTasAutoWaste.cs); searches and writes nothing.
+            int audit = Array.IndexOf(args, "--waste-audit");
+            if (audit > 0 && audit + 1 < args.Length) return new FullTas(args).WasteAuditCommand(args[audit + 1]);
             return check > 0 && check + 1 < args.Length ? new FullTas(args).Check(args[check + 1]) : new FullTas(args).Search();
         }
 
@@ -676,7 +679,11 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined, rng: _rng);
+            // --parts grafts: the tech library in every window (FullTasAutoWaste.cs), unless a part set its own.
+            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined ?? AutoGrafts(caps), rng: _rng);
+            if (_mined == null) TuneGrafts(solver, 0, 0, 0);
+            bool ownModes = _findModes == null && solver.Mined != null;
+            if (ownModes) _findModes = new HashSet<string>();
             solver.Resume = _states.Index;
             solver.NoResets = _noResets;
             TimeSpan begin = _clock.Elapsed, last = begin;
@@ -705,6 +712,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         found.Add(inputs);
                         _findModes?.Add(how);
+                        GraftFind(how);
                         if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(atGoal) });
                     }
                 }
@@ -763,8 +771,10 @@ namespace IGTAP.EngineSim.Cli
             if (closestPrefix != null) OfferClosest(solver.Closest(), closestPrefix);
             SaveVisits(solver.Visits());
             Status();
-            if (_mined != null)
-                Log($"{title} {span}: {solver.TechGrafted} tech grafts ({string.Join(", ", _mined.Patterns.Select(p => p.Tech).Distinct())}); finds via {(_findModes == null || _findModes.Count == 0 ? "-" : string.Join(", ", _findModes))}");
+            GraftTally(solver);
+            if (solver.Mined != null)
+                Log($"{title} {span}: {solver.TechGrafted} tech grafts of {solver.Runs} runs ({solver.Mined.Patterns.Select(p => p.Tech).Distinct().Count()} techs); finds via {(_findModes == null || _findModes.Count == 0 ? "-" : string.Join(", ", _findModes))}");
+            if (ownModes) _findModes = null;
             lock (window)
             {
                 Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });
@@ -810,9 +820,9 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>What the search presses for these goals: the unlocks the player <see cref="_eval"/> holds now
         /// (<see cref="PlayerCaps"/>) plus what the boxes they buy give, as the caps id the solver reads.</summary>
-        string WindowCaps(IEnumerable<FullTasGoal> goals)
+        string WindowCaps(IEnumerable<FullTasGoal> goals, Caps? from = null)
         {
-            Caps caps = PlayerCaps.Of(_eval.Player);
+            Caps caps = from ?? PlayerCaps.Of(_eval.Player);
             foreach (FullTasGoal goal in goals)
                 foreach (string box in goal.boxes ?? Array.Empty<string>())
                     switch (_eval.Shop.MovementUpgrade(box))

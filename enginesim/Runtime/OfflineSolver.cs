@@ -121,6 +121,10 @@ namespace IGTAP.EngineSim
         public long GoalResumes;
         /// <summary>Mined patterns drawn per grafted contact.</summary>
         public int MinedDraws = 1;
+        /// <summary>The share of explore runs with a contact that get a mined graft (a Full-TAS window's per-window cap).</summary>
+        public double GraftRate = .5;
+        /// <summary>Run input ticks (from the search's start) whose contacts a graft prefers, 3 picks in 4 (a waste audit's span); null: any.</summary>
+        public (int lo, int hi)? GraftFocus;
 
         public string ArchiveStatus()
         {
@@ -780,7 +784,7 @@ namespace IGTAP.EngineSim
                 {
                     if (_died) _contacts.Add((_endTick, Contact.Died));
                     _log.DropBefore(lo);
-                    if (_contacts.Count > 0 && _rng.NextDouble() < GraftRate) graft = GraftContact();
+                    if (_contacts.Count > 0 && _rng.NextDouble() < _owner.GraftRate) graft = GraftContact();
                 }
                 _splicing = false;
                 // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
@@ -799,7 +803,6 @@ namespace IGTAP.EngineSim
             readonly ContactProbe _gate;
             List<(int tick, Contact kind)> _contacts => _log.Contacts;
             bool _recordContacts;
-            const double GraftRate = .5;
 
             void RecordContact(int tick) { _log.Tick(tick, _sim.Player, _gate.NearGate()); }
 
@@ -812,15 +815,22 @@ namespace IGTAP.EngineSim
             void RecordStep() { _log.Step(_sim); }
 
             /// <summary>A contact of the run to graft at, uniformly among the kinds the mined tech windows offer at this run's
-            /// unlocks.</summary>
+            /// unlocks; with a <see cref="GraftFocus"/>, among those in it 3 picks in 4 (any when none is).</summary>
             (int tick, Contact kind)? GraftContact()
             {
+                (int lo, int hi) focus = _owner.GraftFocus is var (flo, fhi) && _rng.NextDouble() < .75 ? (flo, fhi) : (int.MinValue, int.MaxValue);
+                bool In((int tick, Contact kind) c) => c.tick >= focus.lo && c.tick <= focus.hi && _owner.Mined.Offers(c.kind, _resets);
                 int n = 0;
-                for (int i = 0; i < _contacts.Count; i++) if (_owner.Mined.Offers(_contacts[i].kind, _resets)) n++;
+                for (int i = 0; i < _contacts.Count; i++) if (In(_contacts[i])) n++;
+                if (n == 0 && focus.lo != int.MinValue)
+                {
+                    focus = (int.MinValue, int.MaxValue);
+                    for (int i = 0; i < _contacts.Count; i++) if (In(_contacts[i])) n++;
+                }
                 if (n == 0) return null;
                 int pick = _rng.Next(n);
                 for (int i = 0; i < _contacts.Count; i++)
-                    if (_owner.Mined.Offers(_contacts[i].kind, _resets) && pick-- == 0) return _contacts[i];
+                    if (In(_contacts[i]) && pick-- == 0) return _contacts[i];
                 return null;
             }
 
