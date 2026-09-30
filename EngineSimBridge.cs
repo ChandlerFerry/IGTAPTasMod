@@ -220,7 +220,7 @@ namespace IGTAPTasMod
         }
 
         // The humanize slack report of a route's human version (`<best>-human.slack.json`, written by
-        // `IGTAP.EngineSim humanize`) with the human version's input ticks for the studio's frame timeline. Read-only.
+        // `IGTAP.EngineSim humanize`) with the human version's input ticks for the TAS tab's roll. Read-only.
         object EngineSimSlack(WebStudioRequest request, JObject body)
         {
             string name = Text(body, "name") ?? "";

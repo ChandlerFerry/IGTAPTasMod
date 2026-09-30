@@ -636,10 +636,11 @@ namespace IGTAP.EngineSim
         /// the end). A window at a contact with no side (<see cref="Sided"/>) is turned to the run's direction (its last stick
         /// before the placement, else either way), the other way 30% of the time. A press or release at the cut keeps the jump
         /// button's edges real (docs/human-input.md). <paramref name="placed"/>: the run tick the window's contact went to;
-        /// <paramref name="shift"/> overrides the pattern's own range (a chained graft's).
+        /// <paramref name="shift"/> overrides the pattern's own range (a chained graft's); <paramref name="turn"/> the direction a
+        /// window with no side is turned to (-1, 1: no random turn).
         /// False: the window doesn't fit after the run's kept prefix.</summary>
         public static bool Compose(List<InputTick> run, int contactTick, int lo, TechPattern p, System.Random rng, out List<InputTick> grafted, out int placed,
-            (int lo, int hi)? shift = null)
+            (int lo, int hi)? shift = null, int turn = 0)
         {
             grafted = null;
             (int shiftLo, int shiftHi) = shift ?? (p.ShiftLo, p.ShiftHi);
@@ -650,8 +651,8 @@ namespace IGTAP.EngineSim
             if (!Sided(p.Kind))
             {
                 float runX = run.Count > 0 ? run[before].x : 0f;
-                int want = runX != 0f ? Math.Sign(runX) : rng.NextDouble() < .5 ? -1 : 1;
-                if (rng.NextDouble() < .3) want = -want;
+                int want = turn != 0 ? turn : runX != 0f ? Math.Sign(runX) : rng.NextDouble() < .5 ? -1 : 1;
+                if (turn == 0 && rng.NextDouble() < .3) want = -want;
                 flip = dir != 0 && want != dir;
                 dir = want;
             }

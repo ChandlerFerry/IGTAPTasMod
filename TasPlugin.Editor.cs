@@ -71,6 +71,22 @@ namespace IGTAPTasMod
             /// <summary>Inputs before suggestUntil changed while suggest ran: its result is for other inputs.</summary>
             public bool suggestStale;
             public JObject suggestions;
+            /// <summary>Techs here (TasPlugin.Techs.cs): the search running for input tick techsAt, and the results per held input
+            /// tick for inputs version techsVersion.</summary>
+            public Process techs;
+            public System.Collections.Concurrent.ConcurrentQueue<string> techsOutput;
+            public string techsFile;
+            public long techsRead, heldSince;
+            public int techsAt = -1, techsVersion = -1, heldAt = -1;
+            public readonly Dictionary<int, TasTechs> techsCache = new Dictionary<int, TasTechs>();
+            /// <summary>The tech whose paths are drawn, and its variant drawn bright (hoverDir null: none).</summary>
+            public string hoverTech, hoverDir;
+            public float? hoverAngle;
+            /// <summary>The held input tick a redraw re-seek (TasTechsHover) is rebuilding, -1 none: the studio sees it still held
+            /// there rather than the seek's ticks.</summary>
+            public int redrawAt = -1;
+            /// <summary>The hover changed during a redraw: one more once it holds.</summary>
+            public bool redrawAgain;
 
             /// <summary>A savestate start: it holds first after input 0, so input 0 presses nothing (TasQuiet).</summary>
             public bool SavestateStart { get { return !string.IsNullOrEmpty(route.savestateId); } }
@@ -138,6 +154,7 @@ namespace IGTAPTasMod
                     _webServer?.Pump(HandleWebRequest);
                     TasHotkeys();
                     TasPollSuggest();
+                    TasPollTechs();
                     Thread.Sleep(4);
                 }
             }
@@ -193,6 +210,8 @@ namespace IGTAPTasMod
             s.playUntil = int.MaxValue;
             s.release = 0;
             s.held = true;
+            s.redrawAt = -1;
+            if (s.redrawAgain) TasRedraw(s);
             return true;
         }
 
@@ -510,6 +529,7 @@ namespace IGTAPTasMod
             _tas = null;
             _walkSlowdown = 0f;
             if (s.suggest != null) { try { if (!s.suggest.HasExited) s.suggest.Kill(); s.suggest.Dispose(); } catch (Exception) { } }
+            TasStopTechs(s);
             StopPlayback(reason);
             if (_playbackSavedAbilities.Count > 0) RestorePlaybackAbilities();
             Logger.LogInfo("TAS session closed: " + s.route.name + " (" + reason + ")");
@@ -520,6 +540,7 @@ namespace IGTAPTasMod
             if (_tas == null) return;
             TasHotkeys();
             TasPollSuggest();
+            TasPollTechs();
         }
 
         void TasHotkeys()
@@ -788,6 +809,8 @@ namespace IGTAPTasMod
                     break;
                 }
                 case "suggest": TasSuggest(s); break;
+                case "techs/hover": TasTechsHover(s, body); break;
+                case "techs/apply": TasTechsApply(s, body); break;
                 case "suggest/apply":
                 {
                     JArray found = s.suggestions?["suggestions"] as JArray;
@@ -844,9 +867,9 @@ namespace IGTAPTasMod
             return new {
                 open = true, routeId = s.route.id, name = s.route.name, savestateId = s.route.savestateId,
                 course = course?.id, capabilities = course != null ? CapsOf(category.Groups["label"].Value).Id : null,
-                phase = s.starting ? "starting" : s.recording ? "recording" : s.playing ? "playing" : s.held ? "held" : "running",
+                phase = s.starting ? "starting" : s.recording ? "recording" : s.playing ? "playing" : s.held || s.redrawAt >= 0 ? "held" : "running",
                 // The engine plays no input while the recorder has the controller.
-                cursor = s.recording && _recorder.Current != null ? s.recordFrom + _recorder.Current.samples.Count : (int)_engine.RunTicks, physics = s.physics, tickCount = s.ticks.Count, baseInput = s.BaseInput,
+                cursor = s.recording && _recorder.Current != null ? s.recordFrom + _recorder.Current.samples.Count : TasHeldAt(s), physics = s.physics, tickCount = s.ticks.Count, baseInput = s.BaseInput,
                 rerecords = s.route.rerecords, version = s.version, canUndo = s.undo.Count > 0, canRedo = s.redo.Count > 0,
                 slowdown = s.slowdown, greenzone = s.greenzone.Select(g => g.input).ToArray(), traced = s.trace.Count, traceVersion = s.traceVersion,
                 playUntil = s.playing && s.playUntil != int.MaxValue ? s.playUntil : (int?)null,
@@ -855,7 +878,8 @@ namespace IGTAPTasMod
                     results = s.suggestions?["suggestions"] is JArray list ? list.Select((r, i) => new { index = i,
                         description = (string)r["description"], kind = (string)r["kind"], saved = r["saved"]?.Value<int>() ?? 0,
                         from = r["from"]?.Value<int>() ?? 0, arrival = r["arrival"]?.Value<int>() ?? 0, speed = r["speed"]?.Value<float>() ?? 0f }).ToArray() : null,
-                    tried = s.suggestions?["tried"]?.Value<int>() }
+                    tried = s.suggestions?["tried"]?.Value<int>() },
+                techs = TasTechsLive(s)
             };
         }
     }
