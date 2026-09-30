@@ -61,8 +61,9 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   judge them again.
 - The game is build 25630570 (Steam, 2026-09-30): on-screen clones spawn one a frame while a slot is free (no spawn-gap
   sawtooth or magic spots; 12 RNG draws a tick per on-screen course with clones) and buy-max boxes buy one level a
-  physics step. Clone and buy-max numbers from before are the old build's. The model:
-  [`docs/fulltas.md`](docs/fulltas.md#clones-and-buy-max-build-25630570); the engine and turbo are being ported to it.
+  physics step. Clone and buy-max numbers from before are the old build's; the engine and turbo play the new build.
+  Routes judged before it pay different Cash: judge them again. The model:
+  [`docs/fulltas.md`](docs/fulltas.md#clones-and-buy-max-build-25630570).
 
 ## Before calling a new best real
 

@@ -744,8 +744,13 @@ ordered as the sections they came from.
   one clone a rendered frame while a slot is free (drawing the RNG every frame); `upgradeBox.IE_BuyMax` waits `WaitForFixedUpdate` instead of
   `WaitForEndOfFrame`, one level a physics step instead of one a rendered frame. The model:
   [`docs/fulltas.md`](fulltas.md#clones-and-buy-max-build-25630570).
-- **Fix:** pending: the engine, turbo and `zip-plan` are being ported; the routes are judged again after.
-- **Where:** `Runtime/Economy.cs`, `Shop.EndOfFrame`, `TurboRunner.Run`, `ZipPlan`, `tools/plan_fulltas.py`.
+- **Fix:** ed1784b: the engine's spawn keeps the overshoot, and the engine and turbo resume `IE_BuyMax` after every
+  physics step, the touch's included. The engine then matches the new-build turbo through tick 14122 of the 353.32 s
+  route. A scene diff of the builds (4,036 objects each side) changes no gameplay field, so nothing was captured again.
+  Still on the old rule: `ZipPlan.ClonePay`'s on-screen branch and `plan_fulltas.py`'s spawn gate. Pending: a 1x probe
+  of the buy-max levels on the touch's tick. Routes judged before the build are judged again.
+- **Where:** `Economy.cs:308`, `Economy.CloneStates`, `Shop.FixedStep` (`Shop.cs:148`, `Simulation.cs:1313`),
+  `TurboRunner.cs:181` and 238-239.
 
 The RNG runs of *Buy-max levels bought once a tick* (~1,100 ticks, runs of 1-6) aren't a divergence: over the 358.69 s
 route both sides make the same 6,759 draws in the same order (every per-tick state of both lies on one xorshift sequence,
