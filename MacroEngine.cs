@@ -50,6 +50,7 @@ namespace IGTAPTasMod
         private int _preRollTicksTotal;
         private long _runTicks;
         private long _physicsTicks;
+        private long _heldFrames;
         private bool _countEveryPhysicsTick;
         private int _quickRestartStep = -1;
         private bool _requireCourseFinish;
@@ -60,6 +61,8 @@ namespace IGTAPTasMod
         public int StepIndex { get { return _stepIndex; } }
         public long RunTicks { get { return _runTicks; } }
         public long PhysicsTicks { get { return _physicsTicks; } }
+        /// <summary>Rendered frames the run stood still in so far (a dash freeze's, a pause's), each 1/<see cref="PlaybackFrameRate"/> s of real time at 1x.</summary>
+        public long HeldFrames { get { return _heldFrames; } }
         public MacroDefinition ActiveMacro { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
         public string Status { get; private set; } = "Ready";
@@ -131,6 +134,17 @@ namespace IGTAPTasMod
             public float CrossStep { get { return _crossStep; } }
             readonly float _prevStep, _crossStep, _frozenStep;
 
+            /// <summary>Frame k's Time.deltaTime (the crossing frame's, then 1/fps each; the tick's frames add up to 0.02). A
+            /// freeze's or pause's repeats of a frame run at 0: timeScale is 0 until it lifts.</summary>
+            public float Step(int k) { return k == 0 ? _updateCross : _prevStep; }
+
+            /// <summary>
+            /// The crossing frame's Time.deltaTime as 1x reads it. 1x's ticks come 0.0199999929 s apart on the fixed clock, not
+            /// 0.02f, so that frame advances 0.00214285006 s (a 280 fps probe's frame times; clone pointers and spawn timers
+            /// then match 1x to the bit), 6.6e-9 short of <see cref="CrossStep"/>. Other rates keep CrossStep.
+            /// </summary>
+            readonly float _updateCross;
+
             public FrameGrid(int fps)
             {
                 double frame = 1.0 / fps, offset = frame / 2, tick = 0.02f;
@@ -141,6 +155,7 @@ namespace IGTAPTasMod
                 _crossStep = (float)(tick + offset - last);
                 _prevStep = Alphas.Length >= 2 ? (float)frame : _crossStep;
                 _frozenStep = Alphas.Length >= 2 ? (float)frame : (float)tick;
+                _updateCross = fps == PlaybackFrameRate ? BitConverter.Int32BitsToSingle(0x3b0c6f0f) : _crossStep;
             }
 
             public int FrozenFrames(float duration)
@@ -187,6 +202,7 @@ namespace IGTAPTasMod
             _preRollTicksTotal = _preRollTicksRemaining;
             _runTicks = 0;
             _physicsTicks = 0;
+            _heldFrames = 0;
             _countEveryPhysicsTick = false;
             _quickRestartStep = -1;
             _requireCourseFinish = requireCourseFinish;
@@ -367,9 +383,46 @@ namespace IGTAPTasMod
                 || reason == FullTasFinishReason;
         }
 
+        /// <summary>
+        /// Every <see cref="RewardRefreshTicks"/> physics ticks of a run: the courses' UpdateReward. The game repeats it every 5 s
+        /// from a random phase (courseScript.Start's InvokeRepeating), and a course's clones pay its reward as last updated; a
+        /// Full-TAS run cancels that timer and its host (the plugin, the offline engine) runs it here, on one phase for 1x, turbo
+        /// and the engine.
+        /// </summary>
+        public Action RefreshRewards;
+        public const int RewardRefreshTicks = 250;
+
         public void CountPhysicsTick()
         {
-            if (IsRunning && (_runTicks > 0 || _countEveryPhysicsTick)) _physicsTicks++;
+            if (!IsRunning || !(_runTicks > 0 || _countEveryPhysicsTick)) return;
+            _physicsTicks++;
+            if (_physicsTicks % RewardRefreshTicks == 0) RefreshRewards?.Invoke();
+        }
+
+        /// <summary>
+        /// Frames time stood still in (a dash freeze's repeats of a tick's first frame, a pause's of the frame it holds:
+        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose Update ran at timeScale 0), counted on the ticks
+        /// <see cref="CountPhysicsTick"/> counts. A Full-TAS run's time is its ticks and these (<see cref="LiveSeconds"/>).
+        /// </summary>
+        public void CountHeldFrames(int frames)
+        {
+            if (frames <= 0 || !IsRunning || !(_runTicks > 0 || _countEveryPhysicsTick)) return;
+            _heldFrames += frames;
+        }
+
+        /// <summary>
+        /// Live time: what a run takes at 1x, its physics ticks (0.02 s each) plus the frames it stood still in (a dash
+        /// freeze's, a pause's: 1/<see cref="PlaybackFrameRate"/> s each). The game frames are the ticks alone.
+        /// </summary>
+        public static float LiveSeconds(long ticks, long heldFrames)
+        {
+            return (float)(ticks * 0.02 + heldFrames / (double)PlaybackFrameRate);
+        }
+
+        /// <summary>Live time as an integer, in 1/1400 s (a tick 28, a held frame 5): exact ordering of two runs' live times.</summary>
+        public static long LiveUnits(long ticks, long heldFrames)
+        {
+            return ticks * (1400 / 50) + heldFrames * (1400 / PlaybackFrameRate);
         }
 
         public void CompleteFromGame(string reason = "Course finish detected", float authoritativeTime = 0f)

@@ -92,10 +92,10 @@ namespace IGTAP.EngineSim.Cli
             public double WaitLimit = 4 * 3600;
             // Zone 2 is a drop from zone 1; the way back up (Zone2toZone1PathOpen) opens with the OmniDash box, past the zip movers.
             public bool WayBack;
-            // The clones' frame (the engine and the Full-TAS gate step clonesScript.Update once per physics tick; 1x plays
-            // 1/280 s frames) and the frames an off-screen spawn takes (timeSinceLastClone to 1 s).
-            public double Frame = 0.02;
-            public int OffscreenFrames = 50;
+            // The clones' frame (clonesScript.Update runs in each of playback's 280 fps frames, in 1x, turbo and the engine)
+            // and the frames an off-screen spawn takes (timeSinceLastClone to 1 s).
+            public double Frame = 1.0 / MacroEngine.PlaybackFrameRate;
+            public int OffscreenFrames = FramesTo(1f, 1f / MacroEngine.PlaybackFrameRate);
             public List<Vector2[]>[] LoD;
         }
 
@@ -205,7 +205,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // Expected payout per second of one course's clones in one currency, frame by frame as clonesScript.Update steps them
-        // (the engine and the Full-TAS gate: one frame per physics tick). Off screen (SpawnClone's else branch) a clone spawns
+        // (one per rendered frame). Off screen (SpawnClone's else branch) a clone spawns
         // once timeSinceLastClone reaches 1 s and pays ceil(value (2j+1) / the previous spawn's interval); on screen one spawns
         // once it reaches the rolled interval, if the pool has one free (the oldest clone leaves on the frame after its spawn
         // check), and pays ceil(value (2j+1)) at its path's end.

@@ -1,7 +1,9 @@
 # Full-TAS
 
 The whole game from a fresh new game as one continuous input stream. A run is a list of goals, game events that must
-happen in order; its time is the physics ticks from the new game's first settled tick to the last goal. Goals split
+happen in order; its time is live time from the new game's first settled tick to the last goal: the physics ticks at
+0.02 s plus the frames the run stands still in, each dash freeze's and pause's, at 1/280 s (README `### Rules` 31;
+`MacroEngine.LiveSeconds`). Every time is reported with its game frames (the ticks) beside it. Goals split
 the run for display and for the offline search; nothing restarts, teleports or re-times between them. A quick restart
 (`Movement.respawn(true)`, the game's QuickReset) is an input the route chooses (`reset` on a tick), so a route can
 restart or run on, whichever is faster. The new game is loaded by `POST /api/session/newgame`: the menu's New Game with
@@ -100,7 +102,7 @@ too) starts it in a Vman speedrun's world instead of a new game. `POST /api/sess
    the same rest. Capturing on a frame count instead caught the player mid-fall on a frame-rate-dependent tick, so each
    load had a different start and a route found from one trace's start died in the gate's.
 
-The run's time is still physics ticks from that start. The snapshot carries VmanScript's clock and score (turbo steps
+The run's time is still counted from that start. The snapshot carries VmanScript's clock and score (turbo steps
 `VmanScript.FixedUpdate` like Unity does; a run whose clock runs out ends there). A course's first clear pays its
 `completionReward` (Course 1 1000 W, Course 2 4e6 W) and nothing else: no clone path, no comp boost. The unlock audit
 follows the run's purchases box by box, so `buyomni` (dash, omnidash, +1 air dash) and a later `buyds` (+1) are what
@@ -432,7 +434,10 @@ even from the same seed; the gate (turbo) is the judge.
 `fulltas/<run>_NONE <time>`, saved only by the gate (`SaveSolverRoute`), only when strictly faster. The gate replays the
 route in turbo from the run's start with the usual buffer audit, checks the unlocks against the run's own purchases so
 far, and refuses a quick restart on two ticks in a row (a real button is released in between). Splits per goal are kept
-in `fulltas-splits.json`.
+in `fulltas-splits.json`, each with its `ticks` and `held` frames. The offline search keeps ticks as its clock (splits,
+rests, windows, the library) and compares whole runs by live time (`Route.Live`), so what it submits is what the gate
+scores; its run file carries `goalHeldFrames` beside `goalPhysicsTicks`. A record named when a run's time was its
+ticks alone is renamed to its live time on its next trace (`RememberBestSplits`).
 
 A turbo judge or trace (`TurboRunner.Run`) runs every tick of the route inside one frame on Unity's main thread, so a
 long run (a `FalseEnding-Any%` judge, about 19,500 ticks) holds the picture frozen for tens of seconds. Every 250 ms it
@@ -536,8 +541,8 @@ inputs past the last unchanged goal the same way.
   rebuilt stretch once a solve). A repaired run that is complete but no faster is searched on from the goal where it
   first falls behind the best, as long as that goal moves forward; before this, all of these were dropped.
 - `--check <route.json>` replays a route (a run file's `inputs` or an offline best's `ticks`) from the trace's start
-  under the trace's goals and prints each goal's physics and input tick and how the replay ended; it searches and
-  writes nothing.
+  under the trace's goals and prints each goal's physics and input tick, its live time and held frames, and how the
+  replay ended; it searches and writes nothing.
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -589,7 +594,7 @@ straight down onto the floor, each jumped out of), and with the omnidirectional 
 
 ### Reset study and lookahead
 
-A quick restart throws the player's momentum away. `--reset-study` (`FullTasResets.cs`) takes each reset in the best, in
+A quick restart throws the player's momentum away. `--reset-study` (`FullTasResets.cs`) takes each reset in the best (only those in the `--focus` goals, when given), in
 order, and searches the way on from the input before it with no resets at all (`OfflineSolver.NoResets`: no mutation adds
 or moves one, and seeds holding one are dropped; its archive is `<first>-<limit>-<hash>-noreset.json`) through the goal the
 reset is in and the two after it. The log's table gives, per reset, the best's and the no-reset way's tick at each of
@@ -597,6 +602,17 @@ those goals and the speed (|Velocity + momentum|) 12 ticks after the last: a *te
 killer* loses to the no-reset way (sooner, or within 12 ticks and 1.25 times as fast). A no-reset way that is sooner or
 faster goes to the merge, which keeps it when the whole run gets faster, else re-finds the goals after it. The study then
 stops.
+
+The window ends before the next goal whose own way has a reset (a lap's return to its gate), since the study bans every
+reset in it. In a buy goal it is also seeded with the builder's hop ways (`HopWays`, `Stand`'s: a short walk, then hops
+under the box), the way back into a box between two of its buys. With the scheduler part on, `--auto` studies each reset
+between two buys of the same box once, after the scheduler's windows run out (they never pull the reset study), and
+not at a buy with no spare Cash. Studied first, they held `FalseEnding-Any%`'s windows off for 8 minutes for nothing.
+
+`--record-lap K` searches the lap finishing at goal K from where the best's quick restart before it lands, scored on the
+course timer (the course's path time), and writes it to `offline-best` as `<course>_<caps>-<time>-restart.json` for record
+laps. A record lap also tries a saved route with its first tick on the restart's own tick (its stick only): a saved route
+starts one settling tick behind a run's restart landing (Course 2's 2.20 s route dies on its spikes one tick later).
 
 `--lookahead N` makes each polish and repair window search on N goals past its own last goal and scores it there, so a
 window whose own goal is reached later but with more speed wins when it gains by the goal after next.
@@ -613,8 +629,10 @@ by a measured gap. The studio's **Improve** runs it ([Studio](#studio-full-tas-t
 
 **Focus.** `--focus a-b` (or `--focus a`) keeps the search on goals a..b: the scheduler's regions are those goals' labels
 (numbered within the focus, the loop adds `a − 1` back), the first-round probes and the bandit's arms are goals a..b only,
-so every pull's window starts there (a window of goal b still runs to goal b+1). Combine still splices known routes at any
-goals, and a merge still repairs the tail after the window. The `autoStart` event carries `focus: [a, b]` (`[1, goals]`
+so every pull's window starts there (a window of goal b still runs to goal b+1). Combine splices only runs of goals that
+reach into the focus, and revive only known routes whose lead ends at goal a−1..b: elsewhere their repairs searched goals
+the focus keeps out (`--focus 274-283` spent its first 20 minutes on combine at goal 95 and revives at goals 94-125). A
+merge still repairs the tail after the window. The `autoStart` event carries `focus: [a, b]` (`[1, goals]`
 without it). On `FalseEnding-Any%` with `--focus 181-186` every pull of a 2-minute run was at goals 181-186.
 
 **The gap model**, rebuilt after every new best (the log's per-goal table, and a `model` line in `fulltas/<run>.auto.jsonl`):
@@ -634,8 +652,23 @@ without it). On `FalseEnding-Any%` with `--focus 181-186` every pull of a 2-minu
   makes in that goal; a stretch of 6 or more ticks under 35% of that is flagged, with the ticks it would save, as
   `reset`, `loops back`, `standing/wait` or `slow`.
 - *Known*: every route the loop has seen (below): each goal's soonest arrival and shortest split among them.
-- *Expected* headroom of goal k = 0.6 × (the known routes' lead there: sooner arrival or shorter split) + 0.3 × deficit +
-  0.05 × gap. Goals rank by it.
+- *Economy goals* (a Full-TAS run's laps and economy-box buys, `FullTasGoal.IsEconomy`): cash, not distance, sets their
+  time, so they get no deficit and no gap. Their *slack* is the laps the best's spare cash covers: a lap (a course's start
+  gate and finish back to back, or a finish alone) earns the course reward and the clones' income over its ticks, and
+  it could go if every later tick still held that much cash (every later buy still paid). Laps are dropped most ticks
+  per cash first, each drop lowering the cash after it; a dropped lap's slack is its ticks less the straight walk at top
+  speed across it. On `FalseEnding-Any%` (364.22 s) it is 0: every lap's cash is spent before the next one ends.
+- *Spare Cash* of a buy: the ticks before the best buys it that it already held the price (its Cash drop there). A buy
+  reached sooner than that waits for its Cash, so the movement headroom (known lead, deficit, gap) of the goals since the
+  buy before is held, between them, to its spare Cash. A price reached on a goal's own tick (a lap's finish, a reward)
+  came from the player, not the clones, and leaves the stretch unbound; so do the goals after the last buy (the
+  ending). On `FalseEnding-Any%` (361.54 s) `buywj` has 0 spare ticks, `buystatue` 1, `buyds` and `buydj` 7: the
+  expected headroom went from 908 to 392 ticks, `buydj`'s climb from 139 to 7.
+- *Expected* headroom of goal k = 0.6 × (the known routes' lead there: a shorter split, or an arrival lead the goal
+  itself made, i.e. its lead less the previous goal's, so a lead carried through later goals counts once) + 0.3 ×
+  (deficit + slack) + 0.05 × gap (not for economy goals), its movement part held to the spare Cash above. Goals rank by
+  it. The outlook's floor is the best less every searched goal's gap within the spare Cash (an economy goal's slack
+  instead); the repair's hopeless test keeps the distance bounds.
 
 **The bandit.** An arm is a lever at a goal: `polish` (Polish.cs over goal k's inputs only, 3 sweeps), `window` (goals
 k..k+1 from goal k−1's state), `lookahead` (goals k..k+2, scored at the goal after next: a way that reaches goal k later
@@ -652,7 +685,8 @@ ticks per CPU second, (lever share × expected + ticks gained) / (the lever's CP
 the arm; a pull's cost is its budget's CPU seconds counted as one pull, averaged with every pull the lever made, so one
 that ended early doesn't make a lever look free): an arm that pays keeps winning, one that doesn't fades as its CPU grows. Lever shares (from the `VMAN` work: the goal 11 gain came from a window scored at goal 14's small box, windows scored
 at large area boxes found arrivals the next goals couldn't use, and the early resets proved to be teleports): polish
-0.15, window 0.2, lookahead and plan 0.3, span 0.45, dropreset 0.15, graft 0.6 (of the proven lead). A window arm pulled again searches
+0.15, window 0.2, lookahead and plan 0.3, span 0.45, dropreset 0.15, graft 0.6 (of the proven lead: a known route's lead at a goal a graft or merge has already followed, and not kept, is
+no longer proven). A window arm pulled again searches
 longer (`--window-minutes` × pulls, up to 4×; its archive resumes it), a plan pull 1.5× that and at least 2 minutes. A
 graft tries each known route's source once per goal (a window pull's finds are one source, and the goal its merge already
 repaired from is skipped). CPU is the process's
@@ -677,6 +711,17 @@ route that replays on this engine; a complete one faster than the best (the run 
 start and is written to the run file (`auto: --ref ... beats the best`). The studio passes the saved record this way, which
 the run file trails when that record was found and judged elsewhere.
 
+**Memory.** What the run's sessions tried is kept in `fulltas/<run>.auto-memory.json` (not read with `--fresh`) and read
+back when the goals match, so a restarted Improve goes on where the last one stopped: the combine splices played, the
+known routes revived (at most twice each), the goal edits played (each is its whole spliced route, so it plays the same
+way again; a goals pull with none new is skipped), the resets studied, the goals whose plan found no finish, the leads
+grafted, and the bandit's arms, lever costs and per-goal pulls (the outlook's "not tried yet on this run"). On the same
+best it also keeps the finds merged, the goals polished and the leads each window showed. Before it, six restarts of
+`FalseEnding-Any%` at 361.54 s spent 43 of their 79 minutes of pulls replaying the same combine, revive, goals and
+reset-study pulls. A window's finds are merged once per best by the state and tick they arrive in at the window's last
+goal, not by their inputs: a resumed window re-found goal 116 at 8723 with other inputs after it, and its three repairs
+took 4,600 CPU s.
+
 **Every new best** is replayed from the start on a new simulation on its own thread before it is kept (`VerifyFresh`, the
 `--check` replay: the engine can play a route differently after other runs on the same simulation) and kept as that replay
 has it, only if it still beats the best. Then it is merged, written (`fulltas/<run>.json`, `offline-best/`), and logged:
@@ -691,14 +736,15 @@ outcome, gain, CPU, wall), `check`, `record`, `model` and `autoEnd` (the curve).
 "Should it keep going?" (the Optimize tab for a course, the Full-TAS tab's Improve for a run). The engine also prints a `pullStart` event (lever, goal, budget, and what that
 lever and goal gave this session) as each pull starts. The outlook's chance of a gain comes from when gains came,
 counting every earlier session of the run in its `.auto.jsonl` as search already spent. Gains are treated as a Poisson
-process over the recent half of all search (at least 10 minutes), with a Jeffreys prior. With k gains in that window W,
+process over the recent half of all search, with a Jeffreys prior. With k gains in that window W,
 P(a gain within t more) = 1 − (W/(W+t))^(k+½), and the median wait is W(2^(1/(k+½)) − 1). Only the recent half counts
 because an anytime search's gains thin out. `verdict`:
 
 - `floor`: the best is at the model's floor (every searched goal at its bound).
 - `exhausted`: the bandit has no arm left.
-- `early`: under 10 minutes of search and no gain yet.
-- `likely`, `possible` or `unlikely`: a chance of a gain in the next hour of ≥ 60%, ≥ 25%, or less.
+- `likely`, `possible` or `unlikely`: a chance of a gain in the next hour of ≥ 60%, ≥ 25%, or less. `likely` needs a gain
+  in the window: with none, the chance is the prior's half gain alone (62% an hour after 20 minutes), what too
+  little search can't rule out, so it reads `possible` ("Unproven") at most.
 
 With `possible`, `unlikely` or `exhausted`, `advice` names the goal with the most expected headroom (when 3 or more are
 searched), the levers and goals this session hasn't pulled, and a `--focus` that left goals out. The Optimize matrix's
@@ -1146,9 +1192,9 @@ engine holds them there.
 
 The model follows the decompiled code:
 
-- **Clones** (`clonesScript.Update`/`SpawnClone`), frame by frame as the engine and the gate step them (one frame per
-  physics tick; `cloneFrameSeconds` 1/280 for 1x): off screen a course with clones and a path spawns once
-  `timeSinceLastClone` reaches 1 s (51 frames) and pays `ceil(value (2j+1) / previous interval)`; on screen (the player
+- **Clones** (`clonesScript.Update`/`SpawnClone`), frame by frame as 1x, turbo and the engine step them (one frame per
+  rendered 280 fps frame, `cloneFrameSeconds`): off screen a course with clones and a path spawns once
+  `timeSinceLastClone` reaches 1 s and pays `ceil(value (2j+1) / previous interval)`; on screen (the player
   inside the course's `activeCloneArea`, its `clonesLoD` polygon: Course 9's covers most of zone 2, or lapping it) one
   spawns once the rolled interval's frames pass and the pool has one free, and pays `ceil(value (2j+1))` at its path's
   end. The interval is path / clones with the speed and size rolls (`Random.Range(0, 101)` against the chances, per
@@ -1300,6 +1346,14 @@ before the statue walk too, or the walk buys Course 2's `Clone` box. FELaps2's s
 offline (not judged). Two runs' routes combine by diffing each against their common base and splicing in the regions
 that don't overlap. Where they overlap (both changed the same Course 3 lap), restarting `--auto` with the other route
 as `--ref` works better than splicing by hand.
+
+**Stalled at 361.54 s (2026-09-29).** Six `--auto` sessions after the 361.54 s record found nothing. Their windows and
+reset studies found goals reached sooner (goal 41 by 27 ticks, 116 by 17, 263 by 26), and none lasted to the end: a
+run ahead holds more Cash at every place after, and the old way on then brushes boxes it can now afford (Course 2's
+`CashPerLoop` and `Clone` after goal 116, Course 3's row at goals 247-248), which the strict buys refuse. The idle ticks
+that keep it out of them cost the lead back. The model had put 908 ticks of headroom where the target buys wait on
+the clones' Cash (`buydj`'s climb 139 ticks, `buyds` and `buystatue`); held to the buys' spare Cash (above) it is 392.
+Goal 91 keeps its 195: `reward:bonus1`'s own Cash pays the buy after it, so reaching it sooner moves that buy.
 
 **The statue boost.** `buy:buystatue` (`BoostOldCourses`) sets Courses 1 and 2 to Course 3's reward tier plus their mod
 and turns their boxes back on as buy-max boxes with 1.5x caps, at their old costs: `buyreward2` 39 -> 68 levels,

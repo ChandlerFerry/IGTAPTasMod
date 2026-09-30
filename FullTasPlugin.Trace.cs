@@ -111,20 +111,43 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
+            // A run that ended before its first tick never played its inputs (after a goals edit it has, from a new game start
+            // the engine couldn't resume): keep the trace there was, which the offline solver would otherwise load and replay to
+            // nothing.
+            if (inputs.Count > 1 && finishTick == 0 && tracker.Next == 0)
+            {
+                File.Delete(temporary);
+                throw new InvalidOperationException("Trace " + name + ": the run ended before its first tick, so its inputs never played; the trace "
+                    + "was not written. Load the scene again (POST /api/oracle/bootstrap) and capture again.");
+            }
             ReplaceAtomic(temporary, path);
             RememberBestSplits(run, inputs, finished, time, tracker);
-            FullTasLog("Trace " + path + ": " + (finished ? "finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s"
+            FullTasLog("Trace " + path + ": " + (finished ? "finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s live (" + _engine.PhysicsTicks + " frames)"
                 : "reached " + tracker.Next + " of " + goals.Length + " goals"));
             return new { ok = true, path = path, trace = path, finished = finished, time = time, finishTick = finishTick, progress = tracker.Next };
         }
 
+        /// <summary>
+        /// A trace that replayed the record's own inputs (the trace starts with them) keeps the record's splits, and puts the
+        /// record's name to the time the replay took when it differs: a record saved when a Full-TAS time was its physics ticks
+        /// alone (before dash freezes counted, README ### Rules 31) is re-timed here on its next trace.
+        /// </summary>
         void RememberBestSplits(FullTasRunDef run, List<SolverTick> inputs, bool finished, float time, FullTasTracker tracker)
         {
             MacroDefinition best = FullTasBestRoute(run.name);
-            if (!finished || best == null || _fullTasSplits.ContainsKey(best.id) || Mathf.Abs(CategoryBest(FullTasCategory(run.name)) - time) > .0001f) return;
+            if (!finished || best == null || !_library.macros.Contains(best)) return;
             List<SolverTick> saved = ToTicks(best.steps);
             if (saved.Count > inputs.Count || JsonConvert.SerializeObject(saved) != JsonConvert.SerializeObject(inputs.Take(saved.Count).ToList())) return;
-            StoreFullTasSplits(best, FullTasSplits(tracker));
+            string name = FullTasCategory(run.name) + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
+            if (!string.Equals(best.name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                FullTasLog("Re-timed " + best.name + " as " + name + ": its replay took " + time.ToString("0.00", CultureInfo.InvariantCulture)
+                    + " s live (" + tracker.PhysicsTicks[tracker.Next - 1] + " frames, " + tracker.HeldFrames[tracker.Next - 1] + " held)");
+                best.name = name;
+                PruneSlowerRoutes();
+                SaveLibrary();
+            }
+            if (!_fullTasSplits.ContainsKey(best.id)) StoreFullTasSplits(best, FullTasSplits(tracker));
         }
 
         List<SolverTick> FullTasInputs(FullTasRunDef run, JObject body)

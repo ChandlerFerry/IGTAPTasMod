@@ -44,6 +44,12 @@ namespace IGTAPTasMod
             movement.MoveAxis = new Vector2(_brakeAxis, 0f);
         }
 
+        /// <summary>Turbo's frames the run stood still in (TurboRunner's frame loop), onto the engine's count.</summary>
+        internal static void CountHeldFrames(int frames)
+        {
+            if (Instance != null) Instance._engine.CountHeldFrames(frames);
+        }
+
         void PacePlayback(bool on)
         {
             if (on != _playbackPaced)
@@ -58,6 +64,8 @@ namespace IGTAPTasMod
                     _pacedFps = _probe != null && _probe.fps > 0 ? _probe.fps : MacroEngine.PlaybackFrameRate;
                     _clockNext = 1f / _pacedFps;
                     _clockTotal = 0.0;
+                    _paceClock.Restart();
+                    _paceDue = 0.0;
                 }
                 else
                 {
@@ -70,22 +78,42 @@ namespace IGTAPTasMod
             if (!_playbackPaced) return;
             // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
             if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
-            // The cap only paces the wall clock: every frame's game time is the fixed step below (captureDeltaTime), so fast
-            // playback (settings fastPlayback) lifts it and plays the same frames sooner, and a walk lowers it and plays the
-            // same frames slower. Not for a probe (its fps is the experiment).
-            int targetFrameRate = _walkScaled ? Math.Max(1, (int)Math.Round(_pacedFps / _walkSlowdown))
-                : _settings.fastPlayback && _probe == null ? -1 : _pacedFps;
+            // Only the wall clock is paced here: every frame's game time is the fixed step below (captureDeltaTime). Not by
+            // Unity's cap: the fixed clock's frames aren't 1/fps of game time (six make a 0.02 s tick, 0.933x at 280 fps) and
+            // it never makes up a late frame. Playback waits for the fixed clock's own time (WaitForFixedClock): a walk for
+            // slowdown times it, fast playback (settings fastPlayback) not at all. A probe that isn't walked keeps Unity's
+            // cap: its fps is the experiment.
+            bool probeCap = _probe != null && !_walkScaled;
+            int targetFrameRate = probeCap ? _pacedFps : -1;
             if (Application.targetFrameRate != targetFrameRate) Application.targetFrameRate = targetFrameRate;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
             _clockTotal += _clockFrame;
+            // A frame whose Update ran with time stopped (a dash freeze, the pause menu) is one the run stands still in: its live
+            // time (MacroEngine.HeldFrames), the frames turbo and the offline engine repeat (MacroEngine.FrameRepeats).
+            if (Time.timeScale == 0f) _engine.CountHeldFrames(1);
+            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback ? 0f : 1f);
             _clockNext = FixedClockStep(_pacedFps);
             Time.captureDeltaTime = _clockNext;
         }
 
         /// <summary>
-        /// At a playback's start: the camera eased on the wall clock until now, so it starts settled on the player, and the
-        /// clones it frames (clonesLoD) pay the same from the first tick.
+        /// Holds this frame until the wall clock reaches the fixed clock's time since the playback started (its frames' steps
+        /// summed, a freeze's frames included, times <paramref name="scale"/>), so 1x plays in real time. The frames after a
+        /// late one catch up, up to <see cref="MaxPaceDebt"/> behind; a longer stall (a load) is let go, not fast-forwarded.
+        /// Scale 0: no wait.
+        /// </summary>
+        void WaitForFixedClock(float scale)
+        {
+            double now = _paceClock.Elapsed.TotalSeconds;
+            _paceDue = scale > 0f ? Math.Max(_paceDue + _clockFrame * scale, now - MaxPaceDebt) : now;
+            // Sleep only while a coarse (15.6 ms) timer tick can't overshoot, then yield.
+            for (double left; (left = _paceDue - now) > 0; now = _paceClock.Elapsed.TotalSeconds)
+                if (left > 0.016) System.Threading.Thread.Sleep(1); else System.Threading.Thread.Yield();
+        }
+
+        /// <summary>
+        /// At a playback's start: the camera eased on the wall clock until now, so it starts settled on the player.
         /// </summary>
         void SnapCameraAtPlaybackStart(Movement movement)
         {

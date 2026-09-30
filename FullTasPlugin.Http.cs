@@ -32,18 +32,19 @@ namespace IGTAPTasMod
 
         void FullTasEvent(bool reached)
         {
+            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (README ### Rules 31).
             if (reached && _fullTas.Done && _engine.IsRunning)
-                _engine.CompleteFromGame(MacroEngine.FullTasFinishReason, _engine.PhysicsTicks * Time.fixedDeltaTime);
+                _engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(_engine.PhysicsTicks, _engine.HeldFrames));
         }
 
         void FullTasCourseStarted(int course)
         {
-            if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseStarted(course, _engine.RunTicks, _engine.PhysicsTicks));
+            if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseStarted(course, _engine.RunTicks, _engine.PhysicsTicks, _engine.HeldFrames));
         }
 
         void FullTasCourseFinished(int course)
         {
-            if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseFinished(course, _engine.RunTicks, _engine.PhysicsTicks));
+            if (_fullTas != null && _engine.IsRunning) FullTasEvent(_fullTas.CourseFinished(course, _engine.RunTicks, _engine.PhysicsTicks, _engine.HeldFrames));
         }
 
         object FullTasWhenReady(WebStudioRequest request, FullTasRunDef run, string what, Func<object> action)

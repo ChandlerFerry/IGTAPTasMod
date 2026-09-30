@@ -56,7 +56,8 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   new game (a `"start": "vman"` run: the Vman speedrun's world) with the run's goals in the header (`fulltas.goals`);
   `IGTAP.EngineSim fulltas <trace>` searches the whole run in windows of goals and sends complete, faster runs to
   `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json>` only replays a route (a run file's `inputs` or an
-  offline best's `ticks`) and prints each goal's physics and input tick and how it ended.
+  offline best's `ticks`) and prints each goal's physics and input tick, its live time and held frames (dash freezes,
+  pauses; a Full-TAS run's time is live time, README `### Rules` 31), and how it ended.
 
 `tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
 reloads the plugin.
@@ -641,7 +642,7 @@ fixed clock pins it: every frame's game time is a step on a grid half a frame of
 (`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`). Three scripts read the wall clock, which `captureDeltaTime`
 leaves alone (`TasPlugin.PatchWallClock`); during playback they read the fixed clock's frame and its running total
 instead: `Movement.TimeStop`'s freeze (so a freeze always runs the same number of `Update` frames),
-`cameraMover.LateUpdate` (the camera decides which clones are on screen, `clonesLoD`, and so how they pay) and
+`cameraMover.LateUpdate` and
 `ObjectBobber`. A playback starts with the camera settled on the player (`SavestateService.SnapCamera`). `timer`'s
 play-time display still counts the wall clock.
 
@@ -1134,11 +1135,17 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   `StatuePrestigeText` on (a run that bought the statue once left it on:
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Statue text left on*). A Full-TAS trace exports its world after
   restoring the start (`FullTasTrace`).
-- Clones step in scene-load order, instance id highest first, in turbo (`TurboRunner.Run`) and here (`Economy`) alike.
+- Clones step in 1x's Update order, instance id lowest first, in turbo (`TurboRunner.Run`) and here (`Economy`) alike.
   Two courses spawning on one tick take their fast/big rolls in that order (turbo used `FindObjectsSortMode.None`
   before: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Clone order changed between sessions*). Instance ids keep their
-  relative order from load to load. 1x playback runs `clonesScript.Update` in Unity's own order, once per rendered frame
-  (Δt 1/280): neither is proven to match yet.
+  relative order from load to load. A 1x probe (`FalseEnding-Any%`, tick 15637) ran Course 2's `clonesScript.Update`
+  before Course 3's, lowest id first; highest first had swapped their rolls.
+- `clonesScript.Update` runs once per rendered frame on its `Time.deltaTime`, in turbo and here as at 1x: each frame of
+  the tick's grid (`MacroEngine.FrameGrid.Step`: the crossing frame's step, then 1/280), 0 in a dash freeze's or
+  pause's repeats (timeScale 0). The crossing frame at the playback rate reads 0.00214285006 s, not `CrossStep`: 1x's
+  ticks come 0.0199999929 s apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). A spawn resets `timeSinceLastClone` to 0 and drops the overshoot, so a per-tick step
+  (Δt 0.02) spawned less often than 1x and its Cash came in later ([`docs/fidelity-log.md`](../docs/fidelity-log.md),
+  *Clones stepped once a tick*).
 - `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
   it lists. Cash here is start − spent + awarded + earned, the game's a running total: they differ in the last bit
   (tick 13336 above), which only matters for a purchase within a rounding of its cost.

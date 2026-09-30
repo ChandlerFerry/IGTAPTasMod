@@ -55,13 +55,18 @@ namespace IGTAPTasMod
 
         // What a Full-TAS trace file holds per tick. Bump it whenever the export changes: an older trace is recaptured before a
         // solve (FullTasTraceCurrent) even when its goals and start still match (2: MacroEngine._steps left out of every snapshot,
-        // which made a 437-goal trace 3.8 GB, past what the offline engine can read).
-        const int FullTasTraceFormat = 2;
+        // which made a 437-goal trace 3.8 GB, past what the offline engine can read; 3: a Full-TAS time is live time, README
+        // ### Rules 31, so the trace's result and the record it re-times on capture (RememberBestSplits) count held frames).
+        const int FullTasTraceFormat = 3;
 
+        /// <summary>A goal's arrival: its physics tick (game frames) and the frames the run had stood still in by then (dash
+        /// freezes, pauses); together its live time (MacroEngine.LiveSeconds).</summary>
         public sealed class FullTasSplit
         {
             public string label;
             public long ticks;
+            public long held;
+            [JsonIgnore] public float Live { get { return MacroEngine.LiveSeconds(ticks, held); } }
         }
 
         sealed class FullTasVerdict
@@ -183,7 +188,7 @@ namespace IGTAPTasMod
         sealed class FullTasOfflineFile
         {
             public List<string> goals;
-            public List<long> ticks, inputTicks;
+            public List<long> ticks, held, inputTicks;
             public List<SolverTick> inputs;
         }
         sealed class FullTasOffline

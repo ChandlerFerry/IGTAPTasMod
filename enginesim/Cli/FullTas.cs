@@ -11,6 +11,7 @@ using System.Threading;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 using FullTasTracker = IGTAPTasMod.FullTasTracker;
 using Caps = IGTAPTasMod.Caps;
+using MacroEngine = IGTAPTasMod.MacroEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -21,6 +22,9 @@ namespace IGTAP.EngineSim.Cli
             public List<InputTick> Inputs;
             public int Progress;
             public long[] GoalInput, GoalPhysics;
+            /// <summary>Per goal, the frames the run had stood still in (dash freezes, pauses: RunResult.GoalHeldFrames); null for a
+            /// route composed from others' goal ticks, which counts none until its replay times it.</summary>
+            public long[] GoalHeld;
             /// <summary>How its replay from the start ended (Evaluate's), for the log.</summary>
             public string EndReason;
             /// <summary>The last goal's physics tick from the run's start (tick arithmetic: splits, rests, the library).</summary>
@@ -31,6 +35,18 @@ namespace IGTAP.EngineSim.Cli
             public long Last { get { return Progress == 0 ? long.MaxValue : End - Origin; } }
             /// <summary>Goal k's arrival on the run's own clock (its tick less the start-gate goal's once that is behind it).</summary>
             public long Clock(int k) { return GoalPhysics[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0); }
+            /// <summary>The frames the run stood still in by goal k. A course record run (<see cref="TimerGoal"/>) is timed by the
+            /// game timer, physics ticks from its start gate: none count there.</summary>
+            public long Held(int k) { return GoalHeld == null || TimerGoal > 0 ? 0 : GoalHeld[k - 1]; }
+            /// <summary>
+            /// The run's time as the gate scores it, in live units (MacroEngine.LiveUnits): a Full-TAS run's ticks and the frames it
+            /// stood still in (README ### Rules 31). What a whole run's better and worse compare; the tick arithmetic (splits,
+            /// rests, windows, the library) stays on <see cref="Clock"/>.
+            /// </summary>
+            public long Live { get { return Progress == 0 ? long.MaxValue : MacroEngine.LiveUnits(Last, Held(Progress)); } }
+            public double LiveSeconds { get { return Progress == 0 ? double.MaxValue : LiveSecondsAt(Progress); } }
+            /// <summary>Goal k's arrival in live seconds on the run's own clock.</summary>
+            public double LiveSecondsAt(int k) { return Math.Round(MacroEngine.LiveSeconds(Clock(k), Held(k)), 4); }
         }
 
         /// <summary>
@@ -153,12 +169,12 @@ namespace IGTAP.EngineSim.Cli
             for (int g = 0; g < _goals; g++)
             {
                 long t = g < r.Progress ? r.GoalPhysics[g] : -1;
-                Console.WriteLine($"goal {g + 1,2} {_labels[g],-42} " + (t < 0 ? "-" : $"{t,5} ({(t * _dt).ToString("0.00", CultureInfo.InvariantCulture),6} s, +{t - last,4}) input {r.GoalInput[g]}"));
+                Console.WriteLine($"goal {g + 1,2} {_labels[g],-42} " + (t < 0 ? "-" : $"{t,5} ({r.LiveSecondsAt(g + 1).ToString("0.00", CultureInfo.InvariantCulture),6} s live, {r.Held(g + 1),3} held, +{t - last,4}) input {r.GoalInput[g]}"));
                 if (t >= 0) last = t;
             }
             WorldPos at = _eval.PlayerWorld;
             Console.WriteLine($"{Path.GetFileName(file)}: {inputs.Count} inputs, {r.Progress} of {_goals} goals"
-                + (r.Progress == _goals ? $", {(r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture)} s ({r.Last} ticks)" : "")
+                + (r.Progress == _goals ? $", {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({r.Last} ticks, {r.Held(r.Progress)} held frames)" : "")
                 + $"; ended after input {_eval.Engine.RunTicks} at {at.x.ToString("0.0", CultureInfo.InvariantCulture)},{at.y.ToString("0.0", CultureInfo.InvariantCulture)}: {r.EndReason}");
             Console.WriteLine($"purchases ({(_eval.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
             // --chain-vs OLD: the chaining check (FullTasAutoLib.cs) of this route against an older one.
@@ -200,9 +216,18 @@ namespace IGTAP.EngineSim.Cli
             // --reset-study: each reset in the best against the way on without it (FullTasResets.cs); then stops.
             if (_resetStudy)
             {
+                ReadFocus(_args);
                 ResetStudy();
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 Emit(new { type = "done", best = RouteJson(_best) });
+                return 0;
+            }
+            // --record-lap K: the lap finishing at goal K searched on the course timer from its restart (FullTasAutoGoals.cs); then stops.
+            int recordLap = Solve.Option(_args, "--record-lap", 0);
+            if (recordLap > 0)
+            {
+                RecordLapSearch(recordLap);
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
 
@@ -408,8 +433,8 @@ namespace IGTAP.EngineSim.Cli
 
         object RouteJson(Route r)
         {
-            return new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : Seconds(r.Last),
-                splits = Enumerable.Range(0, r.Progress).Select(k => Seconds(r.GoalPhysics[k])).ToArray() };
+            return new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : r.LiveSeconds, ticks = r.Progress == 0 ? (long?)null : r.Last,
+                splits = Enumerable.Range(1, r.Progress).Select(k => r.LiveSecondsAt(k)).ToArray() };
         }
 
         bool TimeUp { get { return _stopRequested || _clock.Elapsed.TotalMinutes >= _minutes; } }
@@ -463,14 +488,14 @@ namespace IGTAP.EngineSim.Cli
 
         string Describe(Route r)
         {
-            if (r.Progress == _goals) return (r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture) + "s";
-            return r.Progress + "/" + _goals + " goals" + (r.Progress > 0 ? " (" + (r.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture) + "s)" : "");
+            if (r.Progress == _goals) return r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s";
+            return r.Progress + "/" + _goals + " goals" + (r.Progress > 0 ? " (" + r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s)" : "");
         }
 
         static bool Better(Route a, Route b)
         {
             if (a.Progress != b.Progress) return a.Progress > b.Progress;
-            return a.Progress > 0 && a.Last < b.Last;
+            return a.Progress > 0 && a.Live < b.Live;
         }
 
         Route Evaluate(List<InputTick> inputs, int limit = -1)
@@ -478,7 +503,7 @@ namespace IGTAP.EngineSim.Cli
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = limit < 0 ? _goals : limit;
             RunResult r = _eval.Run(inputs, null, null, 1000000);
-            return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, EndReason = r.EndReason };
+            return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
         }
 
         internal static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
@@ -1138,7 +1163,10 @@ namespace IGTAP.EngineSim.Cli
                     return;
                 }
                 slower++;
-                if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit) broken = candidate;
+                // Only one ahead at the window's last goal is worth re-finding the rest for (spliced into the whole run, a window that
+                // was faster on its own can arrive later: a buy waiting on cash).
+                if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit
+                    && candidate.GoalPhysics[limit - 1] < best.GoalPhysics[limit - 1]) broken = candidate;
             }
             if (broken == null)
             {
@@ -1151,7 +1179,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 double gain = Seconds(best.Clock(limit) - broken.Clock(limit));
                 string tail = broken.Progress >= best.Progress
-                    ? $"finishes {Seconds(broken.Last - best.Last):+0.00;-0.00}s against the record"
+                    ? $"finishes {broken.LiveSeconds - best.LiveSeconds:+0.00;-0.00}s against the record"
                     : $"stops at goal {broken.Progress} of {best.Progress}";
                 Emit(new { type = "note", level = "info", gain, text = $"Faster through goal {limit} by {gain:0.00}s, but the old route after it {tail}; "
                     + $"re-finding goals {limit + 1}-{best.Progress}. Worth up to −{gain:0.00}s if they come back as fast as before." });
@@ -1259,14 +1287,14 @@ namespace IGTAP.EngineSim.Cli
                         Log($"repaired run {Describe(run)} is no better: it falls behind the best at goal {behind + 1}; re-finding from there");
                         resynced = behind;
                         run = new Route { Inputs = run.Inputs.Take((int)Math.Min(run.GoalInput[behind - 1], run.Inputs.Count)).ToList(), Progress = behind,
-                            GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, EndReason = run.EndReason };
+                            GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, GoalHeld = run.GoalHeld, EndReason = run.EndReason };
                         continue;
                     }
                     Log($"repaired run {Describe(run)} is no better; dropped");
                     Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." + lost });
                     return;
                 }
-                if (run.Last >= _best.Last)
+                if (run.Live >= _best.Live)
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
                     Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." + lost });
@@ -1313,7 +1341,7 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> inputs = r.Inputs.ToList();
             Pad(inputs, r.GoalInput[r.Progress - 1]);
             Route padded = Evaluate(inputs);
-            return padded.Progress == r.Progress && padded.Last == r.Last ? padded : r;
+            return padded.Progress == r.Progress && padded.Live == r.Live ? padded : r;
         }
 
         void Commit(Route r, string where)
@@ -1326,7 +1354,7 @@ namespace IGTAP.EngineSim.Cli
             string file = _runFile;
             if (r.Progress == _goals)
             {
-                float time = r.Last * _dt;
+                float time = (float)r.LiveSeconds;
                 Directory.CreateDirectory(_outDir);
                 file = Path.Combine(_outDir, "fulltas-" + _name + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
                 // A route of goals the loop adopted (--parts goals) carries them and the lists they came from: the game judges it
@@ -1357,7 +1385,9 @@ namespace IGTAP.EngineSim.Cli
                 inputs = r.Inputs.Select(t => t.ToJson()),
                 goalInputTicks = r.GoalInput,
                 goalPhysicsTicks = r.GoalPhysics,
+                goalHeldFrames = r.GoalHeld,
                 total = r.Progress == _goals ? r.Last : -1,
+                live = r.Progress == _goals ? r.LiveSeconds : -1,
                 startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
                 goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage,
             }));

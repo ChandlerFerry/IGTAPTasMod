@@ -84,7 +84,7 @@ namespace IGTAPTasMod
             float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 4 * rowHeight + 12 * scale
                 + DebugSectionHeight(scale);
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
-            Fill(panel, PanelBack);
+            Fill(panel, PanelBase);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
             Fill(new Rect(panel.x, panel.y, 1, panel.height), PanelLine);
             Fill(new Rect(panel.x, panel.yMax - 1, width, 1), PanelLine);
@@ -120,11 +120,11 @@ namespace IGTAPTasMod
                 Label(new Rect(yColumn, y, columnWidth, rowHeight), _velocityText[2 * i + 1], _overlayText, color);
                 y += rowHeight;
                 if (i != 1) continue;
-                float age = Time.unscaledTime - _nudgeTime;
                 Label(new Rect(x, y, labelWidth, rowHeight), "NUDGE", _overlaySmall, MutedColor);
-                if (age < NudgeLingerSeconds)
-                    Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _nudgeText, _overlayText, new Color(JumpColor.r, JumpColor.g, JumpColor.b, 1f - age / NudgeLingerSeconds));
-                else Label(new Rect(xColumn, y, columnWidth, rowHeight), "0", _overlayText, MutedColor);
+                // Its value fades on the wall clock, so a cached panel (DrawCachedPanels) leaves it to the live pass.
+                Rect nudge = new Rect(xColumn, y, 2 * columnWidth, rowHeight);
+                if (_panelCaching) _nudgeRect = nudge;
+                else DrawNudge(nudge);
                 y += rowHeight;
             }
 
@@ -139,6 +139,14 @@ namespace IGTAPTasMod
             y += rowHeight;
             Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
             DrawDebugSection(panel, x, y + rowHeight, scale);
+        }
+
+        void DrawNudge(Rect r)
+        {
+            float age = Time.unscaledTime - _nudgeTime;
+            if (age < NudgeLingerSeconds)
+                Label(r, _nudgeText, _overlayText, new Color(JumpColor.r, JumpColor.g, JumpColor.b, 1f - age / NudgeLingerSeconds));
+            else Label(new Rect(r.x, r.y, r.width / 2f, r.height), "0", _overlayText, MutedColor);
         }
 
         /// <summary>Interpolation stays on; playback runs on the fixed clock that turbo and enginesim model (MacroEngine.FrameGrid).</summary>

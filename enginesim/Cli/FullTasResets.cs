@@ -27,7 +27,7 @@ namespace IGTAP.EngineSim.Cli
                 // Resets not studied yet, keyed by the goal they're in and their input's offset from that goal's start, so a
                 // commit that moves the inputs doesn't study one twice.
                 var next = Enumerable.Range(1, best.Inputs.Count - 1).Where(i => best.Inputs[i].reset)
-                    .Select(i => (q: i, g: GoalsBy(best, i))).Where(r => r.g < best.Progress)
+                    .Select(i => (q: i, g: GoalsBy(best, i))).Where(r => r.g < best.Progress && InFocus(r.g + 1))
                     .Select(r => (r.q, r.g, offset: r.q - (r.g == 0 ? 0 : (int)best.GoalInput[r.g - 1])))
                     .FirstOrDefault(r => !done.Contains((r.g, r.offset)));
                 if (next.q == 0) break;
@@ -48,12 +48,19 @@ namespace IGTAP.EngineSim.Cli
 
         string StudyReset(Route best, int q, int reached)
         {
-            int limit = Math.Min(best.Progress, reached + 1 + ResetStudyAhead);
+            // The window bans every reset, so it stops before the next goal whose own way has one (a lap's return to its gate):
+            // only this goal's resets are studied.
+            int limit = reached + 1;
+            while (limit < Math.Min(best.Progress, reached + 1 + ResetStudyAhead)
+                && !best.Inputs.Skip((int)best.GoalInput[limit - 1]).Take((int)(best.GoalInput[limit] - best.GoalInput[limit - 1])).Any(t => t.reset))
+                limit++;
             string where = $"reset at input {q} (in goal {reached + 1} {_labels[reached]}), window to goal {limit}";
             // Seeds: the best's own way on with its resets made plain ticks, and with the reset tick left out.
             List<InputTick> rest = best.Inputs.Skip(q).ToList();
             List<InputTick> plain = rest.Select(t => { t.reset = false; return t; }).ToList();
             var seeds = new List<List<InputTick>> { plain, plain.Skip(1).ToList() };
+            // A reset between two buys of a box: hopping back into it as the cash comes in is the way on without it.
+            if (_runGoals.Goals[reached].kind == IGTAPTasMod.FullTasGoal.Buy) seeds.AddRange(HopWays());
             List<List<InputTick>> found;
             _noResets = true;
             try { found = SearchWindow("noreset", best, q, limit, seeds, long.MaxValue, _windowMinutes, 0); }

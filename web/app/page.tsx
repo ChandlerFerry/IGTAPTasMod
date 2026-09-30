@@ -5,7 +5,7 @@ import "./action-editor.css";
 import "./frame-timeline.css";
 import "./route-sidebar.css";
 import "./fulltas.css";
-import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, liveSeconds, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
@@ -31,7 +31,7 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
   outlook?: Outlook | null; pulls?: PullNow[] };
 /** Improve's outlook: the chance more search beats the best (a Poisson rate over the recent half of all search, every Improve
  * of this target counted), the model's floor and headroom, and what else there is to try. Seconds are search (wall) seconds. */
-type Outlook = { verdict: "early" | "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
+type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
   best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: number; label: string; expected: number; slow: string }[];
   searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
   window: number; recent: number; chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[] };
@@ -162,7 +162,7 @@ export default function Studio() {
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
-          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback isn't held to 280 frames a second and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
+          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
             <input type="checkbox" checked={!!state.fastPlayback} disabled={!state.connected} onChange={e => command("/settings/fast-playback", { on: e.target.checked })} />Fast
           </label>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
@@ -460,8 +460,8 @@ const pct=(p:number)=>`${Math.round(p*100)}%`;
 
 /** Improve's answer to "should I keep going?": the verdict, what to do, and the numbers behind it. */
 function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
-  const odds=o.verdict!=="early"&&o.verdict!=="floor"&&o.verdict!=="exhausted";
-  const tone=o.verdict==="likely"?"good":o.verdict==="possible"||o.verdict==="early"?"maybe":"bad";
+  const odds=o.verdict!=="floor"&&o.verdict!=="exhausted";
+  const tone=o.verdict==="likely"?"good":o.verdict==="possible"?"maybe":"bad";
   const room=o.bestTicks-o.floorTicks;
   return <div className={`outlookCard ${tone}`}>
     <p className="eyebrow">SHOULD IT KEEP GOING?</p>
@@ -469,13 +469,13 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
     <ul className="outlookAdvice">{o.advice.map((a,i)=><li key={i}>{a}</li>)}</ul>
     <div className="outlookStats">
       <div><span>Chance of a gain</span><strong>{odds?`${pct(o.chanceHour)} per hour`:"—"}</strong>
-        <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":o.verdict==="early"?"not enough search to judge":"more search won't help"}</small></div>
+        <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":"more search won't help"}</small></div>
       <div><span>Next gain</span><strong>{odds?`~${searchSpan(o.medianWait)}`:"—"}</strong>
         <small>{odds?`median wait at this pace${o.typicalGain!=null?` · gains so far ~${o.typicalGain} ticks each`:""}`:""}</small></div>
       <div><span>Searched</span><strong>{searchSpan(o.searched)}</strong>
         <small>{o.sessions} Improve run{o.sessions===1?"":"s"} · {o.gains?`${o.gains} gain${o.gains===1?"":"s"} (−${o.gained} ticks), last ${searchSpan(o.lastGainAgo??0)} ago`:"no gain yet"}</small></div>
       <div><span>Room to the floor</span><strong>{room} ticks</strong>
-        <small>floor {o.floor.toFixed(2)}s (distance ÷ top speed) · model expects ~{o.headroom} ticks findable</small></div>
+        <small>floor {o.floor.toFixed(2)}s (moving at top speed, dropping the laps spare cash covers) · model expects ~{o.headroom} ticks findable</small></div>
     </div>
     {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
       <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`run ${p.pulls}× here before (${searchSpan(p.cpu)} CPU), ${p.gained?`−${p.gained} ticks`:"no gain"}`:"first time here"}{p.expected>0?` · ~${p.expected} ticks expected here`:""}</li>)}</ul></div>}
@@ -1135,6 +1135,8 @@ function SolveMatrix({routes,courses,categories,solver,open,onOpen,onCommand}:{r
 
 const TICK_SECONDS = 0.02;
 const tickText = (ticks: number) => `${ticks} t · ${runTime(ticks * TICK_SECONDS)}`;
+/** A Full-TAS time as live time and game frames: `1:02.37 · 3106 f`. */
+const liveText = (seconds: number, ticks: number) => `${runTime(seconds)} · ${ticks} f`;
 
 function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(name:string)=>void}) {
   const runs = fullTas?.runs ?? [];
@@ -1162,13 +1164,13 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   // A click picks a goal (or a segment's goals), clicking the same pick again clears it, shift-click extends the pick to cover both.
   const pick = (first: number, last: number, shift: boolean) => setPicked(p => shift && p ? [Math.min(p[0], first), Math.max(p[1], last)]
     : p && p[0] === first && p[1] === last ? null : [first, last]);
-  const pickedSeconds = picked && complete ? (splits[picked[1] - 1].ticks - (picked[0] > 1 ? splits[picked[0] - 2].ticks : 0)) * TICK_SECONDS : null;
+  const pickedSeconds = picked && complete ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Improving":running?"Playing":"Idle"}</span></div>
     <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code></li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in fulltas.json: Vman world.</li></ul></details><details className="howTo"><summary>How improving works</summary><ol><li><b>Improve</b> searches offline from the run&apos;s record and picks where to look itself.</li><li>Think a stretch is slow? Click its goals or segment bar (shift-click extends), then Improve.</li><li>Improve also edits the economy goals itself: it drops laps the Cash no longer needs, laps where the route stood waiting, and swaps in a record lap when that pays; an edit stays only when the whole run is faster. The game saves the new goal list with the record (fulltas.json backed up first).</li><li>The game replays every faster route in turbo from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li></ol></details>
     <div className="fullTasRuns">
       {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.savestate ? "Savestate · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
-        {r.best?<b>{runTime(r.best.time)}</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {runTime(r.offline.time)}</b>:<b className="none">no route yet</b>}
+        {r.best?<b>{liveText(r.best.time, r.best.splits[r.best.splits.length - 1]?.ticks ?? 0)}</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {runTime(r.offline.time)}</b>:<b className="none">no route yet</b>}
         {!r.traceReady && <span className="badge missing">No trace</span>}
       </button>)}
       {name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
@@ -1180,7 +1182,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     </div>
     {name && <div className="fullTasGrid">
       <div className="fullTasGoals">
-        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${runTime(run.best.time)}`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached}`:""}</h2></div></div>
+        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${liveText(run.best.time, run.best.splits[run.best.splits.length - 1]?.ticks ?? 0)} live`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached}`:""}</h2></div></div>
         <div className="fullTasSolve">
           {complete && <div className={`ftFocus ${picked ? "on" : ""}`}>
             {picked
@@ -1208,15 +1210,15 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           </div>
         </div>
         <div className={`resultTable ${segments.length > 1 ? "segmented" : ""}`}>
-          <div className="tableHead"><span>#</span><span>Goal</span><span>Split</span><span>Cumulative</span></div>
+          <div className="tableHead"><span>#</span><span>Goal</span><span>Split (live · frames)</span><span>Cumulative (live · frames)</span></div>
           {(() => {
             const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = run?.breaker; const inPick = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
               const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", complete ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
               return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${complete ? "pickable" : ""} ${inPick ? "picked" : ""}`} key={i} title={title || undefined}
                 onClick={complete ? e => pick(i + 1, i + 1, e.shiftKey) : undefined}>
               <span>{i + 1}</span><span>{label}</span>
-              <span>{s ? tickText(s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
-              <span>{s ? tickText(s.ticks) : "—"}</span>
+              <span>{s ? liveText(liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0), s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
+              <span>{s ? liveText(liveSeconds(s), s.ticks) : "—"}</span>
             </div>; };
             if (segments.length <= 1) return labels.map((_, i) => goalRow(i));
             // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last. A
@@ -1242,7 +1244,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     </div>}
     <div className="fullTasSearch">
       <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Improve · ${solve.name}` : "Improve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
-      <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? splits[splits.length - 1].ticks * TICK_SECONDS : null, splits: splits.map(s => s.ticks * TICK_SECONDS) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}
+      <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}
         picked={picked} onPick={(goal, shift) => { if (complete) pick(goal, goal, shift); }}/>
       {solve.outlook != null && <OutlookCard outlook={solve.outlook as Outlook} pulls={solve.running ? (solve.pulls ?? []) as PullNow[] : []}/>}
     </div>

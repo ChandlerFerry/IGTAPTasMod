@@ -143,7 +143,7 @@ namespace IGTAP.EngineSim
             return string.Join("; ", parts);
         }
 
-        internal void StepClones() { Economy?.Step(_sim.World.FixedDeltaTime); }
+        internal void StepClones(float dt) { Economy?.Step(dt); }
 
         internal void EndOfFrame()
         {

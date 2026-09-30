@@ -350,7 +350,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!tried.Add(hash) || _lib.Knows(hash)) return null;
                 plays++;
                 Route r = TraceRun(inputs, $"{how}, {what}");
-                if (r.Progress == _goals && r.Last < _best.Last)
+                if (r.Progress == _goals && r.Live < _best.Live)
                 {
                     Log($"auto sync: {how}: {what} -> {Describe(r)}");
                     return r;
@@ -657,7 +657,7 @@ namespace IGTAP.EngineSim.Cli
                 if (sim.Progress != progress) pending |= LibPoint.Goal;
                 ground = m.onGround; wall = m.OnWall; dash = m.dashActive; progress = sim.Progress;
             });
-            var route = new Route { Inputs = inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, EndReason = rr.EndReason };
+            var route = new Route { Inputs = inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, GoalHeld = rr.GoalHeldFrames, EndReason = rr.EndReason };
             // A goal touched inside the tick before an input boundary is filed at that boundary with its goal count; the last goal's
             // touch also ends the run 12 ticks later, so its state is filed at its own tick when the boundary never came.
             if (route.Progress == _goals && !states.Any(s => s.Goal == _goals))
@@ -734,10 +734,10 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto stitch: library {_lib.Describe()}; "
                     + $"shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}"
                     + (exact ? " (exactly as predicted)" : " (NOT as predicted)") + $"; {_stitchExact} of {_stitchTried} stitches replayed exactly so far");
-                if (r.Progress == _goals && r.Last < _best.Last)
+                if (r.Progress == _goals && r.Live < _best.Live)
                 {
                     Commit(r, how);
-                    return _best == r || _best.Last <= r.Last;
+                    return _best == r || _best.Live <= r.Live;
                 }
                 // Where the replay left the prediction: the first goal it missed or reached at another tick.
                 long offset = 0;
@@ -1002,10 +1002,16 @@ namespace IGTAP.EngineSim.Cli
         {
             if (_lib == null) { Merge(where, best, prefixLength, limit, found); return; }
             // A resumed window hands back the finds it had: one already merged onto this best repairs the same way again (a course
-            // 4 find at goal 6 cost two 55 s repairs), so only new ones go on.
+            // 4 find at goal 6 cost two 55 s repairs), so only new ones go on. Keyed by the state and tick each arrives in at goal
+            // limit, not its inputs: a window re-found the same arrival with other inputs past it (FalseEnding-Any%'s goal 116 at
+            // 8723, repaired three times for 4,600 CPU s).
             if (_mergedOn != best) { _mergedOn = best; _merged.Clear(); }
             int given = found.Count;
-            found = found.Where(f => _merged.Add(SnapshotIndex.Hash(f, f.Count) ^ (ulong)prefixLength * 0x9E3779B97F4A7C15UL)).ToList();
+            found = Enumerable.Reverse(found).Take(5).Reverse().Where(f =>
+            {
+                Route at = Evaluate(best.Inputs.Take(prefixLength).Concat(f).ToList(), limit);
+                return at.Progress >= limit && _merged.Add(Mix(Mix(StateKey(_eval), (ulong)(uint)WorldDigest(_eval)), (ulong)at.GoalPhysics[limit - 1]) ^ (ulong)limit);
+            }).ToList();
             if (found.Count == 0)
             {
                 Log($"auto: {where}: its {given} finds were merged onto this best already");
@@ -1026,7 +1032,7 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = 1; i < inputs.Count; i++) if (inputs[i].reset && inputs[i - 1].reset) twice = true;
                 if (twice) continue;
                 Route c = TraceRun(inputs, where);
-                if (c.Progress == _goals && c.Last < _best.Last) { Commit(c, where); return; }
+                if (c.Progress == _goals && c.Live < _best.Live) { Commit(c, where); return; }
                 if (c.Progress >= limit && c.Progress < _goals) broken.Add(c);
                 if (c.Progress == _goals) broken.Add(c);
             }
@@ -1042,9 +1048,9 @@ namespace IGTAP.EngineSim.Cli
             foreach (Route c in broken.Where(c => c.Progress < _goals).OrderByDescending(c => c.Progress))
             {
                 Route fixedRun = WaitFix(c, best, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where, prefixLength);
-                if (fixedRun != null && fixedRun.Last < _best.Last) { Commit(fixedRun, where + ", waiting for the Cash"); return; }
+                if (fixedRun != null && fixedRun.Live < _best.Live) { Commit(fixedRun, where + ", waiting for the Cash"); return; }
             }
-            foreach (Route c in broken.Where(c => c.Progress < _goals || c.Last >= _best.Last).OrderByDescending(c => c.Progress).Take(3))
+            foreach (Route c in broken.Where(c => c.Progress < _goals || c.Live >= _best.Live).OrderByDescending(c => c.Progress).Take(3))
             {
                 Route synced = RouteSync(c, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where);
                 if (synced != null) { Commit(synced, where + ", route-synced"); return; }
@@ -1151,11 +1157,11 @@ namespace IGTAP.EngineSim.Cli
                     int changedEnd = inputs.Count;
                     inputs.AddRange(follow.Inputs.Skip((int)Math.Min(follow.GoalInput[limit - 1], follow.Inputs.Count)));
                     Route r = TraceRun(inputs, where + ", tail re-found");
-                    if (r.Progress == _goals && r.Last < _best.Last) return r;
+                    if (r.Progress == _goals && r.Live < _best.Live) return r;
                     if (r.Progress < _goals)
                     {
                         Route waited = WaitFix(r, follow, changedEnd, where + ", tail re-found", prefixLength);
-                        if (waited != null && waited.Last < _best.Last) return waited;
+                        if (waited != null && waited.Live < _best.Live) return waited;
                     }
                     if (next == null || r.Progress > next.Progress) { next = r; nextChanged = changedEnd; }
                 }

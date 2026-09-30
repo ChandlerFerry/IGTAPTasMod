@@ -38,8 +38,19 @@ namespace IGTAP.EngineSim.Cli
             public string How;
             public List<InputTick> Inputs;
             public int Progress;
-            public long[] GoalPhysics, GoalInput;
+            public long[] GoalPhysics, GoalInput, GoalHeld;
             public ulong Key;
+        }
+
+        /// <summary>
+        /// The live time won since <paramref name="before"/> was the best, in ticks (rounded; at least 1 when a live-faster best
+        /// replaced it: a dropped dash freeze is under a tick). The pull accounting's gain.
+        /// </summary>
+        long GainTicks(Route before)
+        {
+            if (ReferenceEquals(before, _best) || before.Progress == 0 || _best.Progress == 0) return 0;
+            long units = before.Live - _best.Live;
+            return units <= 0 ? 0 : Math.Max(1, (long)Math.Round(units / 28.0));
         }
 
         sealed class Arm
@@ -64,7 +75,22 @@ namespace IGTAP.EngineSim.Cli
             public string RefArrivalHow, RefSplitHow;
             public double Deficit, Expected;
             public long Gap => Math.Max(0, Split - Bound);
+            /// <summary>A Full-TAS lap or economy buy (FullTasGoal.IsEconomy): cash, not distance, sets its time.</summary>
+            public bool Economy;
+            /// <summary>An economy goal's laps the run's spare cash covers (EconomySlack), ticks.</summary>
+            public long Slack;
+            /// <summary>The next buy's goal (0: none after it) and that buy's spare Cash in ticks (CashBound): the most the goals up
+            /// to it can save between them, since a buy reached sooner waits for its Cash.</summary>
+            public int Target;
+            public long Spare = long.MaxValue;
+            /// <summary>The share of its gap and movement headroom a goal keeps under its target's spare Cash (1: all of it).</summary>
+            public double Share = 1;
+            /// <summary>What the model thinks the goal could lose: an economy goal's slack, else its gap to the bound, within the spare Cash.</summary>
+            public long Room => Economy ? Slack : (long)(Gap * Share);
             public long ArrivalLead => RefArrival >= 0 ? Math.Max(0, Arrival - RefArrival) : 0;
+            /// <summary>The previous goal's arrival lead: a lead carried in was made there, not here.</summary>
+            public long LeadIn;
+            public long NewLead => Math.Max(0, ArrivalLead - LeadIn);
             public long SplitLead => RefSplit >= 0 ? Math.Max(0, Split - RefSplit) : 0;
         }
 
@@ -73,6 +99,7 @@ namespace IGTAP.EngineSim.Cli
             public long Tick;
             public int Input, Progress;
             public float X, Y, CX, CY, Dist, Speed;
+            public double Cash;
             public string Caps;
         }
 
@@ -113,6 +140,20 @@ namespace IGTAP.EngineSim.Cli
 
         bool InFocus(int k) { return k >= _focusFrom && k <= _focusTo; }
 
+        /// <summary>--focus a-b (or a): the goals --auto and --reset-study work on; every goal without it. Whether it was given.</summary>
+        bool ReadFocus(string[] args)
+        {
+            string focus = Solve.Option(args, "--focus", (string)null);
+            _focusTo = _goals;
+            if (focus == null) return false;
+            string[] ends = focus.Split('-');
+            if (ends.Length > 2 || !int.TryParse(ends[0], out _focusFrom) || !int.TryParse(ends[ends.Length - 1], out _focusTo)
+                || _focusFrom < 1 || _focusTo < _focusFrom || _focusFrom > _goals)
+                throw new ArgumentException($"--focus {focus}: a goal range a-b (or one goal a) within 1-{_goals}");
+            _focusTo = Math.Min(_focusTo, _goals);
+            return true;
+        }
+
         static double CpuSeconds()
         {
             using Process p = Process.GetCurrentProcess();
@@ -145,7 +186,7 @@ namespace IGTAP.EngineSim.Cli
             var refs = new List<(string file, Route route)>();
             foreach (string file in Solve.Args(args, "--ref")) refs.Add((file, Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file))));
             foreach (var (file, r) in refs)
-                if (r.Progress == _goals && (_best.Progress < _goals || r.Last < _best.Last))
+                if (r.Progress == _goals && (_best.Progress < _goals || r.Live < _best.Live))
                 {
                     Log($"auto: --ref {Path.GetFileName(file)} ({Describe(r)}) beats the best ({Describe(_best)}): the loop starts from it");
                     _best = r;
@@ -164,21 +205,13 @@ namespace IGTAP.EngineSim.Cli
             _strayRetime = _strayAvoid = Part("stray");
             _tailMinutes = Solve.Option(args, "--tail-minutes", _windowMinutes);
             _combineRepairMinutes = Solve.Option(args, "--combine-repair-minutes", _tailMinutes / 3);
-            string focus = Solve.Option(args, "--focus", (string)null);
-            if (focus != null)
-            {
-                string[] ends = focus.Split('-');
-                if (ends.Length > 2 || !int.TryParse(ends[0], out _focusFrom) || !int.TryParse(ends[ends.Length - 1], out _focusTo)
-                    || _focusFrom < 1 || _focusTo < _focusFrom || _focusFrom > _goals)
-                    throw new ArgumentException($"--focus {focus}: a goal range a-b (or one goal a) within 1-{_goals}");
-                _focusTo = Math.Min(_focusTo, _goals);
-                // A focus is goals picked by number: the goals part, which renumbers them, stays off.
-                if (_parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");
-            }
-            else _focusTo = _goals;
+            // A focus is goals picked by number: the goals part, which renumbers them, stays off.
+            bool focused = ReadFocus(args);
+            if (focused && _parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _autoLog = Path.Combine(dir, "fulltas", _name + ".auto.jsonl");
             _refsFile = Path.Combine(dir, "fulltas", _name + ".auto-refs.json");
+            _memoryFile = Path.Combine(dir, "fulltas", _name + ".auto-memory.json");
             Directory.CreateDirectory(Path.GetDirectoryName(_autoLog));
             // The planner's field cell (plan's --field-cell default): the bounds and the plan lever share it.
             DistanceField.CellSize = 8f;
@@ -193,7 +226,7 @@ namespace IGTAP.EngineSim.Cli
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = Solve.Args(args, "--ref").ToArray(),
                 focus = new[] { _focusFrom, _focusTo } });
-            if (focus != null) Log($"auto: focus goals {_focusFrom}-{_focusTo}: the scheduler and every lever pull windows starting there; combine splices anywhere");
+            if (focused) Log($"auto: focus goals {_focusFrom}-{_focusTo}: the scheduler and every lever pull windows starting there; combine splices anywhere");
             Log($"auto: parts {(_parts.Count == 0 ? "none" : string.Join(",", AllParts.Where(Part)))}");
             if (Part("lib"))
             {
@@ -209,6 +242,7 @@ namespace IGTAP.EngineSim.Cli
             if (!_fresh) LoadRefs();
             foreach (var (file, r) in refs) Collect(r, "--ref " + Path.GetFileName(file));
             if (_lib != null && _lib.Runs > 1) TryStitch("the known routes at the start");
+            if (!_fresh) LoadMemory();
             // The speed probes (a minute and a half on FalseEnding's 300 goals) are kept per run and start state: a restart reads
             // them back and only adds the best's own path (docs/fulltas.md, "Auto").
             if (_fresh || !LoadSpeeds()) { MeasureSpeeds(); SaveSpeeds(); }
@@ -281,6 +315,18 @@ namespace IGTAP.EngineSim.Cli
                         continue;
                     }
                     if (probes.Count > 0) probes.Clear();
+                    // Then each quick restart between two buys of a box (a hop back in as the cash comes may do), once the scheduler
+                    // has no window left to hand out: its windows never pull the reset study. Studied first, they held FalseEnding-Any%'s
+                    // windows off for 8 minutes (goals 41-221, 30 s each, none kept) while the ending's windows were worth 79 ticks.
+                    // Not at a buy with no spare Cash: without the reset it is reached sooner only to wait for the Cash.
+                    int reset = _model.Where(r => InFocus(r.K) && r.K > 1 && _runGoals.Goals[r.K - 1].kind == FullTasGoal.Buy && _labels[r.K - 2] == _labels[r.K - 1]
+                        && r.Spare > 0 && NextReset(r.K) >= 0).Select(r => r.K).FirstOrDefault();
+                    if (reset > 0)
+                    {
+                        if (!_arms.TryGetValue(("dropreset", reset), out Arm arm)) _arms[("dropreset", reset)] = arm = new Arm { Lever = "dropreset", Goal = reset };
+                        RunSingle(arm, Budget(arm), double.NaN);
+                        continue;
+                    }
                 }
                 if (probes.Count > 0)
                     while (probes.Count > 0 && batch.Count < _parallel)
@@ -313,7 +359,7 @@ namespace IGTAP.EngineSim.Cli
             BuildModel();
             PrintModel("end");
             PrintArms();
-            Log($"auto: {(start.Last * _dt).ToString("0.00", CultureInfo.InvariantCulture)}s ({start.Progress} goals) -> {Describe(_best)} ({_goals} goals) in {(_clock.Elapsed - _autoWall0).TotalMinutes:0.0} min, {CpuSeconds() - _autoCpu0:0} CPU s, {_pullNo} pulls");
+            Log($"auto: {start.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({start.Progress} goals) -> {Describe(_best)} ({_goals} goals) in {(_clock.Elapsed - _autoWall0).TotalMinutes:0.0} min, {CpuSeconds() - _autoCpu0:0} CPU s, {_pullNo} pulls");
             Log("auto: time-to-gain (wall s, CPU s, ticks, time, lever@goal): " + string.Join("; ",
                 _curve.Select(c => $"{c.wall:0} s/{c.cpu:0} CPU s -> {c.ticks} ({c.ticks * _dt:0.00} s) {c.lever}@{c.goal}")));
             foreach (var g in _arms.Values.GroupBy(a => a.Lever).OrderByDescending(g => g.Sum(a => a.Gain)))
@@ -330,6 +376,7 @@ namespace IGTAP.EngineSim.Cli
             AutoWrite(new { type = "autoEnd", best = RouteJson(_best), pulls = _pullNo, cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                 curve = _curve.Select(c => new { wall = Math.Round(c.wall, 1), cpu = Math.Round(c.cpu, 1), ticks = c.ticks, lever = c.lever, goal = c.goal }) });
             SaveRefs();
+            SaveMemory();
         }
 
         const int CombineTries = 16, CombinePerRoute = 4, CombineRepairs = 4, CombineRepairGoals = 2;
@@ -381,7 +428,8 @@ namespace IGTAP.EngineSim.Cli
                 bool Low(int i) => (i == 0 || lead[i] <= lead[i - 1]) && (i == n || lead[i] < lead[i + 1]);
                 bool High(int j) => j > 0 && lead[j] > lead[j - 1] && (j == n || lead[j] >= lead[j + 1]);
                 List<int> lows = Enumerable.Range(0, n + 1).Where(Low).ToList(), highs = Enumerable.Range(1, n).Where(High).ToList();
-                cands.AddRange(lows.SelectMany(i => highs.Where(j => j > i && lead[j] - lead[i] >= 2).Select(j => (lead[j] - lead[i], i + 1, j, r)))
+                // Under --focus only the splices that reach into the focus's goals: one elsewhere repairs goals it keeps the search off.
+                cands.AddRange(lows.SelectMany(i => highs.Where(j => j > i && lead[j] - lead[i] >= 2 && j >= _focusFrom && i + 1 <= _focusTo).Select(j => (lead[j] - lead[i], i + 1, j, r)))
                     .OrderByDescending(c => c.Item1).Take(CombinePerRoute));
             }
             // The untried splices, largest gain first, with their input lists.
@@ -425,14 +473,14 @@ namespace IGTAP.EngineSim.Cli
                 {
                     repairs++;
                     // The splice-in state differs: the goals after it re-found from the best's state at goal a-1.
-                    var broken = new Route { Inputs = inputs, Progress = a - 1, GoalInput = best.GoalInput, GoalPhysics = best.GoalPhysics,
+                    var broken = new Route { Inputs = inputs, Progress = a - 1, GoalInput = best.GoalInput, GoalPhysics = best.GoalPhysics, GoalHeld = best.GoalHeld,
                         EndReason = $"the best's state at goal {a - 1} isn't the route's" };
                     c = TailWindows(broken, best, how + ", splice-in repaired", follow, CombineRepairGoals, _combineRepairMinutes, 2) ?? broken;
                 }
-                if (c.Progress == _goals && c.Last < _best.Last)
+                if (c.Progress == _goals && c.Live < _best.Live)
                 {
                     Commit(c, how);
-                    if (_best.Last < best.Last) return ($"{how}{(same ? "" : ", splice-in repaired")}: {Describe(_best)}", a);
+                    if (_best.Live < best.Live) return ($"{how}{(same ? "" : ", splice-in repaired")}: {Describe(_best)}", a);
                 }
             }
             string counts = $"{exact} with the same state at the splice-in, {repairs} repaired there, {skipped} over the repair budget";
@@ -445,14 +493,18 @@ namespace IGTAP.EngineSim.Cli
         {
             var inputs = r.Inputs.Take(rTo).Concat(best.Inputs.Skip(to)).ToList();
             long dt = r.GoalPhysics[b - 1] - best.GoalPhysics[b - 1], di = rTo - to;
+            bool held = r.GoalHeld != null && best.GoalHeld != null;
+            long dh = held ? r.GoalHeld[b - 1] - best.GoalHeld[b - 1] : 0;
             var gi = new long[_goals];
             var gp = new long[_goals];
+            var gh = held ? new long[_goals] : null;
             for (int k = 0; k < _goals; k++)
             {
                 gi[k] = k < b ? r.GoalInput[k] : best.GoalInput[k] + di;
                 gp[k] = k < b ? r.GoalPhysics[k] : best.GoalPhysics[k] + dt;
+                if (held) gh[k] = k < b ? r.GoalHeld[k] : best.GoalHeld[k] + dh;
             }
-            return new Route { Inputs = inputs, Progress = _goals, GoalInput = gi, GoalPhysics = gp };
+            return new Route { Inputs = inputs, Progress = _goals, GoalInput = gi, GoalPhysics = gp, GoalHeld = gh };
         }
 
         /// <summary>The full-state digest (StateKey mixed with WorldDigest: the player, the economy, the goals; not the clock) after
@@ -492,6 +544,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>At most this many known routes a revive pass tries, and how often one route is tried (each on a new best).</summary>
         const int RevivePerPass = 3, ReviveAttempts = 2;
         readonly Dictionary<ulong, int> _reviveTried = new Dictionary<ulong, int>();
+        /// <summary>Each known route revived on a best (its key mixed with the best's): a second attempt waits for a new best.</summary>
+        readonly HashSet<ulong> _revivedOn = new HashSet<ulong>();
         Route _revivedFor;
 
         /// <summary>One revive pass as a pull (bookkept only when it tried a route).</summary>
@@ -518,12 +572,13 @@ namespace IGTAP.EngineSim.Cli
         {
             Route best = _best;
             int tried = 0, first = 0;
-            foreach (AutoRef r in _refs.Where(r => r.Progress > 0 && r.Progress < _goals && best.GoalPhysics[r.Progress - 1] > r.GoalPhysics[r.Progress - 1])
+            foreach (AutoRef r in _refs.Where(r => r.Progress > 0 && r.Progress < _goals && best.GoalPhysics[r.Progress - 1] > r.GoalPhysics[r.Progress - 1]
+                    && r.Progress + 1 >= _focusFrom && r.Progress <= _focusTo)
                 .OrderByDescending(r => best.GoalPhysics[r.Progress - 1] - r.GoalPhysics[r.Progress - 1]).ToList())
             {
                 if (tried >= RevivePerPass || TimeUp) break;
                 int n = _reviveTried.TryGetValue(r.Key, out int was) ? was : 0;
-                if (n >= ReviveAttempts) continue;
+                if (n >= ReviveAttempts || !_revivedOn.Add(Mix(r.Key, BestKey()))) continue;
                 _reviveTried[r.Key] = n + 1;
                 tried++;
                 int p = r.Progress;
@@ -532,11 +587,11 @@ namespace IGTAP.EngineSim.Cli
                 string how = $"revive: {r.How} (goal {p}, {best.GoalPhysics[p - 1] - r.GoalPhysics[p - 1]} ticks ahead)";
                 Route broken = TraceRun(inputs, how), c = broken;
                 if (c.Progress < _goals) c = WaitFix(broken, best, changedEnd, how, changedStart) ?? broken;
-                if ((c.Progress < _goals || c.Last >= _best.Last) && broken.Progress < _goals && Part("tail")) c = TailWindows(broken, best, how) ?? c;
-                if (c.Progress == _goals && c.Last < _best.Last)
+                if ((c.Progress < _goals || c.Live >= _best.Live) && broken.Progress < _goals && Part("tail")) c = TailWindows(broken, best, how) ?? c;
+                if (c.Progress == _goals && c.Live < _best.Live)
                 {
                     Commit(c, how);
-                    if (_best.Last < best.Last) return ($"{how}: {Describe(_best)}", p);
+                    if (_best.Live < best.Live) return ($"{how}: {Describe(_best)}", p);
                 }
             }
             return tried == 0 ? ("revive: no known route ahead of the best is left to try", 0) : ($"revive: {tried} known routes ahead of the best, none rescued faster", first);
@@ -562,6 +617,9 @@ namespace IGTAP.EngineSim.Cli
         (int fast, float median) _chain0;
         List<InputTick> _chainStart;
         double _repairCpuPerTick, _repairMax, _autoCpu0;
+        /// <summary>A repair's least CPU budget (0: by its lead alone): a record lap's lead is small where its old way on stops, and
+        /// its gain comes later, in the clones' income.</summary>
+        double _repairFloorCpu;
         TimeSpan _autoWall0;
         readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
         readonly List<string> _order = new List<string>();
@@ -663,6 +721,8 @@ namespace IGTAP.EngineSim.Cli
             double search = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             Log($"auto: {jobs.Count} windows side by side on {per} threads each: {search:0} CPU s, {wall:0} s; "
                 + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})" : "nothing faster")}")));
+            // Each merge runs under its own pull's number; the batch's last number is put back after, so the next pull doesn't reuse one.
+            int lastPull = _pullNo;
             foreach (var j in jobs.OrderByDescending(j => j.k))
             {
                 _pullNo = j.pull;
@@ -695,15 +755,18 @@ namespace IGTAP.EngineSim.Cli
                 // (VMAN: an hour of the same windows at goals 5, 6, 16-19, the same repairs failing each round).
                 long seen = _leadSeen.TryGetValue((j.k, j.limit), out long was) ? was : 0;
                 if (lead > seen) _leadSeen[(j.k, j.limit)] = lead;
-                j.arm.Lead = Math.Max(0, lead - seen);
+                // And only what the goal's target buy can use: a lead past its spare Cash comes back as a wait for the Cash
+                // (FalseEnding-Any%'s goal 116 by 17 ticks, 41 by 27, none of them kept), so it doesn't keep a region in the rounds.
+                j.arm.Lead = Math.Min(Math.Max(0, lead - seen), _model[j.limit - 1].Spare);
                 Account(j.arm, j.pull, before, search / jobs.Count + CpuSeconds() - m0, wall + (_clock.Elapsed - mw).TotalSeconds, outcome, j.budget, j.score);
             }
+            _pullNo = Math.Max(_pullNo, lastPull);
         }
 
         /// <summary>A pull's bookkeeping: the arm's and the lever's CPU and gain, the log, the jsonl, and the model after a gain.</summary>
         void Account(Arm arm, int pull, Route before, double cpu, double wall, string outcome, double budget, double score)
         {
-            long gain = Math.Max(0, before.Last - _best.Last);
+            long gain = GainTicks(before);
             arm.Pulls++;
             arm.Cpu += cpu;
             arm.Gain += gain;
@@ -715,14 +778,14 @@ namespace IGTAP.EngineSim.Cli
             _order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
             Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
             AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
-                wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = Seconds(_best.Last), score });
+                wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score });
             if (gain > 0)
             {
                 _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, arm.Lever, arm.Goal));
                 var changed = Enumerable.Range(1, _goals).Where(k => Split(before.GoalPhysics, k) != Split(_best.GoalPhysics, k))
                     .Select(k => $"{k}:{Split(before.GoalPhysics, k)}->{Split(_best.GoalPhysics, k)}");
                 Log($"auto: record {Describe(before)} -> {Describe(_best)} at {(_clock.Elapsed - _autoWall0).TotalSeconds:0} s by {arm.Lever} at goal {arm.Goal} (-{gain} ticks); splits changed: {string.Join(" ", changed)}");
-                AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = Seconds(_best.Last), ticks = _best.Last,
+                AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = _best.LiveSeconds, ticks = _best.Last,
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                     splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray() });
             }
@@ -732,6 +795,7 @@ namespace IGTAP.EngineSim.Cli
                 if (_refsChanged) SaveRefs();
                 _refsChanged = false;
             }
+            SaveMemory();
             Outlook();
         }
 
@@ -921,7 +985,7 @@ namespace IGTAP.EngineSim.Cli
                 if (run.Progress >= k && run.GoalPhysics[k - 1] < best.GoalPhysics[k - 1])
                 {
                     Log($"auto graft: bridge from {r.How} at goal {k}: tick {run.GoalPhysics[k - 1]} against the best's {best.GoalPhysics[k - 1]}; re-finding goals {k + 1}-{_goals}");
-                    Repair($"the way to goal {k} of {r.How} (auto bridge)", best, new Route { Inputs = run.Inputs, Progress = k, GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, EndReason = run.EndReason });
+                    Repair($"the way to goal {k} of {r.How} (auto bridge)", best, new Route { Inputs = run.Inputs, Progress = k, GoalInput = run.GoalInput, GoalPhysics = run.GoalPhysics, GoalHeld = run.GoalHeld, EndReason = run.EndReason });
                     said.Add($"bridge from {r.How}");
                 }
             }
@@ -991,7 +1055,7 @@ namespace IGTAP.EngineSim.Cli
                     Simulation sim = _create();
                     sim.Goals.Limit = _goals;
                     RunResult rr = sim.Run(r.Inputs, null, null, 1000000);
-                    return new Route { Inputs = r.Inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, EndReason = rr.EndReason };
+                    return new Route { Inputs = r.Inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, GoalHeld = rr.GoalHeldFrames, EndReason = rr.EndReason };
                 });
             }
             catch (Exception ex) { failed = ex; }
@@ -1005,7 +1069,7 @@ namespace IGTAP.EngineSim.Cli
             if (!Better(fresh, _best))
             {
                 Log($"fresh check ({where}): a new simulation replays it as {Describe(fresh)}, {same}: no faster than the best {Describe(_best)}; not kept");
-                AutoWrite(new { type = "check", where, kept = false, time = fresh.Progress == _goals ? Seconds(fresh.Last) : (double?)null, progress = fresh.Progress });
+                AutoWrite(new { type = "check", where, kept = false, time = fresh.Progress == _goals ? fresh.LiveSeconds : (double?)null, progress = fresh.Progress });
                 return null;
             }
             // The chaining check is a diagnostic: every kept best logs how many goal touches it crosses at speed against the record
@@ -1017,7 +1081,7 @@ namespace IGTAP.EngineSim.Cli
                 chain = $"; chaining {fast} of {_goals} at speed (start {_chain0.fast})" + (fast != _chain0.fast ? $": {ChainingDiff(_chainStart, fresh.Inputs)}" : "");
             }
             Log($"fresh check ({where}): {Describe(fresh)} from a new simulation, {same}{chain}; per goal {Splits(fresh)}");
-            AutoWrite(new { type = "check", where, kept = true, time = Seconds(fresh.Last), progress = fresh.Progress });
+            AutoWrite(new { type = "check", where, kept = true, time = fresh.LiveSeconds, progress = fresh.Progress });
             Collect(fresh, where);
             return fresh;
         }
@@ -1042,7 +1106,7 @@ namespace IGTAP.EngineSim.Cli
             if (ctgBound != null) return ctgBound;
             if (_repairAt is (double cpu, long lead))
             {
-                double spent = CpuSeconds() - cpu, budget = _repairCpuPerTick * lead;
+                double spent = CpuSeconds() - cpu, budget = Math.Max(_repairCpuPerTick * lead, _repairFloorCpu);
                 if (spent >= budget) return $"its budget is spent ({spent:0} CPU s for a {lead}-tick lead, --repair-cpu-per-tick {_repairCpuPerTick})";
                 // The next window gets what's left of it, on every thread.
                 _repairMinutes = Math.Clamp((budget - spent) / (60.0 * _threads), 0.05, _repairMax);
@@ -1067,7 +1131,8 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> inputs = r.Inputs.Take((int)Math.Min(r.GoalInput[r.Progress - 1], r.Inputs.Count)).ToList();
             ulong key = SnapshotIndex.Hash(inputs, inputs.Count);
             if (!_refKeys.Add(key)) return;
-            _refs.Add(new AutoRef { How = how, Inputs = inputs, Progress = r.Progress, GoalPhysics = (long[])r.GoalPhysics.Clone(), GoalInput = (long[])r.GoalInput.Clone(), Key = key });
+            _refs.Add(new AutoRef { How = how, Inputs = inputs, Progress = r.Progress, GoalPhysics = (long[])r.GoalPhysics.Clone(), GoalInput = (long[])r.GoalInput.Clone(),
+                GoalHeld = (long[])r.GoalHeld?.Clone(), Key = key });
             _refsChanged = true;
             if (_refs.Count > MaxRefs) Prune();
         }
@@ -1107,12 +1172,15 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_refsFile), new JsonDocumentOptions { MaxDepth = 256 });
             if (!doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_labels)) return;
             int n = 0;
+            const string Earlier = " (earlier --auto)";
             foreach (JsonElement r in doc.RootElement.GetProperty("refs").EnumerateArray())
             {
                 List<InputTick> refInputs = r.GetProperty("inputs").EnumerateArray().Select(InputTick.FromJson).ToList();
-                Route route = _lib != null ? TraceRun(refInputs, r.GetProperty("how").GetString() + " (earlier --auto)") : Evaluate(refInputs);
+                // Once, however many sessions it has come through.
+                string how = r.GetProperty("how").GetString().Replace(Earlier, "") + Earlier;
+                Route route = _lib != null ? TraceRun(refInputs, how) : Evaluate(refInputs);
                 if (route.Progress == 0) continue;
-                Collect(route, r.GetProperty("how").GetString() + " (earlier --auto)");
+                Collect(route, how);
                 n++;
             }
             Log($"auto: {n} references from {Path.GetFileName(_refsFile)}");
@@ -1170,7 +1238,7 @@ namespace IGTAP.EngineSim.Cli
                 CapturePos c = _eval.PlayerAtCapture;
                 float d = field == null || p >= _goals ? float.NaN : field.Distance(c);
                 s.Add(new Sample { Tick = _eval.Engine.PhysicsTicks, Input = (int)_eval.Engine.RunTicks, Progress = p, X = w.x, Y = w.y, CX = c.x, CY = c.y,
-                    Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Caps = caps });
+                    Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Cash = _eval.Shop.CashNow, Caps = caps });
             });
             return s;
         }
@@ -1307,7 +1375,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 long arrival = _best.GoalPhysics[k - 1], start = k == 1 ? 0 : _best.GoalPhysics[k - 2];
                 List<Sample> seg = s.Where(x => x.Tick > start && x.Tick <= arrival).ToList();
-                var row = new GoalRow { K = k, Label = _labels[k - 1], Split = arrival - start, Arrival = arrival };
+                var row = new GoalRow { K = k, Label = _labels[k - 1], Split = arrival - start, Arrival = arrival, Economy = _course == null && FullTasGoal.IsEconomy(_labels[k - 1]) };
                 if (seg.Count == 0) { row.Bound = 1; rows.Add(row); continue; }
                 Sample end = seg[seg.Count - 1];
                 FullTasGoal goal = _runGoals.Goals[k - 1];
@@ -1361,28 +1429,118 @@ namespace IGTAP.EngineSim.Cli
                     }
                     i = j;
                 }
-                row.Deficit = stretches.Sum(x => x.saved);
+                // A lap winds and a buy waits for cash: neither is slow movement.
+                row.Deficit = row.Economy ? 0 : stretches.Sum(x => x.saved);
                 row.Worst = string.Join(", ", stretches.OrderByDescending(x => x.saved).Take(2).Select(x => x.what));
                 rows.Add(row);
             }
+            EconomySlack(rows, s);
+            CashBound(rows, s);
             _model = rows;
             _bounds = rows.Select(r => r.Bound).ToArray();
             Refresh();
         }
 
-        /// <summary>The known routes' per-goal records and every goal's expected headroom (after a reference is filed).</summary>
+        /// <summary>
+        /// The laps the best's spare cash covers. A lap (a course's start gate and its finish back to back, or a finish alone) earns
+        /// the course reward and the clones' income over its ticks; the run could drop it if every later tick still held that much
+        /// cash, so every later buy is still paid. Most ticks per cash earned first; each drop lowers the cash after it. A dropped
+        /// lap's slack is its ticks less the straight walk at top speed from where it starts to where it ends, filed on its finish.
+        /// </summary>
+        void EconomySlack(List<GoalRow> rows, List<Sample> s)
+        {
+            if (_course != null || s.Count == 0) return;
+            double[] cash = s.Select(x => x.Cash).ToArray();
+            int IndexAt(long tick) { int i = s.FindIndex(x => x.Tick >= tick); return i < 0 ? s.Count - 1 : i; }
+            var laps = new List<(int finish, int to, double earned, long slack)>();
+            for (int i = 0; i < rows.Count; i++)
+            {
+                string label = rows[i].Label;
+                int j = label.StartsWith("start:", StringComparison.Ordinal) && i + 1 < rows.Count && rows[i + 1].Label == "finish:" + label.Substring(6) ? i + 1 : i;
+                if (!rows[j].Economy || !rows[j].Label.StartsWith("finish:", StringComparison.Ordinal)) continue;
+                long t0 = i == 0 ? 0 : _best.GoalPhysics[i - 1], t1 = _best.GoalPhysics[j];
+                int a = IndexAt(t0), b = IndexAt(t1);
+                double earned = 0;
+                for (int m = a + 1; m <= b; m++) earned += Math.Max(0, cash[m] - cash[m - 1]);
+                float dx = s[b].X - s[a].X, dy = s[b].Y - s[a].Y;
+                long slack = t1 - t0 - (long)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy) / rows[j].VTop);
+                if (slack > 0) laps.Add((j, b, earned, slack));
+                i = j;
+            }
+            foreach (var lap in laps.OrderByDescending(l => l.slack / (l.earned + 1)))
+            {
+                double least = double.MaxValue;
+                for (int m = lap.to; m < cash.Length; m++) least = Math.Min(least, cash[m]);
+                if (least < lap.earned) continue;
+                for (int m = lap.to; m < cash.Length; m++) cash[m] -= lap.earned;
+                rows[lap.finish].Slack += lap.slack;
+            }
+        }
+
+        /// <summary>
+        /// Every buy's spare Cash: the ticks before the best buys it that it already held the price (the Cash it spends there), so
+        /// the most the goals since the buy before can save between them; a buy reached sooner than that waits for its Cash
+        /// (docs/fulltas.md, FalseEnding-Any%: a faster lap or walk comes back as a wait at the next target buy). A price reached
+        /// on a goal's own tick (a lap's finish, a reward) came from the player, not the clones: moving that goal sooner moves the
+        /// Cash too, so the stretch is not bound. The goals after the last buy (the ending) are movement only.
+        /// </summary>
+        void CashBound(List<GoalRow> rows, List<Sample> s)
+        {
+            if (_course != null || s.Count < 2) return;
+            int IndexAt(long tick) { int i = s.FindIndex(x => x.Tick >= tick); return i < 0 ? s.Count - 1 : i; }
+            long Spare(GoalRow buy)
+            {
+                // The purchase: the biggest Cash drop within two samples of the buy's tick.
+                int at = IndexAt(buy.Arrival), paid = -1;
+                double price = 0;
+                for (int i = Math.Max(1, at - 2); i <= Math.Min(s.Count - 1, at + 2); i++)
+                    if (s[i - 1].Cash - s[i].Cash > price) { price = s[i - 1].Cash - s[i].Cash; paid = i; }
+                if (paid < 0) return long.MaxValue;
+                int m = paid - 1;
+                while (m > 0 && s[m - 1].Cash >= price) m--;
+                if (m > 0 && rows.Any(r => r != buy && Math.Abs(r.Arrival - s[m].Tick) <= 2)) return long.MaxValue;
+                return s[paid - 1].Tick - s[m].Tick;
+            }
+            int from = 0;
+            for (int j = 0; j < rows.Count; j++)
+            {
+                if (_runGoals.Goals[j].kind != FullTasGoal.Buy) continue;
+                long spare = Spare(rows[j]);
+                for (int k = from; k <= j; k++) { rows[k].Target = j + 1; rows[k].Spare = spare; }
+                from = j + 1;
+            }
+        }
+
+        /// <summary>The known routes' per-goal records and every goal's expected headroom (after a reference is filed): its
+        /// movement headroom (proven, deficit, gap) held, with the other goals up to its target buy, to that buy's spare Cash.</summary>
         void Refresh()
         {
+            long leadIn = 0;
+            var move = new Dictionary<GoalRow, double>();
             foreach (GoalRow row in _model)
             {
                 int k = row.K;
-                var reach = _refs.Where(r => r.Progress >= k).ToList();
+                // A lead already followed (grafted or merged from, _grafted) and not kept is no longer proven.
+                var reach = _refs.Where(r => r.Progress >= k && !_grafted.Contains((r.How, k))).ToList();
                 AutoRef soonest = reach.OrderBy(r => r.GoalPhysics[k - 1]).FirstOrDefault(), shortest = reach.OrderBy(r => Split(r.GoalPhysics, k)).FirstOrDefault();
                 row.RefArrival = soonest?.GoalPhysics[k - 1] ?? -1;
                 row.RefArrivalHow = soonest?.How;
                 row.RefSplit = shortest == null ? -1 : Split(shortest.GoalPhysics, k);
                 row.RefSplitHow = shortest?.How;
-                row.Expected = ProvenWeight * Math.Max(row.ArrivalLead, row.SplitLead) + DeficitWeight * row.Deficit + GapWeight * row.Gap;
+                row.LeadIn = leadIn;
+                leadIn = row.ArrivalLead;
+                move[row] = ProvenWeight * Math.Max(row.NewLead, row.SplitLead) + DeficitWeight * row.Deficit + (row.Economy ? 0 : GapWeight * row.Gap);
+                row.Expected = move[row] + DeficitWeight * row.Slack;
+            }
+            foreach (var stretch in _model.Where(r => r.Spare < long.MaxValue).GroupBy(r => r.Target))
+            {
+                double gaps = stretch.Where(r => !r.Economy).Sum(r => (double)r.Gap), moves = stretch.Sum(r => move[r]);
+                long spare = stretch.First().Spare;
+                foreach (GoalRow row in stretch)
+                {
+                    row.Share = gaps > spare ? spare / gaps : 1;
+                    if (moves > spare) row.Expected -= move[row] * (1 - spare / moves);
+                }
             }
         }
 
@@ -1394,12 +1552,12 @@ namespace IGTAP.EngineSim.Cli
             foreach (GoalRow r in _model)
                 b.AppendLine($" {r.K,4} {r.Label,-40} {r.Split,5} {r.Bound,6} {r.Gap,5} {r.Distance,6:0} {r.VTop,7:0.0} {r.Deficit,8:0} {(r.RefSplit < 0 ? "-" : r.RefSplit.ToString(CultureInfo.InvariantCulture)),6} {r.Expected,7:0.0}  {r.Worst}");
             long bound = _model.Sum(r => r.Bound);
-            b.Append($" total {_best.Last} ticks ({Describe(_best)}); lower bound {bound} ticks ({bound * _dt:0.00} s), deficit {_model.Sum(r => r.Deficit):0} ticks, "
+            b.Append($" total {_best.Last} ticks ({Describe(_best)}); lower bound {bound} ticks ({bound * _dt:0.00} s), deficit {_model.Sum(r => r.Deficit):0} ticks, laps the spare cash covers {_model.Sum(r => r.Slack)} ticks, buys with no spare Cash {_model.Where(r => r.Spare == 0).Select(r => r.Target).Distinct().Count()}, "
                 + $"most expected: {string.Join(", ", _model.OrderByDescending(r => r.Expected).Take(6).Select(r => $"{r.K} ({r.Expected:0})"))}");
             Log(b.ToString());
-            AutoWrite(new { type = "model", when, best = Seconds(_best.Last), bound = _model.Sum(r => r.Bound),
+            AutoWrite(new { type = "model", when, best = _best.LiveSeconds, bound = _model.Sum(r => r.Bound),
                 goals = _model.Select(r => new { goal = r.K, label = r.Label, split = r.Split, bound = r.Bound, gap = r.Gap, distance = Math.Round(r.Distance), vtop = Math.Round(r.VTop, 1),
-                    caps = r.Caps, deficit = Math.Round(r.Deficit, 1), refSplit = r.RefSplit, refArrival = r.RefArrival, expected = Math.Round(r.Expected, 1), slow = r.Worst }) });
+                    caps = r.Caps, deficit = Math.Round(r.Deficit, 1), economy = r.Economy, slack = r.Slack, target = r.Target, spare = r.Spare == long.MaxValue ? (long?)null : r.Spare, refSplit = r.RefSplit, refArrival = r.RefArrival, expected = Math.Round(r.Expected, 1), slow = r.Worst }) });
         }
 
         void PrintArms()

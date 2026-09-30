@@ -214,7 +214,7 @@ namespace IGTAPTasMod
         {
             var splits = new List<FullTasSplit>();
             for (int i = 0; i < tracker.Next && i < tracker.Goals.Length; i++)
-                splits.Add(new FullTasSplit { label = tracker.Goals[i].label, ticks = tracker.PhysicsTicks[i] });
+                splits.Add(new FullTasSplit { label = tracker.Goals[i].label, ticks = tracker.PhysicsTicks[i], held = tracker.HeldFrames[i] });
             return splits;
         }
 
@@ -235,7 +235,7 @@ namespace IGTAPTasMod
             Vector2 origin = CurrentOrigin();
             float x0 = g.x - g.w / 2f + origin.x, y0 = g.y - g.h / 2f + origin.y;
             if (!g.EnteredFrom(x0, x0 + g.w, y0, y0 + g.h, previous.xMin, previous.xMax, previous.yMin, previous.yMax)) return;
-            FullTasEvent(_fullTas.Touched(_engine.RunTicks, _engine.PhysicsTicks));
+            FullTasEvent(_fullTas.Touched(_engine.RunTicks, _engine.PhysicsTicks, _engine.HeldFrames));
         }
 
         static Rect PlayerBounds(Movement player)
@@ -255,7 +255,7 @@ namespace IGTAPTasMod
             if (_fullTas == null || !_engine.IsRunning) return;
             string path = HierarchyPath(box.transform);
             _fullTasUnlocks.Bought(FullTasGoal.Boxes.FirstOrDefault(b => b.path == path).token);
-            FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks));
+            FullTasEvent(_fullTas.Bought(path, FullTasBoxId(box), _engine.RunTicks, _engine.PhysicsTicks, _engine.HeldFrames));
         }
 
         static string FullTasBoxId(upgradeBox box)
@@ -454,7 +454,7 @@ namespace IGTAPTasMod
                 }
                 else verdict.reason = _solverLog[_solverLog.Count - 1];
             }
-            string line = "Full-TAS " + run.name + ": " + (finished ? time.ToString("0.00", CultureInfo.InvariantCulture) + "s in turbo" : "no finish in turbo")
+            string line = "Full-TAS " + run.name + ": " + (finished ? time.ToString("0.00", CultureInfo.InvariantCulture) + "s live in turbo (" + runTicks + " frames)" : "no finish in turbo")
                 + ", " + verdict.reason;
             SetFullTasResult(line, new { kind = "judge", text = line, run = run.name, error = !finished, finished, time = finished ? time : (float?)null, saved = verdict.saved,
                 reason = verdict.reason, reached = tracker.Next, of = tracker.Goals.Length, next = tracker.Current?.label, splits = verdict.splits });

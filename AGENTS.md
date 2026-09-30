@@ -5,7 +5,7 @@ a route that breaks any of them doesn't count, however fast it is.
 
 Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`WJ_DS_DJ`), the `VMAN` Full-TAS run (a
 Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)), and the
-`FalseEnding-Any%` Full-TAS run (and its copy `FalseEnding2-Any%`, where the economy work was tried first; notes and
+`FalseEnding-Any%` Full-TAS run (notes and
 open ideas in [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28); unattended improvement:
 `fulltas --auto`, [`docs/fulltas.md`](docs/fulltas.md#auto)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
@@ -24,7 +24,10 @@ open ideas in [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseendin
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
   start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
-- Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)).
+- Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
+  is live time, physics ticks plus dash freezes and pauses (README `### Rules` 31), and its splits carry both the
+  ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
+  next trace (`RememberBestSplits`).
 - All are saved only by `SaveSolverRoute`, which replays them from their start: a category or farm route from the
   course start, a Full-TAS route from a fresh new game. Every judged candidate is checked for both: a new record and
   fewer physics ticks than the farm route.

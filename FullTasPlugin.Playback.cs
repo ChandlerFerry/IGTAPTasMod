@@ -37,6 +37,7 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             play.started = true;
             UnityEngine.Random.InitState(FullTasSeed);
+            SetGameRewardTimers(false);
             _brakeTicks = -1;
             play.tracker.Reset();
             GuardSavestateRestarts(play.run, play.tracker, movement);
@@ -76,21 +77,51 @@ namespace IGTAPTasMod
             FullTasPlay play = _fullTasPlay;
             _fullTasPlay = null;
             _fullTas = null;
+            SetGameRewardTimers(true);
             FullTasTracker tracker = play.tracker;
             bool finished = success && reason == MacroEngine.FullTasFinishReason;
-            float time = finished ? _engine.AuthoritativeCompletionTime : _engine.PhysicsTicks * Time.fixedDeltaTime;
+            float time = finished ? _engine.AuthoritativeCompletionTime : MacroEngine.LiveSeconds(_engine.PhysicsTicks, _engine.HeldFrames);
             List<FullTasSplit> splits = FullTasSplits(tracker);
-            string splitText = string.Join(" + ", splits.Select(s => s.label + " " + (s.ticks * Time.fixedDeltaTime).ToString("0.00", CultureInfo.InvariantCulture)));
+            string splitText = string.Join(" + ", splits.Select(s => s.label + " " + s.Live.ToString("0.00", CultureInfo.InvariantCulture)));
             FullTasGoal next = tracker.Current;
-            string line = "Full-TAS " + play.run.name + (finished ? " finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s"
+            string line = "Full-TAS " + play.run.name + (finished ? " finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s live (" + _engine.PhysicsTicks + " frames)"
                 : " stopped after " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : " (next " + next.label + ")") + ": " + reason)
                 + DroppedFramesText() + (splitText.Length > 0 ? " [" + splitText + "]" : "");
             SetFullTasResult(line, new { kind = "play", text = line, run = play.run.name, error = !finished && tracker.Next < play.expected, finished, time,
                 reached = tracker.Next, of = tracker.Goals.Length, expected = play.expected, next = next?.label, reason = finished ? null : reason,
                 droppedFrames = _droppedFrames, splits });
+            // 1x is the judge and plays a route the same every time: a saved route that dies or runs out of inputs short of its
+            // goals (not a stop, not a dropped frame) is no longer a time, whatever turbo judged it.
+            bool broken = !finished && _droppedFrames == 0 && (reason.StartsWith("Player death", StringComparison.Ordinal) || reason == "Timeline complete");
+            if (broken && play.expected == tracker.Goals.Length && MatchCategoryRoute(play.route.name).Success && _library.macros.Contains(play.route))
+            {
+                FullTasLog("Retired " + play.route.name + ": its 1x play " + reason.ToLowerInvariant() + " after " + tracker.Next + " of " + tracker.Goals.Length + " goals");
+                play.route.name += " stale";
+                SaveLibrary();
+            }
             if (finished && FullTasBestRoute(play.run.name) == play.route && !_fullTasSplits.ContainsKey(play.route.id)
                 && Mathf.Abs(CategoryBest(FullTasCategory(play.run.name)) - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);
+        }
+
+        /// <summary>MacroEngine.RefreshRewards in a Full-TAS run (1x and turbo): each active course with local upgrades updates its
+        /// reward, the set enginesim's Economy.RefreshReward updates.</summary>
+        void RefreshFullTasRewards()
+        {
+            if (_fullTas == null) return;
+            foreach (courseScript c in FindObjectsByType<courseScript>(FindObjectsSortMode.None))
+                if (c.gameObject.activeInHierarchy && c.localUpgradesScript != null) c.UpdateReward();
+        }
+
+        /// <summary>The game's own 5 s UpdateReward timers (courseScript.Start, a random phase): off while a Full-TAS run plays at 1x,
+        /// which refreshes rewards on MacroEngine's fixed phase instead, and back on after it.</summary>
+        static void SetGameRewardTimers(bool on)
+        {
+            foreach (courseScript c in FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                c.CancelInvoke("UpdateReward");
+                if (on) c.InvokeRepeating("UpdateReward", MacroEngine.RewardRefreshTicks * Time.fixedDeltaTime, MacroEngine.RewardRefreshTicks * Time.fixedDeltaTime);
+            }
         }
 
         void DropPendingFullTasPlayback(string reason)
