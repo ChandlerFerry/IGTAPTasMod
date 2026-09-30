@@ -1108,8 +1108,47 @@ baseline). The default is set by the measurements below, and has every part exce
    Acceptance, `--auto --parts idle --minutes 15 --threads 6` from 358.69 s: 0 of 20 waits moved (81 CPU s), 31 window pulls
    (4,660 CPU s), no gain. Shorter runs from the same start found `buy:buydj` sooner with a window at goal 274 (the climb
    after the Course 2 laps, item 4 of issue #22): 605 -> 595 ticks, 358.54 s, in 5 minutes (`--parts idle`); 605 -> 587,
-   358.33 s, in 12 (`--parts lib,tail,stray,idle`; `offline-best\fulltas-FE-IDLE-358.33.json`, not judged). The 15-minute
-   run's goal 274 window was 27 ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
+   358.33 s, in 12 (`--parts lib,tail,stray,idle`; judged, the record then). The 15-minute run's goal 274 window was 27
+   ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
+
+   **The RNG under the box** (`enginesim\Cli\FullTasAutoIdleRng.cs`). A wait for Cash is time the player can spend on the
+   RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s: 6,026 draws): the clones' spawn
+   rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds (`Hooks.PlaySfx`/`PlayAudio`: a
+   jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a wall slide 2, a quick restart 1),
+   a buy 3. Walking draws nothing (the run animation's footstep is presentation, README exception 11). The RNG's state after
+   n draws is the same whenever they come, so a hop only makes another class where a clone roll falls between its jump and
+   landing and the next hop; and a hop under a box bonks its underside, about 20 ticks up and down whatever the hold. A pass
+   (at the start and after each new best), in order:
+   - **Re-timing** (`Retune`): from a goal on, each goal with a quick restart since the goal before (a buy, a lap's start)
+     gets the idle ticks before that restart cut or added (up to 60) to the count whose touch of the goal before the next
+     such goal comes soonest; one whose goals are lost either way takes the one before back and checks through them (up to
+     3). A restart's input moves only with the cuts before it (the base run's restarts, moved), a touch comes as the Cash
+     does. One idle tick stays between two restarts (the gate refuses restarts on ticks in a row). Every goal with a restart
+     is a start (on every thread); the fastest is kept. The same re-timing plays every ticket below.
+   - **Filler**: where a stretch has more than one restart, everything before the last one (dashes away, restarts, hops that
+     only burn ticks) becomes as many idle ticks, re-timed from there.
+   - **Walk-in**, every buy: from the touch of the goal before, the stick toward the trigger until 12 idle ticks leave the
+     player at rest under it (at most 150 ticks), the fewest idle ticks whose straight jump touches, then the run's inputs from
+     its old touch.
+   - **Tickets**: the idle ticks under the box (a walk-in's, a moved wait's at the fewest that touch, a wait already standing
+     there) get every single hop and 300 random sets of hops 20+ apart; those that leave the player on the ground within reach
+     of the trigger are sorted by the RNG's state there, and each class (up to 40, the plain wait first) is played whole,
+     re-timed. A class counts only when it buys the box by the plain wait's tick (the jump in comes as the Cash does).
+
+   Measured on `FalseEnding-Any%` (private copies, `--auto --parts idle --minutes 20 --threads 6`, window pulls between
+   passes): 357.35 -> 355.92 s (re-timing after goal 52, 126, 225 and 248's moves: 357.35 -> 356.15, goal 126's alone
+   -0.76 s; windows at 176/177/270/272/273/276 the rest; judged), 355.92 -> 355.70 (re-timing from goal 95 -0.06), and from
+   355.67 (278 goals) -> 355.43 s: goal 249's two restarts and dashes became a 20-tick walk-in and 71 ticks under the box with
+   one hop (-0.10), goal 248's filler before its last restart idle (-0.06), re-timing from goal 95 (-0.02), windows at 176
+   and 268 (judged, the record). Tickets: 1 RNG class at 11 of 14 standing waits (13-23 ticks: no room for a hop and a roll
+   between), 2-5 at goals 174, 231 and 249; a hop class beat the plain wait once (goal 249). A pass is 60-150 CPU s on an
+   idle machine (re-timing 50, filler 16, walk-ins and tickets the rest), 400 on a loaded one.
+
+   Open: `buy:buyds` (goal 174): the walk-in stands under the box after 135 ticks and buys at tick 10429 against the route's
+   10394 (its run and jump carry the fall's speed), 357.19 s whole; the old jump into the box's underside costs nothing (the
+   Cash is there at 10394). `buy:buystatue` (goal 262, 411 idle ticks, 27 clone rolls) and `buy:buydj` (goal 268, the
+   shaft): no walk-in (1,500 units off; a climb), so their waits get no tickets. A clean approach there needs a window to a
+   stand under the box, not a walk.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 
