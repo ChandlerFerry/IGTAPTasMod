@@ -1221,6 +1221,17 @@ baseline). The default is set by the measurements below, and has every part exce
    there 9 ticks before the touch). The filler after the Course 3 buy near tick 12340 on 355.92 (a dash right, restart,
    jump and dash, restart, idle, restart) is gone on 354.72: buy, restart, a dash to the Course 3 gate, restart, lap.
 
+   **Build 25630570** (2026-09-30): the numbers above are the old build's. An on-screen course with clones now rolls on every
+   rendered frame (`clonesScript.SpawnClone` takes the interval off its timer instead of zeroing it, and Start's 10,000 never
+   runs down: 2 draws a frame, more on a success, 12 a physics tick on the studio's clock, against about 0.3), and a roll on
+   a frame with no free slot is drawn and thrown away. So every extra draw moves which rolls fall on the frames that spawn,
+   from then on, not only a roll between a hop's jump and landing: nearly every hop schedule is its own RNG class. The
+   tickets now take their 40 classes in turns from the single hops (spread over the wait) and the random sets, not the
+   singles first. A hop that buys the box doesn't count (the jump in buys it), and a buy-max box's levels, which come in one
+   a physics tick while the player is in the trigger, are the jump in's as far as it reaches them (the run goes on from the
+   last one's old touch, re-timed from the goal after). Waits under a box shorter than a hop (about 20 ticks) still have
+   one class. Not measured on the new build yet.
+
 8. **Waste audit** (`waste`; `enginesim\Cli\FullTasAutoWaste.cs`; `fulltas <trace> --waste-audit <route.json> [--expect a-b,..]
    [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; a model of another route, the goals
    part's `ModelOf`, audits that route, and the best is audited again when next asked for) the best is replayed tick by
