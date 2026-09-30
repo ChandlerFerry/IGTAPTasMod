@@ -74,7 +74,6 @@ namespace IGTAPTasMod
         static readonly MethodInfo OriginLateUpdate = AccessTools.Method(typeof(FloatingOrigin), "LateUpdate");
         static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
-        static readonly List<(upgradeBox box, IEnumerator routine)> BuyMax = new List<(upgradeBox, IEnumerator)>();
         static readonly List<Routine> Routines = new List<Routine>();
         static readonly AccessTools.FieldRef<WaitForSeconds, float> WaitSeconds = AccessTools.FieldRefAccess<WaitForSeconds, float>("m_Seconds");
         static readonly Func<object, object> CloneObject = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
@@ -178,7 +177,8 @@ namespace IGTAPTasMod
                 if (routine.MoveNext()) _rebase = routine;
                 return false;
             }
-            if (__instance is PlatformMover)
+            // IE_BuyMax yields WaitForFixedUpdate (build 25630570): one level per physics step, from the touch's step on.
+            if (__instance is PlatformMover || __instance is upgradeBox && routine.GetType().Name.Contains("IE_BuyMax"))
             {
                 // A zip mover's coroutines are gameplay (MakeIntangible's 0.15 s off the Ground layer, PlayerExit's contact
                 // clear, the move itself once unlocked): they step on the run's ticks, as enginesim's Scheduler does.
@@ -186,10 +186,7 @@ namespace IGTAPTasMod
                 if (routine.MoveNext()) Park(new Routine { target = __instance, body = routine }, routine.Current);
                 return false;
             }
-            if (!(__instance is upgradeBox box) || !routine.GetType().Name.Contains("IE_BuyMax")) return true;
-            __result = null;
-            if (routine.MoveNext()) BuyMax.Add((box, routine));
-            return false;
+            return true;
         }
 
         /// <summary>Where a parked coroutine resumes in a tick (Unity's player loop at playback's frame rate).</summary>
@@ -238,7 +235,8 @@ namespace IGTAPTasMod
                 {
                     if (r.wait != wait || wait == Wait.Seconds && r.due > _tick) continue;
                     Routines.Remove(r);
-                    if (r.target == null) continue;
+                    // Unity stops a buy-max box's coroutine when its GameObject goes off (Shop.FixedStep's check).
+                    if (r.target == null || r.target is upgradeBox && !r.target.gameObject.activeInHierarchy) continue;
                     if (r.body.MoveNext()) Park(r, r.body.Current);
                 }
             }
@@ -328,15 +326,6 @@ namespace IGTAPTasMod
             }
             foreach (backgroundScroller scroller in UnityEngine.Object.FindObjectsByType<backgroundScroller>(FindObjectsSortMode.None)) scroller.Translate(offset);
             origin.currentOrigin -= offset;
-        }
-
-        static void EndOfFrame()
-        {
-            for (int i = 0; i < BuyMax.Count; i++)
-            {
-                var (box, routine) = BuyMax[i];
-                if (box == null || !box.gameObject.activeInHierarchy || !routine.MoveNext()) BuyMax.RemoveAt(i--);
-            }
         }
 
         internal sealed class Snapshot
@@ -902,7 +891,6 @@ namespace IGTAPTasMod
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
             Pending.Clear();
-            BuyMax.Clear();
             if (resume != null) Pending.AddRange(resume.pending);
             if (resume != null) RestoreRoutines(resume.routines);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
@@ -994,8 +982,6 @@ namespace IGTAPTasMod
                             float frameDt = repeat == repeats ? frames.Step(k) : 0f;
                             foreach (clonesScript c in clones)
                                 if (c != null && c.isActiveAndEnabled) StepClones(c, frameDt);
-                            // Each rendered frame ends with WaitForEndOfFrame: IE_BuyMax buys one level per frame (Simulation.InterpolatedFrames).
-                            EndOfFrame();
                         }
                     }
                     Place(player, _stepTo);
@@ -1018,8 +1004,7 @@ namespace IGTAPTasMod
                     else CallInvoked(target, method);
                 }
                 Pending.Clear();
-                BuyMax.Clear();
-                foreach (Routine r in Routines)
+                    foreach (Routine r in Routines)
                 {
                     if (r.target == null) continue;
                     object wait = r.wait == Wait.Seconds ? new WaitForSeconds(Mathf.Max(0, r.due - _tick) * Time.fixedDeltaTime) : r.yielded;

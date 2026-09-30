@@ -937,9 +937,6 @@ namespace IGTAP.EngineSim
                     }
                     Shop.StepClones(repeat == repeats ? Frames.Step(k) : 0f);
                     OnFrame?.Invoke(Frames.Alphas[k], repeat > 0);
-                    // Each rendered frame ends with WaitForEndOfFrame: a buy-max box's IE_BuyMax buys one level per frame (every frame
-                    // of the tick's grid, freeze and pause repeats included), after that frame's Update and clone step.
-                    Shop.EndOfFrame();
                 }
             }
             Player.transform.StoreWorldPosition(_stepTo);
@@ -1311,6 +1308,9 @@ namespace IGTAP.EngineSim
                     _stepFrom = BodyPosition();
                 }
                 _stepTo = BodyPosition();
+                // A buy-max box's IE_BuyMax yields WaitForFixedUpdate (build 25630570; WaitForEndOfFrame before): one level per
+                // physics step, the touch's step included (its coroutine starts in the step's trigger callback).
+                Shop.FixedStep();
                 Scheduler.Resume(Scheduler.Wait.FixedUpdate);
                 int rebasesBeforeResume = _rebases.Length;
                 ResumeRebase();

@@ -213,6 +213,7 @@ namespace IGTAP.EngineSim.Cli
                         held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
                         cash = _eval.Shop.CashNow,
                         rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
+                        clones = _eval.Shop.Economy?.CloneStates(),
                         random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
                 });
                 Console.WriteLine($"ticks -> {_args[ticksOut + 1]}");
