@@ -600,6 +600,49 @@ goal 15. The search finds it as a move instead: `OfflineSolver`'s omni kind `bou
 straight down onto the floor, each jumped out of), and with the omnidirectional dash the cell key keeps momentum at 250,
 1000 and 2500 apart (it lumped everything past 750 together).
 
+### Route-corpus grafts
+
+`TechGrafts.Load` adds the saved routes' windows to the tech demos' (`enginesim\Runtime\RouteGrafts.cs`, one hook where
+it returns; `routegrafts <traces dir>` lists them). Every `routes.json` route named `<target>_<CAT>[ farm] <time>`
+replays from its start trace (`start-c<target>-<caps>.json`, else a `route-c<target>-<caps>-*.json`, loaded canonical as a
+solve does); one that doesn't reach its finish offline gives nothing. Each contact (`ContactLog`, the solver's own
+detection) gives the window −10..+30 around it (`TechGrafts.Cut`'s: travel without a button dropped), scored by its net
+displacement per physics tick from the contact to the window's end. A window's start key is what the run brings: the
+unlocks the window spends, the contact kind, the facing, |vx| in 200 u/s bands and rising/level/falling, the dashes and
+air jumps left. Identical windows merge (the faster kept); per key those at or above the key's median stay, the fastest
+3, a sided one with its mirror. A window needs what it spends (its dashes and air jumps, a wall jump: a press on a wall,
+the omnidash: a dash or freeze turn with a vertical, block swap with a dash), never more than its route's category, plus
+the category's refill orbs and zip movers. Its tech is `route <target>_<CAT>`: one pick weight per route family, as a
+lab demo has, so a new best found by one says `via tech graft route 4_WJ_DS_DJ`. The planner leaves them out (it takes
+every window at a contact as an edge). `--no-route-grafts` drops them. Cached in `route-grafts.cache.json` beside the
+tech cache (`--tech-cache`'s folder), keyed by the routes' inputs, their trace and world files and the engine build.
+
+Measured 2026-09-30: 63 of the 65 saved routes replay to their finish (Course 15's two have no start trace); 1,410
+patterns (mirrors included) from 50 of them (13 repeat another's windows: farm routes with their record's inputs, `1_WJ` with `1_NONE`'s), mined in 14 s. Offered per
+category: `NONE` 106, `WJ` 116, `WJ_DS` 307, `WJ_DS_DJ` 520, `WJ_DS_DJ_BS` 680, `WJ_DS2_BS_ZIP_OM` 490,
+`WJ_DS_DJ_BS_ORB_ZIP_OM` 1,380 (wall contacts about half, then touches, ground, air jumps and dash jumps, the gate), against
+the lab demos' 354. By kind: `WallAhead*` 300, `DoubleJump` 102, `WallAbove*` 194, `Landed` 86, `DashJump` 80, `Spike*`
+143, `SteppedUp*` 132, `LeftGround` 64, `WallBoost*` 98, `TouchedWall`/`LeftWall` 88, `NearGate*` 50, `WallBehind*` 38,
+`CornerHyper` 10, springs 21, slopes and overhangs 4.
+
+A/B, plain `solve` (the course search that grafts; `solve --auto`'s Full-TAS windows don't graft yet), arms at once, same
+threads and minutes, `--no-route-grafts` against the corpus:
+
+| Target, start | Threads × min | Without | With |
+|---|---|---|---|
+| Course 5 `WJ_DS_DJ`, seed 12.14 | 2 × 15 | **12.00** (splice, explore) | 12.14 |
+| Course 5 `WJ_DS_DJ`, seed 12.14, `--rng 1` | 1 × 15 | 12.14 | 12.14 (one tech for the whole corpus: 12.14) |
+| Bonus 1 `WJ`, seed 6.90 | 2 × 15 | 6.90 | 6.90 |
+| Course 4 `WJ_DS`, no route | 2 × 15 | no finish | no finish |
+| Course 4 `WJ_DS_DJ`, first finish (its seed, judged 13.24, doesn't finish offline) | 1 × 15 | 14.82 (15.5 at 592 s) | **14.62** (15.5 at 446 s; one tech: 14.76) |
+| Course 4 `WJ_DS_DJ`, first finish, `--rng 2` | 1 × 15 | 14.62 (15.5 at 462 s) | **14.14** (15.5 at 163 s); without Course 4's own routes **14.24** (15.5 at 119 s) |
+
+The corpus helps a search that is still finding the course (Course 4's first finish, also with Course 4's own routes held
+out: the other courses' movement transfers), and not the polish of a seeded near-record route: there it takes graft
+picks from the lab windows and the runs finish less often (Course 5: 6,895 finishes against 9,767, 3,931 against 7,055).
+One best in all runs names a route graft (`4_WJ_DS_DJ` at 26.14 s, early); the rest reach their gains through cells the
+grafted runs opened, credited to splice and optimize. Single runs each: noisy.
+
 ### Reset study and lookahead
 
 A quick restart throws the player's momentum away. `--reset-study` (`FullTasResets.cs`) takes each reset in the best (only those in the `--focus` goals, when given), in
@@ -1108,8 +1151,47 @@ baseline). The default is set by the measurements below, and has every part exce
    Acceptance, `--auto --parts idle --minutes 15 --threads 6` from 358.69 s: 0 of 20 waits moved (81 CPU s), 31 window pulls
    (4,660 CPU s), no gain. Shorter runs from the same start found `buy:buydj` sooner with a window at goal 274 (the climb
    after the Course 2 laps, item 4 of issue #22): 605 -> 595 ticks, 358.54 s, in 5 minutes (`--parts idle`); 605 -> 587,
-   358.33 s, in 12 (`--parts lib,tail,stray,idle`; `offline-best\fulltas-FE-IDLE-358.33.json`, not judged). The 15-minute
-   run's goal 274 window was 27 ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
+   358.33 s, in 12 (`--parts lib,tail,stray,idle`; judged, the record then). The 15-minute run's goal 274 window was 27
+   ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
+
+   **The RNG under the box** (`enginesim\Cli\FullTasAutoIdleRng.cs`). A wait for Cash is time the player can spend on the
+   RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s: 6,026 draws): the clones' spawn
+   rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds (`Hooks.PlaySfx`/`PlayAudio`: a
+   jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a wall slide 2, a quick restart 1),
+   a buy 3. Walking draws nothing (the run animation's footstep is presentation, README exception 11). The RNG's state after
+   n draws is the same whenever they come, so a hop only makes another class where a clone roll falls between its jump and
+   landing and the next hop; and a hop under a box bonks its underside, about 20 ticks up and down whatever the hold. A pass
+   (at the start and after each new best), in order:
+   - **Re-timing** (`Retune`): from a goal on, each goal with a quick restart since the goal before (a buy, a lap's start)
+     gets the idle ticks before that restart cut or added (up to 60) to the count whose touch of the goal before the next
+     such goal comes soonest; one whose goals are lost either way takes the one before back and checks through them (up to
+     3). A restart's input moves only with the cuts before it (the base run's restarts, moved), a touch comes as the Cash
+     does. One idle tick stays between two restarts (the gate refuses restarts on ticks in a row). Every goal with a restart
+     is a start (on every thread); the fastest is kept. The same re-timing plays every ticket below.
+   - **Filler**: where a stretch has more than one restart, everything before the last one (dashes away, restarts, hops that
+     only burn ticks) becomes as many idle ticks, re-timed from there.
+   - **Walk-in**, every buy: from the touch of the goal before, the stick toward the trigger until 12 idle ticks leave the
+     player at rest under it (at most 150 ticks), the fewest idle ticks whose straight jump touches, then the run's inputs from
+     its old touch.
+   - **Tickets**: the idle ticks under the box (a walk-in's, a moved wait's at the fewest that touch, a wait already standing
+     there) get every single hop and 300 random sets of hops 20+ apart; those that leave the player on the ground within reach
+     of the trigger are sorted by the RNG's state there, and each class (up to 40, the plain wait first) is played whole,
+     re-timed. A class counts only when it buys the box by the plain wait's tick (the jump in comes as the Cash does).
+
+   Measured on `FalseEnding-Any%` (private copies, `--auto --parts idle --minutes 20 --threads 6`, window pulls between
+   passes): 357.35 -> 355.92 s (re-timing after goal 52, 126, 225 and 248's moves: 357.35 -> 356.15, goal 126's alone
+   -0.76 s; windows at 176/177/270/272/273/276 the rest; judged), 355.92 -> 355.70 (re-timing from goal 95 -0.06), and from
+   355.67 (278 goals) -> 355.43 s: goal 249's two restarts and dashes became a 20-tick walk-in and 71 ticks under the box with
+   one hop (-0.10), goal 248's filler before its last restart idle (-0.06), re-timing from goal 95 (-0.02), windows at 176
+   and 268 (judged, the record). Tickets: 1 RNG class at 11 of 14 standing waits (13-23 ticks: no room for a hop and a roll
+   between), 2-5 at goals 174, 231 and 249; a hop class beat the plain wait once (goal 249). A pass is 60-150 CPU s on an
+   idle machine (re-timing 50, filler 16, walk-ins and tickets the rest), 400 on a loaded one.
+
+   Open: `buy:buyds` (goal 174): the walk-in stands under the box after 135 ticks and buys at tick 10429 against the route's
+   10394 (its run and jump carry the fall's speed), 357.19 s whole; the old jump into the box's underside costs nothing (the
+   Cash is there at 10394). `buy:buystatue` (goal 262, 411 idle ticks, 27 clone rolls) and `buy:buydj` (goal 268, the
+   shaft): no walk-in (1,500 units off; a climb), so their waits get no tickets. A clean approach there needs a window to a
+   stand under the box, not a walk.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 
@@ -1156,6 +1238,14 @@ route's goals 186-266 made 379.40 s, each in under 20 s. Judged in turbo (GameOw
 379.40, 378.74. The chaining check stayed at 227-230 of 300 goal touches at speed on every kept best. The continuous run
 then went 378.94, 378.74, 378.72, 378.50, 378.48, 378.46 (bin6, windows), then 377.80 (stray study), 376.76 and 376.70
 (combine's splice-in repair); candidates after 378.74 had not been judged when this was written.
+
+**Regression bench.** A change to the grafts or the window search is measured on `searchbench --suite grafts --seeds 3
+--minutes 1 --threads 4` ([enginesim/README.md](../enginesim/README.md#planted-waste-suite---suite-grafts)): wastes
+planted in known-good windows of the `FalseEnding-Any%` 355.92 record and course records (a super chain played as dash
+and run, a jump into a ceiling, a cancelling dash pair, a filler restart), each searched from the planted route as
+`fulltas --goal` (or `solve`) and scored on whether it gets back within 2 ticks and the CPU it takes, plus the record's
+own windows at goals 174, 270 and 275, where the waste was seen by eye. The baseline recovers every planted waste in the
+minute and beats the record's split at goals 270 and 275 (window-local), not at 174.
 
 ### Reset segments
 

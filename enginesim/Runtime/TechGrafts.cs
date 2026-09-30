@@ -539,7 +539,7 @@ namespace IGTAP.EngineSim
     /// each contact becomes a pattern. <c>solve</c> grafts them at the same contact kinds (filter by the run's unlocks): they
     /// are its only grafts; <c>--no-tech-grafts</c> turns them off. The mining is cached in the configured
     /// traces folder (where the demos resolve from; <c>--tech-dir</c>), keyed by the catalog content and the engine build.</summary>
-    public sealed class TechGrafts
+    public sealed partial class TechGrafts
     {
         public List<TechDemo> Demos = new List<TechDemo>();
         public List<TechPattern> Patterns = new List<TechPattern>();
@@ -848,7 +848,7 @@ namespace IGTAP.EngineSim
                     {
                         cached.CacheFile = cache;
                         cached.FromCache = true;
-                        return cached;
+                        return cached.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
                     }
                 }
                 catch (Exception) { }
@@ -863,7 +863,7 @@ namespace IGTAP.EngineSim
                 File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
             }
             catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
-            return mined;
+            return mined.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
         }
 
         // The configured traces dir (tools/gamepaths.py's TRACES: the game's config folder's enginesim dir) when it exists:

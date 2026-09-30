@@ -45,6 +45,7 @@ namespace IGTAP.EngineSim.Cli
                     case "rays": return Rays(args[1], args[2]);
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
+                    case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
@@ -117,6 +118,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --optional/--no-optional turns a named optional block of forced-paths.json on/off\n"
                             + "                                         (blocks with \"default\": true start on)\n"
                             + "                                         --no-tech-grafts grafts only the hand-written patterns, not the tech tab's mined demos;\n"
+                            + "                                         --no-route-grafts drops the windows mined from the saved routes (routegrafts);\n"
                             + "                                         --tech-dir <dir> mines them from that folder (default: the configured traces\n"
                             + "                                         dir, the game's config enginesim folder when it exists, whatever trace is solved)\n"
                             + "                                         --guide (experimental, off by default) weights picks by the walkable\n"
@@ -124,12 +126,16 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --rng N seeds the search's randomness (worker i gets N + i) instead of\n"
                             + "                                         the clock, so a one-thread run repeats exactly\n"
                             + "                                         each new best also gets a human version (humanize; --no-humanize skips it)\n"
-                            + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks)\n"
+                            + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks, cpu s)\n"
                             + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
                             + "                                         --plan [--plan-minutes M]: plan (and polish) first, its route a seed\n"
                             + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
                             + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
                             + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
+                            + "  searchbench --suite grafts [--check] [--case a,b] [--slack k] [--seeds N] [--minutes M] [--threads T] [--arms ...]\n"
+                            + "                                         planted-waste cases (searchbench-grafts.json): a saved route with a waste\n"
+                            + "                                         planted seeds solve (or fulltas --goal); per case the seeds that get within\n"
+                            + "                                         k ticks of the original and the CPU s it took (--check: plant only)\n"
                             + "  plan <trace.json> [--threads N] [--minutes M] [--width W] [--max-width W] [--cap K] [--cell C] [--labels L] [--first]\n"
                             + "       [--guide-route <best.json>]... [--follow-ticks K] [--no-midair] [--no-chains] [--no-polish] [--no-tech-grafts] [--out file]\n"
                             + "       [--route <best.json> --from-goal N [--to-goal M] [--guide-probe <probe.json>]... [--chain K]] [--profile <route.json>]\n"
@@ -157,7 +163,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         with its inputs and path, a line each as found: <route>-techs.jsonl\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
-                            + "          [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"
+                            + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] | --check <route.json> [--chain-vs <old route.json>]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
                             + "                   [--combine-repair-minutes m]\n"
@@ -202,6 +208,9 @@ namespace IGTAP.EngineSim.Cli
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
                             + "                                         inputs from it, every tick logged\n"
+                            + "  routegrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>] [--tech-cache <file>]\n"
+                            + "                                         every saved route (routes.json) replayed from its start trace and mined into\n"
+                            + "                                         graft patterns, the fastest per start key; counts per unlock set and contact kind\n"
                             + "  techgrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>]\n"
                             + "                                         every tech tab demo replayed from its start and mined into graft patterns\n"
                             + "                                         (contact type, input window, unlocks); --refresh re-mines instead of\n"
