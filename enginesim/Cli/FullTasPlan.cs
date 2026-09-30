@@ -29,6 +29,13 @@ namespace IGTAP.EngineSim.Cli
         // Record laps searched from the restart once per course, and the ways found (tried with the saved routes after).
         readonly HashSet<int> _recordSearched = new HashSet<int>();
         readonly List<(int course, List<InputTick> inputs)> _recordWays = new List<(int, List<InputTick>)>();
+        // The last record lap's way from the quick restart (its idle pad and inputs) and the best time before it (RecordLap).
+        List<InputTick> _recordWay;
+        float _recordBefore;
+        /// <summary>--ladder-max K: the most record laps in a ladder (1: none).</summary>
+        int _ladderMax;
+        /// <summary>The Cash the plan's ladders earn that their stand-in laps don't (Ladders): added to every state the plan plays on.</summary>
+        double _credit;
 
         int PlanFarm(string[] args)
         {
@@ -49,6 +56,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (string t in targets) if (!byLabel.ContainsKey(t)) throw new ArgumentException("no goal " + t);
             FullTasGoal[] lap = { byLabel["start:" + course], byLabel["finish:" + course] };
             string[] buys = all.Skip(kept).Take(targetIndex - kept).Where(g => g.kind == FullTasGoal.Buy && g.label != targetLabel).Select(g => g.label).Distinct().ToArray();
+            _ladderMax = Math.Max(1, Solve.Option(args, "--ladder-max", 12));
 
             // Replay the best to the stretch's start, as the builder does (a goal's input tick can fall a tick or two early).
             int length = kept == 0 ? 0 : (int)_best.GoalInput[kept - 1];
@@ -95,7 +103,7 @@ namespace IGTAP.EngineSim.Cli
                 FullTasGoal target = byLabel[aim];
                 int walk = _pieces.Where(p => p.Target == aim).Select(p => p.Inputs.Count).DefaultIfEmpty(0).Min();
                 double cost = Cost(at, target);
-                (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta)? pick = null;
+                (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta, double credit, double formula)? pick = null;
                 var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap), ("record lap", lap) };
                 string[] open = buys.Where(l => l != aim && !unreachable.Contains(l)).ToArray();
                 options.AddRange(open.Select(l => (l, new[] { byLabel[l] })));
@@ -125,17 +133,31 @@ namespace IGTAP.EngineSim.Cli
                         continue;
                     }
                     var (inputs, state, tick) = played.Value;
-                    double eta = tick;
+                    double eta = tick, formula = double.NaN;
                     if (what != aim)
                     {
                         // Laps fill the rest (a plan never stands at a box): the income is the lap's reward plus the clones'. One lap's
                         // clone payouts are too few to average out their rolls, and the best of several noisy guesses bought
                         // every box, so the clones' income is measured standing still after a quick restart, over IdleTicks.
-                        double? rate = Rate(state, inputs, course, lapTicks);
+                        double? rate = Rate(state, inputs, course, lapTicks, out formula);
                         if (rate == null || rate <= 0) continue;
                         eta = tick + Math.Max(0.0, cost - Cash(state)) / rate.Value + walk;
+                        // A record lap's break can go on as a ladder: K - 1 more breaks, each lap a tick faster, the same income after.
+                        if (what == "record lap")
+                        {
+                            var ladders = Ladders(inputs, state, tick, planned, lap, course);
+                            var etas = ladders.Select(l => l.tick + Math.Max(0.0, cost - Cash(l.state) - l.credit) / rate.Value + walk).ToList();
+                            for (int k = 0; k < ladders.Count; k++)
+                            {
+                                var l = ladders[k];
+                                if (pick == null || etas[k] < pick.Value.eta) pick = (l.what, l.goals, l.inputs, l.state, l.tick, etas[k], l.credit, formula);
+                            }
+                            if (ladders.Count > 0)
+                                Log($"ladders at tick {now}: record lap eta {eta:F0}; " + string.Join(", ", ladders.Select((l, k) =>
+                                    $"{l.what} +{l.tick - tick} ticks +{l.credit:G3} Cash eta {etas[k]:F0}")));
+                        }
                     }
-                    if (pick == null || eta < pick.Value.eta) pick = (what, goals, inputs, state, tick, eta);
+                    if (pick == null || eta < pick.Value.eta) pick = (what, goals, inputs, state, tick, eta, 0.0, formula);
                 }
                 // More laps only add Cash: once the target is paid for and still no way reaches it, the plan is stuck here.
                 if (aimPayable && !aimPlayed) { Log($"stuck at tick {now}: {aim} is paid for but no way reaches it from {Where(at.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); break; }
@@ -145,11 +167,20 @@ namespace IGTAP.EngineSim.Cli
                 route = p.inputs;
                 at = p.state;
                 now = p.tick;
+                if (p.credit > 0)
+                {
+                    // The ladder's breaks after its first are the model's (its laps here are the fastest one again): their Cash goes
+                    // into the plan's state, and into the states piece searches replay to (as the buy table's price does).
+                    _credit += p.credit;
+                    at = Credited(at, p.credit);
+                    _pieceState = s => Credited(s, _credit);
+                }
                 if (p.what == aim) done = ++phase == targets.Length;
                 double cash = Cash(at);
                 string levels = string.Join(" ", buys.Append(targetLabel).Select(l => l.Substring(4) + " " + Level(at, byLabel[l])));
-                Log($"tick {now,6} ({now - bonus1} after reward:bonus1)  {p.what,-22} cash {cash:G4}  eta {p.eta:F0}  {levels}");
-                log.Add(new { tick = now, step = p.what, cash, eta = Math.Round(p.eta), levels });
+                Log($"tick {now,6} ({now - bonus1} after reward:bonus1)  {p.what,-22} cash {cash:G4}  eta {p.eta:F0}  {levels}"
+                    + (double.IsNaN(p.formula) ? "" : $"  (income by formula {p.formula:G4} a tick)"));
+                log.Add(new { tick = now, step = p.what, cash, eta = Math.Round(p.eta), levels, credit = p.credit });
             }
             string[] tokens = planned.Select(g => g.label).ToArray();
             Log(done ? $"{targetLabel} at tick {now}, {now - bonus1} after reward:bonus1 (the best: {old}); {tokens.Length} goals replace {targetIndex + 1 - kept}"
@@ -163,7 +194,9 @@ namespace IGTAP.EngineSim.Cli
             // The plan's own route, as the solver saves a run's best (fulltas/<run>.json): the goals alone replay it only as
             // closely as other pieces allow, and a buy planned just affordable on arrival can then fall short.
             string routeFile = Solve.Option<string>(args, "--route", null);
-            if (routeFile != null && done)
+            if (routeFile != null && done && _credit > 0)
+                Log($"route: not written, the plan's ladders ({_credit:G4} Cash of breaks) are played as the fastest lap; the goals part's ladder edit slows them");
+            else if (routeFile != null && done)
             {
                 var full = _kept.Concat(planned).Concat(all.Skip(targetIndex + 1)).ToList();
                 Track(full);
@@ -595,7 +628,7 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot here = state.WithGoal(Fresh(list.Count, i));
             var target = new Target { Goal = i, Key = lap[1].label };
             float before = BestPath(here, course);
-            (List<InputTick> inputs, SimSnapshot state, long tick, float best)? pick = null;
+            (List<InputTick> inputs, SimSnapshot state, long tick, float best, List<InputTick> way)? pick = null;
             var tried = new List<string>();
             // A saved course route starts standing still: the game's run waits for three grounded ticks and its start alignment
             // before the first input. Idle ticks after the quick restart stand in for that wait; each route's pad is the first that
@@ -625,7 +658,7 @@ namespace IGTAP.EngineSim.Cli
                     float best = BestPath(end.Next, course);
                     tried.Add($"{key} {best:0.00}s after {found} idle ticks");
                     if (pick == null || best < pick.Value.best || best == pick.Value.best && end.Physics < pick.Value.tick)
-                        pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best);
+                        pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best, end.Inputs);
                 }
             // A saved route that misses from here (Course 2's 2.20 s lap takes its spikes on their last grace tick, and a restart's
             // start differs from its recording in the last hundredths) is searched once per course from the restart: seeded with
@@ -643,7 +676,7 @@ namespace IGTAP.EngineSim.Cli
                     Log($"record lap: searched from the restart, a lap sets the best time to {best:0.00}s (finish at tick {found.Physics})");
                     _recordWays.Add((course, found.Inputs));
                     if (pick == null || best < pick.Value.best || best == pick.Value.best && found.Physics < pick.Value.tick)
-                        pick = (inputs.Concat(pre).Concat(found.Inputs).ToList(), found.Next, found.Physics, best);
+                        pick = (inputs.Concat(pre).Concat(found.Inputs).ToList(), found.Next, found.Physics, best, found.Inputs);
                 }
             }
             else
@@ -655,11 +688,12 @@ namespace IGTAP.EngineSim.Cli
                         if (end == null) continue;
                         float best = BestPath(end.Next, course);
                         if (pick == null || best < pick.Value.best || best == pick.Value.best && end.Physics < pick.Value.tick)
-                            pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best);
+                            pick = (inputs.Concat(pre).Concat(end.Inputs).ToList(), end.Next, end.Physics, best, end.Inputs);
                     }
             if (!_recordTried) { _recordTried = true; Log("record lap seeds: " + string.Join("; ", tried)); }
             if (pick == null || pick.Value.best >= before) return null;
             Log($"record lap: best time {before:0.00}s -> {pick.Value.best:0.00}s, finish at tick {pick.Value.tick}");
+            (_recordWay, _recordBefore) = (pick.Value.way, before);
             return (pick.Value.inputs, pick.Value.state, pick.Value.tick);
         }
 
@@ -676,9 +710,10 @@ namespace IGTAP.EngineSim.Cli
 
         static FullTasTracker.State Fresh(int count, int next)
         {
-            var s = new FullTasTracker.State { Next = next, InputTicks = new long[count], PhysicsTicks = new long[count] };
+            var s = new FullTasTracker.State { Next = next, InputTicks = new long[count], PhysicsTicks = new long[count], HeldFrames = new long[count] };
             Array.Fill(s.InputTicks, -1L);
             Array.Fill(s.PhysicsTicks, -1L);
+            Array.Fill(s.HeldFrames, -1L);
             return s;
         }
 
@@ -686,21 +721,167 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Cash per tick laps earn from s (just after inputs): the course's lap reward over a lap of lapTicks, plus the clones' income
-        /// standing still after a quick restart (off any box) for IdleTicks after IdleSettle (a clone just bought first pays about a
-        /// path later). Null when no restart or stand plays.
+        /// standing still after a quick restart (off any box) after IdleSettle (a clone just bought first pays about a path later),
+        /// over the whole clone laps of the course that fit in IdleTicks: on build 25630570 a record lap leaves its pool in step,
+        /// paying in a bunch once a lap, so a window cut mid-lap is off by up to a bunch. formula: the same from the clones' own
+        /// numbers (<see cref="CloneIncome"/>), a cross-check. Null when no restart or stand plays.
         /// </summary>
-        double? Rate(SimSnapshot s, List<InputTick> inputs, int course, long lapTicks)
+        double? Rate(SimSnapshot s, List<InputTick> inputs, int course, long lapTicks, out double formula)
         {
+            formula = double.NaN;
             Read(s);
-            double reward = _eval.Courses.First(c => c.courseNumber == course).reward;
+            courseScript c = _eval.Courses.First(x => x.courseNumber == course);
+            double reward = c.reward, path = (float)BestPathTime.GetValue(c) / _dt;
+            int window = path > 0 && path < IdleTicks ? (int)Math.Round(Math.Floor(IdleTicks / (path + CloneLifeFrames / FramesPerTick)) * (path + CloneLifeFrames / FramesPerTick)) : IdleTicks;
             foreach (var (pre, restarted) in Restarts(s, inputs, _goals).Take(1))
             {
                 int length = inputs.Count + pre.Count;
                 SimSnapshot settled = AdvanceFrom(restarted, length, Enumerable.Repeat(new InputTick(), IdleSettle).ToList());
-                SimSnapshot idle = settled == null ? null : AdvanceFrom(settled, length + IdleSettle, Enumerable.Repeat(new InputTick(), IdleTicks).ToList());
-                if (idle != null) return (Cash(idle) - Cash(settled)) / IdleTicks + reward / Math.Max(1, lapTicks);
+                SimSnapshot idle = settled == null ? null : AdvanceFrom(settled, length + IdleSettle, Enumerable.Repeat(new InputTick(), window).ToList());
+                if (idle == null) continue;
+                Read(settled);
+                formula = CloneIncome(_eval) + reward / Math.Max(1, lapTicks);
+                return (Cash(idle) - Cash(settled)) / window + reward / Math.Max(1, lapTicks);
             }
             return null;
+        }
+
+        /// <summary>
+        /// Ladders on top of a record lap (state, just after its finish at tick, played after inputs): K = 2..--ladder-max back-to-back
+        /// record laps from the quick restart, the fastest lap slowed by K - 1, ..., 1, 0 ticks, so each finish is a new best and a
+        /// break (docs/fulltas.md, "Engine farm planner"). K is at most the ticks between the best before the record lap and the
+        /// fastest. The laps after the first are played here as the record lap's way from the restart (no break: its time is the
+        /// best already), then K(K-1)/2 idle ticks for the slowing; each of those K - 1 breaks is credited with the Cash the model
+        /// gives it (build 25630570: while the course keeps Start's spawn reserve a free slot refills on the next frame, so after a
+        /// break the pool runs in step, and at the next break every clone has run the restart's overhead o of its new path T': it
+        /// pays the rest, C (1 - o / T') payouts). A course that has been off screen with clones has lost the reserve for good: its
+        /// pool refills one an interval, and a break's C / 2 is only an advance the emptier pool pays back over T' (none credited).
+        /// </summary>
+        List<(string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double credit)> Ladders(
+            List<InputTick> inputs, SimSnapshot state, long tick, List<FullTasGoal> planned, FullTasGoal[] lap, int course)
+        {
+            var found = new List<(string, FullTasGoal[], List<InputTick>, SimSnapshot, long, double)>();
+            float fastest = BestPath(state, course);
+            int fast = (int)Math.Round(fastest / _dt), kmax = Math.Min(_ladderMax, (int)Math.Round(_recordBefore / _dt) - fast);
+            if (kmax < 2 || _recordWay == null) return found;
+            courseScript c = _eval.Courses.First(x => x.courseNumber == course);
+            var (clones, reserve) = Clones(_eval, course);
+            if (!reserve) clones = 0;
+            double pay = ClonePay(_eval, c);
+            var list = _kept.Concat(planned).Concat(lap).ToList();
+            long last = tick;
+            for (int k = 2; k <= kmax; k++)
+            {
+                list.AddRange(lap);
+                Track(list);
+                int start = list.Count - 2;
+                var (pre, restarted) = Restarts(state.WithGoal(Fresh(list.Count, start)), inputs, start).FirstOrDefault();
+                Step end = restarted == null ? null : Reaches(restarted, inputs.Count + pre.Count, _recordWay, new Target { Goal = start + 1, Key = lap[1].label });
+                if (end == null) { Log($"ladder: lap {k} doesn't play from the quick restart ({(restarted == null ? "no restart" : Replayed(restarted, inputs.Count + pre.Count, _recordWay, new Target { Goal = start + 1, Key = lap[1].label }))})"); break; }
+                inputs = inputs.Concat(pre).Concat(end.Inputs).ToList();
+                state = end.Next;
+                long overhead = end.Physics - last - fast;
+                last = end.Physics;
+                // Lap k of K sets the path fast + K - k; the laps' slowing is sum 0..K-1 ticks.
+                double credit = clones * pay * Enumerable.Range(0, k - 1).Sum(j => Math.Max(0.0, 1.0 - (double)overhead / (fast + j)));
+                int slow = k * (k - 1) / 2;
+                SimSnapshot slowed = AdvanceFrom(state, inputs.Count, Enumerable.Repeat(new InputTick(), slow).ToList());
+                if (slowed == null) break;
+                found.Add(($"ladder {k}", Enumerable.Range(0, k).SelectMany(_ => lap).ToArray(), inputs.Concat(Enumerable.Repeat(new InputTick(), slow)).ToList(),
+                    slowed, end.Physics + slow, credit));
+            }
+            return found;
+        }
+
+        /// <summary>s with Cash more on its Shop (a copy: the snapshot is shared).</summary>
+        static SimSnapshot Credited(SimSnapshot s, double cash)
+        {
+            if (cash <= 0 || s.Economy?.Awarded == null) return s;
+            SimSnapshot t = s.WithGoal(s.Goal);
+            var awarded = (double[])s.Economy.Awarded.Clone();
+            awarded[(int)globalStats.Currencies.Cash] += cash;
+            t.Economy = new Shop.State { Spent = s.Economy.Spent, Awarded = awarded, Economy = s.Economy.Economy, BuyMax = s.Economy.BuyMax };
+            return t;
+        }
+
+        // The studio's 280 fps clock renders six frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
+        // before its slot refills (clonesScript on build 25630570: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
+        const double FramesPerTick = 6, CloneLifeFrames = 1.5;
+
+        /// <summary>The course's clone count, and whether it still has Start's spawn reserve (its spawn timer far past any interval).</summary>
+        static (int count, bool reserve) Clones(Simulation sim, int course)
+        {
+            foreach (object[] row in sim.Shop.Economy?.CloneStates() ?? Enumerable.Empty<object[]>())
+                if ((int)row[0] == course) return ((int)row[1], (float)row[5] > 100f);
+            return (0, false);
+        }
+
+        /// <summary>A clone's payout on course c: reward x the clone multiplier x the competition boost x (2 bigness + 1), its size
+        /// rolled as SpawnClone rolls it, averaged.</summary>
+        static double ClonePay(Simulation sim, courseScript c)
+        {
+            Economy e = sim.Shop.Economy;
+            if (e == null) return 0;
+            double mult = 0.1 + e.GlobalOf(globalStats.globalUpgradeSet.cloneMult) * 0.2 + e.LocalOf(c.localUpgradesScript, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
+            return c.reward * mult * (c.compBoostTimeLeft > 0.0 ? c.compBoostBonus : 1.0) * Rolls(e, c).size;
+        }
+
+        /// <summary>
+        /// SpawnClone's speed and size rolls averaged: E[2j + 1] (a payout's size) and E[(2j + 1) (1 + 0.35 i) 0.75^j] (payouts a path
+        /// time, the speed counted). Each tier i is reached while Random.Range(0, 101) stays under chance / (1 + i) and 50 + 5 cap.
+        /// </summary>
+        static (double size, double income) Rolls(Economy e, courseScript c)
+        {
+            double[] Tiers(double chance, double cap)
+            {
+                var p = new List<double>();
+                double reach = 1.0;
+                for (int i = 0; i < 1.0 + cap; i++)
+                {
+                    double under = Math.Min(chance / (1.0 + i), 50.0 + cap * 5.0), pass = Enumerable.Range(0, 101).Count(k => k < under) / 101.0;
+                    p.Add(reach * (1 - pass));
+                    reach *= pass;
+                }
+                p.Add(reach);
+                return p.ToArray();
+            }
+            localUpgrades l = c.localUpgradesScript;
+            double[] fast = Tiers(e.LocalOf(l, localUpgrades.localUpgradeSet.fastCloneChance) * 5.0 + e.GlobalOf(globalStats.globalUpgradeSet.fastCloneChance) * 8.0,
+                e.GlobalOf(globalStats.globalUpgradeSet.maxCloneFastness));
+            double[] big = Tiers(e.LocalOf(l, localUpgrades.localUpgradeSet.bigCloneChance) * 5.0 + e.GlobalOf(globalStats.globalUpgradeSet.bigCloneChance) * 8.0,
+                e.GlobalOf(globalStats.globalUpgradeSet.maxCloneBigness));
+            double size = 0, income = 0;
+            for (int i = 0; i < fast.Length; i++)
+                for (int j = 0; j < big.Length; j++)
+                {
+                    size += fast[i] * big[j] * (2 * j + 1);
+                    income += fast[i] * big[j] * (2 * j + 1) * (1 + 0.35 * i) * Math.Pow(0.75, j);
+                }
+            return (size, income);
+        }
+
+        /// <summary>
+        /// The clones' Cash per physics tick by formula, every course with clones and a path (build 25630570). On screen every slot
+        /// refills the frame after its clone pays, so min(C, path frames) clones fly and each pays once a path: C pay / path, less
+        /// 1.5 frames a lap. Off screen a course pays ceil(pay C / path) (the rolls' speed counted) once its timer reaches 1 s:
+        /// every 50 ticks.
+        /// </summary>
+        internal static double CloneIncome(Simulation sim)
+        {
+            Economy e = sim.Shop.Economy;
+            if (e == null) return 0;
+            double dt = sim.World.FixedDeltaTime, w = 0;
+            foreach (object[] row in e.CloneStates())
+            {
+                int number = (int)row[0], count = (int)row[1];
+                float path = (float)row[2];
+                courseScript c = sim.Courses.FirstOrDefault(x => x.courseNumber == number);
+                if (c == null || path <= 0.1f) continue;
+                double pay = ClonePay(sim, c) / Rolls(e, c).size * Rolls(e, c).income, ticks = path / dt;
+                w += (bool)row[3] ? Math.Min(count, ticks * FramesPerTick) * pay / ticks * (1 - CloneLifeFrames / (ticks * FramesPerTick))
+                    : Math.Ceiling(pay * count / path) * dt;
+            }
+            return w;
         }
 
         /// <summary>Restores s to read the economy: its goal state can be another plan's, so it gets one the tracker holds.</summary>

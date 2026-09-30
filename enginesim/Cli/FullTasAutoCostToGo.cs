@@ -7,7 +7,7 @@ namespace IGTAP.EngineSim.Cli
     // from it to the run's end, so a window can be scored "arrival tick + ticks-to-finish" and prefer an arrival that reaches its
     // goal later but heads for the end faster. It is learned, per goal, from the library's own arrivals that have a known way on
     // to the end (Fit): a k-nearest-neighbour regression over the arrival features (place, velocity, momentum, dashes
-    // and air jumps, facing and ground, the run's purchases and cash), with the median split times between goals as the fallback
+    // and air jumps, facing and ground, the run's purchases, cash and clone income), with the median split times between goals as the fallback
     // where no arrival is known yet. Neighbours come from the goal's own arrivals; one with a different purchase set is kept in
     // but pays a penalty, so an arrival after a changed buy still gets an estimate.
     sealed class FullTasAutoCostToGo
@@ -33,16 +33,17 @@ namespace IGTAP.EngineSim.Cli
             public double Median;
         }
 
-        // The continuous features' order in a distance: X, Y, VX, VY, MX, MY, dashes, air jumps, cash.
-        const int Dims = 9;
+        // The continuous features' order in a distance: X, Y, VX, VY, MX, MY, dashes, air jumps, cash, clone income (a record lap's
+        // break leaves the same Cash and buys but a faster clone path, which pays on to the end).
+        const int Dims = 10;
         const int Neighbors = 8;
         /// <summary>Goals with fewer arrivals than this are blended with the fallback (the median split times).</summary>
         const int BlendAt = 4;
         const double Eps = 0.04;
         // Facing and ground cost this much in distance squared when they differ, and a different purchase set this much more.
         const double FacePenalty = 0.25, GroundPenalty = 0.35, BuysPenalty = 2.25;
-        static readonly double[] Floor = { 16.0, 16.0, 24.0, 24.0, 24.0, 24.0, 1.0, 1.0, 50.0 };
-        static readonly double[] Weight = { 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25 };
+        static readonly double[] Floor = { 16.0, 16.0, 24.0, 24.0, 24.0, 24.0, 1.0, 1.0, 50.0, 1.0 };
+        static readonly double[] Weight = { 1.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25, 0.25 };
 
         GoalModel[] _model;
         /// <summary>Step medians as a prefix sum: the chain from goal g to goal j is _stepPrefix[j] - _stepPrefix[g].</summary>
@@ -99,9 +100,9 @@ namespace IGTAP.EngineSim.Cli
             Span<double> a = stackalloc double[Dims];
             Span<double> b = stackalloc double[Dims];
             a[0] = f.X; a[1] = f.Y; a[2] = f.VX; a[3] = f.VY; a[4] = f.MX; a[5] = f.MY;
-            a[6] = f.DashesLeft; a[7] = f.AirJumpsLeft; a[8] = f.Cash;
+            a[6] = f.DashesLeft; a[7] = f.AirJumpsLeft; a[8] = f.Cash; a[9] = f.Income;
             b[0] = s.F.X; b[1] = s.F.Y; b[2] = s.F.VX; b[3] = s.F.VY; b[4] = s.F.MX; b[5] = s.F.MY;
-            b[6] = s.F.DashesLeft; b[7] = s.F.AirJumpsLeft; b[8] = s.F.Cash;
+            b[6] = s.F.DashesLeft; b[7] = s.F.AirJumpsLeft; b[8] = s.F.Cash; b[9] = s.F.Income;
             double d = 0;
             for (int i = 0; i < Dims; i++)
             {
@@ -239,7 +240,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (Sample s in samples)
             {
                 a[0] = s.F.X; a[1] = s.F.Y; a[2] = s.F.VX; a[3] = s.F.VY; a[4] = s.F.MX; a[5] = s.F.MY;
-                a[6] = s.F.DashesLeft; a[7] = s.F.AirJumpsLeft; a[8] = s.F.Cash;
+                a[6] = s.F.DashesLeft; a[7] = s.F.AirJumpsLeft; a[8] = s.F.Cash; a[9] = s.F.Income;
                 for (int i = 0; i < Dims; i++)
                 {
                     if (a[i] < lo[i]) lo[i] = a[i];
