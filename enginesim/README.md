@@ -645,7 +645,7 @@ and after, the RNG state before, and the clonesScripts whose `Update` ran earlie
 every call of a game method that drew (`Audio.PlayAudio*`, `Movement.playSFX`, the `Start` of lights, animators and
 refill orbs, `ObjectBobber.OnEnable`, `upgradeBox.OnEnable`, `courseScript.Start`) with the object's name and the state
 after. Their offline counterpart is `fulltas <trace> --check <route> --ticks-out FILE`: a JSON line per physics tick
-(position, velocity, Cash, each course's reward, reward tier and comp boost, the RNG state), per clone spawn (course, on
+(position, velocity, momentum, held frames so far, ground, air dashes and jumps left, omnidash, Cash, each course's reward, reward tier and comp boost, the RNG state), per clone spawn (course, on
 screen, divisor, fastness and bigness rolled, payout) and per draw (the engine method that drew). Compare Cash as the
 sequence of values each side takes, not tick by tick: 1x's physics count runs ahead through dash freezes.
 
