@@ -71,6 +71,17 @@ namespace IGTAPTasMod
             /// <summary>Inputs before suggestUntil changed while suggest ran: its result is for other inputs.</summary>
             public bool suggestStale;
             public JObject suggestions;
+            /// <summary>Techs here (TasPlugin.Techs.cs): the search running for input tick techsAt, and the results per held input
+            /// tick for inputs version techsVersion.</summary>
+            public Process techs;
+            public System.Collections.Concurrent.ConcurrentQueue<string> techsOutput;
+            public string techsFile;
+            public long techsRead, heldSince;
+            public int techsAt = -1, techsVersion = -1, heldAt = -1;
+            public readonly Dictionary<int, TasTechs> techsCache = new Dictionary<int, TasTechs>();
+            /// <summary>The tech whose paths are drawn, and its variant drawn bright (hoverDir null: none).</summary>
+            public string hoverTech, hoverDir;
+            public float? hoverAngle;
 
             /// <summary>A savestate start: it holds first after input 0, so input 0 presses nothing (TasQuiet).</summary>
             public bool SavestateStart { get { return !string.IsNullOrEmpty(route.savestateId); } }
@@ -138,6 +149,7 @@ namespace IGTAPTasMod
                     _webServer?.Pump(HandleWebRequest);
                     TasHotkeys();
                     TasPollSuggest();
+                    TasPollTechs();
                     Thread.Sleep(4);
                 }
             }
@@ -510,6 +522,7 @@ namespace IGTAPTasMod
             _tas = null;
             _walkSlowdown = 0f;
             if (s.suggest != null) { try { if (!s.suggest.HasExited) s.suggest.Kill(); s.suggest.Dispose(); } catch (Exception) { } }
+            TasStopTechs(s);
             StopPlayback(reason);
             if (_playbackSavedAbilities.Count > 0) RestorePlaybackAbilities();
             Logger.LogInfo("TAS session closed: " + s.route.name + " (" + reason + ")");
@@ -520,6 +533,7 @@ namespace IGTAPTasMod
             if (_tas == null) return;
             TasHotkeys();
             TasPollSuggest();
+            TasPollTechs();
         }
 
         void TasHotkeys()
@@ -788,6 +802,8 @@ namespace IGTAPTasMod
                     break;
                 }
                 case "suggest": TasSuggest(s); break;
+                case "techs/hover": TasTechsHover(s, body); break;
+                case "techs/apply": TasTechsApply(s, body); break;
                 case "suggest/apply":
                 {
                     JArray found = s.suggestions?["suggestions"] as JArray;
@@ -855,7 +871,8 @@ namespace IGTAPTasMod
                     results = s.suggestions?["suggestions"] is JArray list ? list.Select((r, i) => new { index = i,
                         description = (string)r["description"], kind = (string)r["kind"], saved = r["saved"]?.Value<int>() ?? 0,
                         from = r["from"]?.Value<int>() ?? 0, arrival = r["arrival"]?.Value<int>() ?? 0, speed = r["speed"]?.Value<float>() ?? 0f }).ToArray() : null,
-                    tried = s.suggestions?["tried"]?.Value<int>() }
+                    tried = s.suggestions?["tried"]?.Value<int>() },
+                techs = TasTechsLive(s)
             };
         }
     }

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./tas-editor.css";
+import { TONE, inputName, toneOf, type SlackInput, type SlackReply } from "./human-slack";
 
 const API = "http://127.0.0.1:17426/api";
 
@@ -19,7 +20,12 @@ export type TasPlayer = { x: number; y: number; vx: number; vy: number; velX: nu
 export type TasLive = { open: boolean; routeId: string; name: string; savestateId?: string; course?: number | null; capabilities?: string | null;
   phase: "starting" | "held" | "playing" | "recording" | "running"; cursor: number; physics: number; tickCount: number; baseInput: number; rerecords: number;
   version: number; canUndo: boolean; canRedo: boolean; slowdown: number; greenzone: number[]; traced: number; traceVersion: number; playUntil?: number | null; ended?: string | null; finished: boolean; endTime: number; endPhysics: number;
-  player?: TasPlayer | null; suggest: { running: boolean; error?: string | null; until: number; results?: TasSuggestion[] | null; tried?: number | null } };
+  player?: TasPlayer | null; suggest: { running: boolean; error?: string | null; until: number; results?: TasSuggestion[] | null; tried?: number | null };
+  techs?: TasTechsLive };
+/** `tas.techs`: Techs here (TasPlugin.Techs.cs), the techs whose key window works from the held input tick, per direction. */
+export type TasTechsLive = { at: number; running: boolean; unavailable?: string | null; done: boolean; tried: number; error?: string | null;
+  list?: { tech: string; name: string; variants: TasTechVariant[] }[] | null };
+export type TasTechVariant = { dir: string; angle?: number | null; start: number; died: boolean };
 export type PlacePrefill = { x?: number; y?: number; vx?: number; vy?: number; rebaseAtX?: number; rebaseAtY?: number };
 
 type CourseLite = { id: number; token: string; bonus: boolean; categories: string[]; to?: string };
@@ -46,7 +52,22 @@ const yText = (y = 0) => y > 0 ? "U" : y < 0 ? "D" : "";
 const nextX = (x = 0) => x === 0 ? 1 : x === 1 ? -1 : 0;
 const nextY = (y = 0) => y === 0 ? 1 : y === 1 ? -1 : 0;
 const isTap = (t: TasTick) => !t.held && !!t.press && !!t.release;
-const fmt = (v: unknown, digits = 1) => typeof v === "number" ? v.toFixed(digits) : String(v ?? "—");
+const SLACK_KEYS = ["x", "y", "held", "press", "release", "dash", "dashJump", "springDash", "lockX", "lockY", "turnX", "turnY", "reset", "pause"];
+const num = (v?: number | null) => v == null ? "–" : String(+v.toFixed(2));
+// The More column: each extra as a badge, and the legend under the roll's header ([class, example, meaning, badge text]).
+const EXTRAS: [string, string, string, (t: TasTick) => string | null][] = [
+  ["djump", "dash-jump f3", "Jump on the dash's 3rd frame (a dash-jump).", t => t.dashJump ? `dash-jump f${t.dashJump}` : null],
+  ["aim", "aim x0.35 y1", "The stick the game reads during the dash freeze (x, y). Without the omnidash only x counts.",
+    t => t.turnX != null || t.turnY != null ? `aim x${num(t.turnX)} y${num(t.turnY)}` : null],
+  ["spring", "spring dash t3", "Dash on the spring launch's 3rd tick. Spring ticks take no input, so the press is set here.",
+    t => t.springDash ? `spring dash t${t.springDash}` : null],
+  ["lock", "lock x0 y–", "The stick held through the dash or spring ticks that take no input. – is unset: x 0, y the next input's.",
+    t => t.lockX != null || t.lockY != null ? `lock x${num(t.lockX)} y${num(t.lockY)}` : null],
+  ["pause", "pause 12f", "Open the pause menu for 12 rendered frames.", t => t.pause ? `pause ${t.pause}f` : null],
+  ["restart", "restart", "Quick restart.", t => t.reset ? "restart" : null],
+  ["cut", "cut", "Jump release (a jump cut) on this tick.", t => t.release && t.held ? "cut" : null],
+];
+const fmt = (v: unknown, digits = 1) =>typeof v === "number" ? v.toFixed(digits) : String(v ?? "—");
 
 /**
  * The jump flags from `from` to `to` (and the tick after) as a hold's edges give them: a hold presses where it starts and
@@ -150,6 +171,27 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     return () => { alive = false; };
   }, [tas.routeId, tas.traced, tas.traceVersion, trace]);
 
+  // A Human version session (`<course>_<CAT> human <time>`) shows its humanize slack report, on the rows whose inputs
+  // (and every one before them) are still the human version's.
+  const [slack, setSlack] = useState<SlackReply | null>(null);
+  useEffect(() => {
+    setSlack(null);
+    const m = /^(\S+) human ([\d.]+)(?: \d+)?$/.exec(tas.name);
+    if (!m) return;
+    let alive = true;
+    call("/enginesim/slack", { name: `${m[1]} ${m[2]}` }).then(r => { if (alive) setSlack(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [tas.name]);
+  const slackRows = useMemo(() => {
+    const at = new Map<number, SlackInput[]>(), human = slack?.ticks ?? [];
+    const key = (t: object) => JSON.stringify(SLACK_KEYS.map(k => Number((t as Record<string, unknown>)[k] ?? 0)));
+    let upTo = 0;
+    while (upTo < ticks.length && upTo < human.length && key(ticks[upTo]) === key(human[upTo])) upTo++;
+    for (const e of slack?.slack.inputs ?? [])
+      for (let t = e.tick; t < Math.max(e.tick + 1, e.end) && t < upTo; t++) at.set(t, [...(at.get(t) ?? []), e]);
+    return { at, upTo };
+  }, [slack, ticks]);
+
   const busy = tas.phase === "starting" || tas.phase === "recording";
   const cmd = (path: string, body: unknown = {}) => onCommand(path, body);
 
@@ -239,8 +281,11 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
 
     <div className="tasGrid">
       <div className="panel tasMain">
+        {view === "grid" && slack && <p className="tasHint tasSlack">Human slack ({slack.file}):
+          {[TONE.exact, { color: "#ffbf5b", short: "window" }, TONE.band, TONE.free].map(t => <span key={t.short}><i style={{ background: t.color }}/>{t.short}</span>)}
+          {" "}· {slack.slack.exact} exact · {slackRows.upTo === ticks.length ? "the session is the human version" : `edited at input ${slackRows.upTo}: shown above it only`}</p>}
         {view === "grid"
-          ? <TasRoll ticks={ticks} markers={markers} trace={trace.route === tas.routeId ? trace.rows : []} cursor={tas.cursor} greenzone={tas.greenzone} base={tas.baseInput} busy={busy} follow={tas.phase === "playing" || tas.phase === "recording"}
+          ? <TasRoll ticks={ticks} markers={markers} slack={slackRows.at} trace={trace.route === tas.routeId ? trace.rows : []} cursor={tas.cursor} greenzone={tas.greenzone} base={tas.baseInput} busy={busy} follow={tas.phase === "playing" || tas.phase === "recording"}
               onPlayTo={playTo} onUndo={() => tas.canUndo && cmd("/tas/undo")} onRedo={() => tas.canRedo && cmd("/tas/redo")}
               onSeek={tick => cmd("/tas/seek", { tick })} onEdit={edit} onMarker={(tick, n) => cmd("/tas/marker", { tick, note: n })}/>
           : <div className="tasText">
@@ -268,6 +313,8 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
             <button disabled={busy} title="A savestate (player only) of this tick" onClick={() => cmd("/savestates/capture")}>Capture savestate</button>
           </div>
         </div>
+
+        {tas.techs && <TechsHere techs={tas.techs} held={tas.phase === "held"} busy={busy} onTry={(tech, v) => cmd("/tas/techs/apply", { tech, dir: v.dir, angle: v.angle ?? null, slowdown: speed })}/>}
 
         <div className="panel"><p className="eyebrow">OPTIMIZE SO FAR</p>
           <p className="tasHint">Offline (enginesim): nudges each press, release, dash and stick change before input {tas.cursor} and lists the ones that reach where you are now sooner.</p>
@@ -336,13 +383,13 @@ const LEAD_IN = 50;
 /**
  * The piano roll (TAStudio / FCEUX TAS Editor conventions): one row per input tick, a seek column, drag-select on the
  * numbers, paint on the inputs, the physics tick each input starts on (dash and spring ticks take no input: +n), the
- * player's position and speed as played, edited cells flash. Read-only: selection only (the Timeline tab).
+ * player's position and speed as played, edited cells flash.
  */
-export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [], base = 0, busy, follow = false, readOnly = false,
-  onSeek, onEdit, onMarker, onPlayTo, onUndo, onRedo, tools }: {
-  ticks: TasTick[]; markers: TasMarker[]; trace?: TasTrace; cursor?: number; greenzone?: number[]; base?: number; busy: boolean; follow?: boolean; readOnly?: boolean;
+export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenzone = [], base = 0, busy, follow = false,
+  onSeek, onEdit, onMarker, onPlayTo, onUndo, onRedo }: {
+  ticks: TasTick[]; markers: TasMarker[]; slack?: Map<number, SlackInput[]>; trace?: TasTrace; cursor?: number; greenzone?: number[]; base?: number; busy: boolean; follow?: boolean;
   onSeek?: (t: number) => void; onEdit?: (from: number, deleteCount: number, insert: TasTick[]) => void; onMarker?: (t: number, n: string) => void;
-  onPlayTo?: (t: number) => void; onUndo?: () => void; onRedo?: () => void; tools?: (sel: [number, number] | null) => React.ReactNode }) {
+  onPlayTo?: (t: number) => void; onUndo?: () => void; onRedo?: () => void }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -357,13 +404,13 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
   const prev = useRef<TasTick[] | null>(null);
   const noteAt = useMemo(() => new Map(markers.map(m => [m.tick, m.note])), [markers]);
   const green = useMemo(() => new Set(greenzone), [greenzone]);
-  const edit = (from: number, del: number, insert: TasTick[]) => { if (!readOnly && !busy) onEdit?.(from, del, insert); };
+  const edit = (from: number, del: number, insert: TasTick[]) => { if (!busy) onEdit?.(from, del, insert); };
 
   // Flash what an edit changed (FCEUX's hot changes): the rows between the unchanged head and tail.
   useEffect(() => {
     const p = prev.current;
     prev.current = ticks;
-    if (!p || readOnly) return;
+    if (!p) return;
     const same = (a?: TasTick, b?: TasTick) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     let head = 0;
     while (head < p.length && head < ticks.length && same(p[head], ticks[head])) head++;
@@ -371,7 +418,7 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
     let tail = 0;
     while (tail < p.length - head && tail < ticks.length - head && same(p[p.length - 1 - tail], ticks[ticks.length - 1 - tail])) tail++;
     setHot(h => ({ from: head, to: Math.max(head, ticks.length - 1 - tail), gen: h.gen + 1 }));
-  }, [ticks, readOnly]);
+  }, [ticks]);
 
   const sel = selection && selection[0] < ticks.length ? [selection[0], Math.min(selection[1], ticks.length - 1)] as [number, number] : null;
   const reveal = (i: number) => {
@@ -425,16 +472,16 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
   });
 
   // The wheel on an X cell steps through a controller's values (the selection's, if it's in it); it lands once the wheel rests.
-  const wheelState = useRef({ ticks, sel, wheel, busy, readOnly, onEdit });
-  wheelState.current = { ticks, sel, wheel, busy, readOnly, onEdit };
+  const wheelState = useRef({ ticks, sel, wheel, busy, onEdit });
+  wheelState.current = { ticks, sel, wheel, busy, onEdit };
   const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       const cell = (e.target as HTMLElement).closest<HTMLElement>("[data-x]");
-      const { ticks, sel, wheel, busy, readOnly } = wheelState.current;
-      if (!cell || busy || readOnly) return;
+      const { ticks, sel, wheel, busy } = wheelState.current;
+      if (!cell || busy) return;
       e.preventDefault();
       const i = Number(cell.dataset.x);
       const [from, to] = wheel ? [wheel.from, wheel.to] : sel && i >= sel[0] && i <= sel[1] ? sel : [i, i];
@@ -454,7 +501,7 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
   }, []);
 
   const startPaint = (column: Paint["column"], i: number) => {
-    if (busy || readOnly || i >= ticks.length) return;
+    if (busy || i >= ticks.length) return;
     const t = ticks[i];
     const value = column === "x" ? nextX(t.x) : column === "y" ? nextY(t.y) : !t.held;
     setPaint({ column, from: i, to: i, value });
@@ -498,16 +545,16 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
   };
 
   // TAStudio / FCEUX keys, while no field has the focus.
-  const keys = useRef({ sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, readOnly, busy, ticks });
-  keys.current = { sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, readOnly, busy, ticks };
+  const keys = useRef({ sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, busy, ticks });
+  keys.current = { sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, busy, ticks };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
       const k = keys.current, ctrl = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
       const lead = k.sel ? (k.anchor === k.sel[0] ? k.sel[1] : k.sel[0]) : k.anchor ?? -1;
-      const write = !k.readOnly && !k.busy;
+      const write = !k.busy;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") k.select(lead + (e.key === "ArrowDown" ? 1 : -1), e.shiftKey);
-      else if ((e.key === "PageDown" || e.key === "PageUp") && e.shiftKey && !k.readOnly) k.markerSeek(e.key === "PageDown" ? 1 : -1);
+      else if ((e.key === "PageDown" || e.key === "PageUp") && e.shiftKey) k.markerSeek(e.key === "PageDown" ? 1 : -1);
       else if (e.key === "PageDown" || e.key === "PageUp") k.select(lead + (e.key === "PageDown" ? VISIBLE : -VISIBLE), false);
       else if (e.key === "Escape") setSelection(null);
       else if (ctrl && key === "c" && k.sel) k.copy();
@@ -531,47 +578,51 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
   }, []);
 
   const physAt = (i: number) => i < base ? null : i === base ? 0 : trace[i - 1]?.[0] ?? null;
-  const rows = ticks.length + (readOnly ? 0 : 1);
+  const rows = ticks.length + 1;
   const first = Math.max(0, Math.floor(top / ROW) - 4), last = Math.min(rows, first + VISIBLE + 8);
   const cells: React.ReactElement[] = [];
   for (let i = first; i < last; i++) {
     const t = shown[i], selected = !!sel && i >= sel[0] && i <= sel[1], isHot = i >= hot.from && i <= hot.to;
     const cls = `tasRow ${i === cursor ? "cursor" : ""} ${i < cursor ? "played" : ""} ${selected ? "selected" : ""} ${i < base ? "locked" : ""} ${noteAt.has(i) ? "marked" : ""} ${isHot ? "hot" : ""}`;
-    const seek = <span className={`tasSeek ${green.has(i) ? "green" : ""}`} title={readOnly ? "" : green.has(i) ? "Go here (a greenzone snapshot: instant)" : "Go here: turbo to this input and hold"}
-      onClick={() => !busy && !readOnly && onSeek?.(i)}>{i === cursor ? "▶" : ""}</span>;
+    const seek = <span className={`tasSeek ${green.has(i) ? "green" : ""}`} title={green.has(i) ? "Go here (a greenzone snapshot: instant)" : "Go here: turbo to this input and hold"}
+      onClick={() => !busy && onSeek?.(i)}>{i === cursor ? "▶" : ""}</span>;
     if (!t) { cells.push(<div key={i} className={`${cls} end`} style={{ top: i * ROW }}>{seek}<span className="tasNum">{i}</span><span className="tasEndCell">end · advancing past it adds neutral ticks</span></div>); continue; }
     const p0 = physAt(i), tr = trace[i], p1 = tr?.[0], span = p0 != null && p1 != null ? p1 - p0 : null;
-    const extras = [t.dashJump ? `+${t.dashJump}` : "", t.turnX != null || t.turnY != null ? `↻${t.turnX ?? ""}:${t.turnY ?? ""}` : "", t.springDash ? `S${t.springDash}` : "",
-      t.lockX != null || t.lockY != null ? `K${t.lockX ?? ""}:${t.lockY ?? ""}` : "", t.pause ? `Z${t.pause}` : "", t.reset ? "Q" : "", t.release && t.held ? "C" : ""].filter(Boolean).join(" ");
+    const on = slack?.get(i), strict = on?.reduce((a, b) => toneOf(b.class).rank > toneOf(a.class).rank ? b : a), tone = strict && toneOf(strict.class);
+    const extras = EXTRAS.map(([cls, , tip, text]) => { const s = text(t); return s && <i key={cls} className={`tasBadge ${cls}`} title={tip}>{s}</i>; });
     cells.push(<div key={isHot ? `${i}-${hot.gen}` : i} className={`${cls} ${span != null && span > 1 ? "lag" : ""}`} style={{ top: i * ROW }}>
       {seek}
-      <span className="tasNum" title={readOnly ? "Click or drag: select · shift: extend" : "Click or drag: select · shift: extend · double-click: go here"}
+      <span className="tasNum" style={tone ? { boxShadow: `inset -3px 0 0 ${tone.color}` } : undefined}
+        title={(tone ? `${tone.label}: ${on!.map(inputName).join(" · ")}\n` : "") + "Click or drag: select · shift: extend · double-click: go here"}
         onMouseDown={e => { if (e.button !== 0) return; select(i, e.shiftKey); setDragSel(true); }}
         onMouseEnter={() => dragSel && anchor !== null && setSelection([Math.min(anchor, i), Math.max(anchor, i)])}
-        onDoubleClick={() => !busy && !readOnly && onSeek?.(i)}>{i}</span>
-      <span data-x={i} className={`tasCell x ${t.x ? "on" : ""}`} title={readOnly ? "" : "Click or drag: R, L, rest · wheel: part tilts (the selection's, if in it)"} onMouseDown={e => e.button === 0 && startPaint("x", i)} onMouseEnter={() => paint?.column === "x" && setPaint({ ...paint, to: i })}>{xText(t.x)}</span>
+        onDoubleClick={() => !busy && onSeek?.(i)}>{i}</span>
+      <span data-x={i} className={`tasCell x ${t.x ? "on" : ""}`} title={"Click or drag: R, L, rest · wheel: part tilts (the selection's, if in it)"} onMouseDown={e => e.button === 0 && startPaint("x", i)} onMouseEnter={() => paint?.column === "x" && setPaint({ ...paint, to: i })}>{xText(t.x)}</span>
       <span className={`tasCell y ${t.y ? "on" : ""}`} onMouseDown={e => e.button === 0 && startPaint("y", i)} onMouseEnter={() => paint?.column === "y" && setPaint({ ...paint, to: i })}>{yText(t.y)}</span>
-      <span className={`tasCell jump ${t.held ? "on" : ""} ${t.press ? "press" : ""} ${isTap(t) ? "tap" : ""}`} title={readOnly ? "" : "Click or drag: hold jump · right-click: tap (press and release in one tick)"}
-        onMouseDown={e => e.button === 0 && startPaint("jump", i)} onContextMenu={e => { e.preventDefault(); if (!busy && !readOnly) toggleTap(i); }}
+      <span className={`tasCell jump ${t.held ? "on" : ""} ${t.press ? "press" : ""} ${isTap(t) ? "tap" : ""}`} title={"Click or drag: hold jump · right-click: tap (press and release in one tick)"}
+        onMouseDown={e => e.button === 0 && startPaint("jump", i)} onContextMenu={e => { e.preventDefault(); if (!busy) toggleTap(i); }}
         onMouseEnter={() => paint?.column === "jump" && setPaint({ ...paint, to: i })}>{isTap(t) ? "T" : t.held ? (t.press ? "J" : "│") : t.press ? "P" : ""}</span>
-      <span className={`tasCell dash ${t.dash ? "on" : ""}`} title={readOnly ? "" : "Click: dash press"} onClick={() => !busy && !readOnly && toggleDash(i)}>{t.dash ? "X" : ""}</span>
+      <span className={`tasCell dash ${t.dash ? "on" : ""}`} title={"Click: dash press"} onClick={() => !busy && toggleDash(i)}>{t.dash ? "X" : ""}</span>
       <span className="tasExtra">{extras}</span>
       <span className="tasPhys" title={span != null && span > 1 ? `${span - 1} more physics tick${span > 2 ? "s" : ""} with no input follow (dash or spring)` : "Physics tick this input plays on"}>{p0 ?? ""}{span != null && span > 1 ? <b>+{span - 1}</b> : null}</span>
       <span className="tasVal">{tr ? tr[1].toFixed(1) : ""}</span><span className="tasVal">{tr ? tr[2].toFixed(1) : ""}</span>
       <span className="tasVal">{tr ? tr[3].toFixed(1) : ""}</span><span className="tasVal">{tr ? tr[4].toFixed(1) : ""}</span>
-      <span className="tasNote" onDoubleClick={() => !readOnly && mark(i)}>{noteAt.get(i) ?? ""}</span>
+      <span className="tasNote" onDoubleClick={() => mark(i)}>{noteAt.get(i) ?? ""}</span>
     </div>);
   }
 
   return <div className="tasRollWrap">
-    <div className="tasRollHead"><span/><span>#</span><span>X</span><span>Y</span><span>Jump</span><span>Dash</span><span>More</span><span>Phys</span><span>x</span><span>y</span><span>vx</span><span>vy</span><span>Marker{readOnly ? "" : " (M)"}</span></div>
+    <details className="howTo"><summary>What the More column means</summary><ul>
+      {EXTRAS.map(([cls, example, tip]) => <li key={cls}><i className={`tasBadge ${cls}`}>{example}</i> {tip}</li>)}
+      <li><b>Phys +n</b>: the dash or spring ticks after this input, which take no input.</li>
+    </ul></details>
+    <div className="tasRollHead"><span/><span>#</span><span>X</span><span>Y</span><span>Jump</span><span>Dash</span><span>More</span><span>Phys</span><span>x</span><span>y</span><span>vx</span><span>vy</span><span>Marker (M)</span></div>
     <div className="tasRoll" ref={scroller} style={{ height: ROW * VISIBLE }} onScroll={e => setTop(e.currentTarget.scrollTop)}>
       <div style={{ height: rows * ROW, position: "relative" }}>{cells}</div>
     </div>
     <div className="tasTools">
       {sel ? <span className="tasSelLabel">Inputs {sel[0]}–{sel[1]} ({sel[1] - sel[0] + 1})</span> : <span className="tasSelLabel">Drag or shift-click input numbers to select.</span>}
-      {tools?.(sel)}
-      {!readOnly && sel && <>
+      {sel && <>
         {onPlayTo && <button disabled={busy} title={`Play at the chosen speed up to input ${sel[0]} and hold (from ${LEAD_IN} inputs before it if it's behind you)  Shift+Enter`} onClick={() => onPlayTo(sel[0])}>▶ Play to {sel[0]}</button>}
         <select value={xValue} onChange={e => setXValue(Number(e.target.value))}>{X_VALUES.map(v => <option key={v} value={v}>{v === 0 ? "0 (rest)" : xText(v)}</option>)}</select>
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, x: xValue }))}>Set X</button>
@@ -587,32 +638,65 @@ export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [
         <button disabled={busy} title="Insert a copy before it  Ctrl+Ins" onClick={clone}>Clone</button>
         <button className="danger" disabled={busy} title="Ctrl+Del" onClick={remove}>Delete</button>
       </>}
-      {!readOnly && <>
+      <>
         <span className="tasSep"/>
         <input type="number" min={1} max={500} value={insertCount} onChange={e => setInsertCount(Math.max(1, Number(e.target.value)))}/>
         <button disabled={busy} title="Neutral inputs before the selection (or the held input)  Ins: one · Shift+Ins: this many" onClick={() => insertBlank(insertCount)}>Insert blank</button>
-      </>}
+      </>
     </div>
-    {!readOnly && <p className="tasKeys"><kbd>↑</kbd><kbd>↓</kbd> select (<kbd>Shift</kbd> extends) · <kbd>Enter</kbd> go · <kbd>Shift+Enter</kbd> play to · <kbd>Ins</kbd> insert · <kbd>Ctrl+Ins</kbd> clone · <kbd>Del</kbd> clear · <kbd>Ctrl+Del</kbd> delete · <kbd>Ctrl+X/C/V</kbd> (<kbd>Shift</kbd>: insert) · <kbd>Ctrl+Z/Y</kbd> · <kbd>M</kbd> marker · <kbd>Shift+PgUp/PgDn</kbd> markers</p>}
+    <p className="tasKeys"><kbd>↑</kbd><kbd>↓</kbd> select (<kbd>Shift</kbd> extends) · <kbd>Enter</kbd> go · <kbd>Shift+Enter</kbd> play to · <kbd>Ins</kbd> insert · <kbd>Ctrl+Ins</kbd> clone · <kbd>Del</kbd> clear · <kbd>Ctrl+Del</kbd> delete · <kbd>Ctrl+X/C/V</kbd> (<kbd>Shift</kbd>: insert) · <kbd>Ctrl+Z/Y</kbd> · <kbd>M</kbd> marker · <kbd>Shift+PgUp/PgDn</kbd> markers</p>
   </div>;
 }
 
-/** The Timeline tab's view of a route: the TAS roll, read-only, with play from a tick and open in the TAS tab. */
-export function RouteRoll({ routeId, version, running, onPlayFrom, onOpenTas }: { routeId?: string; version: unknown; running: boolean;
-  onPlayFrom: (tick: number) => void; onOpenTas: (routeId: string) => void }) {
-  const [data, setData] = useState<{ raw: boolean; ticks: TasTick[]; markers: TasMarker[] } | null>(null);
+const COMPASS = ["UL", "U", "UR", "L", "", "R", "DL", "D", "DR"];
+const ARROW: Record<string, string> = { UL: "↖", U: "↑", UR: "↗", L: "←", "": "•", R: "→", DL: "↙", D: "↓", DR: "↘" };
+const hoverTech = (tech?: string, v?: TasTechVariant) => call("/tas/techs/hover", !tech ? {} : v ? { tech, dir: v.dir, angle: v.angle ?? null } : { tech }).catch(() => {});
+
+/**
+ * Techs here: one button per tech that works from the held tick (a click tries its soonest direction). Hovering it draws
+ * all its directions in game and opens its compass; an arrow shows and tries that direction, the wheel on a diagonal steps
+ * through its steep freeze aims.
+ */
+function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: boolean; busy: boolean; onTry: (tech: string, v: TasTechVariant) => void }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [steep, setSteep] = useState<Record<string, number>>({});
+  // The wheel steps a diagonal's aims; the page mustn't scroll under it (React's wheel listener is passive).
+  const compass = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!routeId) { setData(null); return; }
-    let alive = true;
-    call("/routes/ticks", { routeId }).then(r => { if (alive) setData({ raw: r.raw, ticks: r.ticks ?? [], markers: r.markers ?? [] }); }).catch(() => { if (alive) setData(null); });
-    return () => { alive = false; };
-  }, [routeId, version]);
-  if (!routeId || !data?.raw) return null;
-  return <div className="routeRoll">
-    <TasRoll ticks={data.ticks} markers={data.markers} busy={false} readOnly tools={sel => <>
-      <button className="secondary" disabled={running} title={`Skips fast to input ${sel ? sel[0] : 0}, then plays at 1x`} onClick={() => onPlayFrom(sel ? sel[0] : 0)}>▶ Play from {sel ? sel[0] : 0}</button>
-      <button className="primary" title="Edit it tick by tick on the live game (a record opens as an editable copy)" onClick={() => onOpenTas(routeId)}>Open in TAS</button>
-    </>}/>
+    const el = compass.current;
+    if (!el) return;
+    const stop = (e: WheelEvent) => e.preventDefault();
+    el.addEventListener("wheel", stop, { passive: false });
+    return () => el.removeEventListener("wheel", stop);
+  }, [open]);
+  const list = techs.list ?? [];
+  const status = techs.unavailable ?? (!held ? "Hold on a tick: the techs that fit there appear after a second."
+    : techs.error ? null : techs.running ? `Searching… ${list.length} found` : !techs.done ? "Waiting for the tick to settle…"
+    : list.length ? `${list.length} techs fit here (${techs.tried} tried). Hover one to see it in game.` : `No techs fit here (${techs.tried} tried).`);
+  return <div className="panel"><p className="eyebrow">TECHS HERE</p>
+    {status && <p className="tasHint">{status}</p>}
+    {techs.error && <p className="tasError">{techs.error}</p>}
+    {held && !techs.unavailable && <div className="techsHere">
+      {list.map(t => {
+        const soonest = t.variants.reduce((a, b) => b.start < a.start ? b : a);
+        return <div key={t.tech} className="techWrap" onMouseEnter={() => { setOpen(t.tech); hoverTech(t.tech); }} onMouseLeave={() => { setOpen(null); hoverTech(); }}>
+          <button disabled={busy} title={`Try it (${ARROW[soonest.dir]}, starts ${soonest.start} input ticks from here)`} onClick={() => onTry(t.tech, soonest)}>{t.name}</button>
+          {open === t.tech && t.variants.some(v => v.dir) && <div className="techCompass" ref={compass}>
+            {COMPASS.map(dir => {
+              const here = t.variants.filter(v => v.dir === dir);
+              if (!here.length) return <span key={dir} className="empty">{ARROW[dir]}</span>;
+              const key = `${t.tech}|${dir}`, v = here[(steep[key] ?? 0) % here.length];
+              return <button key={dir} disabled={busy} className={v.died ? "died" : ""}
+                title={`${v.angle != null ? `${v.angle}° from vertical · ` : ""}starts in ${v.start} input ticks${v.died ? " · dies after it" : ""}${here.length > 1 ? " · wheel: steeper aims" : ""}`}
+                onMouseEnter={() => hoverTech(t.tech, v)} onMouseLeave={() => hoverTech(t.tech)} onClick={() => onTry(t.tech, v)}
+                onWheel={e => { if (here.length < 2) return; const n = ((steep[key] ?? 0) + (e.deltaY > 0 ? 1 : here.length - 1)) % here.length; setSteep({ ...steep, [key]: n }); hoverTech(t.tech, here[n]); }}>
+                {ARROW[dir]}{here.length > 1 && <small>{v.angle != null ? `${Math.round(v.angle)}°` : "45°"}</small>}
+              </button>;
+            })}
+          </div>}
+        </div>;
+      })}
+    </div>}
   </div>;
 }
 

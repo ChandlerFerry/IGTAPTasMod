@@ -232,10 +232,15 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   session's trace, `/api/tas/trace`, cut where the inputs change). **Play to** (`/api/tas/play {until, from}`) plays up
   to a tick and holds, from 50 inputs before it if it's behind. Also text ([`docs/tas-markup.md`](docs/tas-markup.md)),
   undo/redo, markers (go to one to load that point; each shows its segment's inputs and ticks). Sticks are a
-  controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press. The
-  Timeline tab shows a route in the same roll, read-only, with **Play from** and **Open in TAS**.
+  controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press. A
+  **Human version** session colours each input number by its humanize slack (red exact, amber window, violet band, green
+  free; hover for the input), on the rows whose inputs are still the human version's.
 - **Re-record** drops the inputs from the held tick and records the controller (`InputRecorder`) at a slowdown; on stop
   its ticks go in and the session seeks to their end: what is kept is what replays. A death or finish stops it.
+- **Techs here** (course and category sessions): a second after a tick is held, `enginesim techs`
+  ([`enginesim/README.md`](enginesim/README.md#techs)) lists the named techs whose key window works from there, one button
+  each. Hovering one draws its directions' paths in game (the held tick is seeked again, so its last 1x tick draws them)
+  and opens its compass; an arrow, or the button for the soonest, puts its inputs in at the held tick and plays them.
 - **Suggest** (course and category sessions) runs `enginesim suggest` on the route up to the held tick
   ([`enginesim/README.md`](enginesim/README.md#suggest)) and lists edits that reach the same spot sooner; apply splices one in.
 - **Share**: a code (`IGTAS1:` + base64url gzip), `.igtas.json` or `.tas` text, with the savestate if any. An import is a
