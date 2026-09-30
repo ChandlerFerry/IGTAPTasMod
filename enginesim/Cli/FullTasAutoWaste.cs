@@ -425,21 +425,29 @@ namespace IGTAP.EngineSim.Cli
             return missed == 0 ? 0 : 1;
         }
 
-        /// <summary>--parts waste, at the end of every BuildModel (the start, each new best): the best's audit, its ticks per goal
-        /// for the model (Refresh) and a waste arm per goal with a stake (its window: the goal to the one after its last finding).</summary>
+        /// <summary>The route <see cref="_wasteFound"/> audits: a model built on another route (the goals part's ModelOf) audits
+        /// that one, and the best's audit is made again when next asked for.</summary>
+        Route _wasteRoute;
+
+        /// <summary>The best's findings (audited again when the best changed since).</summary>
+        List<Waste> Findings()
+        {
+            if (!ReferenceEquals(_wasteRoute, _best)) AuditWaste();
+            return _wasteFound;
+        }
+
+        /// <summary>--parts waste, at the end of every BuildModel (the start, each new best): the best's audit and its ticks per goal
+        /// for the model (Refresh) and the waste arms (a window from the goal to the one after its last finding: WasteLimit).</summary>
         void AuditWaste()
         {
-            if (!_auto || !Part("waste") || _best.Progress < _goals) return;
+            _wasteRoute = _best;
+            _wasteFound = new List<Waste>();
+            _wasteAt.Clear();
+            if (!_auto || !Part("waste") || _best == null || _best.Progress < _goals || _model == null || _model.Count < _goals) return;
             double c0 = CpuSeconds();
             var (s, w) = WasteTrace(_best.Inputs);
             _wasteFound = Audit(_best, s, w, _model);
-            _wasteAt.Clear();
-            foreach (var g in _wasteFound.Where(x => IsMove(x.Kind) && x.Stake > 0).GroupBy(x => x.Goal))
-            {
-                _wasteAt[g.Key] = g.Sum(x => x.Stake);
-                if (!_arms.TryGetValue(("waste", g.Key), out Arm arm)) _arms[("waste", g.Key)] = arm = new Arm { Lever = "waste", Goal = g.Key };
-                arm.Limit = Math.Min(_goals, Math.Max(g.Key + 1, g.Max(x => x.Limit)));
-            }
+            foreach (var g in _wasteFound.Where(x => IsMove(x.Kind) && x.Stake > 0).GroupBy(x => x.Goal)) _wasteAt[g.Key] = g.Sum(x => x.Stake);
             Log($"auto: waste audit of {Describe(_best)} in {CpuSeconds() - c0:0.0} CPU s: {_wasteFound.Count} findings ({string.Join(", ", _wasteFound.GroupBy(x => x.Kind).Select(g => $"{g.Key} {g.Count()}"))}), "
                 + $"stake {_wasteAt.Values.Sum():0} ticks at {_wasteAt.Count} goals");
             foreach (Waste x in _wasteFound.Where(x => x.Stake > 0).OrderByDescending(x => x.Stake).Take(12)) Log("auto: waste " + WasteLine(x, _labels[x.Goal - 1]));
@@ -447,7 +455,14 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>The audit's ticks at stake at goal k (0: none).</summary>
-        double WasteAt(int k) { return _wasteAt.TryGetValue(k, out double t) ? t : 0; }
+        double WasteAt(int k) { Findings(); return _wasteAt.TryGetValue(k, out double t) ? t : 0; }
+
+        /// <summary>A waste arm's last goal: the goal after the last one its findings reach.</summary>
+        int WasteLimit(int k)
+        {
+            List<Waste> at = Findings().Where(x => x.Goal == k && IsMove(x.Kind) && x.Stake > 0).ToList();
+            return Math.Min(_goals, Math.Max(k + 1, at.Count == 0 ? 0 : at.Max(x => x.Limit)));
+        }
 
         /// <summary>
         /// A waste arm's own seeds, from the best's inputs with its goal's findings undone one at a time: a filler chain's inputs cut
@@ -457,7 +472,7 @@ namespace IGTAP.EngineSim.Cli
         List<List<InputTick>> WasteSeeds(Route best, int k, int prefixLength)
         {
             var seeds = new List<List<InputTick>>();
-            foreach (Waste x in _wasteFound.Where(x => x.Goal == k && x.E0 >= prefixLength && x.E0 < best.Inputs.Count))
+            foreach (Waste x in Findings().Where(x => x.Goal == k && x.E0 >= prefixLength && x.E0 < best.Inputs.Count))
             {
                 List<InputTick> v = best.Inputs.ToList();
                 switch (x.Kind)
@@ -543,7 +558,7 @@ namespace IGTAP.EngineSim.Cli
             _graftSolvers++;
             solver.GraftRate = GraftShareIdle;
             if (k <= 0) return;
-            List<Waste> spans = _wasteFound.Where(x => IsMove(x.Kind) && x.Stake > 0 && x.Goal >= k && x.Goal <= limit && x.InFrom >= prefixLength).ToList();
+            List<Waste> spans = Findings().Where(x => IsMove(x.Kind) && x.Stake > 0 && x.Goal >= k && x.Goal <= limit && x.InFrom >= prefixLength).ToList();
             if (spans.Count == 0) return;
             solver.GraftRate = GraftShareWaste;
             solver.GraftFocus = (spans.Min(x => x.InFrom) - prefixLength, spans.Max(x => x.InTo) - prefixLength);

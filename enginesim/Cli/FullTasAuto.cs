@@ -651,6 +651,7 @@ namespace IGTAP.EngineSim.Cli
         int WindowLimit(Arm arm)
         {
             if (arm.Limit > 0) return arm.Limit;
+            if (arm.Lever == "waste") return WasteLimit(arm.Goal);
             return arm.Lever == "lookahead" ? Math.Min(_goals, arm.Goal + 2) : arm.Lever == "span" ? SpanEnd(arm.Goal) : Math.Min(_goals, arm.Goal + 1);
         }
 
@@ -868,7 +869,7 @@ namespace IGTAP.EngineSim.Cli
                 case "graft": return GraftCandidate(k) != null;
                 case "plan": return !_planDead.Contains(k);
                 case "polish": return !Polished(k);
-                case "waste": return WasteAt(k) > 0 && _arms.ContainsKey(("waste", k));
+                case "waste": return WasteAt(k) > 0;
                 default: return true;
             }
         }

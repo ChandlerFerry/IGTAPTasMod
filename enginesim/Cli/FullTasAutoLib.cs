@@ -1008,15 +1008,17 @@ namespace IGTAP.EngineSim.Cli
             // limit, not its inputs: a window re-found the same arrival with other inputs past it (FalseEnding-Any%'s goal 116 at
             // 8723, repaired three times for 4,600 CPU s).
             if (_mergedOn != best) { _mergedOn = best; _merged.Clear(); }
-            int given = found.Count;
+            int given = found.Count, short_ = 0;
             found = Enumerable.Reverse(found).Take(5).Reverse().Where(f =>
             {
                 Route at = Evaluate(best.Inputs.Take(prefixLength).Concat(f).ToList(), limit);
-                return at.Progress >= limit && _merged.Add(Mix(Mix(StateKey(_eval), (ulong)(uint)WorldDigest(_eval)), (ulong)at.GoalPhysics[limit - 1]) ^ (ulong)limit);
+                if (at.Progress < limit) { short_++; return false; }
+                return _merged.Add(Mix(Mix(StateKey(_eval), (ulong)(uint)WorldDigest(_eval)), (ulong)at.GoalPhysics[limit - 1]) ^ (ulong)limit);
             }).ToList();
             if (found.Count == 0)
             {
-                Log($"auto: {where}: its {given} finds were merged onto this best already");
+                Log($"auto: {where}: " + (short_ == 0 ? $"its {given} finds were merged onto this best already"
+                    : $"{short_} of its last {Math.Min(5, given)} finds replay from the run's start short of goal {limit}"));
                 return;
             }
             var broken = new List<Route>();

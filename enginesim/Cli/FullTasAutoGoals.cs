@@ -1138,6 +1138,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 _goalLineage.RemoveAt(_goalLineage.Count - 1);
                 (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+                RebindEval();
                 Log($"auto goals: {e.Text}: the fresh check didn't keep it; the goals stay");
                 return false;
             }
@@ -1214,6 +1215,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 _goalLineage.RemoveAt(_goalLineage.Count - 1);
                 (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+                RebindEval();
                 _refound = full;
                 Log($"auto goals: {e.Text}: re-found, no faster than the best; the goals stay");
                 return false;
@@ -1341,6 +1343,16 @@ namespace IGTAP.EngineSim.Cli
             _focusTo = _goals;
         }
 
+        /// <summary>After the goals change back: the loop's simulation made again. A Simulation made on this thread since (SwitchGoals')
+        /// took over the thread's game statics and engine hooks (World.Load, the Simulation constructor), so the saved one played
+        /// every run to no goal: after a goals pull whose investment wasn't kept, every window find was dropped as "merged onto
+        /// this best already" (its replay never reached the window's goal) and the model's per-goal table came out empty.</summary>
+        void RebindEval()
+        {
+            _eval = _create();
+            _origin = _eval.Start;
+        }
+
         /// <summary>After adopted goals: every goal-numbered piece of the loop starts again from the new best (as a new --auto would,
         /// without the speed probes, which are per unlock set).</summary>
         void RestartOnGoals()
@@ -1395,6 +1407,7 @@ namespace IGTAP.EngineSim.Cli
                 return;
             }
             (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+            RebindEval();
             Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) replay as {r.Progress}/{goals.Length} goals"
                 + (r.Progress == goals.Length ? $" ({Describe(r)}), no faster than the trace's best" : "") + "; the trace's goals stay");
         }
