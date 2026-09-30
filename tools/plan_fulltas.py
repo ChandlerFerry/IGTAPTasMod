@@ -47,6 +47,9 @@ LIFE_EXTRA = 1.5 / FRAMES
 # slowed by K-1, ..., 1, 0 ticks, each lap a break (None: no ladders). --fast-lap, --ladder-max.
 FAST_LAP = None
 LADDER_MAX = 12
+# A ladder whose slowest lap doesn't beat the best path holds back the lap that set it (slowed by up to this many ticks, as
+# FullTasAutoLadder.MaxHoldBack) so the ladder's first lap breaks it.
+MAX_HOLD = 24
 TAIL = ["start:2", "finish:2", "reward:bonus2", "start:3", "reward:bonus3", "start:3", "finish:3"]
 FOREVER = 10 ** 8
 
@@ -123,12 +126,27 @@ def wait_for(s, cost, deadline):
     s.advance(hi)
     return True
 
+def hold_back(s, top, flight, reserve=True):
+    """A ladder's first lap runs top - 1 ticks and must beat s.P. When it doesn't, the lap that set s.P (at tick s.Pt, in
+    this plan) is held back to top: the run is top - s.P ticks later, and the clones ran the slower path since, losing
+    flight (every clone's pay) x (the payouts per tick lost) over that time. False when no lap of the plan can be held back that
+    far, or the course has lost its spawn reserve (its breaks then only bring Cash forward); s.what names the hold-back."""
+    if top - 1 < s.P:
+        return True
+    if not reserve or s.Pt is None or top - s.P > MAX_HOLD:
+        return False
+    hold = top - s.P
+    s.cash -= flight * (s.t - s.Pt) * (1 / clone_life(s.P) - 1 / clone_life(top))
+    s.advance(s.t + hold)
+    s.P, s.what = top, f"+{hold}"
+    return True
+
 class State:
-    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "active", "c1next", "where", "prev", "tokens", "what")
+    __slots__ = ("t", "cash", "n", "N", "m", "g", "P", "Pt", "active", "c1next", "where", "prev", "tokens", "what")
 
     def child(self):
         s = State.__new__(State)
-        s.t, s.cash, s.n, s.N, s.m, s.g, s.P = self.t, self.cash, self.n, self.N, self.m, self.g, self.P
+        s.t, s.cash, s.n, s.N, s.m, s.g, s.P, s.Pt = self.t, self.cash, self.n, self.N, self.m, self.g, self.P, self.Pt
         s.active, s.c1next, s.where = self.active, self.c1next, self.where
         s.prev, s.tokens, s.what = self, (), ""
         return s
@@ -163,7 +181,7 @@ class State:
         self.cash += self.reward2()
         if path < self.P:
             self.cash += self.N * self.pay2()
-            self.active, self.P = respawn(self.t, self.N), path
+            self.active, self.P, self.Pt = respawn(self.t, self.N), path, self.t
 
     def lap(self):
         s = self.child()
@@ -177,15 +195,17 @@ class State:
     def ladder(self, K):
         """K back-to-back record laps from the quick restart: the fastest lap slowed by K-1, ..., 1, 0 ticks, each a
         break (docs/fulltas.md, "Engine farm planner"). None when the slowest isn't under the best path."""
-        if FAST_LAP is None or FAST_LAP + K - 1 >= self.P:
+        if FAST_LAP is None:
             return None
         s = self.child()
+        if not hold_back(s, FAST_LAP + K, s.N * s.pay2()):
+            return None
         for k in range(K):
             path = FAST_LAP + K - 1 - k
             s.advance(s.t + (0 if k == 0 and s.where == "gate" else LEAD) + path)
             s.finish(path)
         s.tokens = (("finish:2",) if self.where == "gate" else ("start:2", "finish:2")) + ("start:2", "finish:2") * (K - 1)
-        s.what, s.where = f"ladder {K}", "done"
+        s.what, s.where = f"ladder {K}" + (f" (held back {s.what})" if s.what else ""), "done"
         return s
 
     def buy(self, b, walk_row, force=False):
@@ -216,7 +236,7 @@ class State:
 
 def start_state(cash):
     s = State.__new__(State)
-    s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, cash, 0, 0, 0, 0, CLONE_PATH
+    s.t, s.cash, s.n, s.N, s.m, s.g, s.P, s.Pt = 0, cash, 0, 0, 0, 0, CLONE_PATH, None
     s.active, s.c1next, s.where = (), OFFSCREEN // 2, "gate"
     s.prev, s.tokens, s.what = None, (), ""
     s.advance(ARRIVE)
@@ -448,11 +468,11 @@ class Phase:
         return math.ceil(self.reward(lv, g) * (0.1 + self.gm * 0.2 + m * 0.1)) * roll
 
 class LateState:
-    __slots__ = ("ph", "t", "cash", "lv", "g", "P", "clones", "where", "lapped", "prev", "tokens", "what")
+    __slots__ = ("ph", "t", "cash", "lv", "g", "P", "Pt", "clones", "where", "lapped", "prev", "tokens", "what")
 
     def child(self):
         s = LateState.__new__(LateState)
-        s.ph, s.t, s.cash, s.lv, s.g, s.P, s.clones, s.where, s.lapped = self.ph, self.t, self.cash, self.lv, self.g, self.P, self.clones, self.where, self.lapped
+        s.ph, s.t, s.cash, s.lv, s.g, s.P, s.Pt, s.clones, s.where, s.lapped = self.ph, self.t, self.cash, self.lv, self.g, self.P, self.Pt, self.clones, self.where, self.lapped
         s.prev, s.tokens, s.what = self, (), ""
         return s
 
@@ -484,7 +504,7 @@ class LateState:
         if self.P is not None:
             life = clone_life(self.P)
             self.cash += self.pay() * sum(1 - (self.t - a) % life / life for a in self.clones if a <= self.t)
-        self.P = path
+        self.P, self.Pt = path, self.t
         n = len(self.clones)
         # The reserve refills the pool one a frame (in step); without it one an interval, over a whole life: the break's Cash
         # is then an advance the emptier pool pays back over the next life.
@@ -507,16 +527,18 @@ class LateState:
         """K back-to-back record laps from the quick restart: the phase's lap slowed by K-1, ..., 1, 0 ticks, each a break
         (docs/fulltas.md, "Engine farm planner"). None when the slowest isn't under the best path."""
         ph = self.ph
-        if self.P is None or ph.lap + K - 1 >= self.P:
+        if self.P is None:
             return None
         s = self.child()
+        if not hold_back(s, ph.lap + K, len(s.clones) * s.pay(), ph.c.reserve):
+            return None
         for k in range(K):
             path = ph.lap + K - 1 - k
             s.advance(s.t + (0 if k == 0 and s.where == "gate" else ph.c.lead) + path)
             s.finish(path)
         n = ph.c.number
         s.tokens = ((f"finish:{n}",) if self.where == "gate" else (f"start:{n}", f"finish:{n}")) + (f"start:{n}", f"finish:{n}") * (K - 1)
-        s.what, s.where, s.lapped = f"ladder {K}", "done", True
+        s.what, s.where, s.lapped = f"ladder {K}" + (f" (held back {s.what})" if s.what else ""), "done", True
         return s
 
     def buy(self, i, walk_row, force=False):
@@ -712,7 +734,7 @@ class Late:
         ph = Phase(c, keys, required, need_lap, self.other_rate(course), self.glob, LATE_LAP[course][1 if self.dj else 0])
         s0 = LateState.__new__(LateState)
         t0 = self.t
-        s0.ph, s0.t, s0.cash, s0.lv, s0.g, s0.P = ph, t0, self.cash, tuple(c.level[k] for k in keys), self.g, c.P
+        s0.ph, s0.t, s0.cash, s0.lv, s0.g, s0.P, s0.Pt = ph, t0, self.cash, tuple(c.level[k] for k in keys), self.g, c.P, None
         n = c.level.get("C", 0)
         # The clones already fly, in whatever phase their buys left them: spread over one life.
         s0.clones = tuple(t0 - i * clone_life(c.P or 0) / n for i in range(n)) if n else ()
