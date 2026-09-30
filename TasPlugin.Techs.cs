@@ -27,7 +27,7 @@ namespace IGTAPTasMod
         {
             public string tech, name, dir;
             public float? angle;
-            public int start;
+            public int start, lead;
             public float speed;
             public bool died;
             public List<SolverTick> ticks;
@@ -131,7 +131,7 @@ namespace IGTAPTasMod
                 var v = new TasTechVariant
                 {
                     tech = (string)row["tech"], name = (string)row["name"], dir = (string)row["dir"] ?? "", angle = row["angle"]?.ToObject<float?>(),
-                    start = row["start"].Value<int>(), speed = row["speed"].Value<float>(), died = row["died"].Value<bool>(),
+                    start = row["start"].Value<int>(), lead = row["lead"]?.Value<int>() ?? 0, speed = row["speed"].Value<float>(), died = row["died"].Value<bool>(),
                     ticks = row["ticks"].ToObject<List<SolverTick>>().Select(TasSanitize).ToList(),
                     path = Enumerable.Range(0, path.Length / 2).Select(i => new Vector2(path[2 * i], path[2 * i + 1])).ToArray(),
                 };
@@ -227,7 +227,8 @@ namespace IGTAPTasMod
         bool TechPathsShown { get { TasSession s = _tas; return s != null && s.hoverTech != null; } }
 
         /// <summary>The hovered tech's paths in world space (the engine's origin-free positions plus the current origin): its
-        /// other directions faint, the hovered one bright (red when it dies in its coast).</summary>
+        /// other directions faint, the hovered one bright (red when it dies in its coast); the lead-in (the continuation before
+        /// the tech's inputs) thin, and a box where the tech starts.</summary>
         void DrawTechPaths(float scale)
         {
             TasSession s = _tas;
@@ -248,8 +249,15 @@ namespace IGTAPTasMod
                 {
                     bool hovered = variants[i].dir == s.hoverDir && variants[i].angle == s.hoverAngle;
                     if (hovered != (pass == 1)) continue;
-                    var shape = new SpikeShape { points = variants[i].path.Select(p => p + origin).ToArray() };
-                    DrawShape(cam, shape, !hovered ? TechPathColor : variants[i].died ? TechPathDied : TechPathHovered, Mathf.Max(.75f, scale) * (hovered ? 2f : 1f));
+                    TasTechVariant v = variants[i];
+                    Color color = !hovered ? TechPathColor : v.died ? TechPathDied : TechPathHovered;
+                    float half = Mathf.Max(.75f, scale) * (hovered ? 2f : 1f);
+                    int lead = Mathf.Clamp(v.lead, 0, v.path.Length - 1);
+                    Vector2[] points = v.path.Select(p => p + origin).ToArray();
+                    if (lead > 0) DrawShape(cam, new SpikeShape { points = points.Take(lead + 1).ToArray() }, color, half * .5f);
+                    DrawShape(cam, new SpikeShape { points = points.Skip(lead).ToArray() }, color, half);
+                    Vector2 at = points[lead];
+                    DrawShape(cam, new SpikeShape { closed = true, points = new[] { at + new Vector2(-8f, -8f), at + new Vector2(8f, -8f), at + new Vector2(8f, 8f), at + new Vector2(-8f, 8f) } }, color, half);
                 }
             GL.End();
             GL.PopMatrix();

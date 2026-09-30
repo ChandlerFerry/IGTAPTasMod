@@ -21,8 +21,9 @@ namespace IGTAP.EngineSim.Cli
     {
         /// <summary>Input ticks each continuation plays past N, and the contacts along it that place windows.</summary>
         const int Ahead = 75, MaxContacts = 8;
-        /// <summary>A steep freeze aim's x with y at full tilt (16.7°, 19.3°, 21.8° from vertical).</summary>
-        static readonly float[] Steep = { .30f, .35f, .40f };
+        /// <summary>A steep freeze aim's x with y at full tilt (16.7°, 19.3° from vertical): from 0.4 up (0.4f is just over it)
+        /// MacroEngine.ControllerAxis snaps x to full tilt, the 45° diagonal.</summary>
+        static readonly float[] Steep = { .30f, .35f };
         static readonly (float x, float y)[] Compass = { (0f, 1f), (1f, 1f), (1f, 0f), (1f, -1f), (0f, -1f), (-1f, -1f), (-1f, 0f), (-1f, 1f) };
         static readonly (float x, float y)[] Sideways = { (-1f, 0f), (1f, 0f) };
 
@@ -71,13 +72,19 @@ namespace IGTAP.EngineSim.Cli
 
             /// <summary><paramref name="inputs"/> played from input tick N to their end (not the idle steps the engine runs after
             /// them): the contacts from there, the input tick it died on (-1: none), the player's world position after every physics
-            /// step (the first: at N) and the speed at the end.</summary>
-            public (List<(int tick, Contact kind)> contacts, int died, List<float> path, float speed) Play(List<InputTick> inputs)
+            /// step (the first: at N), the path's step where input tick <paramref name="mark"/> starts, and the speed at the end.</summary>
+            public (List<(int tick, Contact kind)> contacts, int died, List<float> path, int marked, float speed) Play(List<InputTick> inputs, int mark = -1)
             {
                 _log.Load(_mark);
                 var path = new List<float> { Start.x, Start.y };
-                int last = _at.Tick;
-                RunResult r = _sim.Run(inputs, _at, tick => { last = tick; _log.Tick(tick, _sim.Player, _gate.NearGate()); return tick < inputs.Count; }, 60, _ =>
+                int last = _at.Tick, marked = 0;
+                RunResult r = _sim.Run(inputs, _at, tick =>
+                {
+                    last = tick;
+                    if (tick == mark) marked = path.Count / 2 - 1;
+                    _log.Tick(tick, _sim.Player, _gate.NearGate());
+                    return tick < inputs.Count;
+                }, 60, _ =>
                 {
                     Step();
                     WorldPos p = _sim.PlayerWorld;
@@ -87,7 +94,7 @@ namespace IGTAP.EngineSim.Cli
                 bool died = r.EndReason != null && r.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 var contacts = new List<(int, Contact)>(_log.Contacts);
                 if (died) contacts.Add((last + 1, Contact.Died));
-                return (contacts, died ? last + 1 : -1, path, _sim.Physics.GetVelocity(_body).magnitude);
+                return (contacts, died ? last + 1 : -1, path, marked, _sim.Physics.GetVelocity(_body).magnitude);
             }
         }
 
@@ -236,7 +243,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     lock (found) if (found.TryGetValue(job.Key, out int best) && best <= job.Start) return;
                     Interlocked.Increment(ref tried);
-                    var (hits, died, path, speed) = j.Play(job.Inputs);
+                    var (hits, died, path, lead, speed) = j.Play(job.Inputs, at + job.Start);
                     if (!hits.Any(h => h.kind == job.Pattern.Kind && h.tick >= job.Placed - 1 && h.tick <= job.Placed + 2)) return;
                     // A death before the window's own inputs end is the tech failing (one in its coast is shown, marked).
                     if (died >= 0 && died < job.Inputs.Count - TechGrafts.GraftCoast) return;
@@ -248,7 +255,7 @@ namespace IGTAP.EngineSim.Cli
                     Interlocked.Increment(ref works);
                     Write(new
                     {
-                        tech = job.Pattern.Tech, name = job.Pattern.Name, dir = job.Dir, angle = job.Angle, start = job.Start, speed, died = died >= 0,
+                        tech = job.Pattern.Tech, name = job.Pattern.Name, dir = job.Dir, angle = job.Angle, start = job.Start, lead, speed, died = died >= 0,
                         ticks = job.Inputs.Skip(at).Select(t => t.ToJson()), path,
                     });
                 });

@@ -1150,14 +1150,15 @@ released and held); `ContactLog` files the contacts along each (and the player's
 a wall). Each tech's key window (`TechGrafts`: `Key`, not quick-restarting, not keyed on a death, its `Requires` within
 `--caps`) is placed at each contact of its kind by `TechGrafts.Compose` (every shift in its range, no `Vary` sampling), in
 every direction: a window with no side both ways; a dash's stick in 8 directions with the omnidash, else left and right; a
-freeze aim's (`turnX`/`turnY`) freeze stick in 8, the diagonals also at x 0.30, 0.35, 0.40 with y at full tilt. A variant
+freeze aim's (`turnX`/`turnY`) freeze stick in 8, the diagonals also at x 0.30 and 0.35 with y at full tilt (from 0.40 up,
+`MacroEngine.ControllerAxis` snaps x to full tilt: the 45° diagonal). A variant
 works when its key contact happens −1..+2 ticks from where Compose placed it and it doesn't die before its window's inputs
 end (a death in the coast is kept, `died`). Placements run soonest first; a tech's direction (and angle) found once is
 skipped where it would start later.
 
 `--out` (default `<route>-techs.jsonl`) gets a line per working variant as it is found: `tech`, `name`, `dir` (`U`, `UR`,
 `R`, … or `""`), `angle` (a steep freeze aim's degrees from vertical, else null), `start` (input ticks after N the window
-starts), `speed` (at the end), `died`, `ticks` (from N: the continuation's, the window's, 40 of coast) and `path` (the
+starts), `lead` (the path's step there: the continuation before it is the lead-in), `speed` (at the end), `died`, `ticks` (from N: the continuation's, the window's, 40 of coast) and `path` (the
 player's origin-free world position after every physics step, from N: `[x0, y0, x1, y1, …]`); the last line is
 `{"done": true, "tried": n}`. Course 4 `WJ_DS_DJ` human 13.28 at N = 120: 841 placements, 407 tried, 27 variants of 15 techs
 in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs in 6.2 s.

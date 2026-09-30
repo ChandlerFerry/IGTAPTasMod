@@ -20,8 +20,9 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
   range, no `Vary` sampling), cut at N at the earliest, then its coast.
 - **Directions.** A window with no side is tried both ways (a sided one is mined mirrored already). A window with a
   dash: with the omnidash, the dash stick in all 8 directions; without it, left and right. A window whose dash aims in
-  the freeze (`turnX`/`turnY`): the freeze stick in 8 directions, and the 4 diagonals also at x 0.30, 0.35, 0.40 with y at
-  full tilt (16.7°, 19.3°, 21.8° from vertical); without the omnidash left and right.
+  the freeze (`turnX`/`turnY`): the freeze stick in 8 directions, and the 4 diagonals also at x 0.30 and 0.35 with y at
+  full tilt (16.7°, 19.3° from vertical; from 0.40 up `ControllerAxis` snaps x to full tilt, the 45° diagonal); without
+  the omnidash left and right.
 - **Works.** The key contact happens where the demo had it (−1..+2 ticks of where Compose placed it). A variant that
   dies still counts (marked `died`).
 - **Output**, one JSON line per working variant as it is found: `tech`, `name`, `dir` (`L`, `R`, `U`, `D`, `UL`, `UR`,
@@ -49,7 +50,7 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
 
 A **Techs here** panel under Held tick: a status line (waiting / searching, n found / none / error) and one button per
 tech named by its name. Hovering a button opens its compass: the directions found, arrows in a 3×3 grid; the diagonals
-with steep freeze aims take the wheel to step 45° → 22° → 19° → 17°. Hovering an arrow shows that variant in game; a
+with steep freeze aims take the wheel to step 45° → 19° → 17°. Hovering an arrow shows that variant in game; a
 click tries it. A click on the button itself tries the tech's soonest direction.
 
 ## Not in scope
