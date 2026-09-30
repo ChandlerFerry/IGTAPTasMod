@@ -247,7 +247,7 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   ([`enginesim/README.md`](enginesim/README.md#suggest)) and lists edits that reach the same spot sooner; apply splices one in.
 - **Share**: a code (`IGTAS1:` + base64url gzip), `.igtas.json` or `.tas` text, with the savestate if any. An import is a
   plain route (a record's name gets ` shared`).
-- **Hotkeys**, in the game or the studio's TAS tab: `]` advance, `[` rewind (in the studio Shift for ten ticks), `\` play/hold,
+- **Hotkeys**, in the game or the studio's TAS tab: `]` advance, `[` rewind (in the studio also `→`/`←`, Shift for ten ticks), `\` play/hold (in the studio also Space),
   `'` re-record; F8 (game) closes. The tab's input box turbos to an input tick and holds there.
 - **Placed loadstates** (Savestates tab): a copy of the player now or of a savestate with x, y, speed or facing replaced,
   and optionally the world rebased around a point after the restore (`RebaseWorldAround`, the Full-TAS `rebaseAt`'s moves),
