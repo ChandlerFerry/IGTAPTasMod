@@ -8,6 +8,7 @@ import "./fulltas.css";
 import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { HumanSlackTimeline, type SlackReply } from "./human-slack";
 import { TechPanel, type TechState } from "./techs";
+import { PlaceLoadstate, TasEditor, type PlacePrefill, type TasLive } from "./tas-editor";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
 import { artTiles, capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 
@@ -54,6 +55,7 @@ type StudioState = {
   selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
   techs?: TechState;
+  tas?: TasLive | null;
 };
 // GET /state/static: the heavy part, fetched again only when /state/live's staticVersion changes.
 type StaticState = { staticVersion: number; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
@@ -90,6 +92,7 @@ export default function Studio() {
   const [error, setError] = useState("");
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   const [courseTarget, setCourseTarget] = useState<CourseTarget | null>(null);
+  const [placePrefill, setPlacePrefill] = useState<PlacePrefill | null>(null);
   const saveUnlocks = state.connected ? state.saveUnlocks ?? null : null;
 
   // The static part and the refresh that fetched it; a refresh's answer is shown only if no later one was shown already.
@@ -173,7 +176,7 @@ export default function Studio() {
         </div>
       </header>
 
-      <nav className="tabs">{[["fulltas","Full-TAS"],["tech","Tech"],["ultras","Ultra map"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="tabs">{[["tas","TAS"],["fulltas","Full-TAS"],["tech","Tech"],["ultras","Ultra map"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"],["timeline","Timeline"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {error && <div className="errorBanner">{error}<button onClick={() => setError("")}>×</button></div>}
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
@@ -184,13 +187,16 @@ export default function Studio() {
 
         {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
+        {tab === "tas" && <TasEditor tas={state.tas} routes={state.routes} courses={state.courses ?? []} categories={state.categories} savestates={state.savestates} onCommand={command}
+          onImprove={(course, capabilities) => { setCourseTarget({ course, capabilities, farm: false }); setTab("optimize"); }} onPlace={p => { setPlacePrefill(p); setTab("savestates"); }}/>}
+
         {tab === "tech" && <TechPanel techs={state.techs} running={state.running || state.recording} onCommand={command}/>}
 
         {tab === "ultras" && <UltraMap load={loadUltras}/>}
 
         {tab === "optimize" && <><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} categories={state.categories} routes={state.routes} running={state.running} target={courseTarget} onTarget={setCourseTarget} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} categories={state.categories} solver={state.solver ?? emptyState.solver} open={courseTarget} onOpen={setCourseTarget} onCommand={command}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
-        {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Capture a game state, then assign it as a route start.</p><div className="savestateList">{!state.savestates.length && <div className="emptyState"><span className="orbit">●</span><h2>No savestates yet</h2><p>Capture one to start routes mid-game.</p></div>}{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div></div>}
+        {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Capture a game state, then assign it as a route start.</p><div className="savestateList">{!state.savestates.length && <div className="emptyState"><span className="orbit">●</span><h2>No savestates yet</h2><p>Capture one to start routes mid-game.</p></div>}{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div><PlaceLoadstate savestates={state.savestates} prefill={placePrefill} onCommand={command}/></div>}
       </div>
     </section>
   </main>;

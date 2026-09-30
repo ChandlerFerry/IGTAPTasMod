@@ -155,12 +155,8 @@ namespace IGTAPTasMod
             if (s.ended != null) return TasHold(s);
             if (s.holdAtInput >= 0 || s.holdAtPhysics >= 0)
             {
-                if (_engine.RunTicks >= s.holdAtInput && s.physics >= s.holdAtPhysics)
-                {
-                    s.holdAtInput = s.holdAtPhysics = -1;
-                    return TasHold(s);
-                }
-                return !TasEnsureInput(s);
+                if (_engine.RunTicks < s.holdAtInput || s.physics < s.holdAtPhysics) return !TasEnsureInput(s);
+                s.holdAtInput = s.holdAtPhysics = -1;
             }
             if (s.release > 0)
             {
@@ -326,7 +322,8 @@ namespace IGTAPTasMod
             s.greenzone.RemoveAll(g => g != start && g.input > first);
             s.route.steps = ToSteps(s.ticks);
             SaveLibrary();
-            if (!reseek || s.starting) return;
+            if (!reseek) return;
+            if (s.starting) { s.refeed = true; return; }
             int cursor = (int)_engine.RunTicks;
             if (first >= cursor && s.ended == null) { s.refeed = true; return; }
             if (first < s.BaseInput) { s.seekAfterStart = Math.Min(cursor, s.ticks.Count); s.reopen = true; return; }
@@ -367,6 +364,8 @@ namespace IGTAPTasMod
             TasTicksChanged(s, from, false);
             s.recordFrom = from;
             s.recording = true;
+            // The engine stays running (it takes the finish) but has no inputs left: a quick restart step would still fire.
+            _engine.ResumeAt(_engine.CaptureState(), new List<MacroStep>());
             _walkSlowdown = slowdown > 1f ? slowdown : 0f;
             _recorder.Start(s.route.name + " re-record");
             s.held = false;

@@ -648,3 +648,16 @@ ordered as the sections they came from.
 - **Fix:** a walk leaves `Time.timeScale` alone and paces the wall clock instead: `Application.targetFrameRate` is the
   paced rate / slowdown (28 fps for 10×), so it plays 1x's exact frames, slower.
 - **Where:** `TasPlugin.PacePlayback`, `PaceWalk`.
+
+## Savestate restore kept a death's respawn
+
+- **Symptom:** a savestate restored within 0.6 s of a death (the studio's Restore, a savestate route or probe start, a
+  lab placement) teleported the player back to the checkpoint moments later, and the camera panned across the map.
+  Restores in a camera room or while falling left the camera on the old room, or up to 1180 below the player.
+- **Cause:** `onDeath` queues `Invoke("deathRespawn", 0.6f)`, which a savestate restore never cancelled (turbo's
+  restore cancels every invoke). A `camZoneScript` holds the camera until its `OnTriggerExit2D`, and `SnapCamera` used
+  the fall look-down offset the last tick before the restore left.
+- **Fix:** `SavestateService.Restore` cancels `deathRespawn` only (a blanket `CancelInvoke` would drop a wall jump's
+  `reEnableNormalCollider`, which a savestate can't restore), gives the camera back to the player, restores the zoom
+  (`camSize`, 0 in older savestates) and snaps with the look-down of the restored speed.
+- **Where:** `SavestateService.Restore`, `SnapCamera`, `Savestate.camSize`.

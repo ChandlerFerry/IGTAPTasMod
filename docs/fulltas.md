@@ -311,7 +311,9 @@ own spot, a checkpoint the game never set: `Test-No-Omni-Skip`'s best quick-rest
 
 A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
 unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
-snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map.
+snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map: it takes
+the camera back from a camera room that held it, looks down as the restored speed would, and cancels a death's queued
+respawn (turbo's restore cancels every invoke).
 
 ## Shared goal pieces
 

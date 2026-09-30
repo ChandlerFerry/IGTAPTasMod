@@ -1,0 +1,88 @@
+.tasEditor { display: flex; flex-direction: column; gap: 16px; }
+.tasHead .panelTitle { margin-bottom: 8px; }
+.tasStatus { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.tasStatus b { color: var(--text); }
+.tasPhase { padding: 3px 10px; border-radius: 999px; background: #172b46; color: var(--cyan); font-weight: 800; letter-spacing: .04em; }
+.tasPhase.playing { color: var(--green); }
+.tasPhase.recording { color: var(--red); }
+.tasPhase.starting { color: var(--amber); }
+.tasPhase.finished { background: #123826; color: var(--green); }
+.tasPhase.ended { background: #3a1620; color: var(--red); }
+.tasTransport { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.tasTransport select { background: #0c1d33; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
+.tasTransport button.active { border-color: var(--cyan); color: var(--cyan); }
+.tasSep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.tasKeys { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+.tasKeys kbd { background: #172b46; border: 1px solid #34506f; border-radius: 4px; padding: 1px 5px; color: white; }
+.tasHint { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 10px; }
+.tasHint code { font-size: 11px; color: #bcd6f2; }
+.tasError { color: var(--red); font-size: 12px; }
+
+.tasGrid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.tasSide { display: flex; flex-direction: column; gap: 16px; }
+.tasSide .panel { margin: 0; }
+.tasMain { margin: 0; }
+.tasWrap { flex-wrap: wrap; }
+
+.tasRollWrap { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; user-select: none; }
+.tasRollHead, .tasRow { display: grid; grid-template-columns: 58px 54px 34px 48px 40px minmax(90px, 1fr) minmax(90px, 2fr); }
+.tasRollHead { color: #6f8cab; font-size: 10px; font-weight: 800; letter-spacing: .1em; padding: 0 0 6px; border-bottom: 1px solid var(--line); }
+.tasRoll { overflow-y: auto; position: relative; border-bottom: 1px solid var(--line); }
+.tasRow { position: absolute; left: 0; right: 0; height: 22px; align-items: stretch; border-bottom: 1px solid #0f2036; }
+.tasRow > span { display: flex; align-items: center; padding: 0 6px; overflow: hidden; white-space: nowrap; }
+.tasRow.played { opacity: .62; }
+.tasRow.locked .tasNum { color: #4d6682; }
+.tasRow.cursor { background: #16345a; opacity: 1; box-shadow: inset 3px 0 0 var(--cyan); }
+.tasRow.selected { background: #2a2350; }
+.tasRow.cursor.selected { background: #28406b; }
+.tasRow.end { color: var(--muted); }
+.tasEndCell { grid-column: 2 / -1; font-style: italic; }
+.tasNum { color: #8fa8c4; cursor: pointer; justify-content: flex-end; }
+.tasNum:hover { color: white; background: #1b3353; }
+.tasNum.green::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); margin-right: auto; }
+.tasCell { cursor: pointer; justify-content: center; border-left: 1px solid #0f2036; }
+.tasCell:hover { background: #1b3353; }
+.tasCell.x.on { color: var(--cyan); }
+.tasCell.y.on { color: #9f8cff; }
+.tasCell.jump.on { background: #16405a; color: #7fe3ff; }
+.tasCell.jump.press { font-weight: 900; color: white; }
+.tasCell.jump.tap { color: var(--amber); font-weight: 900; }
+.tasCell.dash.on { background: #4a1f36; color: #ff8fc0; font-weight: 900; }
+.tasExtra { color: var(--amber); font-size: 11px; }
+.tasNote { color: #b9e28c; cursor: text; }
+.tasTools { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; padding-top: 10px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+.tasTools select, .tasTools input { background: #0c1d33; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.tasTools input { width: 64px; }
+.tasSelLabel { color: var(--muted); font-size: 12px; margin-right: 4px; }
+
+.tasText textarea { width: 100%; min-height: 560px; background: #081425; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+
+.tasState { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 8px 0 12px; font-size: 12px; }
+.tasState dt { color: var(--muted); }
+.tasState dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
+
+.tasSuggestions { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.tasSuggestion { display: grid; grid-template-columns: 40px 1fr auto; gap: 8px; align-items: center; background: #0c1d33; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 12px; }
+.tasSuggestion b { color: var(--green); font-size: 14px; }
+.tasSuggestion small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+.tasMarkers { display: flex; flex-direction: column; gap: 5px; }
+.tasMarker { display: grid; grid-template-columns: 58px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.tasMarker button { padding: 4px 8px; }
+.tasMarkerAdd { display: flex; gap: 6px; margin-top: 6px; }
+.tasMarkerAdd input { flex: 1; background: #0c1d33; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+
+.tasShare textarea, .tasShareInput { width: 100%; min-height: 70px; background: #081425; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+  font-family: ui-monospace, Consolas, monospace; font-size: 11px; margin: 8px 0; word-break: break-all; }
+
+.tasStartGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.tasStartGrid section { background: #0c1d33; border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.tasStartGrid h3 { margin: 0 0 4px; font-size: 14px; }
+.tasStartGrid .field select, .tasStartGrid .field input, .tasPlace .field select, .tasPlace .field input { width: 100%; }
+.tasStartGrid .buttonRow { flex-wrap: wrap; }
+
+.tasPlace { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.tasPlaceGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+
+@media (max-width: 1100px) { .tasGrid { grid-template-columns: 1fr; } }
