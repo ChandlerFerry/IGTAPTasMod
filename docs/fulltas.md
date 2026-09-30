@@ -1021,7 +1021,9 @@ baseline). The default is set by the measurements below, and has every part exce
    jumping up into it. At the start and after each new best, per buy goal, the idle runs of 8 ticks or more since the
    goal before that end further than the player's half width from that x-range are taken out and put back under it:
    - **Stands.** The ground spots after the last quick restart within 120 units of the trigger, and the last ground spot
-     run on up to 60 ticks with the stick toward the trigger; a stand is one where 12 idle ticks after it leave the player
+     run on up to 60 ticks with the stick toward the trigger, and so is the spawn after the first quick restart since the
+     goal before (not on the ground on the restart's tick; a stand there replaces the dash hops after it: Course 3's spawn
+     9506,6958 is a 37-43 tick run from its x 9040-9168 triggers); a stand is one where 12 idle ticks after it leave the player
      at rest inside the trigger's x-range (the route's jump-off spot is short of it: goal 30's left the ground at
      x 1670, the range ends at 1611). The 6 nearest the edge the route comes from, at least 6 units apart, are tried.
    - **Ways in.** From a stand, w idle ticks and then the route's own inputs on (a spot on the route's own way), or a jump
@@ -1041,10 +1043,25 @@ baseline). The default is set by the measurements below, and has every part exce
    check kept it). Goal 52's 25 ticks became 17 standing at x 1581.6 (inputs 3103-3119, the jump at 3120), the buy at
    the old tick 3126; goal 33's 15 became 7, also at the old tick. Goal 86 (112 ticks) and 92 (9) reach every goal
    only with re-timing (goal 86: 360.35 s against 360.17 s, 9 ticks slower, not taken; goal 92: none passes): their waits stay.
-   Course 3's dash hops (goals 220-245: 9-29 idle ticks in the air after a dash, then a quick restart) found no stand: the
-   spawn after the last restart isn't on the ground before the dash, so no ground spot is looked at. Open: stands at that
-   spawn (ground run 340 units to the triggers, about 37 ticks), and re-tuning the tail after a move in Course 3 so goals
-   86 and 92 can move too.
+
+   On the 284-goal list (358.69 s, a private copy) the old goals 86 and 92 are 88 and 94; the Course 1 lap added before
+   `buy:buywj` took goal 88's wait (no idle run of 8+ left). Course 3 (goals 222-245) now finds stands at the spawn at 12
+   of its 18 buys tried (a 37-43 tick run to the x 9040-9168 triggers, 56-60 to the x 8870-8998 one; the x 8320-8658 ones
+   are past the 60-tick run); none is kept. At goals 225-228 and 238-239 the run is slower than the dash hop it replaces
+   (the fewest w that touch no sooner than the old route: 0). Every move also changes the sounds played (a dash's, a
+   landing's: `Hooks.PlaySfx` draws the RNG), so the clones' rolls fall differently and a later Course 3 buy strays: goal 222's move misses goal 240, and the
+   wait fix gets it through at 358.92 s (+0.23 s). Goal 94: every stand misses goal 99 (a stray `CashPerLoop`). Tried on
+   94 and 222 and dropped: every sooner wait of the window (low..high−1) played whole (none reaches every goal), and tail
+   windows (`--parts tail`) from the sooner run furthest ahead, as a revive does (94: no way through goals 99-101; 222:
+   goals 227-232 re-found up to 46 ticks sooner, no faster whole run; 946 CPU s a pass). A pass is 81-92 CPU s (was 14:
+   the spawn stands' whole replays). Goals 229, 231, 240 and 274 wait in the air after a hop with no restart, and the run
+   without the wait never lands: no spot. Open: a move that keeps the RNG draws (the sounds) as they were.
+
+   Acceptance, `--auto --parts idle --minutes 15 --threads 6` from 358.69 s: 0 of 20 waits moved (81 CPU s), 31 window pulls
+   (4,660 CPU s), no gain. Shorter runs from the same start found `buy:buydj` sooner with a window at goal 274 (the climb
+   after the Course 2 laps, item 4 of issue #22): 605 -> 595 ticks, 358.54 s, in 5 minutes (`--parts idle`); 605 -> 587,
+   358.33 s, in 12 (`--parts lib,tail,stray,idle`; `offline-best\fulltas-FE-IDLE-358.33.json`, not judged). The 15-minute
+   run's goal 274 window was 27 ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 

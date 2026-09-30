@@ -112,7 +112,7 @@ namespace IGTAP.EngineSim.Cli
                 var far = runs.Where(r => !zone.Near(poses[r.at + r.length - from].x)).ToList();
                 if (far.Count == 0) continue;
                 tried++;
-                (Route pick, string how) = MoveWait(current, g, from, buy, far, zone, Snapshot);
+                (Route pick, string how) = MoveWait(current, g, from, buy, far, zone, poses, Snapshot);
                 if (pick == null) continue;
                 moved++;
                 saved += current.Last - pick.Last;
@@ -140,7 +140,7 @@ namespace IGTAP.EngineSim.Cli
         /// Goal g's buy with its waits away from the box (far: idle runs of the inputs) moved under it. Returns the whole run and
         /// how, or null when no spot and wait keeps every goal at no more than the current live time.
         /// </summary>
-        (Route, string) MoveWait(Route current, int g, int from, int buy, List<(int at, int length)> far, Zone zone, Func<int, SimSnapshot> snapshot)
+        (Route, string) MoveWait(Route current, int g, int from, int buy, List<(int at, int length)> far, Zone zone, Pose[] poses, Func<int, SimSnapshot> snapshot)
         {
             List<InputTick> inputs = current.Inputs;
             var gone = new bool[buy - from];
@@ -149,6 +149,12 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> without = inputs.Where((_, i) => i < from || i >= buy || !gone[i - from]).ToList();
             int buyW = buy - removed;
             int div = far[0].at;
+            // The spawn after the first quick restart since the goal before: the player stands there (not on the ground yet on
+            // the restart's tick), and the dash hops after it are what a stand replaces (Course 3's buys: spawn 9506,6958, the
+            // triggers at x 9040-9168). It is run on from, as the last ground spot is.
+            int spawn = -1;
+            for (int i = from; i < buyW - 1 && spawn < 0; i++) if (without[i].reset) spawn = i + 1;
+            SimSnapshot atSpawn = spawn >= 0 && spawn < div ? snapshot(spawn) : null;
             SimSnapshot atDiv = snapshot(div);
             if (atDiv == null) return (null, null);
             // Where the run without the waits goes: the ground spots on the way in.
@@ -165,6 +171,7 @@ namespace IGTAP.EngineSim.Cli
                 if (way[q - div].x >= zone.x0 - SlideReach && way[q - div].x <= zone.x1 + SlideReach) spots.Add(q);
             }
             if (lastGround >= 0 && !spots.Contains(lastGround)) spots.Add(lastGround);
+            if (spawn >= 0 && !spots.Contains(spawn)) spots.Insert(0, spawn);
             // Where the player can stand: at a ground spot, or on the ground the route's last spot runs on with the stick it had
             // there (the route jumped off at it, short of the trigger), then rests within the trigger's x-range after a release.
             var stands = new List<(int q, int run, SimSnapshot state, InputTick step, float x)>();
@@ -182,21 +189,22 @@ namespace IGTAP.EngineSim.Cli
                     sAt = q;
                 }
                 if (s == null) break;
+                SimSnapshot at = q < div ? atSpawn : s;
                 bool held = q > 0 && without[q - 1].held;
-                InputTick step = RunStep(without, q, held, zone.Middle < way[q - div].x ? -1f : 1f);
-                int maxRun = q == lastGround ? MaxRunOn : 0;
+                InputTick step = RunStep(without, q, held, zone.Middle < (q <= div ? poses[q - from] : way[q - div]).x ? -1f : 1f);
+                int maxRun = q == lastGround || q == spawn ? MaxRunOn : 0;
                 for (int run = 0; run <= maxRun; run++)
                 {
                     Pose rest = default;
                     var list = Enumerable.Repeat(step, run).Concat(Enumerable.Repeat(new InputTick { held = held }, RestTicks)).ToList();
-                    _eval.SetStart(s, q);
+                    _eval.SetStart(at, q);
                     _eval.Goals.Limit = _goals;
                     _eval.Run(list, null, tick =>
                     {
                         if (tick == list.Count) rest = new Pose { ground = _eval.Player.onGround, x = _eval.PlayerWorld.x, y = _eval.PlayerWorld.y, vx = _eval.Player.Velocity.x };
                         return true;
                     }, 0);
-                    if (rest.ground && zone.Under(rest.x)) stands.Add((q, run, s, step, rest.x));
+                    if (rest.ground && zone.Under(rest.x)) stands.Add((q, run, at, step, rest.x));
                     // Past the trigger: further runs only go further.
                     if (step.x < 0f && rest.x < zone.x0 || step.x > 0f && rest.x > zone.x1) break;
                 }
