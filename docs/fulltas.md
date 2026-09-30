@@ -1926,7 +1926,7 @@ new economy's strays), 352.74 s (the goals part dropped the pre-dash Course 2 la
 351.24 s (every wait re-timed from the start: `buystatue` -52 ticks, `buydj` -75; `FullTas.Commit` now does this to
 every new best), 350.65 s (a K=2 Course 3 ladder at goals 250-251, 19 clones with the reserve, laps 195 and 194 over
 five earlier Course 3 laps held back to 196, fitted by StrayFit; 279 goals), 350.35 s (Course 1's lap at goals 86-87
-dropped, 276 goals), 347.98 s and 347.28 s (`reward:bonus5` after `reward:bonus2`: +1 global reward level, rewards
+dropped, 276 goals), 347.98 s, 347.28 s and 346.74 s (`reward:bonus5` after `reward:bonus2`: +1 global reward level, rewards
 x17 against x15 from Course 3's start; the detour costs `start:3` 2.65 s and is back by goal 250, -105 ticks by
 `buydj`; 277 goals, put into `fulltas.json` by hand since a reward goal is refused as an edit,
 `fulltas.json.before-bonus5-20260930-145146`). Bonus 5 before bonus 2 (from goal 172's flying state, no restart) re-found
