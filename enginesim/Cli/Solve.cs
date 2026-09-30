@@ -63,9 +63,10 @@ namespace IGTAP.EngineSim.Cli
             TechGrafts mined = techGrafts ? TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(startTrace)), techDir: Option(args, "--tech-dir", (string)null),
                 cacheFile: Option(args, "--tech-cache", (string)null)) : null;
             if (mined != null && args.Contains("--no-graft-specs")) mined.Patterns.RemoveAll(p => p.Spec);
+            if (mined != null && args.Contains("--no-route-grafts")) mined.Patterns.RemoveAll(p => p.Category == TechGrafts.RouteCategory);
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
-                    + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)})");
+                    + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)}), {mined.Patterns.Count(p => p.Category == TechGrafts.RouteCategory)} of them from the saved routes");
             // --plan: the planner (and the timing polish) first, within this solve's time; its route seeds the search.
             var clock = Stopwatch.StartNew();
             if (args.Contains("--plan"))
