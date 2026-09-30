@@ -326,7 +326,7 @@ namespace IGTAP.EngineSim
         /// <summary>Every purchase of a Full-TAS run (the box's path), goal or not: `fulltas --check` lists them.</summary>
         internal Action<string> Purchased;
 
-        /// <param name="continuing">A buy-max box's later levels, bought at the ends of the frames after the touch (a prestige-boosted
+        /// <param name="continuing">A buy-max box's later levels, one per physics step from the touch's own (a prestige-boosted
         /// course's boxes): they are the touch's own purchase, so they neither reach a goal nor count as a stray buy. One buy goal
         /// per touch of such a box.</param>
         internal void Bought(string path, string id, bool continuing)

@@ -708,9 +708,7 @@ namespace IGTAP.EngineSim
                 var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
                 bool overlap = trigger && Overlap(c, fa, fb);
                 if (overlap) _overlapNext.Add(pair);
-                bool touching = trigger
-                    ? overlap || c.IsTouching() && !sa.Rescaled && !sb.Rescaled && !_touching.Contains(pair)
-                    : c.IsTouching();
+                bool touching = trigger ? overlap : c.IsTouching();
                 if (!touching) continue;
                 if (!_contactsNow.TryGetValue(pair, out List<b2Contact> contacts))
                 {
