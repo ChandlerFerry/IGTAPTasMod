@@ -906,6 +906,17 @@ baseline). The default is set by the measurements below, and has every part exce
      get furthest, 150 CPU s a goal left): from the 360.17 s best, `--parts goals` on 8 threads re-found goals 241-284
      in 463 s wall (3545 CPU s) and adopted 284 goals at 358.69 s (17202 ticks, -74; the fresh check kept it, and
      `--check` of the route under the 284-goal list reaches every goal).
+     A wait after a later quick restart gets the laps at that restart too (it lands at the course's start: after the
+     statue's Course 2 buys the restart lands at the top, by Course 3's gate). A buy reached as its Cash comes waits by
+     walking, not standing: the climb to `buy:buydj` is 605 ticks against a bound of 145 with 17 ticks of spare Cash (the
+     model's `Gap` and `Spare`, [Auto](#auto)), and has no loop in it to cut (no two inputs 20 or more apart where the
+     player stands within 16 units at the same speed). So a Cash-bound buy (spare under its gap) gets n laps (n * L under
+     the gap) at the lap's finish (the buy right after it) or at the last quick restart before it, nothing cut, and the
+     goals from the buy on re-found as an investment from the laps' finish (`GoalEdit.Refind`; a buy the laps' walk
+     passes after its Cash came is a stray: 3 Course 3 laps at the top bought `buydj` on the way). On the 357.08 s best
+     (278 goals): 1-6 Course 2 laps in place of the climb, 3.2 min on 8 threads to re-find the 11 goals from `buydj`
+     (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
+     on 357.73 s the same to +9. A Course 2 lap earns about what the clones pay while standing: none paid.
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
@@ -932,16 +943,32 @@ baseline). The default is set by the measurements below, and has every part exce
      course's best time), for every course the run laps after the buy. The clones then run that path through everything
      after: `FalseEnding-Any%`'s Course 2 lap with the dash right after `buy:buyds`, before the run leaves Course 2, not
      on the drop back after the statue. Each is offered alone and with the course's next visit dropped (its back-to-back
-     laps first after the next unlock buy, cut from the goal before them to the quick restart that ended them, or to a
-     quick restart in place of the last finish: after the statue's Course 2 buys the restart lands at the top, by the
-     shaft to `buy:buydj`). The best's way on starts at the buy's box, not the lap's finish, so none plays as spliced:
-     the two that get furthest (then soonest) are re-found as **investments**. The edit's goals become the run's for it,
-     the goals after where its partial run stops are repaired as a window's are (the old best's inputs as seeds), and
-     falling behind the best doesn't end it (an investment is behind until its income pays; the model's bounds and
-     cost-to-go are the old goals'): only its CPU budget does (150 CPU s a goal left), or the whole run then not
-     beating the best (the fresh check, as every best). The goals change back when it isn't kept. First run on the
-     361.68 s best: the Course 2 lap after `buyds` cost 121 ticks at its finish; each repair reached goal 250 of 284 on
-     a 60 CPU s budget, which is why it's 150 now.
+     laps first after the next unlock buy, the last one with or without a quick restart after it, cut from the goal
+     before them to the quick restart that ended them, or to a quick restart in place of the last finish: after the
+     statue's Course 2 buys the restart lands at the top, by the shaft to `buy:buydj`; both post-statue laps go, the
+     second climbing to `buydj` from its finish). The best's way on starts at the buy's box, not the lap's finish, so none
+     plays as spliced: they are re-found as **investments**, InvestTries (2) of each kind (inserts, adds ahead, walk adds,
+     payout breaks), furthest (then soonest) first. From one pool of two, the two inserts took both, and every edit a pull
+     plays is marked played (memory `edits`), so an add or payout break behind them was never re-found; an edit still
+     waiting for its investment (the pull adopted a drop first, or it ranked past InvestTries) isn't marked, and the next
+     pull offers it again. The edit's goals become the run's for it, the goals after where its partial run stops are
+     repaired as a window's are (the old best's inputs as seeds), and falling behind the best doesn't end it (an
+     investment is behind until its income pays; the model's bounds and cost-to-go are the old goals', and the repair
+     doesn't search again from where a complete run falls behind): only its CPU budget does (150 CPU s a goal left), or
+     the whole run then not beating the best (the fresh check, as every best). One re-found to the end but no faster is
+     **replanned**: the goals after its change get the goals part's drops and adds on its route (its own model for the
+     walk adds), the fastest that beats the investment becomes it and is planned again; with none played through faster,
+     its adds and the drops that stop ahead of it (the extra Cash strays into a box the old buy walk only brushed) are
+     re-found as investments of their own, held to the best, the fastest that beats the investment becoming it. The
+     goals change back when none is kept. First run on the 361.68 s best: the Course 2 lap after `buyds` cost 121 ticks
+     at its finish; each repair reached goal 250 of 284 on a 60 CPU s budget, which is why it's 150 now. At 150 both
+     complete, in a fraction of it: on the 357.73 s best (280 goals) the insert re-found goals 177-282 in 11.6 min on 8
+     threads (361.10 s, +141 ticks) and with the post-statue laps dropped goals 177-278 in 7.3 min (360.02 s, +102); on
+     the 357.08 s best (278 goals) 9.5 min (359.99 s, +118). Their replans: the insert alone drops one post-statue
+     Course 2 lap (359.13 s, +55 on 357.73); every Course 3 lap drop after it misses a buy (the lap's Cash comes sooner,
+     the old buy walk strays into `CloneCount`, `CloneMult`, `CashPerLoop` or `FastCloneChance`, and no wait passes it);
+     with the laps dropped the restart to the top waits 829 ticks for `buydj` (bound 133, 67 spare), and 3 Course 3 laps
+     there bought `buydj` on the way (a stray).
    - **Payout breaks** (`FullTasAutoPayout.cs`, the Tech tab's *Record-break payout*): a finish that beats the course's
      best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`).
      A lap at the best time without beating it pays nothing extra. This edit plays every earlier lap that set or tied the
@@ -989,6 +1016,15 @@ baseline). The default is set by the measurements below, and has every part exce
    287 goals, 170 s); pull 5 found nothing more. The game judged the 367.26 s route in turbo from its submission (its
    `goalsFrom` held the game's 292-goal list), saved it as the record and made its 287 goals the run's, keeping
    `fulltas.json.20260929-063956.bak`.
+
+   Measured on private copies (2026-09-30, `--parts goals`, 8 threads), the drops the pull after the 358.69 s adoption
+   never played: from 358.69 s, Course 3 laps 257-258 (358.28 s) and 259-260 (357.73 s, 280 goals), the list the gate
+   took with 357.71 s; from 357.35 s one of the two post-statue Course 2 laps (goals 268-269: 357.08 s, 278 goals), and
+   from the 355.92 s record the same (355.67 s: the same ticks, the lap's 70 frozen frames gone, 109 idle ticks before the
+   climb's quick restart). Dropping both misses `buydj`: the climb starts from the lap's finish. The item-2 plan (issue
+   22: a 2_WJ_DS lap before leaving Course 2, the restart to the top, Course 3 laps until `buydj`) came out behind: the
+   insert re-found +102 to +184 ticks, its replans +55 at best, and no Course 3 drop after it re-found to the end (the
+   extra Cash strays the old buy walks, and one re-found as an investment found no way to the next `start:3`).
 
 6. **Wall-coyote restart** (`wallreset`, opt-in; `enginesim\Cli\FullTasAutoWallReset.cs`; the Tech tab's *Wall coyote restart*,
    `techs.json` `wall-coyote-restart`, and the community's `checkpoint-midair-walljump`): a quick restart leaves
