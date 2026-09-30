@@ -1230,7 +1230,22 @@ baseline). The default is set by the measurements below, and has every part exce
    singles first. A hop that buys the box doesn't count (the jump in buys it), and a buy-max box's levels, which come in one
    a physics tick while the player is in the trigger, are the jump in's as far as it reaches them (the run goes on from the
    last one's old touch, re-timed from the goal after). Waits under a box shorter than a hop (about 20 ticks) still have
-   one class. Not measured on the new build yet.
+   one class.
+
+   Measured on the new engine (ed1784b, provisional until proven against the game), 353.32 s as the seed: it strays at
+   goal 127 (a Course 2 `Clone` level bought that isn't the next goal's box: the goal list is the old build's), and
+   re-timing its waits (`--rng-study --base-check FILE`, the old build's `--check` of it for the waits' places) doesn't get
+   past it (the Course 2 buys between goals 95 and 180 have no restart to wait at). To goal 126: 30,751 clone rolls and
+   62,607 draws (the old build: 1,561 and 5,917 over all 278 goals), 61,502 of them the rolls'; goal 52's 17-tick wait has
+   102 rolls in it (6 a tick, Course 1 on screen), against 3. While a course's fast and big clone chances are 0 (Course 1,
+   Course 2 before its fast/big boxes), every roll draws exactly 2 and fails, so the rolls can't change a clone and the RNG's
+   state after a wait is its draw count alone: hops at goal 52's stand make 1, 2, 3, 4 and 6 classes in 14, 34, 54, 94 and
+   174 ticks on the new build (1, 2, 4, 7 and 12 on the old; `--rng-study --census --census-extend 20,40,80,160`, hops
+   that buy the box counted). The RNG only pays where a chance is above 0 (Course 3 from `buy:buyfast3`, the global
+   fast/big boxes), and there, on the new build, every frame's roll is re-dealt by an extra draw. The existing stands in
+   the reached goals are 13-17 ticks (one class); walk-ins there have no class (the player isn't at rest within reach where
+   their wait ends). Open: a new-build route through Course 3 to measure the tickets on, and skipping hop tickets where
+   every on-screen course's chances are 0 (Economy doesn't expose them to the loop yet).
 
 8. **Waste audit** (`waste`; `enginesim\Cli\FullTasAutoWaste.cs`; `fulltas <trace> --waste-audit <route.json> [--expect a-b,..]
    [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; a model of another route, the goals

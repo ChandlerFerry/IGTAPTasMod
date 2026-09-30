@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
@@ -22,6 +23,8 @@ namespace IGTAP.EngineSim.Cli
         const int RetuneCap = 60, MaxMerge = 3;
         /// <summary>The RNG classes played whole per wait, at most.</summary>
         const int MaxTickets = 40, HopSamples = 300, HopApart = 20;
+        /// <summary>--rng-study --census: RngTickets sorts its schedules into classes and logs them, and plays nothing whole.</summary>
+        bool _rngCensus;
 
         /// <summary>
         /// <paramref name="inputs"/> (<paramref name="b"/>'s from its goal <paramref name="start"/> on, 0-based, moved by the count
@@ -120,7 +123,7 @@ namespace IGTAP.EngineSim.Cli
         /// <paramref name="touchBy"/> (the plain wait's: the jump in comes as the Cash does). Returns the fastest run and its hops,
         /// or null when none completes.
         /// </summary>
-        (Route, string) RngTickets(Route current, int g, List<InputTick> run, int ws, int we, SimSnapshot state, int stateAt, Zone zone, long touchBy, bool fixTail = false, int retuneFrom = -1)
+        (Route, string) RngTickets(Route current, int g, List<InputTick> run, int ws, int we, SimSnapshot state, int stateAt, Zone zone, long touchBy, bool fixTail = false, int retuneFrom = -1, bool census = false)
         {
             // Hops go on released idle ticks (a jump let go on the first one keeps its release).
             if (ws < we && run[ws].release) ws++;
@@ -158,7 +161,7 @@ namespace IGTAP.EngineSim.Cli
             var tickets = new List<(List<InputTick> inputs, string how)>();
             foreach (var hops in schedules)
             {
-                if (tickets.Count >= MaxTickets || TimeUp) break;
+                if (!(census || _rngCensus) && tickets.Count >= MaxTickets || TimeUp) break;
                 List<InputTick> list = Hopped(hops);
                 bool ok = false;
                 UnityEngine.Random.State rng = default;
@@ -172,12 +175,17 @@ namespace IGTAP.EngineSim.Cli
                     x = _eval.PlayerWorld.x;
                     // A hop that buys the box would take its levels (a buy-max box's come in one a tick while the player is in
                     // the trigger) away from the jump in: the box stays unbought until the wait ends.
-                    ok = _eval.Player.onGround && zone.Near(x) && _eval.Progress <= g;
+                    ok = _eval.Player.onGround && (census || zone.Near(x) && _eval.Progress <= g);
                     rng = UnityEngine.Random.state;
                     return false;
                 }, 0);
                 if (!ok || !seen.Add((rng.s0, rng.s1, rng.s2, rng.s3, (float)Math.Round(x)))) continue;
                 tickets.Add((list, hops.Length == 0 ? "no hop" : string.Join(" and ", hops.Select(h => $"a {h.hold}-tick jump {h.at} ticks in"))));
+            }
+            if (census || _rngCensus)
+            {
+                Log($"rng study: goal {g + 1} ({_labels[g]}): {w} idle ticks under the box at inputs {ws}-{we - 1}: {schedules.Count} hop schedules, {tickets.Count} RNG classes");
+                return (null, null);
             }
             if (tickets.Count == 0) return (null, null);
             var results = new Route[tickets.Count];
@@ -588,6 +596,30 @@ namespace IGTAP.EngineSim.Cli
         void RngStudy()
         {
             Route best = _best;
+            // --base-check FILE: the best's goal ticks as another build's --check of it printed them ("goal k label tick (...) input
+            // i" lines). A route made on that build that strays on this one is re-timed from the start (Retune) with its old goal
+            // inputs for the waits' places, and kept when complete.
+            string baseCheck = Solve.Args(_args, "--base-check").FirstOrDefault();
+            if (baseCheck != null)
+            {
+                var lines = System.IO.File.ReadAllLines(baseCheck).Where(l => l.StartsWith("goal ") && l.Contains(" input ")).ToList();
+                var input = new long[_goals];
+                var physics = new long[_goals];
+                foreach (string l in lines)
+                {
+                    string[] w = l.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    int k = int.Parse(w[1]) - 1;
+                    physics[k] = long.Parse(w[3]);
+                    input[k] = long.Parse(w[w.Length - 1]);
+                }
+                var old = new Route { Inputs = best.Inputs, Progress = lines.Count, GoalInput = input, GoalPhysics = physics };
+                double r0 = CpuSeconds();
+                Route fixedRun = Retune(_eval, _origin, old, best.Inputs, 0);
+                Log($"rng study: {Path.GetFileName(baseCheck)}'s route re-timed on this build: {(fixedRun == null ? "a goal is lost" : Describe(fixedRun))} (as it is: {Describe(best)}, {best.Progress}/{_goals} goals) in {CpuSeconds() - r0:0} CPU s");
+                if (fixedRun == null || fixedRun.Progress < _goals) return;
+                Commit(fixedRun, "re-timed on this build");
+                best = fixedRun;
+            }
             // Every draw of the best by input and caller, and the clone rolls.
             var draws = new List<(int input, string caller)>();
             var rolls = new List<int>();
@@ -600,7 +632,24 @@ namespace IGTAP.EngineSim.Cli
             if (_eval.Shop.Economy != null) _eval.Shop.Economy.Spawned = null;
             Log($"rng study: {draws.Count} draws, {rolls.Count} clone rolls; by caller: "
                 + string.Join(", ", draws.GroupBy(d => d.caller).OrderByDescending(x => x.Count()).Select(x => $"{x.Key} {x.Count()}")));
-            for (int g = 0; g < _goals; g++)
+            // --census: every wait standing within reach of its box (in the goals the best reaches), its hop schedules sorted
+            // into RNG classes (no replays of the whole run).
+            bool census = _args.Contains("--census");
+            if (census)
+            {
+                // Every buy's walk-in too: its idle ticks under the box, the classes of their hops.
+                _rngCensus = true;
+                for (int g = 1; g < best.Progress; g++)
+                {
+                    if (_runGoals.Goals[g].kind != FullTasGoal.Buy) continue;
+                    int from = (int)best.GoalInput[g - 1];
+                    _eval.SetStart(_origin, 0);
+                    _eval.Goals.Limit = _goals;
+                    WalkIn(best, g, from, (int)best.GoalInput[g], _eval.Advance(best.Inputs.GetRange(0, from)));
+                }
+                _rngCensus = false;
+            }
+            for (int g = 0; g < best.Progress; g++)
             {
                 if (_runGoals.Goals[g].kind != FullTasGoal.Buy) continue;
                 int from = g == 0 ? 0 : (int)best.GoalInput[g - 1], buy = (int)best.GoalInput[g];
@@ -617,6 +666,22 @@ namespace IGTAP.EngineSim.Cli
                         var inWait = draws.Where(d => d.input >= i && d.input < j).GroupBy(d => d.caller).Select(x => $"{x.Key} {x.Count()}");
                         Log($"rng study: goal {g + 1} ({_labels[g]}): wait inputs {i}-{j - 1} ({j - i}), {ground} on the ground, {near} at rest within reach of the trigger (x {zone.x0:0}-{zone.x1:0}, y {zone.y0:0}), ends at ({poses[j].x:0},{poses[j].y:0})"
                             + $"{(j < best.Inputs.Count && best.Inputs[j].reset ? ", then a quick restart" : "")}; clone rolls in it {rolls.Count(t => t >= i && t < j)}; draws: {string.Join(", ", inWait)}");
+                        if (census && near > 0)
+                        {
+                            int ws = j;
+                            while (ws > i && poses[ws].ground && zone.Near(poses[ws].x) && poses[ws].vx == 0f) ws--;
+                            _eval.SetStart(_origin, 0);
+                            _eval.Goals.Limit = _goals;
+                            SimSnapshot atWs = _eval.Advance(best.Inputs.GetRange(0, ws));
+                            BoxZone(_runGoals.Goals[g]);
+                            RngTickets(best, g, best.Inputs, ws, j, atWs, ws, zone, best.GoalPhysics[g], census: true);
+                            // --census-extend N,...: the same stand N idle ticks longer (a longer wait, for the class count only).
+                            foreach (int n in Solve.Args(_args, "--census-extend").SelectMany(a => a.Split(',')).Select(int.Parse))
+                            {
+                                var longer = best.Inputs.Take(j).Concat(Enumerable.Repeat(new InputTick(), n)).Concat(best.Inputs.Skip(j)).ToList();
+                                RngTickets(best, g, longer, ws, j + n, atWs, ws, zone, long.MaxValue, census: true);
+                            }
+                        }
                     }
                     i = j;
                 }
