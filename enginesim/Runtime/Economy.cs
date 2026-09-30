@@ -228,6 +228,20 @@ namespace IGTAP.EngineSim
                 if (c.V.Count > 0) yield return new object[] { c.Course?.courseNumber ?? -1, c.V.Count, c.V.PathLength, c.V.OnScreen, c.Active.Count, c.V.SinceLast };
         }
 
+        /// <summary>Whether every stepped course with clones has both roll chances at 0: SpawnClone's fast and big rolls then always
+        /// fail and draw exactly two values.</summary>
+        internal bool RollsFixed()
+        {
+            foreach (Clones c in _stepped)
+            {
+                if (c.V.Count <= 0 || c.Local < 0) continue;
+                if (Local(c.Local, localUpgrades.localUpgradeSet.fastCloneChance) * 5.0 + Global(globalStats.globalUpgradeSet.fastCloneChance) * 8.0 > 0.0
+                    || Local(c.Local, localUpgrades.localUpgradeSet.bigCloneChance) * 5.0 + Global(globalStats.globalUpgradeSet.bigCloneChance) * 8.0 > 0.0)
+                    return false;
+            }
+            return true;
+        }
+
         internal (int count, float pathLength)? ClonesOf(clonesScript script)
         {
             return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? (c.V.Count, c.V.PathLength) : null;

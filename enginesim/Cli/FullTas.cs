@@ -168,7 +168,8 @@ namespace IGTAP.EngineSim.Cli
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
             _eval = Solve.Creator(_trace, header)();
-            _eval.StrictBuys = true;
+            // --loose-buys: a stray purchase doesn't end the replay (to line it up with a trace capture, which plays on).
+            _eval.StrictBuys = !_args.Contains("--loose-buys");
             var bought = new List<string>();
             _eval.Purchased = path => bought.Add($"{path} (tick {_eval.Engine.PhysicsTicks}, input {_eval.Engine.RunTicks})");
             _origin = _eval.Start;
