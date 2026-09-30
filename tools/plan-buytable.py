@@ -238,8 +238,8 @@ class Planner:
 
     def start(self):
         s = pf.State.__new__(pf.State)
-        s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, self.cash, 0, 0, 0, 0, pf.CLONE_PATH + 2
-        s.active, s.pool, s.last, s.c1next, s.where = (), (), -pf.FOREVER, pf.OFFSCREEN // 2, "start"
+        s.t, s.cash, s.n, s.N, s.m, s.g, s.P = 0, self.cash, 0, 0, 0, 0, pf.CLONE_PATH
+        s.active, s.c1next, s.where = (), pf.OFFSCREEN // 2, "start"
         s.prev, s.tokens, s.what = None, (), ""
         return s
 
@@ -265,9 +265,26 @@ class Planner:
             return None
         x = s.child()
         x.advance(x.t + (ticks if s.where == "gate" else ticks + pf.LAP))
-        x.cash += x.reward2()
+        x.finish(pf.LAP)
         x.tokens = ("finish:2",) if s.where == "gate" else ("start:2", "finish:2")
         x.what, x.where = "lap", "done"
+        return x
+
+    def ladder(self, s, K):
+        """K back-to-back record laps (plan_fulltas.State.ladder), each from a quick restart but the first from the gate."""
+        if pf.FAST_LAP is None or pf.FAST_LAP + K - 1 >= s.P or s.where == "start":
+            return None
+        x = s.child()
+        for k in range(K):
+            path = pf.FAST_LAP + K - 1 - k
+            lead = 0 if k == 0 and x.where == "gate" else self.to_gate(x)
+            if lead is None:
+                return None
+            x.advance(x.t + lead + path)
+            x.finish(path)
+            x.where = "done"
+        x.tokens = (("finish:2",) if s.where == "gate" else ("start:2", "finish:2")) + ("start:2", "finish:2") * (K - 1)
+        x.what = f"ladder {K}"
         return x
 
     def way(self, where, letters):
@@ -316,7 +333,8 @@ class Planner:
             return None
         x.cash -= cost
         x.n, x.N, x.m, x.g = levels["R"], levels["C"], levels["M"], levels["G"]
-        x.pool = tuple(sorted(x.pool + (x.t,) * (levels["C"] - s.N)))
+        # Each new clone's slot fills on the next rendered frame.
+        x.active = x.active + (x.t,) * (levels["C"] - s.N)
         x.tokens = (label_of(letters),)
         x.what = (("restart, " if how == "restart" else "") + "+".join(pf.TOKEN[b] for b in letters)
                   + (f" [{technique}]" if technique != "walk" else "") + (f" (waits {x.t - arrived})" if x.t > arrived else ""))
@@ -326,6 +344,7 @@ class Planner:
     def options(self, s, force=False, label=None):
         """Every move from s; with label, only the buys whose goal is that label (a replay's next goal)."""
         out = [self.arrive(s)] if s.where == "start" else [self.lap(s)] + ([self.arrive(s)] if s.where != "gate" else [])
+        out += [self.ladder(s, k) for k in range(2, pf.LADDER_MAX + 1)]
         out = [x for x in out if x is not None]
         for letters in self.sets:
             if label is not None and label_of(letters) != label:
@@ -348,7 +367,7 @@ class Planner:
             if pf.dominated(best, s):
                 continue
             rate = s.rate()
-            best[(s.n, s.N, s.m, s.g, s.where)] = (s.cash - rate * s.t, rate)
+            best[pf.key(s)] = (s.cash - rate * s.t, rate)
             expanded += 1
             for x in self.options(s):
                 heapq.heappush(heap, (x.t, next(order), x))
@@ -387,7 +406,7 @@ def chain(s):
 
 
 def summary(steps):
-    laps = sum(1 for x in steps if x.what.startswith("lap"))
+    laps = sum(1 for x in steps if x.what.startswith("lap")) + sum(int(x.what.split()[1]) for x in steps if x.what.startswith("ladder"))
     buys = [x for x in steps if x.tokens and x.tokens[0].startswith("buy:")]
     grouped = [x for x in buys if "+" in x.tokens[0]]
     waits = sum(int(x.what.rsplit("(waits ", 1)[1].rstrip(")")) for x in buys if "(waits " in x.what)
@@ -417,8 +436,12 @@ def main():
     ap.add_argument("--record", type=float, default=None, help="the record's total (s) the prediction is added to")
     ap.add_argument("--max-set", type=int, default=3)
     ap.add_argument("--out", default=None, help="write the whole planned goal list and the prediction here")
+    ap.add_argument("--fast-lap", type=int, default=None,
+                    help="the fastest known Course 2 lap (course timer, ticks): ladders run it slowed (default: none)")
+    ap.add_argument("--ladder-max", type=int, default=pf.LADDER_MAX, help="the most record laps in one ladder")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
+    pf.FAST_LAP, pf.LADDER_MAX = a.fast_lap, a.ladder_max
 
     table = Table(a.table)
     run = a.run or table.doc["run"]

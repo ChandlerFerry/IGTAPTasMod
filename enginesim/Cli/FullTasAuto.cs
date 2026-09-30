@@ -101,6 +101,10 @@ namespace IGTAP.EngineSim.Cli
             public float X, Y, CX, CY, Dist, Speed;
             public double Cash;
             public string Caps;
+            /// <summary>New best times so far (a course's first finish too): a lap that makes one is a break.</summary>
+            public int Breaks;
+            /// <summary>The last goal reached is a buy whose buy-max touch is still buying (a level a physics tick).</summary>
+            public bool Buying;
         }
 
         static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan", "waste" };
@@ -1259,11 +1263,19 @@ namespace IGTAP.EngineSim.Cli
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = _goals;
             DistanceField field = distances ? DistanceField.For(_eval) : null;
-            int avoidFor = -1, capsFor = -1;
+            int avoidFor = -1, capsFor = -1, breaks = 0;
             string caps = "";
+            var bests = new Dictionary<courseScript, float>();
             _eval.Run(inputs, null, null, 1000000, _ =>
             {
                 int p = _eval.Progress;
+                foreach (courseScript course in _eval.Courses)
+                {
+                    float t = (float)BestPathTime.GetValue(course);
+                    if (bests.TryGetValue(course, out float was) && t < was) breaks++;
+                    bests[course] = t;
+                }
+                FullTasGoal last = p > 0 && p <= _goals ? _runGoals.Goals[p - 1] : null;
                 if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(_eval.Player).Id; }
                 if (field != null && p != avoidFor && p < _goals)
                 {
@@ -1274,7 +1286,8 @@ namespace IGTAP.EngineSim.Cli
                 CapturePos c = _eval.PlayerAtCapture;
                 float d = field == null || p >= _goals ? float.NaN : field.Distance(c);
                 s.Add(new Sample { Tick = _eval.Engine.PhysicsTicks, Input = (int)_eval.Engine.RunTicks, Progress = p, X = w.x, Y = w.y, CX = c.x, CY = c.y,
-                    Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Cash = _eval.Shop.CashNow, Caps = caps });
+                    Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Cash = _eval.Shop.CashNow, Caps = caps,
+                    Breaks = breaks, Buying = last?.kind == FullTasGoal.Buy && _eval.Shop.Buying(last.boxes) });
             });
             return s;
         }
@@ -1484,6 +1497,9 @@ namespace IGTAP.EngineSim.Cli
         /// the course reward and the clones' income over its ticks; the run could drop it if every later tick still held that much
         /// cash, so every later buy is still paid. Most ticks per cash earned first; each drop lowers the cash after it. A dropped
         /// lap's slack is its ticks less the straight walk at top speed from where it starts to where it ends, filed on its finish.
+        /// A break (a lap that sets a new best time) has none: it pays every clone in flight at once and the clones run the faster
+        /// path from then on (build 25630570: the pool then runs in step and each later break pays C (1 - o / T')), which the Cash
+        /// after it doesn't show as spare.
         /// </summary>
         void EconomySlack(List<GoalRow> rows, List<Sample> s)
         {
@@ -1498,6 +1514,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!rows[j].Economy || !rows[j].Label.StartsWith("finish:", StringComparison.Ordinal)) continue;
                 long t0 = i == 0 ? 0 : _best.GoalPhysics[i - 1], t1 = _best.GoalPhysics[j];
                 int a = IndexAt(t0), b = IndexAt(t1);
+                if (s[b].Breaks > s[a].Breaks) { i = j; continue; }
                 double earned = 0;
                 for (int m = a + 1; m <= b; m++) earned += Math.Max(0, cash[m] - cash[m - 1]);
                 float dx = s[b].X - s[a].X, dy = s[b].Y - s[a].Y;
@@ -1520,7 +1537,9 @@ namespace IGTAP.EngineSim.Cli
         /// the most the goals since the buy before can save between them; a buy reached sooner than that waits for its Cash
         /// (docs/fulltas.md, FalseEnding-Any%: a faster lap or walk comes back as a wait at the next target buy). A price reached
         /// on a goal's own tick (a lap's finish, a reward) came from the player, not the clones: moving that goal sooner moves the
-        /// Cash too, so the stretch is not bound. The goals after the last buy (the ending) are movement only.
+        /// Cash too, so the stretch is not bound. The goals after the last buy (the ending) are movement only. A buy-max touch's
+        /// price is every level it buys: it counts them from the Cash on the touch and buys one a physics tick after (IE_BuyMax,
+        /// build 25630570), so touched sooner with less it buys fewer.
         /// </summary>
         void CashBound(List<GoalRow> rows, List<Sample> s)
         {
@@ -1534,6 +1553,15 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = Math.Max(1, at - 2); i <= Math.Min(s.Count - 1, at + 2); i++)
                     if (s[i - 1].Cash - s[i].Cash > price) { price = s[i - 1].Cash - s[i].Cash; paid = i; }
                 if (paid < 0) return long.MaxValue;
+                // A buy-max touch's levels: from its first drop, one a tick while it buys (net of the income those ticks).
+                int first = Math.Max(1, at - 2);
+                while (first < paid && !(s[first - 1].Cash > s[first].Cash)) first++;
+                if (s[first].Buying)
+                {
+                    price = 0;
+                    for (int i = first; i < s.Count && (i == first || s[i - 1].Buying); i++) price += Math.Max(0, s[i - 1].Cash - s[i].Cash);
+                    paid = first;
+                }
                 int m = paid - 1;
                 while (m > 0 && s[m - 1].Cash >= price) m--;
                 if (m > 0 && rows.Any(r => r != buy && Math.Abs(r.Arrival - s[m].Tick) <= 2)) return long.MaxValue;

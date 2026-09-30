@@ -620,7 +620,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 X = w.x, Y = w.y, VX = m.Velocity.x, VY = m.Velocity.y, MX = m.momentum.x, MY = m.momentum.y,
                 DashesLeft = m.airDashesLeft, AirJumpsLeft = m.airJumpsLeft, FacingRight = m.facingRight, OnGround = m.onGround,
-                BuysHash = sim.Goals.Hash(), Cash = sim.Shop.CashNow,
+                BuysHash = sim.Goals.Hash(), Cash = sim.Shop.CashNow, Income = CloneIncome(sim),
             };
         }
 

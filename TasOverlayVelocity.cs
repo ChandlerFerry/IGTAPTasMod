@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Globalization;
+using HarmonyLib;
 using UnityEngine;
 
 namespace IGTAPTasMod
@@ -48,6 +50,38 @@ namespace IGTAPTasMod
             _fpsElapsed = _fpsWorst = 0f;
         }
 
+        // Clones on screen: the on-screen course (clonesScript.onScreen; one off screen keeps its active clones) with the most, its
+        // clones bought (cloneCount) and the most seen at once since its count last fell to 0 (a new best clears them).
+        static readonly AccessTools.FieldRef<clonesScript, List<GameObject>> OverlayActiveClones = AccessTools.FieldRefAccess<clonesScript, List<GameObject>>("activeClones");
+        static readonly AccessTools.FieldRef<clonesScript, int> OverlayCloneCount = AccessTools.FieldRefAccess<clonesScript, int>("cloneCount");
+        static readonly AccessTools.FieldRef<clonesScript, courseScript> OverlayCloneCourse = AccessTools.FieldRefAccess<clonesScript, courseScript>("course");
+        clonesScript[] _overlayClones = new clonesScript[0];
+        float _overlayClonesScanTime = float.NegativeInfinity;
+        clonesScript _peakClones;
+        int _peakCloneCount;
+        string _clonesText = "";
+
+        void SampleClones()
+        {
+            if (Time.unscaledTime - _overlayClonesScanTime >= SpikeScanSeconds)
+            {
+                _overlayClonesScanTime = Time.unscaledTime;
+                _overlayClones = FindObjectsByType<clonesScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            }
+            clonesScript best = null;
+            int active = 0;
+            foreach (clonesScript c in _overlayClones)
+            {
+                int n = c == null || !c.onScreen ? 0 : OverlayActiveClones(c)?.Count ?? 0;
+                if (n > active) { best = c; active = n; }
+            }
+            if (best == null) { _peakClones = null; _peakCloneCount = 0; _clonesText = ""; return; }
+            if (!ReferenceEquals(best, _peakClones)) { _peakClones = best; _peakCloneCount = 0; }
+            _peakCloneCount = Mathf.Max(_peakCloneCount, active);
+            courseScript course = OverlayCloneCourse(best);
+            _clonesText = (course != null ? "C" + course.courseNumber + "  " : "") + active + " / " + OverlayCloneCount(best) + "   (peak " + _peakCloneCount + ")";
+        }
+
         static string Axis(float v, string negative, string positive)
         {
             int n = Mathf.RoundToInt(v);
@@ -81,7 +115,7 @@ namespace IGTAPTasMod
             bool platform = _velocityPlatform != Vector2.zero;
             int parts = platform ? 3 : 2;
             float bandHeight = 14 * scale + titleLine + 12 * scale;
-            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 4 * rowHeight + 12 * scale
+            float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 5 * rowHeight + 12 * scale
                 + DebugSectionHeight(scale);
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
             Fill(panel, PanelBase);
@@ -135,9 +169,13 @@ namespace IGTAPTasMod
             Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), InterpolationText, _overlayText, MutedColor);
             y += rowHeight;
             Label(new Rect(x, y, labelWidth, rowHeight), "CHECKPOINTS", _overlaySmall, MutedColor);
-            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), CheckpointRespawns ? "ON" : "OFF", CheckpointRespawns ? _overlayTitle : _overlayText, CheckpointRespawns ? JumpColor : GraceColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), CheckpointRespawns ? "ON" : "OFF", CheckpointRespawns ? _overlayTitle : _overlayText, CheckpointRespawns ? JumpColor : MutedColor);
             y += rowHeight;
-            Label(new Rect(x, y, inner, rowHeight), "SEED (unoptimized) " + FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, PanelText);
+            Label(new Rect(x, y, labelWidth, rowHeight), "CLONES", _overlaySmall, MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), _clonesText, _overlayText, MutedColor);
+            y += rowHeight;
+            Label(new Rect(x, y, labelWidth, rowHeight), "SEED (unoptimized)", _overlaySmall, MutedColor);
+            Label(new Rect(xColumn, y, 2 * columnWidth, rowHeight), FullTasSeed.ToString(CultureInfo.InvariantCulture), _overlayText, MutedColor);
             DrawDebugSection(panel, x, y + rowHeight, scale);
         }
 

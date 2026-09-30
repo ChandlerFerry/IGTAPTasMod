@@ -381,10 +381,12 @@ ticks and the extra per box row crossed, and Course 2's best run (game timer), w
 replaces the goals from `reward:bonus1` through `buy:buyds` and keeps the run's goals after it. Rerun it after the
 run's Course 2 laps or box walks get faster; a goals edit makes the saved routes stale, so solve again afterwards.
 
-The plan's Course 2 clones follow the game: a clone spawns from the pool only once `BaseCloneInterval` (best path ÷
-clone count) has passed since the last spawn, runs the path (best run + 1 tick), pays, and is back in the pool a tick
-later. Replaying `TrueEnding-ANY%`'s buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539
-planned against 3533 after `reward:bonus1`).
+The plan's Course 2 clones follow the pre-2026-09-30 build: a clone spawns from the pool only once `BaseCloneInterval`
+(best path ÷ clone count) has passed since the last spawn, runs the path (best run + 1 tick), pays, and is back in the
+pool a tick later. The current build spawns into a free slot every frame while the course stays on screen
+([Clones and buy-max](#clones-and-buy-max-build-25630570)); the model isn't ported yet. Replaying `TrueEnding-ANY%`'s
+buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539 planned against 3533 after
+`reward:bonus1`).
 
 Its Course 3 (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
 
@@ -963,15 +965,18 @@ baseline). The default is set by the measurements below, and has every part exce
      passes after its Cash came is a stray: 3 Course 3 laps at the top bought `buydj` on the way). On the 357.08 s best
      (278 goals): 1-6 Course 2 laps in place of the climb, 3.2 min on 8 threads to re-find the 11 goals from `buydj`
      (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
-     on 357.73 s the same to +9. A Course 2 lap earns about what the clones pay while standing: none paid.
+     on 357.73 s the same to +9. A Course 2 lap earned about what the clones pay while standing: none paid (on the
+     pre-2026-09-30 build).
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
      course routes of that course (`offline-best` and `offline-best\judged` beside the trace, the 12 fastest of each
      unlock set the player holds there, fastest first, until 4 play from the restart) and the best's own laps of the
      course (the 6 shortest), when it leaves the course a faster best time: the clones' path, so every clone pays more
-     from then on. Each spot offers two laps when they differ: the one that leaves the fastest best time, and the one
-     that finishes soonest while still beating it (a faster time can cost ticks: `2_wjds-1.50-restart` crosses the
+     from then on, and the clones in flight pay at the finish (a record break,
+     [Clones and buy-max](#clones-and-buy-max-build-25630570)). Each spot offers two laps when they differ: the one
+     that leaves the fastest best time, and the one that finishes soonest while still beating it (a faster time can cost
+     ticks: `2_wjds-1.50-restart` crosses the
      line 9 ticks after the best's own 1.68 s lap from the same restart). Tried at the course's last lap before its
      first clone buy, its first lap after one, its first lap after each unlock buy (new unlocks, a faster way), and
      every lap the best walks into (no quick restart before the gate): the walk is kept to the gate and a quick restart
@@ -1017,7 +1022,8 @@ baseline). The default is set by the measurements below, and has every part exce
      with the laps dropped the restart to the top waits 829 ticks for `buydj` (bound 133, 67 spare), and 3 Course 3 laps
      there bought `buydj` on the way (a stray).
    - **Payout breaks** (`FullTasAutoPayout.cs`, the Tech tab's *Record-break payout*): a finish that beats the course's
-     best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`).
+     best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`;
+     what a break and a ladder of them pay on the current build: [Clones and buy-max](#clones-and-buy-max-build-25630570)).
      A lap at the best time without beating it pays nothing extra. This edit plays every earlier lap that set or tied the
      best time (back to the last prestige that reset it, at most 40) one tick slower, so a later lap f breaks the record
      and the clones in flight pay there, up to one best time sooner. A lap f slower than the best time plays the lap that
@@ -1029,10 +1035,13 @@ baseline). The default is set by the measurements below, and has every part exce
      re-found as an investment, as an inserted record lap is, when it is behind the best by less than the best time it
      breaks where its old way on stops (the clones' Cash comes forward by at most that). Adopted edits stack: the next
      pull can break again one lap earlier (the slowed laps one more tick slower), so a course climbs down a ladder of
-     best times, one payout each. On `FalseEnding-Any%` (359.46 s, 2026-09-30) none paid: its only breaks are Course 1's
+     best times, one payout each. On `FalseEnding-Any%` (359.46 s, 2026-09-30, the pre-update build, where a faster
+     path raised the income less) none paid: its only breaks are Course 1's
      1.40 s lap (goals 22-23) or Course 3's 3.80 s lap (goals 193-194) held back, which costs 101-155 ticks (the record
      lap plays twice and the clones run the slower path in between), the earlier Cash makes the walks through the box
-     rows buy a box early, and the two re-found as investments (142 and 166 ticks behind) came out no faster.
+     rows buy a box early, and the two re-found as investments (142 and 166 ticks behind) came out no faster. Not yet
+     measured on the current build, where a break gains for good only while its course still holds `Start`'s spawn
+     timer reserve ([Clones and buy-max](#clones-and-buy-max-build-25630570)).
 
    An edit that misses a goal after the change gets idle ticks before the last quick restart ahead of that goal (every 5
    up to its lead there plus 60, then each below the first that passes: a stray buy isn't monotone in the wait), up to 6
@@ -1159,12 +1168,16 @@ baseline). The default is set by the measurements below, and has every part exce
    ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
 
    **The RNG under the box** (`enginesim\Cli\FullTasAutoIdleRng.cs`). A wait for Cash is time the player can spend on the
-   RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s: 6,026 draws): the clones' spawn
-   rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds (`Hooks.PlaySfx`/`PlayAudio`: a
-   jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a wall slide 2, a quick restart 1),
-   a buy 3. Walking draws nothing (the run animation's footstep is presentation, README exception 11). The RNG's state after
-   n draws is the same whenever they come, so a hop only makes another class where a clone roll falls between its jump and
-   landing and the next hop; and a hop under a box bonks its underside, about 20 ticks up and down whatever the hold. A pass
+   RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s, pre-2026-09-30 build: 6,026
+   draws): the clones' spawn rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds
+   (`Hooks.PlaySfx`/`PlayAudio`: a jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a
+   wall slide 2, a quick restart 1), a buy 3. Walking draws nothing (the run animation's footstep is presentation, README
+   exception 11). The RNG's state after n draws is the same whenever they come, so a hop only makes another class where
+   a clone roll falls between its jump and landing and the next hop; and a hop under a box bonks its underside, about 20
+   ticks up and down whatever the hold. On the current build an on-screen course with clones rolls in every rendered
+   frame (12 draws a tick, [Clones and buy-max](#clones-and-buy-max-build-25630570)), so a roll falls inside every hop and
+   the classes and measurements below are the old build's (the new build's: **Build 25630570** at the end of this
+   item). A pass
    (at the start and after each new best), in order:
    - **Re-timing** (`Retune`): from a goal on, each goal with a quick restart since the goal before (a buy, a lap's start)
      gets the idle ticks before that restart cut or added (up to 60) to the count whose touch of the goal before the next
@@ -1220,6 +1233,32 @@ baseline). The default is set by the measurements below, and has every part exce
    (the shaft), so no stand; the climb's windows took 3 ticks, and the buy is Cash-bound again (on 355.43 the price was
    there 9 ticks before the touch). The filler after the Course 3 buy near tick 12340 on 355.92 (a dash right, restart,
    jump and dash, restart, idle, restart) is gone on 354.72: buy, restart, a dash to the Course 3 gate, restart, lap.
+
+   **Build 25630570** (2026-09-30): the numbers above are the old build's. An on-screen course with clones now rolls on every
+   rendered frame (`clonesScript.SpawnClone` takes the interval off its timer instead of zeroing it, and Start's 10,000 never
+   runs down: 2 draws a frame, more on a success, 12 a physics tick on the studio's clock, against about 0.3), and a roll on
+   a frame with no free slot is drawn and thrown away. So every extra draw moves which rolls fall on the frames that spawn,
+   from then on, not only a roll between a hop's jump and landing: nearly every hop schedule is its own RNG class. The
+   tickets now take their 40 classes in turns from the single hops (spread over the wait) and the random sets, not the
+   singles first. A hop that buys the box doesn't count (the jump in buys it), and a buy-max box's levels, which come in one
+   a physics tick while the player is in the trigger, are the jump in's as far as it reaches them (the run goes on from the
+   last one's old touch, re-timed from the goal after). Waits under a box shorter than a hop (about 20 ticks) still have
+   one class.
+
+   Measured on the new engine (ed1784b, provisional until proven against the game), 353.32 s as the seed: it strays at
+   goal 127 (a Course 2 `Clone` level bought that isn't the next goal's box: the goal list is the old build's), and
+   re-timing its waits (`--rng-study --base-check FILE`, the old build's `--check` of it for the waits' places) doesn't get
+   past it (the Course 2 buys between goals 95 and 180 have no restart to wait at). To goal 126: 30,751 clone rolls and
+   62,607 draws (the old build: 1,561 and 5,917 over all 278 goals), 61,502 of them the rolls'; goal 52's 17-tick wait has
+   102 rolls in it (6 a tick, Course 1 on screen), against 3. While a course's fast and big clone chances are 0 (Course 1,
+   Course 2 before its fast/big boxes), every roll draws exactly 2 and fails, so the rolls can't change a clone and the RNG's
+   state after a wait is its draw count alone: hops at goal 52's stand make 1, 2, 3, 4 and 6 classes in 14, 34, 54, 94 and
+   174 ticks on the new build (1, 2, 4, 7 and 12 on the old; `--rng-study --census --census-extend 20,40,80,160`, hops
+   that buy the box counted). The RNG only pays where a chance is above 0 (Course 3 from `buy:buyfast3`, the global
+   fast/big boxes), and there, on the new build, every frame's roll is re-dealt by an extra draw. The existing stands in
+   the reached goals are 13-17 ticks (one class); walk-ins there have no class (the player isn't at rest within reach where
+   their wait ends). Open: a new-build route through Course 3 to measure the tickets on, and skipping hop tickets where
+   every on-screen course's chances are 0 (Economy doesn't expose them to the loop yet).
 
 8. **Waste audit** (`waste`; `enginesim\Cli\FullTasAutoWaste.cs`; `fulltas <trace> --waste-audit <route.json> [--expect a-b,..]
    [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; a model of another route, the goals
@@ -1454,9 +1493,14 @@ a lap of the stretch's course, each box the stretch buys (when the run can pay f
 choice is played with the loop builder's pieces (a piece search only when none plays, `--piece-minutes`), and scored by
 when it would buy the target: its end tick, plus the Cash the target still needs over the income laps would earn from
 there, plus the walk to the target. The income is the course's lap reward over a lap (the best's own back-to-back
-laps) plus the clones' income measured standing still after a quick restart for 2000 ticks: one lap's clone payouts
-are too few to average their rolls, and picking the best of several one-lap guesses bought every box to its cap (Course
-3: `buydj` 1718 ticks later than the best). It never waits at a box: laps fill. A lap's gate piece is the one after which
+laps) plus the clones' income measured standing still after a quick restart, over the whole clone laps of the course
+that fit in 2000 ticks: one lap's clone payouts are too few to average their rolls, and picking the best of several
+one-lap guesses bought every box to its cap (Course 3: `buydj` 1718 ticks later than the best). On build 25630570 a
+record lap leaves the pool in step (below), paying in one bunch a lap, so a window cut mid-lap was off by up to a bunch.
+Each step's line also prints the income by formula (`CloneIncome`, a cross-check): on screen every slot refills the
+frame after its clone pays, so min(C, path frames) clones fly and pay C x pay / T, less 1.5 frames a lap (0.993-0.997
+at the 280 fps clock's 300 frames a second); off screen a course pays ceil(pay C / T) every 50 ticks (300 frames); the
+rolls are averaged. It never waits at a box: laps fill. A lap's gate piece is the one after which
 the finish comes soonest, not the fastest to the gate: the fastest gate piece crossed Course 1's gate where only a slow
 finish piece played, and the plan's laps took 248 ticks from the box for the best's 107. Before planning it files the best's
 own steps in the span as library pieces (a polished route passes spots the builder never filed). It prints the planned
@@ -1486,10 +1530,25 @@ Stretches can be planned in parallel: the loop pieces (`archive/fulltas-pieces.j
 name (two plans crashed on one `.tmp`). The planner plays the goals of the trace's header, not `fulltas.json`: to plan a
 stretch on top of a planned route, capture the start again with its goals first.
 
-A clone pays once per path, and its path is the course's best time, so every step also offers a **record lap**: the
+A clone pays at its path's end, and its path is the course's best time, so every step also offers a **record lap**: the
 gate crossed, a quick restart to the course's reset point, and each saved course route (`--seed`) for the course played
 from standing there after 0-40 idle ticks; the one leaving the lowest best time wins, and the estimate weighs the faster
-clones. A route that misses from there is searched once per course from the restart, seeded with it. Course 2: the
+clones. A record lap is a **break** (`updateClonePath`): every clone in flight pays in full at once. On build 25630570,
+while the course keeps Start's spawn reserve (its 10000 s timer, from its first clone to its first tick off screen, never
+back), the pool refills one a frame (52 clones in 0.17 s), so it runs in step and the next break pays C (1 - o / T')
+more payouts (o the restart's overhead, T' the new path: Course 2's 52 clones at 1.9 s with o 0.5 s, about 38). Once
+the reserve is gone the pool refills one an interval, and a break's C / 2 is an advance the emptier pool pays back over
+T': worth it only right before a Cash-bound buy.
+
+A record lap also offers **ladders** (`--ladder-max K`, default 12, 1 for none): K back-to-back record laps from the
+quick restart, the fastest lap slowed by K-1, ..., 1, 0 ticks, so each finish is a break; K is at most the ticks
+between the course's best before and the fastest lap. The laps after the first are played as the record lap's way
+again (no break in the engine: its time is already the best) plus K(K-1)/2 idle ticks for the slowing, and each of
+their K-1 breaks is credited with C (1 - o / T') payouts (the model; none without the reserve, read from the course's
+spawn timer). The goals part's ladder edit builds the slowed
+laps. A picked ladder's credit goes into the plan's Cash (and into the states piece searches replay to), the log
+prints every K's end, credit and estimate (`ladders at tick N: ...`), and `--route` is not written while the plan has
+one (its stand-in laps don't earn the credit). A route that misses from there is searched once per course from the restart, seeded with it. Course 2: the
 `2_WJ 2.20` route dies on its spikes from the restart (its recording takes them on the last grace tick, and the restart
 differs from its start by hundredths of a unit), and the seeded search, which scores the finish tick and not the
 course timer, finds a 2.44 s lap, the one `FalseEnding-Any%` already runs. A 2.20 s lap from the restart needs a search
@@ -1547,7 +1606,8 @@ once it stops finding. The search's workers replay that route, then start from t
 (the run's goals to the place, then the set's) and its Cash, neither of which a replay reaches (each entry's goals are
 built from the run's, not the previous entry's list); the search tracks every goal of the set and a way is cut at the
 set's last box. Every place's single buys are measured first, then every place's pairs, then the triples, so a run cut
-short has whole sizes done.
+short has whole sizes done. A buy-max box's entry ends on its touch (the goal's tick); its levels land one a physics
+tick after it (L levels over L - 1 ticks, build 25630570) while the walk goes on.
 
 The output is `fulltas/<run>.buytable.json`, cached per run and trace: `places` (`id`, `name`, `kind` of `start`,
 `restart`, `gate`, `finish` or `box`, the `box` label where it is one, `x`/`y`, `caps`, `tick` the snapshot's own physics
@@ -1567,10 +1627,17 @@ python tools/plan-buytable.py --table $traces\fulltas\FalseEnding-Any%.buytable.
 `plan-buytable.py` chooses a buy phase's buy order and grouping from the measured time-to-buy table
 ([Buy table](#buy-table)): the engine's ticks from each place the run stands at (the phase's start, the start gate,
 the finish, each box's spot, the quick restart's landing) to buy each box and each ordered set of 2-3 boxes in one pass.
-On top of it runs `plan_fulltas.py`'s Course 2 economy (clone pool and spawn gate, box costs, lap rewards, Course 1's
-clones off screen), and a Dijkstra search over its states (tick first, the model's dominance on box levels, place and
+On top of it runs `plan_fulltas.py`'s Course 2 economy on build 25630570 ([Clones and
+buy-max](#clones-and-buy-max-build-25630570): a bought clone flies on the next frame and every clone pays once a path
+plus 1.5 frames, a break pays every clone in flight and the pool runs on in step; box costs, lap rewards, Course 1's
+clones off screen every 50 ticks; the later phases lose a course's reserve once the run leaves it with clones, and then
+a bought clone waits half an interval and a break refills the pool over a life; a buy-max touch buys what the Cash pays
+on the touch, a level a tick while the player walks on), and a Dijkstra search over its states (tick first, the model's
+dominance on box levels, place and
 Cash) finds the goal list that buys the target soonest. Each step is a lap (`start:2 finish:2`, or `finish:2` from the
-gate), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
+gate), a ladder of K such laps (`--fast-lap N`, the fastest known lap's course-timer ticks, and `--ladder-max`, as the
+[engine farm planner](#engine-farm-planner)'s; `plan_fulltas.py` takes the same two for Course 2 and plans the later
+courses' ladders on their own laps), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
 restart and a walk from its landing, whichever the table has cheaper. Until the plan first crosses Course 2's gate (a
 box bought on the way from the phase's start), a quick restart lands at the checkpoint before the course: those restarts
 use the phase's earliest landing and its measured walks (its gate walk is ~404 ticks against 25 from Course 2's own), so
@@ -1625,8 +1692,10 @@ The model follows the decompiled code:
   `timeSinceLastClone` reaches 1 s and pays `ceil(value (2j+1) / previous interval)`; on screen (the player
   inside the course's `activeCloneArea`, its `clonesLoD` polygon: Course 9's covers most of zone 2, or lapping it) one
   spawns once the rolled interval's frames pass and the pool has one free, and pays `ceil(value (2j+1))` at its path's
-  end. The interval is path / clones with the speed and size rolls (`Random.Range(0, 101)` against the chances, per
-  tier) averaged exactly. Watts are `reward × clone multiplier`, green power `gpReward × clone dust multiplier` on a
+  end (the pre-2026-09-30 rule; the current build spawns into a free slot every frame,
+  [Clones and buy-max](#clones-and-buy-max-build-25630570), which `ZipPlan.ClonePay` models). The interval is path / clones with
+  the speed and size rolls (`Random.Range(0, 101)` against the chances, per tier) averaged exactly. Watts are `reward ×
+  clone multiplier`, green power `gpReward × clone dust multiplier` on a
   green clone (a fraction `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward ×
   clone dust multiplier` with clone dust on. The `ceil` makes every course with one clone worth at least one GP per
   green spawn off screen, and one more clone or reward level often worth nothing until a few come together. Against
@@ -1681,18 +1750,18 @@ unmodeled there); the plan is for building the run's goals.
 
 The whole run needs Cash offline. A start state whose economy carries the clones (every Full-TAS trace) runs the
 economy natively (`enginesim/Runtime/Economy.cs`): course-finish rewards, comp boost, new-best clone paths, clone spawns
-and payouts on and off screen (the clonesLoD trigger), what the courses' local boxes change (reward, clone count, clone
+and payouts on and off screen (the clonesLoD trigger; the current build's rule:
+[Clones and buy-max](#clones-and-buy-max-build-25630570)), what the courses' local boxes change (reward, clone count, clone
 multiplier) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
 5 s phase), the global clone speed and size caps (`maxCloneFastness`, `maxCloneBigness`: dictionary only while both
 clone chances are 0) and the statue (`unlockPrestige`: a global clone multiplier instead of its own entry). A prestige
 box — the statue and Course 4's `buyprestige4` — also runs `BoostOldCourses`: each old course's reward tier becomes the
 buying course's tier plus its own mod and its reward updates, and its boxes gain half their cap multiplier, become
 buy-max and turn back on. A buy-max box's touch buys what `GetNumPlayerCouldBuy` counts (`IE_BuyMax`): the first during
-the tick's physics, then one at the end of every rendered frame while affordable (six frames a tick on the 280 fps
-clock, a dash freeze's or pause's repeats each one more: `Simulation.InterpolatedFrames`, `TurboRunner.Run`; a probe of
-`FalseEnding-Any%` 361.68 paid the statue's 29 `buyclone2` levels in 5 ticks, and the engine now matches its Cash on every
-tick). Such a touch is one buy goal: the levels bought after the first continue it, so they neither reach a goal nor end
-a strict run as a stray buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with one goal each after the
+the tick's physics, then one a physics step while affordable, the touch's step included (`Shop.FixedStep`; 2 levels
+on the touch's tick, then 1 a tick: [Clones and buy-max](#clones-and-buy-max-build-25630570)). Such a touch is one buy
+goal: the levels bought after the first continue it, so they neither reach a goal nor end a strict run as a stray
+buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with one goal each after the
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
@@ -1714,11 +1783,125 @@ keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on 
 off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
 Vman speedrun's start is lit with no breaker light on.
 
+### Clones and buy-max (build 25630570)
+
+Steam's update of 2026-09-30 10:34 (build 25630570) changed two game statements: `clonesScript.SpawnClone` on screen
+went from `timeSinceLastClone = 0f` to `timeSinceLastClone -= nextCloneDue`, and `upgradeBox.IE_BuyMax` from
+`WaitForEndOfFrame` to `WaitForFixedUpdate`. The numbers below come from a float32 simulation of the decompiled
+`clonesScript.Update`/`SpawnClone` of both builds, which reproduces the measured pre-update table (the old column).
+
+**Engine status.** The engine and turbo play the new build (ed1784b). An on-screen spawn keeps the overshoot
+(`Economy.cs:308`), and the snapshots keep each course's timer as it is. `IE_BuyMax` resumes after every physics step,
+the touch's included (`Shop.FixedStep`, `Shop.cs:148`, called at `Simulation.cs:1313`; turbo parks it as a
+`WaitForFixedUpdate` routine, `TurboRunner.cs:181`, resumed at 238-239). `--ticks-out` rows carry each course's clones
+(`Economy.CloneStates`: count, path, on screen, in flight, spawn timer). The engine matches the new-build turbo through
+tick 14122 of the 353.32 s route. `ZipPlan.ClonePay` and `plan_fulltas.py` model it too (a slot cycles every lifetime + 1 frame). Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
+so L levels take L − 1 ticks; offline Cash is equal level by level from tick 15040. A scene diff of the two builds (4,036 objects each side) finds no collider, `upgradeBox`, `courseScript`,
+`clonesScript`, spring, spike, mover or checkpoint field changed, only presentation and runtime state (the statue's
+`StatuePrestigeText` lost a MeshFilter): no world or trace needs capturing again for the build.
+
+**Terms** (both builds). T the course's best time (the clones' path, `pathLength`); C the clone count; I = T/C
+(`BaseCloneInterval`); a clone's speed s = (1 + 0.35 fast) · 0.75^big, its rolled interval I/s; its lifetime L =
+⌈T · fps / s⌉ frames (+1 when float rounding falls short); it pays on the first frame its pointer reaches N = T/0.02.
+On screen a clone pays `ceil(reward (2 big + 1) cloneMult boost)` (cloneMult 0.1 + 0.2 a global level + 0.1 a local).
+Every `SpawnClone` call draws the RNG at least twice (the fast and big roll loops, one more per success), spawn or not;
+at most one spawn a frame. Off screen (unchanged): one call per 1 s counted in frames, paying about C s/T of a clone's
+pay, income ×1.000 on the studio grid, ×0.992 at 120 fps, ×0.983 at 60, ×1.000 at 30. The studio's "280 fps" clock
+renders 6 frames a 0.02 s tick (one short crossing frame, five of 1/280 s): 300 frames a second. Numbers at 280 are on
+that grid.
+
+**Old build (to 2026-09-30).** A spawn set the timer to 0: the gap was I rounded up to whole frames, in flight
+min(C, L/gap), income ∝ (I/dt)/⌈I/dt⌉: a sawtooth in T, with magic spots where I/dt is just under an integer.
+
+**New build.** `Start` sets the timer to 10000 and a spawn only takes an interval off, so on screen the timer stays due:
+`SpawnClone` runs every rendered frame, a clone spawns in every frame with a free slot, and each slot recycles every
+L+1 frames. In flight min(C, L), L ≈ ⌈T fps⌉; income over the ideal C/T ≈ 1 − 1.5/(T fps) when C ≤ T fps, else
+T fps / C. A course's rolls are tied to its frame count, not its spawns: any other draw (a sound) moves every roll after
+it. What still depends on the frame rate: one spawn a frame (binds only at low fps), the lifetime's rounding plus the
+one-frame respawn, and the off-screen 1 s counted in frames.
+
+**The reserve.** A course keeps `Start`'s 10000 from its first clone to its first off-screen tick. The off-screen
+call (with clones and a path; it returns before the reset while the course has none) sets the timer to 0 and the due
+to 1 s, and nothing in a run puts the 10000 back (only `clonesScript.Start` sets it). In the 353.32 s route Course 1
+keeps it to tick 5550, Course 2 from tick 7717 to 10367, Course 3 from 11655 to 14346; the post-statue Course 2 laps
+have none. Back on screen the first spawn waits up to 1 s. The timer is then at about 1 − I, so about 1/I − 1 spawns
+come one a frame, then one an interval with the remainder kept (no rounding loss) until the pool is full; from then the
+timer gains about 1.5 frames' time a lap. Clones in flight when the course left stay where they were (hidden, not
+stepped) and go on. Steady income is the same with or without the reserve. What it changes is the refill after a
+record break: 52 clones after 2.20 → 1.90 s refill in 0.17 s with it, 1.84 s without.
+
+| T, C = 88 | old build | new build |
+|---|---|---|
+| all 88 in flight | at 280: T 1.74-1.76 s and 3.20 s; at 60: 1.46, 2.92, 4.36-4.40 s | at 280: any T ≥ 0.30 s; at 60: T ≥ 1.46 s |
+| T 1.50 s, in flight | 76 at 280, 46 at 60 | 88 at 280, 88 at 60, 45 at 30 |
+| T 1.06 s, in flight | 80 at 280, 64 at 60 | 88 at 280, 64 at 60, 32 at 30 |
+| on-screen income | best at 280; 120 about −5 % (−15 % at a magic spot); 30 about −25 % | of ideal: 0.993-0.997 at 280, 0.99-0.995 at 120, 0.976-0.99 at 60, 0.97-0.98 at 30 |
+| magic spots | yes | gone (±0.3 % at 280, ±1.5 % at 60 left) |
+| off screen against on screen | about −0.8 % | about +0.3-0.5 % at 280, equal at 120 |
+| RNG | about 0.3 draws a tick per on-screen course | 2 draws a rendered frame per on-screen course with clones: 12 a tick at 280 |
+
+`FalseEnding-Any%`'s courses at 280 (in flight, income over ideal):
+
+| Course | old build | new build |
+|---|---|---|
+| Course 1, 9 clones, 1.40 s | 9.0, 0.993 | 9.0, 0.994 |
+| Course 2, 23 clones, 2.20 s | 22.8, 0.990 | 23.0, 0.997 (+0.7 %) |
+| Course 2, 52 clones, 2.20 s | 50.0, 0.962 | 51.9, 0.997 (+3.6 %) |
+| Course 2, 52 clones, 1.90 s | 47.5, 0.913 | 51.9, 0.997 (+9.2 %) |
+| Course 3, 19 clones, 3.80 s | 19.0, 0.999 | 19.0, 1.001 |
+
+The 353.32 s route replayed with the new clone code has 8.7 % more Cash at goal 110. That is a timing lead, not a
+higher rate: a clone bought on screen spawns the next frame instead of an interval later, so its payouts start up to
+one interval sooner. At tick 8500 the route is one Course 2 payout (1,008 W, about 0.5 s of income) ahead, and the old
+buy order strays at goal 127.
+
+**Record breaks.** A finish that beats the best time calls `updateClonePath`, which destroys every clone in flight and
+pays each in full at once (both builds); the spawn timer runs on. With the reserve the pool refills at one a frame and
+runs in step, and the new path's income is the full T/T′ of the old: Course 2 2.20 → 1.90 s +15.7 % (old build +9.9 %,
+its sawtooth). Back-to-back breaks (the next lap T′ after the restart's overhead o) catch the pool just after it paid.
+What each extra break gains for good, in clone payouts (payouts plus the in-flight clones' progress, float32
+simulation of the new build):
+
+| Course, clones, T′ | o | reserve kept | reserve lost |
+|---|---|---|---|
+| Course 2, 23, 2.00 s | 0.5 s | 17.1 | −0.2 |
+| Course 2, 23, 2.00 s | 1.14 s | 9.7 | −0.3 |
+| Course 2, 52, 1.90 s | 0.3 s | 43.3 | about −0.6 |
+| Course 2, 52, 1.90 s | 0.5 s | 44.0 (K = 2) to 39.7 (K = 8) | about −0.6 |
+| Course 2, 52, 1.90 s | 0.8 s | 29.7 | about −0.6 |
+| Course 2, 52, 1.50 s | 0.5 s | 34.2 | −0.6 |
+| Course 3, 19, 3.30 s | 0.2 s | 17.8 | about −0.1 |
+| Course 3, 19, 3.30 s | 0.6 s | 15.4 | about −0.1 |
+
+With the reserve lost a break gains nothing for good: its flush pays about C/2, but refilling at one per interval
+leaves slot m empty for m·I, which costs the same C/2. It only brings Cash forward. So a break ladder pays only while
+the course holds the reserve: in the 353.32 s route Course 2 between ticks 7717 and 10367 and Course 3 between 11655
+and 14346, not the post-statue Course 2 laps. Planning model, pending a measured route: a K-break ladder is the K
+fastest distinct known laps from the quick restart, slowest first, each breaking the record the one before set.
+
+**Buy-max.** Old build: the first level on the touch (`OnTriggerStay2D`, in the physics step), then one a rendered
+frame (300 a second on the studio clock, a dash freeze's and pause's repeat frames too): L levels in ⌈(L−1)/6⌉ ticks,
+the touch's tick counted. New build: the first on the touch, then one a physics step, 50 a second at any frame rate.
+The engine and turbo buy the second on the touch's own tick (the coroutine starts in the step's trigger callback);
+a 1x probe hasn't confirmed that count yet. L levels in about L−1 ticks. The statue's `buyclone2` (29 levels) went from
+5 ticks to about 28, `buyclonemult2` (9) from 2 to about 8. The coroutine buys on after the player leaves the box, but
+the boosts come up to 0.5 s later.
+
 ## FalseEnding-Any% and FalseEnding2-Any% (2026-09-28)
 
 Both end at the credits trigger after `buy:buydj`, `VMAN`'s way up (goals `at:8570,8300` to `at:22200,15900`).
 `FalseEnding2-Any%` is the copy the economy work was tried on first. `FalseEnding-Any%` has its own recalculated economy
 (below, 390.38 s); `fulltas --auto` took it from there to the record, 379.40 s ([Parts](#parts-goal-state-library-tail-windows-combine-scheduler-cost-to-go-macros-goals)).
+
+**Build 25630570 (2026-09-30).** Every time and measurement below was made on the pre-update build. On the current one
+([Clones and buy-max](#clones-and-buy-max-build-25630570)) on-screen clones pay more (Course 2's 52 clones at 1.90 s
++9.2 %), a clone bought on screen starts paying up to an interval sooner (the 353.32 s route holds 8.7 % more Cash at
+goal 110, a timing lead), a faster Course 2 path raises its income by the full ratio (2.20 → 1.90 s +15.7 %, was
++9.9 %), and the statue's buy-max boxes buy one level a tick (`buyclone2`'s 29 levels about 28 ticks, was 5). The
+Cash-bound waits and strays below move with it: on the ported engine 353.32 s strays at goal 127 (a Course 2 `Clone`
+level it can now afford). Record-break ladders gain for good only while a course holds its spawn timer's reserve:
+Course 2 before the run leaves it for Course 3 (ticks 7717-10367 in 353.32 s) and Course 3 (11655-14346), not the
+post-statue Course 2 laps (planning model in that section, pending measurement).
 
 **Economy re-evaluation** (`fulltas-plan` from `FalseEnding-Any%`'s 487.14 s best, per stretch; ticks of the target buy):
 Course 1 to `buywj` 5445 against the best's 5327, `reward:bonus1` to `buyds` 12142 against 11672, statue to `buydj` 23192
@@ -1742,8 +1925,9 @@ in its 300 goals.
 `buyds`, `buystatue`, `buydj`). A faster lap or walk alone gains nothing: the time comes back as a wait at the next
 target. A Course 3 lap 29 ticks faster (the 187-tick lap, which at goals 202, 260 and 270 strays into Course 3's
 `CashPerLoop` box whenever the run can afford it, so those laps run 216 ticks) needed 35 idle ticks before the statue
-walk and ended 12 ticks later. What pays is income. A clone pays once per path, and its path is the course's best time,
-so one **record lap** raises a course's clone income for the rest of the run. `fulltas-plan`'s record-lap line
+walk and ended 12 ticks later. What pays is income. A clone pays at its path's end, and its path is the course's best
+time, so one **record lap** raises a course's clone income for the rest of the run (and pays the clones in flight at
+once: [Clones and buy-max](#clones-and-buy-max-build-25630570)). `fulltas-plan`'s record-lap line
 (`record lap seeds: ...`) shows which course routes survive from the run's quick-restart landing. The human routes do
 (`offline-best/1_none-1.4x-human.json`, `2_wj-2.2x-human.json`, given `"standing": true`): `1_none-1.42-human` and
 `2_wj-2.22-human` play, while the 1.40 and 2.20 records die from the restart. With `1_none-1.42-human` as the lap at
@@ -1752,7 +1936,8 @@ goals 22-23 (the quick restart, the route, cut at its finish, then the old route
 isn't affordable). The statue walk then needs 34 idle ticks before its quick restart: arriving before the statue is
 affordable, the walk runs on and buys Course 2's `Clone` box (a strict stray). The feasible waits aren't monotone
 (40 passes, 50 strays, 60 on pass), so they are scanned. Dropping the sixth post-statue dash lap too (86-88 idle ticks
-before the climb's quick restart; `buydj` is Cash-bound, and a dash lap earns about what standing does) gave 373.90 s
+before the climb's quick restart; `buydj` is Cash-bound, and a dash lap earned about what standing does on the
+pre-2026-09-30 build) gave 373.90 s
 against 375.52 s. `FalseEnding-Any%` now has 294 goals: the old goals 88-91 (`start:1 finish:1` x2) and 288-289
 (`start:2 finish:2`) are gone (`fulltas.json.before-fe-c1-record-lap`). A reorder of Course 2's buys from the buy
 planner, built and measured, gained 1 tick.
@@ -1805,8 +1990,9 @@ and turns their boxes back on as buy-max boxes with 1.5x caps, at their old cost
 `buyclone2` 23 -> 52, `buyclonemult2` 6 -> 15, for about 7e5 W against 3.2e10 held. `FalseEnding-Any%` never went back
 for them and lapped Course 3 for 6180 ticks to afford `buydj` (5.55e11). `FalseEnding2-Any%` drops from the statue down
 the shaft (`at:7645,6050`, `at:6827.5,4537.8`, `at:4300,2850`), crosses `start:2`, touches the three boxes (one goal
-each, 0.9 s), climbs back to Course 3, stands under the `buydj` box (`at:7951,6950,120,50`) and hops into it until the
-clones have paid (`buy:buydj` at 374.96 s against 461.66 s). Records: 409.34 s (Course 3 lap before `buydj`), 408.28 s
+each, 0.9 s; on the current build their levels come one a tick after the touch), climbs back to Course 3, stands
+under the `buydj` box (`at:7951,6950,120,50`) and hops into it until the clones have paid (`buy:buydj` at 374.96 s
+against 461.66 s). Records: 409.34 s (Course 3 lap before `buydj`), 408.28 s
 (the statue plan), then the goals edit that dropped the lap staled it: 411.02 s, and 403.30 s once the ending was polished.
 
 Splits of the 410.22 s best (the 403.30 s record's ending is 7 s faster): `buy:buywj` 106.22, `reward:bonus1` 142.60,
