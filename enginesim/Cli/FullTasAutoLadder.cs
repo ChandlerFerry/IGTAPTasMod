@@ -138,14 +138,15 @@ namespace IGTAP.EngineSim.Cli
         /// a ladder at the end of Course 1) changes the Cash of every buy between. With <paramref name="gate"/> only where the course
         /// has clones, and where its spawn timer has lost the reserve (<see cref="ReserveKept"/>) only right before a Cash-bound buy
         /// (the model's spare under its gap), where Cash brought forward is time. <paramref name="course"/> and
-        /// <paramref name="onlyK"/> narrow it (--ladder-study); <paramref name="spots"/> gets every spot looked at.
+        /// <paramref name="onlyK"/> narrow it (--ladder-study); <paramref name="spots"/> gets every spot looked at. With
+        /// <paramref name="only"/>, only the spots given are (the engine farm planner's, at its plan's end).
         /// </summary>
-        List<GoalEdit> LadderEdits(Route best, List<RunLap> laps, int course = 0, int onlyK = 0, List<LadderSpot> spots = null, bool gate = true)
+        List<GoalEdit> LadderEdits(Route best, List<RunLap> laps, int course = 0, int onlyK = 0, List<LadderSpot> spots = null, bool gate = true, bool only = false)
         {
             var edits = new List<GoalEdit>();
             LoadCourseRoutes();
             spots ??= new List<LadderSpot>();
-            foreach (List<RunLap> block in Blocks(laps))
+            foreach (List<RunLap> block in only ? new List<List<RunLap>>() : Blocks(laps))
                 if ((course == 0 || block[0].Course == course) && block[block.Count - 1].K + 2 <= best.Progress)
                     // The whole run of laps, and its last K laps (the laps before them kept).
                     foreach (int m in Enumerable.Range(0, block.Count - 1).Where(m => m == 0 || m >= block.Count - LadderKmax).DefaultIfEmpty(0))
@@ -154,7 +155,7 @@ namespace IGTAP.EngineSim.Cli
                         spots.Add(new LadderSpot { Course = tail[0].Course, A = tail[0].A, First = tail[0].K, Restart = best.Inputs[tail[0].A], Block = tail, OnlyK = m == 0 ? 0 : tail.Count });
                     }
             int[] unlocks = Enumerable.Range(1, Math.Min(_goals - 2, best.Progress - 1)).Where(k => _runGoals.Goals[k].kind == FullTasGoal.Buy && !FullTasGoal.IsEconomy(_labels[k])).ToArray();
-            foreach (int k in unlocks)
+            foreach (int k in only ? Array.Empty<int>() : unlocks)
             {
                 int r = (int)Math.Min(best.GoalInput[k], best.Inputs.Count) - 1;
                 while (r > best.GoalInput[k - 1] && !best.Inputs[r].reset) r--;

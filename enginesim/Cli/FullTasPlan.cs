@@ -37,14 +37,72 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The Cash the plan's ladders earn that their stand-in laps don't (Ladders): added to every state the plan plays on.</summary>
         double _credit;
 
+        /// <summary>What <see cref="Replan"/> planned.</summary>
+        sealed class PlanResult
+        {
+            public bool Done;
+            public string Target;
+            /// <summary>The target's physics tick in the plan, and in the best (-1: the best doesn't reach it).</summary>
+            public long Tick, Old, AfterBonus1;
+            /// <summary>The plan's goals, and the whole list: the goals before the stretch, the plan, the goals after the target.</summary>
+            public string[] Planned, Goals;
+            public List<object> Log;
+            /// <summary>With join: the plan's route under <see cref="Goals"/>, the best's way on after the target joined when it plays
+            /// on, re-timed from the start (Retune from goal 0) when it reaches every goal. Null when the plan isn't done.</summary>
+            public Route Run;
+        }
+
         int PlanFarm(string[] args)
         {
             Open();
-            FullTasGoal[] all = _runGoals.Goals;
             int kept = GoalNumber(Solve.Option(args, "--from", ""), 0);
             // --target a,b: buy a first, then b (a big box that pays back, the statue, has to be saved for: step by step, the plan
             // toward b alone keeps buying the smaller boxes that pay back sooner and reaches it late).
             string[] targets = Solve.Option(args, "--target", "buy:buydj").Split(',');
+            _ladderMax = Math.Max(1, Solve.Option(args, "--ladder-max", 12));
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            string outFile = Solve.Option<string>(args, "--out", null), routeFile = Solve.Option<string>(args, "--route", null);
+            PlanResult p = Replan(_best, _runGoals.Goals, kept, targets, routeFile != null);
+            Console.WriteLine(JsonSerializer.Serialize(p.Planned));
+            if (outFile != null)
+                File.WriteAllText(outFile, JsonSerializer.Serialize(new { done = p.Done, target = p.Target, tick = p.Tick, afterBonus1 = p.AfterBonus1, best = p.Old,
+                    goals = p.Goals, planned = p.Planned, log = p.Log }, new JsonSerializerOptions { WriteIndented = true }));
+            // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.
+            if (routeFile != null && p.Run != null)
+                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = p.Goals, inputs = p.Run.Inputs.Select(t => t.ToJson()),
+                    goalInputTicks = p.Run.GoalInput, goalPhysicsTicks = p.Run.GoalPhysics, total = p.Run.Progress == p.Goals.Length ? p.Run.GoalPhysics[p.Goals.Length - 1] : -1 }));
+            return p.Done ? 0 : 3;
+        }
+
+        /// <summary>
+        /// The engine farm planner's plan (docs/fulltas.md, "Engine farm planner") of <paramref name="all"/> (a goal list <paramref name="best"/>
+        /// plays, not necessarily the run's) from goal <paramref name="kept"/> (the goals before it stay) until it buys the last of
+        /// <paramref name="targets"/>; with <paramref name="join"/> the route too (<see cref="PlanResult.Run"/>). Callable from the goals
+        /// part (a reroute after an edit changed the economy): the solve's best, goals and simulation factory are put back after it.
+        /// </summary>
+        PlanResult Replan(Route best, FullTasGoal[] all, int kept, string[] targets, bool join)
+        {
+            var saved = (_best, _runGoals, _labels, _goals, _create, _kept, _planBase, _borrow, _credit, _pieceState, _recordWay);
+            _best = best;
+            _credit = 0;
+            _pieceState = null;
+            _recordWay = null;
+            _planBase = _runGoals;
+            if (_ladderMax == 0) _ladderMax = 12;
+            try
+            {
+                Track(all.ToList());
+                return ReplanOn(all, kept, targets, join);
+            }
+            finally
+            {
+                (_best, _runGoals, _labels, _goals, _create, _kept, _planBase, _borrow, _credit, _pieceState, _recordWay) = saved;
+                _eval.UseGoals(_runGoals);
+            }
+        }
+
+        PlanResult ReplanOn(FullTasGoal[] all, int kept, string[] targets, bool join)
+        {
             string targetLabel = targets[targets.Length - 1];
             int targetIndex = Array.FindIndex(all, kept, g => g.label == targetLabel);
             if (targetIndex < 0) throw new ArgumentException($"no goal {targetLabel} after goal {kept}");
@@ -56,7 +114,6 @@ namespace IGTAP.EngineSim.Cli
             foreach (string t in targets) if (!byLabel.ContainsKey(t)) throw new ArgumentException("no goal " + t);
             FullTasGoal[] lap = { byLabel["start:" + course], byLabel["finish:" + course] };
             string[] buys = all.Skip(kept).Take(targetIndex - kept).Where(g => g.kind == FullTasGoal.Buy && g.label != targetLabel).Select(g => g.label).Distinct().ToArray();
-            _ladderMax = Math.Max(1, Solve.Option(args, "--ladder-max", 12));
 
             // Replay the best to the stretch's start, as the builder does (a goal's input tick can fall a tick or two early).
             int length = kept == 0 ? 0 : (int)_best.GoalInput[kept - 1];
@@ -72,10 +129,8 @@ namespace IGTAP.EngineSim.Cli
             }
             if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
             Harvest(at, route, kept, Math.Min(targetIndex + 1, _best.Progress));
-            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
             SeedLaps(at, route, kept, lap);
             _kept = all.Take(kept).ToArray();
-            _planBase = _runGoals;
             _borrow = (all.Select(g => g.label).ToArray(), kept, Math.Min(targetIndex, _best.Progress - 1));
             // Piece searches replay the plan so far on fresh simulations: they track the plan's goals, as the evaluator does.
             Func<Simulation> make = _create;
@@ -97,6 +152,7 @@ namespace IGTAP.EngineSim.Cli
             // A box the piece search found no way to (a far global box) is dropped from the plan: searched again every step, its
             // two budgets were most of the plan's time and it never played.
             var unreachable = new HashSet<string>();
+            int ladderClones = -1;
             while (!done && !TimeUp)
             {
                 string aim = targets[phase];
@@ -105,6 +161,14 @@ namespace IGTAP.EngineSim.Cli
                 double cost = Cost(at, target);
                 (string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double eta, double credit, double formula)? pick = null;
                 var options = new List<(string, FullTasGoal[])> { (aim, new[] { target }), ("lap", lap), ("record lap", lap) };
+                // Hold-back ladders (HoldBackLadders), each time the course's clone count changed: a ladder is worth more with more clones.
+                Read(at);
+                var (cn, reserve) = Clones(_eval, course);
+                if (_ladderMax > 1 && cn > 0 && reserve && cn != ladderClones)
+                {
+                    ladderClones = cn;
+                    options.Add(("hold-back ladder", lap));
+                }
                 string[] open = buys.Where(l => l != aim && !unreachable.Contains(l)).ToArray();
                 options.AddRange(open.Select(l => (l, new[] { byLabel[l] })));
                 // --group-buys: two boxes on one walk (x, then y from where x left the player) against each alone: the step
@@ -124,6 +188,23 @@ namespace IGTAP.EngineSim.Cli
                     if (affordable == null) continue;
                     // A buy-max touch still buying goes on without another touch; a search for a way to touch it again found none.
                     if (what != aim && goals.Any(g => g.kind == FullTasGoal.Buy && Buying(at, g))) continue;
+                    if (what == "hold-back ladder")
+                    {
+                        var held = HoldBackLadders(route, planned, lap, course);
+                        double? rate = null;
+                        double f = double.NaN;
+                        foreach (var h in held)
+                        {
+                            // One rate for them all: the same clones on the same path after each (the ladder's fastest lap).
+                            rate ??= Rate(h.state, h.inputs, course, lapTicks, out f);
+                            if (rate == null || rate <= 0) break;
+                            double e = h.tick + Math.Max(0.0, cost - Cash(h.state)) / rate.Value + walk;
+                            if (pick == null || e < pick.Value.eta) pick = (h.what, h.goals, h.inputs, h.state, h.tick, e, 0.0, f);
+                        }
+                        if (held.Count > 0)
+                            Log($"hold-back ladders at tick {now}: " + string.Join(", ", held.Select(h => $"{h.what} to tick {h.tick}")));
+                        continue;
+                    }
                     var played = what == "lap" ? Lap(at, route, planned, lap) : what == "record lap" ? RecordLap(at, route, planned, lap, course)
                         : Play(at, route, planned, goals, affordable == true);
                     if (what == aim) aimPlayed = played != null;
@@ -185,24 +266,20 @@ namespace IGTAP.EngineSim.Cli
             string[] tokens = planned.Select(g => g.label).ToArray();
             Log(done ? $"{targetLabel} at tick {now}, {now - bonus1} after reward:bonus1 (the best: {old}); {tokens.Length} goals replace {targetIndex + 1 - kept}"
                 : $"stopped before {targetLabel} ({tokens.Length} goals planned)");
-            Console.WriteLine(JsonSerializer.Serialize(tokens));
-            string outFile = Solve.Option<string>(args, "--out", null);
-            if (outFile != null)
-                File.WriteAllText(outFile, JsonSerializer.Serialize(new { done, target = targetLabel, tick = now, afterBonus1 = now - bonus1, best = old,
-                    goals = all.Take(kept).Select(g => g.label).Concat(tokens).Concat(done ? all.Skip(targetIndex + 1).Select(g => g.label) : Array.Empty<string>()),
-                    planned = tokens, log }, new JsonSerializerOptions { WriteIndented = true }));
+            var result = new PlanResult { Done = done, Target = targetLabel, Tick = now, Old = old, AfterBonus1 = now - bonus1, Planned = tokens, Log = log,
+                Goals = all.Take(kept).Select(g => g.label).Concat(tokens).Concat(done ? all.Skip(targetIndex + 1).Select(g => g.label) : Array.Empty<string>()).ToArray() };
             // The plan's own route, as the solver saves a run's best (fulltas/<run>.json): the goals alone replay it only as
             // closely as other pieces allow, and a buy planned just affordable on arrival can then fall short.
-            string routeFile = Solve.Option<string>(args, "--route", null);
-            if (routeFile != null && done && _credit > 0)
-                Log($"route: not written, the plan's ladders ({_credit:G4} Cash of breaks) are played as the fastest lap; the goals part's ladder edit slows them");
-            else if (routeFile != null && done)
+            if (join && done && _credit > 0)
+                Log($"route: not made, the plan's ladders ({_credit:G4} Cash of breaks) are played as the fastest lap; the goals part's ladder edit slows them");
+            else if (join && done)
             {
                 var full = _kept.Concat(planned).Concat(all.Skip(targetIndex + 1)).ToList();
                 Track(full);
+                SimSnapshot origin = _origin.WithGoal(Fresh(full.Count, 0));
                 RunResult Play(List<InputTick> inputs)
                 {
-                    _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
+                    _eval.SetStart(origin, 0);
                     _eval.Goals.Limit = full.Count;
                     return _eval.Run(inputs, null, null, 1000000);
                 }
@@ -239,7 +316,7 @@ namespace IGTAP.EngineSim.Cli
                     }
                     if (written == route)
                     {
-                        _eval.SetStart(_origin.WithGoal(Fresh(full.Count, 0)), 0);
+                        _eval.SetStart(origin, 0);
                         _eval.Goals.Limit = full.Count;
                         SimSnapshot end = _eval.Advance(head);
                         courseScript running = null;
@@ -258,12 +335,17 @@ namespace IGTAP.EngineSim.Cli
                             + stops + "; re-plan the stretch it stops in, or solve the goals after it (the studio's Reach missing goals)");
                     }
                 }
-                // The route follows the planned goals, not the run's current ones: fulltas.json takes the --out goals with it.
-                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals = full.Select(g => g.label), inputs = written.Select(t => t.ToJson()),
-                    goalInputTicks = r.GoalInputTicks, goalPhysicsTicks = r.GoalPhysicsTicks, total = r.Progress == full.Count ? r.GoalPhysicsTicks[full.Count - 1] : -1 }));
-                Log($"route: reaches {r.Progress} of {full.Count} goals" + (r.Progress == full.Count ? $" in {r.GoalPhysicsTicks[full.Count - 1] * _dt:0.00}s" : "") + $" -> {routeFile}");
+                var run = new Route { Inputs = written, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
+                // Its waits re-timed from the start: the plan's walks and the old way on were timed to another economy.
+                if (run.Progress == full.Count && Retune(_eval, origin, run, written, 0, full.Count) is Route t && t.Progress == full.Count && t.Live < run.Live)
+                {
+                    Log($"route: re-timed from the start, {run.LiveSeconds:0.00}s -> {t.LiveSeconds:0.00}s");
+                    run = t;
+                }
+                result.Run = run;
+                Log($"route: reaches {run.Progress} of {full.Count} goals" + (run.Progress == full.Count ? $" in {run.LiveSeconds:0.00}s live ({run.Last} ticks)" : ""));
             }
-            return done ? 0 : 3;
+            return result;
         }
 
         /// <summary>
@@ -695,6 +777,48 @@ namespace IGTAP.EngineSim.Cli
             Log($"record lap: best time {before:0.00}s -> {pick.Value.best:0.00}s, finish at tick {pick.Value.tick}");
             (_recordWay, _recordBefore) = (pick.Value.way, before);
             return (pick.Value.inputs, pick.Value.state, pick.Value.tick);
+        }
+
+        /// <summary>
+        /// Hold-back ladders at the plan's end (after <paramref name="route"/>): the goals part's ladder edit (<see cref="LadderEdits"/>)
+        /// at this one spot, K = 2..8 laps from the quick restart, the fastest lap slowed to T+K-1, ..., T, the plan's earlier laps
+        /// that set the course's best time held back to T+K (<see cref="SlowOne"/>, the waits after each re-timed) so the first
+        /// breaks it. Every break is played, none credited: each is the whole route (its earlier laps changed), the plan's goals
+        /// with 2K lap goals after them, where it leaves the player and its last finish.
+        /// </summary>
+        List<(string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick)> HoldBackLadders(List<InputTick> route,
+            List<FullTasGoal> planned, FullTasGoal[] lap, int course)
+        {
+            var found = new List<(string, FullTasGoal[], List<InputTick>, SimSnapshot, long)>();
+            var list = _kept.Concat(planned).ToList();
+            Track(list);
+            _eval.SetStart(_origin.WithGoal(Fresh(list.Count, 0)), 0);
+            _eval.Goals.Limit = list.Count;
+            RunResult rr = _eval.Run(route, null, null, 1000000);
+            if (rr.Progress < list.Count) return found;
+            int a = (int)Math.Min(rr.GoalInputTicks[list.Count - 1], route.Count);
+            var r = new Route { Inputs = route.Take(a).ToList(), Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, GoalHeld = rr.GoalHeldFrames };
+            var spot = new LadderSpot { Course = course, A = a, First = list.Count, Restart = new InputTick { reset = true } };
+            Route best = _best;
+            List<GoalEdit> edits;
+            // LadderEdits reads the best for its log text; here the best is the plan so far.
+            _best = r;
+            try { edits = LadderEdits(r, Laps(r), course, 0, new List<LadderSpot> { spot }, false, true); }
+            finally { _best = best; }
+            if (spot.Why != null) Log($"hold-back ladders: {spot.Why}");
+            foreach (GoalEdit e in edits)
+            {
+                int k = (e.Labels.Length - list.Count) / 2;
+                var goals = list.Concat(Enumerable.Range(0, k).SelectMany(_ => lap)).ToList();
+                Track(goals);
+                _eval.SetStart(_origin.WithGoal(Fresh(goals.Count, 0)), 0);
+                _eval.Goals.Limit = goals.Count;
+                SimSnapshot end = _eval.Advance(e.Inputs);
+                if (end == null || end.Goal.Next != goals.Count) continue;
+                found.Add(($"hold-back ladder {k}", goals.Skip(list.Count).ToArray(), e.Inputs, end, end.Goal.PhysicsTicks[goals.Count - 1]));
+            }
+            Track(list);
+            return found;
         }
 
         float BestPath(SimSnapshot s, int course) { Read(s); return (float)BestPathTime.GetValue(_eval.Courses.First(c => c.courseNumber == course)); }
