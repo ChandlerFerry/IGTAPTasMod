@@ -44,6 +44,7 @@ namespace IGTAP.EngineSim.Cli
                     case "rays": return Rays(args[1], args[2]);
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
+                    case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
@@ -116,6 +117,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --optional/--no-optional turns a named optional block of forced-paths.json on/off\n"
                             + "                                         (blocks with \"default\": true start on)\n"
                             + "                                         --no-tech-grafts grafts only the hand-written patterns, not the tech tab's mined demos;\n"
+                            + "                                         --no-route-grafts drops the windows mined from the saved routes (routegrafts);\n"
                             + "                                         --tech-dir <dir> mines them from that folder (default: the configured traces\n"
                             + "                                         dir, the game's config enginesim folder when it exists, whatever trace is solved)\n"
                             + "                                         --guide (experimental, off by default) weights picks by the walkable\n"
@@ -202,6 +204,9 @@ namespace IGTAP.EngineSim.Cli
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
                             + "                                         inputs from it, every tick logged\n"
+                            + "  routegrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>] [--tech-cache <file>]\n"
+                            + "                                         every saved route (routes.json) replayed from its start trace and mined into\n"
+                            + "                                         graft patterns, the fastest per start key; counts per unlock set and contact kind\n"
                             + "  techgrafts <traces dir or trace.json> [--refresh] [--tech-dir <dir>]\n"
                             + "                                         every tech tab demo replayed from its start and mined into graft patterns\n"
                             + "                                         (contact type, input window, unlocks); --refresh re-mines instead of\n"

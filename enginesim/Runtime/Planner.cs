@@ -118,8 +118,10 @@ namespace IGTAP.EngineSim
             _caps = Caps.Parse(capabilities);
             _path = path != null && !path.IsEmpty ? path : null;
             _o = options;
+            // Not the route corpus's windows (RouteGrafts.cs): every window at a contact is an edge, and its ~1,400 would
+            // multiply each expansion.
             if (mined != null)
-                foreach (var g in mined.Patterns.Where(p => p.Requires.IsSubsetOf(_caps) && !p.Resets).GroupBy(p => p.Kind))
+                foreach (var g in mined.Patterns.Where(p => p.Requires.IsSubsetOf(_caps) && !p.Resets && p.Category != TechGrafts.RouteCategory).GroupBy(p => p.Kind))
                     _patterns[g.Key] = g.ToArray();
             // The per-step tech contacts (ContactLog.Step) become nodes only when a mined window grafts at one of their kinds.
             _stepContacts = _patterns.Keys.Any(k => !Primitives.ContainsKey(k));
