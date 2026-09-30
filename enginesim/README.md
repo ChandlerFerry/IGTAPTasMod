@@ -548,6 +548,61 @@ Baseline (25cc4b3, 2026-09-28, other searches sharing the CPU, so wall times are
 | Course 1 `NONE` | 17.4, 2.7–20.6 | 1.62, 1.62–1.66 |
 | bonus1 `WJ` | 28.7, 2.6–55.7 | 6.92, 6.90–6.94 |
 
+### Planted-waste suite (`--suite grafts`)
+
+Does a graft or search change still find the moves a record wastes? Run it before and after (two builds on the same
+seeds: `--arms '{"main": ["--exe", "main\\IGTAP.EngineSim.exe"], "new": []}'`):
+
+```powershell
+& $exe searchbench --suite grafts --seeds 3 --minutes 1 --threads 4   # --check: plant only; --case a,b; --slack k (default 2)
+```
+
+- A case (`Cli\searchbench-grafts.json`, copied beside the build) is a known-good stretch of a saved route with a waste
+  planted in it: a course route trace's inputs, or a Full-TAS `route` over its `trace`, window goals `goals[0]`+1 to
+  `goals[1]`. Wastes: `dashrun` (a super chain played as dashes and a run: from a super, every dash's jump and every
+  jump press dropped for `len` inputs, default 12), `bonk` (a jump pressed on a walk and held `hold` inputs, default 8;
+  kept only where the vertical speed drops from 150+ to 0 in the air), `dashpair` (a dash back and a dash forward
+  inserted), `restart` (a quick restart inserted, then the inputs since the last restart played again).
+- The planter replays the route and keeps the first input of the case's `at` range (inputs from the window's start)
+  whose plant still finishes (reaches goal `goals[1]`) 5-100 ticks later (`minCost`, `maxCost`). A plant rarely
+  finishes as it is, so after the waste the original inputs go on up to 8 inputs later or sooner (`rejoin`, tried 0, +1,
+  -1, ...): a shift the search has to undo too. Scores: course-timer ticks, or the physics tick of goal `goals[1]`. A
+  case with no `waste` is open: the record's own window, to beat by `gain` ticks (default 1).
+- Each case, seed and arm is a child process on a temp copy of the trace whose inputs are the planted route (a Full-TAS
+  trace's goals cut after `goals[1]`): `solve`, or `fulltas --goal <goals[1]> --window <goals[1] - goals[0]>` (that one
+  window for the whole budget), both with `--rng s --no-submit --fresh --log-json`. The bench reads the log as it
+  grows and stops the child at the first best within the slack of the original (an open case: at its target). Per case
+  it prints how many seeds got there and the CPU s it took (the child's process CPU from the seed's replay, setup left
+  out), and a `@searchbench {json}` line per case and arm, also written to `--out` (default `searchbench.jsonl`).
+  `--check` only plants and prints where: after an engine change, a case that no longer plants says so.
+- For it `fulltas` takes `--rng N` (the windows' search randomness, as `solve`'s) and `--log-json FILE` (one line per
+  window best, `runTicks` the physics tick at the window's last goal); both `--log-json`s carry `cpu` (process CPU s).
+
+Baseline (1386219, 2026-09-30, 3 seeds × 1 minute × 4 threads, machine shared; best − target when stopped; the open
+cases' target is the record's split − 1):
+
+| Case | Waste, where | Seed (target) | Reached | CPU s to target (median, min–max) | Best − target |
+|---|---|---|---|---|---|
+| `c4-dashrun` | dashrun, Course 4 `WJ_DS_DJ` 13.28, input 452 | 670 (664) | 3/3 | 10.2, 0.7–19.9 | +1 to +2 |
+| `fe176-dashrun` | dashrun, FE goal 176, tick 10642 | 10685 (10675) | 3/3 | 6.0, 3.1–6.5 | +1 to +2 |
+| `fe176-bonk` | bonk, FE goal 176, tick 10651 | 10680 (10675) | 3/3 | 0.2, 0.1–0.2 | −3 |
+| `c4-dashpair` | dashpair, Course 4 `WJ_DS_DJ` 13.28, input 438 | 670 (664) | 3/3 | 54.3, 52.4–98.2 | +2 |
+| `c2-dashpair` | dashpair, Course 2 `WJ_DS` 1.62, input 72 | 91 (81) | 3/3 | 0.2, 0.1–1.6 | +1 to +2 |
+| `c5-dashpair` | dashpair, Course 5 `WJ_DS_DJ` 12.14, input 178 | 612 (607) | 3/3 | 15.1, 10.9–28.8 | 0 to +2 |
+| `fe273-dashpair` | dashpair, FE goal 273, tick 16114 | 16137 (16132) | 3/3 | 0.1, 0.0–0.2 | 0 |
+| `fe270-dashpair` | dashpair, FE goal 270 (the DJ climb), tick 15804 | 15931 (15926) | 3/3 | 32.0, 22.9–44.3 | −1 to +2 |
+| `fe-c2lap-restart` | restart, FE goals 172-173 (a Course 2 lap), tick 10096 | 10255 (10240) | 3/3 | 2.4, 1.0–18.0 | −7 to 0 |
+| `fe-c3lap-restart` | restart, FE goals 189-190 (a Course 3 lap), tick 11449 | 11651 (11638) | 3/3 | 4.6, 1.6–7.7 | 0 |
+| `fe174-open` | the record's bonk at ~10288 | 10395 (10394) | 0/3 | - | +1 |
+| `fe270-open` | the record's dash pairs at ~15626-15786 | 15926 (15925) | 3/3 | 20.6, 0.9–54.0 | −9 to 0 |
+| `fe275-open` | the record's run and dash on the flat at ~16300-16450 | 16700 (16699) | 3/3 | 0.4, 0.4–0.6 | −3 to −1 |
+
+Every planted waste comes back within 2 ticks inside the minute; what separates builds is the CPU (the dash pairs on
+Course 4 and the DJ climb cost the most). Full-TAS windows graft no tech today (`fulltas` passes no mined library to its
+windows), so every Full-TAS row is the plain search's. The open cases say the plain window search already beats the
+record's split at goals 270 (by up to 10 ticks) and 275 (up to 4) within a minute, window-local (the rest of the run not
+replayed), and not at goal 174.
+
 ### Course head-to-head: plain `solve` against `solve --auto` (2026-09-29, stopped early)
 
 Each target starts from its saved record route (a copy of the trace and world), `--rng 1` and `2`, `--no-submit --fresh

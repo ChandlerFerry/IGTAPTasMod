@@ -108,7 +108,8 @@ namespace IGTAP.EngineSim.Cli
                 humanize?.Set(file, inputs);
                 // Raised one at a time, in the order the bests were found, so the appends never interleave.
                 if (logJson != null)
-                    File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how }) + "\n");
+                    File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how,
+                        cpu = Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds }) + "\n");
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
