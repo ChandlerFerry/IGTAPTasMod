@@ -366,8 +366,9 @@ namespace IGTAPTasMod
             // Under the game's pause menu nothing anchored in the world is drawn (it would sit on top of the menu): the lab
             // ghosts' key and badges, spikes, checkpoints, the hitbox and the graze. The screen panels stay.
             bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown, ghosts = LabGhostOverlayShown;
+            bool techs = TechPathsShown;
             if (!origin) ResetOriginOverlay();
-            if (!(_settings.showOverlay || goals || origin || trainer || ghosts) || Event.current.type != EventType.Repaint) return;
+            if (!(_settings.showOverlay || goals || origin || trainer || ghosts || techs) || Event.current.type != EventType.Repaint) return;
             bool menu = GameMenuOpen;
             ghosts &= !menu;
             float scale = Screen.height / 1080f;
@@ -376,6 +377,7 @@ namespace IGTAPTasMod
             if (trainer) DrawLabTrainer();
             if (goals) DrawFullTasGoals(scale);
             if (origin) DrawOriginOverlay(scale);
+            if (techs && !menu) DrawTechPaths(scale);
             if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             if (!menu)

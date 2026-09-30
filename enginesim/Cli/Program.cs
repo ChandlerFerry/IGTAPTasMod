@@ -34,6 +34,7 @@ namespace IGTAP.EngineSim.Cli
                     case "coverage": return Coverage.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "suggest": return Suggest.Run(args.Skip(1).ToArray());
+                    case "techs": return Techs.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
@@ -155,6 +156,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the player after the route's first N input ticks as a target: humanize's\n"
                             + "                                         edits of those ticks (shifts, stick values, drops) that get there sooner,\n"
                             + "                                         ranked by input ticks saved: <route>-suggest.json\n"
+                            + "  techs <start-trace.json> <route.json> --at N --caps <id> [--out file.jsonl] [--threads T]\n"
+                            + "                                         the techs whose key window works from input tick N, each direction\n"
+                            + "                                         with its inputs and path, a line each as found: <route>-techs.jsonl\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] [--no-tech-grafts] [--graft-rate r]\n"
