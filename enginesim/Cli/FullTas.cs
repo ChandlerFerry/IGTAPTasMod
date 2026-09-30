@@ -258,6 +258,14 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
+            // --rng-study: the best's waits for Cash, what draws the RNG in them, and the RNG classes a wait's hops reach
+            // (FullTasAutoIdleRng.cs); then stops.
+            if (_args.Contains("--rng-study"))
+            {
+                RngStudy();
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
+                return 0;
+            }
             // --record-lap K: the lap finishing at goal K searched on the course timer from its restart (FullTasAutoGoals.cs); then stops.
             int recordLap = Solve.Option(_args, "--record-lap", 0);
             if (recordLap > 0)
