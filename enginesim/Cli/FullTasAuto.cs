@@ -717,8 +717,8 @@ namespace IGTAP.EngineSim.Cli
                 var labels = _labels.Skip(k - 1).Take(limit - k + 1).ToList();
                 var windowSeeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                 windowSeeds.AddRange(MacroSeeds(best, k, prefixLength));
-                // --parts waste and grafts (FullTasAutoWaste.cs): a waste arm's undone findings as seeds; the tech grafts.
-                if (arm.Lever == "waste") windowSeeds.AddRange(WasteSeeds(best, k, prefixLength));
+                // --parts waste and grafts (FullTasAutoWaste.cs): the undone findings at goal k as seeds; the tech grafts.
+                windowSeeds.AddRange(WasteSeeds(best, k, prefixLength));
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), windowSeeds,
                     null, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
                 TuneGrafts(solver, k, limit, prefixLength);

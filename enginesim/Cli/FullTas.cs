@@ -674,6 +674,8 @@ namespace IGTAP.EngineSim.Cli
             // --parts grafts: the tech library in every window (FullTasAutoWaste.cs), unless a part set its own.
             var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined ?? AutoGrafts(caps), rng: _rng);
             if (_mined == null) TuneGrafts(solver, 0, 0, 0);
+            bool ownModes = _findModes == null && solver.Mined != null;
+            if (ownModes) _findModes = new HashSet<string>();
             solver.Resume = _states.Index;
             solver.NoResets = _noResets;
             TimeSpan begin = _clock.Elapsed, last = begin;
@@ -763,7 +765,8 @@ namespace IGTAP.EngineSim.Cli
             Status();
             GraftTally(solver);
             if (solver.Mined != null)
-                Log($"{title} {span}: {solver.TechGrafted} tech grafts of {solver.Runs} runs ({string.Join(", ", solver.Mined.Patterns.Select(p => p.Tech).Distinct().Take(12))}...); finds via {(_findModes == null || _findModes.Count == 0 ? "-" : string.Join(", ", _findModes))}");
+                Log($"{title} {span}: {solver.TechGrafted} tech grafts of {solver.Runs} runs ({solver.Mined.Patterns.Select(p => p.Tech).Distinct().Count()} techs); finds via {(_findModes == null || _findModes.Count == 0 ? "-" : string.Join(", ", _findModes))}");
+            if (ownModes) _findModes = null;
             lock (window)
             {
                 Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });

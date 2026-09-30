@@ -318,12 +318,14 @@ namespace IGTAP.EngineSim.Cli
                 float made = Sideways(a, b, k);
                 double live = w[b].Live - w[a].Live, speed = made / live;
                 bool chain = Caps.TryParse(s[a].Caps, out Caps caps) && caps.Dash;
-                float vref = chain ? SuperChainSpeed(r, Math.Max(0, s[a].Input), Math.Sign(TargetX(k) - s[a].CX)) : flatTop.TryGetValue(s[a].Caps, out float v) ? v : float.NaN;
+                int dir = Math.Sign(TargetX(k) - s[a].CX), wait = 0, from = Math.Max(0, s[a].Input);
+                float vref = chain ? SuperChainSpeed(r, from, dir, out wait) : flatTop.TryGetValue(s[a].Caps, out float v) ? v : float.NaN;
                 // A chain that can't get going there (a wall, a gap: under a walk's 9.2 u a tick) says nothing about the flat.
                 if (made <= 0 || !(vref > ChainFloor) || speed >= WasteSlowShare * vref) return;
                 long raw = Math.Max(0, (long)Math.Round(live - made / vref));
+                // The chain seed (WasteSeeds): E0 the input it starts at, E1 its wait before the first press, times the side.
                 if (raw >= 3) Add("slow", a, b, raw, $"{speed:0.0} u per live tick sideways over {s[b].Tick - s[a].Tick} ticks ({live:0} live) on flat ground, against "
-                    + (chain ? $"{vref:0.0} for the super chain from there" : $"{vref:0.0} for {s[a].Caps}"));
+                    + (chain ? $"{vref:0.0} for the super chain from there" : $"{vref:0.0} for {s[a].Caps}"), chain ? from : -1, chain ? (wait + 1) * dir : -1);
             }
             // Back-to-back laps: the last lap of each run of laps of one course (the goals part's drop candidates; their stake is
             // the model's economy slack there).
@@ -488,7 +490,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// A waste arm's own seeds, from the best's inputs with its goal's findings undone one at a time: a filler chain's inputs cut
         /// (its last restart right after the goal before), the away restart dropped, the cancelling dashes dropped, the bonking
-        /// jump dropped (press to release). What follows is the best's own, for the search to mend.
+        /// jump dropped (press to release), slow flat ground played as the super chain (its probe's wait, cycles over the span's
+        /// inputs). What follows is the best's own, for the search to mend.
         /// </summary>
         List<List<InputTick>> WasteSeeds(Route best, int k, int prefixLength)
         {
@@ -511,6 +514,13 @@ namespace IGTAP.EngineSim.Cli
                     case "bonk":
                         for (int q = x.E0; q <= (x.E1 < 0 ? x.E0 : x.E1) && q < v.Count; q++)
                             if (q == x.E0 || !v[q].press) v[q] = v[q] with { press = false, held = false, release = false };
+                        break;
+                    case "slow":
+                        if (x.E1 == 0) continue;
+                        int dir = Math.Sign(x.E1), cycles = Math.Max(2, (x.InTo - x.E0) / ChainCycle(dir).Count + 1);
+                        var chain = Enumerable.Repeat(new InputTick { x = dir }, Math.Abs(x.E1) - 1).ToList();
+                        for (int c = 0; c < cycles; c++) chain.AddRange(ChainCycle(dir));
+                        v = v.Take(x.E0).Concat(chain).Concat(v.Skip(Math.Min(v.Count, x.InTo))).ToList();
                         break;
                     default: continue;
                 }
@@ -551,23 +561,34 @@ namespace IGTAP.EngineSim.Cli
             {
                 Tech = "super-chain", Name = "Super chain", Category = "glitchless", Requires = Caps.Parse("ds"), Kind = Contact.Landed,
                 First = -ChainLanding, Last = cycle.Count - 1 - ChainLanding, Ticks = cycle.ToArray(), Key = true, Dir = 1, Weight = 3,
-                DemoStart = "FalseEnding-Any% 354.72 s, inputs 15225-15240", ShiftLo = -2, ShiftHi = 2,
+                DemoStart = "FalseEnding-Any% 354.72 s, inputs 15225-15240", ShiftLo = -2, ShiftHi = 4,
                 Vary = new[] { new PatternVary { Index = 5, Run = 11, Ticks = new[] { 7, 9, 11, 13 } } },
-                Chain = new PatternChain { Depth = 8, On = new[] { Contact.Landed }, With = "super-chain", ShiftLo = -2, ShiftHi = 2 },
+                Chain = new PatternChain { Depth = 8, On = new[] { Contact.Landed }, With = "super-chain", ShiftLo = -2, ShiftHi = 4 },
             };
         }
 
-        readonly Dictionary<(int input, int dir), float> _chainSpeed = new Dictionary<(int, int), float>();
+        readonly Dictionary<(int input, int dir), (float speed, int wait)> _chainSpeed = new Dictionary<(int, int), (float, int)>();
         Route _chainFor;
 
         /// <summary>The super chain's sideways speed per live tick played from the run's state after <paramref name="input"/> inputs
-        /// toward <paramref name="dir"/> (the best of 0-4 ticks' wait before the first press), after its first ChainSettle ticks:
-        /// what that flat allows. NaN when it can't play (the state, a death, a wall within the first cycles).</summary>
-        float SuperChainSpeed(Route r, int input, int dir)
+        /// toward <paramref name="dir"/> (the best of 0-4 ticks' wait before the first press, <paramref name="wait"/>), after its
+        /// first ChainSettle ticks: what that flat allows. NaN when it can't play (the state, a death, a wall within the first cycles).</summary>
+        float SuperChainSpeed(Route r, int input, int dir) { return SuperChainSpeed(r, input, dir, out _); }
+
+        float SuperChainSpeed(Route r, int input, int dir, out int wait)
         {
+            wait = 0;
             if (dir == 0) return float.NaN;
             if (!ReferenceEquals(_chainFor, r)) { _chainSpeed.Clear(); _chainFor = r; }
-            if (_chainSpeed.TryGetValue((input, dir), out float known)) return known;
+            if (_chainSpeed.TryGetValue((input, dir), out var known)) { wait = known.wait; return known.speed; }
+            float best = ChainProbe(r, input, dir, out wait);
+            _chainSpeed[(input, dir)] = (best, wait);
+            return best;
+        }
+
+        float ChainProbe(Route r, int input, int dir, out int bestWait)
+        {
+            bestWait = 0;
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = _goals;
             SimSnapshot at = input == 0 ? _origin : _eval.Advance(r.Inputs.GetRange(0, Math.Min(input, r.Inputs.Count)));
@@ -584,10 +605,10 @@ namespace IGTAP.EngineSim.Cli
                 var (x0, l0) = xs[ChainSettle];
                 var (x1, l1) = xs[^1];
                 float v = (float)((x1 - x0) * dir / (l1 - l0));
-                if (float.IsNaN(best) || v > best) best = v;
+                if (float.IsNaN(best) || v > best) { best = v; bestWait = wait; }
             }
             _eval.SetStart(_origin, 0);
-            return _chainSpeed[(input, dir)] = best;
+            return best;
         }
 
         // ---------------------------------------------------------------- tech grafts in every window (--parts grafts)
@@ -646,13 +667,13 @@ namespace IGTAP.EngineSim.Cli
             return AutoGrafts(WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1), from));
         }
 
-        /// <summary>A grafting solver's share and focus: GraftShareIdle of its explore runs, or, in a window whose goals hold audit
-        /// findings (the best's inputs from prefixLength), GraftShareWaste with the findings' input span as its focus.</summary>
+        /// <summary>A grafting solver's share and focus: GraftShareIdle of its explore runs (--graft-rate), or, in a window whose
+        /// goals hold audit findings (the best's inputs from prefixLength), GraftShareWaste with the findings' input span as its focus.</summary>
         void TuneGrafts(OfflineSolver solver, int k, int limit, int prefixLength)
         {
             if (solver.Mined == null) return;
             _graftSolvers++;
-            solver.GraftRate = GraftShareIdle;
+            solver.GraftRate = Solve.Option(_args, "--graft-rate", GraftShareIdle);
             if (k <= 0) return;
             List<Waste> spans = Findings().Where(x => IsMove(x.Kind) && x.Stake > 0 && x.Goal >= k && x.Goal <= limit && x.InFrom >= prefixLength).ToList();
             if (spans.Count == 0) return;
