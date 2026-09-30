@@ -1693,7 +1693,7 @@ The model follows the decompiled code:
   inside the course's `activeCloneArea`, its `clonesLoD` polygon: Course 9's covers most of zone 2, or lapping it) one
   spawns once the rolled interval's frames pass and the pool has one free, and pays `ceil(value (2j+1))` at its path's
   end (the pre-2026-09-30 rule; the current build spawns into a free slot every frame,
-  [Clones and buy-max](#clones-and-buy-max-build-25630570), not ported here yet). The interval is path / clones with
+  [Clones and buy-max](#clones-and-buy-max-build-25630570), which `ZipPlan.ClonePay` models). The interval is path / clones with
   the speed and size rolls (`Random.Range(0, 101)` against the chances, per tier) averaged exactly. Watts are `reward ×
   clone multiplier`, green power `gpReward × clone dust multiplier` on a
   green clone (a fraction `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward ×
@@ -1758,8 +1758,8 @@ clone chances are 0) and the statue (`unlockPrestige`: a global clone multiplier
 box — the statue and Course 4's `buyprestige4` — also runs `BoostOldCourses`: each old course's reward tier becomes the
 buying course's tier plus its own mod and its reward updates, and its boxes gain half their cap multiplier, become
 buy-max and turn back on. A buy-max box's touch buys what `GetNumPlayerCouldBuy` counts (`IE_BuyMax`): the first during
-the tick's physics, then one a physics step while affordable, the touch's step included (`Shop.FixedStep`; the
-touch-tick count awaits a 1x probe: [Clones and buy-max](#clones-and-buy-max-build-25630570)). Such a touch is one buy
+the tick's physics, then one a physics step while affordable, the touch's step included (`Shop.FixedStep`; 2 levels
+on the touch's tick, then 1 a tick: [Clones and buy-max](#clones-and-buy-max-build-25630570)). Such a touch is one buy
 goal: the levels bought after the first continue it, so they neither reach a goal nor end a strict run as a stray
 buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with one goal each after the
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
@@ -1795,9 +1795,8 @@ went from `timeSinceLastClone = 0f` to `timeSinceLastClone -= nextCloneDue`, and
 the touch's included (`Shop.FixedStep`, `Shop.cs:148`, called at `Simulation.cs:1313`; turbo parks it as a
 `WaitForFixedUpdate` routine, `TurboRunner.cs:181`, resumed at 238-239). `--ticks-out` rows carry each course's clones
 (`Economy.CloneStates`: count, path, on screen, in flight, spawn timer). The engine matches the new-build turbo through
-tick 14122 of the 353.32 s route. Still on the old rule: `ZipPlan.ClonePay`'s on-screen branch and `plan_fulltas.py`'s
-Course 2 spawn gate ([Buy planner](#buy-planner), `--dj-farm`). Pending a 1x probe: how many buy-max levels come on the
-touch's tick. A scene diff of the two builds (4,036 objects each side) finds no collider, `upgradeBox`, `courseScript`,
+tick 14122 of the 353.32 s route. `ZipPlan.ClonePay` and `plan_fulltas.py` model it too (a slot cycles every lifetime + 1 frame). Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
+so L levels take L − 1 ticks; offline Cash is equal level by level from tick 15040. A scene diff of the two builds (4,036 objects each side) finds no collider, `upgradeBox`, `courseScript`,
 `clonesScript`, spring, spike, mover or checkpoint field changed, only presentation and runtime state (the statue's
 `StatuePrestigeText` lost a MeshFilter): no world or trace needs capturing again for the build.
 

@@ -1367,7 +1367,7 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
   called after the step at `Simulation.cs:1313`) buys the next level after every physics step, the touch's included
   (the coroutine starts in the step's trigger callback); turbo parks it as a `WaitForFixedUpdate` routine
-  (`TurboRunner.cs:181`, resumed at 238-239). The touch tick's count awaits a 1x probe. The old build bought a level at
+  (`TurboRunner.cs:181`, resumed at 238-239). The touch's tick buys 2 levels, then 1 a tick (a 1x probe; offline Cash equal level by level from tick 15040). The old build bought a level at
   the end of every rendered frame, six a tick on the 280 fps clock (a freeze's or pause's repeats too); there a 1x
   probe of `FalseEnding-Any%` 361.68 (29 `buyclone2` levels from tick 15216) matched offline Cash on every tick
   ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Buy-max levels bought once a tick*).
