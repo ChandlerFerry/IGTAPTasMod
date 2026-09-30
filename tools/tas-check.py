@@ -5,7 +5,10 @@
 Opens a TAS session on a raw-input route and, for each input tick T:
   - seeks to T (a greenzone snapshot, turbo to one tick short, the last at 1x) and reads the held state;
   - goes back to the start and plays to T at 1x only, and reads it again: the two must match exactly;
-  - rewinds one physics tick and advances one: the state must come back.
+  - rewinds one physics tick and advances one: the state must come back;
+  - the trace (per input: its span's last physics tick, position, speed) is the same built by the seek's turbo as by
+    1x, and ends on the held physics tick;
+  - plays from the start to T (play until) and holds there in the same state.
 Then checks the TAS text and a share code carry the session's inputs unchanged, and closes the session (the imported
 copy is deleted again).
 """
@@ -62,6 +65,7 @@ def main():
         t = min(t, tas["tickCount"])
         ok(call("/api/tas/seek", {"tick": t}), "seek")
         seeked = state(held(t))
+        turbo_trace = call("/api/tas/trace", {"from": 0})["trace"][:t]
         ok(call("/api/tas/seek", {"tick": 0}), "seek to the start")
         now = held()
         while now["cursor"] < t and not now.get("ended"):
@@ -71,6 +75,17 @@ def main():
         played = state(now)
         d = diff(seeked, played)
         print(f"input {t}: seek {'==' if not d else '!='} 1x play" + (f"  {d}" if d else ""))
+        failures += bool(d)
+        trace = call("/api/tas/trace", {"from": 0})["trace"][:t]
+        rows = [r for r in trace if r]
+        good = trace == turbo_trace and rows and rows[-1][0] == now["physics"] and all(a[0] < b[0] for a, b in zip(rows, rows[1:]))
+        print(f"input {t}: trace {'turbo == 1x, ends on the held tick' if good else 'MISMATCH'}")
+        failures += not good
+        ok(call("/api/tas/seek", {"tick": 0}), "seek to the start")
+        held()
+        ok(call("/api/tas/play", {"until": t}), "play until")
+        d = diff(played, state(held(t)))
+        print(f"input {t}: play until {'==' if not d else '!='} advance" + (f"  {d}" if d else ""))
         failures += bool(d)
         ok(call("/api/tas/rewind", {"ticks": 1}), "rewind")
         held()

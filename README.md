@@ -223,9 +223,17 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   modelled only (`TurboRunner.DropTimeStops`: no real `IE_TimeStop` left to freeze 1x after it), and the handoff puts the
   player at the last frame's blend, where 1x's next FixedUpdate reads it. A savestate session holds first after input
   0, so its input 0 presses nothing (the buffer timers a press starts there couldn't be put back on a rewind).
-- **Editing.** Grid (click or drag stick and jump, right-click a tap, click a dash; shift-click input numbers for range
-  tools), text ([`docs/tas-markup.md`](docs/tas-markup.md)), undo/redo, markers (go to one to load that point). Sticks
-  are a controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press.
+- **Editing.** A piano roll on TAStudio's and FCEUX TAS Editor's conventions: one row per input tick; the narrow left
+  column goes there (double-click a number does too), click or drag the numbers to select. Click or drag stick and jump,
+  right-click a tap, click a dash; the wheel on X steps through the part tilts (the whole selection's). Keys: arrows
+  select, Enter go, Shift+Enter play to, Ins/Ctrl+Ins insert/clone, Del/Ctrl+Del clear/delete, Ctrl+X/C/V (Shift:
+  insert), Ctrl+Z/Y, M marker, Shift+PgUp/PgDn markers. Edited rows flash. **Phys** is the physics tick an input plays
+  on, `+n` the dash or spring ticks after it that take no input; x, y, vx, vy are the player there as played (the
+  session's trace, `/api/tas/trace`, cut where the inputs change). **Play to** (`/api/tas/play {until, from}`) plays up
+  to a tick and holds, from 50 inputs before it if it's behind. Also text ([`docs/tas-markup.md`](docs/tas-markup.md)),
+  undo/redo, markers (go to one to load that point; each shows its segment's inputs and ticks). Sticks are a
+  controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press. The
+  Timeline tab shows a route in the same roll, read-only, with **Play from** and **Open in TAS**.
 - **Re-record** drops the inputs from the held tick and records the controller (`InputRecorder`) at a slowdown; on stop
   its ticks go in and the session seeks to their end: what is kept is what replays. A death or finish stops it.
 - **Suggest** (course and category sessions) runs `enginesim suggest` on the route up to the held tick

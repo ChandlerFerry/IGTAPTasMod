@@ -27,7 +27,7 @@
 .tasWrap { flex-wrap: wrap; }
 
 .tasRollWrap { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; user-select: none; }
-.tasRollHead, .tasRow { display: grid; grid-template-columns: 58px 54px 34px 48px 40px minmax(90px, 1fr) minmax(90px, 2fr); }
+.tasRollHead, .tasRow { display: grid; grid-template-columns: 18px 50px 54px 34px 48px 40px minmax(60px, 1fr) 66px 62px 62px 54px 54px minmax(80px, 1.4fr); }
 .tasRollHead { color: #6f8cab; font-size: 10px; font-weight: 800; letter-spacing: .1em; padding: 0 0 6px; border-bottom: 1px solid var(--line); }
 .tasRoll { overflow-y: auto; position: relative; border-bottom: 1px solid var(--line); }
 .tasRow { position: absolute; left: 0; right: 0; height: 22px; align-items: stretch; border-bottom: 1px solid #0f2036; }
@@ -38,10 +38,21 @@
 .tasRow.selected { background: #2a2350; }
 .tasRow.cursor.selected { background: #28406b; }
 .tasRow.end { color: var(--muted); }
-.tasEndCell { grid-column: 2 / -1; font-style: italic; }
+.tasEndCell { grid-column: 3 / -1; font-style: italic; }
 .tasNum { color: #8fa8c4; cursor: pointer; justify-content: flex-end; }
 .tasNum:hover { color: white; background: #1b3353; }
-.tasNum.green::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); margin-right: auto; }
+.tasSeek { cursor: pointer; justify-content: center; color: var(--cyan); padding: 0 !important; font-size: 10px; }
+.tasSeek:hover { background: #1b3353; }
+.tasSeek.green:empty::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+.tasPhys { color: #8fa8c4; justify-content: flex-end; gap: 4px; border-left: 1px solid #0f2036; }
+.tasPhys b { color: var(--amber); font-size: 10px; }
+.tasVal { color: #7d97b4; justify-content: flex-end; font-size: 11px; }
+.tasRow.lag { box-shadow: inset 0 -2px 0 #8a5a14; }
+.tasRow.marked { box-shadow: inset 0 2px 0 #6f9a3c; }
+.tasRow.hot > span:not(.tasNum):not(.tasSeek) { animation: tasHot 1.6s ease-out; }
+@keyframes tasHot { from { background: #8a5316; } to { background: transparent; } }
+.tasMarker small { display: block; color: var(--muted); font-size: 10px; }
+.routeRoll { margin-top: 18px; }
 .tasCell { cursor: pointer; justify-content: center; border-left: 1px solid #0f2036; }
 .tasCell:hover { background: #1b3353; }
 .tasCell.x.on { color: var(--cyan); }

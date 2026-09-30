@@ -18,7 +18,7 @@ export type TasPlayer = { x: number; y: number; vx: number; vy: number; velX: nu
 /** GET /state/live `tas`: the open TAS editor session (TasPlugin.Editor.cs), null when none. */
 export type TasLive = { open: boolean; routeId: string; name: string; savestateId?: string; course?: number | null; capabilities?: string | null;
   phase: "starting" | "held" | "playing" | "recording" | "running"; cursor: number; physics: number; tickCount: number; baseInput: number; rerecords: number;
-  version: number; canUndo: boolean; canRedo: boolean; slowdown: number; greenzone: number[]; ended?: string | null; finished: boolean; endTime: number; endPhysics: number;
+  version: number; canUndo: boolean; canRedo: boolean; slowdown: number; greenzone: number[]; traced: number; traceVersion: number; playUntil?: number | null; ended?: string | null; finished: boolean; endTime: number; endPhysics: number;
   player?: TasPlayer | null; suggest: { running: boolean; error?: string | null; until: number; results?: TasSuggestion[] | null; tried?: number | null } };
 export type PlacePrefill = { x?: number; y?: number; vx?: number; vy?: number; rebaseAtX?: number; rebaseAtY?: number };
 
@@ -121,6 +121,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
   const [ticks, setTicks] = useState<TasTick[]>([]);
   const [markers, setMarkers] = useState<TasMarker[]>([]);
   const [loaded, setLoaded] = useState({ route: "", version: -1 });
+  const [trace, setTrace] = useState<{ route: string; version: number; rows: TasTrace }>({ route: "", version: -1, rows: [] });
   const [speed, setSpeed] = useState(1);
   const [recordSpeed, setRecordSpeed] = useState(4);
   const [view, setView] = useState<"grid" | "text">("grid");
@@ -135,6 +136,19 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     call("/tas/ticks").then(r => { if (!alive) return; setTicks(r.ticks); setMarkers(r.markers); setLoaded({ route: r.routeId, version: r.version }); }).catch(() => {});
     return () => { alive = false; };
   }, [tas.routeId, tas.version, loaded]);
+
+  // The trace grows as the session plays (only the new rows are fetched) and starts over where the inputs changed.
+  useEffect(() => {
+    const fresh = trace.route !== tas.routeId || trace.version !== tas.traceVersion;
+    const from = fresh ? 0 : trace.rows.length;
+    if (!fresh && from >= tas.traced) return;
+    let alive = true;
+    call("/tas/trace", { from }).then(r => {
+      if (!alive) return;
+      setTrace(t => ({ route: tas.routeId, version: tas.traceVersion, rows: [...(r.from === 0 || t.route !== tas.routeId ? [] : t.rows.slice(0, r.from)), ...r.trace] }));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [tas.routeId, tas.traced, tas.traceVersion, trace]);
 
   const busy = tas.phase === "starting" || tas.phase === "recording";
   const cmd = (path: string, body: unknown = {}) => onCommand(path, body);
@@ -158,6 +172,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const edit = (from: number, deleteCount: number, insert: TasTick[]) => cmd("/tas/edit", { from, deleteCount, ticks: insert });
+  const playTo = (until: number) => cmd("/tas/play", until > tas.cursor ? { slowdown: speed, until } : { slowdown: speed, until, from: Math.max(0, until - LEAD_IN) });
   const category = categories.find(c => c.id === tas.capabilities);
   const course = courses.find(c => c.id === tas.course);
   const openText = async () => { try { setText((await call("/tas/text")).text); setView("text"); } catch (e) { setNote(String(e)); } };
@@ -225,7 +240,8 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     <div className="tasGrid">
       <div className="panel tasMain">
         {view === "grid"
-          ? <TasRoll ticks={ticks} markers={markers} cursor={tas.cursor} greenzone={tas.greenzone} base={tas.baseInput} busy={busy} follow={tas.phase === "playing" || tas.phase === "recording"}
+          ? <TasRoll ticks={ticks} markers={markers} trace={trace.route === tas.routeId ? trace.rows : []} cursor={tas.cursor} greenzone={tas.greenzone} base={tas.baseInput} busy={busy} follow={tas.phase === "playing" || tas.phase === "recording"}
+              onPlayTo={playTo} onUndo={() => tas.canUndo && cmd("/tas/undo")} onRedo={() => tas.canRedo && cmd("/tas/redo")}
               onSeek={tick => cmd("/tas/seek", { tick })} onEdit={edit} onMarker={(tick, n) => cmd("/tas/marker", { tick, note: n })}/>
           : <div className="tasText">
               <p className="tasHint">One line per input run: <code>ticks,inputs</code>. <code>R L</code> (<code>R0.55</code> part tilt) <code>U D</code> stick, <code>J</code> jump held (presses where it starts), <code>H</code> held without that press, <code>P</code> press, <code>C</code> release, <code>X</code> dash (<code>X+3</code>, <code>X(0.35:1)</code>), <code>S3</code>, <code>K(x:y)</code>, <code>Z12@0.3</code> pause, <code>Q</code> restart, <code>@ note</code> marker. See docs/tas-markup.md.</p>
@@ -277,7 +293,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         </div>}
 
         <div className="panel"><p className="eyebrow">MARKERS</p>
-          <MarkerList markers={markers} cursor={tas.cursor} busy={busy} onSeek={tick => cmd("/tas/seek", { tick })} onMarker={(tick, n) => cmd("/tas/marker", { tick, note: n })}/>
+          <MarkerList markers={markers} trace={trace.rows} end={ticks.length} cursor={tas.cursor} busy={busy} onSeek={tick => cmd("/tas/seek", { tick })} onMarker={(tick, n) => cmd("/tas/marker", { tick, note: n })}/>
         </div>
 
         <div className="panel"><p className="eyebrow">SHARE</p>
@@ -296,40 +312,86 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
   </div>;
 }
 
-function MarkerList({ markers, cursor, busy, onSeek, onMarker }: { markers: TasMarker[]; cursor: number; busy: boolean; onSeek: (t: number) => void; onMarker: (t: number, n: string) => void }) {
+function MarkerList({ markers, trace, end, cursor, busy, onSeek, onMarker }: { markers: TasMarker[]; trace: TasTrace; end: number; cursor: number; busy: boolean;
+  onSeek: (t: number) => void; onMarker: (t: number, n: string) => void }) {
   const [text, setText] = useState("");
+  // Each segment's length to the next marker (or the end): input ticks, and physics ticks once it has been played.
+  const length = (from: number, to: number) => {
+    const a = from === 0 ? 0 : trace[from - 1]?.[0], b = trace[to - 1]?.[0];
+    return `${to - from} inputs${a != null && b != null ? ` · ${b - a} ticks` : ""}`;
+  };
   return <div className="tasMarkers">
-    {markers.map(m => <div key={m.tick} className="tasMarker"><button disabled={busy} title="Go there (the session holds before this input)" onClick={() => onSeek(m.tick)}>{m.tick}</button><span>{m.note}</span><button className="danger" onClick={() => onMarker(m.tick, "")}>×</button></div>)}
+    {markers.map((m, k) => <div key={m.tick} className="tasMarker"><button disabled={busy} title="Go there (the session holds before this input)" onClick={() => onSeek(m.tick)}>{m.tick}</button>
+      <span>{m.note}<small>{length(m.tick, k + 1 < markers.length ? markers[k + 1].tick : end)}</small></span><button className="danger" onClick={() => onMarker(m.tick, "")}>×</button></div>)}
     {!markers.length && <p className="tasHint">Markers are save points: go to one and the session holds there, rebuilt from the start.</p>}
     <div className="tasMarkerAdd"><input value={text} placeholder={`Note at input ${cursor}`} onChange={e => setText(e.target.value)}/><button disabled={!text.trim()} onClick={() => { onMarker(cursor, text.trim()); setText(""); }}>Mark</button></div>
   </div>;
 }
 
 type Paint = { column: "x" | "y" | "jump"; from: number; to: number; value: number | boolean };
+/** Per input tick as played (POST /tas/trace): [physics tick its span ends on, x, y, vx, vy]; null where not played yet. */
+export type TasTrace = (number[] | null)[];
+const LEAD_IN = 50;
 
-function TasRoll({ ticks, markers, cursor, greenzone, base, busy, follow, onSeek, onEdit, onMarker }: { ticks: TasTick[]; markers: TasMarker[]; cursor: number; greenzone: number[];
-  base: number; busy: boolean; follow: boolean; onSeek: (t: number) => void; onEdit: (from: number, deleteCount: number, insert: TasTick[]) => void; onMarker: (t: number, n: string) => void }) {
+/**
+ * The piano roll (TAStudio / FCEUX TAS Editor conventions): one row per input tick, a seek column, drag-select on the
+ * numbers, paint on the inputs, the physics tick each input starts on (dash and spring ticks take no input: +n), the
+ * player's position and speed as played, edited cells flash. Read-only: selection only (the Timeline tab).
+ */
+export function TasRoll({ ticks, markers, trace = [], cursor = -1, greenzone = [], base = 0, busy, follow = false, readOnly = false,
+  onSeek, onEdit, onMarker, onPlayTo, onUndo, onRedo, tools }: {
+  ticks: TasTick[]; markers: TasMarker[]; trace?: TasTrace; cursor?: number; greenzone?: number[]; base?: number; busy: boolean; follow?: boolean; readOnly?: boolean;
+  onSeek?: (t: number) => void; onEdit?: (from: number, deleteCount: number, insert: TasTick[]) => void; onMarker?: (t: number, n: string) => void;
+  onPlayTo?: (t: number) => void; onUndo?: () => void; onRedo?: () => void; tools?: (sel: [number, number] | null) => React.ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   const [anchor, setAnchor] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number] | null>(null);
+  const [dragSel, setDragSel] = useState(false);
   const [paint, setPaint] = useState<Paint | null>(null);
+  const [wheel, setWheel] = useState<{ from: number; to: number; value: number } | null>(null);
   const [clip, setClip] = useState<TasTick[]>([]);
   const [xValue, setXValue] = useState(1);
   const [insertCount, setInsertCount] = useState(1);
+  const [hot, setHot] = useState({ from: 0, to: -1, gen: 0 });
+  const prev = useRef<TasTick[] | null>(null);
   const noteAt = useMemo(() => new Map(markers.map(m => [m.tick, m.note])), [markers]);
   const green = useMemo(() => new Set(greenzone), [greenzone]);
+  const edit = (from: number, del: number, insert: TasTick[]) => { if (!readOnly && !busy) onEdit?.(from, del, insert); };
 
+  // Flash what an edit changed (FCEUX's hot changes): the rows between the unchanged head and tail.
   useEffect(() => {
+    const p = prev.current;
+    prev.current = ticks;
+    if (!p || readOnly) return;
+    const same = (a?: TasTick, b?: TasTick) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    let head = 0;
+    while (head < p.length && head < ticks.length && same(p[head], ticks[head])) head++;
+    if (head === p.length && head === ticks.length) return;
+    let tail = 0;
+    while (tail < p.length - head && tail < ticks.length - head && same(p[p.length - 1 - tail], ticks[ticks.length - 1 - tail])) tail++;
+    setHot(h => ({ from: head, to: Math.max(head, ticks.length - 1 - tail), gen: h.gen + 1 }));
+  }, [ticks, readOnly]);
+
+  const sel = selection && selection[0] < ticks.length ? [selection[0], Math.min(selection[1], ticks.length - 1)] as [number, number] : null;
+  const reveal = (i: number) => {
     const el = scroller.current;
     if (!el) return;
+    if (i * ROW < el.scrollTop) el.scrollTop = i * ROW;
+    else if ((i + 1) * ROW > el.scrollTop + el.clientHeight) el.scrollTop = (i + 1) * ROW - el.clientHeight;
+  };
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || cursor < 0) return;
     const y = cursor * ROW;
     if (follow || y < el.scrollTop || y > el.scrollTop + el.clientHeight - ROW * 2) el.scrollTop = Math.max(0, y - el.clientHeight / 2);
   }, [cursor, follow]);
 
   const shown = useMemo(() => {
-    if (!paint) return ticks;
+    if (!paint && !wheel) return ticks;
     const draft = ticks.map(t => ({ ...t }));
+    if (wheel) for (let i = wheel.from; i <= wheel.to && i < draft.length; i++) draft[i].x = wheel.value;
+    if (!paint) return draft;
     const [a, b] = paint.from <= paint.to ? [paint.from, paint.to] : [paint.to, paint.from];
     for (let i = a; i <= b && i < draft.length; i++) {
       if (paint.column === "x") draft[i].x = paint.value as number;
@@ -338,23 +400,61 @@ function TasRoll({ ticks, markers, cursor, greenzone, base, busy, follow, onSeek
     }
     if (paint.column === "jump") fixEdges(draft, a, b);
     return draft;
-  }, [ticks, paint]);
+  }, [ticks, paint, wheel]);
+
+  /** Replace `del` inputs at `from` with `insert`, the jump edges at both seams as a hold gives them. */
+  const splice = (from: number, del: number, insert: TasTick[]) => {
+    const all = [...ticks.slice(0, from), ...insert.map(t => ({ ...t })), ...ticks.slice(from + del)];
+    const end = from + insert.length;
+    fixEdges(all, from, from - 1);
+    fixEdges(all, end, end - 1);
+    edit(from, Math.min(ticks.length, from + del + 1) - from, all.slice(from, Math.min(all.length, end + 1)));
+  };
 
   const finishPaint = () => {
     if (!paint) return;
     const [a, b] = paint.from <= paint.to ? [paint.from, paint.to] : [paint.to, paint.from];
     const end = Math.min(b + 2, shown.length);
-    onEdit(a, end - a, shown.slice(a, end));
+    edit(a, end - a, shown.slice(a, end));
     setPaint(null);
   };
   useEffect(() => {
-    const up = () => finishPaint();
+    const up = () => { finishPaint(); setDragSel(false); };
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
   });
 
+  // The wheel on an X cell steps through a controller's values (the selection's, if it's in it); it lands once the wheel rests.
+  const wheelState = useRef({ ticks, sel, wheel, busy, readOnly, onEdit });
+  wheelState.current = { ticks, sel, wheel, busy, readOnly, onEdit };
+  const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const cell = (e.target as HTMLElement).closest<HTMLElement>("[data-x]");
+      const { ticks, sel, wheel, busy, readOnly } = wheelState.current;
+      if (!cell || busy || readOnly) return;
+      e.preventDefault();
+      const i = Number(cell.dataset.x);
+      const [from, to] = wheel ? [wheel.from, wheel.to] : sel && i >= sel[0] && i <= sel[1] ? sel : [i, i];
+      const now = wheel ? wheel.value : ticks[from]?.x ?? 0;
+      const k = X_VALUES.indexOf(X_VALUES.reduce((a, b) => Math.abs(b - now) < Math.abs(a - now) ? b : a));
+      const value = X_VALUES[Math.max(0, Math.min(X_VALUES.length - 1, k + (e.deltaY < 0 ? 1 : -1)))];
+      setWheel({ from, to, value });
+      if (wheelTimer.current) clearTimeout(wheelTimer.current);
+      wheelTimer.current = setTimeout(() => {
+        const w = { from, to, value }, all = wheelState.current.ticks;
+        wheelState.current.onEdit?.(w.from, w.to - w.from + 1, all.slice(w.from, w.to + 1).map(t => ({ ...t, x: w.value })));
+        setWheel(null);
+      }, 400);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const startPaint = (column: Paint["column"], i: number) => {
-    if (busy || i >= ticks.length) return;
+    if (busy || readOnly || i >= ticks.length) return;
     const t = ticks[i];
     const value = column === "x" ? nextX(t.x) : column === "y" ? nextY(t.y) : !t.held;
     setPaint({ column, from: i, to: i, value });
@@ -364,59 +464,115 @@ function TasRoll({ ticks, markers, cursor, greenzone, base, busy, follow, onSeek
     const t = draft[0], tap = !isTap(t);
     t.held = false; t.press = tap; t.release = tap;
     if (draft[1]?.held) draft[1].press = true;
-    onEdit(i, draft.length, draft);
+    edit(i, draft.length, draft);
   };
   const toggleDash = (i: number) => {
     const t = { ...ticks[i], dash: !ticks[i].dash };
     if (!t.dash) { t.dashJump = 0; t.turnX = null; t.turnY = null; }
-    onEdit(i, 1, [t]);
+    edit(i, 1, [t]);
   };
-  const clickRow = (i: number, e: React.MouseEvent) => {
-    if (e.shiftKey && anchor !== null) { setSelection([Math.min(anchor, i), Math.max(anchor, i)]); return; }
-    if (e.ctrlKey || e.metaKey) { setAnchor(i); setSelection([i, i]); return; }
-    setAnchor(i);
-    setSelection(null);
-    if (!busy) onSeek(i);
+  const select = (i: number, extend: boolean) => {
+    i = Math.max(0, Math.min(ticks.length - 1, i));
+    if (extend && anchor !== null) setSelection([Math.min(anchor, i), Math.max(anchor, i)]);
+    else { setAnchor(i); setSelection([i, i]); }
+    reveal(i);
   };
-  const sel = selection && selection[0] < ticks.length ? [selection[0], Math.min(selection[1], ticks.length - 1)] as [number, number] : null;
   const rangeEdit = (change: (t: TasTick, i: number) => TasTick, fix = false) => {
     if (!sel) return;
     const end = Math.min(sel[1] + 2, ticks.length);
     const draft = ticks.slice(sel[0], end).map((t, k) => sel[0] + k <= sel[1] ? change({ ...t }, sel[0] + k) : { ...t });
-    if (fix) { const all = ticks.slice(0, sel[0]).concat(draft); fixEdges(all, sel[0], sel[1]); onEdit(sel[0], draft.length, all.slice(sel[0])); }
-    else onEdit(sel[0], draft.length, draft);
+    if (fix) { const all = ticks.slice(0, sel[0]).concat(draft); fixEdges(all, sel[0], sel[1]); edit(sel[0], draft.length, all.slice(sel[0])); }
+    else edit(sel[0], draft.length, draft);
+  };
+  const copy = () => { if (sel) setClip(ticks.slice(sel[0], sel[1] + 1).map(t => ({ ...t }))); };
+  const at = () => sel ? sel[0] : Math.max(0, Math.min(cursor, ticks.length));
+  const clear = () => { if (sel) rangeEdit(() => ({}), true); };
+  const remove = () => { if (sel) { splice(sel[0], sel[1] - sel[0] + 1, []); setSelection(null); } };
+  const insertBlank = (n: number) => splice(at(), 0, Array.from({ length: n }, () => ({})));
+  const clone = () => { if (sel) splice(sel[0], 0, ticks.slice(sel[0], sel[1] + 1)); };
+  const paste = (insert: boolean) => { if (!clip.length) return; const a = at(); splice(a, insert ? 0 : Math.min(clip.length, ticks.length - a), clip); };
+  const mark = (i: number) => { const n = window.prompt(`Marker at input ${i}`, noteAt.get(i) ?? ""); if (n !== null) onMarker?.(i, n.trim()); };
+  const markerSeek = (dir: 1 | -1) => {
+    const list = markers.map(m => m.tick).filter(t => dir > 0 ? t > cursor : t < cursor);
+    if (list.length) onSeek?.(dir > 0 ? Math.min(...list) : Math.max(...list));
   };
 
-  const rows = ticks.length + 1;
+  // TAStudio / FCEUX keys, while no field has the focus.
+  const keys = useRef({ sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, readOnly, busy, ticks });
+  keys.current = { sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, readOnly, busy, ticks };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+      const k = keys.current, ctrl = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
+      const lead = k.sel ? (k.anchor === k.sel[0] ? k.sel[1] : k.sel[0]) : k.anchor ?? -1;
+      const write = !k.readOnly && !k.busy;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") k.select(lead + (e.key === "ArrowDown" ? 1 : -1), e.shiftKey);
+      else if ((e.key === "PageDown" || e.key === "PageUp") && e.shiftKey && !k.readOnly) k.markerSeek(e.key === "PageDown" ? 1 : -1);
+      else if (e.key === "PageDown" || e.key === "PageUp") k.select(lead + (e.key === "PageDown" ? VISIBLE : -VISIBLE), false);
+      else if (e.key === "Escape") setSelection(null);
+      else if (ctrl && key === "c" && k.sel) k.copy();
+      else if (ctrl && key === "a" && k.ticks.length) { setAnchor(0); setSelection([0, k.ticks.length - 1]); }
+      else if (!write) return;
+      else if (e.key === "Enter" && k.sel) { if (e.shiftKey) k.onPlayTo?.(k.sel[0]); else k.onSeek?.(k.sel[0]); }
+      else if (e.key === "Insert" && ctrl) k.clone();
+      else if (e.key === "Insert") k.insertBlank(e.shiftKey ? k.insertCount : 1);
+      else if (e.key === "Delete" && ctrl) k.remove();
+      else if (e.key === "Delete") k.clear();
+      else if (ctrl && key === "x") { k.copy(); k.remove(); }
+      else if (ctrl && key === "v") k.paste(e.shiftKey);
+      else if (ctrl && key === "z" && !e.shiftKey) k.onUndo?.();
+      else if (ctrl && (key === "y" || key === "z")) k.onRedo?.();
+      else if (!ctrl && !e.altKey && key === "m" && k.sel) k.mark(k.sel[0]);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const physAt = (i: number) => i < base ? null : i === base ? 0 : trace[i - 1]?.[0] ?? null;
+  const rows = ticks.length + (readOnly ? 0 : 1);
   const first = Math.max(0, Math.floor(top / ROW) - 4), last = Math.min(rows, first + VISIBLE + 8);
   const cells: React.ReactElement[] = [];
   for (let i = first; i < last; i++) {
-    const t = shown[i], selected = !!sel && i >= sel[0] && i <= sel[1];
-    const cls = `tasRow ${i === cursor ? "cursor" : ""} ${i < cursor ? "played" : ""} ${selected ? "selected" : ""} ${i < base ? "locked" : ""}`;
-    if (!t) { cells.push(<div key={i} className={`${cls} end`} style={{ top: i * ROW }} onClick={e => clickRow(i, e)}><span className="tasNum">{i}</span><span className="tasEndCell">end · advancing past it adds neutral ticks</span></div>); continue; }
+    const t = shown[i], selected = !!sel && i >= sel[0] && i <= sel[1], isHot = i >= hot.from && i <= hot.to;
+    const cls = `tasRow ${i === cursor ? "cursor" : ""} ${i < cursor ? "played" : ""} ${selected ? "selected" : ""} ${i < base ? "locked" : ""} ${noteAt.has(i) ? "marked" : ""} ${isHot ? "hot" : ""}`;
+    const seek = <span className={`tasSeek ${green.has(i) ? "green" : ""}`} title={readOnly ? "" : green.has(i) ? "Go here (a greenzone snapshot: instant)" : "Go here: turbo to this input and hold"}
+      onClick={() => !busy && !readOnly && onSeek?.(i)}>{i === cursor ? "▶" : ""}</span>;
+    if (!t) { cells.push(<div key={i} className={`${cls} end`} style={{ top: i * ROW }}>{seek}<span className="tasNum">{i}</span><span className="tasEndCell">end · advancing past it adds neutral ticks</span></div>); continue; }
+    const p0 = physAt(i), tr = trace[i], p1 = tr?.[0], span = p0 != null && p1 != null ? p1 - p0 : null;
     const extras = [t.dashJump ? `+${t.dashJump}` : "", t.turnX != null || t.turnY != null ? `↻${t.turnX ?? ""}:${t.turnY ?? ""}` : "", t.springDash ? `S${t.springDash}` : "",
       t.lockX != null || t.lockY != null ? `K${t.lockX ?? ""}:${t.lockY ?? ""}` : "", t.pause ? `Z${t.pause}` : "", t.reset ? "Q" : "", t.release && t.held ? "C" : ""].filter(Boolean).join(" ");
-    cells.push(<div key={i} className={cls} style={{ top: i * ROW }}>
-      <span className={`tasNum ${green.has(i) ? "green" : ""}`} title={green.has(i) ? "Greenzone snapshot: rewinds from here are instant" : "Click: go here · shift-click: select · ctrl-click: select one"} onClick={e => clickRow(i, e)}>{i}</span>
-      <span className={`tasCell x ${t.x ? "on" : ""}`} onMouseDown={() => startPaint("x", i)} onMouseEnter={() => paint?.column === "x" && setPaint({ ...paint, to: i })}>{xText(t.x)}</span>
-      <span className={`tasCell y ${t.y ? "on" : ""}`} onMouseDown={() => startPaint("y", i)} onMouseEnter={() => paint?.column === "y" && setPaint({ ...paint, to: i })}>{yText(t.y)}</span>
-      <span className={`tasCell jump ${t.held ? "on" : ""} ${t.press ? "press" : ""} ${isTap(t) ? "tap" : ""}`} title="Click or drag: hold jump · right-click: tap (press and release in one tick)"
-        onMouseDown={e => e.button === 0 && startPaint("jump", i)} onContextMenu={e => { e.preventDefault(); if (!busy) toggleTap(i); }}
+    cells.push(<div key={isHot ? `${i}-${hot.gen}` : i} className={`${cls} ${span != null && span > 1 ? "lag" : ""}`} style={{ top: i * ROW }}>
+      {seek}
+      <span className="tasNum" title={readOnly ? "Click or drag: select · shift: extend" : "Click or drag: select · shift: extend · double-click: go here"}
+        onMouseDown={e => { if (e.button !== 0) return; select(i, e.shiftKey); setDragSel(true); }}
+        onMouseEnter={() => dragSel && anchor !== null && setSelection([Math.min(anchor, i), Math.max(anchor, i)])}
+        onDoubleClick={() => !busy && !readOnly && onSeek?.(i)}>{i}</span>
+      <span data-x={i} className={`tasCell x ${t.x ? "on" : ""}`} title={readOnly ? "" : "Click or drag: R, L, rest · wheel: part tilts (the selection's, if in it)"} onMouseDown={e => e.button === 0 && startPaint("x", i)} onMouseEnter={() => paint?.column === "x" && setPaint({ ...paint, to: i })}>{xText(t.x)}</span>
+      <span className={`tasCell y ${t.y ? "on" : ""}`} onMouseDown={e => e.button === 0 && startPaint("y", i)} onMouseEnter={() => paint?.column === "y" && setPaint({ ...paint, to: i })}>{yText(t.y)}</span>
+      <span className={`tasCell jump ${t.held ? "on" : ""} ${t.press ? "press" : ""} ${isTap(t) ? "tap" : ""}`} title={readOnly ? "" : "Click or drag: hold jump · right-click: tap (press and release in one tick)"}
+        onMouseDown={e => e.button === 0 && startPaint("jump", i)} onContextMenu={e => { e.preventDefault(); if (!busy && !readOnly) toggleTap(i); }}
         onMouseEnter={() => paint?.column === "jump" && setPaint({ ...paint, to: i })}>{isTap(t) ? "T" : t.held ? (t.press ? "J" : "│") : t.press ? "P" : ""}</span>
-      <span className={`tasCell dash ${t.dash ? "on" : ""}`} title="Click: dash press" onClick={() => !busy && toggleDash(i)}>{t.dash ? "X" : ""}</span>
+      <span className={`tasCell dash ${t.dash ? "on" : ""}`} title={readOnly ? "" : "Click: dash press"} onClick={() => !busy && !readOnly && toggleDash(i)}>{t.dash ? "X" : ""}</span>
       <span className="tasExtra">{extras}</span>
-      <span className="tasNote" onDoubleClick={() => { const n = window.prompt(`Marker at input ${i}`, noteAt.get(i) ?? ""); if (n !== null) onMarker(i, n.trim()); }}>{noteAt.get(i) ?? ""}</span>
+      <span className="tasPhys" title={span != null && span > 1 ? `${span - 1} more physics tick${span > 2 ? "s" : ""} with no input follow (dash or spring)` : "Physics tick this input plays on"}>{p0 ?? ""}{span != null && span > 1 ? <b>+{span - 1}</b> : null}</span>
+      <span className="tasVal">{tr ? tr[1].toFixed(1) : ""}</span><span className="tasVal">{tr ? tr[2].toFixed(1) : ""}</span>
+      <span className="tasVal">{tr ? tr[3].toFixed(1) : ""}</span><span className="tasVal">{tr ? tr[4].toFixed(1) : ""}</span>
+      <span className="tasNote" onDoubleClick={() => !readOnly && mark(i)}>{noteAt.get(i) ?? ""}</span>
     </div>);
   }
 
   return <div className="tasRollWrap">
-    <div className="tasRollHead"><span>#</span><span>X</span><span>Y</span><span>Jump</span><span>Dash</span><span>More</span><span>Marker (double-click)</span></div>
+    <div className="tasRollHead"><span/><span>#</span><span>X</span><span>Y</span><span>Jump</span><span>Dash</span><span>More</span><span>Phys</span><span>x</span><span>y</span><span>vx</span><span>vy</span><span>Marker{readOnly ? "" : " (M)"}</span></div>
     <div className="tasRoll" ref={scroller} style={{ height: ROW * VISIBLE }} onScroll={e => setTop(e.currentTarget.scrollTop)}>
       <div style={{ height: rows * ROW, position: "relative" }}>{cells}</div>
     </div>
     <div className="tasTools">
-      {sel ? <>
-        <span className="tasSelLabel">Inputs {sel[0]}–{sel[1]} ({sel[1] - sel[0] + 1})</span>
+      {sel ? <span className="tasSelLabel">Inputs {sel[0]}–{sel[1]} ({sel[1] - sel[0] + 1})</span> : <span className="tasSelLabel">Drag or shift-click input numbers to select.</span>}
+      {tools?.(sel)}
+      {!readOnly && sel && <>
+        {onPlayTo && <button disabled={busy} title={`Play at the chosen speed up to input ${sel[0]} and hold (from ${LEAD_IN} inputs before it if it's behind you)  Shift+Enter`} onClick={() => onPlayTo(sel[0])}>▶ Play to {sel[0]}</button>}
         <select value={xValue} onChange={e => setXValue(Number(e.target.value))}>{X_VALUES.map(v => <option key={v} value={v}>{v === 0 ? "0 (rest)" : xText(v)}</option>)}</select>
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, x: xValue }))}>Set X</button>
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, y: 1 }))}>Y up</button>
@@ -424,15 +580,39 @@ function TasRoll({ ticks, markers, cursor, greenzone, base, busy, follow, onSeek
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, y: -1 }))}>Y down</button>
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, held: true }), true)}>Hold jump</button>
         <button disabled={busy} onClick={() => rangeEdit(t => ({ ...t, held: false, press: false, release: false }), true)}>No jump</button>
-        <button disabled={busy} onClick={() => rangeEdit(() => ({}), true)}>Clear</button>
-        <button disabled={busy} onClick={() => setClip(ticks.slice(sel[0], sel[1] + 1).map(t => ({ ...t })))}>Copy</button>
-        <button disabled={busy || !clip.length} title="Insert the copied inputs before the selection" onClick={() => onEdit(sel[0], 0, clip)}>Paste {clip.length ? `(${clip.length})` : ""}</button>
-        <button className="danger" disabled={busy} onClick={() => { onEdit(sel[0], sel[1] - sel[0] + 1, []); setSelection(null); }}>Delete</button>
-      </> : <span className="tasSelLabel">Shift-click input numbers to select a range.</span>}
-      <span className="tasSep"/>
-      <input type="number" min={1} max={500} value={insertCount} onChange={e => setInsertCount(Math.max(1, Number(e.target.value)))}/>
-      <button disabled={busy} title="Neutral inputs before the selection (or the held input)" onClick={() => onEdit(sel ? sel[0] : Math.min(cursor, ticks.length), 0, Array.from({ length: insertCount }, () => ({})))}>Insert blank</button>
+        <button disabled={busy} title="Del" onClick={clear}>Clear</button>
+        <button disabled={busy} title="Ctrl+C" onClick={copy}>Copy</button>
+        <button disabled={busy || !clip.length} title="Over the selection  Ctrl+V" onClick={() => paste(false)}>Paste{clip.length ? ` (${clip.length})` : ""}</button>
+        <button disabled={busy || !clip.length} title="Before the selection  Ctrl+Shift+V" onClick={() => paste(true)}>Paste insert</button>
+        <button disabled={busy} title="Insert a copy before it  Ctrl+Ins" onClick={clone}>Clone</button>
+        <button className="danger" disabled={busy} title="Ctrl+Del" onClick={remove}>Delete</button>
+      </>}
+      {!readOnly && <>
+        <span className="tasSep"/>
+        <input type="number" min={1} max={500} value={insertCount} onChange={e => setInsertCount(Math.max(1, Number(e.target.value)))}/>
+        <button disabled={busy} title="Neutral inputs before the selection (or the held input)  Ins: one · Shift+Ins: this many" onClick={() => insertBlank(insertCount)}>Insert blank</button>
+      </>}
     </div>
+    {!readOnly && <p className="tasKeys"><kbd>↑</kbd><kbd>↓</kbd> select (<kbd>Shift</kbd> extends) · <kbd>Enter</kbd> go · <kbd>Shift+Enter</kbd> play to · <kbd>Ins</kbd> insert · <kbd>Ctrl+Ins</kbd> clone · <kbd>Del</kbd> clear · <kbd>Ctrl+Del</kbd> delete · <kbd>Ctrl+X/C/V</kbd> (<kbd>Shift</kbd>: insert) · <kbd>Ctrl+Z/Y</kbd> · <kbd>M</kbd> marker · <kbd>Shift+PgUp/PgDn</kbd> markers</p>}
+  </div>;
+}
+
+/** The Timeline tab's view of a route: the TAS roll, read-only, with play from a tick and open in the TAS tab. */
+export function RouteRoll({ routeId, version, running, onPlayFrom, onOpenTas }: { routeId?: string; version: unknown; running: boolean;
+  onPlayFrom: (tick: number) => void; onOpenTas: (routeId: string) => void }) {
+  const [data, setData] = useState<{ raw: boolean; ticks: TasTick[]; markers: TasMarker[] } | null>(null);
+  useEffect(() => {
+    if (!routeId) { setData(null); return; }
+    let alive = true;
+    call("/routes/ticks", { routeId }).then(r => { if (alive) setData({ raw: r.raw, ticks: r.ticks ?? [], markers: r.markers ?? [] }); }).catch(() => { if (alive) setData(null); });
+    return () => { alive = false; };
+  }, [routeId, version]);
+  if (!routeId || !data?.raw) return null;
+  return <div className="routeRoll">
+    <TasRoll ticks={data.ticks} markers={data.markers} busy={false} readOnly tools={sel => <>
+      <button className="secondary" disabled={running} title={`Skips fast to input ${sel ? sel[0] : 0}, then plays at 1x`} onClick={() => onPlayFrom(sel ? sel[0] : 0)}>▶ Play from {sel ? sel[0] : 0}</button>
+      <button className="primary" title="Edit it tick by tick on the live game (a record opens as an editable copy)" onClick={() => onOpenTas(routeId)}>Open in TAS</button>
+    </>}/>
   </div>;
 }
 

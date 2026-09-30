@@ -178,6 +178,13 @@ namespace IGTAPTasMod
                 ReplaySelected(Number(body, "startDelayTicks", 0), Mathf.Clamp(FloatNumber(body, "slowdown", DefaultWalkSlowdown), 1f, 1000f));
                 return new { ok = true };
             }
+            if (request.Path == "/api/routes/ticks")
+            {
+                MacroDefinition route = _library.macros.Find(r => r.id == Text(body, "routeId")) ?? throw new InvalidOperationException("Route not found.");
+                if (!route.steps.All(st => st.type == MacroStepType.RawInput)) return new { ok = true, raw = false };
+                return new { ok = true, raw = true, ticks = JArray.FromObject(ToTicks(route.steps.Where(st => st.enabled).ToList()), TasTickJson),
+                    markers = route.markers ?? new List<RouteMarker>() };
+            }
             if (request.Path == "/api/routes/duplicate")
             {
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
