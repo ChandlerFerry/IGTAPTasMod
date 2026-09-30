@@ -62,6 +62,10 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
         /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
         readonly int _lookahead;
+        /// <summary>--rng N: the windows' search randomness (worker i gets N + i), as solve's; --log-json FILE: one JSON line per
+        /// window best (wall s, time, runTicks: the physics tick at the window's last goal, ticks simulated, how, process CPU s).</summary>
+        readonly int _rng;
+        readonly string _logJson;
         bool _unsolved;
         string _name, _runFile, _closestFile, _outDir;
         string[] _labels;
@@ -130,6 +134,9 @@ namespace IGTAP.EngineSim.Cli
             _groupBuys = args.Contains("--group-buys");
             _resetStudy = args.Contains("--reset-study");
             _lookahead = Math.Max(0, Solve.Option(args, "--lookahead", 0));
+            _rng = Solve.Option(args, "--rng", 0);
+            _logJson = Solve.Option(args, "--log-json", (string)null);
+            if (_logJson != null) File.WriteAllText(_logJson, "");
             _seedFiles.AddRange(Solve.Args(args, "--seed"));
             // --seed-list: a file of seed paths, one per line (a run's seeds can pass Windows' 32767-character command line).
             foreach (string list in Solve.Args(args, "--seed-list"))
@@ -669,7 +676,7 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined);
+            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined, rng: _rng);
             solver.Resume = _states.Index;
             solver.NoResets = _noResets;
             TimeSpan begin = _clock.Elapsed, last = begin;
@@ -686,8 +693,13 @@ namespace IGTAP.EngineSim.Cli
                     last = _clock.Elapsed;
                     finished = true;
                     if (atGoal < windowBest)
+                    {
                         Log($"{title} {span} finish {Seconds(atGoal):0.00}s ({atGoal} physics ticks) at {(_clock.Elapsed - begin).TotalSeconds:0.0}s, "
                             + $"{Interlocked.Read(ref solver.Ticks)} ticks simulated");
+                        if (_logJson != null)
+                            File.AppendAllText(_logJson, JsonSerializer.Serialize(new { wall = _clock.Elapsed.TotalSeconds, time = Seconds(atGoal), runTicks = atGoal,
+                                ticks = Interlocked.Read(ref solver.Ticks), how, cpu = Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds }) + "\n");
+                    }
                     windowBest = Math.Min(windowBest, atGoal);
                     if (atGoal < baseline)
                     {
