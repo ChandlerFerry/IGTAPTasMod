@@ -59,6 +59,11 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
 - Turbo and the offline engine keep a physics callback's position write as 1x does (a sideways spring's 10u push,
   `Movement.hitSpring`). Routes judged before this that take a sideways spring may die at 1x (`5_WJ_DS_DJ 13.46` does);
   judge them again.
+- The game is build 25630570 (Steam, 2026-09-30): on-screen clones spawn one a frame while a slot is free (no spawn-gap
+  sawtooth or magic spots; 12 RNG draws a tick per on-screen course with clones) and buy-max boxes buy one level a
+  physics step. Clone and buy-max numbers from before are the old build's; the engine and turbo play the new build.
+  Routes judged before it pay different Cash: judge them again. The model:
+  [`docs/fulltas.md`](docs/fulltas.md#clones-and-buy-max-build-25630570).
 
 ## Before calling a new best real
 

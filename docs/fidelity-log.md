@@ -196,8 +196,9 @@ ordered as the sections they came from.
   turbo matched through goal 124 (tick 8935); at 1x `buy:buyreward2` came at 8940, turbo's at 8970, and from there 1x
   bought only on a subset of turbo's buy ticks: the player was where turbo had it, the Cash was not.
 - **Cause:** turbo (`StepClones`) and the engine (`Economy.Step`) ran `clonesScript.Update` once per physics tick on
-  0.02 s; the game runs it in each rendered frame (1/280 s). A spawn sets `timeSinceLastClone` to 0 and drops the
-  overshoot, up to a tick per spawn per tick against up to a frame at 1x, so clones spawned less often and paid later.
+  0.02 s; the game runs it in each rendered frame (1/280 s). A spawn set `timeSinceLastClone` to 0 and dropped the
+  overshoot (the pre-2026-09-30 build; see *Game build 25630570: clones and buy-max*), up to a tick per spawn per tick
+  against up to a frame at 1x, so clones spawned less often and paid later.
 - **Fix:** both step the clones in each frame of the tick's grid on that frame's `Time.deltaTime`
   (`MacroEngine.FrameGrid.Step`), 0 in a freeze's or pause's repeats. The engine's `--check` of the 359.70 route now
   meets every goal on 1x's tick (125 of them, `buy:buyreward2` at 8940) and stops there (strict buys). `zip-plan`'s
@@ -704,10 +705,11 @@ ordered as the sections they came from.
   (-142,134) and then one a tick (-94,163, -113,938, ...). Offline Cash then stayed off 1x's on every tick to the end of
   the replay (243.48e9 against 247.54e9 at tick 16,413, 1.6% short), and the RNG states parted at tick 15219 and never
   rejoined.
-- **Cause:** `IE_BuyMax` buys a level, then `yield return new WaitForEndOfFrame()`, so it buys one level per rendered
-  frame. 1x renders six frames per 0.02 s tick on the 280 fps clock (probe frames 96549-96554 are tick 15216's), so it
-  buys the touch's level in the physics step and one at each frame's end. Turbo (`TurboRunner.EndOfFrame`) and the engine
-  (`Shop.EndOfFrame`) resumed it once per tick, after all six frames: the 29 levels took 28 ticks there against 5 at 1x,
+- **Cause:** `IE_BuyMax` bought a level, then `yield return new WaitForEndOfFrame()` (the pre-2026-09-30 build; build
+  25630570 waits `WaitForFixedUpdate`), so it bought one level per rendered frame. 1x renders six frames per 0.02 s
+  tick on the 280 fps clock (probe frames 96549-96554 are tick 15216's), so it buys the touch's level in the physics step
+  and one at each frame's end. Turbo (`TurboRunner.EndOfFrame`) and the engine (`Shop.EndOfFrame`) resumed it once per
+  tick, after all six frames: the 29 levels took 28 ticks there against 5 at 1x,
   so Course 2's extra clones (and their payouts) came about 23 ticks late. The 40-level touch that matched turbo tick for
   tick (`enginesim/README.md`, Fidelity facts) showed the engine matched turbo, not 1x.
 - **Fix:** both resume the buy-max routines after every rendered frame's Update and clone step, in the tick's frame grid
@@ -732,6 +734,23 @@ ordered as the sections they came from.
 - **Fix:** 1x counts a frame as held when its game time (`Time.timeAsDouble`) is the frame before's. The same 358.69 s
   route then plays at 1x in 358.69 s live (0 dropped frames), as turbo and offline time it.
 - **Where:** `TasPlugin.PacePlayback` (`_pacedTime`).
+
+## Game build 25630570: clones and buy-max
+
+- **Symptom:** Steam updated the game on 2026-09-30 10:34 (build 25630570); routes judged before it pay different Cash
+  at 1x (the 353.32 s `FalseEnding-Any%` route, replayed with the new clone code: 8.7 % more Cash at goal 110).
+- **Cause:** two statements changed. `clonesScript.SpawnClone` on screen takes the rolled interval off
+  `timeSinceLastClone` instead of setting it to 0, so a course keeps `Start`'s 10000 (until it pays off screen) and spawns
+  one clone a rendered frame while a slot is free (drawing the RNG every frame); `upgradeBox.IE_BuyMax` waits `WaitForFixedUpdate` instead of
+  `WaitForEndOfFrame`, one level a physics step instead of one a rendered frame. The model:
+  [`docs/fulltas.md`](fulltas.md#clones-and-buy-max-build-25630570).
+- **Fix:** ed1784b: the engine's spawn keeps the overshoot, and the engine and turbo resume `IE_BuyMax` after every
+  physics step, the touch's included. The engine then matches the new-build turbo through tick 14122 of the 353.32 s
+  route. A scene diff of the builds (4,036 objects each side) changes no gameplay field, so nothing was captured again.
+  Still on the old rule: `ZipPlan.ClonePay`'s on-screen branch and `plan_fulltas.py`'s spawn gate. Pending: a 1x probe
+  of the buy-max levels on the touch's tick. Routes judged before the build are judged again.
+- **Where:** `Economy.cs:308`, `Economy.CloneStates`, `Shop.FixedStep` (`Shop.cs:148`, `Simulation.cs:1313`),
+  `TurboRunner.cs:181` and 238-239.
 
 The RNG runs of *Buy-max levels bought once a tick* (~1,100 ticks, runs of 1-6) aren't a divergence: over the 358.69 s
 route both sides make the same 6,759 draws in the same order (every per-tick state of both lies on one xorshift sequence,
