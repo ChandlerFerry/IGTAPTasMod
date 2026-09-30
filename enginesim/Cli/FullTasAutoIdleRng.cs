@@ -9,9 +9,12 @@ namespace IGTAP.EngineSim.Cli
     // --parts idle, the RNG under the box (docs/fulltas.md, "Parts" item 7): a wait for Cash is time the player can spend drawing
     // the RNG. The clones' spawn rolls (Economy.RollCount) draw it, and so do the player's own sounds: a jump 2 (playSFX's clip and
     // pitch), a landing's footstep 2 (Audio.PlayAudio with pitch variance; 5 after 0.8 s in the air), a quick restart, a dash, a
-    // wall slide. So hops under the box in a wait set how many draws come before each later clone roll, and with them every roll
-    // after: a lottery ticket per RNG class. Each class is played whole with the later waits re-timed to their Cash (Retune),
-    // and the earliest end is kept.
+    // wall slide. Since build 25630570 an on-screen course with clones rolls on every rendered frame (SpawnClone runs whenever
+    // its timer is past due, and a spawn now only takes the interval off it: 2 draws a frame, more on a success, 6 frames a
+    // physics tick), and a roll on a frame with no free slot is drawn and thrown away. So any extra draw moves which rolls
+    // fall on the frames that spawn, from then on; before, only a roll between a hop's jump and landing did. Each hop schedule
+    // is a lottery ticket (its class: the RNG's state where the wait ends); each class is played whole with the later waits
+    // re-timed to their Cash (Retune), and the earliest end is kept.
     sealed partial class FullTas
     {
         /// <summary>Retune adds at most this many idle ticks to a wait that no longer reaches its goals; a site whose goals are lost
@@ -100,6 +103,13 @@ namespace IGTAP.EngineSim.Cli
             return new Route { Inputs = inputs, Progress = whole.Progress, GoalInput = whole.GoalInputTicks, GoalPhysics = whole.GoalPhysicsTicks, GoalHeld = whole.GoalHeldFrames, EndReason = whole.EndReason };
         }
 
+        /// <summary>Hop schedules equal when their hops are.</summary>
+        sealed class ScheduleEquality : IEqualityComparer<(int at, int hold)[]>
+        {
+            public bool Equals((int at, int hold)[] a, (int at, int hold)[] b) { return a.SequenceEqual(b); }
+            public int GetHashCode((int at, int hold)[] a) { return a.Aggregate(17, (h, t) => h * 31 + t.at * 7 + t.hold); }
+        }
+
         /// <summary>
         /// Goal g's wait for Cash spent drawing the RNG: <paramref name="run"/> (a whole run of <paramref name="current"/>'s goals)
         /// has idle ticks at <paramref name="ws"/>..<paramref name="we"/> where the player stands within reach of the box's trigger
@@ -116,18 +126,25 @@ namespace IGTAP.EngineSim.Cli
             if (ws < we && run[ws].release) ws++;
             if (we - ws < 2 || run.Skip(ws).Take(we - ws).Any(t => t.held)) return (null, null);
             int w = we - ws;
-            // Under a box a hop bonks its underside whatever the hold (about 20 ticks up and down), and a hop's draws only make
-            // another class where a clone roll falls between them and the next hop's: every single hop, then HopSamples random
-            // sets of hops HopApart ticks apart (the same for the same goal).
-            var schedules = new List<(int at, int hold)[]> { new (int, int)[0] };
-            for (int a = 0; a + 2 <= w; a++) schedules.Add(new[] { (a, 1) });
+            // Under a box a hop bonks its underside whatever the hold (about 20 ticks up and down). With a roll on every frame
+            // nearly every schedule is its own class, so the MaxTickets played are taken in turns from the single hops (every
+            // tick) and HopSamples random sets of hops HopApart ticks apart (the same for the same goal), not all singles first.
+            var singles = Enumerable.Range(0, Math.Max(0, w - 1)).Select(a => new[] { (a, 1) }).ToList();
+            var sets = new List<(int at, int hold)[]>();
             var random = new Random(g);
             for (int n = 0; n < HopSamples && w >= 2 * HopApart; n++)
             {
                 var hops = new List<(int, int)>();
                 for (int a = random.Next(HopApart); a + 2 <= w; a += HopApart + random.Next(w / 2)) hops.Add((a, 1));
-                if (hops.Count > 1) schedules.Add(hops.ToArray());
+                if (hops.Count > 1) sets.Add(hops.ToArray());
             }
+            var schedules = new List<(int at, int hold)[]> { new (int, int)[0] };
+            for (int i = 0; i < Math.Max(singles.Count, sets.Count); i++)
+            {
+                if (i < singles.Count) schedules.Add(singles[i * (singles.Count % 7 == 0 ? 1 : 7) % singles.Count]);
+                if (i < sets.Count) schedules.Add(sets[i]);
+            }
+            schedules = schedules.Distinct(new ScheduleEquality()).ToList();
             List<InputTick> Hopped((int at, int hold)[] hops)
             {
                 var list = new List<InputTick>(run);
@@ -153,7 +170,9 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (tick != count) return true;
                     x = _eval.PlayerWorld.x;
-                    ok = _eval.Player.onGround && zone.Near(x);
+                    // A hop that buys the box would take its levels (a buy-max box's come in one a tick while the player is in
+                    // the trigger) away from the jump in: the box stays unbought until the wait ends.
+                    ok = _eval.Player.onGround && zone.Near(x) && _eval.Progress <= g;
                     rng = UnityEngine.Random.state;
                     return false;
                 }, 0);
@@ -171,10 +190,10 @@ namespace IGTAP.EngineSim.Cli
                 Route fixedRun = TailFix(current, tickets[0].inputs, g);
                 if (fixedRun != null)
                 {
-                    int at = (int)fixedRun.GoalInput[g];
+                    int at = (int)fixedRun.GoalInput[Math.Max(g, (retuneFrom < 0 ? g + 1 : retuneFrom) - 1)];
                     results[0] = fixedRun;
                     Solve.Workers(_threads, tickets.Count - 1, () => { Simulation sim = _create(); return (sim, sim.Start); },
-                        (s, i) => results[i + 1] = Retune(s.sim, s.Start, fixedRun, tickets[i + 1].inputs.Take(at).Concat(fixedRun.Inputs.Skip(at)).ToList(), g + 1))();
+                        (s, i) => results[i + 1] = Retune(s.sim, s.Start, fixedRun, tickets[i + 1].inputs.Take(at).Concat(fixedRun.Inputs.Skip(at)).ToList(), retuneFrom < 0 ? g + 1 : retuneFrom))();
                     fixedHow = ", the way on re-found";
                 }
             }
@@ -325,6 +344,22 @@ namespace IGTAP.EngineSim.Cli
                 return (null, null);
             }
             var (touch, physics) = Play(Jump(low));
+            // A buy-max box's levels (the goals after g with its label) come in one a physics tick while the player is in the
+            // trigger: the jump in is kept on through as many of them as it reaches (the most first), and the run's inputs go on
+            // from the last one's old touch.
+            int levels = 0;
+            while (g + levels + 1 < _goals && _labels[g + levels + 1] == _labels[g] && current.GoalInput[g + levels + 1] - current.GoalInput[g] <= levels + 1) levels++;
+            for (; levels > 0; levels--)
+            {
+                List<InputTick> hold = Jump(low).Concat(Enumerable.Repeat(new InputTick { held = true, x = stick }, levels)).ToList();
+                _eval.SetStart(afterLead, from + lead.Count);
+                _eval.Goals.Limit = g + 1 + levels;
+                RunResult rr = _eval.Run(hold, null, null, 0);
+                if (rr.Progress < g + 1 + levels) continue;
+                touch = rr.GoalInputTicks[g + levels];
+                buy = (int)Math.Min(current.GoalInput[g + levels], current.Inputs.Count);
+                break;
+            }
             List<InputTick> tail = current.Inputs.Skip(buy).ToList();
             if (tail.Count > 0)
             {
@@ -333,9 +368,10 @@ namespace IGTAP.EngineSim.Cli
                 else if (t0.held && !t0.press) return (null, null);
             }
             int on = from + lead.Count;
-            List<InputTick> whole = current.Inputs.Take(from).Concat(lead).Concat(Jump(low).Take((int)touch - on)).Concat(tail).ToList();
+            List<InputTick> jumpIn = Jump(low).Concat(Enumerable.Repeat(new InputTick { held = true, x = stick }, levels)).ToList();
+            List<InputTick> whole = current.Inputs.Take(from).Concat(lead).Concat(jumpIn.Take((int)touch - on)).Concat(tail).ToList();
             int ws = on + stand;
-            var (r, how) = RngTickets(current, g, whole, ws, ws + low, afterLead, on, zone, physics, leadHow != null);
+            var (r, how) = RngTickets(current, g, whole, ws, ws + low, afterLead, on, zone, physics, leadHow != null, g + levels + 1);
             return r == null ? (null, null) : (r, $"{leadHow ?? ""}{(leadHow == null ? "" : ", ")}walked in ({stand} ticks), {how}");
         }
 
