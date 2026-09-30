@@ -600,6 +600,49 @@ goal 15. The search finds it as a move instead: `OfflineSolver`'s omni kind `bou
 straight down onto the floor, each jumped out of), and with the omnidirectional dash the cell key keeps momentum at 250,
 1000 and 2500 apart (it lumped everything past 750 together).
 
+### Route-corpus grafts
+
+`TechGrafts.Load` adds the saved routes' windows to the tech demos' (`enginesim\Runtime\RouteGrafts.cs`, one hook where
+it returns; `routegrafts <traces dir>` lists them). Every `routes.json` route named `<target>_<CAT>[ farm] <time>`
+replays from its start trace (`start-c<target>-<caps>.json`, else a `route-c<target>-<caps>-*.json`, loaded canonical as a
+solve does); one that doesn't reach its finish offline gives nothing. Each contact (`ContactLog`, the solver's own
+detection) gives the window −10..+30 around it (`TechGrafts.Cut`'s: travel without a button dropped), scored by its net
+displacement per physics tick from the contact to the window's end. A window's start key is what the run brings: the
+unlocks the window spends, the contact kind, the facing, |vx| in 200 u/s bands and rising/level/falling, the dashes and
+air jumps left. Identical windows merge (the faster kept); per key those at or above the key's median stay, the fastest
+3, a sided one with its mirror. A window needs what it spends (its dashes and air jumps, a wall jump: a press on a wall,
+the omnidash: a dash or freeze turn with a vertical, block swap with a dash), never more than its route's category, plus
+the category's refill orbs and zip movers. Its tech is `route <target>_<CAT>`: one pick weight per route family, as a
+lab demo has, so a new best found by one says `via tech graft route 4_WJ_DS_DJ`. The planner leaves them out (it takes
+every window at a contact as an edge). `--no-route-grafts` drops them. Cached in `route-grafts.cache.json` beside the
+tech cache (`--tech-cache`'s folder), keyed by the routes' inputs, their trace and world files and the engine build.
+
+Measured 2026-09-30: 63 of the 65 saved routes replay to their finish (Course 15's two have no start trace); 1,410
+patterns (mirrors included) from 50 of them (13 repeat another's windows: farm routes with their record's inputs, `1_WJ` with `1_NONE`'s), mined in 14 s. Offered per
+category: `NONE` 106, `WJ` 116, `WJ_DS` 307, `WJ_DS_DJ` 520, `WJ_DS_DJ_BS` 680, `WJ_DS2_BS_ZIP_OM` 490,
+`WJ_DS_DJ_BS_ORB_ZIP_OM` 1,380 (wall contacts about half, then touches, ground, air jumps and dash jumps, the gate), against
+the lab demos' 354. By kind: `WallAhead*` 300, `DoubleJump` 102, `WallAbove*` 194, `Landed` 86, `DashJump` 80, `Spike*`
+143, `SteppedUp*` 132, `LeftGround` 64, `WallBoost*` 98, `TouchedWall`/`LeftWall` 88, `NearGate*` 50, `WallBehind*` 38,
+`CornerHyper` 10, springs 21, slopes and overhangs 4.
+
+A/B, plain `solve` (the course search that grafts; `solve --auto`'s Full-TAS windows don't graft yet), arms at once, same
+threads and minutes, `--no-route-grafts` against the corpus:
+
+| Target, start | Threads × min | Without | With |
+|---|---|---|---|
+| Course 5 `WJ_DS_DJ`, seed 12.14 | 2 × 15 | **12.00** (splice, explore) | 12.14 |
+| Course 5 `WJ_DS_DJ`, seed 12.14, `--rng 1` | 1 × 15 | 12.14 | 12.14 (one tech for the whole corpus: 12.14) |
+| Bonus 1 `WJ`, seed 6.90 | 2 × 15 | 6.90 | 6.90 |
+| Course 4 `WJ_DS`, no route | 2 × 15 | no finish | no finish |
+| Course 4 `WJ_DS_DJ`, first finish (its seed, judged 13.24, doesn't finish offline) | 1 × 15 | 14.82 (15.5 at 592 s) | **14.62** (15.5 at 446 s; one tech: 14.76) |
+| Course 4 `WJ_DS_DJ`, first finish, `--rng 2` | 1 × 15 | 14.62 (15.5 at 462 s) | **14.14** (15.5 at 163 s); without Course 4's own routes **14.24** (15.5 at 119 s) |
+
+The corpus helps a search that is still finding the course (Course 4's first finish, also with Course 4's own routes held
+out: the other courses' movement transfers), and not the polish of a seeded near-record route: there it takes graft
+picks from the lab windows and the runs finish less often (Course 5: 6,895 finishes against 9,767, 3,931 against 7,055).
+One best in all runs names a route graft (`4_WJ_DS_DJ` at 26.14 s, early); the rest reach their gains through cells the
+grafted runs opened, credited to splice and optimize. Single runs each: noisy.
+
 ### Reset study and lookahead
 
 A quick restart throws the player's momentum away. `--reset-study` (`FullTasResets.cs`) takes each reset in the best (only those in the `--focus` goals, when given), in

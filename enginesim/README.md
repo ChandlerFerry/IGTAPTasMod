@@ -238,6 +238,9 @@ The hand-written grafts are gone: every contact is grafted from these mined wind
 progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed the demo's contact
 after it).
 
+The saved routes are mined into windows too (route-corpus grafts, `routegrafts`, `--no-route-grafts`:
+[docs/fulltas.md](../docs/fulltas.md#route-corpus-grafts)).
+
 Besides the tick contacts above, `ContactLog.Step` files per physics step (a dash's steps consume no input tick, and a
 spring or a spike acts inside a physics callback) the contacts the game's own calls and the player's touches make, at the
 input tick that step belongs to: `SpringHitLeft`/`Right` (a spring whose up has an x, named by the side it launches toward)
