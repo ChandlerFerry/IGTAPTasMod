@@ -53,10 +53,18 @@ namespace IGTAPTasMod
             public bool finished;
             public float endTime;
             public int endPhysics;
+            /// <summary>The route's inputs changed in this session (it is saved only then: opening a route leaves it as it was).</summary>
+            public bool dirty;
             public Process suggest;
+            public System.Collections.Concurrent.ConcurrentQueue<string> suggestOutput;
             public string suggestFile, suggestError;
             public int suggestUntil;
+            /// <summary>Inputs before suggestUntil changed while suggest ran: its result is for other inputs.</summary>
+            public bool suggestStale;
             public JObject suggestions;
+
+            /// <summary>A savestate start: it holds first after input 0, so input 0 presses nothing (TasQuiet).</summary>
+            public bool SavestateStart { get { return !string.IsNullOrEmpty(route.savestateId); } }
 
             public int BaseInput { get { return greenzone.Count == 0 ? 0 : greenzone[0].input; } }
         }
@@ -194,6 +202,8 @@ namespace IGTAPTasMod
             // The last tick's interpolation ends, as turbo keeps them (TurboRunner._stepFrom/_stepTo): FixedUpdate reads the blend.
             start.stepFrom = s.stepFrom;
             start.stepTo = player.GetComponent<Rigidbody2D>().position;
+            // A course start's restores put the world at its canonical origin exactly, as the gate's start does (Solver.Evaluate).
+            start.canonical = _canonicalReference;
             s.greenzone.Clear();
             s.greenzone.Add(new TasGreen { physics = 0, input = (int)_engine.RunTicks, snapshot = start });
             s.physics = 0;
@@ -216,6 +226,7 @@ namespace IGTAPTasMod
             s.refeed = false;
             s.playing = false;
             s.release = 0;
+            _walkSlowdown = 0f;
             TasGreen from = s.greenzone.LastOrDefault(g => input >= 0 ? g.input < input : g.physics < physics);
             if (from == null)
             {
@@ -233,18 +244,24 @@ namespace IGTAPTasMod
             int green = from.input;
             Func<bool> more = input >= 0 ? (Func<bool>)(() => _engine.RunTicks < input - 1) : () => s.physics < physics - 1;
             int most = input >= 0 ? (input - from.input) * 4 + 2000 : physics - from.physics + 10;
-            TurboRunner.Run(player, () => _engine.IsRunning && more(), most, () =>
+            TurboRunner.DropTimeStops = true;
+            try
             {
-                _engine.Clock++;
-                _engineSimTickHook?.Invoke(player);
-                int at = (int)_engine.RunTicks;
-                if (!_engine.IsRunning || at < green + TasGreenEvery) return;
-                green = at;
-                if (s.greenzone.Exists(g => g.input == at)) return;
-                var added = new TasGreen { physics = s.physics, input = at, snapshot = TurboRunner.Capture(player, courses, _engine.CaptureState(), at) };
-                int index = s.greenzone.FindIndex(g => g.physics > added.physics);
-                s.greenzone.Insert(index < 0 ? s.greenzone.Count : index, added);
-            }, from.snapshot);
+                TurboRunner.Run(player, () => _engine.IsRunning && more(), most, () =>
+                {
+                    _engine.Clock++;
+                    _engineSimTickHook?.Invoke(player);
+                    int at = (int)_engine.RunTicks;
+                    if (!_engine.IsRunning || at < green + TasGreenEvery) return;
+                    green = at;
+                    if (s.greenzone.Exists(g => g.input == at)) return;
+                    var added = new TasGreen { physics = s.physics, input = at, snapshot = TurboRunner.Capture(player, courses, _engine.CaptureState(), at) };
+                    int index = s.greenzone.FindIndex(g => g.physics > added.physics);
+                    s.greenzone.Insert(index < 0 ? s.greenzone.Count : index, added);
+                }, from.snapshot);
+            }
+            finally { TurboRunner.DropTimeStops = false; }
+            TurboRunner.ShowLastFrame(player);
             if (input >= 0) { s.holdAtInput = Math.Min(input, s.ticks.Count); s.holdAtPhysics = -1; }
             else { s.holdAtPhysics = physics; s.holdAtInput = -1; }
             // Ended in turbo (a death, the finish): one tick at 1x shows it, then it holds.
@@ -274,10 +291,10 @@ namespace IGTAPTasMod
             s.release = 0;
             s.holdAtInput = s.holdAtPhysics = -1;
             s.physics = 0;
+            _walkSlowdown = 0f;
             s.reopening = true;
             try { if (_engine.IsRunning) _engine.Abort("TAS session restarted"); }
             finally { s.reopening = false; }
-            s.route.steps = ToSteps(s.ticks);
             _pendingReplay = s.route;
             _pendingReplayStartDelayTicks = 0;
         }
@@ -318,34 +335,61 @@ namespace IGTAPTasMod
         void TasTicksChanged(TasSession s, int first, bool reseek = true)
         {
             s.version++;
+            s.dirty = true;
+            // A snapshot at input `first` may have pressed it already (a wall touch in a dash lock presses the next input early).
             TasGreen start = s.greenzone.FirstOrDefault();
-            s.greenzone.RemoveAll(g => g != start && g.input > first);
+            s.greenzone.RemoveAll(g => g != start && g.input >= first);
+            if (first < s.suggestUntil) { s.suggestions = null; s.suggestStale = s.suggest != null; }
             s.route.steps = ToSteps(s.ticks);
             SaveLibrary();
             if (!reseek) return;
             if (s.starting) { s.refeed = true; return; }
             int cursor = (int)_engine.RunTicks;
-            if (first >= cursor && s.ended == null) { s.refeed = true; return; }
+            if (first > cursor && s.ended == null) { s.refeed = true; return; }
             if (first < s.BaseInput) { s.seekAfterStart = Math.Min(cursor, s.ticks.Count); s.reopen = true; return; }
+            // The next input: rebuilt to this very physics tick, since it may be pressed already.
+            if (first == cursor && s.ended == null)
+            {
+                if (s.physics > 0) s.seekPhysics = s.physics;
+                else { s.seekAfterStart = -1; s.reopen = true; }
+                return;
+            }
             s.seekInput = Math.Max(s.BaseInput + 1, Math.Min(s.ended != null ? s.ticks.Count : cursor, s.ticks.Count));
         }
 
-        void TasSetTicks(TasSession s, List<SolverTick> ticks)
+        /// <summary>The session's inputs replaced (undoable unless <paramref name="undo"/> is off); false when nothing changed.</summary>
+        bool TasSetTicks(TasSession s, List<SolverTick> ticks, bool undo = true)
         {
+            if (ticks.Count == 0) ticks.Add(new SolverTick());
+            if (s.SavestateStart) TasQuiet(ticks[0]);
             int first = 0;
             while (first < ticks.Count && first < s.ticks.Count && JsonConvert.SerializeObject(ticks[first]) == JsonConvert.SerializeObject(s.ticks[first])) first++;
-            if (first == ticks.Count && first == s.ticks.Count) return;
+            if (first == ticks.Count && first == s.ticks.Count) return false;
+            if (undo) TasPushUndo(s);
             s.ticks = ticks;
-            if (s.ticks.Count == 0) s.ticks.Add(new SolverTick());
             TasTicksChanged(s, first);
+            return true;
         }
 
-        /// <summary>A stick a controller gives (docs/human-input.md "The stick"): x 0, ±1 or ±0.3..0.8, y 0 or ±1.</summary>
+        static bool TasPresses(SolverTick t) { return t.press || t.release || t.dash || t.reset || t.springDash != 0 || t.pause != 0; }
+
+        /// <summary>
+        /// Input 0 of a savestate session: nothing that queues a game timer (a press's buffer cancel, endRecentJump). Its base
+        /// snapshot is taken at 1x after that tick, where Unity's own invokes can't be captured, and every seek starts from it.
+        /// </summary>
+        static void TasQuiet(SolverTick t)
+        {
+            t.press = t.release = t.dash = t.reset = false;
+            t.dashJump = t.springDash = t.pause = t.pauseTick = t.pauseFrame = 0;
+            t.turnX = t.turnY = null;
+        }
+
+        /// <summary>The stick as the engine plays it (MacroEngine.ControllerAxis: a controller's values, docs/human-input.md).</summary>
         static SolverTick TasSanitize(SolverTick t)
         {
-            float x = Mathf.Abs(t.x) < 0.3f ? 0f : Mathf.Abs(t.x) > 0.8f ? Mathf.Sign(t.x) : (float)Math.Round(t.x, 2);
-            t.x = x;
-            t.y = t.y > 0.4f ? 1f : t.y < -0.4f ? -1f : 0f;
+            Vector2 stick = MacroEngine.ControllerAxis(t.x, t.y);
+            t.x = stick.x;
+            t.y = stick.y;
             if (!t.dash) { t.turnX = t.turnY = null; t.dashJump = 0; }
             if (t.turnX.HasValue) t.turnX = Mathf.Abs(t.turnX.Value) < 0.3f ? 0f : Mathf.Abs(t.turnX.Value) > 0.8f ? Mathf.Sign(t.turnX.Value) : t.turnX;
             if (t.turnY.HasValue) t.turnY = t.turnY > 0.4f ? 1f : t.turnY < -0.4f ? -1f : 0f;
@@ -368,6 +412,7 @@ namespace IGTAPTasMod
             _engine.ResumeAt(_engine.CaptureState(), new List<MacroStep>());
             _walkSlowdown = slowdown > 1f ? slowdown : 0f;
             _recorder.Start(s.route.name + " re-record");
+            _recorder.SeedEdges(FindWorldMovement());
             s.held = false;
         }
 
@@ -385,6 +430,7 @@ namespace IGTAPTasMod
             List<SolverTick> recorded = ToTicks(ExactInputCompressor.Compress(samples));
             s.ticks.AddRange(recorded.Select(TasSanitize));
             if (s.ticks.Count == 0) s.ticks.Add(new SolverTick());
+            if (s.SavestateStart) TasQuiet(s.ticks[0]);
             s.route.rerecords++;
             TasTicksChanged(s, s.recordFrom, false);
             Logger.LogInfo("TAS re-record: " + recorded.Count + " input ticks from " + s.recordFrom + " (" + reason + ")");
@@ -397,14 +443,25 @@ namespace IGTAPTasMod
         {
             if (!route.steps.All(st => st.type == MacroStepType.RawInput))
                 throw new InvalidOperationException("Only raw-input routes can be edited tick by tick.");
+            if (FullTasRouteName.Match(route.name ?? "").Success)
+                throw new InvalidOperationException("A Full-TAS route starts from a new game; the editor can't hold one yet.");
+            // The inputs as the engine plays them (disabled steps skipped), unchanged: the route is saved again only once edited.
+            List<SolverTick> ticks = ToTicks(route.steps.Where(st => st.enabled).ToList());
+            if (!string.IsNullOrEmpty(route.savestateId) && ticks.Count > 0 && TasPresses(ticks[0]))
+                throw new InvalidOperationException("Its first input presses something. A savestate session holds first after input 0, so input 0 "
+                    + "must press nothing (the game's own buffer timers it starts can't be put back on a rewind): add a neutral first tick to a copy and open that.");
             if (_tas != null) TasClose("Another TAS session opened");
             if (_recorder.IsRecording) StopRecording("TAS session opened");
             StopPlayback("TAS session opened");
             int index = _library.macros.IndexOf(route);
             if (index >= 0 && index != _library.selectedIndex) { _library.selectedIndex = index; SaveSelection(); }
-            var s = new TasSession { route = route, ticks = ToTicks(route.steps).Select(TasSanitize).ToList() };
-            if (s.ticks.Count == 0) s.ticks.Add(new SolverTick());
-            route.steps = ToSteps(s.ticks);
+            var s = new TasSession { route = route, ticks = ticks };
+            if (s.ticks.Count == 0)
+            {
+                s.ticks.Add(new SolverTick());
+                route.steps = ToSteps(s.ticks);
+                SaveLibrary();
+            }
             _tas = s;
             EnsureGameUnpaused();
             _pendingReplay = route;
@@ -416,12 +473,11 @@ namespace IGTAPTasMod
         {
             TasSession s = _tas;
             if (s == null) return;
+            // A re-record's ticks so far stay (its tail was dropped when it started).
+            if (s.recording) { s.recordStop = reason; TasEndRecord(s); }
             _tas = null;
-            if (s.recording) _recorder.Stop(reason);
             _walkSlowdown = 0f;
-            if (s.suggest != null) { try { if (!s.suggest.HasExited) s.suggest.Kill(); } catch (Exception) { } }
-            s.route.steps = ToSteps(s.ticks);
-            SaveLibrary();
+            if (s.suggest != null) { try { if (!s.suggest.HasExited) s.suggest.Kill(); s.suggest.Dispose(); } catch (Exception) { } }
             StopPlayback(reason);
             if (_playbackSavedAbilities.Count > 0) RestorePlaybackAbilities();
             Logger.LogInfo("TAS session closed: " + s.route.name + " (" + reason + ")");
@@ -503,7 +559,10 @@ namespace IGTAPTasMod
             s.suggestUntil = until;
             s.suggestError = null;
             s.suggestions = null;
-            s.suggest = StartEngineSim("suggest " + Quote(trace) + " " + Quote(file) + " --until " + until + " --out " + Quote(s.suggestFile));
+            s.suggestStale = false;
+            // Its output read as it comes: a full pipe would block it.
+            s.suggestOutput = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            s.suggest = StartEngineSim("suggest " + Quote(trace) + " " + Quote(file) + " --until " + until + " --out " + Quote(s.suggestFile), s.suggestOutput);
         }
 
         void TasPollSuggest()
@@ -512,11 +571,13 @@ namespace IGTAPTasMod
             if (s == null || s.suggest == null || !s.suggest.HasExited) return;
             Process p = s.suggest;
             s.suggest = null;
-            string output = "";
-            try { output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); } catch (Exception) { }
+            p.Dispose();
+            string[] lines = s.suggestOutput?.ToArray() ?? new string[0];
+            string output = string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 6))).Trim();
             try
             {
-                if (!File.Exists(s.suggestFile)) throw new InvalidOperationException(output.Trim().Length > 0 ? output.Trim() : "enginesim suggest wrote no result");
+                if (s.suggestStale) throw new InvalidOperationException("The inputs before input " + s.suggestUntil + " changed while it searched: run it again.");
+                if (!File.Exists(s.suggestFile)) throw new InvalidOperationException(output.Length > 0 ? output : "enginesim suggest wrote no result");
                 s.suggestions = JObject.Parse(File.ReadAllText(s.suggestFile));
             }
             catch (Exception ex) { s.suggestError = ex.Message; }
@@ -603,7 +664,8 @@ namespace IGTAPTasMod
                 case "rewind": TasRewind(s, Number(body, "ticks", 1)); break;
                 case "seek":
                 {
-                    if (s.starting) throw new InvalidOperationException("The session is still starting.");
+                    // A start that failed (a death while it settled) can only start again.
+                    if (s.starting && (_engine.IsRunning || _pendingReplay != null)) throw new InvalidOperationException("The session is still starting.");
                     int tick = Mathf.Clamp(Number(body, "tick", 0), 0, s.ticks.Count);
                     if (tick <= s.BaseInput) { s.seekAfterStart = -1; s.reopen = true; }
                     else s.seekInput = tick;
@@ -622,11 +684,14 @@ namespace IGTAPTasMod
                     int from = Mathf.Clamp(Number(body, "from", 0), 0, s.ticks.Count);
                     int delete = Mathf.Clamp(Number(body, "deleteCount", 0), 0, s.ticks.Count - from);
                     List<SolverTick> insert = body["ticks"] == null ? new List<SolverTick>() : body["ticks"].ToObject<List<SolverTick>>();
+                    if (s.ticks.Count - delete + insert.Count > TasMarkup.MaxTicks) throw new InvalidOperationException("A route holds at most " + TasMarkup.MaxTicks + " input ticks.");
                     var ticks = CloneTicks(s.ticks);
                     ticks.RemoveRange(from, delete);
                     ticks.InsertRange(from, insert.Select(TasSanitize));
-                    TasPushUndo(s);
-                    TasSetTicks(s, ticks);
+                    if (TasSetTicks(s, ticks) && insert.Count != delete && s.route.markers != null)
+                        foreach (RouteMarker m in s.route.markers)
+                            if (m.tick >= from + delete) m.tick += insert.Count - delete;
+                            else if (m.tick > from) m.tick = from;
                     break;
                 }
                 case "undo":
@@ -638,7 +703,7 @@ namespace IGTAPTasMod
                     to.Add(CloneTicks(s.ticks));
                     List<SolverTick> ticks = from[from.Count - 1];
                     from.RemoveAt(from.Count - 1);
-                    TasSetTicks(s, ticks);
+                    TasSetTicks(s, ticks, false);
                     break;
                 }
                 case "record":
@@ -652,7 +717,7 @@ namespace IGTAPTasMod
                 case "marker":
                 {
                     int tick = Number(body, "tick", -1);
-                    string note = Text(body, "note").Trim();
+                    string note = Text(body, "note").Replace('\r', ' ').Replace('\n', ' ').Trim();
                     if (s.route.markers == null) s.route.markers = new List<RouteMarker>();
                     s.route.markers.RemoveAll(m => m.tick == tick);
                     if (note.Length > 0) s.route.markers.Add(new RouteMarker { tick = tick, note = note });
@@ -669,7 +734,6 @@ namespace IGTAPTasMod
                     if (body["text"] == null) return new { ok = true, text = TasMarkup.Format(s.route.name, ToSteps(s.ticks), s.route.markers) };
                     if (s.recording) throw new InvalidOperationException("Stop re-recording first.");
                     List<SolverTick> ticks = ToTicks(TasMarkup.Parse(Text(body, "text"), out List<RouteMarker> markers)).Select(TasSanitize).ToList();
-                    TasPushUndo(s);
                     s.route.markers = markers;
                     s.version++;
                     TasSetTicks(s, ticks);
@@ -687,7 +751,6 @@ namespace IGTAPTasMod
                     int arrival = found[index]["arrival"]?.Value<int>() ?? s.suggestUntil;
                     List<SolverTick> ticks = found[index]["ticks"].ToObject<List<SolverTick>>().Take(arrival).Select(TasSanitize).ToList();
                     if (s.ticks.Count > s.suggestUntil) ticks.AddRange(CloneTicks(s.ticks.GetRange(s.suggestUntil, s.ticks.Count - s.suggestUntil)));
-                    TasPushUndo(s);
                     TasSetTicks(s, ticks);
                     s.seekInput = Mathf.Clamp(arrival, s.BaseInput + 1, s.ticks.Count);
                     s.suggestions = null;
@@ -723,6 +786,7 @@ namespace IGTAPTasMod
                     if (CourseTrackingField.GetValue(c) is bool tracking && tracking && CourseCurrentPathTimeField.GetValue(c) is float t) courseTime = t;
                 state = new {
                     x = at.x, y = at.y, vx = body != null ? body.linearVelocity.x : 0f, vy = body != null ? body.linearVelocity.y : 0f,
+                    velX = player.Velocity.x, velY = player.Velocity.y,
                     momentumX = player.momentum.x, momentumY = player.momentum.y, onGround = player.onGround, onWall = player.OnWall,
                     dashActive = player.dashActive, dead = GetMovementBool(player, "isDead", false),
                     airJumpsLeft = GetMovementField(player, "airJumpsLeft"), airDashesLeft = GetMovementField(player, "airDashesLeft"),

@@ -12,7 +12,7 @@ export type TasTick = { x?: number; y?: number; held?: boolean; press?: boolean;
   lockX?: number | null; lockY?: number | null; turnX?: number | null; turnY?: number | null; reset?: boolean; pause?: number; pauseTick?: number; pauseFrame?: number };
 export type TasMarker = { tick: number; note: string };
 export type TasSuggestion = { index: number; description: string; kind: string; saved: number; from: number; arrival: number; speed: number };
-export type TasPlayer = { x: number; y: number; vx: number; vy: number; momentumX: number; momentumY: number; onGround: boolean; onWall: boolean; dashActive: boolean;
+export type TasPlayer = { x: number; y: number; vx: number; vy: number; velX: number; velY: number; momentumX: number; momentumY: number; onGround: boolean; onWall: boolean; dashActive: boolean;
   dead: boolean; airJumpsLeft: unknown; airDashesLeft: unknown; jumpBuffer: boolean; dashBuffer: boolean; coyote: unknown; cutscene: string; originX: number; originY: number;
   courseTime?: number | null };
 /** GET /state/live `tas`: the open TAS editor session (TasPlugin.Editor.cs), null when none. */
@@ -150,7 +150,15 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     if (!tas.course || !tas.capabilities) return;
     if (!window.confirm("Judging replays the session from the course start through the gate. It closes the session first. Judge now?")) return;
     const { routeId, course, capabilities } = tas;
-    if (await cmd("/tas/close")) await cmd("/enginesim/submit", { course, capabilities, routeId });
+    if (!await cmd("/tas/close")) return;
+    try {
+      const r = await call("/enginesim/submit", { course, capabilities, routeId });
+      setNote(r.saved ? `New record: ${r.time.toFixed(2)}s${r.previousBest != null ? ` (was ${r.previousBest.toFixed(2)})` : ""}.`
+        : r.rejected ? `Rejected by the gate: ${r.rejected}`
+        : r.finished ? `Finished in ${r.time.toFixed(2)}s: not faster than the record${r.previousBest != null ? ` (${r.previousBest.toFixed(2)})` : ""}${r.farmSaved ? "; saved as the farm route" : ""}.`
+        : "The replay from the course start didn't finish.");
+    }
+    catch (e) { setNote(e instanceof Error ? e.message : String(e)); }
   };
   const status = tas.ended ? (tas.finished ? `Finished · ${tas.endTime.toFixed(3)}s · ${tas.endPhysics} physics ticks` : `Ended: ${tas.ended}`)
     : tas.phase === "starting" ? "Starting (quick restart, settling)…" : tas.phase === "recording" ? "Re-recording from the controller…"
@@ -187,7 +195,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         <button className={view === "text" ? "active" : ""} onClick={openText}>Text</button>
       </div>
       <p className="tasKeys">In game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind · <kbd>\</kbd> play/hold · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close. Held, the game waits before its next physics tick: nothing moves until you advance.</p>
-      {note && <div className="errorBanner">{note}<button onClick={() => setNote("")}>×</button></div>}
+      {note && <div className="errorBanner tasNotice">{note}<button onClick={() => setNote("")}>×</button></div>}
     </div>
 
     <div className="tasGrid">
@@ -216,7 +224,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
             <dt>Origin</dt><dd>{fmt(tas.player.originX, 0)}, {fmt(tas.player.originY, 0)}</dd>
           </dl> : <p className="tasHint">No player in the world.</p>}
           <div className="buttonRow">
-            <button disabled={!tas.player} title="A placed loadstate at this position and speed (Savestates tab)" onClick={() => tas.player && onPlace({ x: tas.player.x, y: tas.player.y, vx: tas.player.vx, vy: tas.player.vy })}>Place loadstate here…</button>
+            <button disabled={!tas.player} title="A placed loadstate at this position and speed (Savestates tab)" onClick={() => tas.player && onPlace({ x: tas.player.x, y: tas.player.y, vx: tas.player.velX, vy: tas.player.velY })}>Place loadstate here…</button>
             <button disabled={busy} title="A savestate (player only) of this tick" onClick={() => cmd("/savestates/capture")}>Capture savestate</button>
           </div>
         </div>

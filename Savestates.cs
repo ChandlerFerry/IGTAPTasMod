@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using HarmonyLib;
@@ -173,23 +174,28 @@ namespace IGTAPTasMod
         }
 
         static readonly FieldInfo CameraLerpedPos = AccessTools.Field(typeof(cameraMover), "lerpedPos"),
-            CameraPlayerScript = AccessTools.Field(typeof(cameraMover), "playerScript");
+            CameraPlayerScript = AccessTools.Field(typeof(cameraMover), "playerScript"),
+            CameraPlayerSetOffset = AccessTools.Field(typeof(cameraMover), "playerSetOffset"),
+            MovementDashDirection = AccessTools.Field(typeof(Movement), "dashDirection");
 
         /// <summary>
         /// Puts the camera where cameraMover's follow settles on the player (no lookahead, the player's set offset, the target
         /// zoom), so a restore doesn't pan across the map from where the camera was. The set offset is Movement.FixedUpdate's
         /// fall look-down from the speed now: the one the last tick before a restore left points the camera up to 1180 low.
         /// </summary>
-        internal static void SnapCamera(Vector3 player)
+        internal static void SnapCamera(Vector3 player, bool lookDown = true)
         {
             Camera cam = Camera.main;
             cameraMover mover = cam != null ? cam.GetComponent<cameraMover>() : null;
             if (mover == null) return;
-            Vector3 offset = mover.defaultoffset;
-            if (CameraPlayerScript?.GetValue(mover) is Movement m)
+            // A turbo snapshot restores the camera's own set offset (lookDown false); a savestate has none.
+            Vector3 offset = !lookDown && CameraPlayerSetOffset != null ? (Vector3)CameraPlayerSetOffset.GetValue(mover) : mover.defaultoffset;
+            if (lookDown && CameraPlayerScript?.GetValue(mover) is Movement m)
             {
                 float vy = m.Velocity.y + m.momentum.y;
-                if (vy < -850f) offset = new Vector3(0f, 620f + Mathf.Clamp(vy * 0.92f, -1600f, 100000000f));
+                bool dashingDown = m.dashActive && MovementDashDirection?.GetValue(m) is Vector2 dash && dash.y < 0f;
+                if (dashingDown) offset = (Vector3)CameraPlayerSetOffset.GetValue(mover);
+                else if (vy < -850f) offset = new Vector3(0f, 620f + Mathf.Clamp(vy * 0.92f, -1600f, 100000000f));
                 else if (vy < -150f && !m.OnWall && !m.onGround) offset = new Vector3(0f, mover.defaultoffset.y + vy / 3.3f, 0f);
                 mover.NewPlayersetOffset(offset);
             }
@@ -233,6 +239,13 @@ namespace IGTAPTasMod
                     if (value != null && TryEncode(value, out encoded)) destination[name] = encoded;
                 } catch { }
             }
+        }
+
+        /// <summary>Drops every field a capture doesn't take (a shared savestate's unlocks, anything else hand-added).</summary>
+        internal static void KeepCapturedFields(Savestate savestate)
+        {
+            foreach (string key in savestate.movementFields.Keys.Where(k => Array.IndexOf(MovementFieldNames, k) < 0).ToList()) savestate.movementFields.Remove(key);
+            foreach (string key in savestate.bodyFields.Keys.Where(k => Array.IndexOf(BodyFieldNames, k) < 0).ToList()) savestate.bodyFields.Remove(key);
         }
 
         /// <summary>An unlock (not a per-jump count like airDashesLeft): savestates capture none, but one may carry them (a Full-TAS savestate start).</summary>

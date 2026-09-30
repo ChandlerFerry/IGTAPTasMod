@@ -86,3 +86,4 @@
 .tasPlaceGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
 
 @media (max-width: 1100px) { .tasGrid { grid-template-columns: 1fr; } }
+.tasNotice { background: #10263f; border-color: #2c4f78; color: #cfe6ff; }

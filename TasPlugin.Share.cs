@@ -59,6 +59,9 @@ namespace IGTAPTasMod
                 if (((int?)doc["version"] ?? 0) > 1) throw new InvalidOperationException("This route was shared by a newer TAS Studio.");
                 List<MacroStep> steps = doc["steps"]?.ToObject<List<MacroStep>>() ?? new List<MacroStep>();
                 if (steps.Count == 0 || !steps.All(s => s.type == MacroStepType.RawInput)) throw new InvalidOperationException("The shared route has no raw inputs.");
+                if (steps.Sum(s => (long)Math.Max(1, s.durationTicks)) > TasMarkup.MaxTicks)
+                    throw new InvalidOperationException("The shared route is longer than " + TasMarkup.MaxTicks + " input ticks.");
+                steps = steps.Where(s => s.enabled).ToList();
                 // Its ticks as the editor keeps them: controller sticks only (README ### Rules 2).
                 steps = ToSteps(ToTicks(steps).Select(TasSanitize).ToList());
                 var route = new MacroDefinition { name = TasUniqueName(SharedName(((string)doc["name"] ?? "shared").Trim())), steps = steps,
@@ -67,6 +70,8 @@ namespace IGTAPTasMod
                 if (doc["savestate"] is JObject shared)
                 {
                     Savestate savestate = shared.ToObject<Savestate>();
+                    // Only what a capture holds: no unlocks (they would stay on the save and be autosaved) or other fields.
+                    SavestateService.KeepCapturedFields(savestate);
                     savestate.id = Guid.NewGuid().ToString("N");
                     savestate.name = "shared/" + savestate.name;
                     _savestates.Insert(0, savestate);
@@ -106,12 +111,20 @@ namespace IGTAPTasMod
             }
         }
 
+        const int ShareMaxBytes = 16 << 20;
+
         static byte[] Gunzip(byte[] data)
         {
             using (var input = new GZipStream(new MemoryStream(data), CompressionMode.Decompress))
             using (var output = new MemoryStream())
             {
-                input.CopyTo(output);
+                var buffer = new byte[81920];
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    if (output.Length + read > ShareMaxBytes) throw new InvalidOperationException("The share code unpacks to more than 16 MB.");
+                    output.Write(buffer, 0, read);
+                }
                 return output.ToArray();
             }
         }

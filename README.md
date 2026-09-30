@@ -204,11 +204,15 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
 - **Hold.** The session plays as 1x playback and holds between physics ticks: at the start of a frame whose FixedUpdate
   is due, the main thread waits (answering the studio, reading hotkeys, audio paused) until told to go on. The fixed
   clock already set the frame's game time, so the game plays 1x's frames, only later: no clock change, no game logic
-  skipped. Advance lets physics ticks through; play runs on to the end of the inputs (at a slowdown if asked).
+  skipped. Advance lets physics ticks through; play runs on to the end of the inputs (at a slowdown if asked). While
+  held the game window is only kept responsive: it can't be moved or closed, so close the session first (F8, the studio).
 - **Rewind and seek.** Greenzone turbo snapshots every 25 input ticks: a seek restores the last one before the target,
   turbos to one tick short and plays the last tick at 1x, so what is held on screen is a 1x frame. Before the first
-  snapshot (the start) the session starts again. An edit before the held tick drops the snapshots after it and seeks
-  back; one after it only re-feeds the engine (`MacroEngine.ResumeAt`).
+  snapshot (the start) the session starts again. An edit at or before the held tick drops the snapshots from it and
+  seeks back; one after it only re-feeds the engine (`MacroEngine.ResumeAt`). During a seek's turbo, dash freezes are
+  modelled only (`TurboRunner.DropTimeStops`: no real `IE_TimeStop` left to freeze 1x after it), and the handoff puts the
+  player at the last frame's blend, where 1x's next FixedUpdate reads it. A savestate session holds first after input
+  0, so its input 0 presses nothing (the buffer timers a press starts there couldn't be put back on a rewind).
 - **Editing.** Grid (click or drag stick and jump, right-click a tap, click a dash; shift-click input numbers for range
   tools), text ([`docs/tas-markup.md`](docs/tas-markup.md)), undo/redo, markers (go to one to load that point). Sticks
   are a controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press.

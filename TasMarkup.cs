@@ -15,6 +15,10 @@ namespace IGTAPTasMod
     {
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
+        /// <summary>The most input ticks a route text, a share or an edit may hold (about 33 minutes): a pasted count can't
+        /// make the game allocate billions of ticks.</summary>
+        public const int MaxTicks = 100000;
+
         public static string Format(string name, List<MacroStep> steps, List<RouteMarker> markers)
         {
             var text = new StringBuilder();
@@ -95,8 +99,9 @@ namespace IGTAPTasMod
                 if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
                 if (line.StartsWith("@", StringComparison.Ordinal)) { markers.Add(new RouteMarker { tick = tick, note = line.Substring(1).Trim() }); continue; }
                 string[] fields = line.Split(',').Select(f => f.Trim()).Where(f => f.Length > 0).ToArray();
-                if (!int.TryParse(fields[0], NumberStyles.None, Inv, out int ticks) || ticks < 1)
-                    throw new FormatException("Line " + number + ": starts with '" + fields[0] + "', not a tick count.");
+                if (fields.Length == 0 || !int.TryParse(fields[0], NumberStyles.None, Inv, out int ticks) || ticks < 1)
+                    throw new FormatException("Line " + number + ": starts with '" + (fields.Length > 0 ? fields[0] : line) + "', not a tick count.");
+                if (ticks > MaxTicks - tick) throw new FormatException("Line " + number + ": past " + MaxTicks + " input ticks in all.");
                 var step = new MacroStep { type = MacroStepType.RawInput, label = "TAS markup", durationTicks = ticks };
                 bool hold = false, noPress = false, press = false;
                 foreach (string field in fields.Skip(1))
