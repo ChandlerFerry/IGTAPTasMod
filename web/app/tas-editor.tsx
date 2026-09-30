@@ -203,9 +203,12 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       const t = e.target as HTMLElement | null;
       if (e.ctrlKey || e.altKey || e.metaKey || e.repeat || t?.closest("input, textarea, select, [contenteditable]")) return;
       const { tas, busy, speed, recordSpeed, cmd } = keys.current, n = e.shiftKey ? 10 : 1;
-      if (e.code === "BracketRight") { if (!busy && !tas.ended) cmd("/tas/advance", { ticks: n }); }
-      else if (e.code === "BracketLeft") { if (!busy) cmd("/tas/rewind", { ticks: n }); }
-      else if (e.code === "Backslash") { if (tas.phase === "playing") cmd("/tas/hold"); else if (!busy && !tas.ended) cmd("/tas/play", { slowdown: speed }); }
+      if (e.code === "BracketRight" || e.code === "ArrowRight") { if (!busy && !tas.ended) cmd("/tas/advance", { ticks: n }); }
+      else if (e.code === "BracketLeft" || e.code === "ArrowLeft") { if (!busy) cmd("/tas/rewind", { ticks: n }); }
+      else if (e.code === "Backslash" || e.code === "Space") {
+        // Space would scroll the page, or click the focused button on its keyup: blur it so the key only plays/holds.
+        if (e.code === "Space") (document.activeElement as HTMLElement | null)?.blur();
+        if (tas.phase === "playing") cmd("/tas/hold"); else if (!busy && !tas.ended) cmd("/tas/play", { slowdown: speed }); }
       else if (e.code === "Quote") { if (tas.phase === "recording") cmd("/tas/record/stop"); else if (!busy && !tas.ended) cmd("/tas/record", { slowdown: recordSpeed }); }
       else return;
       e.preventDefault();
@@ -238,7 +241,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     catch (e) { setNote(e instanceof Error ? e.message : String(e)); }
   };
   const status = tas.ended ? (tas.finished ? `Finished · ${tas.endTime.toFixed(3)}s · ${tas.endPhysics} physics ticks` : `Ended: ${tas.ended}`)
-    : tas.phase === "starting" ? "Starting (quick restart, settling)…" : tas.phase === "recording" ? "Re-recording from the controller…"
+    : tas.phase === "starting" ? "Starting (quick restart, settling)…" : tas.phase === "recording" ? `Re-recording: play it in the game (keyboard or pad); ' or Stop keeps it, Undo brings the old inputs back`
     : tas.phase === "playing" ? "Playing" : tas.phase === "running" ? "Stepping…" : "Held";
 
   return <div className="tasEditor">
@@ -275,7 +278,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}>Grid</button>
         <button className={view === "text" ? "active" : ""} onClick={openText}>Text</button>
       </div>
-      <p className="tasKeys">Here or in game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind (here <kbd>Shift</kbd> for 10) · <kbd>\</kbd> play/hold · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close (in game). Held, the game waits before its next physics tick: nothing moves until you advance.</p>
+      <p className="tasKeys">Here or in game: <kbd>]</kbd> advance · <kbd>[</kbd> rewind (here also <kbd>→</kbd> <kbd>←</kbd>, <kbd>Shift</kbd> for 10) · <kbd>\</kbd> play/hold (here also <kbd>Space</kbd>) · <kbd>&apos;</kbd> re-record · <kbd>F8</kbd> close (in game). Held, the game waits before its next physics tick: nothing moves until you advance.</p>
       {note && <div className="errorBanner tasNotice">{note}<button onClick={() => setNote("")}>×</button></div>}
     </div>
 
