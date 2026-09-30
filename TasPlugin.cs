@@ -307,6 +307,8 @@ namespace IGTAPTasMod
         double _clockTotal;
         readonly System.Diagnostics.Stopwatch _paceClock = new System.Diagnostics.Stopwatch();
         double _paceDue;
+        /// <summary>The last paced frame's game time (Time.timeAsDouble), NaN at a playback's start: a frame that doesn't move it stood still.</summary>
+        double _pacedTime;
         const double MaxPaceDebt = 0.1;
 
         private void Update()

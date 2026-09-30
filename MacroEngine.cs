@@ -426,7 +426,7 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// Frames time stood still in (a dash freeze's repeats of a tick's first frame, a pause's of the frame it holds:
-        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose Update ran at timeScale 0), counted on the ticks
+        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose game time stood still), counted on the ticks
         /// <see cref="CountPhysicsTick"/> counts. A Full-TAS run's time is its ticks and these (<see cref="LiveSeconds"/>).
         /// </summary>
         public void CountHeldFrames(int frames)

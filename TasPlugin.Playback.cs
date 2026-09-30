@@ -66,6 +66,7 @@ namespace IGTAPTasMod
                     _clockTotal = 0.0;
                     _paceClock.Restart();
                     _paceDue = 0.0;
+                    _pacedTime = double.NaN;
                 }
                 else
                 {
@@ -89,9 +90,13 @@ namespace IGTAPTasMod
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
             _clockFrame = _clockNext;
             _clockTotal += _clockFrame;
-            // A frame whose Update ran with time stopped (a dash freeze, the pause menu) is one the run stands still in: its live
-            // time (MacroEngine.HeldFrames), the frames turbo and the offline engine repeat (MacroEngine.FrameRepeats).
-            if (Time.timeScale == 0f) _engine.CountHeldFrames(1);
+            // A frame whose game time stood still (a dash freeze, the pause menu) is one the run stands still in: its live time
+            // (MacroEngine.HeldFrames), the frames turbo and the offline engine repeat (MacroEngine.FrameRepeats). Not
+            // Time.timeScale == 0: the freeze starts in the FixedUpdate of the frame that crosses the tick, so that frame's Update
+            // runs at timeScale 0 though its time moved (the step that ran the tick): one frame too many per dash freeze.
+            double gameTime = Time.timeAsDouble;
+            if (gameTime == _pacedTime) _engine.CountHeldFrames(1);
+            _pacedTime = gameTime;
             bool skipping = _fastUntilTick > 0 && (_pendingReplay != null || _engine.RunTicks < _fastUntilTick);
             if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f);
             _clockNext = FixedClockStep(_pacedFps);
