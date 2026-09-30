@@ -37,6 +37,8 @@ namespace IGTAP.EngineSim.Cli
         struct WasteTick
         {
             public float VX, VY, StickX;
+            /// <summary>Live time so far in ticks (MacroEngine.LiveUnits: a dash freeze's held frames count, 5.6 to a tick).</summary>
+            public double Live;
             public bool Ground, Wall, Dash, Ceiling, Fresh, Press, Release, Reset;
         }
 
@@ -61,10 +63,10 @@ namespace IGTAP.EngineSim.Cli
         const long AwayTicks = 15;
         // A Cash-bound walk: from at least WalkFrom away, its path longer than WalkSlack × the walk distance + WalkExtra.
         const float WalkSlack = 1.25f, WalkExtra = 60f, WalkFrom = 150f;
-        // Slow ground: progress over SlowWindow ticks under WasteSlowShare of the top path speed for the unlocks, the rise under
-        // SlowRise; its stake counts SustainShare of that speed as what the span could make.
+        // Slow ground: sideways progress on flat ground (under SlowRise of rise over SlowWindow ticks) under WasteSlowShare of what
+        // the flat allows (the super chain's speed from there, FlatRise: the rise a flat 10-tick top allows).
         const int SlowWindow = 50;
-        const float WasteSlowShare = .8f, SustainShare = .9f, SlowRise = 150f, FlatRise = 20f;
+        const float WasteSlowShare = .9f, SlowRise = 150f, FlatRise = 20f, ChainFloor = 9.2f;
         // The model's weight on the audit's ticks (between the proven lead's .6 and the deficit's .3).
         const double WasteWeight = .5;
         // Grafted share of explore runs: a window over no finding, and a window over one.
@@ -111,7 +113,8 @@ namespace IGTAP.EngineSim.Cli
                     Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (m.Velocity + m.momentum).magnitude, Cash = _eval.Shop.CashNow, Caps = caps });
                 w.Add(new WasteTick { VX = m.Velocity.x, VY = m.Velocity.y, StickX = stick, Ground = m.onGround, Wall = m.OnWall,
                     Dash = m.cutsceneMode == Movement.cutsceneModes.dash, Ceiling = _eval.Physics.PlayerTouch.Ceiling,
-                    Fresh = fresh, Press = fresh && t.press, Release = fresh && t.release, Reset = fresh && t.reset });
+                    Fresh = fresh, Press = fresh && t.press, Release = fresh && t.release, Reset = fresh && t.reset,
+                    Live = MacroEngine.LiveUnits(_eval.Engine.PhysicsTicks, _eval.Engine.HeldFrames) / 28.0 });
             });
             return (s, w);
         }
@@ -156,7 +159,7 @@ namespace IGTAP.EngineSim.Cli
                 var rates = new List<float>();
                 for (int i = at[k - 1] + 2; i <= at[k]; i++)
                 {
-                    float rate = DistTo(i - 1, k) - DistTo(i, k);
+                    float rate = (float)((DistTo(i - 1, k) - DistTo(i, k)) / Math.Max(1e-3, w[i].Live - w[i - 1].Live));
                     if (rate > 0f && !Jumped(s[i - 1], s[i])) rates.Add(rate);
                 }
                 rates.Sort();
@@ -166,7 +169,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 int k = GoalOf(a);
                 double made = DistTo(a, k) - DistTo(b, k);
-                return Math.Max(0, s[b].Tick - s[a].Tick - (long)Math.Round(Math.Max(0, made) / attain[k]));
+                return Math.Max(0, (long)Math.Round(w[b].Live - w[a].Live - Math.Max(0, made) / attain[k]));
             }
             void Add(string kind, int a, int b, long raw, string what, int e0 = -1, int e1 = -1)
             {
@@ -248,7 +251,7 @@ namespace IGTAP.EngineSim.Cli
                     int a = q0 - 1;
                     while (a > 0 && s[a].Tick > anchor) a--;
                     // The seed: the last restart played right after the anchor (its inputs up to there cut).
-                    Add("filler", a, q1, Math.Max(0, s[q1].Tick - s[a].Tick - 1), $"{e - c + 1} restarts in {s[q1].Tick - s[q0].Tick} ticks at ticks "
+                    Add("filler", a, q1, Math.Max(0, (long)Math.Round(w[q1].Live - w[a].Live) - 1), $"{e - c + 1} restarts in {s[q1].Tick - s[q0].Tick} ticks at ticks "
                         + string.Join(",", restarts.Skip(c).Take(e - c + 1).Select(q => s[q].Tick)) + $", {s[q0].Tick - s[a].Tick} ticks after goal {p}",
                         s[a].Input, s[q1].Input - 1);
                 }
@@ -262,7 +265,7 @@ namespace IGTAP.EngineSim.Cli
                 if (_runGoals.Goals[k - 1].kind != FullTasGoal.Buy || at[k] <= q) continue;
                 float before = DistTo(q - 1, k), after = DistTo(q, k);
                 if (after < before + AwayMargin) continue;
-                long raw = Math.Max(0, s[at[k]].Tick - s[q].Tick - Math.Max(BuyCooldown, (long)Math.Round(before / attain[k])));
+                long raw = Math.Max(0, (long)Math.Round(w[at[k]].Live - w[q].Live) - Math.Max(BuyCooldown, (long)Math.Round(before / attain[k])));
                 if (raw >= AwayTicks) Add("away", q - 1, at[k], raw, $"restart at tick {s[q].Tick} lands {after:0} u from goal {k}'s box, {before:0} u before it; bought {s[at[k]].Tick - s[q].Tick} ticks later",
                     s[q].Input - 1);
             }
@@ -282,39 +285,45 @@ namespace IGTAP.EngineSim.Cli
                 Add("walk", a, at[k], raw,$"walks {path:0} u to the box where the way is {direct:0} u; "
                     + (rows[k - 1].Spare == long.MaxValue ? "not Cash-bound" : $"held the price {rows[k - 1].Spare} ticks before"));
             }
-            // Slow ground: flat progress well under the top flat speed for the unlocks (the fastest 10 ticks the run makes sideways
-            // with under FlatRise of rise: a dash's, not a fall's), where movement pays (no lap, spare Cash).
+            // Slow ground: on flat ground (under SlowRise of rise over SlowWindow ticks), where movement pays (no lap, spare Cash), the
+            // run's sideways progress toward the goal per live tick (a dash's freeze frames, 14 at its start and 14 at an end no
+            // super cancels, are time the run spends) against what the flat allows: with the dash, the super chain played from the
+            // span's start (SuperChainSpeed); without it, the fastest 10 ticks the run makes sideways on flat ground with those unlocks.
             var flatTop = new Dictionary<string, float>();
             for (int i = 0; i + SpeedWindow < n; i++)
             {
                 int b = i + SpeedWindow;
                 if (s[b].Caps != s[i].Caps || Math.Abs(s[b].Y - s[i].Y) >= FlatRise || Enumerable.Range(i + 1, SpeedWindow).Any(m => Jumped(s[m - 1], s[m]))) continue;
-                float v = Math.Abs(s[b].X - s[i].X) / SpeedWindow;
+                float v = (float)(Math.Abs(s[b].X - s[i].X) / (w[b].Live - w[i].Live));
                 if (!flatTop.TryGetValue(s[i].Caps, out float top) || v > top) flatTop[s[i].Caps] = v;
             }
+            float TargetX(int k) => _runGoals.Goals[k - 1].kind == FullTasGoal.At ? _runGoals.Goals[k - 1].x : s[at[k]].CX;
+            float Sideways(int a, int b, int k) => (s[b].X - s[a].X) * Math.Sign(TargetX(k) - s[a].CX);
             for (int k = 1; k <= goals; k++)
             {
                 GoalRow row = rows[k - 1];
                 if (row.Economy || row.Spare <= 0) continue;
                 int i = at[k - 1] + 1, open = -1;
-                float vref = 1f;
                 for (; i + SlowWindow <= at[k]; i++)
                 {
                     int b = i + SlowWindow;
-                    vref = flatTop.TryGetValue(s[i].Caps, out float v) ? Math.Max(1f, v) : 1f;
-                    float made = DistTo(i, k) - DistTo(b, k);
-                    bool flat = Math.Abs(s[b].Y - s[i].Y) < SlowRise && !Enumerable.Range(i + 1, SlowWindow).Any(m => Jumped(s[m - 1], s[m]));
-                    bool slow = flat && made > 0 && made / SlowWindow < WasteSlowShare * vref;
-                    if (slow && open < 0) open = i;
-                    if (!slow && open >= 0) { AddSlow(open, i - 1 + SlowWindow, vref); open = -1; }
+                    bool flat = Math.Abs(s[b].Y - s[i].Y) < SlowRise && Sideways(i, b, k) > 0 && !Enumerable.Range(i + 1, SlowWindow).Any(m => Jumped(s[m - 1], s[m]));
+                    if (flat && open < 0) open = i;
+                    if (!flat && open >= 0) { AddSlow(open, i - 1 + SlowWindow, k); open = -1; }
                 }
-                if (open >= 0) AddSlow(open, Math.Min(at[k], i - 1 + SlowWindow), vref);
+                if (open >= 0) AddSlow(open, Math.Min(at[k], i - 1 + SlowWindow), k);
             }
-            void AddSlow(int a, int b, float vref)
+            void AddSlow(int a, int b, int k)
             {
-                float made = DistTo(a, GoalOf(a)) - DistTo(b, GoalOf(a));
-                long raw = Math.Max(0, s[b].Tick - s[a].Tick - (long)Math.Round(made / (SustainShare * vref)));
-                if (raw >= 3) Add("slow", a, b, raw, $"{made / Math.Max(1, s[b].Tick - s[a].Tick):0.0} u/tick over {s[b].Tick - s[a].Tick} ticks against {vref:0.0} for {s[a].Caps}");
+                float made = Sideways(a, b, k);
+                double live = w[b].Live - w[a].Live, speed = made / live;
+                bool chain = Caps.TryParse(s[a].Caps, out Caps caps) && caps.Dash;
+                float vref = chain ? SuperChainSpeed(r, Math.Max(0, s[a].Input), Math.Sign(TargetX(k) - s[a].CX)) : flatTop.TryGetValue(s[a].Caps, out float v) ? v : float.NaN;
+                // A chain that can't get going there (a wall, a gap: under a walk's 9.2 u a tick) says nothing about the flat.
+                if (made <= 0 || !(vref > ChainFloor) || speed >= WasteSlowShare * vref) return;
+                long raw = Math.Max(0, (long)Math.Round(live - made / vref));
+                if (raw >= 3) Add("slow", a, b, raw, $"{speed:0.0} u per live tick sideways over {s[b].Tick - s[a].Tick} ticks ({live:0} live) on flat ground, against "
+                    + (chain ? $"{vref:0.0} for the super chain from there" : $"{vref:0.0} for {s[a].Caps}"));
             }
             // Back-to-back laps: the last lap of each run of laps of one course (the goals part's drop candidates; their stake is
             // the model's economy slack there).
@@ -380,9 +389,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// --waste-audit &lt;route.json&gt; [--expect a-b,c-d]: the audit of a route (a run file's "inputs" or an offline best's "ticks")
-        /// under the trace's goals, every finding with its span, ticks at stake and kind. --expect: physics tick spans each finding
-        /// must overlap (one line each, exit 1 when one is missed).
+        /// --waste-audit &lt;route.json&gt; [--expect a-b,c-d] [--clean kind:a-b]: the audit of a route (a run file's "inputs" or an offline best's "ticks")
+        /// under the trace's goals, every finding with its span, ticks at stake and kind. --expect: physics tick spans a finding
+        /// must overlap; --clean: spans no finding (of that kind) may overlap; one line each, exit 1 when one isn't so.
         /// </summary>
         int WasteAuditCommand(string file)
         {
@@ -410,18 +419,30 @@ namespace IGTAP.EngineSim.Cli
             foreach (Waste x in found) Console.WriteLine(WasteLine(x, _labels[x.Goal - 1]));
             Console.WriteLine($"waste audit: {found.Count} findings ({string.Join(", ", found.GroupBy(x => x.Kind).Select(g => $"{g.Key} {g.Count()}"))}), "
                 + $"stake {found.Where(x => IsMove(x.Kind)).Sum(x => x.Stake)} ticks at {found.Where(x => IsMove(x.Kind) && x.Stake > 0).Select(x => x.Goal).Distinct().Count()} goals (laps: the goals part's), {clock.Elapsed.TotalSeconds:0.0} s");
-            string expect = Solve.Option(_args, "--expect", (string)null);
-            if (expect == null) return 0;
             int missed = 0;
-            foreach (string span in expect.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            IEnumerable<string> Spans(string option) => (Solve.Option(_args, option, (string)null) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            List<Waste> Hits(string span, string kind)
             {
                 string[] ends = span.Split('-');
                 long a = long.Parse(ends[0], CultureInfo.InvariantCulture), b = long.Parse(ends[^1], CultureInfo.InvariantCulture);
-                List<Waste> hits = found.Where(x => x.From <= b && x.To >= a).ToList();
-                if (hits.Count == 0) missed++;
-                Console.WriteLine($"expect {a}-{b}: " + (hits.Count == 0 ? "MISSED" : "flagged by " + string.Join(", ", hits.Select(x => $"{x.Kind} goal {x.Goal} {x.From}-{x.To} stake {x.Stake}"))));
+                return found.Where(x => x.From <= b && x.To >= a && (kind == null || x.Kind == kind)).ToList();
             }
-            Console.WriteLine(missed == 0 ? "expect: all flagged" : $"expect: {missed} missed");
+            string Show(List<Waste> hits) => string.Join(", ", hits.Select(x => $"{x.Kind} goal {x.Goal} {x.From}-{x.To} stake {x.Stake}"));
+            foreach (string span in Spans("--expect"))
+            {
+                List<Waste> hits = Hits(span, null);
+                if (hits.Count == 0) missed++;
+                Console.WriteLine($"expect {span}: " + (hits.Count == 0 ? "MISSED" : "flagged by " + Show(hits)));
+            }
+            // --clean kind:a-b: spans no finding of that kind may overlap (a fixed route's stretch).
+            foreach (string clean in Spans("--clean"))
+            {
+                string[] parts = clean.Split(':');
+                List<Waste> hits = Hits(parts[^1], parts.Length > 1 ? parts[0] : null);
+                if (hits.Count > 0) missed++;
+                Console.WriteLine($"clean {clean}: " + (hits.Count == 0 ? "clean" : "FLAGGED by " + Show(hits)));
+            }
+            if (Spans("--expect").Any() || Spans("--clean").Any()) Console.WriteLine(missed == 0 ? "expect: all as expected" : $"expect: {missed} not as expected");
             return missed == 0 ? 0 : 1;
         }
 
@@ -498,6 +519,77 @@ namespace IGTAP.EngineSim.Cli
             return seeds;
         }
 
+        // ---------------------------------------------------------------- the super chain
+
+        /// <summary>
+        /// One cycle of the super chain on flat ground, the ending agent's (FalseEnding-Any% 354.72 s, inputs 15225-15240 on the
+        /// 278-goal list, 23.7 u a live tick on goal 273's flat against the 355.92 s route's 20.2): the dash pressed in the air,
+        /// buffered to the landing (index 3, the Landed contact), its jump at dash frame 10 so the super lands on the dash's last
+        /// tick and cancels its end freeze, the jump cut, an air dash, then the fast-fall to the next cycle's landing.
+        /// </summary>
+        static List<InputTick> ChainCycle(int dir)
+        {
+            var t = new List<InputTick>
+            {
+                new InputTick { x = dir, dash = true, dashJump = 10 },
+                new InputTick { x = dir, release = true },
+                new InputTick { x = dir },
+                new InputTick { x = dir },
+                new InputTick { x = dir, dash = true },
+            };
+            t.AddRange(Enumerable.Repeat(new InputTick { x = dir, y = -1 }, 11));
+            return t;
+        }
+        const int ChainLanding = 3, ChainCycles = 6, ChainSettle = 20;
+
+        /// <summary>The super chain as a tech window at a landing, chained into itself at each next landing (up to 8 cycles), for
+        /// the grafts: a flat with the dash available gets the cycle wherever a run lands on it.</summary>
+        static TechPattern ChainPattern()
+        {
+            List<InputTick> cycle = ChainCycle(1);
+            return new TechPattern
+            {
+                Tech = "super-chain", Name = "Super chain", Category = "glitchless", Requires = Caps.Parse("ds"), Kind = Contact.Landed,
+                First = -ChainLanding, Last = cycle.Count - 1 - ChainLanding, Ticks = cycle.ToArray(), Key = true, Dir = 1, Weight = 3,
+                DemoStart = "FalseEnding-Any% 354.72 s, inputs 15225-15240", ShiftLo = -2, ShiftHi = 2,
+                Vary = new[] { new PatternVary { Index = 5, Run = 11, Ticks = new[] { 7, 9, 11, 13 } } },
+                Chain = new PatternChain { Depth = 8, On = new[] { Contact.Landed }, With = "super-chain", ShiftLo = -2, ShiftHi = 2 },
+            };
+        }
+
+        readonly Dictionary<(int input, int dir), float> _chainSpeed = new Dictionary<(int, int), float>();
+        Route _chainFor;
+
+        /// <summary>The super chain's sideways speed per live tick played from the run's state after <paramref name="input"/> inputs
+        /// toward <paramref name="dir"/> (the best of 0-4 ticks' wait before the first press), after its first ChainSettle ticks:
+        /// what that flat allows. NaN when it can't play (the state, a death, a wall within the first cycles).</summary>
+        float SuperChainSpeed(Route r, int input, int dir)
+        {
+            if (dir == 0) return float.NaN;
+            if (!ReferenceEquals(_chainFor, r)) { _chainSpeed.Clear(); _chainFor = r; }
+            if (_chainSpeed.TryGetValue((input, dir), out float known)) return known;
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot at = input == 0 ? _origin : _eval.Advance(r.Inputs.GetRange(0, Math.Min(input, r.Inputs.Count)));
+            float best = float.NaN;
+            for (int wait = 0; at != null && wait <= 4; wait++)
+            {
+                var moves = Enumerable.Repeat(new InputTick { x = dir }, wait).ToList();
+                for (int c = 0; c < ChainCycles; c++) moves.AddRange(ChainCycle(dir));
+                _eval.SetStart(at, input);
+                _eval.Restore(at);
+                var xs = new List<(float x, double live)>();
+                _eval.Run(moves, null, null, 0, _ => xs.Add((_eval.PlayerWorld.x, MacroEngine.LiveUnits(_eval.Engine.PhysicsTicks, _eval.Engine.HeldFrames) / 28.0)));
+                if (xs.Count < ChainSettle + 3 * SlowWindow / 2) continue;
+                var (x0, l0) = xs[ChainSettle];
+                var (x1, l1) = xs[^1];
+                float v = (float)((x1 - x0) * dir / (l1 - l0));
+                if (float.IsNaN(best) || v > best) best = v;
+            }
+            _eval.SetStart(_origin, 0);
+            return _chainSpeed[(input, dir)] = best;
+        }
+
         // ---------------------------------------------------------------- tech grafts in every window (--parts grafts)
 
         TechGrafts _graftLib;
@@ -517,22 +609,26 @@ namespace IGTAP.EngineSim.Cli
             {
                 string techDir = Solve.Option(_args, "--tech-dir", (string)null), cache = Solve.Option(_args, "--tech-cache", (string)null);
                 TechGrafts all = Solve.OnThread(() => TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(_trace)), techDir: techDir, cacheFile: cache));
-                if (all.Patterns.Count == 0) { Log("auto: grafts: the tech library is empty"); return null; }
-                Log($"auto: grafts: {all.Patterns.Count} tech windows of {all.Patterns.Select(p => p.Tech).Distinct().Count()} techs ({(all.FromCache ? "cache" : "mined")})");
+                all.Patterns.Add(ChainPattern());
+                Log($"grafts: {all.Patterns.Count} tech windows of {all.Patterns.Select(p => p.Tech).Distinct().Count()} techs ({(all.FromCache ? "cache" : "mined")})");
                 return _graftLib = all;
             }
             catch (Exception ex) when (ex is IOException || ex is InvalidOperationException || ex is JsonException)
             {
-                Log("auto: grafts: the tech library didn't load: " + ex.GetBaseException().Message);
+                Log("grafts: the tech library didn't load: " + ex.GetBaseException().Message);
                 return null;
             }
         }
 
-        /// <summary>The library's windows the unlocks allow (a techs.json "requires" within them), for one solver (null: --parts
-        /// grafts is off, or no --auto). Each solver gets its own instance: OfflineSolver prepares it for its caps.</summary>
+        /// <summary>Every Full-TAS window grafts (a plain solve's too, as a course solve does): off with --no-tech-grafts, or an
+        /// --auto whose --parts leaves grafts out.</summary>
+        bool GraftsOn => _args != null && !_args.Contains("--no-tech-grafts") && Part("grafts");
+
+        /// <summary>The library's windows the unlocks allow (a techs.json "requires" within them), for one solver (null: grafts
+        /// off). Each solver gets its own instance: OfflineSolver prepares it for its caps.</summary>
         TechGrafts AutoGrafts(string caps)
         {
-            if (!_auto || !Part("grafts") || GraftLibrary() is not TechGrafts lib) return null;
+            if (!GraftsOn || GraftLibrary() is not TechGrafts lib) return null;
             if (!_graftsFor.TryGetValue(caps, out List<TechPattern> patterns))
             {
                 Caps held = Caps.Parse(caps);
@@ -545,7 +641,7 @@ namespace IGTAP.EngineSim.Cli
         /// window's unlock buys.</summary>
         TechGrafts WindowGrafts(int k, int limit)
         {
-            if (!_auto || !Part("grafts")) return null;
+            if (!GraftsOn) return null;
             Caps? from = _model != null && k >= 1 && k <= _model.Count && Caps.TryParse(_model[k - 1].Caps, out Caps c) ? c : (Caps?)null;
             return AutoGrafts(WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1), from));
         }
@@ -576,7 +672,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The session's grafting, for the log's end.</summary>
         void LogGrafts()
         {
-            if (!_auto || !Part("grafts")) return;
+            if (!GraftsOn) return;
             lock (_graftFinds)
                 Log($"auto: grafts: {_graftsTried} tech grafts tried over {_graftSolvers} windows; finds via a graft: "
                     + (_graftFinds.Count == 0 ? "none" : string.Join(", ", _graftFinds.OrderByDescending(f => f.Value).Select(f => $"{f.Key.Substring("tech graft ".Length)} {f.Value}"))));
