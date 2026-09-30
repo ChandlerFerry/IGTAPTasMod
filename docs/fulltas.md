@@ -1144,11 +1144,35 @@ baseline). The default is set by the measurements below, and has every part exce
    between), 2-5 at goals 174, 231 and 249; a hop class beat the plain wait once (goal 249). A pass is 60-150 CPU s on an
    idle machine (re-timing 50, filler 16, walk-ins and tickets the rest), 400 on a loaded one.
 
-   Open: `buy:buyds` (goal 174): the walk-in stands under the box after 135 ticks and buys at tick 10429 against the route's
+   `buy:buyds` (goal 174): the walk-in stands under the box after 135 ticks and buys at tick 10429 against the route's
    10394 (its run and jump carry the fall's speed), 357.19 s whole; the old jump into the box's underside costs nothing (the
-   Cash is there at 10394). `buy:buystatue` (goal 262, 411 idle ticks, 27 clone rolls) and `buy:buydj` (goal 268, the
-   shaft): no walk-in (1,500 units off; a climb), so their waits get no tickets. A clean approach there needs a window to a
-   stand under the box, not a walk.
+   Cash is there at 10394).
+
+   Two more ways under the box, then the same tickets:
+   - **Wait before a restart** (in the pass): where a buy's wait is idle ticks before its last quick restart and the restart
+     and a dash take the player in (Course 3's rows), the wait starts with a walk toward the trigger until the player rests
+     under it and stands there for the rest; the restart and the dash stay, so the way on after the buy is the run's.
+     Re-timed from that goal (the wait is the restart's).
+   - **Stand window** (`--rng-study --stand K`, one minute): for a buy no walk reaches (a climb, a far box), the solver
+     searches from the goal before to a line as wide as the trigger at the height the run stood below it (or the floor a
+     raycast finds under it), scored at the earliest arrival and seeded with the run's own way; after 12 settling idle ticks
+     (an arrival in a dash takes no input), the walk-in, idle ticks and a jump that holds the stick the run held into the
+     box. When the way on after the buy dies, it is re-found (`TailFix`: up to 3 windows of two goals from the last goal
+     reached, seeded with the run's way). A study only: on the measurements below it never paid.
+
+   Measured from 354.29 s (`--auto --parts idle --minutes 20 --threads 6`, 278 goals): 353.32 s. Re-timing from goal 254
+   (-0.12 s), filler before the last restart made standing at goals 227 and 245 (-0.02, -0.23), walk-ins with winning
+   hop tickets at goal 248 (one hop 5 ticks into 73 standing, -0.05; later one in 37, -0.08) and 249 (three hops in 85, -0.14),
+   re-timing from goal 95, windows at 268 (the `buydj` climb, -3 ticks), 271 and 273.
+
+   `buy:buystatue` (goal 262): on 354.72 its wait is a looping walk 450-1,500 units right of the trigger, then a dash left
+   into it at the Cash tick (14787; the price is there from 14786). The stand window gets under the box by tick 14399 and
+   has 342-420 idle ticks there (8 RNG classes of 640-720 hop schedules; a hop bonks the ceiling at y 7041), but the run's
+   way on after the buy starts from that dash: from a stand it dies (action 5126-5135), and re-found it loses 72 ticks by
+   goal 266 and finds no way through goals 267-268 in a minute. Open. `buy:buydj` (goal 268): no floor under the trigger
+   (the shaft), so no stand; the climb's windows took 3 ticks, and the buy is Cash-bound again (on 355.43 the price was
+   there 9 ticks before the touch). The filler after the Course 3 buy near tick 12340 on 355.92 (a dash right, restart,
+   jump and dash, restart, idle, restart) is gone on 354.72: buy, restart, a dash to the Course 3 gate, restart, lap.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 
