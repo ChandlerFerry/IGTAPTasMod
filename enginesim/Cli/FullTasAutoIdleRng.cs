@@ -33,27 +33,29 @@ namespace IGTAP.EngineSim.Cli
         /// the player back as the run had it, so only the clock and the Cash move). Each site takes the cut whose touch of the goal
         /// before the next site is soonest (every goal up to it reached), or, when none reaches them, the fewest idle ticks added
         /// (up to RetuneCap); a site whose goals are lost either way takes the site before back and checks that one's cut through
-        /// them too. Returns the whole run replayed, or null when a goal is lost.
+        /// them too. Returns the whole run replayed, or null when a goal is lost. <paramref name="goals"/>: the goal count of the
+        /// simulation's goals when they aren't the run's (a goals edit's).
         /// </summary>
-        Route Retune(Simulation sim, SimSnapshot origin, Route b, List<InputTick> inputs, int start)
+        Route Retune(Simulation sim, SimSnapshot origin, Route b, List<InputTick> inputs, int start, int goals = 0)
         {
+            int count = goals > 0 ? goals : _goals;
             inputs = new List<InputTick>(inputs);
             int shift = inputs.Count - b.Inputs.Count;
             int Old(int g) => g < 0 ? 0 : (int)b.GoalInput[g];
             // b's last restart since the goal before: a restart's input moves only with the cuts before it, while a touch can come
             // on another input as the Cash does.
             int LastReset(int g) { for (int i = Old(g) - 1; i > Old(g - 1); i--) if (b.Inputs[i].reset) return i; return -1; }
-            var sites = Enumerable.Range(start, _goals - start).Where(g => LastReset(g) > 0).Append(_goals).ToList();
+            var sites = Enumerable.Range(start, count - start).Where(g => LastReset(g) > 0).Append(count).ToList();
             int at = start == 0 ? 0 : Old(start - 1) + shift;
             sim.SetStart(origin, 0);
-            sim.Goals.Limit = _goals;
+            sim.Goals.Limit = count;
             SimSnapshot snap = at == 0 ? origin : sim.Advance(inputs.GetRange(0, at));
             (int k, int at, SimSnapshot snap, List<InputTick> inputs, int shift, int extra)? before = null;
             int extra = 0;
             for (int k = 0; k < sites.Count && snap != null;)
             {
-                int g = sites[k], limit = g == _goals ? _goals : sites[Math.Min(k + 1 + extra, sites.Count - 1)];
-                int reset = g < _goals && LastReset(g) + shift > at ? LastReset(g) + shift : -1, idle = 0;
+                int g = sites[k], limit = g == count ? count : sites[Math.Min(k + 1 + extra, sites.Count - 1)];
+                int reset = g < count && LastReset(g) + shift > at ? LastReset(g) + shift : -1, idle = 0;
                 if (reset > 0) while (reset - idle - 1 >= at && Idle(inputs[reset - idle - 1])) idle++;
                 // Two quick restarts on ticks in a row are refused (README ### Rules 34): one idle tick stays between them.
                 if (idle > 0 && reset - idle - 1 >= 0 && inputs[reset - idle - 1].reset) idle--;
@@ -91,9 +93,9 @@ namespace IGTAP.EngineSim.Cli
                 if (pick > 0) inputs.RemoveRange(reset - pick, pick);
                 else if (pick < 0) inputs.InsertRange(reset, Enumerable.Repeat(new InputTick { held = inputs[reset - 1].held && !inputs[reset - 1].release }, -pick));
                 shift -= pick;
-                if (limit == _goals) break;
+                if (limit == count) break;
                 sim.SetStart(snap, at);
-                sim.Goals.Limit = _goals;
+                sim.Goals.Limit = count;
                 snap = sim.Advance(inputs.GetRange(at, (int)touch - at));
                 at = (int)touch;
                 k += 1 + extra;
@@ -101,7 +103,7 @@ namespace IGTAP.EngineSim.Cli
             }
             if (snap == null) return null;
             sim.SetStart(origin, 0);
-            sim.Goals.Limit = _goals;
+            sim.Goals.Limit = count;
             RunResult whole = sim.Run(inputs, null, null, 1000000);
             return new Route { Inputs = inputs, Progress = whole.Progress, GoalInput = whole.GoalInputTicks, GoalPhysics = whole.GoalPhysicsTicks, GoalHeld = whole.GoalHeldFrames, EndReason = whole.EndReason };
         }

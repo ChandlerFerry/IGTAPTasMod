@@ -1042,6 +1042,17 @@ baseline). The default is set by the measurements below, and has every part exce
      rows buy a box early, and the two re-found as investments (142 and 166 ticks behind) came out no faster. Not yet
      measured on the current build, where a break gains for good only while its course still holds `Start`'s spawn
      timer reserve ([Clones and buy-max](#clones-and-buy-max-build-25630570)).
+     **Ladders** (`FullTasAutoLadder.cs`): K = 2-8 laps back to back, the course's fastest lap from the quick restart
+     (T ticks on the course timer) played T+K-1, ..., T+1, T, so each finish breaks the record the one before set. A lap
+     is made exactly k ticks slower by k ticks that hold the input before them (no new press) after the gate touch, of
+     every point the one that finishes soonest; a k no point gives is split over two or more. Each lap is built where the
+     one before leaves the player (from a finish's restart Course 3's 190-tick lap plays as 194, so T rises to 194).
+     Offered in place of each run of back-to-back laps (all of it, or its last K), right after each unlock buy and at the
+     last quick restart before one; when T+K-1 doesn't beat the best time there, the laps that set it are held back to
+     exactly T+K and the waits after them re-timed (`Retune`) first. The waits from the ladder on are re-timed too; one
+     that doesn't play through is re-found as an investment. Only where the course has clones and keeps the reserve, or
+     right before a Cash-bound buy. `fulltas <trace> --ladder-study C --k K` (0: every K) prints each spot's laps (course
+     time, finish, held ticks) and each ladder played whole, with every finish's course time and pay.
 
    An edit that misses a goal after the change gets idle ticks before the last quick restart ahead of that goal (every 5
    up to its lead there plus 60, then each below the first that passes: a stray buy isn't monotone in the wait), up to 6
