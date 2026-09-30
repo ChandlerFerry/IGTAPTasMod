@@ -221,6 +221,13 @@ namespace IGTAP.EngineSim
 
         internal double GlobalOf(globalStats.globalUpgradeSet upgrade) { return Global(upgrade); }
 
+        /// <summary>Each course's clones now (--ticks-out): course, count, path length, on screen, in flight, spawn timer.</summary>
+        internal IEnumerable<object[]> CloneStates()
+        {
+            foreach (Clones c in _clones)
+                if (c.V.Count > 0) yield return new object[] { c.Course?.courseNumber ?? -1, c.V.Count, c.V.PathLength, c.V.OnScreen, c.Active.Count, c.V.SinceLast };
+        }
+
         internal (int count, float pathLength)? ClonesOf(clonesScript script)
         {
             return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? (c.V.Count, c.V.PathLength) : null;
@@ -296,7 +303,9 @@ namespace IGTAP.EngineSim
                     c.V.OffscreenDivisor = 1f;
                     c.V.Pooled--;
                     c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j });
-                    c.V.SinceLast = 0f;
+                    // Build 25630570 (2026-09-30) keeps the overshoot (before: 0f). Start's 10000 then never runs down on screen: once a
+                    // course's clones spawn on screen, SpawnClone runs every frame and spawns whenever a slot is free.
+                    c.V.SinceLast = (float)(c.V.SinceLast - (double)c.V.NextDue);
                     if (!ColourCheck(c)) return false;
                 }
                 return true;
