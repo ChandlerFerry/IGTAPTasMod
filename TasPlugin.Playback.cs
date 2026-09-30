@@ -125,6 +125,7 @@ namespace IGTAPTasMod
 
         private void ReplaySelected(int startDelayTicks = 0, float walkSlowdown = 0f)
         {
+            TasClose("Route playback started");
             MacroDefinition macro = TechPlayable(SelectedMacro);
             if (macro == null) return;
             _walkSlowdown = walkSlowdown;
@@ -146,6 +147,8 @@ namespace IGTAPTasMod
                 FinishFullTasPlayback(success, reason);
                 return;
             }
+            // A TAS session keeps its category's unlocks until it closes: a rewind plays on from before the end.
+            if (_tas != null) { TasEngineEnded(success, reason); return; }
             RestorePlaybackAbilities();
             if (_silentEvaluation)
             {

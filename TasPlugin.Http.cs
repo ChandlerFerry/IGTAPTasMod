@@ -30,6 +30,7 @@ namespace IGTAPTasMod
             if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);
             if (request.Path.StartsWith("/api/probe/", StringComparison.Ordinal)) return HandleProbe(request.Path, body);
             if (request.Path.StartsWith("/api/labmap/", StringComparison.Ordinal)) return HandleLabMap(request.Path, body);
+            if (request.Path.StartsWith("/api/tas/", StringComparison.Ordinal)) return HandleTas(request, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -418,7 +419,7 @@ namespace IGTAPTasMod
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState() };
+                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState(), tas = BuildTasLiveState() };
         }
 
         private object BuildStaticWebState()

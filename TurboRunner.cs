@@ -53,7 +53,7 @@ namespace IGTAPTasMod
         /// that hasn't looked at its message queue for 5 s "Not Responding". Looking without taking a message (PM_NOREMOVE)
         /// keeps it responsive and runs no frame, Update, FixedUpdate or coroutine, so nothing of the run moves.
         /// </summary>
-        static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
+        internal static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
         {
             if (clock.ElapsedMilliseconds < next) return;
             next = clock.ElapsedMilliseconds + KeepAliveMs;

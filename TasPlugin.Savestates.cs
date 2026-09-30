@@ -59,6 +59,16 @@ namespace IGTAPTasMod
             Movement movement = FindWorldMovement();
             SavestateResult result = SavestateService.Restore(movement, savestate);
             if (!result.Success) Logger.LogError(result.Message); else Logger.LogInfo(result.Message);
+            if (result.Success) RebaseForSavestate(movement, savestate);
+        }
+
+        /// <summary>A placed savestate's rebaseAt, after its restore (floating-origin tests).</summary>
+        void RebaseForSavestate(Movement movement, Savestate savestate)
+        {
+            if (!savestate.hasRebaseAt) return;
+            string error = RebaseWorldAround(movement, new Vector2(savestate.rebaseAtX, savestate.rebaseAtY), out float distance);
+            if (error != null) Logger.LogWarning("Savestate " + savestate.name + ": " + error);
+            else Logger.LogInfo("Savestate " + savestate.name + ": world rebased around (" + savestate.rebaseAtX + ", " + savestate.rebaseAtY + "), player " + distance.ToString("0.#") + " from it");
         }
 
         private bool RestoreRouteStart(MacroDefinition route)
@@ -88,6 +98,7 @@ namespace IGTAPTasMod
                 if (restored.Success)
                 {
                     LeaveCourses(movement);
+                    RebaseForSavestate(movement, savestate);
                     return true;
                 }
                 Logger.LogWarning(restored.Message + "; using quick restart.");

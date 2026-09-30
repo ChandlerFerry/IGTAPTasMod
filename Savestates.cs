@@ -66,6 +66,12 @@ namespace IGTAPTasMod
         public bool hasOrigin;
         public float originX;
         public float originY;
+        /// <summary>cameraMover.camSize (the zoom a camSizeTrigger sets and nothing resets); 0 in savestates from before it.</summary>
+        public float camSize;
+        /// <summary>Rebase the world around this world point after the restore (a placed savestate's floating-origin test).</summary>
+        public bool hasRebaseAt;
+        public float rebaseAtX;
+        public float rebaseAtY;
         public Dictionary<string, SnapshotValue> movementFields = new Dictionary<string, SnapshotValue>();
         public Dictionary<string, SnapshotValue> bodyFields = new Dictionary<string, SnapshotValue>();
     }
@@ -106,6 +112,7 @@ namespace IGTAPTasMod
             result.hasOrigin = true;
             result.originX = origin.x;
             result.originY = origin.y;
+            if (movement.cam != null) result.camSize = movement.cam.camSize;
             CaptureMembers(movement, MovementFieldNames, result.movementFields);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             if (body != null) CaptureMembers(body, BodyFieldNames, result.bodyFields);
@@ -148,6 +155,17 @@ namespace IGTAPTasMod
                 body.simulated = ReadBool(savestate.bodyFields, "simulated", true);
             }
             Physics2D.SyncTransforms();
+            // A savestate holds only the player. What it replaces may still have a death's respawn queued (onDeath's 0.6 s
+            // Invoke, which would teleport the player back to the checkpoint; turbo's restore cancels every invoke, but a blanket
+            // CancelInvoke here would drop a wall jump's reEnableNormalCollider) and a camZoneScript holding the camera (only
+            // its OnTriggerExit2D gives it back). The camera follows the player, as the zone's exit leaves it; a zone the
+            // restore lands in takes it again on the next physics step.
+            movement.CancelInvoke("deathRespawn");
+            if (movement.cam != null)
+            {
+                movement.cam.newTarget(movement.gameObject, movement.cam.defaultoffset, true, Vector2.zero);
+                if (savestate.camSize > 0f) movement.cam.newCamSize(savestate.camSize);
+            }
             SnapCamera(transform.position);
             result.Success = true;
             result.Message = "Savestate restored";
@@ -155,18 +173,26 @@ namespace IGTAPTasMod
         }
 
         static readonly FieldInfo CameraLerpedPos = AccessTools.Field(typeof(cameraMover), "lerpedPos"),
-            CameraPlayerSetOffset = AccessTools.Field(typeof(cameraMover), "playerSetOffset");
+            CameraPlayerScript = AccessTools.Field(typeof(cameraMover), "playerScript");
 
         /// <summary>
         /// Puts the camera where cameraMover's follow settles on the player (no lookahead, the player's set offset, the target
-        /// zoom), so a restore doesn't pan across the map from where the camera was.
+        /// zoom), so a restore doesn't pan across the map from where the camera was. The set offset is Movement.FixedUpdate's
+        /// fall look-down from the speed now: the one the last tick before a restore left points the camera up to 1180 low.
         /// </summary>
         internal static void SnapCamera(Vector3 player)
         {
             Camera cam = Camera.main;
             cameraMover mover = cam != null ? cam.GetComponent<cameraMover>() : null;
             if (mover == null) return;
-            Vector3 offset = CameraPlayerSetOffset != null ? (Vector3)CameraPlayerSetOffset.GetValue(mover) : Vector3.zero;
+            Vector3 offset = mover.defaultoffset;
+            if (CameraPlayerScript?.GetValue(mover) is Movement m)
+            {
+                float vy = m.Velocity.y + m.momentum.y;
+                if (vy < -850f) offset = new Vector3(0f, 620f + Mathf.Clamp(vy * 0.92f, -1600f, 100000000f));
+                else if (vy < -150f && !m.OnWall && !m.onGround) offset = new Vector3(0f, mover.defaultoffset.y + vy / 3.3f, 0f);
+                mover.NewPlayersetOffset(offset);
+            }
             CameraLerpedPos?.SetValue(mover, (Vector3)(Vector2)player);
             mover.transform.position = new Vector3(Mathf.Round(player.x), Mathf.Round(player.y + offset.y), -100f);
             cam.orthographicSize = mover.camSize;
@@ -266,6 +292,9 @@ namespace IGTAPTasMod
             bool parsed;
             return values != null && values.TryGetValue(key, out value) && bool.TryParse(value.value, out parsed) ? parsed : fallback;
         }
+
+        /// <summary>The game's Assembly-CSharp hash (a shared route plays the same only on the same build).</summary>
+        internal static string GameAssemblyHash() { return HashAssembly(typeof(Movement).Assembly); }
 
         private static Assembly _hashedAssembly;
         private static string _assemblyHash;

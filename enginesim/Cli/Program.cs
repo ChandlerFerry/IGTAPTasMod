@@ -33,6 +33,7 @@ namespace IGTAP.EngineSim.Cli
                     case "polish": return Polish.Command(args.Skip(1).ToArray());
                     case "coverage": return Coverage.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
+                    case "suggest": return Suggest.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
@@ -146,6 +147,10 @@ namespace IGTAP.EngineSim.Cli
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
+                            + "  suggest <start-trace.json> <route.json> --until N [--out file] [--threads T] [--radius R] [--max-shift S]\n"
+                            + "                                         the player after the route's first N input ticks as a target: humanize's\n"
+                            + "                                         edits of those ticks (shifts, stick values, drops) that get there sooner,\n"
+                            + "                                         ranked by input ticks saved: <route>-suggest.json\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "          [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"

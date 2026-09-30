@@ -73,16 +73,31 @@ namespace IGTAPTasMod
         void ApplyNewGameRebase(Movement player)
         {
             _newGameRebased = true;
-            FloatingOrigin origin = CurrentFloatingOrigin();
-            if (origin == null) { FailNewGame("No FloatingOrigin to rebase."); return; }
             Vector2 at = _newGameRebaseAt.Value;
+            string error = RebaseWorldAround(player, at, out float distance);
+            if (error != null) { FailNewGame(error); return; }
+            _newGameNotes.Add("rebased around " + at.ToString("0.#") + " (player " + distance.ToString("0.#") + " from it)");
+            _newGameSpawn = null;
+            _newGamePhase = 2;
+            _newGameFrame = Time.frameCount;
+        }
+
+        /// <summary>
+        /// FloatingOrigin.MoveOrigin's own moves (roots, camera, backgrounds, particles, trails, lines, currentOrigin) by the scene
+        /// position of world point <paramref name="at"/>, then a physics sync: the world rebased around it, as FloatingOrigin
+        /// would have with the player there. Null, or why not (the player has to stay inside Threshold of it, or the game
+        /// rebases again on the next frame).
+        /// </summary>
+        string RebaseWorldAround(Movement player, Vector2 at, out float distance)
+        {
+            distance = 0f;
+            FloatingOrigin origin = CurrentFloatingOrigin();
+            if (origin == null) return "No FloatingOrigin to rebase.";
             var offset = new Vector3(at.x + origin.currentOrigin.x, at.y + origin.currentOrigin.y, 0f);
             Vector2 after = (Vector2)(player.transform.position - offset);
-            if (after.magnitude >= origin.Threshold)
-            {
-                FailNewGame("rebaseAt " + at + " is " + after.magnitude.ToString("0.#") + " from the player, past FloatingOrigin's Threshold " + origin.Threshold + ".");
-                return;
-            }
+            distance = after.magnitude;
+            if (distance >= origin.Threshold)
+                return "rebaseAt " + at + " is " + distance.ToString("0.#") + " from the player, past FloatingOrigin's Threshold " + origin.Threshold + ".";
             FloatingOriginMoves[0].Invoke(origin, new object[] { offset });
             Camera.main.GetComponent<cameraMover>().Translate(-offset);
             Camera.main.transform.position += offset;
@@ -92,10 +107,7 @@ namespace IGTAPTasMod
             if (origin.UpdateLineRenderers) FloatingOriginMoves[3].Invoke(origin, new object[] { offset });
             origin.currentOrigin -= offset;
             Physics2D.SyncTransforms();
-            _newGameNotes.Add("rebased around " + at.ToString("0.#") + " (player " + after.magnitude.ToString("0.#") + " from it)");
-            _newGameSpawn = null;
-            _newGamePhase = 2;
-            _newGameFrame = Time.frameCount;
+            return null;
         }
 
         void ApplyNewGameSavestate(Movement player)

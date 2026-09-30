@@ -71,6 +71,17 @@ namespace IGTAPTasMod
         public string name = "New macro";
         public string savestateId = "";
         public List<MacroStep> steps = new List<MacroStep>();
+        public List<RouteMarker> markers;
+        public int rerecords;
+        public bool ShouldSerializemarkers() { return markers != null && markers.Count > 0; }
+        public bool ShouldSerializererecords() { return rerecords > 0; }
+    }
+
+    [Serializable]
+    public sealed class RouteMarker
+    {
+        public int tick;
+        public string note = "";
     }
 
     [Serializable]

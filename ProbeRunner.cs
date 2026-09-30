@@ -231,6 +231,12 @@ namespace IGTAPTasMod
             }
             if (body["x"] != null) placed.positionX = (float)body["x"] + placed.originX;
             if (body["y"] != null) placed.positionY = (float)body["y"] + placed.originY;
+            if (body["rebaseAtX"] != null && body["rebaseAtY"] != null)
+            {
+                placed.hasRebaseAt = true;
+                placed.rebaseAtX = (float)body["rebaseAtX"];
+                placed.rebaseAtY = (float)body["rebaseAtY"];
+            }
             if (body["facing"] != null)
             {
                 bool right = (float)body["facing"] > 0f;

@@ -15,7 +15,7 @@ namespace IGTAP.EngineSim.Cli
         const float Tie = .0001f;
         public const int Radius = 6;
         const int StateEvery = 4, Rounds = 6;
-        static readonly float[] Partials = Enumerable.Range(0, 11).Select(i => (float)Math.Round(.3 + .05 * i, 2)).ToArray();
+        internal static readonly float[] Partials = Enumerable.Range(0, 11).Select(i => (float)Math.Round(.3 + .05 * i, 2)).ToArray();
 
         public enum Kind { StickX, StickY, Press, Release, Dash }
 
