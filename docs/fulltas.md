@@ -551,6 +551,8 @@ inputs past the last unchanged goal the same way.
   under the trace's goals and prints each goal's physics and input tick, its live time and held frames, and how the
   replay ended; it searches and writes nothing. `--ticks-out FILE` also writes the replay's physics ticks, clone spawns
   and RNG draws as JSON lines, to line up with a 1x probe ([enginesim/README.md](../enginesim/README.md#probe)).
+  `--waste-audit <route.json> [--expect a-b,...]` replays a route the same way and prints its waste audit (Parts 8 under
+  [Auto](#auto)); `--expect` lists physics tick spans each finding must overlap, and exits 1 when one is missed.
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -676,7 +678,8 @@ without it). On `FalseEnding-Any%` with `--focus 181-186` every pull of a 2-minu
   expected headroom went from 908 to 392 ticks, `buydj`'s climb from 139 to 7.
 - *Expected* headroom of goal k = 0.6 × (the known routes' lead there: a shorter split, or an arrival lead the goal
   itself made, i.e. its lead less the previous goal's, so a lead carried through later goals counts once) + 0.3 ×
-  (deficit + slack) + 0.05 × gap (not for economy goals), its movement part held to the spare Cash above. Goals rank by
+  (deficit + slack) + 0.05 × gap (not for economy goals) + 0.5 × the waste audit's ticks there (`--parts waste`), its
+  movement part held to the spare Cash above. Goals rank by
   it. The outlook's floor is the best less every searched goal's gap within the spare Cash (an economy goal's slack
   instead); the repair's hopeless test keeps the distance bounds.
 
@@ -687,8 +690,9 @@ gate or an area rect of at most 300×300; scored at a large area box a window wi
 next goals can't use, as Vman4 saw on `VMAN` goals 10-14 and 15-18; twice a window's budget), `dropreset` (the reset study of the next quick restart in goal k not studied yet), `graft` (a
 known route that does goal k better: reached sooner, its way there kept and the later goals re-found as the transplant's
 bridges do; a shorter split, its inputs picked up from the best's states nearest its path by position, velocity and
-facing, the transplant's splices), and `plan` (the contact planner on goal k's window, the best's window as its guide; a
-goal whose plan finds no finish is dropped from the plan lever). First every goal label (a lap phase: every
+facing, the transplant's splices), `plan` (the contact planner on goal k's window, the best's window as its guide; a
+goal whose plan finds no finish is dropped from the plan lever), and `waste` (a window from goal k to the goal after its
+last waste finding, Parts 8, seeded with each finding undone; prior 0.5 × the audit's ticks there). First every goal label (a lap phase: every
 `buy:buyclone2` is one) gets one window probe of `--probe-minutes` (half of `--window-minutes`) at its goal with the most
 expected headroom, most expected first (one per goal took longer than 10 minutes on `FalseEnding-Any%`'s 300 goals). Then each pull takes the arm with the most expected
 ticks per CPU second, (lever share × expected + ticks gained) / (the lever's CPU seconds per pull + CPU seconds spent on
@@ -790,8 +794,8 @@ end with the verdict.
 & $exe fulltas $traces\fulltas-FalseEnding-Any%.json --auto --minutes 10 --window-minutes 0.5 --threads 16 --no-submit   # --parts LIST, --tail-minutes t, --combine-repair-minutes m, --library-runs R (150)
 ```
 
-`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`
-(`tail`, `combine`, `ctg`, `macros` and `stray` need `lib`); `--parts none` is the loop above as it was (the measured
+`--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`,
+`wallreset`, `waste`, `grafts` (`tail`, `combine`, `ctg`, `macros` and `stray` need `lib`); `--parts none` is the loop above as it was (the measured
 baseline). The default is set by the measurements below, and has every part except `wallreset` (opt-in: add it to the list).
 
 1. **Goal-state library** (`lib`, `enginesim\Cli\FullTasAutoLib.cs`, contracts in `FullTasAutoContracts.cs`). Every run the loop
@@ -1011,7 +1015,7 @@ baseline). The default is set by the measurements below, and has every part exce
    `wall-coyote-restart` at `TouchedWall`, `LeftWall`, `WallAheadLeft/Right`: the stick into the wall, the restart, 0-3 idle
    ticks, the ground jump held 1-4, the wall jump) at the wall contacts of its runs, merged like any window's finds
    (`MergeAuto`), at most `--wallreset-minutes` (5) a pass, once per restart (memory `wallStudied`). `Explore` hands its
-   solver `_mined`: the other Full-TAS windows have never grafted tech windows. The pass runs before the goals part (behind
+   solver `_mined` (the other windows get the whole library from `--parts grafts`, item 9). The pass runs before the goals part (behind
    it, a goals pull's investments took all 20 minutes and the pass never ran), and mines on a thread of its own (mining on
    the loop's thread took over its Simulation's thread-static hooks: the first pass saw every run end at once, 0 restarts).
    Status: opt-in. Measured, A/B at the same time, `--minutes 20 --threads 5` each, private copies of the 358.69 s run
