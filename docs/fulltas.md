@@ -1009,8 +1009,18 @@ baseline). The default is set by the measurements below, and has every part exce
    `wall-coyote-restart` at `TouchedWall`, `LeftWall`, `WallAheadLeft/Right`: the stick into the wall, the restart, 0-3 idle
    ticks, the ground jump held 1-4, the wall jump) at the wall contacts of its runs, merged like any window's finds
    (`MergeAuto`), at most `--wallreset-minutes` (5) a pass, once per restart (memory `wallStudied`). `Explore` hands its
-   solver `_mined`: the other Full-TAS windows have never grafted tech windows. Status: it builds and the windows mine
-   (`techgrafts`), but the pass has not been run in a loop yet; its measured effect on the run is open.
+   solver `_mined`: the other Full-TAS windows have never grafted tech windows. The pass runs before the goals part (behind
+   it, a goals pull's investments took all 20 minutes and the pass never ran), and mines on a thread of its own (mining on
+   the loop's thread took over its Simulation's thread-static hooks: the first pass saw every run end at once, 0 restarts).
+   Status: opt-in. Measured, A/B at the same time, `--minutes 20 --threads 5` each, private copies of the 358.69 s run
+   (284 goals): with `wallreset` 358.67 s at 103 s (goal 180, -1 tick), 358.26 s at 593 s, 357.71 s at 1084 s; the
+   defaults 358.28 s at 203 s, 357.73 s at 253 s, then a 935 s goals pull with no gain (both later gains are the goals
+   part's two Course 3 lap drops). 4 passes, 6 pulls (goals 180 and 221 each pass), 32,970 tech grafts tried, none in a
+   find: the finds came by `optimize`, `splice`, `explore`, `seed`, `plateau`, and the one merged (goal 180) is the quick
+   restart at the Course 3 spawn a tick sooner, ground jumps only; no find used the stored wall jump. The part took 3,715
+   of the arm's 4,459 CPU s and 943 of its 1,206 wall s: goal 221's pulls ran their 1-minute window to 5-6 minutes
+   repairing finds that stray-buy at goals 224-248, past the 5-minute pass cap. A tick for 3,700 CPU s, with the goals'
+   gains 6-14 minutes later.
 
 7. **Idle under the box** (`idle`; `enginesim\Cli\FullTasAutoIdle.cs`): every wait for Cash stands under the box it waits
    for, so the blanks in a route are where the route waits. The wait fix puts a buy's idle ticks before the quick restart

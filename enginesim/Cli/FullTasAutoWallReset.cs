@@ -27,7 +27,7 @@ namespace IGTAP.EngineSim.Cli
         /// graft at: the windows of these techs at a landing or a ledge would restart in the middle of a lap.</summary>
         static readonly string[] WallResetTechs = { "checkpoint-midair-walljump", "wall-coyote-restart" };
         static readonly Contact[] WallResetContacts = { Contact.TouchedWall, Contact.LeftWall, Contact.WallAheadLeft, Contact.WallAheadRight };
-        /// <summary>Parts --auto leaves off unless --parts names them (unmeasured in the loop).</summary>
+        /// <summary>Parts --auto leaves off unless --parts names them (measured not to pay: docs/fulltas.md, "Wall-coyote restart").</summary>
         static readonly string[] OptInParts = { "wallreset" };
 
         Route _wallFor;
@@ -123,7 +123,10 @@ namespace IGTAP.EngineSim.Cli
             _wallLibraryTried = true;
             try
             {
-                TechGrafts all = TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(_trace)), techDir: Solve.Option(_args, "--tech-dir", (string)null));
+                // On its own thread: mining builds a Simulation per demo, which on this thread would take over the thread-static
+                // engine hooks the loop's own Simulation plays with (its next run would end at once, "Solver run ended").
+                string techDir = Solve.Option(_args, "--tech-dir", (string)null);
+                TechGrafts all = Solve.OnThread(() => TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(_trace)), techDir: techDir));
                 all.Patterns.RemoveAll(p => Array.IndexOf(WallResetTechs, p.Tech) < 0 || Array.IndexOf(WallResetContacts, p.Kind) < 0 || !p.Resets);
                 if (all.Patterns.Count == 0)
                 {
