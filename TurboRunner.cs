@@ -877,9 +877,9 @@ namespace IGTAPTasMod
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             JiggleDropScript[] orbs = UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsSortMode.None);
-            // Steps in scene-load order (instance id, highest first), as the engine does: FindObjectsSortMode.None's order changed
-            // from one game session to the next, and two courses spawning on one tick swap their fast/big rolls with it.
-            Array.Sort(clones, (a, b) => b.GetInstanceID().CompareTo(a.GetInstanceID()));
+            // Steps in 1x's Update order (instance id, lowest first; a probe: Course 2's clones before Course 3's in one frame), as
+            // the engine does: two courses spawning in one frame take their fast/big rolls in that order.
+            Array.Sort(clones, (a, b) => a.GetInstanceID().CompareTo(b.GetInstanceID()));
             float dt = Time.fixedDeltaTime;
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
@@ -957,19 +957,26 @@ namespace IGTAPTasMod
                     // there and drops the interpolation, so the frames after show it. A pause holds its frame's time as a
                     // freeze does (MacroEngine.FrameRepeats).
                     int frozen = _freezeFor >= 0f ? frames.FrozenFrames(_freezeFor) : 0;
+                    // clonesScript.Update runs in every frame too, on that frame's Time.deltaTime (0 in a freeze's or pause's repeats).
                     for (int k = 0; k < frames.Alphas.Length; k++)
-                        for (int repeat = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter); repeat >= 0; repeat--)
+                    {
+                        int repeats = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                        for (int repeat = repeats; repeat >= 0; repeat--)
                         {
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));
                             _update(movement);
-                            if (player.position == at) continue;
-                            Physics2D.SyncTransforms();
-                            _stepFrom = _stepTo = player.position;
+                            if (player.position != at)
+                            {
+                                Physics2D.SyncTransforms();
+                                _stepFrom = _stepTo = player.position;
+                            }
+                            float frameDt = repeat == repeats ? frames.Step(k) : 0f;
+                            foreach (clonesScript c in clones)
+                                if (c != null && c.isActiveAndEnabled) StepClones(c, frameDt);
                         }
+                    }
                     Place(player, _stepTo);
                     Resume(Wait.Frame);
-                    foreach (clonesScript c in clones)
-                        if (c != null && c.isActiveAndEnabled) StepClones(c, dt);
                     OriginFrame();
                     EndOfFrame();
                     Resume(Wait.EndOfFrame);

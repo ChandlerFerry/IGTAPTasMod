@@ -140,12 +140,58 @@ ordered as the sections they came from.
   after restoring the start.
 - **Where:** `TurboRunner.Scene.objects`, `FullTasTrace`, `ObjectBobber.OnEnable`, `buystatue`.
 
+## Crossing frame step and presentation draws
+
+- **Symptom:** after the rewards fix, a 1x probe of the 356.64 s inputs still split from turbo: Course 1's clone path
+  pointer read 0.9999996 at 1x against 0.99999994 after a tick, and the RNG split at tick 7.
+- **Cause:** 1x's ticks come 0.0199999929 s apart on the fixed clock, so the crossing frame's Update reads
+  Time.deltaTime 0.00214285006, not the model's 0.0021428566 (a clone pointer grows exactly 1 a tick, so the last bit
+  decides the tick it ends its path). And the run animation's footstep event (`PlayerAnimationEventProxy.RelayFootstep`
+  → `Movement.PlayFootstep` → `Audio.PlayAudio`, two draws) and floating numbers fire only at 1x.
+- **Fix:** `FrameGrid.Step(0)` is the measured 0.00214285006 at the playback rate; an animation footstep or floating
+  number in a Full-TAS run gives `UnityEngine.Random`'s state back (README exception 11); Movement's own `PlayFootstep`
+  calls in the physics step draw as before. Clone state (timers, pointers, counts) then matches 1x on every tick of the
+  356.64 s inputs (16,675 ticks). A dash freeze logs the tick's physics count twice in both (turbo's trace and a probe):
+  compare by the engine's physics count, not the trace's `tick`.
+- **Where:** `MacroEngine.FrameGrid`, `TasPlugin.BeforePresentationDraw`/`AfterPresentationDraw`.
+
+## Course rewards refreshed only at 1x
+
+- **Symptom:** `FalseEnding-Any%` 356.64 s (Bonus 2 added; judged in turbo) died at 1x at action 5257 after 238 goals,
+  short of Cash; the 361.34 s route before it played at 1x to the tick. A 1x probe split from turbo's Cash at physics
+  tick 6798, 65 ticks after `reward:bonus1`: a Course 1 clone paid 13 at 1x, 9 in turbo.
+- **Cause:** `courseScript.Start` repeats `UpdateReward` every 5 s (`InvokeRepeating`, phase `Random.Range(0, 5)`), and a
+  global `cashPerLoop` buy updates only its own course's reward. At 1x the timer carried Bonus 1's increase to Course 1
+  within 5 s; turbo (Unity's invoke clock stands still in a turbo run) and the engine never ran it. The phase differs
+  from session to session, so even 1x wasn't reproducible for a route whose Cash depends on it.
+- **Fix:** a Full-TAS run turns the timer off at 1x and updates every active course's reward every 250 physics ticks
+  from its start (`MacroEngine.RefreshRewards`: `TasPlugin.RefreshFullTasRewards`, `Economy.RefreshReward`); README
+  exception 10. The 356.64 s inputs now die at action 5257 in turbo and offline alike, Cash and RNG identical on every
+  tick (`div-fe-356.64`).
+- **Where:** `MacroEngine.CountPhysicsTick`, `FullTasPlugin.Playback.cs`, `Simulation`, `Economy.RefreshReward`.
+
+## Clones stepped once a tick
+
+- **Symptom:** `fulltas/FalseEnding-Any%_NONE 359.70` (judged in turbo, 283 goals) died at 1x at action 3164. 1x and
+  turbo matched through goal 124 (tick 8935); at 1x `buy:buyreward2` came at 8940, turbo's at 8970, and from there 1x
+  bought only on a subset of turbo's buy ticks: the player was where turbo had it, the Cash was not.
+- **Cause:** turbo (`StepClones`) and the engine (`Economy.Step`) ran `clonesScript.Update` once per physics tick on
+  0.02 s; the game runs it in each rendered frame (1/280 s). A spawn sets `timeSinceLastClone` to 0 and drops the
+  overshoot, up to a tick per spawn per tick against up to a frame at 1x, so clones spawned less often and paid later.
+- **Fix:** both step the clones in each frame of the tick's grid on that frame's `Time.deltaTime`
+  (`MacroEngine.FrameGrid.Step`), 0 in a freeze's or pause's repeats. The engine's `--check` of the 359.70 route now
+  meets every goal on 1x's tick (125 of them, `buy:buyreward2` at 8940) and stops there (strict buys). `zip-plan`'s
+  clone frame is 1/280 s.
+- **Where:** `TurboRunner.Run`, `Simulation.InterpolatedFrames`, `Shop.StepClones`, `ZipPlan`.
+
 ## Clone order changed between sessions
 
 - **Symptom:** the same route's clone rolls swapped at physics tick 16409 and one course's spawns ran 2 ticks late
   from then on (Course 3 before Course 1 in one game session, after it in the next).
 - **Cause:** turbo used `FindObjectsSortMode.None`, whose order changed between game sessions.
-- **Fix:** clones step in scene-load order, instance id highest first, in turbo and the engine alike.
+- **Fix:** clones step in a fixed order, in turbo and the engine alike: instance id lowest first, 1x's Update order (a 1x
+  probe of `FalseEnding-Any%` 356.64 s, tick 15637: Course 2 before Course 3 in one frame; the first fix, highest first,
+  swapped their rolls and Course 3 paid 538M against 1x's 727M at tick 15688).
 - **Where:** `TurboRunner.Run`, `Runtime/Economy.cs`.
 
 ## Floating number pool drained

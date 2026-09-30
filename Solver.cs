@@ -730,7 +730,6 @@ namespace IGTAPTasMod
             {
                 case "floor": return " · can't beat: at the speed floor";
                 case "exhausted": return " · nothing left to try";
-                case "early": return " · too early to tell";
                 default: return " · " + verdict + " to improve (" + Math.Round(hour * 100).ToString(CultureInfo.InvariantCulture) + "% per hour)";
             }
         }

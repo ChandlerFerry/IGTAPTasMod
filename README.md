@@ -112,7 +112,7 @@
    `VmanCoursesCompleteTemp`; the plugin drops both calls. Both come after the goal, so no route sees them.
 4. Relaxes rule 39. The one RNG write: the Full-TAS runs' fixed seed, `UnityEngine.Random.InitState` at the fresh new
    game before its start snapshot; nothing else writes the RNG.
-5. Relaxes rule 39. The one other setup write: a Vman Full-TAS start (`docs/fulltas.md`) sets, in a fresh new game,
+5. Relaxes rule 39. A setup write: a Vman Full-TAS start (`docs/fulltas.md`) sets, in a fresh new game,
    Area 1 overgrown, `vmanTime` and `VmanStartsWithOmniDash` to their boxes' full effect and the player under the 1x
    Vman start box; the game itself buys the box and loads the Vman world the run starts in.
 6. Relaxes rules 33 and 15. The one exception to "no teleports" and "unlocks only through the game's purchases": a
@@ -129,6 +129,15 @@
    at the demo's end, on a scene change, or by `POST /api/labmap/restore`.
 8. Relaxes rule 1. Spike grace is allowed: up to two overlapping ticks.
 9. Relaxes rule 27. Flying starts allowed: time counts from the last start-gate crossing.
+10. Relaxes rule 39. The Full-TAS reward refresh: each course's 5 s `UpdateReward` timer (`courseScript.Start`'s
+    `InvokeRepeating`, a random phase per session) is off while a Full-TAS run plays at 1x, and the courses update their
+    reward every 250 physics ticks from the run's start instead (`MacroEngine.RefreshRewards`), in turbo and the offline
+    engine alike; the timer is back on after the run. A course's clones pay its reward as last updated, so the phase
+    decides the Cash.
+11. Relaxes rule 39. Presentation doesn't draw the Full-TAS RNG: the run animation's footstep event
+    (`PlayerAnimationEventProxy.RelayFootstep`, on rendered frames) and a floating number (`spawnNewFloatingNumber`),
+    which turbo and the offline engine don't play, play and put `UnityEngine.Random`'s state back after them
+    (`TasPlugin.BeforePresentationDraw`/`AfterPresentationDraw`), so the fixed seed's draws are the same at 1x as judged.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:
@@ -176,6 +185,11 @@ as the game renders. The simulation is unchanged: each frame's game time is the 
 (`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock, and vsync off,
 `Time.maximumDeltaTime` and the wall-clock patches stay as they are. A walk (its slowdown is paced by the wall clock)
 and a probe (`ProbeRunner`, its frame rate is what it measures) keep the cap.
+
+A playback that holds 280 fps plays in its game time; a slower frame rate plays the same frames, only later. While a
+playback lists its ticks, the overlay draws its input panel, pad and velocity panel into a texture once a physics tick
+(`TasOverlayCache.cs`) and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP and the nudge are drawn
+live. Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
 
 ## Solving
 

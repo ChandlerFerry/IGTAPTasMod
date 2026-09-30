@@ -140,6 +140,7 @@ namespace IGTAPTasMod
                 paused = movement.pauseMenu != null && movement.pauseMenu.menuOpen,
                 camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
                 cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
+                random = Array.ConvertAll(EngineSimExport.RandomStateFields, f => (int)f.GetValue((object)UnityEngine.Random.state)),
                 physics = _engine.PhysicsTicks, input = _engine.RunTicks,
                 x = p.x - origin.x, y = p.y - origin.y, vx = v.x, vy = v.y, mx = m.x, my = m.y, bvx = body.x, bvy = body.y,
                 bodyX = bodyAt.x, bodyY = bodyAt.y, interpolation = _playerBody != null ? _playerBody.interpolation.ToString() : null,

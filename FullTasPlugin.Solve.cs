@@ -365,6 +365,8 @@ namespace IGTAPTasMod
                     return;
                 }
                 _fullTasProcess.WaitForExit();
+                // WaitForExit waits for the last stdout and stderr lines (a crash's exception comes last): read them too.
+                while (_fullTasOutput.TryDequeue(out string last)) FullTasSolveLine(last);
                 int code = _fullTasProcess.ExitCode;
                 if (code == 0) KillFullTasSolve(_fullTasKillAt != null ? "Stopped" : "Finished");
                 else KillFullTasSolve("The offline solver exited with code " + code, "The offline solver crashed (exit code " + code + "). The log below has its last words.");

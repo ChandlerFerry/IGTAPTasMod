@@ -59,6 +59,7 @@ namespace IGTAPTasMod
             _debugInputs[row, 0] = ia; _debugInputs[row, 1] = ib; _debugInputs[row, 2] = ic;
             _debugInputs[row, 3] = id; _debugInputs[row, 4] = ie; _debugInputs[row, 5] = iff;
             _debugColor[row] = PanelText;
+            if (!DebugLiveRows[row]) _panelCacheDirty = true;
             return true;
         }
 
@@ -154,20 +155,35 @@ namespace IGTAPTasMod
             y += 8 * scale;
             Fill(new Rect(panel.x, y, panel.width, 1), PanelLine);
             y += 1 + 8 * scale;
-            float row = DebugRowHeight(scale), valueX = x + 92 * scale, yX = valueX + 150 * scale;
-            for (int i = 0; i < DebugLabels.Length; i++)
+            if (_panelCaching)
             {
-                Label(new Rect(x, y, valueX - x, row), DebugLabels[i], _overlaySmall, MutedColor);
-                if (_debugX[i] != null)
-                {
-                    if (_debugY[i] == null) Label(new Rect(valueX, y, panel.xMax - valueX, row), _debugX[i], _overlaySmall, _debugColor[i]);
-                    else
-                    {
-                        Label(new Rect(valueX, y, yX - valueX, row), _debugX[i], _overlaySmall, _debugColor[i]);
-                        Label(new Rect(yX, y, panel.xMax - yX, row), _debugY[i], _overlaySmall, _debugColor[i]);
-                    }
-                }
-                y += row;
+                _debugPanel = panel;
+                _debugTop = new Vector2(x, y);
+            }
+            float row = DebugRowHeight(scale);
+            for (int i = 0; i < DebugLabels.Length; i++, y += row)
+            {
+                Label(new Rect(x, y, 92 * scale, row), DebugLabels[i], _overlaySmall, MutedColor);
+                if (!(_panelCaching && DebugLiveRows[i])) DrawDebugValue(i, panel, x, y, scale);
+            }
+        }
+
+        /// <summary>A cached panel's (DrawCachedPanels) live rows: the values that change on every rendered frame.</summary>
+        void DrawLiveDebugValues(float scale)
+        {
+            for (int i = 0; i < DebugLabels.Length; i++)
+                if (DebugLiveRows[i]) DrawDebugValue(i, _debugPanel, _debugTop.x, _debugTop.y + i * DebugRowHeight(scale), scale);
+        }
+
+        void DrawDebugValue(int i, Rect panel, float x, float y, float scale)
+        {
+            if (_debugX[i] == null) return;
+            float row = DebugRowHeight(scale), valueX = x + 92 * scale, yX = valueX + 150 * scale;
+            if (_debugY[i] == null) Label(new Rect(valueX, y, panel.xMax - valueX, row), _debugX[i], _overlaySmall, _debugColor[i]);
+            else
+            {
+                Label(new Rect(valueX, y, yX - valueX, row), _debugX[i], _overlaySmall, _debugColor[i]);
+                Label(new Rect(yX, y, panel.xMax - yX, row), _debugY[i], _overlaySmall, _debugColor[i]);
             }
         }
     }

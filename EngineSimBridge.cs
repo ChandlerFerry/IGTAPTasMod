@@ -691,7 +691,7 @@ namespace IGTAPTasMod
     {
         const BindingFlags InstanceFields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
-        static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
+        internal static readonly FieldInfo[] RandomStateFields = typeof(UnityEngine.Random.State).GetFields(InstanceFields);
 
         // MacroEngine's step list is the whole route being played (17k entries on a Full-TAS run): nothing reads it back from
         // a trace, and written with every tick it made a Full-TAS trace 3.8 GB, past what the offline engine can read.

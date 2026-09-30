@@ -5,7 +5,7 @@ a route that breaks any of them doesn't count, however fast it is.
 
 Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`WJ_DS_DJ`), the `VMAN` Full-TAS run (a
 Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)), and the
-`FalseEnding-Any%` Full-TAS run (and its copy `FalseEnding2-Any%`, where the economy work was tried first; notes and
+`FalseEnding-Any%` Full-TAS run (notes and
 open ideas in [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28); unattended improvement:
 `fulltas --auto`, [`docs/fulltas.md`](docs/fulltas.md#auto)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).

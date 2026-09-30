@@ -10,7 +10,7 @@ namespace IGTAP.EngineSim.Cli
     /// or a better arrival does, its state is kept there, keyed by the hash of the run's inputs up to it. A solve or window
     /// starts from the stored state instead of replaying the run up to there, and an archive cell replays its prefix from
     /// the later of its worker's own state and these (docs/fulltas.md "Offline search"). They go with the archive: the
-    /// run's start.key drops both together, and a route edit hashes differently, so a stale state is never picked up.
+    /// run's start.key drops both together, a route edit hashes differently, and another engine build drops the states.
     /// </summary>
     sealed class FullTasStates
     {
@@ -22,7 +22,15 @@ namespace IGTAP.EngineSim.Cli
         public FullTasStates(string archiveDir, bool fresh)
         {
             _dir = Path.Combine(archiveDir, "states");
-            if (fresh || !Directory.Exists(_dir)) return;
+            if (!Directory.Exists(_dir)) return;
+            // Another engine build can play the same inputs to another state (a fidelity fix): its states go.
+            string engineFile = Path.Combine(_dir, "engine"), engine = EngineHash();
+            if (!File.Exists(engineFile) || File.ReadAllText(engineFile) != engine)
+            {
+                foreach (string file in Directory.GetFiles(_dir, "*.bin")) File.Delete(file);
+                File.WriteAllText(engineFile, engine);
+            }
+            if (fresh) return;
             foreach (string file in Directory.GetFiles(_dir, "*.bin"))
                 try
                 {
@@ -38,6 +46,19 @@ namespace IGTAP.EngineSim.Cli
                     });
                 }
                 catch (Exception) { }
+        }
+
+        /// <summary>The engine build: a hash of the DLLs beside the CLI (deterministic builds, so it changes with the code only).</summary>
+        static string EngineHash()
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            foreach (string f in Directory.GetFiles(AppContext.BaseDirectory, "*.dll").OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            {
+                byte[] bytes = File.ReadAllBytes(f);
+                sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+            }
+            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+            return Convert.ToHexString(sha.Hash);
         }
 
         /// <summary>Records the state at the run's input tick unless this arrival is stored already.</summary>

@@ -1002,10 +1002,16 @@ namespace IGTAP.EngineSim.Cli
         {
             if (_lib == null) { Merge(where, best, prefixLength, limit, found); return; }
             // A resumed window hands back the finds it had: one already merged onto this best repairs the same way again (a course
-            // 4 find at goal 6 cost two 55 s repairs), so only new ones go on.
+            // 4 find at goal 6 cost two 55 s repairs), so only new ones go on. Keyed by the state and tick each arrives in at goal
+            // limit, not its inputs: a window re-found the same arrival with other inputs past it (FalseEnding-Any%'s goal 116 at
+            // 8723, repaired three times for 4,600 CPU s).
             if (_mergedOn != best) { _mergedOn = best; _merged.Clear(); }
             int given = found.Count;
-            found = found.Where(f => _merged.Add(SnapshotIndex.Hash(f, f.Count) ^ (ulong)prefixLength * 0x9E3779B97F4A7C15UL)).ToList();
+            found = Enumerable.Reverse(found).Take(5).Reverse().Where(f =>
+            {
+                Route at = Evaluate(best.Inputs.Take(prefixLength).Concat(f).ToList(), limit);
+                return at.Progress >= limit && _merged.Add(Mix(Mix(StateKey(_eval), (ulong)(uint)WorldDigest(_eval)), (ulong)at.GoalPhysics[limit - 1]) ^ (ulong)limit);
+            }).ToList();
             if (found.Count == 0)
             {
                 Log($"auto: {where}: its {given} finds were merged onto this best already");

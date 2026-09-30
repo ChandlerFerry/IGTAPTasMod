@@ -187,6 +187,11 @@ namespace IGTAP.EngineSim
             Player = world.All<Movement>().First(m => m.gameObject.activeInHierarchy && !(bool)typeof(Movement).GetField("isOnMainMenu",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(m));
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
+            Engine.RefreshRewards = () =>
+            {
+                if (Goals == null || Shop.Economy == null) return;
+                foreach (courseScript c in World.All<courseScript>()) Shop.Economy.RefreshReward(c);
+            };
             _floating = world.All<FloatingOrigin>().FirstOrDefault();
             Origin = _floating?.currentOrigin ?? Vector3.zero;
             _rebaseThreshold = _floating?.Threshold ?? float.PositiveInfinity;
@@ -897,7 +902,8 @@ namespace IGTAP.EngineSim
         public bool StartsInsideTick;
 
         /// <summary>
-        /// The tick's rendered frames: one Movement.Update per frame at its blend, the first frame repeated for a dash freeze's
+        /// The tick's rendered frames: one Movement.Update and one clonesScript.Update per frame (on the frame's Time.deltaTime,
+        /// 0 in a freeze's or pause's repeats) at its blend, the first frame repeated for a dash freeze's
         /// frames (time stands still, TimeStop), and a route's pause (the menu held open for MacroStep.pauseFrames frames)
         /// repeating the frame it holds (MacroEngine.FrameRepeats). A step-up write moves the body at once and later frames
         /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
@@ -908,7 +914,9 @@ namespace IGTAP.EngineSim
         {
             int frozen = _freezeFor >= 0f ? Frames.FrozenFrames(_freezeFor) : 0;
             for (int k = 0; k < Frames.Alphas.Length; k++)
-                for (int repeat = MacroEngine.FrameRepeats(k, Frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter); repeat >= 0; repeat--)
+            {
+                int repeats = MacroEngine.FrameRepeats(k, Frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                for (int repeat = repeats; repeat >= 0; repeat--)
                 {
                     Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Alphas[k]));
                     _update();
@@ -917,8 +925,10 @@ namespace IGTAP.EngineSim
                         Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
+                    Shop.StepClones(repeat == repeats ? Frames.Step(k) : 0f);
                     OnFrame?.Invoke(Frames.Alphas[k], repeat > 0);
                 }
+            }
             Player.transform.StoreWorldPosition(_stepTo);
         }
 
@@ -1299,7 +1309,6 @@ namespace IGTAP.EngineSim
                 }
                 InterpolatedFrames();
                 Scheduler.Resume(Scheduler.Wait.Frame);
-                Shop.StepClones();
                 Shop.EndOfFrame();
                 Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();

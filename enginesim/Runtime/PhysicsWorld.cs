@@ -1939,6 +1939,7 @@ namespace IGTAP.EngineSim
         internal void AdoptChanged(object snapshot)
         {
             Settle();
+            _b2.Renumber(((PhysicsSnapshot)snapshot).World);
             foreach (Built saved in ((PhysicsSnapshot)snapshot).Changed)
             {
                 ColliderState state = saved.State;

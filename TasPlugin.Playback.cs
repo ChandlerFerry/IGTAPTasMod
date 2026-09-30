@@ -84,8 +84,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// At a playback's start: the camera eased on the wall clock until now, so it starts settled on the player, and the
-        /// clones it frames (clonesLoD) pay the same from the first tick.
+        /// At a playback's start: the camera eased on the wall clock until now, so it starts settled on the player.
         /// </summary>
         void SnapCameraAtPlaybackStart(Movement movement)
         {

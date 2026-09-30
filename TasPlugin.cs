@@ -80,6 +80,7 @@ namespace IGTAPTasMod
             LoadFullTas();
             LoadTechs();
             _engine.AttemptEnded += OnAttemptEnded;
+            _engine.RefreshRewards = RefreshFullTasRewards;
             Application.runInBackground = true;
             _webServer = new WebStudioServer();
             try
@@ -123,6 +124,10 @@ namespace IGTAPTasMod
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();
+            foreach (var drawer in new[] { AccessTools.Method(typeof(PlayerAnimationEventProxy), "RelayFootstep"),
+                         AccessTools.Method(typeof(FloatingNumberScript), "spawnNewFloatingNumber") })
+                _harmony.Patch(drawer, prefix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(BeforePresentationDraw))),
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(AfterPresentationDraw))));
             Logger.LogInfo("TAS Studio " + PluginVersion + " loaded. Use " + WebStudioServer.Url + ". F8 is emergency stop.");
         }
 

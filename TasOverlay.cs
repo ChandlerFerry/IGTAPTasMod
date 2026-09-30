@@ -385,10 +385,14 @@ namespace IGTAPTasMod
                 DrawHitbox(scale);
                 DrawGraze(scale);
             }
-            InputRow live = OverlayListsRun ? null : LiveRow(_overlayPlayer);
-            if (_inputRows.Count > 0) DrawInputPanel(scale, live);
-            else if (live != null) DrawInputPad(InputPadRect(PanelScale(scale)), live, PanelScale(scale));
-            if (_overlayPlayer != null) DrawVelocityPanel(scale);
+            if (OverlayListsRun) DrawCachedPanels(scale);
+            else
+            {
+                InputRow live = LiveRow(_overlayPlayer);
+                if (_inputRows.Count > 0) DrawInputPanel(scale, live);
+                else if (live != null) DrawInputPad(InputPadRect(PanelScale(scale)), live, PanelScale(scale));
+                if (_overlayPlayer != null) DrawVelocityPanel(scale);
+            }
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
         }
 
@@ -979,7 +983,7 @@ namespace IGTAPTasMod
             int slots = InputRowSlots;
             int shown = Mathf.Min(slots, _inputRows.Count);
             Rect panel = new Rect(0f, 0f, width, headerHeight + slots * rowHeight + 12 * scale);
-            Fill(panel, PanelBack);
+            Fill(panel, PanelBase);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
             Fill(new Rect(panel.xMax - 1, panel.y, 1, panel.height), PanelLine);
             Fill(new Rect(panel.x, panel.yMax - 1, width, 1), PanelLine);
@@ -1045,7 +1049,7 @@ namespace IGTAPTasMod
 
         void DrawInputPad(Rect pad, InputRow row, float scale)
         {
-            Fill(pad, PanelBack);
+            Fill(pad, PanelBase);
             Fill(new Rect(pad.xMax - 1, pad.y, 1, pad.height), PanelLine);
             Fill(new Rect(pad.x, pad.y, pad.width, 1), PanelLine);
             float inset = 16 * scale, size = PadStickHeight * scale - 2 * inset;

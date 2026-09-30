@@ -27,8 +27,6 @@ namespace IGTAP.EngineSim.Cli
 
         (int pulls, double cpu, long gain) Spot(string lever, int goal) { return _spots.TryGetValue((lever, goal), out var s) ? s : (0, 0, 0); }
 
-        /// <summary>Less search than this (seconds, every session) and no gain yet: too early to judge.</summary>
-        const double EarlySearch = 600;
         /// <summary>The chance of a gain in the next hour at or above which more search is "likely", below which "unlikely".</summary>
         const double LikelyHour = .6, UnlikelyHour = .25;
 
@@ -83,7 +81,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// The outlook: the chance of beating the best with more search, from when the gains came. Gains are taken as a Poisson
-        /// process whose rate is estimated over the recent half of all search (every session, at least EarlySearch), with a
+        /// process whose rate is estimated over the recent half of all search (every session), with a
         /// Jeffreys prior: k gains in that window W give P(a gain within t more) = 1 - (W / (W + t))^(k + 1/2), and a median wait of
         /// W (2^(1/(k + 1/2)) - 1). The recent half, not all of it, because an anytime search's gains thin out: early gains don't
         /// promise later ones. The floor is the model's (the best less every searched goal's gap to its bound: no route on these
@@ -96,7 +94,7 @@ namespace IGTAP.EngineSim.Cli
             double searched = _pastSearch + (_clock.Elapsed - _autoWall0).TotalSeconds;
             List<(double at, long gain)> gains = _pastGains
                 .Concat(_curve.Skip(1).Select((c, i) => (at: _pastSearch + c.wall, gain: _curve[i].ticks - c.ticks))).Where(g => g.gain > 0).ToList();
-            double window = Math.Max(searched / 2, Math.Min(searched, EarlySearch));
+            double window = searched / 2;
             int recent = gains.Count(g => g.at >= searched - window);
             double shape = recent + .5;
             double Chance(double more) => window <= 0 || more <= 0 ? 0 : 1 - Math.Pow(window / (window + more), shape);
@@ -108,7 +106,7 @@ namespace IGTAP.EngineSim.Cli
 
             // The goals the loop searches and the timer counts (a course record's goals up to the start gate count for neither).
             List<GoalRow> searchedGoals = _model.Where(r => InFocus(r.K) && r.K > TimerGoal).ToList();
-            long floor = _best.Last - searchedGoals.Sum(r => r.Gap);
+            long floor = _best.Last - searchedGoals.Sum(r => r.Room);
             double headroom = searchedGoals.Sum(r => r.Expected);
             List<GoalRow> hot = searchedGoals.Where(r => r.Expected >= .5).OrderByDescending(r => r.Expected).Take(3).ToList();
             List<(Arm arm, double score)> ranked = RankArms();
@@ -131,17 +129,16 @@ namespace IGTAP.EngineSim.Cli
                 headline = "Nothing left to try: no tactic the scheduler has is expected to pay any more.";
                 advice.Add("Stop. More time repeats what already ran.");
             }
-            else if (searched < EarlySearch && gains.Count == 0)
-            {
-                verdict = "early";
-                headline = $"Too early to tell: {Span(searched)} of search so far.";
-                advice.Add($"Let it run at least {Span(EarlySearch - searched)} more before judging.");
-            }
             else
             {
-                verdict = pHour >= LikelyHour ? "likely" : pHour >= UnlikelyHour ? "possible" : "unlikely";
-                headline = $"{(verdict == "likely" ? "Likely" : verdict == "possible" ? "Possible" : "Unlikely")} to improve: about {Percent(pHour)} chance of a gain in the next hour of search.";
-                if (verdict == "likely") advice.Add($"Keep it running: {recent} gain{(recent == 1 ? "" : "s")} in the last {Span(window)} of search.");
+                // With no gain in the window the chance is the prior's half gain alone (62% an hour after 20 minutes): what
+                // too little search can't rule out, not a pace, so it never reads as likely.
+                verdict = pHour >= LikelyHour && recent > 0 ? "likely" : pHour >= UnlikelyHour ? "possible" : "unlikely";
+                headline = recent == 0 && verdict == "possible"
+                    ? $"Unproven: no gain in {Span(window)} of search. {Percent(pHour)} an hour is only what so little search can't rule out."
+                    : $"{(verdict == "likely" ? "Likely" : verdict == "possible" ? "Possible" : "Unlikely")} to improve: about {Percent(pHour)} chance of a gain in the next hour of search.";
+                if (recent == 0 && verdict == "possible") advice.Add($"No sign yet that more search pays. Stop unless you want another {Span(median)} to find out.");
+                else if (verdict == "likely") advice.Add($"Keep it running: {recent} gain{(recent == 1 ? "" : "s")} in the last {Span(window)} of search.");
                 else if (verdict == "possible") advice.Add($"Worth about {Span(median)} more: at this pace, half the time the next gain comes by then.");
                 else advice.Add($"Stop, or change the search: at this pace the next gain is a coin flip only after {Span(median)} more.");
             }

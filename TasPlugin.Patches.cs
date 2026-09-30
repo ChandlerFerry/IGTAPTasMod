@@ -70,11 +70,30 @@ namespace IGTAPTasMod
         // real frame times:
         // - Movement.TimeStop's freeze (IE_TimeStop) counts unscaledDeltaTime: it froze for 3, 8 and 7 frames at 240 fps,
         //   each one a Movement.Update that can step up;
-        // - cameraMover.LateUpdate eases the camera by unscaledDeltaTime, and the camera decides which clones are on screen
-        //   (clonesLoD) and so how they pay;
+        // - cameraMover.LateUpdate eases the camera by unscaledDeltaTime;
         // - ObjectBobber.FixedUpdate bobs its object by unscaledTime.
         // While playback is paced they read the fixed clock's frame step and its running total instead (FixedFrameStep,
         // FixedUnscaledTime); otherwise the wall clock, as before. timer.Update (the play-time display) is left alone.
+        // Presentation that turbo and the offline engine don't play draws UnityEngine.Random at 1x: the run animation's footstep
+        // event (PlayerAnimationEventProxy.RelayFootstep, on rendered frames; its sound draws twice) and a floating number
+        // (spawnNewFloatingNumber, six draws; turbo spawns none). In a Full-TAS run they play but give the RNG back, so the fixed
+        // seed's draws (clone rolls) are the same at 1x as judged (README exception 11). Movement's own PlayFootstep calls (a
+        // landing, in the physics step) draw as before, in all three.
+        static UnityEngine.Random.State _beforePresentation;
+        static bool _presentationHeld;
+
+        static void BeforePresentationDraw()
+        {
+            _presentationHeld = Instance != null && Instance._fullTas != null;
+            if (_presentationHeld) _beforePresentation = UnityEngine.Random.state;
+        }
+
+        static void AfterPresentationDraw()
+        {
+            if (_presentationHeld) UnityEngine.Random.state = _beforePresentation;
+            _presentationHeld = false;
+        }
+
         private void PatchWallClock()
         {
             // The local iterator IE_TimeStop compiles to "<TimeStop>g__IE_TimeStop|…" on Movement or on its closure class.

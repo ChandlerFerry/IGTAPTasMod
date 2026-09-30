@@ -118,9 +118,9 @@ namespace IGTAP.EngineSim
             }
             _localsHash = HashLocals();
 
-            // Scene-load order (instance id, highest first), as turbo steps them (TurboRunner.Run): the order decides which course
-            // gets which fast/big rolls when two spawn on one tick.
-            clonesScript[] scripts = world.All<clonesScript>().OrderByDescending(s => s.GetInstanceID()).ToArray();
+            // 1x's Update order (instance id, lowest first), as turbo steps them (TurboRunner.Run): the order decides which course
+            // gets which fast/big rolls when two spawn in one frame.
+            clonesScript[] scripts = world.All<clonesScript>().OrderBy(s => s.GetInstanceID()).ToArray();
             var clonesJson = new Dictionary<int, JsonElement>();
             foreach (JsonElement c in economy.GetProperty("clones").EnumerateArray()) clonesJson[c.GetProperty("id").GetInt32()] = c;
             _clones = new Clones[scripts.Length];
@@ -142,6 +142,12 @@ namespace IGTAP.EngineSim
             if (dict == null) return;
             foreach (KeyValuePair<globalStats.globalUpgradeSet, double> e in dict)
                 if ((int)e.Key >= 0 && (int)e.Key < GlobalCount) _global[(int)e.Key] = e.Value;
+        }
+
+        /// <summary>MacroEngine.RefreshRewards: an active course with local upgrades updates its reward (TasPlugin's the same set).</summary>
+        internal void RefreshReward(courseScript course)
+        {
+            if (course.gameObject.activeInHierarchy && LocalIndex(course.localUpgradesScript) >= 0) UpdateReward(course);
         }
 
         int LocalIndex(localUpgrades script)

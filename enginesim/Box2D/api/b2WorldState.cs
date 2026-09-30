@@ -91,14 +91,26 @@ namespace Box2D
     public partial class b2World
     {
         // The static bodies' fixture state is numbered: a load skips them when the snapshot's number is the world's. The
-        // numbers start at a random base per world, so a snapshot saved by another world (a state file of another process,
-        // SnapshotStore) can't match by chance and have its static fixtures skipped.
+        // numbers start at a random base per world, and a snapshot decoded from a state file (SnapshotStore) is renumbered
+        // (Renumber), so neither matches by chance and has its static fixtures skipped.
         private long m_staticEpoch = (long)(uint)System.Random.Shared.Next() << 32;
         private long m_staticValuesEpoch = -1;
 
         internal void StaticChanged(b2Body body)
         {
             if (body == null || body.m_type == b2BodyType.Static) m_staticValuesEpoch = ++m_staticEpoch;
+        }
+
+        /// <summary>
+        /// A snapshot decoded into this world (SnapshotStore) gets a number of its own: its fixtures are this world's objects bound
+        /// at decode time, which need not be the ones another snapshot of the same saved number holds, so a load of it must not
+        /// skip the static bodies.
+        /// </summary>
+        public void Renumber(object stateObject)
+        {
+            var state = (b2WorldState)stateObject;
+            state.staticEpoch = ++m_staticEpoch;
+            foreach (b2WorldState.BodyRec rec in state.bodies) rec.staticEpoch = state.staticEpoch;
         }
 
         // Each body's last saved record. Its fixture arrays are shared with the next record while the fixtures match, and

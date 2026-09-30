@@ -31,7 +31,7 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
   outlook?: Outlook | null; pulls?: PullNow[] };
 /** Improve's outlook: the chance more search beats the best (a Poisson rate over the recent half of all search, every Improve
  * of this target counted), the model's floor and headroom, and what else there is to try. Seconds are search (wall) seconds. */
-type Outlook = { verdict: "early" | "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
+type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
   best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: number; label: string; expected: number; slow: string }[];
   searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
   window: number; recent: number; chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[] };
@@ -460,8 +460,8 @@ const pct=(p:number)=>`${Math.round(p*100)}%`;
 
 /** Improve's answer to "should I keep going?": the verdict, what to do, and the numbers behind it. */
 function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
-  const odds=o.verdict!=="early"&&o.verdict!=="floor"&&o.verdict!=="exhausted";
-  const tone=o.verdict==="likely"?"good":o.verdict==="possible"||o.verdict==="early"?"maybe":"bad";
+  const odds=o.verdict!=="floor"&&o.verdict!=="exhausted";
+  const tone=o.verdict==="likely"?"good":o.verdict==="possible"?"maybe":"bad";
   const room=o.bestTicks-o.floorTicks;
   return <div className={`outlookCard ${tone}`}>
     <p className="eyebrow">SHOULD IT KEEP GOING?</p>
@@ -469,13 +469,13 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
     <ul className="outlookAdvice">{o.advice.map((a,i)=><li key={i}>{a}</li>)}</ul>
     <div className="outlookStats">
       <div><span>Chance of a gain</span><strong>{odds?`${pct(o.chanceHour)} per hour`:"—"}</strong>
-        <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":o.verdict==="early"?"not enough search to judge":"more search won't help"}</small></div>
+        <small>{odds&&o.remaining>0?`${pct(o.chanceRemaining)} in this run's last ${searchSpan(o.remaining)}`:odds?"this run's minutes are up":"more search won't help"}</small></div>
       <div><span>Next gain</span><strong>{odds?`~${searchSpan(o.medianWait)}`:"—"}</strong>
         <small>{odds?`median wait at this pace${o.typicalGain!=null?` · gains so far ~${o.typicalGain} ticks each`:""}`:""}</small></div>
       <div><span>Searched</span><strong>{searchSpan(o.searched)}</strong>
         <small>{o.sessions} Improve run{o.sessions===1?"":"s"} · {o.gains?`${o.gains} gain${o.gains===1?"":"s"} (−${o.gained} ticks), last ${searchSpan(o.lastGainAgo??0)} ago`:"no gain yet"}</small></div>
       <div><span>Room to the floor</span><strong>{room} ticks</strong>
-        <small>floor {o.floor.toFixed(2)}s (distance ÷ top speed) · model expects ~{o.headroom} ticks findable</small></div>
+        <small>floor {o.floor.toFixed(2)}s (moving at top speed, dropping the laps spare cash covers) · model expects ~{o.headroom} ticks findable</small></div>
     </div>
     {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
       <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`run ${p.pulls}× here before (${searchSpan(p.cpu)} CPU), ${p.gained?`−${p.gained} ticks`:"no gain"}`:"first time here"}{p.expected>0?` · ~${p.expected} ticks expected here`:""}</li>)}</ul></div>}

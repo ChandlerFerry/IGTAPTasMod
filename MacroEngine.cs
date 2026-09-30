@@ -131,6 +131,17 @@ namespace IGTAPTasMod
             public float CrossStep { get { return _crossStep; } }
             readonly float _prevStep, _crossStep, _frozenStep;
 
+            /// <summary>Frame k's Time.deltaTime (the crossing frame's, then 1/fps each; the tick's frames add up to 0.02). A
+            /// freeze's or pause's repeats of a frame run at 0: timeScale is 0 until it lifts.</summary>
+            public float Step(int k) { return k == 0 ? _updateCross : _prevStep; }
+
+            /// <summary>
+            /// The crossing frame's Time.deltaTime as 1x reads it. 1x's ticks come 0.0199999929 s apart on the fixed clock, not
+            /// 0.02f, so that frame advances 0.00214285006 s (a 280 fps probe's frame times; clone pointers and spawn timers
+            /// then match 1x to the bit), 6.6e-9 short of <see cref="CrossStep"/>. Other rates keep CrossStep.
+            /// </summary>
+            readonly float _updateCross;
+
             public FrameGrid(int fps)
             {
                 double frame = 1.0 / fps, offset = frame / 2, tick = 0.02f;
@@ -141,6 +152,7 @@ namespace IGTAPTasMod
                 _crossStep = (float)(tick + offset - last);
                 _prevStep = Alphas.Length >= 2 ? (float)frame : _crossStep;
                 _frozenStep = Alphas.Length >= 2 ? (float)frame : (float)tick;
+                _updateCross = fps == PlaybackFrameRate ? BitConverter.Int32BitsToSingle(0x3b0c6f0f) : _crossStep;
             }
 
             public int FrozenFrames(float duration)
@@ -367,9 +379,20 @@ namespace IGTAPTasMod
                 || reason == FullTasFinishReason;
         }
 
+        /// <summary>
+        /// Every <see cref="RewardRefreshTicks"/> physics ticks of a run: the courses' UpdateReward. The game repeats it every 5 s
+        /// from a random phase (courseScript.Start's InvokeRepeating), and a course's clones pay its reward as last updated; a
+        /// Full-TAS run cancels that timer and its host (the plugin, the offline engine) runs it here, on one phase for 1x, turbo
+        /// and the engine.
+        /// </summary>
+        public Action RefreshRewards;
+        public const int RewardRefreshTicks = 250;
+
         public void CountPhysicsTick()
         {
-            if (IsRunning && (_runTicks > 0 || _countEveryPhysicsTick)) _physicsTicks++;
+            if (!IsRunning || !(_runTicks > 0 || _countEveryPhysicsTick)) return;
+            _physicsTicks++;
+            if (_physicsTicks % RewardRefreshTicks == 0) RefreshRewards?.Invoke();
         }
 
         public void CompleteFromGame(string reason = "Course finish detected", float authoritativeTime = 0f)

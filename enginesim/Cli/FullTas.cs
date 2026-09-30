@@ -200,9 +200,18 @@ namespace IGTAP.EngineSim.Cli
             // --reset-study: each reset in the best against the way on without it (FullTasResets.cs); then stops.
             if (_resetStudy)
             {
+                ReadFocus(_args);
                 ResetStudy();
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 Emit(new { type = "done", best = RouteJson(_best) });
+                return 0;
+            }
+            // --record-lap K: the lap finishing at goal K searched on the course timer from its restart (FullTasAutoGoals.cs); then stops.
+            int recordLap = Solve.Option(_args, "--record-lap", 0);
+            if (recordLap > 0)
+            {
+                RecordLapSearch(recordLap);
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
 
@@ -1138,7 +1147,10 @@ namespace IGTAP.EngineSim.Cli
                     return;
                 }
                 slower++;
-                if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit) broken = candidate;
+                // Only one ahead at the window's last goal is worth re-finding the rest for (spliced into the whole run, a window that
+                // was faster on its own can arrive later: a buy waiting on cash).
+                if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit
+                    && candidate.GoalPhysics[limit - 1] < best.GoalPhysics[limit - 1]) broken = candidate;
             }
             if (broken == null)
             {

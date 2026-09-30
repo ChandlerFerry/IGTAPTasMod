@@ -635,6 +635,17 @@ namespace IGTAP.EngineSim.Cli
         Step Stand(SimSnapshot at, int length, Target target)
         {
             Step best = null;
+            foreach (List<InputTick> inputs in HopWays())
+            {
+                Step s = Reaches(at, length, inputs, target);
+                if (s != null && (best == null || s.Physics < best.Physics)) best = s;
+            }
+            return best;
+        }
+
+        /// <summary>Stand's ways: a walk of 0 to 60 ticks left or right, then hops in place (or standing) for ShortWaitTicks.</summary>
+        static IEnumerable<List<InputTick>> HopWays()
+        {
             foreach (int period in new[] { 0, 30, 40, 50 })
                 foreach (int hold in period == 0 ? new[] { 0 } : new[] { 6, 14 })
                     for (int walk = 0; walk <= 60; walk += 4)
@@ -646,10 +657,8 @@ namespace IGTAP.EngineSim.Cli
                                 int k = period == 0 ? -1 : t % period;
                                 inputs.Add(new InputTick { press = k == 0, held = k >= 0 && k < hold, release = k == hold });
                             }
-                            Step s = Reaches(at, length, inputs, target);
-                            if (s != null && (best == null || s.Physics < best.Physics)) best = s;
+                            yield return inputs;
                         }
-            return best;
         }
 
         /// <summary>Whether goal's box is affordable after standing still for ticks from at (the clones' income meanwhile).</summary>
