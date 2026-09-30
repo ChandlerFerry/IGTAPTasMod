@@ -175,6 +175,7 @@ namespace IGTAP.EngineSim.Cli
             // spliced. The two of each kind that get furthest (then soonest) are re-found under their goals, held to a CPU budget, not
             // to the best. So is an add that stops ahead of the best (its extra Cash buys a box early on the way on), and one in place
             // of a walk, from its laps' finish.
+            if (!adopted && ReferenceEquals(_best, best) && !TimeUp) adopted = Reroute(edits, results, best);
             GoalEdit invested = null;
             var investments = Investments(edits, results, best);
             var waiting = new HashSet<GoalEdit>(investments.Select(x => x.e));
@@ -1119,6 +1120,42 @@ namespace IGTAP.EngineSim.Cli
                 waited += wait;
                 waits.Add($"{wait} idle ticks before input {r} (goal {g})");
             }
+        }
+
+        /// <summary>Ladders a pull reroutes (each a planner run, --piece-minutes a piece).</summary>
+        const int Reroutes = 1;
+
+        /// <summary>
+        /// Economy change, then reroute: the fastest ladders that played through (their goals fitted to their strays) but don't beat
+        /// the best get the goals from the ladder up to the next unlock buy planned again on their route by the engine farm planner
+        /// (<see cref="Replan"/>, joined: the plan, the old way on after the target, the waits re-timed from the start). A planned run
+        /// that beats the best is adopted as a goals edit.
+        /// </summary>
+        bool Reroute(List<GoalEdit> edits, (Route route, Route partial, string why)[] results, Route best)
+        {
+            foreach (int i in Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route != null)
+                .OrderBy(i => results[i].route.Live).Take(Reroutes))
+            {
+                GoalEdit e = edits[i];
+                int kept = e.Retune;
+                string target = e.Labels.Skip(kept).FirstOrDefault(l => l.StartsWith("buy:", StringComparison.Ordinal) && !FullTasGoal.IsEconomy(l));
+                if (target == null || TimeUp) continue;
+                PlanResult p;
+                try { p = Replan(results[i].route, GoalsOf(e.Labels), kept, new[] { target }, true); }
+                catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
+                Route r = p.Run;
+                bool complete = r != null && r.Progress == p.Goals.Length;
+                Log($"auto goals: reroute of {e.Text}: goals {kept + 1}.. to {target} planned again ({p.Planned?.Length ?? 0} goals): "
+                    + (complete ? $"{r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s, {r.Last - best.Last:+0;-0} ticks against the best" : "doesn't play through"));
+                if (!complete || r.Live >= best.Live) continue;
+                // The planned goals map to no old goal; those before the ladder and after the target to the edit's.
+                int tp = Array.IndexOf(p.Goals, target, kept), te = Array.IndexOf(e.Labels, target, kept);
+                int[] oldOf = Enumerable.Range(0, p.Goals.Length).Select(j => j < kept ? e.OldOf[j] : j >= tp ? e.OldOf[j - tp + te] : -1).ToArray();
+                var planned = new GoalEdit { Kind = "reroute", Text = $"{e.Text}, rerouted to {target}", Key = e.Key + ":reroute", Labels = p.Goals, OldOf = oldOf,
+                    Inputs = r.Inputs, First = e.First, Last = e.Last };
+                if (AdoptGoals(planned, r, best)) return true;
+            }
+            return false;
         }
 
         /// <summary>A play fits its goals to its strays at most this often; a move looks this many goals ahead for the stray box's buy.</summary>
