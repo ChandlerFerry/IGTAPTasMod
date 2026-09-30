@@ -291,7 +291,7 @@ namespace IGTAP.EngineSim.Cli
                             }
                             _heldBack[key] = basis;
                         }
-                        if (basis == null) { s.Why = $"{k} laps: the run with the earlier laps held back to {s.T + k} loses a goal"; break; }
+                        // One that loses a goal (a stray buy) is spliced with the ladder into the best instead, its goals fitted as it plays (StrayFit).
                     }
                     if (onlyK == 0 || k == onlyK) s.Ladders.Add((k, rungs, hold, basis));
                 }
@@ -402,7 +402,19 @@ namespace IGTAP.EngineSim.Cli
             }
             // A held-back run (the best's own goals) that beats the best is a best of its own: saved as any (the run file, offline-best).
             Route won = spots.SelectMany(s => s.Ladders).Select(l => l.basis).Where(b => b != null && b.Progress == _goals && b.Live < best.Live).OrderBy(b => b.Live).FirstOrDefault();
-            if (won != null) Commit(won, "ladder study: earlier laps held back, the waits re-timed");
+            int fastest = Enumerable.Range(0, edits.Count).Where(i => results[i].route != null).OrderBy(i => results[i].route.Live).DefaultIfEmpty(-1).First();
+            if (fastest >= 0 && results[fastest].route.Live < Math.Min(best.Live, won?.Live ?? long.MaxValue))
+            {
+                // Its goals (the ladder's, fitted to its strays) become the run's, the old list its lineage, as an adopted goals edit.
+                GoalEdit e = edits[fastest];
+                string[] from = _labels;
+                SwitchGoals(e.Labels);
+                _goalLineage.Add(from);
+                _best = StandIn(e, best, false);
+                _goalsEdit = e.Text;
+                Commit(results[fastest].route, "ladder study: " + e.Text);
+            }
+            else if (won != null) Commit(won, "ladder study: earlier laps held back, the waits re-timed");
         }
 
         /// <summary>The edit played (<see cref="Played"/>) and, when it plays through, the waits from goal <see cref="GoalEdit.Retune"/>

@@ -1056,6 +1056,7 @@ namespace IGTAP.EngineSim.Cli
             int newAt = e.NewAt, oldAt = e.OldAt;
             var waits = new List<string>();
             long waited = 0;
+            int fits = 0;
             for (int fix = 0; ; fix++)
             {
                 sim.SetStart(origin, 0);
@@ -1064,7 +1065,17 @@ namespace IGTAP.EngineSim.Cli
                 var part = new Route { Inputs = inputs, Progress = rr.Progress, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, GoalHeld = rr.GoalHeldFrames, EndReason = rr.EndReason };
                 if (rr.Progress == n)
                     return (new Route { Inputs = inputs, Progress = n, GoalInput = rr.GoalInputTicks, GoalPhysics = rr.GoalPhysicsTicks, GoalHeld = rr.GoalHeldFrames, EndReason = rr.EndReason }, null,
-                        waits.Count == 0 ? null : "waits " + string.Join(", ", waits));
+                        waits.Count + fits == 0 ? null : string.Join("; ", new[] { waits.Count == 0 ? null : "waits " + string.Join(", ", waits), fits == 0 ? null : $"{fits} stray fits" }.Where(s => s != null)));
+                // A stray buy isn't a dead end: the goals are fitted to what the run buys (StrayFit), before any wait.
+                if (fits < MaxStrayFits && StrayFit(sim, origin, e, inputs, rr) is (string[] labels, int[] oldOf))
+                {
+                    e.Labels = labels;
+                    e.OldOf = oldOf;
+                    n = labels.Length;
+                    fits++;
+                    fix--;
+                    continue;
+                }
                 int g = rr.Progress + 1;
                 string missed = $"misses goal {g} ({e.Labels[g - 1]}: {rr.EndReason})";
                 if (fix == MaxPadFixes) return (null, part, $"{missed} after {MaxPadFixes} waits");
@@ -1108,6 +1119,67 @@ namespace IGTAP.EngineSim.Cli
                 waited += wait;
                 waits.Add($"{wait} idle ticks before input {r} (goal {g})");
             }
+        }
+
+        /// <summary>A play fits its goals to its strays at most this often; a move looks this many goals ahead for the stray box's buy.</summary>
+        const int MaxStrayFits = 40, StrayFitWindow = 16;
+        static readonly object StrayLog = new object();
+
+        /// <summary>
+        /// StrayFit: a run <paramref name="rr"/> of <paramref name="e"/>'s inputs that bought box B off its goal list (strict buys,
+        /// README Rules 38: every buy is a goal) gets its goals fitted to what it buys: B's next buy goal within StrayFitWindow moved
+        /// up to the stray, <c>buy:B</c> put in there, or the goal it stopped at dropped (an economy buy whose touch can't pay any
+        /// more). Each is replayed; the one that gets furthest (past the stray) is returned with its old-goal map, null when none
+        /// does or B has no economy buy label in the run. Leaves <paramref name="sim"/> on the fitted goals.
+        /// </summary>
+        (string[] labels, int[] oldOf)? StrayFit(Simulation sim, SimSnapshot origin, GoalEdit e, List<InputTick> inputs, RunResult rr)
+        {
+            string box = StrayBox(rr.EndReason);
+            int p = rr.Progress;
+            if (box == null || p >= e.Labels.Length) return null;
+            string label = _runGoals.Goals.FirstOrDefault(g => g.kind == FullTasGoal.Buy && g.boxes?.Length == 1 && g.boxes[0].Split('#')[0] == box && FullTasGoal.IsEconomy(g.label))?.label;
+            var options = new List<(string how, List<string> labels, List<int> oldOf)>();
+            if (label != null)
+            {
+                int later = Enumerable.Range(p + 1, Math.Max(0, Math.Min(e.Labels.Length, p + 1 + StrayFitWindow) - p - 1)).FirstOrDefault(k => e.Labels[k] == label);
+                if (later > p)
+                {
+                    var l = e.Labels.ToList(); var o = e.OldOf.ToList();
+                    l.RemoveAt(later); l.Insert(p, label);
+                    o.Insert(p, o[later]); o.RemoveAt(later + 1);
+                    options.Add(($"move goal {later + 1} ({label}) to {p + 1}", l, o));
+                }
+                var li = e.Labels.ToList(); var oi = e.OldOf.ToList();
+                li.Insert(p, label); oi.Insert(p, -1);
+                options.Add(($"insert {label} at goal {p + 1}", li, oi));
+            }
+            if (e.Labels[p].StartsWith("buy:", StringComparison.Ordinal) && FullTasGoal.IsEconomy(e.Labels[p]))
+            {
+                var ld = e.Labels.ToList(); var od = e.OldOf.ToList();
+                ld.RemoveAt(p); od.RemoveAt(p);
+                options.Add(($"drop goal {p + 1} ({e.Labels[p]})", ld, od));
+            }
+            (string how, string[] labels, int[] oldOf, int progress, string why) pick = default;
+            foreach (var (how, l, o) in options)
+            {
+                string[] labels = l.ToArray();
+                if (FullTasGoal.EditRefused(_labels, labels) != null) continue;
+                sim.UseGoals(sim.Goals.For(GoalsOf(labels)));
+                sim.SetStart(origin, 0);
+                sim.Goals.Limit = labels.Length;
+                RunResult r = sim.Run(inputs, null, null, 1000000);
+                // Progress in the old numbering's terms: a goal put in counts one more, a goal dropped one less.
+                int reach = r.Progress - (labels.Length - e.Labels.Length);
+                if (reach > p && (pick.how == null || reach > pick.progress)) pick = (how, labels, o.ToArray(), reach, r.Progress == labels.Length ? "complete" : r.EndReason);
+            }
+            lock (StrayLog)
+            {
+                Log($"auto stray fit: {e.Text}: bought {box} at goal {p + 1} ({e.Labels[p]}): " + (pick.how == null ? $"none of {options.Count} fits gets past it" : $"{pick.how}, reaches goal {pick.progress} ({pick.why})"));
+                if (_autoLog != null)
+                    AutoWrite(new { type = "strayFit", edit = e.Text, box, goal = p + 1, fit = pick.how, tried = options.Count, reach = pick.how == null ? p : pick.progress, result = pick.why });
+            }
+            sim.UseGoals(sim.Goals.For(GoalsOf(pick.how == null ? e.Labels : pick.labels)));
+            return pick.how == null ? null : (pick.labels, pick.oldOf);
         }
 
         // ---------------------------------------------------------------- adopting an edit
