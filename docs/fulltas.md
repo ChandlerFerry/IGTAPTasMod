@@ -1921,6 +1921,21 @@ level it can now afford). Record-break ladders gain for good only while a course
 Course 2 before the run leaves it for Course 3 (ticks 7717-10367 in 353.32 s) and Course 3 (11655-14346), not the
 post-statue Course 2 laps (planning model in that section, pending measurement).
 
+**Records on build 25630570 (2026-09-30).** 353.32 s (the old build's 353.32 s inputs, goals fitted to 279 for the
+new economy's strays), 352.74 s (the goals part dropped the pre-dash Course 2 lap before `buy:buyds`, 277 goals),
+351.24 s (every wait re-timed from the start: `buystatue` -52 ticks, `buydj` -75; `FullTas.Commit` now does this to
+every new best), 350.65 s (a K=2 Course 3 ladder at goals 250-251, 19 clones with the reserve, laps 195 and 194 over
+five earlier Course 3 laps held back to 196, fitted by StrayFit; 279 goals), 350.35 s (Course 1's lap at goals 86-87
+dropped, 276 goals), 347.98 s and 347.28 s (`reward:bonus5` after `reward:bonus2`: +1 global reward level, rewards
+x17 against x15 from Course 3's start; the detour costs `start:3` 2.65 s and is back by goal 250, -105 ticks by
+`buydj`; 277 goals, put into `fulltas.json` by hand since a reward goal is refused as an edit,
+`fulltas.json.before-bonus5-20260930-145146`). Bonus 5 before bonus 2 (from goal 172's flying state, no restart) re-found
+no faster. What didn't pay on this build: post-statue Course 2 laps and ladders (no reserve: +2.5 to +19 s), Course 1
+hold-back ladders (miss a goal), Course 3 hold-backs without a ladder (the -119 ticks first seen were the re-time),
+lap drops and adds after bonus 5, and `fulltas-plan`'s stretch plans (behind the polished box-row walks). Open: K=3..8
+at goals 250-251 (`SlowOne` can't slow the lap at 200-201 past 196), and the walk to `buystatue` dies after the level
+fits (Reroute is meant to re-find it).
+
 **Economy re-evaluation** (`fulltas-plan` from `FalseEnding-Any%`'s 487.14 s best, per stretch; ticks of the target buy):
 Course 1 to `buywj` 5445 against the best's 5327, `reward:bonus1` to `buyds` 12142 against 11672, statue to `buydj` 23192
 against 23083, and `reward:bonus3` to `buystatue` 16726 against 16903 (177 sooner, but with fewer Course 3 levels
