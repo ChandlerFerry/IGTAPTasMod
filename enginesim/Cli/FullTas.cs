@@ -1589,7 +1589,19 @@ namespace IGTAP.EngineSim.Cli
                 complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals, goalsEdit = _goalsEdit,
                 goals = _goalsEdit == null ? null : _labels });
             _committed?.Invoke(r, where);
+            // Every complete best has its waits re-timed to their Cash from the start: an edit (a goals adoption, a window)
+            // moves the Cash every later wait was made for, and the loop's own re-timings start at a buy site.
+            if (r.Progress != _goals || _retuningCommit) return;
+            _retuningCommit = true;
+            try
+            {
+                Route re = Retune(_eval, _origin, r, r.Inputs, 0);
+                if (re != null && re.Progress == _goals && re.Live < r.Live) Commit(re, where + ", waits re-timed from the start");
+            }
+            finally { _retuningCommit = false; }
         }
+
+        bool _retuningCommit;
 
         /// <summary>After a new best is kept (a course run: CourseAuto writes the course's offline best); null for a Full-TAS run.</summary>
         Action<Route, string> _committed;

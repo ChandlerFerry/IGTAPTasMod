@@ -1246,7 +1246,10 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   per step; contact masks = `(layerMatrix[layer] | include) & ~exclude`, both sides must accept.
 - Callbacks: collisions from Box2D touching flags (start of step); triggers from an overlap test after the step, and a
   trigger the pair wasn't touching also enters when its sensor contact touched at the start of the step (a wall jump's
-  push into a wall that the step undoes still enters the checkpoint behind it); Enter on the first step, Stay after; the
+  push into a wall that the step undoes still enters the checkpoint behind it), and exits in that step: it isn't touching
+  after it, so an overlap on the next step enters again (a dash's pull-forward into a box's strip, moved back out by the
+  step, buys on the Stay a step after the overlap: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Trigger entered on
+  a touch only at the step's start*); Enter on the first step, Stay after; the
   start state primes existing contacts as already touching.
 - A trigger touch lapses across a pull-back (a write moves the player out before the step, the step moves it back in:
   Exit then Enter instead of Stay) only when both colliders sit on non-static bodies and their broadphase fat AABBs

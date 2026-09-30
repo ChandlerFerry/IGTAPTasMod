@@ -758,3 +758,20 @@ the probe's tick row always between the engine's rows for the tick before and th
 match (tick, course, on screen, divisor, rolls). The probe writes its tick row after `Movement.FixedUpdate`
 (`AfterMovementFixedUpdate`), before `Physics2D.Simulate`'s trigger callbacks (a box's buy sound) and the tick's
 rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` writes its row after all of them.
+
+## Trigger entered on a touch only at the step's start
+
+- **Symptom:** on build 25630570, `FalseEnding-Any%` 353.32 s bought Course 3's `CashPerLoop` box offline at tick 14123;
+  turbo and a 1x probe (`fe353new`) buy it at 14124. Cash and the RNG split there (167 of 16,285 ticks against the probe).
+- **Cause:** at tick 14122 the dash's position write moved the player forward from the frame's blend into the box's
+  trigger strip, and the step's dash moved it back out; the next step moved it in again. The engine counted Box2D's touch
+  at the step's start (a pair not touching after the last step) as touching after the step: Enter at 14122, Stay (the
+  buy) at 14123. At 1x such a touch enters and ends in its step, so the next step's overlap enters again: Enter at
+  14123, Stay at 14124.
+- **Fix:** a trigger pair touched only at the step's start gets Enter and Exit in that step and isn't touching after it
+  (`PhysicsWorld.CollectTouching`, `_startOnly`); the start-of-step Enter itself stays (a wall jump's push into a wall
+  enters the checkpoint behind it). The 461-trace replay corpus is byte-identical before and after (dropping the
+  start-of-step touch altogether left it identical too, so the corpus doesn't hold that case). The 353.32 s capture on
+  the new build now matches turbo on every tick (1-17,028: position, Cash, RNG) and the probe's Cash on all 16,285 ticks
+  compared (engine row p against probe row p + 1); the 279-goal route judged in the game at 353.32 s.
+- **Where:** `PhysicsWorld.CollectTouching`, `DispatchCallbacks`, `AdvanceTouching`.

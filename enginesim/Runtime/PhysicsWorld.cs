@@ -95,6 +95,9 @@ namespace IGTAP.EngineSim
         readonly int _velocityIterations, _positionIterations;
         readonly bool _queriesHitTriggers, _queriesStartInColliders;
         HashSet<Pair> _touching = new HashSet<Pair>(), _touchingNext = new HashSet<Pair>();
+        // Trigger pairs touched only at this step's start (Box2D's Collide), not after its move: they enter and exit in the
+        // step, and aren't touching after it (CollectTouching).
+        readonly HashSet<Pair> _startOnly = new HashSet<Pair>();
         readonly BodyState _player;
         readonly List<ColliderState> _changed = new List<ColliderState>();
         readonly List<BodyState> _movedStatic = new List<BodyState>();
@@ -675,6 +678,7 @@ namespace IGTAP.EngineSim
             {
                 Pair p = _pairsNow[i];
                 Queue(p, _touching.Contains(p) && (_lapsed.Count == 0 || !_lapsed.Contains(p)) ? PhaseStay : PhaseEnter, _pairContacts[i]);
+                if (_startOnly.Count > 0 && _startOnly.Contains(p)) Queue(p, PhaseExit, null);
             }
             for (int i = 0; i < _sends.Count; i++)
             {
@@ -697,6 +701,7 @@ namespace IGTAP.EngineSim
             _pairsNow.Clear();
             _touchingNext.Clear();
             _overlapNext.Clear();
+            _startOnly.Clear();
             for (b2Contact c = _b2.GetContactList(); c != null; c = c.GetNext())
             {
                 if (!c.IsEnabled()) continue;
@@ -708,15 +713,21 @@ namespace IGTAP.EngineSim
                 var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
                 bool overlap = trigger && Overlap(c, fa, fb);
                 if (overlap) _overlapNext.Add(pair);
-                bool touching = trigger ? overlap : c.IsTouching();
+                // A touch only at the step's start (a write moved the body into the trigger and the step moved it out) enters
+                // and exits in the step: the next step's overlap enters again (FalseEnding-Any% 353.32's dash pull-forward
+                // into Course 3's CashPerLoop strip at tick 14122: 1x buys on the Stay at 14124, not 14123).
+                bool startOnly = trigger && !overlap && c.IsTouching() && !sa.Rescaled && !sb.Rescaled && !_touching.Contains(pair);
+                bool touching = trigger ? overlap || startOnly : c.IsTouching();
                 if (!touching) continue;
+                if (startOnly) { if (!_touchingNext.Contains(pair)) _startOnly.Add(pair); }
+                else if (_startOnly.Remove(pair)) _touchingNext.Add(pair);
                 if (!_contactsNow.TryGetValue(pair, out List<b2Contact> contacts))
                 {
                     contacts = _contactLists.Count > 0 ? _contactLists.Pop() : new List<b2Contact>(2);
                     _contactsNow.Add(pair, contacts);
                     _pairsNow.Add(pair);
                     _pairContacts.Add(contacts);
-                    _touchingNext.Add(pair);
+                    if (!startOnly) _touchingNext.Add(pair);
                 }
                 contacts.Add(c);
             }
@@ -777,6 +788,7 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _pairsNow.Count; i++)
             {
                 Pair p = _pairsNow[i];
+                if (_startOnly.Count > 0 && _startOnly.Contains(p)) continue;
                 _pairsBefore.Add(p.Trigger && _overlapNext.Contains(p) ? p.Overlapping() : p);
             }
         }
