@@ -178,7 +178,7 @@ namespace IGTAP.EngineSim.Cli
         {
             // --ref routes, replayed on this engine. A complete one faster than the best is the loop's start: the studio passes the
             // run's saved record, which the engine's run file trails when that record was found and judged elsewhere.
-            _parts = ParseParts(Solve.Option(args, "--parts", string.Join(",", AllParts)));
+            _parts = ParseParts(Solve.Option(args, "--parts", string.Join(",", AllParts.Except(OptInParts))));
             // A course run's goals are its waypoints: no economy to edit.
             if (_course != null) _parts.Remove("goals");
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
@@ -281,6 +281,12 @@ namespace IGTAP.EngineSim.Cli
                 if (Part("idle") && !ReferenceEquals(_idledFor, _best))
                 {
                     IdlePull();
+                    continue;
+                }
+                // Every new best (and the start): the wall-coyote restart tech grafted around the best's quick restarts (--parts wallreset).
+                if (Part("wallreset") && !ReferenceEquals(_wallFor, _best))
+                {
+                    WallResetPass();
                     continue;
                 }
                 // Every new best (and the start): the known routes' faster goal runs spliced into it (--parts combine).

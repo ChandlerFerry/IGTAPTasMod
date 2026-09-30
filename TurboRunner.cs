@@ -976,12 +976,13 @@ namespace IGTAPTasMod
                             float frameDt = repeat == repeats ? frames.Step(k) : 0f;
                             foreach (clonesScript c in clones)
                                 if (c != null && c.isActiveAndEnabled) StepClones(c, frameDt);
+                            // Each rendered frame ends with WaitForEndOfFrame: IE_BuyMax buys one level per frame (Simulation.InterpolatedFrames).
+                            EndOfFrame();
                         }
                     }
                     Place(player, _stepTo);
                     Resume(Wait.Frame);
                     OriginFrame();
-                    EndOfFrame();
                     Resume(Wait.EndOfFrame);
                     afterTick?.Invoke();
                 }

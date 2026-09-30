@@ -305,7 +305,7 @@ namespace IGTAP.EngineSim.Cli
         /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs); idle:
         /// each buy's waits for Cash moved under its box (FullTasAutoIdle.cs).</summary>
         /// <summary>Every part, all on by default.</summary>
-        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals", "idle" };
+        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals", "idle", "wallreset" };
         HashSet<string> _parts = new HashSet<string>(AllParts);
         /// <summary>--parts stray's two halves (the stray study switches them one at a time).</summary>
         bool _strayRetime, _strayAvoid;
@@ -626,10 +626,11 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Replays inputs from the start on the loop's simulation, filing every goal touch and chain point, and adds the run to the
-        /// library (once per input list). Returns the replay as a Route.
+        /// library (once per input list). Returns the replay as a Route. Without the library (`--parts` without `lib`): the plain replay.
         /// </summary>
         Route TraceRun(List<InputTick> inputs, string how)
         {
+            if (_lib == null) return Evaluate(inputs);
             Simulation sim = _eval;
             sim.SetStart(_origin, 0);
             sim.Goals.Limit = _goals;

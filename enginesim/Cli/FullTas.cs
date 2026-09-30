@@ -193,7 +193,7 @@ namespace IGTAP.EngineSim.Cli
                             random = new[] { s.s0, s.s1, s.s2, s.s3 } }));
                     };
                 UnityEngine.Random.Drawn = caller => w.WriteLine(JsonSerializer.Serialize(new { kind = "rng", physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, caller }));
-                _eval.Run(inputs, null, null, 400, _ =>
+                _eval.Run(inputs, null, null, 1000000, _ =>
                 {
                     WorldPos p = _eval.PlayerWorld;
                     UnityEngine.Random.State rng = UnityEngine.Random.state;
@@ -247,6 +247,15 @@ namespace IGTAP.EngineSim.Cli
                 ResetStudy();
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 Emit(new { type = "done", best = RouteJson(_best) });
+                return 0;
+            }
+            // --wallreset-study: each quick restart of the best and the wall clings that carry a wall coyote count through it
+            // (FullTasAutoWallReset.cs); then stops.
+            if (_args.Contains("--wallreset-study"))
+            {
+                ReadFocus(_args);
+                WallResetStudy();
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
             // --record-lap K: the lap finishing at goal K searched on the course timer from its restart (FullTasAutoGoals.cs); then stops.
@@ -652,7 +661,7 @@ namespace IGTAP.EngineSim.Cli
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
-            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell);
+            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined);
             solver.Resume = _states.Index;
             solver.NoResets = _noResets;
             TimeSpan begin = _clock.Elapsed, last = begin;
@@ -675,6 +684,7 @@ namespace IGTAP.EngineSim.Cli
                     if (atGoal < baseline)
                     {
                         found.Add(inputs);
+                        _findModes?.Add(how);
                         if (found.Count == 1) Emit(new { type = "found", id, time = Seconds(atGoal) });
                     }
                 }
@@ -733,6 +743,8 @@ namespace IGTAP.EngineSim.Cli
             if (closestPrefix != null) OfferClosest(solver.Closest(), closestPrefix);
             SaveVisits(solver.Visits());
             Status();
+            if (_mined != null)
+                Log($"{title} {span}: {solver.TechGrafted} tech grafts ({string.Join(", ", _mined.Patterns.Select(p => p.Tech).Distinct())}); finds via {(_findModes == null || _findModes.Count == 0 ? "-" : string.Join(", ", _findModes))}");
             lock (window)
             {
                 Emit(new { type = "windowEnd", id, candidates = found.Count, best = windowBest == long.MaxValue ? (double?)null : Seconds(windowBest) });
@@ -1427,6 +1439,12 @@ namespace IGTAP.EngineSim.Cli
                 int prefixLength = (int)Math.Min(run.GoalInput[reached - 1], run.Inputs.Count);
                 var seeds = new List<List<InputTick>> { run.Inputs.Skip(prefixLength).ToList(), old.Inputs.Skip((int)old.GoalInput[reached - 1]).ToList() };
                 List<List<InputTick>> found = SearchWindow("repair", run, prefixLength, limit, seeds, long.MaxValue, _repairMinutes ?? _windowMinutes, 0);
+                if (found.Count == 0 && Rejoin(run, old, reached) is Route rejoined)
+                {
+                    run = rejoined;
+                    _collect?.Invoke(rejoined, where + " (repairing)");
+                    continue;
+                }
                 if (found.Count == 0)
                 {
                     Log($"repair dropped: no route to {_labels[reached]} from the new state");
@@ -1443,6 +1461,33 @@ namespace IGTAP.EngineSim.Cli
                 run = next;
                 _collect?.Invoke(next, where + " (repairing)");
             }
+        }
+
+        /// <summary>How many goals back a stuck repair looks for a goal to rejoin the old way on at (<see cref="Rejoin"/>).</summary>
+        const int RejoinGoals = 16;
+
+        /// <summary>
+        /// A repair with no route to goal <paramref name="reached"/> + 1: the run's inputs to one of the RejoinGoals goals before, then
+        /// the old route's inputs from that goal on, played from where the repair got to. The latest such goal whose splice gets past
+        /// the stuck goal; null when none does. The windows' own finds can leave the player where the old inputs of the next goal
+        /// don't play (FalseEnding-Any%: a payout break re-found to goal 273, 60 ticks ahead, then no way into at:20300.4's
+        /// 100-unit box), while the old inputs from a goal before them still do.
+        /// </summary>
+        Route Rejoin(Route run, Route old, int reached)
+        {
+            for (int k = reached - 1; k >= Math.Max(1, reached - RejoinGoals) && !TimeUp; k--)
+            {
+                long a = run.GoalInput[k - 1], b = old.GoalInput[k - 1];
+                if (a < 0 || b < 0 || b > old.Inputs.Count) continue;
+                var inputs = run.Inputs.Take((int)Math.Min(a, run.Inputs.Count)).ToList();
+                Pad(inputs, a);
+                inputs.AddRange(old.Inputs.Skip((int)b));
+                Route r = Evaluate(inputs);
+                if (r.Progress <= reached) continue;
+                Log($"repair: no route to {_labels[reached]} from the new state; rejoined the old way on at goal {k} ({_labels[k - 1]}): {Describe(r)}");
+                return r;
+            }
+            return null;
         }
 
         static void Pad(List<InputTick> inputs, long count)

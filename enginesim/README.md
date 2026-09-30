@@ -1007,7 +1007,7 @@ section.
   the best's path and speed probes including the bounce chain), the best's slow stretches and the routes the loop itself
   found rank the goals; every window gain has its tail re-found (`Repair`, dropped once the lower bounds say it can't
   win); every new best is replayed on a fresh simulation before it is kept. `--minutes 0` prints the lower-bound table.
-  `--parts` (default `lib,tail,combine,sched,ctg,macros,stray,goals`; `none` is the loop above alone) adds the goal-state
+  `--parts` (default `lib,tail,combine,sched,ctg,macros,stray,goals,idle`; `none` is the loop above alone) adds the goal-state
   library (the wait fix, route-sync, tail windows after a broken splice, `combine`: known routes' faster goal runs spliced
   into each new best), the pull scheduler in place of the bandit while it has pulls, the cost-to-go repair bound, mined
   macro seeds and goal-list edits (`goals`: lap drops and adds, buy regroups, record laps, adopted when the whole run is
@@ -1234,9 +1234,12 @@ place; while it plays, the studio's top bar turns violet with a HUMANIZED badge 
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
   and whether turbo can buy the box depends on the live save (1to2 NONE:
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Wall jump box the live save had bought*).
-- Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): turbo resumes the coroutine at every tick's end
-  (`TurboRunner.EndOfFrame`), `Shop.EndOfFrame` does the same offline. A 40-buy touch of Course 1's `CashPerLoop` matched
-  turbo's Cash on every tick.
+- Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): the coroutine buys a level, then waits for the end of
+  the frame, so it buys one level per rendered frame: six a tick on the 280 fps clock (a freeze's or pause's repeats
+  too). Turbo (`TurboRunner.Run`) and offline (`Simulation.InterpolatedFrames`, `Shop.EndOfFrame`) resume it after each
+  frame of the tick's grid. They resumed it once a tick before, so 1x paid a box's levels six times faster; a 1x probe of
+  `FalseEnding-Any%` 361.68 (29 `buyclone2` levels from tick 15216) now matches offline Cash on every tick
+  ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Buy-max levels bought once a tick*).
 - UnityEngine.Random is Unity's xorshift128 over `Random.State`'s four words (`Shim/Engine/Misc.cs`): `InitState(seed)`
   fills s0 = seed, s(i) = 1812433253 * s(i-1) + 1 mod 2^32; each draw is `t = s0 ^ (s0 << 11)` then
   `[s1, s2, s3, s3 ^ (s3 >> 19) ^ t ^ (t >> 8)]` (the new s3 is the draw); `value` = (draw & 0x7FFFFF) / 8388607;

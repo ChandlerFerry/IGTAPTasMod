@@ -26,7 +26,7 @@ namespace IGTAP.EngineSim
         double[] _awarded = new double[CurrencyCount];
         internal Economy Economy { get; private set; }
         readonly List<BuyMaxRoutine> _buyMax = new List<BuyMaxRoutine>();
-        // Set while EndOfFrame runs the buy-max routines: those purchases continue the touch that started them (Simulation.Bought).
+        // Set while EndOfFrame runs the buy-max routines (once per rendered frame): those purchases continue the touch that started them (Simulation.Bought).
         bool _continuing;
 
         internal struct BuyMaxRoutine
