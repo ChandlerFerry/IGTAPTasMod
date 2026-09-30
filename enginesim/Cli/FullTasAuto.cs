@@ -103,13 +103,15 @@ namespace IGTAP.EngineSim.Cli
             public string Caps;
         }
 
-        static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan" };
+        static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan", "waste" };
         // A lever's share of a goal's expected headroom it is credited with before it has run there (the bandit's prior).
         static readonly Dictionary<string, double> LeverPrior = new Dictionary<string, double>
         {
             // From the VMAN work (2026-09-29): a window scored at a small goal 3-5 goals on gave the goal 11 gain where windows scored
             // at large area boxes found arrivals the next goals couldn't use; its resets at inputs 61-138 were teleports worth keeping.
             ["polish"] = .15, ["window"] = .2, ["lookahead"] = .3, ["span"] = .45, ["dropreset"] = .15, ["graft"] = .6, ["plan"] = .3,
+            // Of the waste audit's ticks at the goal (FullTasAutoWaste.cs), not of the expected headroom.
+            ["waste"] = .5,
         };
         // Expected headroom from each signal: another known route did it (proven), the best's own slow stretches, the bound.
         const double ProvenWeight = .6, DeficitWeight = .3, GapWeight = .05;
@@ -381,6 +383,7 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto: lever {g.Key}: {g.Sum(a => a.Pulls)} pulls, {g.Sum(a => a.Cpu):0} CPU s, {g.Sum(a => a.Gain):0} ticks gained"
                     + (g.Any(a => a.Gain > 0) ? " at goals " + string.Join(",", g.Where(a => a.Gain > 0).Select(a => $"{a.Goal}(-{a.Gain:0})")) : ""));
             Log("auto: pull order: " + string.Join(" ", _order));
+            LogGrafts();
             if (_lib != null)
             {
                 var (fast, median) = Chaining(_best.Inputs);
@@ -643,7 +646,7 @@ namespace IGTAP.EngineSim.Cli
         readonly Dictionary<(int, int), long> _leadSeen = new Dictionary<(int, int), long>();
         Route _leadFor;
 
-        static bool Windowish(string lever) { return lever == "window" || lever == "lookahead" || lever == "span"; }
+        static bool Windowish(string lever) { return lever == "window" || lever == "lookahead" || lever == "span" || lever == "waste"; }
 
         int WindowLimit(Arm arm)
         {
@@ -713,8 +716,11 @@ namespace IGTAP.EngineSim.Cli
                 var labels = _labels.Skip(k - 1).Take(limit - k + 1).ToList();
                 var windowSeeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                 windowSeeds.AddRange(MacroSeeds(best, k, prefixLength));
+                // --parts waste and grafts (FullTasAutoWaste.cs): a waste arm's undone findings as seeds; the tech grafts.
+                if (arm.Lever == "waste") windowSeeds.AddRange(WasteSeeds(best, k, prefixLength));
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), windowSeeds,
-                    null, Solve.FullTasPaths(_name, labels, _labels), VisitCell);
+                    null, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
+                TuneGrafts(solver, k, limit, prefixLength);
                 var found = new List<List<InputTick>>();
                 long[] bestAt = { long.MaxValue };
                 solver.Improved += (time, runTicks, inputs, how) =>
@@ -723,7 +729,7 @@ namespace IGTAP.EngineSim.Cli
                     lock (found)
                     {
                         bestAt[0] = Math.Min(bestAt[0], atGoal);
-                        if (atGoal < baseline) found.Add(inputs);
+                        if (atGoal < baseline) { found.Add(inputs); GraftFind(how); }
                     }
                 };
                 jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, solver, solver.Start(per), found, bestAt));
@@ -736,9 +742,10 @@ namespace IGTAP.EngineSim.Cli
                     if (!stopped[i] && (TimeUp || (_clock.Elapsed - w0).TotalMinutes >= jobs[i].budget)) { jobs[i].solver.Stop(); stopped[i] = true; }
             }
             foreach (var j in jobs) foreach (Thread t in j.threads) t.Join(60000);
+            foreach (var j in jobs) GraftTally(j.solver);
             double search = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             Log($"auto: {jobs.Count} windows side by side on {per} threads each: {search:0} CPU s, {wall:0} s; "
-                + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})" : "nothing faster")}")));
+                + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit}{(j.solver.Mined != null ? $" ({j.solver.TechGrafted} grafts of {j.solver.Runs} runs)" : "")} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})" : "nothing faster")}")));
             // Each merge runs under its own pull's number; the batch's last number is put back after, so the next pull doesn't reuse one.
             int lastPull = _pullNo;
             foreach (var j in jobs.OrderByDescending(j => j.k))
@@ -832,6 +839,7 @@ namespace IGTAP.EngineSim.Cli
         double Prior(string lever, GoalRow row)
         {
             if (lever == "graft") return LeverPrior[lever] * Math.Max(row.ArrivalLead, row.SplitLead);
+            if (lever == "waste") return LeverPrior[lever] * WasteAt(row.K);
             return LeverPrior[lever] * row.Expected;
         }
 
@@ -860,6 +868,7 @@ namespace IGTAP.EngineSim.Cli
                 case "graft": return GraftCandidate(k) != null;
                 case "plan": return !_planDead.Contains(k);
                 case "polish": return !Polished(k);
+                case "waste": return WasteAt(k) > 0 && _arms.ContainsKey(("waste", k));
                 default: return true;
             }
         }
@@ -884,6 +893,7 @@ namespace IGTAP.EngineSim.Cli
                 case "dropreset": return PullDropReset(k);
                 case "graft": return PullGraft(k);
                 case "plan": return PullPlan(k, budget);
+                case "waste": return PullWindow(k, WindowLimit(arm), budget);
             }
             return "unknown lever";
         }
@@ -1463,6 +1473,8 @@ namespace IGTAP.EngineSim.Cli
             CashBound(rows, s);
             _model = rows;
             _bounds = rows.Select(r => r.Bound).ToArray();
+            // --parts waste: the best's waste audit, its ticks for Refresh and its arms (FullTasAutoWaste.cs).
+            AuditWaste();
             Refresh();
         }
 
@@ -1554,7 +1566,7 @@ namespace IGTAP.EngineSim.Cli
                 row.RefSplitHow = shortest?.How;
                 row.LeadIn = leadIn;
                 leadIn = row.ArrivalLead;
-                move[row] = ProvenWeight * Math.Max(row.NewLead, row.SplitLead) + DeficitWeight * row.Deficit + (row.Economy ? 0 : GapWeight * row.Gap);
+                move[row] = ProvenWeight * Math.Max(row.NewLead, row.SplitLead) + DeficitWeight * row.Deficit + (row.Economy ? 0 : GapWeight * row.Gap) + WasteWeight * WasteAt(k);
                 row.Expected = move[row] + DeficitWeight * row.Slack;
             }
             foreach (var stretch in _model.Where(r => r.Spare < long.MaxValue).GroupBy(r => r.Target))

@@ -305,7 +305,7 @@ namespace IGTAP.EngineSim.Cli
         /// goals edited (laps dropped or added, record laps) and adopted when the whole run is faster (FullTasAutoGoals.cs); idle:
         /// each buy's waits for Cash moved under its box (FullTasAutoIdle.cs).</summary>
         /// <summary>Every part, all on by default.</summary>
-        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals", "idle", "wallreset" };
+        static readonly string[] AllParts = { "lib", "tail", "combine", "sched", "ctg", "macros", "stray", "goals", "idle", "wallreset", "waste", "grafts" };
         HashSet<string> _parts = new HashSet<string>(AllParts);
         /// <summary>--parts stray's two halves (the stray study switches them one at a time).</summary>
         bool _strayRetime, _strayAvoid;
@@ -1125,7 +1125,9 @@ namespace IGTAP.EngineSim.Cli
                     if (box != null) { path.Avoid.Add(box.Value); avoided = $", avoiding {stray} ({box.Value})"; }
                     else avoided = $", not avoiding {stray}: {why}";
                 }
-                var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(first - 1).Take(limit - first + 1)), seeds, null, path, VisitCell);
+                var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(first - 1).Take(limit - first + 1)), seeds, null, path, VisitCell,
+                    WindowGrafts(first, limit));
+                TuneGrafts(solver, 0, 0, 0);
                 var found = new List<List<InputTick>>();
                 long bestAt = long.MaxValue;
                 solver.Improved += (time, runTicks, inputs, how) =>
@@ -1134,7 +1136,7 @@ namespace IGTAP.EngineSim.Cli
                     lock (found)
                     {
                         bestAt = Math.Min(bestAt, atGoal);
-                        if (atGoal < baseline) found.Add(inputs);
+                        if (atGoal < baseline) { found.Add(inputs); GraftFind(how); }
                     }
                 };
                 System.Threading.Thread[] threads = solver.Start(_threads);
@@ -1142,6 +1144,7 @@ namespace IGTAP.EngineSim.Cli
                 while (!TimeUp && clock.Elapsed.TotalMinutes < minutes) System.Threading.Thread.Sleep(250);
                 solver.Stop();
                 foreach (System.Threading.Thread t in threads) t.Join(60000);
+                GraftTally(solver);
                 Log($"auto tail: {where}: goals {first}-{limit} from the broken run's state at goal {p} ({best.Last + c.Origin - c.GoalPhysics[p - 1] - Rest(p)} ticks ahead, {c.EndReason}{avoided}): "
                     + (found.Count > 0 ? $"{found.Count} reach goal {limit} before tick {baseline} (soonest {bestAt})"
                         : bestAt == long.MaxValue ? "no way through" : $"goal {limit} at tick {bestAt} against tick {baseline}"));
