@@ -40,6 +40,11 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>An add in place of a walk (<see cref="AddEdits"/>): the goals it reaches through its laps; the rest are re-found
             /// as an investment (0: not one).</summary>
             public int Refind;
+            /// <summary>A ladder (<see cref="LadderEdits"/>): the first goal after it (0-based, new numbering), from which the waits are
+            /// re-timed to their Cash once it plays through (0: none).</summary>
+            public int Retune;
+            /// <summary>The run the splice is made in when it isn't the best (a ladder's, its earlier laps held back: <see cref="LadderEdits"/>).</summary>
+            public Route Base;
         }
 
         /// <summary>One lap of the best: goals K (start:N) and K+1 (finish:N) (0-based), played from the quick restart at input A
@@ -106,6 +111,7 @@ namespace IGTAP.EngineSim.Cli
             List<GoalEdit> inserts = InsertEdits(best, laps);
             edits.AddRange(inserts);
             edits.AddRange(PayoutEdits(best, laps));
+            edits.AddRange(LadderEdits(best, laps));
             edits.RemoveAll(e => FullTasGoal.EditRefused(_labels, e.Labels) != null);
             // An edit is its whole spliced route: one played before (this session or an earlier one) plays the same way again.
             int played = edits.RemoveAll(e => _editsTried.Contains(EditKey(e)));
@@ -117,14 +123,14 @@ namespace IGTAP.EngineSim.Cli
             _pullNo++;
             int pull = _pullNo;
             Log($"auto: pull {pull}: goals, {edits.Count} goal-list edits of {laps.Count} laps ({edits.Count(e => e.Kind == "drop")} drops, {edits.Count(e => e.Kind == "add")} adds, "
-                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks), "
+                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks, {edits.Count(e => e.Kind == "ladder")} ladders), "
                 + "each played on a copy with waits before the quick restarts it needs");
             var results = new (Route route, Route partial, string why)[edits.Count];
             RunOnThreads(edits.Count, (sim, origin, tracker, i) =>
             {
                 GoalEdit e = edits[i];
                 sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
-                results[i] = Played(sim, origin, e, best);
+                results[i] = PlayedRetuned(sim, origin, e, best);
             });
             (GoalEdit edit, Route route) win = default;
             for (int i = 0; i < edits.Count; i++)
@@ -153,7 +159,7 @@ namespace IGTAP.EngineSim.Cli
                     return k == 0 ? null : new Route { Inputs = p.Inputs.Take((int)Math.Min(p.GoalInput[k - 1], p.Inputs.Count)).ToList(), Progress = k,
                         GoalInput = p.GoalInput, GoalPhysics = p.GoalPhysics, GoalHeld = p.GoalHeld, EndReason = p.EndReason };
                 }
-                var ahead = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "record" || edits[i].Kind == "payout") && results[i].partial != null)
+                var ahead = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "record" || edits[i].Kind == "payout" || edits[i].Kind == "ladder") && results[i].partial != null)
                     .Select(i => (i, p: Cut(results[i].partial))).Where(c => c.p != null && c.p.Progress < best.Progress && c.p.Progress >= edits[c.i].Last)
                     .OrderByDescending(c => c.p.Progress).ToList();
                 foreach (var (i, p) in ahead)
@@ -450,7 +456,7 @@ namespace IGTAP.EngineSim.Cli
                     p = new Route { Inputs = r.Inputs, Progress = e.Refind, GoalInput = r.GoalInput, GoalPhysics = r.GoalPhysics, GoalHeld = r.GoalHeld, EndReason = r.EndReason };
                 }
                 else if (results[i].route != null || p == null
-                    || !(e.Kind == "insert" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || e.Kind == "payout" && PayoutMayPay(e, p, best))) continue;
+                    || !(e.Kind == "insert" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || (e.Kind == "payout" || e.Kind == "ladder") && PayoutMayPay(e, p, best))) continue;
                 picks.Add((e, p));
             }
             return picks.GroupBy(x => (x.e.Kind, x.e.Refind > 0))
@@ -837,9 +843,10 @@ namespace IGTAP.EngineSim.Cli
         /// the course (the first pad that reaches <paramref name="finishGoal"/>): the saved routes whose unlocks the player has (fastest
         /// first, until RecordReached play), then <paramref name="own"/>. When one leaves the course's best time under
         /// <paramref name="before"/>: the fastest (then the soonest finish), and the soonest finish that still beats it; else null.
+        /// <paramref name="lapTime"/>: each lap's path is its own course time, not the best time it leaves (a ladder's rungs).
         /// </summary>
         List<(List<InputTick> lap, int fin, float path, long tick, string how)> LapWays(Simulation sim, SimSnapshot at, int a, InputTick restart, int finishGoal,
-            int course, Caps has, List<(string name, List<InputTick> inputs)> own, float before, List<string> tried)
+            int course, Caps has, List<(string name, List<InputTick> inputs)> own, float before, List<string> tried, bool lapTime = false)
         {
             float Path() => (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == course));
             (List<InputTick> lap, int fin, float path, long tick, string how)? pick = null, soon = null;
@@ -863,7 +870,7 @@ namespace IGTAP.EngineSim.Cli
                     RunResult rr = sim.Run(lap, null, null, 400);
                     if (rr.Progress < finishGoal) { end ??= $"{rr.Progress - (finishGoal - 2)} of the lap's 2 goals ({rr.EndReason})"; continue; }
                     int fin = (int)rr.GoalInputTicks[finishGoal - 1];
-                    float path = Path();
+                    float path = lapTime ? sim.LastCourseTime : Path();
                     end = $"{path:0.00}s after {pad} idle ticks";
                     reached = true;
                     long tick = rr.GoalPhysicsTicks[finishGoal - 1];

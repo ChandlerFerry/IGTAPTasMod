@@ -218,6 +218,20 @@ namespace IGTAP.EngineSim.Cli
                 });
                 Console.WriteLine($"ticks -> {_args[ticksOut + 1]}");
             }
+            // --retune GOALS --out FILE: the route's waits re-timed to their Cash from the start (Retune, FullTasAutoIdleRng.cs) against
+            // GOALS, a JSON array of each goal's input where the route last played through (another engine build's --check), so a route
+            // an economy change broke plays again when only its waits are off; the result, when it reaches every goal, to FILE.
+            int retune = Array.IndexOf(_args, "--retune");
+            if (retune > 0 && retune + 1 < _args.Length)
+            {
+                long[] touches = JsonSerializer.Deserialize<long[]>(File.ReadAllText(_args[retune + 1]));
+                var b = new Route { Inputs = inputs, Progress = _goals, GoalInput = touches, GoalPhysics = new long[_goals] };
+                Route t = Retune(_eval, _origin, b, inputs, 0);
+                Console.WriteLine($"retuned: {(t == null ? "a goal is lost" : $"{t.Progress} of {_goals} goals" + (t.Progress == _goals ? $", {Describe(t)}" : $" ({t.EndReason})"))}");
+                string outFile = Solve.Option(_args, "--out", (string)null);
+                if (t != null && t.Progress == _goals && outFile != null)
+                    File.WriteAllText(outFile, JsonSerializer.Serialize(new { fulltas = _name, time = t.LiveSeconds, runTicks = t.Last, goals = _labels, ticks = t.Inputs.Select(x => x.ToJson()) }));
+            }
             // --chain-vs OLD: the chaining check (FullTasAutoLib.cs) of this route against an older one.
             int vs = Array.IndexOf(_args, "--chain-vs");
             if (vs > 0 && vs + 1 < _args.Length)
@@ -277,6 +291,15 @@ namespace IGTAP.EngineSim.Cli
             if (_args.Contains("--rng-study"))
             {
                 RngStudy();
+                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
+                return 0;
+            }
+            // --ladder-study C --k K: Course C's record-break ladders of K laps, their slowed laps and each played whole
+            // (FullTasAutoLadder.cs); then stops.
+            int ladder = Solve.Option(_args, "--ladder-study", 0);
+            if (ladder > 0)
+            {
+                LadderStudy(ladder, Solve.Option(_args, "--k", 4));
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
