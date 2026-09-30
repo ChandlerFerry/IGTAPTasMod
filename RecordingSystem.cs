@@ -37,6 +37,18 @@ namespace IGTAPTasMod
             _tick = 0;
         }
 
+        /// <summary>
+        /// Recording that starts mid-run (a TAS re-record): the buffers the run's own presses left are no edge of this
+        /// recording's, so they count as already seen.
+        /// </summary>
+        public void SeedEdges(Movement movement)
+        {
+            if (movement == null) return;
+            _lastJump = Read<bool>(JumpBuffer, movement);
+            _lastCut = Read<bool>(JumpCutBuffer, movement);
+            _lastDash = Read<bool>(DashBuffer, movement);
+        }
+
         public RecordingDefinition Stop(string reason)
         {
             RecordingDefinition result = Current;

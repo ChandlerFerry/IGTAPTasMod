@@ -31,10 +31,11 @@ namespace IGTAPTasMod
 
         static readonly Regex RunName = new Regex(@"^[A-Za-z0-9%-]+$");
 
-        bool PlaybackActive { get { return _engine.IsRunning || _fullTasPlay != null; } }
+        bool PlaybackActive { get { return _engine.IsRunning || _fullTasPlay != null || _tas != null; } }
 
         void StopPlayback(string reason)
         {
+            if (_tas != null) { TasClose(reason); return; }
             _pendingReplay = null;
             _pendingReplayStartDelayTicks = 0;
             DropPendingFullTasPlayback(reason);

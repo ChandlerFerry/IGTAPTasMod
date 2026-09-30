@@ -129,6 +129,7 @@ namespace IGTAPTasMod
             PatchTechHooks();
             PatchVmanCreditsCrash();
             PatchWallClock();
+            InstallTasHoldPoint();
             foreach (var drawer in new[] { AccessTools.Method(typeof(PlayerAnimationEventProxy), "RelayFootstep"),
                          AccessTools.Method(typeof(FloatingNumberScript), "spawnNewFloatingNumber"), AccessTools.Method(typeof(ObjectBobber), "OnEnable") })
                 _harmony.Patch(drawer, prefix: new HarmonyMethod(AccessTools.Method(typeof(PresentationDraw), nameof(PresentationDraw.Before))),
@@ -306,6 +307,8 @@ namespace IGTAPTasMod
         double _clockTotal;
         readonly System.Diagnostics.Stopwatch _paceClock = new System.Diagnostics.Stopwatch();
         double _paceDue;
+        /// <summary>The last paced frame's game time (Time.timeAsDouble), NaN at a playback's start: a frame that doesn't move it stood still.</summary>
+        double _pacedTime;
         const double MaxPaceDebt = 0.1;
 
         private void Update()
@@ -326,6 +329,7 @@ namespace IGTAPTasMod
             PumpProbe();
             PumpLabMap();
             PumpLabTrainer();
+            TasUpdate();
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -338,6 +342,9 @@ namespace IGTAPTasMod
         }
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
+
+        /// <summary>The open TAS editor session (TasPlugin.Editor.cs), or null.</summary>
+        TasSession _tas;
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }
         private void ClampSelections()
@@ -365,6 +372,8 @@ namespace IGTAPTasMod
         private void OnDestroy()
         {
             if (_solverRunning) StopSolver("Game closed");
+            TasClose("Game closed");
+            RemoveTasHoldPoint();
             if (_recorder.IsRecording) StopRecording("Game closed");
             PacePlayback(false);
             SaveLibrary();

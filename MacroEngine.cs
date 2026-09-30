@@ -234,6 +234,31 @@ namespace IGTAPTasMod
             _pressedStep = -1;
         }
 
+        /// <summary>
+        /// Resume on <paramref name="steps"/>, the inputs from the next input tick on, at a tick boundary (the TAS editor).
+        /// Unlike <see cref="ResumeOwned"/>, a press already made for that tick (a wall touch in a dash lock presses the next
+        /// step early, <see cref="WallTouch"/>) stays made instead of pressing twice.
+        /// </summary>
+        public void ResumeAt(object[] state, List<MacroStep> steps)
+        {
+            FieldState.Restore(this, state);
+            bool pressed = _stepIndex >= 0 && _pressedStep == _stepIndex && _elapsedTicks == 0;
+            bool restarted = _stepIndex >= 0 && _quickRestartStep == _stepIndex && _elapsedTicks == 0;
+            _steps = steps;
+            _stepIndex = 0;
+            _elapsedTicks = 0;
+            _wallJumpTriggered = false;
+            _finishWaitTicks = 0;
+            _pressedStep = pressed ? 0 : -1;
+            _quickRestartStep = restarted ? 0 : -1;
+        }
+
+        /// <summary>The next physics tick plays input tick 0 (the start's last stable tick is that tick).</summary>
+        public bool StartsInputNextTick
+        {
+            get { return IsRunning && _runTicks == 0 && _preRollTicksRemaining == 0 && (!_waitingForStable || _stableTicks >= 2); }
+        }
+
         public bool TakeQuickRestart()
         {
             if (!IsRunning || _waitingForStable || _preRollTicksRemaining > 0 || _stepIndex < 0 || _stepIndex >= _steps.Count
@@ -401,7 +426,7 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// Frames time stood still in (a dash freeze's repeats of a tick's first frame, a pause's of the frame it holds:
-        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose Update ran at timeScale 0), counted on the ticks
+        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose game time stood still), counted on the ticks
         /// <see cref="CountPhysicsTick"/> counts. A Full-TAS run's time is its ticks and these (<see cref="LiveSeconds"/>).
         /// </summary>
         public void CountHeldFrames(int frames)

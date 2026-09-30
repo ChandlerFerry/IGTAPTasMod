@@ -163,8 +163,9 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
 | `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
+| `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](docs/tas-markup.md)). |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan_fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `tech-check.py` (every tech demo, turbo against the offline engine). |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan_fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
 
 ## Build
 
@@ -200,6 +201,53 @@ A slower frame rate plays the same frames, only later. While a
 playback lists its ticks, the overlay draws its input panel, pad and velocity panel into a texture once a physics tick
 (`TasOverlayCache.cs`) and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP and the nudge are drawn
 live. Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
+
+## TAS editor
+
+The studio's **TAS** tab edits a raw-input route tick by tick on the live game
+([`docs/superpowers/specs/2026-09-29-manual-tas-design.md`](docs/superpowers/specs/2026-09-29-manual-tas-design.md)).
+A session is a route: `<course>_<CAT> <text>` starts at the category start with its unlocks (and seeds that course's
+Improve), a route with a savestate starts there; a record opens as an editable copy. The loop: record what you believe is
+perfect, let Optimize's Improve search from it, open its best here (**Open solver best**), perfect it, repeat; **Judge
+as record** sends a finished session through the gate (`/api/enginesim/submit`), the only way it becomes a record.
+
+- **Hold.** The session plays as 1x playback and holds between physics ticks: at the start of a frame whose FixedUpdate
+  is due, the main thread waits (answering the studio, reading hotkeys, audio paused) until told to go on. The fixed
+  clock already set the frame's game time, so the game plays 1x's frames, only later: no clock change, no game logic
+  skipped. Advance lets physics ticks through; play runs on to the end of the inputs (at a slowdown if asked). While
+  held the game window is only kept responsive: it can't be moved or closed, so close the session first (F8, the studio).
+- **Rewind and seek.** Greenzone turbo snapshots every 25 input ticks: a seek restores the last one before the target,
+  turbos to one tick short and plays the last tick at 1x, so what is held on screen is a 1x frame. Before the first
+  snapshot (the start) the session starts again. An edit at or before the held tick drops the snapshots from it and
+  seeks back; one after it only re-feeds the engine (`MacroEngine.ResumeAt`). During a seek's turbo, dash freezes are
+  modelled only (`TurboRunner.DropTimeStops`: no real `IE_TimeStop` left to freeze 1x after it), and the handoff puts the
+  player at the last frame's blend, where 1x's next FixedUpdate reads it. A savestate session holds first after input
+  0, so its input 0 presses nothing (the buffer timers a press starts there couldn't be put back on a rewind).
+- **Editing.** A piano roll on TAStudio's and FCEUX TAS Editor's conventions: one row per input tick; the narrow left
+  column goes there (double-click a number does too), click or drag the numbers to select. Click or drag stick and jump,
+  right-click a tap, click a dash; the wheel on X steps through the part tilts (the whole selection's). Keys: arrows
+  select, Enter go, Shift+Enter play to, Ins/Ctrl+Ins insert/clone, Del/Ctrl+Del clear/delete, Ctrl+X/C/V (Shift:
+  insert), Ctrl+Z/Y, M marker, Shift+PgUp/PgDn markers. Edited rows flash. **Phys** is the physics tick an input plays
+  on, `+n` the dash or spring ticks after it that take no input; x, y, vx, vy are the player there as played (the
+  session's trace, `/api/tas/trace`, cut where the inputs change). **Play to** (`/api/tas/play {until, from}`) plays up
+  to a tick and holds, from 50 inputs before it if it's behind. Also text ([`docs/tas-markup.md`](docs/tas-markup.md)),
+  undo/redo, markers (go to one to load that point; each shows its segment's inputs and ticks). Sticks are a
+  controller's values only, and jump is edited as a hold whose start presses, so every buffer comes from a press. The
+  Timeline tab shows a route in the same roll, read-only, with **Play from** and **Open in TAS**.
+- **Re-record** drops the inputs from the held tick and records the controller (`InputRecorder`) at a slowdown; on stop
+  its ticks go in and the session seeks to their end: what is kept is what replays. A death or finish stops it.
+- **Suggest** (course and category sessions) runs `enginesim suggest` on the route up to the held tick
+  ([`enginesim/README.md`](enginesim/README.md#suggest)) and lists edits that reach the same spot sooner; apply splices one in.
+- **Share**: a code (`IGTAS1:` + base64url gzip), `.igtas.json` or `.tas` text, with the savestate if any. An import is a
+  plain route (a record's name gets ` shared`).
+- **Hotkeys**, in the game or the studio's TAS tab: `]` advance, `[` rewind (in the studio Shift for ten ticks), `\` play/hold,
+  `'` re-record; F8 (game) closes. The tab's input box turbos to an input tick and holds there.
+- **Placed loadstates** (Savestates tab): a copy of the player now or of a savestate with x, y, speed or facing replaced,
+  and optionally the world rebased around a point after the restore (`RebaseWorldAround`, the Full-TAS `rebaseAt`'s moves),
+  for floating-origin tests.
+
+`tools/tas-check.py <route>` (game running) checks that a seek holds the same state as playing there at 1x, that rewind
+and advance come back, and that the text and a share code carry the inputs unchanged.
 
 ## Solving
 

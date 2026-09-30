@@ -313,7 +313,9 @@ own spot, a checkpoint the game never set: `Test-No-Omni-Skip`'s best quick-rest
 
 A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
 unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
-snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map.
+snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map: it takes
+the camera back from a camera room that held it, looks down as the restored speed would, and cancels a death's queued
+respawn (turbo's restore cancels every invoke).
 
 ## Shared goal pieces
 
@@ -904,6 +906,17 @@ baseline). The default is set by the measurements below, and has every part exce
      get furthest, 150 CPU s a goal left): from the 360.17 s best, `--parts goals` on 8 threads re-found goals 241-284
      in 463 s wall (3545 CPU s) and adopted 284 goals at 358.69 s (17202 ticks, -74; the fresh check kept it, and
      `--check` of the route under the 284-goal list reaches every goal).
+     A wait after a later quick restart gets the laps at that restart too (it lands at the course's start: after the
+     statue's Course 2 buys the restart lands at the top, by Course 3's gate). A buy reached as its Cash comes waits by
+     walking, not standing: the climb to `buy:buydj` is 605 ticks against a bound of 145 with 17 ticks of spare Cash (the
+     model's `Gap` and `Spare`, [Auto](#auto)), and has no loop in it to cut (no two inputs 20 or more apart where the
+     player stands within 16 units at the same speed). So a Cash-bound buy (spare under its gap) gets n laps (n * L under
+     the gap) at the lap's finish (the buy right after it) or at the last quick restart before it, nothing cut, and the
+     goals from the buy on re-found as an investment from the laps' finish (`GoalEdit.Refind`; a buy the laps' walk
+     passes after its Cash came is a stray: 3 Course 3 laps at the top bought `buydj` on the way). On the 357.08 s best
+     (278 goals): 1-6 Course 2 laps in place of the climb, 3.2 min on 8 threads to re-find the 11 goals from `buydj`
+     (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
+     on 357.73 s the same to +9. A Course 2 lap earns about what the clones pay while standing: none paid.
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
@@ -930,16 +943,32 @@ baseline). The default is set by the measurements below, and has every part exce
      course's best time), for every course the run laps after the buy. The clones then run that path through everything
      after: `FalseEnding-Any%`'s Course 2 lap with the dash right after `buy:buyds`, before the run leaves Course 2, not
      on the drop back after the statue. Each is offered alone and with the course's next visit dropped (its back-to-back
-     laps first after the next unlock buy, cut from the goal before them to the quick restart that ended them, or to a
-     quick restart in place of the last finish: after the statue's Course 2 buys the restart lands at the top, by the
-     shaft to `buy:buydj`). The best's way on starts at the buy's box, not the lap's finish, so none plays as spliced:
-     the two that get furthest (then soonest) are re-found as **investments**. The edit's goals become the run's for it,
-     the goals after where its partial run stops are repaired as a window's are (the old best's inputs as seeds), and
-     falling behind the best doesn't end it (an investment is behind until its income pays; the model's bounds and
-     cost-to-go are the old goals'): only its CPU budget does (150 CPU s a goal left), or the whole run then not
-     beating the best (the fresh check, as every best). The goals change back when it isn't kept. First run on the
-     361.68 s best: the Course 2 lap after `buyds` cost 121 ticks at its finish; each repair reached goal 250 of 284 on
-     a 60 CPU s budget, which is why it's 150 now.
+     laps first after the next unlock buy, the last one with or without a quick restart after it, cut from the goal
+     before them to the quick restart that ended them, or to a quick restart in place of the last finish: after the
+     statue's Course 2 buys the restart lands at the top, by the shaft to `buy:buydj`; both post-statue laps go, the
+     second climbing to `buydj` from its finish). The best's way on starts at the buy's box, not the lap's finish, so none
+     plays as spliced: they are re-found as **investments**, InvestTries (2) of each kind (inserts, adds ahead, walk adds,
+     payout breaks), furthest (then soonest) first. From one pool of two, the two inserts took both, and every edit a pull
+     plays is marked played (memory `edits`), so an add or payout break behind them was never re-found; an edit still
+     waiting for its investment (the pull adopted a drop first, or it ranked past InvestTries) isn't marked, and the next
+     pull offers it again. The edit's goals become the run's for it, the goals after where its partial run stops are
+     repaired as a window's are (the old best's inputs as seeds), and falling behind the best doesn't end it (an
+     investment is behind until its income pays; the model's bounds and cost-to-go are the old goals', and the repair
+     doesn't search again from where a complete run falls behind): only its CPU budget does (150 CPU s a goal left), or
+     the whole run then not beating the best (the fresh check, as every best). One re-found to the end but no faster is
+     **replanned**: the goals after its change get the goals part's drops and adds on its route (its own model for the
+     walk adds), the fastest that beats the investment becomes it and is planned again; with none played through faster,
+     its adds and the drops that stop ahead of it (the extra Cash strays into a box the old buy walk only brushed) are
+     re-found as investments of their own, held to the best, the fastest that beats the investment becoming it. The
+     goals change back when none is kept. First run on the 361.68 s best: the Course 2 lap after `buyds` cost 121 ticks
+     at its finish; each repair reached goal 250 of 284 on a 60 CPU s budget, which is why it's 150 now. At 150 both
+     complete, in a fraction of it: on the 357.73 s best (280 goals) the insert re-found goals 177-282 in 11.6 min on 8
+     threads (361.10 s, +141 ticks) and with the post-statue laps dropped goals 177-278 in 7.3 min (360.02 s, +102); on
+     the 357.08 s best (278 goals) 9.5 min (359.99 s, +118). Their replans: the insert alone drops one post-statue
+     Course 2 lap (359.13 s, +55 on 357.73); every Course 3 lap drop after it misses a buy (the lap's Cash comes sooner,
+     the old buy walk strays into `CloneCount`, `CloneMult`, `CashPerLoop` or `FastCloneChance`, and no wait passes it);
+     with the laps dropped the restart to the top waits 829 ticks for `buydj` (bound 133, 67 spare), and 3 Course 3 laps
+     there bought `buydj` on the way (a stray).
    - **Payout breaks** (`FullTasAutoPayout.cs`, the Tech tab's *Record-break payout*): a finish that beats the course's
      best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`).
      A lap at the best time without beating it pays nothing extra. This edit plays every earlier lap that set or tied the
@@ -988,6 +1017,15 @@ baseline). The default is set by the measurements below, and has every part exce
    `goalsFrom` held the game's 292-goal list), saved it as the record and made its 287 goals the run's, keeping
    `fulltas.json.20260929-063956.bak`.
 
+   Measured on private copies (2026-09-30, `--parts goals`, 8 threads), the drops the pull after the 358.69 s adoption
+   never played: from 358.69 s, Course 3 laps 257-258 (358.28 s) and 259-260 (357.73 s, 280 goals), the list the gate
+   took with 357.71 s; from 357.35 s one of the two post-statue Course 2 laps (goals 268-269: 357.08 s, 278 goals), and
+   from the 355.92 s record the same (355.67 s: the same ticks, the lap's 70 frozen frames gone, 109 idle ticks before the
+   climb's quick restart). Dropping both misses `buydj`: the climb starts from the lap's finish. The item-2 plan (issue
+   22: a 2_WJ_DS lap before leaving Course 2, the restart to the top, Course 3 laps until `buydj`) came out behind: the
+   insert re-found +102 to +184 ticks, its replans +55 at best, and no Course 3 drop after it re-found to the end (the
+   extra Cash strays the old buy walks, and one re-found as an investment found no way to the next `start:3`).
+
 6. **Wall-coyote restart** (`wallreset`, opt-in; `enginesim\Cli\FullTasAutoWallReset.cs`; the Tech tab's *Wall coyote restart*,
    `techs.json` `wall-coyote-restart`, and the community's `checkpoint-midair-walljump`): a quick restart leaves
    `wallCoyoteFrames` and `wallJumpsLeft` as a wall cling set them, and the ground never counts the first down, so a cling
@@ -1009,8 +1047,18 @@ baseline). The default is set by the measurements below, and has every part exce
    `wall-coyote-restart` at `TouchedWall`, `LeftWall`, `WallAheadLeft/Right`: the stick into the wall, the restart, 0-3 idle
    ticks, the ground jump held 1-4, the wall jump) at the wall contacts of its runs, merged like any window's finds
    (`MergeAuto`), at most `--wallreset-minutes` (5) a pass, once per restart (memory `wallStudied`). `Explore` hands its
-   solver `_mined`: the other Full-TAS windows have never grafted tech windows. Status: it builds and the windows mine
-   (`techgrafts`), but the pass has not been run in a loop yet; its measured effect on the run is open.
+   solver `_mined`: the other Full-TAS windows have never grafted tech windows. The pass runs before the goals part (behind
+   it, a goals pull's investments took all 20 minutes and the pass never ran), and mines on a thread of its own (mining on
+   the loop's thread took over its Simulation's thread-static hooks: the first pass saw every run end at once, 0 restarts).
+   Status: opt-in. Measured, A/B at the same time, `--minutes 20 --threads 5` each, private copies of the 358.69 s run
+   (284 goals): with `wallreset` 358.67 s at 103 s (goal 180, -1 tick), 358.26 s at 593 s, 357.71 s at 1084 s; the
+   defaults 358.28 s at 203 s, 357.73 s at 253 s, then a 935 s goals pull with no gain (both later gains are the goals
+   part's two Course 3 lap drops). 4 passes, 6 pulls (goals 180 and 221 each pass), 32,970 tech grafts tried, none in a
+   find: the finds came by `optimize`, `splice`, `explore`, `seed`, `plateau`, and the one merged (goal 180) is the quick
+   restart at the Course 3 spawn a tick sooner, ground jumps only; no find used the stored wall jump. The part took 3,715
+   of the arm's 4,459 CPU s and 943 of its 1,206 wall s: goal 221's pulls ran their 1-minute window to 5-6 minutes
+   repairing finds that stray-buy at goals 224-248, past the 5-minute pass cap. A tick for 3,700 CPU s, with the goals'
+   gains 6-14 minutes later.
 
 7. **Idle under the box** (`idle`; `enginesim\Cli\FullTasAutoIdle.cs`): every wait for Cash stands under the box it waits
    for, so the blanks in a route are where the route waits. The wait fix puts a buy's idle ticks before the quick restart
@@ -1021,7 +1069,9 @@ baseline). The default is set by the measurements below, and has every part exce
    jumping up into it. At the start and after each new best, per buy goal, the idle runs of 8 ticks or more since the
    goal before that end further than the player's half width from that x-range are taken out and put back under it:
    - **Stands.** The ground spots after the last quick restart within 120 units of the trigger, and the last ground spot
-     run on up to 60 ticks with the stick toward the trigger; a stand is one where 12 idle ticks after it leave the player
+     run on up to 60 ticks with the stick toward the trigger, and so is the spawn after the first quick restart since the
+     goal before (not on the ground on the restart's tick; a stand there replaces the dash hops after it: Course 3's spawn
+     9506,6958 is a 37-43 tick run from its x 9040-9168 triggers); a stand is one where 12 idle ticks after it leave the player
      at rest inside the trigger's x-range (the route's jump-off spot is short of it: goal 30's left the ground at
      x 1670, the range ends at 1611). The 6 nearest the edge the route comes from, at least 6 units apart, are tried.
    - **Ways in.** From a stand, w idle ticks and then the route's own inputs on (a spot on the route's own way), or a jump
@@ -1041,10 +1091,64 @@ baseline). The default is set by the measurements below, and has every part exce
    check kept it). Goal 52's 25 ticks became 17 standing at x 1581.6 (inputs 3103-3119, the jump at 3120), the buy at
    the old tick 3126; goal 33's 15 became 7, also at the old tick. Goal 86 (112 ticks) and 92 (9) reach every goal
    only with re-timing (goal 86: 360.35 s against 360.17 s, 9 ticks slower, not taken; goal 92: none passes): their waits stay.
-   Course 3's dash hops (goals 220-245: 9-29 idle ticks in the air after a dash, then a quick restart) found no stand: the
-   spawn after the last restart isn't on the ground before the dash, so no ground spot is looked at. Open: stands at that
-   spawn (ground run 340 units to the triggers, about 37 ticks), and re-tuning the tail after a move in Course 3 so goals
-   86 and 92 can move too.
+
+   On the 284-goal list (358.69 s, a private copy) the old goals 86 and 92 are 88 and 94; the Course 1 lap added before
+   `buy:buywj` took goal 88's wait (no idle run of 8+ left). Course 3 (goals 222-245) now finds stands at the spawn at 12
+   of its 18 buys tried (a 37-43 tick run to the x 9040-9168 triggers, 56-60 to the x 8870-8998 one; the x 8320-8658 ones
+   are past the 60-tick run); none is kept. At goals 225-228 and 238-239 the run is slower than the dash hop it replaces
+   (the fewest w that touch no sooner than the old route: 0). Every move also changes the sounds played (a dash's, a
+   landing's: `Hooks.PlaySfx` draws the RNG), so the clones' rolls fall differently and a later Course 3 buy strays: goal 222's move misses goal 240, and the
+   wait fix gets it through at 358.92 s (+0.23 s). Goal 94: every stand misses goal 99 (a stray `CashPerLoop`). Tried on
+   94 and 222 and dropped: every sooner wait of the window (low..high−1) played whole (none reaches every goal), and tail
+   windows (`--parts tail`) from the sooner run furthest ahead, as a revive does (94: no way through goals 99-101; 222:
+   goals 227-232 re-found up to 46 ticks sooner, no faster whole run; 946 CPU s a pass). A pass is 81-92 CPU s (was 14:
+   the spawn stands' whole replays). Goals 229, 231, 240 and 274 wait in the air after a hop with no restart, and the run
+   without the wait never lands: no spot. Open: a move that keeps the RNG draws (the sounds) as they were.
+
+   Acceptance, `--auto --parts idle --minutes 15 --threads 6` from 358.69 s: 0 of 20 waits moved (81 CPU s), 31 window pulls
+   (4,660 CPU s), no gain. Shorter runs from the same start found `buy:buydj` sooner with a window at goal 274 (the climb
+   after the Course 2 laps, item 4 of issue #22): 605 -> 595 ticks, 358.54 s, in 5 minutes (`--parts idle`); 605 -> 587,
+   358.33 s, in 12 (`--parts lib,tail,stray,idle`; judged, the record then). The 15-minute run's goal 274 window was 27
+   ticks ahead at goal 275, and its repair fell 24 behind at goal 277.
+
+   **The RNG under the box** (`enginesim\Cli\FullTasAutoIdleRng.cs`). A wait for Cash is time the player can spend on the
+   RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s: 6,026 draws): the clones' spawn
+   rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds (`Hooks.PlaySfx`/`PlayAudio`: a
+   jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a wall slide 2, a quick restart 1),
+   a buy 3. Walking draws nothing (the run animation's footstep is presentation, README exception 11). The RNG's state after
+   n draws is the same whenever they come, so a hop only makes another class where a clone roll falls between its jump and
+   landing and the next hop; and a hop under a box bonks its underside, about 20 ticks up and down whatever the hold. A pass
+   (at the start and after each new best), in order:
+   - **Re-timing** (`Retune`): from a goal on, each goal with a quick restart since the goal before (a buy, a lap's start)
+     gets the idle ticks before that restart cut or added (up to 60) to the count whose touch of the goal before the next
+     such goal comes soonest; one whose goals are lost either way takes the one before back and checks through them (up to
+     3). A restart's input moves only with the cuts before it (the base run's restarts, moved), a touch comes as the Cash
+     does. One idle tick stays between two restarts (the gate refuses restarts on ticks in a row). Every goal with a restart
+     is a start (on every thread); the fastest is kept. The same re-timing plays every ticket below.
+   - **Filler**: where a stretch has more than one restart, everything before the last one (dashes away, restarts, hops that
+     only burn ticks) becomes as many idle ticks, re-timed from there.
+   - **Walk-in**, every buy: from the touch of the goal before, the stick toward the trigger until 12 idle ticks leave the
+     player at rest under it (at most 150 ticks), the fewest idle ticks whose straight jump touches, then the run's inputs from
+     its old touch.
+   - **Tickets**: the idle ticks under the box (a walk-in's, a moved wait's at the fewest that touch, a wait already standing
+     there) get every single hop and 300 random sets of hops 20+ apart; those that leave the player on the ground within reach
+     of the trigger are sorted by the RNG's state there, and each class (up to 40, the plain wait first) is played whole,
+     re-timed. A class counts only when it buys the box by the plain wait's tick (the jump in comes as the Cash does).
+
+   Measured on `FalseEnding-Any%` (private copies, `--auto --parts idle --minutes 20 --threads 6`, window pulls between
+   passes): 357.35 -> 355.92 s (re-timing after goal 52, 126, 225 and 248's moves: 357.35 -> 356.15, goal 126's alone
+   -0.76 s; windows at 176/177/270/272/273/276 the rest; judged), 355.92 -> 355.70 (re-timing from goal 95 -0.06), and from
+   355.67 (278 goals) -> 355.43 s: goal 249's two restarts and dashes became a 20-tick walk-in and 71 ticks under the box with
+   one hop (-0.10), goal 248's filler before its last restart idle (-0.06), re-timing from goal 95 (-0.02), windows at 176
+   and 268 (judged, the record). Tickets: 1 RNG class at 11 of 14 standing waits (13-23 ticks: no room for a hop and a roll
+   between), 2-5 at goals 174, 231 and 249; a hop class beat the plain wait once (goal 249). A pass is 60-150 CPU s on an
+   idle machine (re-timing 50, filler 16, walk-ins and tickets the rest), 400 on a loaded one.
+
+   Open: `buy:buyds` (goal 174): the walk-in stands under the box after 135 ticks and buys at tick 10429 against the route's
+   10394 (its run and jump carry the fall's speed), 357.19 s whole; the old jump into the box's underside costs nothing (the
+   Cash is there at 10394). `buy:buystatue` (goal 262, 411 idle ticks, 27 clone rolls) and `buy:buydj` (goal 268, the
+   shaft): no walk-in (1,500 units off; a climb), so their waits get no tickets. A clean approach there needs a window to a
+   stand under the box, not a walk.
 
 The parts are found by the interface they implement, so a build without one runs without it (the log says so).
 
@@ -1091,6 +1195,14 @@ route's goals 186-266 made 379.40 s, each in under 20 s. Judged in turbo (GameOw
 379.40, 378.74. The chaining check stayed at 227-230 of 300 goal touches at speed on every kept best. The continuous run
 then went 378.94, 378.74, 378.72, 378.50, 378.48, 378.46 (bin6, windows), then 377.80 (stray study), 376.76 and 376.70
 (combine's splice-in repair); candidates after 378.74 had not been judged when this was written.
+
+**Regression bench.** A change to the grafts or the window search is measured on `searchbench --suite grafts --seeds 3
+--minutes 1 --threads 4` ([enginesim/README.md](../enginesim/README.md#planted-waste-suite---suite-grafts)): wastes
+planted in known-good windows of the `FalseEnding-Any%` 355.92 record and course records (a super chain played as dash
+and run, a jump into a ceiling, a cancelling dash pair, a filler restart), each searched from the planted route as
+`fulltas --goal` (or `solve`) and scored on whether it gets back within 2 ticks and the CPU it takes, plus the record's
+own windows at goals 174, 270 and 275, where the waste was seen by eye. The baseline recovers every planted waste in the
+minute and beats the record's split at goals 270 and 275 (window-local), not at 174.
 
 ### Reset segments
 

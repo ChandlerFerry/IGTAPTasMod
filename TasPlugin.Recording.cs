@@ -25,6 +25,7 @@ namespace IGTAPTasMod
 
         private void StartRecording()
         {
+            TasClose("Recording started");
             EnsureGameUnpaused();
             if (_engine.IsRunning) _engine.Abort("Recording started");
             string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
@@ -34,6 +35,8 @@ namespace IGTAPTasMod
 
         private void StopRecording(string reason)
         {
+            // A TAS re-record ends at the next hold point, where its ticks go into the session (a death or finish stops it too).
+            if (_tas != null && _tas.recording) { _tas.recordStop = reason; return; }
             RecordingDefinition recording = _recorder.Stop(reason);
             if (recording == null) return;
             _recordings.Insert(0, recording);

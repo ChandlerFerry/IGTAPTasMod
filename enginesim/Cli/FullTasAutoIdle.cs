@@ -86,12 +86,45 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return chain;
             }
+            // First the waits before the quick restarts re-timed from each buy on (the Cash comes on other ticks than the run was
+            // made for once anything before it moved).
+            if (RetuneSweep(current) is Route swept)
+            {
+                moved++;
+                saved += current.Last - swept.Last;
+                notes.Add($"the waits re-timed: {Describe(swept)}");
+                current = swept;
+            }
+            // Then the filler before a last quick restart made standing.
+            if (Defiller(current) is Route stood)
+            {
+                moved++;
+                saved += current.Last - stood.Last;
+                notes.Add($"filler made standing: {Describe(stood)}");
+                current = stood;
+            }
             for (int g = 0; g < _goals && !TimeUp; g++)
             {
                 if (_runGoals.Goals[g].kind != FullTasGoal.Buy) continue;
                 List<InputTick> inputs = current.Inputs;
                 int from = g == 0 ? 0 : (int)Math.Min(current.GoalInput[g - 1], inputs.Count);
                 int buy = (int)Math.Min(current.GoalInput[g], inputs.Count);
+                // Walking to the box and standing under it, when that beats the run's way there (a restart and dash to a far box, a
+                // loop, a jump that doesn't gain).
+                if (g > 0)
+                {
+                    var (walked, walkHow) = WalkIn(current, g, from, buy, Snapshot(from));
+                    if (walked != null && walked.Live < current.Live)
+                    {
+                        tried++;
+                        moved++;
+                        saved += current.Last - walked.Last;
+                        notes.Add($"goal {g + 1} ({_labels[g]}): {walkHow}");
+                        Log($"auto: idle under the box: {notes[notes.Count - 1]}: {Describe(walked)}");
+                        current = walked;
+                        continue;
+                    }
+                }
                 // The waits: idle runs since the goal before.
                 var runs = new List<(int at, int length)>();
                 for (int i = from; i < buy;)
@@ -108,11 +141,22 @@ namespace IGTAP.EngineSim.Cli
                 Pose[] poses = PoseTrace(atFrom, from, inputs.GetRange(from, buy - from));
                 Zone zone = BoxZone(_runGoals.Goals[g]);
                 if (float.IsNaN(zone.x0)) continue;
-                // A wait that ends within reach of the trigger is under the box already.
+                // A wait that ends within reach of the trigger is under the box already: its ticks at rest there draw the RNG.
                 var far = runs.Where(r => !zone.Near(poses[r.at + r.length - from].x)).ToList();
-                if (far.Count == 0) continue;
+                Route pick = null;
+                string how = null;
+                foreach (var (at, length) in runs.Except(far))
+                {
+                    int ws = at + length;
+                    while (ws > at && poses[ws - 1 - from].ground && zone.Near(poses[ws - 1 - from].x) && poses[ws - 1 - from].vx == 0f) ws--;
+                    SimSnapshot atWs = Snapshot(ws);
+                    if (atWs == null || TimeUp) break;
+                    (Route r, string rhow) = RngTickets(current, g, inputs, ws, at + length, atWs, ws, zone, current.GoalPhysics[g]);
+                    if (r != null && r.Live < current.Live && (pick == null || r.Live < pick.Live)) (pick, how) = (r, rhow);
+                }
+                if (pick == null && far.Count == 0) continue;
                 tried++;
-                (Route pick, string how) = MoveWait(current, g, from, buy, far, zone, Snapshot);
+                if (pick == null) (pick, how) = MoveWait(current, g, from, buy, far, zone, poses, Snapshot);
                 if (pick == null) continue;
                 moved++;
                 saved += current.Last - pick.Last;
@@ -140,7 +184,7 @@ namespace IGTAP.EngineSim.Cli
         /// Goal g's buy with its waits away from the box (far: idle runs of the inputs) moved under it. Returns the whole run and
         /// how, or null when no spot and wait keeps every goal at no more than the current live time.
         /// </summary>
-        (Route, string) MoveWait(Route current, int g, int from, int buy, List<(int at, int length)> far, Zone zone, Func<int, SimSnapshot> snapshot)
+        (Route, string) MoveWait(Route current, int g, int from, int buy, List<(int at, int length)> far, Zone zone, Pose[] poses, Func<int, SimSnapshot> snapshot)
         {
             List<InputTick> inputs = current.Inputs;
             var gone = new bool[buy - from];
@@ -149,6 +193,12 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> without = inputs.Where((_, i) => i < from || i >= buy || !gone[i - from]).ToList();
             int buyW = buy - removed;
             int div = far[0].at;
+            // The spawn after the first quick restart since the goal before: the player stands there (not on the ground yet on
+            // the restart's tick), and the dash hops after it are what a stand replaces (Course 3's buys: spawn 9506,6958, the
+            // triggers at x 9040-9168). It is run on from, as the last ground spot is.
+            int spawn = -1;
+            for (int i = from; i < buyW - 1 && spawn < 0; i++) if (without[i].reset) spawn = i + 1;
+            SimSnapshot atSpawn = spawn >= 0 && spawn < div ? snapshot(spawn) : null;
             SimSnapshot atDiv = snapshot(div);
             if (atDiv == null) return (null, null);
             // Where the run without the waits goes: the ground spots on the way in.
@@ -165,6 +215,7 @@ namespace IGTAP.EngineSim.Cli
                 if (way[q - div].x >= zone.x0 - SlideReach && way[q - div].x <= zone.x1 + SlideReach) spots.Add(q);
             }
             if (lastGround >= 0 && !spots.Contains(lastGround)) spots.Add(lastGround);
+            if (spawn >= 0 && !spots.Contains(spawn)) spots.Insert(0, spawn);
             // Where the player can stand: at a ground spot, or on the ground the route's last spot runs on with the stick it had
             // there (the route jumped off at it, short of the trigger), then rests within the trigger's x-range after a release.
             var stands = new List<(int q, int run, SimSnapshot state, InputTick step, float x)>();
@@ -182,21 +233,22 @@ namespace IGTAP.EngineSim.Cli
                     sAt = q;
                 }
                 if (s == null) break;
+                SimSnapshot at = q < div ? atSpawn : s;
                 bool held = q > 0 && without[q - 1].held;
-                InputTick step = RunStep(without, q, held, zone.Middle < way[q - div].x ? -1f : 1f);
-                int maxRun = q == lastGround ? MaxRunOn : 0;
+                InputTick step = RunStep(without, q, held, zone.Middle < (q <= div ? poses[q - from] : way[q - div]).x ? -1f : 1f);
+                int maxRun = q == lastGround || q == spawn ? MaxRunOn : 0;
                 for (int run = 0; run <= maxRun; run++)
                 {
                     Pose rest = default;
                     var list = Enumerable.Repeat(step, run).Concat(Enumerable.Repeat(new InputTick { held = held }, RestTicks)).ToList();
-                    _eval.SetStart(s, q);
+                    _eval.SetStart(at, q);
                     _eval.Goals.Limit = _goals;
                     _eval.Run(list, null, tick =>
                     {
                         if (tick == list.Count) rest = new Pose { ground = _eval.Player.onGround, x = _eval.PlayerWorld.x, y = _eval.PlayerWorld.y, vx = _eval.Player.Velocity.x };
                         return true;
                     }, 0);
-                    if (rest.ground && zone.Under(rest.x)) stands.Add((q, run, s, step, rest.x));
+                    if (rest.ground && zone.Under(rest.x)) stands.Add((q, run, at, step, rest.x));
                     // Past the trigger: further runs only go further.
                     if (step.x < 0f && rest.x < zone.x0 || step.x > 0f && rest.x > zone.x1) break;
                 }
@@ -219,6 +271,10 @@ namespace IGTAP.EngineSim.Cli
             }
             for (int i = 0; i < Math.Min(2, standList.Count); i++) ways.Add((i, "jump with the stick", standList[i].step.x));
             int played = 0, fixes = 0;
+            // The best way in with hops for the RNG (the first way's stand, at the fewest idle ticks that touch: the jump in as the
+            // Cash comes), kept when faster than every plain way.
+            Route lucky = null;
+            string luckyHow = null;
             foreach (var (index, kind, stick) in ways)
             {
                 if (TimeUp || played >= MaxWhole) break;
@@ -274,7 +330,13 @@ namespace IGTAP.EngineSim.Cli
                     if (input < 0 || physics >= old) b = mid; else a = mid + 1;
                 }
                 int high = a;
-                played++;
+                if (played++ == 0 && Whole(low) is List<InputTick> whole && !TimeUp)
+                {
+                    int ws = q + (own ? 0 : run);
+                    var (r, rhow) = RngTickets(current, g, whole, ws, ws + low, state, q, zone, Play(Way(low)).physics);
+                    if (r != null && r.Live < current.Live)
+                        (lucky, luckyHow) = (r, $"{low} idle ticks under the box at input {q} ({kind}{(run > 0 ? $" after {run} ticks on" : "")}), {rhow}");
+                }
                 Route Play2(int w) { List<InputTick> list = Whole(w); return list == null ? null : Evaluate(list); }
                 Route top = null;
                 int hi = high;
@@ -307,10 +369,11 @@ namespace IGTAP.EngineSim.Cli
                     }
                     hi = b;
                 }
+                if (lucky != null && lucky.Live < pick.Live) break;
                 if (pick.Live <= current.Live)
                     return (pick, $"{hi} idle ticks under the box at input {q} ({kind}{(run > 0 ? $" after {run} ticks on" : "")}), the buy at tick {pick.GoalPhysics[g]} against {old}{how}");
             }
-            return (null, null);
+            return lucky != null ? (lucky, luckyHow) : (null, null);
         }
 
         /// <summary>The smallest wait of 0..cap for which play(w) is a touch (>= 0): every fourth wait is looked at, then the ones before the first that touches.</summary>

@@ -270,6 +270,13 @@ namespace IGTAP.EngineSim.Cli
             double probeMinutes = Solve.Option(args, "--probe-minutes", _windowMinutes / 2);
             while (!TimeUp)
             {
+                // Every new best (and the start): the wall-coyote restart tech grafted around the best's quick restarts (--parts
+                // wallreset). Before the goals: a pass is capped at --wallreset-minutes, a goals pull's investments can take the session.
+                if (Part("wallreset") && !ReferenceEquals(_wallFor, _best))
+                {
+                    WallResetPass();
+                    continue;
+                }
                 // At the start and after new bests (at most every few minutes): the economy goals' edits (--parts goals). An
                 // adopted edit renumbers the goals, so the probes start over.
                 if (GoalsDue())
@@ -281,12 +288,6 @@ namespace IGTAP.EngineSim.Cli
                 if (Part("idle") && !ReferenceEquals(_idledFor, _best))
                 {
                     IdlePull();
-                    continue;
-                }
-                // Every new best (and the start): the wall-coyote restart tech grafted around the best's quick restarts (--parts wallreset).
-                if (Part("wallreset") && !ReferenceEquals(_wallFor, _best))
-                {
-                    WallResetPass();
                     continue;
                 }
                 // Every new best (and the start): the known routes' faster goal runs spliced into it (--parts combine).

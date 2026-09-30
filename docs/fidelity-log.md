@@ -682,6 +682,19 @@ ordered as the sections they came from.
   as long as the game can render the ~310 fps it needs to catch up.
 - **Where:** `TasPlugin.PacePlayback`, `WaitForFixedClock`.
 
+## Savestate restore kept a death's respawn
+
+- **Symptom:** a savestate restored within 0.6 s of a death (the studio's Restore, a savestate route or probe start, a
+  lab placement) teleported the player back to the checkpoint moments later, and the camera panned across the map.
+  Restores in a camera room or while falling left the camera on the old room, or up to 1180 below the player.
+- **Cause:** `onDeath` queues `Invoke("deathRespawn", 0.6f)`, which a savestate restore never cancelled (turbo's
+  restore cancels every invoke). A `camZoneScript` holds the camera until its `OnTriggerExit2D`, and `SnapCamera` used
+  the fall look-down offset the last tick before the restore left.
+- **Fix:** `SavestateService.Restore` cancels `deathRespawn` only (a blanket `CancelInvoke` would drop a wall jump's
+  `reEnableNormalCollider`, which a savestate can't restore), gives the camera back to the player, restores the zoom
+  (`camSize`, 0 in older savestates) and snaps with the look-down of the restored speed.
+- **Where:** `SavestateService.Restore`, `SnapCamera`, `Savestate.camSize`.
+
 ## Buy-max levels bought once a tick
 
 - **Symptom:** a 1x probe of `fulltas/FalseEnding-Any%_NONE 361.68` (`fe36168fix`) split from offline Cash at physics tick
@@ -707,3 +720,22 @@ ordered as the sections they came from.
   replayed yet (it needs the plugin redeployed). `--ticks-out` now runs to the route's end (its 400 extra ticks had ended it
   at tick 16,413 of the probe's 17,353).
 - **Where:** `Simulation.InterpolatedFrames` (`Shop.EndOfFrame`), `TurboRunner.Run` (`EndOfFrame`), `FullTas.Check`.
+
+## 1x counted the dash freeze's first frame as held
+
+- **Symptom:** `fulltas/FalseEnding-Any%_NONE 358.69` played at 1x in 359.74 s live against 358.69 s judged in turbo and
+  offline (2026-09-30; the 359.85 s record likewise read 360.90 s), 294 frames more: one per dash freeze.
+- **Cause:** 1x counted a held frame for every frame whose Update ran at `Time.timeScale` 0. `Movement.TimeStop` sets it
+  in the `FixedUpdate` of the frame that crosses the tick, so that frame's Update runs at 0 though its game time moved
+  (it is the tick's own). A 1x probe (`fe358`) shows 15 frames at timeScale 0 per freeze and 14 with the game time
+  standing still, turbo's and the engine's `FrozenFrames` (4,380 against 4,088 over the probe).
+- **Fix:** 1x counts a frame as held when its game time (`Time.timeAsDouble`) is the frame before's. The same 358.69 s
+  route then plays at 1x in 358.69 s live (0 dropped frames), as turbo and offline time it.
+- **Where:** `TasPlugin.PacePlayback` (`_pacedTime`).
+
+The RNG runs of *Buy-max levels bought once a tick* (~1,100 ticks, runs of 1-6) aren't a divergence: over the 358.69 s
+route both sides make the same 6,759 draws in the same order (every per-tick state of both lies on one xorshift sequence,
+the probe's tick row always between the engine's rows for the tick before and the tick), and all 1,741 clone spawns
+match (tick, course, on screen, divisor, rolls). The probe writes its tick row after `Movement.FixedUpdate`
+(`AfterMovementFixedUpdate`), before `Physics2D.Simulate`'s trigger callbacks (a box's buy sound) and the tick's
+rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` writes its row after all of them.

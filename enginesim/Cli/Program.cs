@@ -33,6 +33,7 @@ namespace IGTAP.EngineSim.Cli
                     case "polish": return Polish.Command(args.Skip(1).ToArray());
                     case "coverage": return Coverage.Run(args.Skip(1).ToArray());
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
+                    case "suggest": return Suggest.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
@@ -122,12 +123,16 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --rng N seeds the search's randomness (worker i gets N + i) instead of\n"
                             + "                                         the clock, so a one-thread run repeats exactly\n"
                             + "                                         each new best also gets a human version (humanize; --no-humanize skips it)\n"
-                            + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks)\n"
+                            + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks, cpu s)\n"
                             + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
                             + "                                         --plan [--plan-minutes M]: plan (and polish) first, its route a seed\n"
                             + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
                             + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
                             + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
+                            + "  searchbench --suite grafts [--check] [--case a,b] [--slack k] [--seeds N] [--minutes M] [--threads T] [--arms ...]\n"
+                            + "                                         planted-waste cases (searchbench-grafts.json): a saved route with a waste\n"
+                            + "                                         planted seeds solve (or fulltas --goal); per case the seeds that get within\n"
+                            + "                                         k ticks of the original and the CPU s it took (--check: plant only)\n"
                             + "  plan <trace.json> [--threads N] [--minutes M] [--width W] [--max-width W] [--cap K] [--cell C] [--labels L] [--first]\n"
                             + "       [--guide-route <best.json>]... [--follow-ticks K] [--no-midair] [--no-chains] [--no-polish] [--no-tech-grafts] [--out file]\n"
                             + "       [--route <best.json> --from-goal N [--to-goal M] [--guide-probe <probe.json>]... [--chain K]] [--profile <route.json>]\n"
@@ -146,9 +151,13 @@ namespace IGTAP.EngineSim.Cli
                             + "  humanize <start-trace.json> <best.json> [--threads N] [--via x0,y0,x1,y1]... [--avoid x0,y0,x1,y1]...\n"
                             + "                                         same-time version of a best with fewer perfect inputs and each\n"
                             + "                                         input's timing/value slack: <best>-human.json and <best>-human.md\n"
+                            + "  suggest <start-trace.json> <route.json> --until N [--out file] [--threads T] [--radius R] [--max-shift S]\n"
+                            + "                                         the player after the route's first N input ticks as a target: humanize's\n"
+                            + "                                         edits of those ticks (shifts, stick values, drops) that get there sooner,\n"
+                            + "                                         ranked by input ticks saved: <route>-suggest.json\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
-                            + "          [--reset-study] [--lookahead N] | --check <route.json> [--chain-vs <old route.json>]\n"
+                            + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] | --check <route.json> [--chain-vs <old route.json>]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
                             + "                   [--combine-repair-minutes m]\n"

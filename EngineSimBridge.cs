@@ -654,6 +654,8 @@ namespace IGTAPTasMod
                     _engineSimTickHook = null;
                     _techStart = null;
                     ClearEngineSimStarts();
+                    // The turbo run starts and ends inside this request, where PumpLabMap never sees it busy: the next Update restores the lab.
+                    if (_lab != null) _lab.PlaybackSeen = true;
                 }
                 if (first == null) throw new InvalidOperationException(tech.name + "'s demo ran no tick in turbo.");
                 Vector2 end = player.transform.position;

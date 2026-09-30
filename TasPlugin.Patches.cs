@@ -218,6 +218,7 @@ namespace IGTAPTasMod
         {
             if (Instance == null || IsMenuPlayer(__instance)) return;
             Instance._engine.CountPhysicsTick();
+            Instance.TasAfterTick(__instance);
             if (!Instance._recorder.IsRecording) Instance._engine.AfterFixedTick(__instance);
             Instance.OverlayTick(__instance);
             Instance.ProbeAfterTick(__instance);

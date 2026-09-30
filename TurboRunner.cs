@@ -53,7 +53,7 @@ namespace IGTAPTasMod
         /// that hasn't looked at its message queue for 5 s "Not Responding". Looking without taking a message (PM_NOREMOVE)
         /// keeps it responsive and runs no frame, Update, FixedUpdate or coroutine, so nothing of the run moves.
         /// </summary>
-        static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
+        internal static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
         {
             if (clock.ElapsedMilliseconds < next) return;
             next = clock.ElapsedMilliseconds + KeepAliveMs;
@@ -150,9 +150,27 @@ namespace IGTAPTasMod
             return false;
         }
 
+        /// <summary>
+        /// The TAS editor's seeks go on at 1x after the run: a dash's IE_TimeStop started in it (timeScale 0 until real frames
+        /// pass; the run models the freeze itself, _freezeFor) would freeze 1x again after it. Off for every judged run.
+        /// </summary>
+        internal static bool DropTimeStops;
+
+        /// <summary>After a run that 1x goes on from: the player where the last rendered frame's blend shows it, which is
+        /// where 1x's next FixedUpdate reads it (the run leaves it at the step's end).</summary>
+        internal static void ShowLastFrame(Movement movement)
+        {
+            Place(movement.transform, Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.LastAlpha));
+        }
+
         static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
         {
             if (!Active || routine == null) return true;
+            if (DropTimeStops && __instance is Movement && routine.GetType().Name.Contains("IE_TimeStop"))
+            {
+                __result = null;
+                return false;
+            }
             if (__instance is FloatingOrigin)
             {
                 // MoveOrigin runs to its WaitForFixedUpdate here (RebaseInProgress set); Run resumes it after the next physics step.
@@ -695,7 +713,7 @@ namespace IGTAPTasMod
             if (s.camera != null && movement.cam != null)
             {
                 FieldState.Restore(movement.cam, s.camera);
-                SavestateService.SnapCamera(s.position);
+                SavestateService.SnapCamera(s.position, false);
             }
             // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
             UnityEngine.Random.state = s.random;

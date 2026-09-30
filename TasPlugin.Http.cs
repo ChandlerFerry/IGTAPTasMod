@@ -30,6 +30,7 @@ namespace IGTAPTasMod
             if (request.Path.StartsWith("/api/techs/", StringComparison.Ordinal)) return HandleTechs(request.Path, body);
             if (request.Path.StartsWith("/api/probe/", StringComparison.Ordinal)) return HandleProbe(request.Path, body);
             if (request.Path.StartsWith("/api/labmap/", StringComparison.Ordinal)) return HandleLabMap(request.Path, body);
+            if (request.Path.StartsWith("/api/tas/", StringComparison.Ordinal)) return HandleTas(request, body);
             if (request.Method == "GET" && request.Path == "/api/oracle/status")
             {
                 return new
@@ -176,6 +177,13 @@ namespace IGTAPTasMod
                 if (SelectedMacro == null) throw new InvalidOperationException("Select a route first.");
                 ReplaySelected(Number(body, "startDelayTicks", 0), Mathf.Clamp(FloatNumber(body, "slowdown", DefaultWalkSlowdown), 1f, 1000f));
                 return new { ok = true };
+            }
+            if (request.Path == "/api/routes/ticks")
+            {
+                MacroDefinition route = _library.macros.Find(r => r.id == Text(body, "routeId")) ?? throw new InvalidOperationException("Route not found.");
+                if (!route.steps.All(st => st.type == MacroStepType.RawInput)) return new { ok = true, raw = false };
+                return new { ok = true, raw = true, ticks = JArray.FromObject(ToTicks(route.steps.Where(st => st.enabled).ToList()), TasTickJson),
+                    markers = route.markers ?? new List<RouteMarker>() };
             }
             if (request.Path == "/api/routes/duplicate")
             {
@@ -418,7 +426,7 @@ namespace IGTAPTasMod
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,
-                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState() };
+                solver = BuildSolverWebState(), fullTas = BuildFullTasLiveWebState(), techs = BuildTechLiveWebState(), tas = BuildTasLiveState() };
         }
 
         private object BuildStaticWebState()
