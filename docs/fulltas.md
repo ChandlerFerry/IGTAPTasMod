@@ -1784,6 +1784,22 @@ that keep it out of them cost the lead back. The model had put 908 ticks of head
 the clones' Cash (`buydj`'s climb 139 ticks, `buyds` and `buystatue`); held to the buys' spare Cash (above) it is 392.
 Goal 91 keeps its 195: `reward:bonus1`'s own Cash pays the buy after it, so reaching it sooner moves that buy.
 
+**Super chain on the ending's flat (2026-09-30).** After `buy:buydj` the run crosses the flat at y ~11660 (x 12160 to
+17400, `FloatingOrigin` rebases on it) to the wall at x 19910. Each dash freezes time 14 frames at its start, and again
+at its end unless a super cancels it (`endDash`: `Mathf.Sign(0)` is +1, so a rightward dash with no momentum pays it
+too). The old route mixed plain ground dashes, double jumps and air dashes: 20.1-20.4 u per live tick (ticks plus
+held frames / 5.6). The super chain makes 23.7 u per live tick. Each cycle: a ground dash on the landing tick, the jump
+at dash frame 10 (the super on the dash's last tick: no end freeze, momentum 876), the jump cut, an air dash 2-4 ticks
+after the super (momentum back at 0.95x when it ends), a fast-fall (stick down), and the next ground dash buffered 3
+ticks before landing. Without the air dash a cycle makes 23.2. The chain is 0.71 s ahead of the old route at x 17300.
+No flight from the flat's edge (super, air dash, double jump) holds its height to the wall: all drop to the lower
+ground, so the old way on (a super on the lower ground, an air dash into the wall, the dash-boost climb) stays. Spliced
+with the old climb where the air dash meets the wall: 355.43 to 354.72 s, then 354.54 s after `--auto --focus
+271-276`. On the 355.18 s prefix (10 ticks sooner at `buydj`) it made 354.27 s. `--auto --focus 271-278` from there
+made 353.55 s: its idle re-timing moved 8 waits under the boxes (353.57 s), and one window saved a tick at goal 271.
+Before the chain, windows on this stretch had found only a few ticks. A chain gains only after several cycles, and
+the windows scored at goal 273, 400 ticks on.
+
 **The statue boost.** `buy:buystatue` (`BoostOldCourses`) sets Courses 1 and 2 to Course 3's reward tier plus their mod
 and turns their boxes back on as buy-max boxes with 1.5x caps, at their old costs: `buyreward2` 39 -> 68 levels,
 `buyclone2` 23 -> 52, `buyclonemult2` 6 -> 15, for about 7e5 W against 3.2e10 held. `FalseEnding-Any%` never went back

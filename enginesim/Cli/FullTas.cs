@@ -187,7 +187,8 @@ namespace IGTAP.EngineSim.Cli
                 + (r.Progress == _goals ? $", {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({r.Last} ticks, {r.Held(r.Progress)} held frames)" : "")
                 + $"; ended after input {_eval.Engine.RunTicks} at {at.x.ToString("0.0", CultureInfo.InvariantCulture)},{at.y.ToString("0.0", CultureInfo.InvariantCulture)}: {r.EndReason}");
             Console.WriteLine($"purchases ({(_eval.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
-            // --ticks-out FILE: every physics tick of the replay (physics and input count, world position, velocity, Cash) as JSON
+            // --ticks-out FILE: every physics tick of the replay (physics and input count, world position, velocity, momentum, held frames,
+            // ground, air dashes and jumps left, Cash) as JSON
             // lines, to line up with a 1x probe (tools/probe.py, rows by `physics`) where the two split.
             int ticksOut = Array.IndexOf(_args, "--ticks-out");
             if (ticksOut > 0 && ticksOut + 1 < _args.Length)
@@ -208,7 +209,9 @@ namespace IGTAP.EngineSim.Cli
                     WorldPos p = _eval.PlayerWorld;
                     UnityEngine.Random.State rng = UnityEngine.Random.state;
                     w.WriteLine(JsonSerializer.Serialize(new { physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, goal = _eval.Progress, x = p.x, y = p.y,
-                        vx = _eval.Player.Velocity.x, vy = _eval.Player.Velocity.y, cash = _eval.Shop.CashNow,
+                        vx = _eval.Player.Velocity.x, vy = _eval.Player.Velocity.y, mx = _eval.Player.momentum.x, my = _eval.Player.momentum.y,
+                        held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
+                        cash = _eval.Shop.CashNow,
                         rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
                         random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
                 });
