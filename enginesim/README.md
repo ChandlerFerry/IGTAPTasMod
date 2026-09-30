@@ -39,8 +39,9 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   frames. Its history is fixed (`CourseStart`, shared with the engine): the Movement fields a quick restart keeps
   (`facingRight` true, `wallJumpFacing` (1, 0), `dashDirection` (0, 0), `wallCoyoteDir` 0, `framesSinceLastDash` 1000,
   `MostRecentUpwardsMoveWasNormalJump` false, afterimage and wall-slide flags, `preDashMomentum`, `finalWallClingTimeLeft`;
-  in the air `lastHyperY` 1e8), the RNG and every `clonesScript.timeSinceLastClone` (10000), set after the quick restart
-  and again at the capture. Its FloatingOrigin is fixed too: the quick restart puts the world where the game's own
+  in the air `lastHyperY` 1e8), the RNG and every `clonesScript.timeSinceLastClone` (10000, `Start`'s: on build 25630570
+  the reserve that lets an on-screen course spawn one clone a frame while a slot is free), set after the quick restart and again at
+  the capture. Its FloatingOrigin is fixed too: the quick restart puts the world where the game's own
   rebase on the player standing at the start leaves it (each scene root at its loaded position minus the reset point
   12 down, `currentOrigin` minus that point, the player at scene (0, 0); `TurboRunner.PutCanonicalOrigin`). The start
   snapshot's restores put it there exactly again, whatever ran before. The searches (`Solve.Creator`) load a category
@@ -1233,6 +1234,10 @@ in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs i
 
 ## Fidelity facts (all verified against traces)
 
+Verified on the game build before 2026-09-30. Build 25630570 changed two statements, the on-screen clone spawn and the
+buy-max coroutine's wait; the engine and turbo are being ported to them
+([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Everything else below holds on both.
+
 - Game float math is Mono double precision: intermediates in double, rounded on store (`-0.3f*46f*10f/4.5f` =
   -30.666668). `Prep/MonoFloat.cs` widens float loads in Assembly-CSharp and in the shim's math types.
 - Colliders: exact shapes from `Collider2D.GetShapes`; static colliders are world-space fixtures on one ground body;
@@ -1275,9 +1280,12 @@ in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs i
 - `clonesScript.Update` runs once per rendered frame on its `Time.deltaTime`, in turbo and here as at 1x: each frame of
   the tick's grid (`MacroEngine.FrameGrid.Step`: the crossing frame's step, then 1/280), 0 in a dash freeze's or
   pause's repeats (timeScale 0). The crossing frame at the playback rate reads 0.00214285006 s, not `CrossStep`: 1x's
-  ticks come 0.0199999929 s apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). A spawn resets `timeSinceLastClone` to 0 and drops the overshoot, so a per-tick step
+  ticks come 0.0199999929 s apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). On
+  the pre-2026-09-30 build a spawn reset `timeSinceLastClone` to 0 and dropped the overshoot, so a per-tick step
   (Δt 0.02) spawned less often than 1x and its Cash came in later ([`docs/fidelity-log.md`](../docs/fidelity-log.md),
-  *Clones stepped once a tick*).
+  *Clones stepped once a tick*). Build 25630570 takes the rolled interval off instead, so an on-screen course keeps
+  `Start`'s 10000 and spawns one clone a frame while a slot is free; turbo and the engine still step the old rule until the port
+  lands. What they must match: [`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570).
 - `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
   it lists. Cash here is start − spent + awarded + earned, the game's a running total: they differ in the last bit
   (tick 13336 above), which only matters for a purchase within a rounding of its cost.
@@ -1352,11 +1360,12 @@ in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs i
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
   and whether turbo can buy the box depends on the live save (1to2 NONE:
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Wall jump box the live save had bought*).
-- Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): the coroutine buys a level, then waits for the end of
-  the frame, so it buys one level per rendered frame: six a tick on the 280 fps clock (a freeze's or pause's repeats
-  too). Turbo (`TurboRunner.Run`) and offline (`Simulation.InterpolatedFrames`, `Shop.EndOfFrame`) resume it after each
-  frame of the tick's grid. They resumed it once a tick before, so 1x paid a box's levels six times faster; a 1x probe of
-  `FalseEnding-Any%` 361.68 (29 `buyclone2` levels from tick 15216) now matches offline Cash on every tick
+- Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
+  waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
+  ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Turbo (`TurboRunner.Run`) and offline
+  (`Simulation.InterpolatedFrames`, `Shop.EndOfFrame`) still play the pre-2026-09-30 rule, being ported: a level at the
+  end of every rendered frame, six a tick on the 280 fps clock (a freeze's or pause's repeats too). On that build a 1x
+  probe of `FalseEnding-Any%` 361.68 (29 `buyclone2` levels from tick 15216) matched offline Cash on every tick
   ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Buy-max levels bought once a tick*).
 - UnityEngine.Random is Unity's xorshift128 over `Random.State`'s four words (`Shim/Engine/Misc.cs`): `InitState(seed)`
   fills s0 = seed, s(i) = 1812433253 * s(i-1) + 1 mod 2^32; each draw is `t = s0 ^ (s0 << 11)` then
@@ -1379,8 +1388,10 @@ in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs i
 - Random consumer audit (every draw a turbo tick can make, and where it is kept offline; lines are
   `obj/fulldecomp-steam`'s):
   - `clonesScript.SpawnClone` (clonesScript.cs:172,182): one `Random.Range(0, 101)` per speed and size roll loop, at
-    least one draw each per spawn, chance or not — modeled in `Runtime/Economy.cs` (the rolls pick the clone's
-    Fastness/Bigness and the next spawn's due time).
+    least one draw each per call, spawn or not — modeled in `Runtime/Economy.cs` (the rolls pick the clone's
+    Fastness/Bigness and the next spawn's due time). On build 25630570 an on-screen course with clones calls it every
+    rendered frame (12 draws a tick at 280 fps, was about 0.3):
+    [`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570).
   - `clonesScript.checkIfColourClone` (clonesScript.cs:379,389): drawn only when a colour counter passes 100; such a
     run ends (`Unmodeled economy: colour clone`), so the draws are never needed.
   - `Movement.playSFX` (Movement.cs:1869-1919): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
