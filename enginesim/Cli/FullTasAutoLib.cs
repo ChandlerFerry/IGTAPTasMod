@@ -783,6 +783,43 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         Route WaitFix(Route c, Route old, int changedEnd, string how, int changedStart = -1)
         {
+            Route r = WaitFixCore(c, old, changedEnd, how, changedStart);
+            if ((r == null || r.Progress < _goals) && StrayBox((r ?? c).EndReason) != null) StrayRescue(r ?? c, old, changedEnd, how);
+            return r;
+        }
+
+        /// <summary>A stray-fitted run that beats the best (<see cref="StrayRescue"/>), with the goals it was fitted from; the loop adopts
+        /// it as a goals edit before its next pull when those goals are still the run's.</summary>
+        (GoalEdit e, Route route, string[] from) _strayWin;
+        /// <summary>Stray rescues tried on the current best (at most StrayRescues a best: each replays the run for every fit).</summary>
+        int _strayRescues;
+        ulong _strayRescueBest;
+        const int StrayRescues = 6;
+
+        /// <summary>
+        /// Any lever's candidate that the wait fix can't carry past a strict stray buy (window finds and merges, combine, revive,
+        /// idle moves, tail windows, the repairs through them) and that is ahead of <paramref name="old"/> where it stops: its goals
+        /// fitted to what it buys (<see cref="Played"/>: StrayFit, then the wait fix), the inputs after the change being old's
+        /// from <paramref name="changedEnd"/> on. A complete fitted run faster than the best is kept in <see cref="_strayWin"/>.
+        /// </summary>
+        void StrayRescue(Route c, Route old, int changedEnd, string how)
+        {
+            int p = c.Progress;
+            if (p < 1 || old.Progress < p || c.GoalPhysics[p - 1] >= old.GoalPhysics[p - 1] || TimeUp) return;
+            ulong key = BestKey();
+            if (key != _strayRescueBest) (_strayRescueBest, _strayRescues) = (key, 0);
+            if (_strayRescues++ >= StrayRescues) return;
+            int shift = c.Inputs.Count - old.Inputs.Count;
+            var e = new GoalEdit { Kind = "strayfit", Text = $"{how}, its goals fitted to its strays", Key = $"strayfit:{SnapshotIndex.Hash(c.Inputs, c.Inputs.Count):x16}",
+                Labels = _labels, OldOf = Enumerable.Range(0, _goals).ToArray(), Inputs = c.Inputs, NewAt = changedEnd, OldAt = changedEnd - shift };
+            (Route route, _, string why) = Played(_eval, _origin, e, old);
+            _eval.UseGoals(_runGoals);
+            Log($"auto stray rescue: {how}: " + (route == null ? why : $"{Describe(route)} on {e.Labels.Length} goals ({route.Last - _best.Last:+0;-0} ticks against the best), {why}"));
+            if (route != null && route.Live < (_strayWin.route ?? _best).Live) _strayWin = (e, route, _labels);
+        }
+
+        Route WaitFixCore(Route c, Route old, int changedEnd, string how, int changedStart = -1)
+        {
             Simulation sim = _eval;
             if (changedStart < 0) changedStart = changedEnd;
             for (int fix = 0; fix < 6 && c != null && c.Progress < _goals; fix++)

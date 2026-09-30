@@ -1129,7 +1129,7 @@ namespace IGTAP.EngineSim.Cli
         /// StrayFit: a run <paramref name="rr"/> of <paramref name="e"/>'s inputs that bought box B off its goal list (strict buys,
         /// README Rules 38: every buy is a goal) gets its goals fitted to what it buys: B's next buy goal within StrayFitWindow moved
         /// up to the stray, <c>buy:B</c> put in there, or the goal it stopped at dropped (an economy buy whose touch can't pay any
-        /// more). Each is replayed; the one that gets furthest (past the stray) is returned with its old-goal map, null when none
+        /// more). Each is replayed; the one that gets furthest (past the stray, or level with it and ending otherwise) is returned with its old-goal map, null when none
         /// does or B has no economy buy label in the run. Leaves <paramref name="sim"/> on the fitted goals.
         /// </summary>
         (string[] labels, int[] oldOf)? StrayFit(Simulation sim, SimSnapshot origin, GoalEdit e, List<InputTick> inputs, RunResult rr)
@@ -1170,7 +1170,8 @@ namespace IGTAP.EngineSim.Cli
                 RunResult r = sim.Run(inputs, null, null, 1000000);
                 // Progress in the old numbering's terms: a goal put in counts one more, a goal dropped one less.
                 int reach = r.Progress - (labels.Length - e.Labels.Length);
-                if (reach > p && (pick.how == null || reach > pick.progress)) pick = (how, labels, o.ToArray(), reach, r.Progress == labels.Length ? "complete" : r.EndReason);
+                // Level with the stray counts when the run now ends otherwise: a walk that buys a row of boxes early takes one fit a box.
+                if ((reach > p || reach == p && r.EndReason != rr.EndReason) && (pick.how == null || reach > pick.progress)) pick = (how, labels, o.ToArray(), reach, r.Progress == labels.Length ? "complete" : r.EndReason);
             }
             lock (StrayLog)
             {

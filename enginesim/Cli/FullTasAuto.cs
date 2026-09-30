@@ -283,6 +283,13 @@ namespace IGTAP.EngineSim.Cli
                     WallResetPass();
                     continue;
                 }
+                if (_strayWin.route != null)
+                {
+                    var (e, route, from) = _strayWin;
+                    _strayWin = default;
+                    if (ReferenceEquals(from, _labels) && route.Live < _best.Live && AdoptGoals(e, route, _best)) Probe();
+                    continue;
+                }
                 // At the start and after new bests (at most every few minutes): the economy goals' edits (--parts goals). An
                 // adopted edit renumbers the goals, so the probes start over.
                 if (GoalsDue())
