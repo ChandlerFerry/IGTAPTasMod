@@ -38,6 +38,7 @@ namespace IGTAPTasMod
             float time;
             int finishTick;
             FullTasTracker tracker;
+            string status;
             string temporary = path + ".tmp";
             using (var writer = new StreamWriter(temporary))
             {
@@ -50,6 +51,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("fulltas"); w.WriteStartObject();
                 w.WritePropertyName("name"); w.WriteValue(run.name);
                 w.WritePropertyName("startSetup"); w.WriteValue(FullTasStartSetup);
+                w.WritePropertyName("build"); w.WriteValue(Application.buildGUID);
                 w.WritePropertyName("format"); w.WriteValue(FullTasTraceFormat);
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
@@ -96,6 +98,7 @@ namespace IGTAPTasMod
                 };
                 try { finished = EvaluateFullTas(run, inputs, out time, out finishTick, out tracker); }
                 finally { _engineSimTickHook = null; }
+                status = _engine.Status;
                 Vector2 end = player.transform.position;
                 ParkAtNewGameStart();
                 w.WriteEndArray();
@@ -120,7 +123,7 @@ namespace IGTAPTasMod
                     + "was not written. Load the scene again (POST /api/oracle/bootstrap) and capture again.");
             }
             ReplaceAtomic(temporary, path);
-            RememberBestSplits(run, inputs, finished, time, tracker);
+            RememberBestSplits(run, inputs, finished, time, tracker, status);
             FullTasLog("Trace " + path + ": " + (finished ? "finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s live (" + _engine.PhysicsTicks + " frames)"
                 : "reached " + tracker.Next + " of " + goals.Length + " goals"));
             return new { ok = true, path = path, trace = path, finished = finished, time = time, finishTick = finishTick, progress = tracker.Next };
@@ -129,14 +132,20 @@ namespace IGTAPTasMod
         /// <summary>
         /// A trace that replayed the record's own inputs (the trace starts with them) keeps the record's splits, and puts the
         /// record's name to the time the replay took when it differs: a record saved when a Full-TAS time was its physics ticks
-        /// alone (before dash freezes counted, README ### Rules 31) is re-timed here on its next trace.
+        /// alone (before dash freezes counted, README ### Rules 31) is re-timed here on its next trace. One whose replay dies or runs
+        /// out of inputs short of its goals (a game update changed it) is retired, as a 1x play retires it.
         /// </summary>
-        void RememberBestSplits(FullTasRunDef run, List<SolverTick> inputs, bool finished, float time, FullTasTracker tracker)
+        void RememberBestSplits(FullTasRunDef run, List<SolverTick> inputs, bool finished, float time, FullTasTracker tracker, string status)
         {
             MacroDefinition best = FullTasBestRoute(run.name);
-            if (!finished || best == null || !_library.macros.Contains(best)) return;
+            if (best == null || !_library.macros.Contains(best)) return;
             List<SolverTick> saved = ToTicks(best.steps);
             if (saved.Count > inputs.Count || JsonConvert.SerializeObject(saved) != JsonConvert.SerializeObject(inputs.Take(saved.Count).ToList())) return;
+            if (!finished)
+            {
+                RetireBrokenFullTasRoute(best, "turbo replay", status, tracker);
+                return;
+            }
             string name = FullTasCategory(run.name) + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
             if (!string.Equals(best.name, name, StringComparison.OrdinalIgnoreCase))
             {
@@ -147,6 +156,19 @@ namespace IGTAPTasMod
                 SaveLibrary();
             }
             if (!_fullTasSplits.ContainsKey(best.id)) StoreFullTasSplits(best, FullTasSplits(tracker));
+        }
+
+        /// <summary>
+        /// 1x and turbo play a route the same every time: a saved route that dies or runs out of inputs short of its goals (not a
+        /// stop) is no longer a time, so it is renamed stale.
+        /// </summary>
+        void RetireBrokenFullTasRoute(MacroDefinition route, string how, string reason, FullTasTracker tracker)
+        {
+            bool broken = reason != null && (reason.StartsWith("Player death", StringComparison.Ordinal) || reason == "Timeline complete");
+            if (!broken || tracker.Next >= tracker.Goals.Length || !MatchCategoryRoute(route.name).Success || !_library.macros.Contains(route)) return;
+            FullTasLog("Retired " + route.name + ": its " + how + " " + reason.ToLowerInvariant() + " after " + tracker.Next + " of " + tracker.Goals.Length + " goals");
+            route.name += " stale";
+            SaveLibrary();
         }
 
         List<SolverTick> FullTasInputs(FullTasRunDef run, JObject body)
@@ -202,7 +224,7 @@ namespace IGTAPTasMod
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && ((string)header["buys"] == "loose") == run.LooseBuys
-                    && RebaseOf(header) == run.RebaseAt
+                    && RebaseOf(header) == run.RebaseAt && (string)header["build"] == Application.buildGUID
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)

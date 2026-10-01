@@ -91,15 +91,8 @@ namespace IGTAPTasMod
             SetFullTasResult(line, new { kind = "play", text = line, run = play.run.name, error = !finished && tracker.Next < play.expected, finished, time,
                 reached = tracker.Next, of = tracker.Goals.Length, expected = play.expected, next = next?.label, reason = finished ? null : reason,
                 droppedFrames = _droppedFrames, splits });
-            // 1x is the judge and plays a route the same every time: a saved route that dies or runs out of inputs short of its
-            // goals (not a stop, not a dropped frame) is no longer a time, whatever turbo judged it.
-            bool broken = !finished && _droppedFrames == 0 && (reason.StartsWith("Player death", StringComparison.Ordinal) || reason == "Timeline complete");
-            if (broken && play.expected == tracker.Goals.Length && MatchCategoryRoute(play.route.name).Success && _library.macros.Contains(play.route))
-            {
-                FullTasLog("Retired " + play.route.name + ": its 1x play " + reason.ToLowerInvariant() + " after " + tracker.Next + " of " + tracker.Goals.Length + " goals");
-                play.route.name += " stale";
-                SaveLibrary();
-            }
+            if (!finished && _droppedFrames == 0 && play.expected == tracker.Goals.Length)
+                RetireBrokenFullTasRoute(play.route, "1x play", reason, tracker);
             if (finished && FullTasBestRoute(play.run.name) == play.route && !_fullTasSplits.ContainsKey(play.route.id)
                 && Mathf.Abs(CategoryBest(FullTasCategory(play.run.name)) - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);

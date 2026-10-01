@@ -1830,6 +1830,12 @@ from the new game's origin, on while blue is active; none in Course 11's overgro
 its own ground type. No other collider changed. World exports from before 16:37 lack them: capture again the traces
 whose routes pass there.
 
+**`FalseEnding-Any%` on build 25640326.** 346.74 s dies at goal 86 (retired by its 1x play). Re-fitted on the engine
+(`C:\tmp\igtap\fit640\fit.py`: at each stop, a wait before one of the last quick restarts or a goal fit, whichever plays
+furthest): +18, +36, +95, +44 and +240 idle ticks before the restarts ahead of `buy:buywj`, the Course 2 lap before
+`buy:buyds`, two Course 3 strays and a Course 2 `Clone` stray, and Course 2's `buyreward2`/`buyclone2` goals fitted to
+its strays (278 goals): 355.40 s, judged in turbo as offline. The waits are the greedy fit's, not tuned.
+
 ### Clones and buy-max (build 25630570)
 
 Steam's update of 2026-09-30 10:34 (build 25630570) changed two game statements: `clonesScript.SpawnClone` on screen
