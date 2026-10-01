@@ -1184,19 +1184,41 @@ namespace IGTAP.EngineSim.Cli
         /// Economy change, then reroute: the fastest ladders that played through (their goals fitted to their strays) but don't beat
         /// the best get the goals from the ladder up to the next unlock buy planned again on their route by the engine farm planner
         /// (<see cref="Replan"/>, joined: the plan, the old way on after the target, the waits re-timed from the start). A planned run
-        /// that beats the best is adopted as a goals edit.
+        /// that beats the best is adopted as a goals edit. So are the furthest ladders whose old way on dies or stalls at an unlock
+        /// buy past the ladder (FalseEnding-Any%'s walk to buy:buystatue, "Player death at action N", after its levels were fitted):
+        /// the goals from the unlock buy before it (or the ladder's end) to that buy planned again on the run that got there.
         /// </summary>
         bool Reroute(List<GoalEdit> edits, (Route route, Route partial, string why)[] results, Route best)
         {
-            foreach (int i in Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route != null)
-                .OrderBy(i => results[i].route.Live).Take(Reroutes))
+            static bool Unlock(string l) => l.StartsWith("buy:", StringComparison.Ordinal) && !FullTasGoal.IsEconomy(l);
+            var through = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route != null)
+                .OrderBy(i => results[i].route.Live).Take(Reroutes);
+            var stopped = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route == null && results[i].partial is Route d
+                    && d.Progress > edits[i].Retune && d.Progress < edits[i].Labels.Length && Unlock(edits[i].Labels[d.Progress]))
+                .OrderByDescending(i => results[i].partial.Progress).ThenBy(i => results[i].partial.GoalPhysics[results[i].partial.Progress - 1]).Take(Reroutes);
+            foreach (int i in through.Concat(stopped))
             {
                 GoalEdit e = edits[i];
+                Route on = results[i].route ?? results[i].partial;
                 int kept = e.Retune;
-                string target = e.Labels.Skip(kept).FirstOrDefault(l => l.StartsWith("buy:", StringComparison.Ordinal) && !FullTasGoal.IsEconomy(l));
+                string target = e.Labels.Skip(kept).FirstOrDefault(Unlock);
+                if (results[i].route == null)
+                {
+                    target = e.Labels[on.Progress];
+                    kept = Math.Max(kept, Array.FindLastIndex(e.Labels, on.Progress - 1, on.Progress, Unlock) + 1);
+                    // The join plays the old way on from the target's input tick, which a run that never reached it doesn't have (0:
+                    // the whole route again after the plan): the best's way on after its own buy of the target, from where the run stopped.
+                    int ot = e.OldOf[on.Progress];
+                    if (ot < 0 || ot >= best.Progress) continue;
+                    int cut = (int)Math.Min(on.GoalInput[on.Progress - 1], on.Inputs.Count);
+                    long[] at = (long[])on.GoalInput.Clone();
+                    at[on.Progress] = cut;
+                    on = new Route { Inputs = on.Inputs.Take(cut).Concat(best.Inputs.Skip((int)Math.Min(best.GoalInput[ot], best.Inputs.Count))).ToList(), Progress = on.Progress,
+                        GoalInput = at, GoalPhysics = on.GoalPhysics, GoalHeld = on.GoalHeld, EndReason = on.EndReason };
+                }
                 if (target == null || TimeUp) continue;
                 PlanResult p;
-                try { p = Replan(results[i].route, GoalsOf(e.Labels), kept, new[] { target }, true); }
+                try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true); }
                 catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
                 Route r = p.Run;
                 bool complete = r != null && r.Progress == p.Goals.Length;
