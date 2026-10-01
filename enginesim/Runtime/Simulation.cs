@@ -185,7 +185,6 @@ namespace IGTAP.EngineSim
         {
             World = world;
             IGTAP.EngineSim.Engine.Scheduler = Scheduler;
-            Scheduler.FrameDeltaTime = Frames.CrossStep;
             Player = world.All<Movement>().First(m => m.gameObject.activeInHierarchy && !(bool)typeof(Movement).GetField("isOnMainMenu",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(m));
             Courses = world.All<courseScript>().Where(c => c.gameObject.activeInHierarchy).ToArray();
@@ -887,7 +886,7 @@ namespace IGTAP.EngineSim
         /// <summary>Before FixedUpdate: the transform holds the last rendered frame's blend (not a write, so the body stays).</summary>
         Vector3 LagForFixedUpdate()
         {
-            Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.LastAlpha));
+            Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Frames(Engine.GridTicks).LastAlpha));
             // As stored: the world position reads back through the player's parent, rounded.
             return Player.transform.m_Position;
         }
@@ -919,24 +918,26 @@ namespace IGTAP.EngineSim
         /// </summary>
         void InterpolatedFrames()
         {
-            int frozen = _freezeFor >= 0f ? Frames.FrozenFrames(_freezeFor) : 0;
-            for (int k = 0; k < Frames.Alphas.Length; k++)
+            long ticks = Engine.GridTicks;
+            float[] alphas = Frames.Frames(ticks).Alphas;
+            int frozen = _freezeFor >= 0f ? Frames.FrozenFrames(ticks, _freezeFor) : 0;
+            for (int k = 0; k < alphas.Length; k++)
             {
-                int repeats = MacroEngine.FrameRepeats(k, Frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
                 // The repeats are frames the run stands still in: its live time (turbo counts its loop's the same way; at 1x
                 // the plugin counts the frames whose Update ran at timeScale 0).
                 Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
-                    Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Alphas[k]));
+                    Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, alphas[k]));
                     _update();
                     if (Physics.PlayerTransformDirty)
                     {
                         Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
-                    Shop.StepClones(repeat == repeats ? Frames.Step(k) : 0f);
-                    OnFrame?.Invoke(Frames.Alphas[k], repeat > 0);
+                    Shop.StepClones(repeat == repeats ? Frames.Step(ticks, k) : 0f);
+                    OnFrame?.Invoke(alphas[k], repeat > 0);
                 }
             }
             Player.transform.StoreWorldPosition(_stepTo);
@@ -1256,6 +1257,8 @@ namespace IGTAP.EngineSim
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Course(goal.course) : null;
                 bool startWasTracking = startGoal != null && Tracking(startGoal);
                 Scheduler.FireDue();
+                // Seconds waits resume here before the tick, in the frame that will cross it.
+                Scheduler.FrameDeltaTime = Frames.Step(MacroEngine.FrameGrid.NextTicks(Engine.GridTicks), 0);
                 Scheduler.Resume(Scheduler.Wait.Seconds);
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
                 int rebasesBefore = _rebases.Length;
@@ -1321,6 +1324,7 @@ namespace IGTAP.EngineSim
                     _stepTo -= by;
                 }
                 InterpolatedFrames();
+                Scheduler.FrameDeltaTime = Frames.Step(Engine.GridTicks, 0);
                 Scheduler.Resume(Scheduler.Wait.Frame);
                 Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();

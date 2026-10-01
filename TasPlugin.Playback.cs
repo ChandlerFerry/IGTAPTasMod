@@ -44,6 +44,8 @@ namespace IGTAPTasMod
             movement.MoveAxis = new Vector2(_brakeAxis, 0f);
         }
 
+        internal static long GridTicks { get { return Instance != null ? Instance._engine.GridTicks : 0; } }
+
         /// <summary>Turbo's frames the run stood still in (TurboRunner's frame loop), onto the engine's count.</summary>
         internal static void CountHeldFrames(int frames)
         {
@@ -62,6 +64,7 @@ namespace IGTAPTasMod
                     _savedTargetFrameRate = Application.targetFrameRate;
                     Time.maximumDeltaTime = Time.fixedDeltaTime;
                     _pacedFps = _probe != null && _probe.fps > 0 ? _probe.fps : MacroEngine.PlaybackFrameRate;
+                    _pacedGrid = _pacedFps == MacroEngine.PlaybackFrameRate ? MacroEngine.FrameGrid.Playback : new MacroEngine.FrameGrid(_pacedFps);
                     _clockNext = 1f / _pacedFps;
                     _clockTotal = 0.0;
                     _paceClock.Restart();
@@ -80,10 +83,9 @@ namespace IGTAPTasMod
             // SettingsScript sets the player's own frame rate and vsync when a scene loads (a Full-TAS new game): hold ours.
             if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
             // Only the wall clock is paced here: every frame's game time is the fixed step below (captureDeltaTime). Not by
-            // Unity's cap: the fixed clock's frames aren't 1/fps of game time (six make a 0.02 s tick, 0.933x at 280 fps) and
-            // it never makes up a late frame. Playback waits for the fixed clock's own time (WaitForFixedClock): a walk for
-            // slowdown times it, fast playback (settings fastPlayback) not at all. A probe that isn't walked keeps Unity's
-            // cap: its fps is the experiment.
+            // Unity's cap: off a run and on its first tick the grid's frames aren't 1/fps of game time (six make a 0.02 s
+            // tick). Playback waits for the fixed clock's own time (WaitForFixedClock): a walk for slowdown times it, fast
+            // playback (settings fastPlayback) not at all. A probe that isn't walked keeps Unity's cap: its fps is the experiment.
             bool probeCap = _probe != null && !_walkScaled;
             int targetFrameRate = probeCap ? _pacedFps : -1;
             if (Application.targetFrameRate != targetFrameRate) Application.targetFrameRate = targetFrameRate;
@@ -99,8 +101,10 @@ namespace IGTAPTasMod
             if (held) _engine.CountHeldFrames(1);
             _pacedTime = gameTime;
             bool skipping = _fastUntilTick > 0 && (_pendingReplay != null || _engine.RunTicks < _fastUntilTick);
-            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f, held ? _clockFrame : EvenFrameStep(_pacedFps));
-            _clockNext = FixedClockStep(_pacedFps);
+            long ticks = _engine.GridTicks;
+            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f,
+                held || ticks >= 2 ? _clockFrame : EvenFrameStep(_pacedFps));
+            _clockNext = FixedClockStep(_pacedGrid, ticks);
             Time.captureDeltaTime = _clockNext;
         }
 
@@ -128,10 +132,10 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The wall time a frame that moved game time is shown for: its tick's time split evenly over the tick's frames (six
-        /// at 280 fps, 3.33 ms each), not its own step. The grid's crossing frame steps only 2.14 ms, less than a frame takes
-        /// to render, so pacing by the step lost time on every tick; split evenly a tick still takes exactly its 20 ms, and
-        /// each frame's game time stays its step (captureDeltaTime).
+        /// The wall time a frame that moved game time is shown for where the grid starts again at each tick (off a run, its
+        /// first tick): its tick's time split evenly over the tick's frames (six at 280 fps, 3.33 ms each), not its own step.
+        /// The crossing frame there steps only 2.14 ms, less than a frame takes to render, so pacing by the step lost time on
+        /// every tick. On the run's cycle every frame steps 1/fps and is shown for its step.
         /// </summary>
         static double EvenFrameStep(int fps)
         {
@@ -140,20 +144,20 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The next frame's game-time step (<c>Time.captureDeltaTime</c>) for a fixed clock: frames fall on a grid anchored to
-        /// the last physics tick, half a frame off it (offset + k/fps), so every tick sees the same frame times whatever the
-        /// wall clock does and no frame lands on a tick boundary. With interpolation on, the render position a FixedUpdate
-        /// write starts from (the last frame's blend) is then the same every run. Re-anchored every frame, so the float
-        /// step's rounding never accumulates. The step goes to the grid point after the one nearest now: a frame that lands a
-        /// hair short of its grid point (the float step's rounding) would otherwise get a near-zero next step, an extra
-        /// Movement.Update in that tick.
+        /// The next frame's game-time step (<c>Time.captureDeltaTime</c>) for a fixed clock: the frame after this one on
+        /// <paramref name="grid"/> (MacroEngine.FrameGrid), whose frames are by the run's physics ticks, so every run sees the
+        /// same frame times whatever the wall clock does and no frame lands on a tick boundary. With interpolation on, the
+        /// render position a FixedUpdate write starts from (the last frame's blend) is then the same every run. Re-anchored
+        /// to the last tick every frame, so the float step's rounding never accumulates. The step goes to the grid point after
+        /// the one nearest now: a frame that lands a hair short of its grid point (the float step's rounding) would otherwise
+        /// get a near-zero next step, an extra Movement.Update in that tick.
         /// </summary>
-        static float FixedClockStep(int fps)
+        static float FixedClockStep(MacroEngine.FrameGrid grid, long ticks)
         {
-            double frame = 1.0 / fps, offset = frame / 2, tick = Time.fixedDeltaTime;
+            double frame = grid.Frame, first = grid.Frames(ticks).First, tick = Time.fixedDeltaTime;
             double since = Time.timeAsDouble - Time.fixedTimeAsDouble;
-            double next = offset + (Math.Floor((since - offset) / frame + 0.5) + 1) * frame;
-            if (next >= tick) next = tick + offset;
+            double next = first + (Math.Floor((since - first) / frame + 0.5) + 1) * frame;
+            if (next >= tick) next = tick + grid.Frames(MacroEngine.FrameGrid.NextTicks(ticks)).First;
             return (float)(next - since);
         }
 

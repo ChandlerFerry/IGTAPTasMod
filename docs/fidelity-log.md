@@ -788,3 +788,27 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   the new build now matches turbo on every tick (1-17,028: position, Cash, RNG) and the probe's Cash on all 16,285 ticks
   compared (engine row p against probe row p + 1); the 279-goal route judged in the game at 353.32 s.
 - **Where:** `PhysicsWorld.CollectTouching`, `DispatchCallbacks`, `AdvanceTouching`.
+
+## 1x played six frames a tick, not the game's 280 cap
+
+- **Symptom:** the overlay read 300 FPS at 1x on the "280 fps" clock, and a route recorded at the game's own 280 fps
+  setting (its FPS dropdown, `Application.targetFrameRate`) can't be shown in real time: `FalseEnding-Any%` 5:52.84 took
+  about 6:30 with OBS running (2026-09-30).
+- **Cause:** the fixed clock started its grid again half a frame after every tick: five 1/280 s frames and a 2.14 ms
+  crossing frame, 300 frames a second, each tick's last frame 0.36 ms before the next tick. A player at the 280 cap gets
+  280 frames a second, a frame every 1/280 s across the ticks, and the lag cycles 0.36, 2.50, 1.07, 3.21, 1.79 ms over
+  five ticks (6, 5, 6, 5, 6 frames). The route's interpolation pullbacks, step-ups, clone frames and freezes were a
+  300 fps player's, and rendering them in real time needs 300 frames a second.
+- **Fix:** from a run's second physics tick the grid runs on (`MacroEngine.FrameGrid` by `GridTicks`, the run's physics
+  ticks while it runs; the restart grid before that, so trace and savestate starts are unchanged), and a run frame is
+  paced 1/280 s of wall time. A 280 fps probe (`grid280`) measured the clock: Time.deltaTime 0x3b6a0ea1 (1/280f) after a
+  crossing and 0x3b6a0e82 at one (ticks 0.0199999929 s apart), while the clock's own steps, which `IE_TimeStop` adds
+  up, are 0x3b6a0ebf and 0x3b6a0e9d. A 0.05 s dash freeze lands on 14 of them and holds 13 frames at 1x (14 before);
+  the model took (float)(1/280) for the clock's steps at first and said 14. `IGTAP.EngineSim grid` checks the cycle and
+  these steps. Every tech demo plays the same at 1x as in turbo as before the change (57 of 70 on every tick; the rest
+  split as they did on the old grid, or only where the probe logs the body before a step-up's sync), turbo matches the
+  engine on all 66 that trace, and freezes hold 13 frames in all three. Every route judged before has to be solved again:
+  `validate.py` finished all 67 category routes on the old grid and 2 on this one (`bonus2_WJ_DS` in 1.06 s against
+  1.04, `bonus2_WJ_DS_DJ_BS_ORB_ZIP_OM` in 0.76 s); the rest die or run out of inputs.
+- **Where:** `MacroEngine.FrameGrid`, `TasPlugin.FixedClockStep`, `PacePlayback`, `TurboRunner.Run`,
+  `Simulation.InterpolatedFrames`.

@@ -713,8 +713,9 @@ sequence of values each side takes, not tick by tick: 1x's physics count runs ah
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
 body back by that frame's lag. On the wall clock the lag changes from run to run, and so does the route; playback's
-fixed clock pins it: every frame's game time is a step on a grid half a frame off the physics tick
-(`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`). Three scripts read the wall clock, which `captureDeltaTime`
+fixed clock pins it: every frame's game time is a step on a grid of 1/280 s frames, half a frame off the run's first
+physics tick (`TasPlugin.FixedClockStep`, `Time.captureDeltaTime`; `MacroEngine.FrameGrid` by the run's physics ticks:
+28 frames every five ticks, each tick's lag 0.36, 2.50, 1.07, 3.21, 1.79 ms in turn; `IGTAP.EngineSim grid` checks it). Three scripts read the wall clock, which `captureDeltaTime`
 leaves alone (`TasPlugin.PatchWallClock`); during playback they read the fixed clock's frame and its running total
 instead: `Movement.TimeStop`'s freeze (so a freeze always runs the same number of `Update` frames),
 `cameraMover.LateUpdate` and
@@ -1284,8 +1285,8 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   before Course 3's, lowest id first; highest first had swapped their rolls.
 - `clonesScript.Update` runs once per rendered frame on its `Time.deltaTime`, in turbo and here as at 1x: each frame of
   the tick's grid (`MacroEngine.FrameGrid.Step`: the crossing frame's step, then 1/280), 0 in a dash freeze's or
-  pause's repeats (timeScale 0). The crossing frame at the playback rate reads 0.00214285006 s, not `CrossStep`: 1x's
-  ticks come 0.0199999929 s apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). On
+  pause's repeats (timeScale 0). A crossing frame reads 7e-9 s less than the clock set: 1x's ticks come 0.0199999929 s
+  apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). On
   the pre-2026-09-30 build a spawn reset `timeSinceLastClone` to 0 and dropped the overshoot, so a per-tick step
   (Δt 0.02) spawned less often than 1x and its Cash came in later ([`docs/fidelity-log.md`](../docs/fidelity-log.md),
   *Clones stepped once a tick*). Build 25640326 takes the rolled interval off instead, except that a timer still at

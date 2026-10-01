@@ -1521,7 +1521,7 @@ one-lap guesses bought every box to its cap (Course 3: `buydj` 1718 ticks later 
 record lap leaves the pool in step (below), paying in one bunch a lap, so a window cut mid-lap was off by up to a bunch.
 Each step's line also prints the income by formula (`CloneIncome`, a cross-check): on screen every slot refills the
 frame after its clone pays, so min(C, path frames) clones fly and pay C x pay / T, less 1.5 frames a lap (0.993-0.997
-at the 280 fps clock's 300 frames a second); off screen a course pays ceil(pay C / T) every 50 ticks (300 frames); the
+at the 280 fps clock's 280 frames a second); off screen a course pays ceil(pay C / T) every 50 ticks (280 frames); the
 rolls are averaged. It never waits at a box: laps fill. A lap's gate piece is the one after which
 the finish comes soonest, not the fastest to the gate: the fastest gate piece crossed Course 1's gate where only a slow
 finish piece played, and the plan's laps took 248 ticks from the box for the best's 107. Before planning it files the best's
@@ -1863,9 +1863,9 @@ so L levels take L − 1 ticks; offline Cash is equal level by level from tick 1
 On screen a clone pays `ceil(reward (2 big + 1) cloneMult boost)` (cloneMult 0.1 + 0.2 a global level + 0.1 a local).
 Every `SpawnClone` call draws the RNG at least twice (the fast and big roll loops, one more per success), spawn or not;
 at most one spawn a frame. Off screen (unchanged): one call per 1 s counted in frames, paying about C s/T of a clone's
-pay, income ×1.000 on the studio grid, ×0.992 at 120 fps, ×0.983 at 60, ×1.000 at 30. The studio's "280 fps" clock
-renders 6 frames a 0.02 s tick (one short crossing frame, five of 1/280 s): 300 frames a second. Numbers at 280 are on
-that grid.
+pay, income ×1.000 on the studio grid, ×0.992 at 120 fps, ×0.983 at 60, ×1.000 at 30. Numbers at 280 were measured
+on the studio's grid before 2026-09-30, six frames a 0.02 s tick (300 frames a second); it now renders 280 a second, a
+frame every 1/280 s across ticks.
 
 **Old build (to 2026-09-30).** A spawn set the timer to 0: the gap was I rounded up to whole frames, in flight
 min(C, L/gap), income ∝ (I/dt)/⌈I/dt⌉: a sawtooth in T, with magic spots where I/dt is just under an integer.

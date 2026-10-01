@@ -119,53 +119,111 @@ namespace IGTAPTasMod
         public const int PlaybackFrameRate = 280;
 
         /// <summary>
-        /// The fixed clock's frames between two physics ticks (TasPlugin.FixedClockStep): half a frame after the tick, then one
-        /// every 1/fps while inside it. Alphas are the interpolation blends (frame time since the tick / 0.02).
-        /// FrozenFrames counts a TimeStop's frames as its loop counts the fixed clock's steps (TasPlugin.PatchWallClock): the
-        /// frame before the tick's, then the crossing, then a frame each.
+        /// The fixed clock's frames between two physics ticks (TasPlugin.FixedClockStep), by the run's physics ticks so far
+        /// (<c>ticks</c>: <see cref="PhysicsTicks"/> while it runs, else 0; see <see cref="GridTicks"/>). Through a run's first
+        /// physics tick (and off a run) the grid starts again at each tick: half a frame after it, then one every 1/fps
+        /// inside it, as every trace and savestate start has it. From the run's second tick it runs on as a player's frames
+        /// at the game's frame cap do: one frame every 1/fps across the ticks, so at 280 fps five ticks hold 28 frames
+        /// (6, 5, 6, 5, 6) and the last frame before a tick lags it 0.36, 2.50, 1.07, 3.21 and 1.79 ms in turn. Alphas are the
+        /// interpolation blends (frame time since the tick / 0.02). FrozenFrames counts a TimeStop's frames as its loop counts
+        /// the fixed clock's steps (TasPlugin.PatchWallClock): the frame before the tick's, then the crossing, then a frame each.
         /// </summary>
         public sealed class FrameGrid
         {
             public static readonly FrameGrid Playback = new FrameGrid(PlaybackFrameRate);
 
-            public readonly float[] Alphas;
-            public float LastAlpha { get { return Alphas[Alphas.Length - 1]; } }
-            /// <summary>The game time of the frame that crosses a physics tick: Time.deltaTime of the frame whose coroutines resume after it.</summary>
-            public float CrossStep { get { return _crossStep; } }
-            readonly float _prevStep, _crossStep, _frozenStep;
-
-            /// <summary>Frame k's Time.deltaTime (the crossing frame's, then 1/fps each; the tick's frames add up to 0.02). A
-            /// freeze's or pause's repeats of a frame run at 0: timeScale is 0 until it lifts.</summary>
-            public float Step(int k) { return k == 0 ? _updateCross : _prevStep; }
-
             /// <summary>
-            /// The crossing frame's Time.deltaTime as 1x reads it. 1x's ticks come 0.0199999929 s apart on the fixed clock, not
-            /// 0.02f, so that frame advances 0.00214285006 s (a 280 fps probe's frame times; clone pointers and spawn timers
-            /// then match 1x to the bit), 6.6e-9 short of <see cref="CrossStep"/>. Other rates keep CrossStep.
+            /// 1x on the fixed clock, as a 280 fps probe measured it: its ticks come 0.0199999929 s apart, not 0.02f, and each
+            /// frame's Time.deltaTime is 7e-9 s short of the step the clock set (captureDeltaTime), so the clock sets the frames
+            /// after a crossing 0x3b6a0ebf (Time.deltaTime 1/280f) and a crossing on the cycle 0x3b6a0e9d (0x3b6a0e82). A
+            /// TimeStop adds up the clock's steps, and a 0.05 s freeze lands on 14 of them: these steps give 1x's 13 held frames.
+            /// Other rates keep 0.02f and the steps the grid asks for.
             /// </summary>
-            readonly float _updateCross;
+            const double TickOnClock = 0.0199999929;
+            const int ClockFrame280 = 0x3b6a0ebf, ClockCross280 = 0x3b6a0e9d, ClockRestart280 = 0x3b0c6f2a;
+
+            public sealed class Span
+            {
+                public readonly float[] Alphas;
+                public float LastAlpha { get { return Alphas[Alphas.Length - 1]; } }
+                // Game time since the span's tick.
+                public readonly double First, Last;
+
+                internal Span(double first, double frame, double tick)
+                {
+                    var alphas = new List<float>();
+                    for (int k = 0; first + k * frame < tick; k++) alphas.Add((float)((first + k * frame) / tick));
+                    Alphas = alphas.ToArray();
+                    First = first;
+                    Last = first + (Alphas.Length - 1) * frame;
+                }
+            }
+
+            public readonly double Frame;
+            readonly Span[] _cycle;
+            // Time.deltaTime (frames after the crossing, crossings) and the clock's steps (TasPlugin.FixedFrameStep).
+            readonly float _frameStep, _restartCross, _clockFrame, _clockRestart, _clockRestartFrozen;
+            readonly float[] _cross, _clockCross, _clockFrozen;
+
+            /// <summary>The frames after the tick that left <paramref name="ticks"/>.</summary>
+            public Span Frames(long ticks) { return _cycle[Phase(ticks)]; }
+
+            /// <summary>The ticks after the next tick: off a run, or before its first tick, the grid starts again.</summary>
+            public static long NextTicks(long ticks) { return ticks >= 1 ? ticks + 1 : 0; }
+
+            int Phase(long ticks) { return ticks <= 1 ? 0 : (int)((ticks - 1) % _cycle.Length); }
+
+            /// <summary>Frame k's Time.deltaTime as 1x reads it (k 0: the crossing, which coroutines resumed after the tick read
+            /// too); a freeze's or pause's repeats run at 0.</summary>
+            public float Step(long ticks, int k) { return k > 0 ? _frameStep : ticks <= 1 ? _restartCross : _cross[Phase(ticks)]; }
 
             public FrameGrid(int fps)
             {
-                double frame = 1.0 / fps, offset = frame / 2, tick = 0.02f;
-                var alphas = new List<float>();
-                for (double since = offset; since < tick; since += frame) alphas.Add((float)(since / tick));
-                Alphas = alphas.ToArray();
-                double last = offset + (Alphas.Length - 1) * frame;
-                _crossStep = (float)(tick + offset - last);
-                _prevStep = Alphas.Length >= 2 ? (float)frame : _crossStep;
-                _frozenStep = Alphas.Length >= 2 ? (float)frame : (float)tick;
-                _updateCross = fps == PlaybackFrameRate ? BitConverter.Int32BitsToSingle(0x3b0c6f0f) : _crossStep;
+                // In units of 1/(100 fps) s: a frame is 100, a tick 2 fps, the frames at 50 + 100 j from the cycle's start.
+                Frame = 1.0 / fps;
+                bool measured = fps == PlaybackFrameRate;
+                double tick = 0.02f, clock = measured ? TickOnClock : tick;
+                int tickUnits = 2 * fps, cycle = 50 / Gcd(fps, 50);
+                _cycle = new Span[cycle];
+                for (int p = 0; p < cycle; p++)
+                {
+                    int start = p * tickUnits, j = (start + 50) / 100;
+                    _cycle[p] = new Span((50 + 100 * j - start) / (100.0 * fps), Frame, tick);
+                }
+                _frameStep = (float)Frame;
+                _clockFrame = measured ? BitConverter.Int32BitsToSingle(ClockFrame280) : _frameStep;
+                _cross = new float[cycle];
+                _clockCross = new float[cycle];
+                _clockFrozen = new float[cycle];
+                for (int p = 0; p < cycle; p++)
+                {
+                    Span before = _cycle[(p + cycle - 1) % cycle], span = _cycle[p], after = _cycle[(p + 1) % cycle];
+                    _cross[p] = (float)(clock + span.First - before.Last);
+                    _clockCross[p] = measured ? BitConverter.Int32BitsToSingle(ClockCross280) : (float)(tick + span.First - before.Last);
+                    _clockFrozen[p] = span.Alphas.Length >= 2 ? _clockFrame : (float)(tick + after.First - span.First);
+                }
+                Span restart = _cycle[0];
+                _restartCross = (float)(clock + restart.First - restart.Last);
+                _clockRestart = measured ? BitConverter.Int32BitsToSingle(ClockRestart280) : (float)(tick + restart.First - restart.Last);
+                _clockRestartFrozen = restart.Alphas.Length >= 2 ? _clockFrame : (float)tick;
             }
 
-            public int FrozenFrames(float duration)
+            static int Gcd(int a, int b) { return b == 0 ? a : Gcd(b, a % b); }
+
+            float ClockCross(long ticks) { return ticks <= 1 ? _clockRestart : _clockCross[Phase(ticks)]; }
+
+            public int FrozenFrames(long ticks, float duration)
             {
-                float i = _prevStep;
+                long before = ticks <= 1 ? 0 : ticks - 1;
+                float i = Frames(before).Alphas.Length >= 2 ? _clockFrame : ClockCross(before);
+                float cross = ClockCross(ticks), frozen = ticks <= 1 ? _clockRestartFrozen : _clockFrozen[Phase(ticks)];
                 int frames = 0;
-                while (i <= duration) { frames++; i += frames == 1 ? _crossStep : _frozenStep; }
+                while (i <= duration) { frames++; i += frames == 1 ? cross : frozen; }
                 return frames;
             }
         }
+
+        public long GridTicks { get { return IsRunning ? _physicsTicks : 0; } }
 
         public void Run(MacroDefinition macro, bool synchronizeStart = false, bool requireCourseFinish = false,
             int startDelayTicks = 0, Vector2? synchronizationPosition = null)

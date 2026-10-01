@@ -16,9 +16,11 @@
    a player sees with it: `Movement.FixedUpdate` reads the last rendered frame's blend of the body's last two positions,
    so its position writes (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) pull the body back by that frame's
    lag, and `Movement.Update`'s step-up runs in every frame, ungated.
-8. 1x playback runs on a fixed clock at 280 fps (`MacroEngine.PlaybackFrameRate`, `TasPlugin.FixedClockStep`: game time
-   steps on a grid half a frame off each physics tick), and turbo and the offline engine model the same frames
-   (`MacroEngine.FrameGrid`), dash freezes included, so all three play a route alike.
+8. 1x playback runs on a fixed clock at 280 fps (`MacroEngine.PlaybackFrameRate`, `TasPlugin.FixedClockStep`): from a
+   run's second physics tick a frame every 1/280 s of game time, half a frame off its first tick, as a player at the
+   game's 280 cap sees them (28 frames every five ticks: 6, 5, 6, 5, 6); before that each tick's frames start half a
+   frame after it. Turbo and the offline engine model the same frames (`MacroEngine.FrameGrid`, by the run's physics
+   ticks), dash freezes included, so all three play a route alike.
 9. The overlay shows `INTERPOLATION ON (280 FPS CLOCK)`.
 10. Unlocks match the category exactly, on every tick (the gate: `wallJumpUnlocked`, `dashUnlocked`/`maxAirDashes`,
     `doubleJumpUnlocked`/`maxAirJumps`, `Solver.cs` `AuditTick`).
@@ -192,8 +194,8 @@ state they left). The HTTP API stays for tools; `GET /api/state` is both parts i
 
 1x playback runs at most in real time: each frame waits until the wall clock reaches the fixed clock's time since the
 last frame (`WaitForFixedClock`: the frame's step, a dash freeze's frames included), and a late frame is never made up,
-so playback never speeds up. It does not use a 280 fps cap: six frames make a 0.02 s tick (five 1/280 s and the
-crossing frame's 2.14 ms, 300 fps on average), so a cap would play at 0.933x. Real time is the route's time plus its
+so playback never speeds up: a run's frames are 1/280 s each, 280 a second (before its first tick each tick holds six,
+paced 3.33 ms apart). Real time is the route's time plus its
 dash freezes only while every frame renders within its step; each late one leaves the rest of the run that much later
 (`GET /api/perf`: the last 4096 frames' wall time, split into the pace wait, the plugin's Update and OnGUI and the
 rest, and the playback's speed against real time).

@@ -43,6 +43,7 @@ namespace IGTAP.EngineSim.Cli
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
+                    case "grid": return Grid();
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
@@ -431,6 +432,37 @@ namespace IGTAP.EngineSim.Cli
             {
                 if (!type.IsValueType) visiting.Remove(value);
             }
+        }
+
+        /// <summary>
+        /// The 280 fps clock's frames (MacroEngine.FrameGrid), checked against a 280 fps probe (grid280): the restart's crossing,
+        /// and on the run's cycle 28 frames in five ticks, lagging the next tick 0.36, 2.50, 1.07, 3.21, 1.79 ms, frame times as
+        /// 1x reads them and a dash's 0.05 s freeze holding 13 frames.
+        /// </summary>
+        static int Grid()
+        {
+            MacroEngine.FrameGrid grid = MacroEngine.FrameGrid.Playback;
+            double frame = grid.Frame;
+            void Check(bool ok, string what) { if (!ok) throw new InvalidOperationException("grid: " + what); }
+            Check(BitConverter.SingleToInt32Bits(grid.Step(0, 0)) == 0x3b0c6f0f, "restart crossing");
+            Check(grid.Frames(0).Alphas.Length == 6 && grid.Frames(1) == grid.Frames(0) && grid.FrozenFrames(1, 0.05f) == 14, "restart span");
+            double[] lags = { 0.357, 2.500, 1.071, 3.214, 1.786 };
+            int frames = 0;
+            for (long t = 2; t < 7; t++)
+            {
+                MacroEngine.FrameGrid.Span span = grid.Frames(t), next = grid.Frames(t + 1);
+                double lag = (0.02 - span.Last) * 1000;
+                frames += span.Alphas.Length;
+                Console.WriteLine($"ticks {t}: {span.Alphas.Length} frames, first {span.First * 1000:0.000} ms, lag {lag:0.000} ms, cross {grid.Step(t, 0) * 1000:0.000000000} ms,"
+                    + $" alphas {string.Join(" ", span.Alphas.Select(a => a.ToString("0.0000")))}");
+                Check(Math.Abs(lag - lags[(t - 1) % 5]) < 0.001, "lag at " + t);
+                Check(Math.Abs(next.First + 0.02 - span.Last - frame) < 1e-12, "continuity at " + t);
+                Check(BitConverter.SingleToInt32Bits(grid.Step(t, 1)) == 0x3b6a0ea1 && BitConverter.SingleToInt32Bits(grid.Step(t, 0)) == 0x3b6a0e82, "steps at " + t);
+                Check(grid.FrozenFrames(t, 0.05f) == 13 && grid.FrozenFrames(t, 0.06f) == 16, "freezes at " + t);
+            }
+            Check(frames == 28, "28 frames in five ticks");
+            Console.WriteLine("grid ok");
+            return 0;
         }
 
         static int Rays(string tracePath, string raysPath)

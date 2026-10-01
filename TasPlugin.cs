@@ -321,6 +321,7 @@ namespace IGTAPTasMod
         string _playbackSpeedText = "1x";
 
         int _pacedFps;
+        MacroEngine.FrameGrid _pacedGrid = MacroEngine.FrameGrid.Playback;
 
         float _clockFrame, _clockNext;
         double _clockTotal;

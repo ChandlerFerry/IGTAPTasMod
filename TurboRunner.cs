@@ -159,7 +159,7 @@ namespace IGTAPTasMod
         /// where 1x's next FixedUpdate reads it (the run leaves it at the step's end).</summary>
         internal static void ShowLastFrame(Movement movement)
         {
-            Place(movement.transform, Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.LastAlpha));
+            Place(movement.transform, Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha));
         }
 
         static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
@@ -228,7 +228,9 @@ namespace IGTAPTasMod
             Routine[] parked = Routines.ToArray();
             // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
             // others in the rendered frame that crosses the tick (a zip mover's first tween step after its WaitForSeconds).
-            _resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.CrossStep;
+            // Seconds waits resume here before the tick, in the frame that will cross it.
+            long ticks = wait == Wait.Seconds ? MacroEngine.FrameGrid.NextTicks(TasPlugin.GridTicks) : TasPlugin.GridTicks;
+            _resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.Step(ticks, 0);
             try
             {
                 foreach (Routine r in parked)
@@ -918,7 +920,7 @@ namespace IGTAPTasMod
                     }
                     Resume(Wait.Seconds);
                     // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
-                    Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.LastAlpha));
+                    Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Frames(TasPlugin.GridTicks).LastAlpha));
                     _freezeFor = -1f;
                     _pauseFrames = _pauseAfter = 0;
                     _fixedUpdate(movement);
@@ -962,24 +964,26 @@ namespace IGTAPTasMod
                     // The tick's rendered frames, the dash freeze's first: Update at each blend. A step-up write moves the body
                     // there and drops the interpolation, so the frames after show it. A pause holds its frame's time as a
                     // freeze does (MacroEngine.FrameRepeats).
-                    int frozen = _freezeFor >= 0f ? frames.FrozenFrames(_freezeFor) : 0;
+                    long ticks = TasPlugin.GridTicks;
+                    float[] alphas = frames.Frames(ticks).Alphas;
+                    int frozen = _freezeFor >= 0f ? frames.FrozenFrames(ticks, _freezeFor) : 0;
                     // clonesScript.Update runs in every frame too, on that frame's Time.deltaTime (0 in a freeze's or pause's repeats).
-                    for (int k = 0; k < frames.Alphas.Length; k++)
+                    for (int k = 0; k < alphas.Length; k++)
                     {
-                        int repeats = MacroEngine.FrameRepeats(k, frames.Alphas.Length, frozen, _pauseFrames, _pauseAfter);
+                        int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
                         // The repeats are frames the run stands still in: its live time (MacroEngine.HeldFrames), counted as the
                         // offline engine and 1x count them.
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
-                            Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Alphas[k]));
+                            Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             _update(movement);
                             if (player.position != at)
                             {
                                 Physics2D.SyncTransforms();
                                 _stepFrom = _stepTo = player.position;
                             }
-                            float frameDt = repeat == repeats ? frames.Step(k) : 0f;
+                            float frameDt = repeat == repeats ? frames.Step(ticks, k) : 0f;
                             foreach (clonesScript c in clones)
                                 if (c != null && c.isActiveAndEnabled) StepClones(c, frameDt);
                         }

@@ -51,9 +51,10 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
 - The player body's interpolation stays on, as the game ships it: `Movement.FixedUpdate` reads the last frame's blend
   and its position writes pull the body back by the lag, and the step-up runs ungated in every frame. 1x playback runs
-  on a fixed 280 fps clock; turbo and the offline engine model the same frames (`MacroEngine.FrameGrid`), so all three
-  play alike. The overlay shows `INTERPOLATION ON (280 FPS CLOCK)`. Routes found before this (interpolation off, 56u
-  step cap) have to be solved again.
+  on a fixed 280 fps clock, a frame every 1/280 s across ticks as at the game's 280 cap (README `### Rules` 8); turbo
+  and the offline engine model the same frames (`MacroEngine.FrameGrid`), so all three play alike. The overlay shows
+  `INTERPOLATION ON (280 FPS CLOCK)`. Routes found before this (interpolation off, 56u step cap) have to be solved again,
+  and routes judged before 2026-09-30's continuous grid (six frames a tick, 300 a second) judged again.
 - Turbo and the offline engine run `FloatingOrigin`'s rebase as 1x does (the world moves back once the player is
   17500 from scene (0, 0)), so Float Ultras and any route that crosses the sphere judge, replay and play back alike.
 - Turbo and the offline engine keep a physics callback's position write as 1x does (a sideways spring's 10u push,

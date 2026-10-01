@@ -929,9 +929,9 @@ namespace IGTAP.EngineSim.Cli
             return t;
         }
 
-        // The studio's 280 fps clock renders six frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
+        // The studio's 280 fps clock renders 5.6 frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
         // before its slot refills (clonesScript, builds 25630570 and 25640326: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
-        const double FramesPerTick = 6, CloneLifeFrames = 1.5;
+        const double FramesPerTick = IGTAPTasMod.MacroEngine.PlaybackFrameRate * 0.02, CloneLifeFrames = 1.5;
 
         /// <summary>The course's clone count, and whether it still has Start's spawn reserve (its spawn timer far past any interval).</summary>
         static (int count, bool reserve) Clones(Simulation sim, int course)

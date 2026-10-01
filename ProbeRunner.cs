@@ -137,6 +137,7 @@ namespace IGTAPTasMod
             _probe.rows.Add(new
             {
                 kind, frame = Time.frameCount, unscaled = Time.unscaledTime, timeScale = Time.timeScale, time = Time.timeAsDouble,
+                fixedTime = Time.fixedTimeAsDouble, dt = Time.deltaTime, clock = _clockFrame,
                 paused = movement.pauseMenu != null && movement.pauseMenu.menuOpen,
                 camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
                 cash = globalStats.currencyLookup[globalStats.Currencies.Cash],

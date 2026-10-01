@@ -35,14 +35,14 @@ REPEAT = 22
 ROW_STEP = 7
 CAP = {"R": 45, "C": 35, "M": 10, "G": 2, "D": 1}
 TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglobalreward2", "D": "buyds"}
-# Off screen a course spawns (and pays) once its timer reaches 1 s, reset to 0: 300 rendered frames on the 280 fps clock's
-# grid (six a physics tick), 50 ticks.
+# Off screen a course spawns (and pays) once its timer reaches 1 s, reset to 0: 280 rendered frames on the 280 fps clock's
+# grid (5.6 a physics tick), 50 ticks.
 OFFSCREEN = 50
 # Game build 25640326: on screen the course's first spawn spends Start's 10000 (the timer goes to 0) and every later one keeps
 # the timer's overshoot. A full pool banks the timer, so a freed slot fills on the next rendered frame and every clone in
-# flight runs its path and one to two frames more: 1.5 frames a lap on average, of six a tick. An emptied pool (clones
+# flight runs its path and one to two frames more: 1.5 frames a lap on average, of 5.6 a tick. An emptied pool (clones
 # bought, a break) fills one an interval.
-FRAMES = 6
+FRAMES = 5.6
 LIFE_EXTRA = 1.5 / FRAMES
 # The fastest known Course 2 lap from its gate (ticks, which the course timer counts): a ladder of K record laps runs it
 # slowed by K-1, ..., 1, 0 ticks, each lap a break (None: no ladders). --fast-lap, --ladder-max.
