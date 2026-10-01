@@ -309,6 +309,41 @@ namespace IGTAPTasMod
         /// <summary>The game's Assembly-CSharp hash (a shared route plays the same only on the same build).</summary>
         internal static string GameAssemblyHash() { return HashAssembly(typeof(Movement).Assembly); }
 
+        /// <summary>
+        /// Stamps a savestate from another game build (a Steam update changes Assembly-CSharp's hash, and may change the
+        /// version) with this one when every field it holds is still on the player or its body and its value still decodes to
+        /// that member's type: a savestate is the player's state alone, which the update leaves meaning the same. True when it
+        /// was stamped; <paramref name="problem"/> says why one from another build can't be (it stays rejected).
+        /// </summary>
+        internal static bool AdoptGameBuild(Savestate savestate, out string problem)
+        {
+            problem = null;
+            CompatibilityFingerprint saved = savestate.fingerprint;
+            if (saved == null) { problem = "it has no compatibility fingerprint"; return false; }
+            string version = Application.version ?? "", hash = GameAssemblyHash();
+            if (saved.gameVersion == version && saved.assemblySha256 == hash) return false;
+            if (hash == "unavailable") { problem = "this build's Assembly-CSharp can't be hashed"; return false; }
+            if (saved.pluginSchemaVersion != MacroLibrary.CurrentSchemaVersion) { problem = "its snapshot schema changed"; return false; }
+            problem = UnrestorableField(typeof(Movement), savestate.movementFields) ?? UnrestorableField(typeof(Rigidbody2D), savestate.bodyFields);
+            if (problem != null) return false;
+            saved.gameVersion = version;
+            saved.assemblySha256 = hash;
+            return true;
+        }
+
+        static string UnrestorableField(Type type, Dictionary<string, SnapshotValue> values)
+        {
+            if (values == null) return null;
+            foreach (KeyValuePair<string, SnapshotValue> pair in values)
+            {
+                (FieldInfo field, PropertyInfo property) = Member(type, pair.Key);
+                Type valueType = field != null ? field.FieldType : property != null && property.CanWrite ? property.PropertyType : null;
+                if (valueType == null) return type.Name + "." + pair.Key + " is gone";
+                if (!TryDecode(pair.Value, valueType, out _)) return type.Name + "." + pair.Key + " no longer takes " + pair.Value?.value;
+            }
+            return null;
+        }
+
         private static Assembly _hashedAssembly;
         private static string _assemblyHash;
 
