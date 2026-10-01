@@ -27,12 +27,14 @@ namespace IGTAP.EngineSim
         SlopeLeft, SlopeRight, DoubleJump, DashJump, WallBoostLeft, WallBoostRight, Paused, SteppedUpLeft, SteppedUpRight
     }
 
-    /// <summary>The unlocks a player holds now, as the <see cref="Caps"/> they make (a Full-TAS window's, what its search may
-    /// press): the Movement's own fields, and the refill orbs and zip movers from the game's global upgrades.</summary>
+    /// <summary>The unlocks a run's player holds now, as the <see cref="Caps"/> they make (a Full-TAS window's, what its search
+    /// may press): the Movement's own fields, and the refill orbs and zip movers from the run's global upgrades (its own
+    /// economy's when it has one: a buy mid-run, like the Omni Dash box's refresh orb, changes only those).</summary>
     public static class PlayerCaps
     {
-        public static Caps Of(Movement player)
+        public static Caps Of(Simulation sim)
         {
+            Movement player = sim.Player;
             var caps = new Caps
             {
                 WallJump = player.wallJumpUnlocked,
@@ -41,15 +43,15 @@ namespace IGTAP.EngineSim
                 BlockSwap = player.blockSwapUnlocked,
                 Omni = player.omniDashUnlocked,
             };
+            Economy economy = sim.Shop?.Economy;
             Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
-            if (upgrades != null)
+            double Global(globalStats.globalUpgradeSet upgrade)
             {
-                upgrades.TryGetValue(globalStats.globalUpgradeSet.unlockJiggleDrops, out double jiggle);
-                upgrades.TryGetValue(globalStats.globalUpgradeSet.moreRefreshOrbs, out double refresh);
-                upgrades.TryGetValue(globalStats.globalUpgradeSet.zipMoversUnlocked, out double zip);
-                caps.Orbs = jiggle + refresh > 0;
-                caps.Zip = zip > 0;
+                if (economy != null) return economy.GlobalOf(upgrade);
+                return upgrades != null && upgrades.TryGetValue(upgrade, out double value) ? value : 0.0;
             }
+            caps.Orbs = Global(globalStats.globalUpgradeSet.unlockJiggleDrops) + Global(globalStats.globalUpgradeSet.moreRefreshOrbs) > 0;
+            caps.Zip = Global(globalStats.globalUpgradeSet.zipMoversUnlocked) > 0;
             return caps;
         }
     }

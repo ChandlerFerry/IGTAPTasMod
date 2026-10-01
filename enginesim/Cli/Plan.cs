@@ -320,7 +320,7 @@ namespace IGTAP.EngineSim.Cli
                     int cut = startInput >= 0 ? startInput : w.From == 0 ? 0 : (int)r.GoalInputTicks[w.From - 1];
                     SimSnapshot at = cut == 0 ? sim.Start : sim.Advance(route.GetRange(0, cut));
                     sim.Restore(at);
-                    caps = PlayerCaps.Of(sim.Player);
+                    caps = PlayerCaps.Of(sim);
                     startPhysics = sim.Engine.PhysicsTicks;
                 });
                 if (r.Progress < (partial ? w.From : w.To)) throw new InvalidOperationException($"the route reaches goal {r.Progress} of {goals} ({r.EndReason}), not goal {(partial ? w.From : w.To)}");

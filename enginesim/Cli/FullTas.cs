@@ -861,18 +861,7 @@ namespace IGTAP.EngineSim.Cli
         /// (<see cref="PlayerCaps"/>) plus what the boxes they buy give, as the caps id the solver reads.</summary>
         string WindowCaps(IEnumerable<FullTasGoal> goals, Caps? from = null)
         {
-            Caps caps = from ?? PlayerCaps.Of(_eval.Player);
-            foreach (FullTasGoal goal in goals)
-                foreach (string box in goal.boxes ?? Array.Empty<string>())
-                    switch (_eval.Shop.MovementUpgrade(box))
-                    {
-                        case upgradeBox.movementUpgrades.wallJump: caps.WallJump = true; break;
-                        case upgradeBox.movementUpgrades.dash: caps.Dashes++; break;
-                        case upgradeBox.movementUpgrades.freeVmanOmnidash: caps.Dashes++; caps.Omni = true; break;
-                        case upgradeBox.movementUpgrades.doubleJump: caps.AirJumps++; break;
-                        case upgradeBox.movementUpgrades.unlockBlockSwap: caps.BlockSwap = true; break;
-                    }
-            return caps.Id;
+            return _eval.Shop.AfterBuys(from ?? PlayerCaps.Of(_eval), goals.SelectMany(g => g.boxes ?? Array.Empty<string>())).Id;
         }
 
         void Remember((int, string) key, List<InputTick> route)

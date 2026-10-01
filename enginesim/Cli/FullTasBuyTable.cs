@@ -87,7 +87,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 (Vector3 here, int unlocks) = Where(at);
                 Read(at);
-                string caps = PlayerCaps.Of(_eval.Player).Id;
+                string caps = PlayerCaps.Of(_eval).Id;
                 foreach (var p in places)
                     if (p.place.Caps == caps && Math.Abs(p.place.X - here.x) <= PieceReach && Math.Abs(p.place.Y - here.y) <= PieceReach) return;
                 long tick = TickOf(at);

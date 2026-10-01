@@ -458,7 +458,7 @@ namespace IGTAP.EngineSim.Cli
             if (_macros == null) return seeds;
             LibState at = BestStateAt(k - 1);
             if (at == null) return seeds;
-            string caps = PlayerCaps.Of(_eval.Player).Id;
+            string caps = PlayerCaps.Of(_eval).Id;
             IReadOnlyList<Macro> list = SafePart(() => _macros.For(at, caps), "macro For");
             if (list == null) return seeds;
             foreach (Macro m in list.Where(m => m.Inputs != null && m.Inputs.Count > 0).Take(5))

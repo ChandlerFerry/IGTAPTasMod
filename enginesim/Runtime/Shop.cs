@@ -403,12 +403,61 @@ namespace IGTAP.EngineSim
 
         internal bool HasBox(string box) { return _ids.ContainsValue(box) || _paths.ContainsValue(box); }
 
-        internal upgradeBox.movementUpgrades? MovementUpgrade(string box)
+        upgradeBox Box(string box)
         {
             foreach (upgradeBox b in _boxes)
-                if (_ids[b] == box || _paths[b] == box)
-                    return b.upgrade == localUpgrades.localUpgradeSet.Movement ? b.movementUpgrade : null;
+                if (_ids[b] == box || _paths[b] == box) return b;
             return null;
+        }
+
+        internal upgradeBox.movementUpgrades? MovementUpgrade(string box)
+        {
+            upgradeBox b = Box(box);
+            return b != null && b.upgrade == localUpgrades.localUpgradeSet.Movement ? b.movementUpgrade : null;
+        }
+
+        /// <summary>
+        /// The unlocks <paramref name="caps"/> become once these boxes are bought in order, as <see cref="Buy"/> applies them and
+        /// <see cref="PlayerCaps"/> reads them: a tree's dash or double-jump box also counts itself, and each Omni Dash buy toggles
+        /// the omnidirectional dash (an odd one on, with the tree's double jumps; an even one off, with one more; the tree's
+        /// dashes plus one either way: <see cref="OmniDashToggle"/>, counts that give nothing while the dash or double jump
+        /// isn't unlocked), its first adding a refresh orb (<see cref="Economy.OmniDashFirstBuy"/>).
+        /// </summary>
+        internal Caps AfterBuys(Caps caps, IEnumerable<string> boxes)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            int treeJumps = (object)stats == null ? 0 : stats.DjBoxesTriggered, treeDashes = (object)stats == null ? 0 : stats.DashBoxesTriggered;
+            var omniUses = new Dictionary<upgradeBox, int>();
+            foreach (string token in boxes)
+            {
+                upgradeBox b = Box(token);
+                if (b == null || b.upgrade != localUpgrades.localUpgradeSet.Movement) continue;
+                switch (b.movementUpgrade)
+                {
+                    case upgradeBox.movementUpgrades.wallJump: caps.WallJump = true; break;
+                    case upgradeBox.movementUpgrades.dash:
+                        caps.Dashes++;
+                        if (UpgradeTree(b) != null) treeDashes++;
+                        break;
+                    case upgradeBox.movementUpgrades.doubleJump:
+                        caps.AirJumps++;
+                        if (UpgradeTree(b) != null) treeJumps++;
+                        break;
+                    case upgradeBox.movementUpgrades.freeVmanOmnidash: caps.Dashes++; caps.Omni = true; break;
+                    case upgradeBox.movementUpgrades.unlockBlockSwap: caps.BlockSwap = true; break;
+                    case upgradeBox.movementUpgrades.OmniDash:
+                    {
+                        int uses = (omniUses.TryGetValue(b, out int used) ? used : b.TimesUsed) + 1;
+                        omniUses[b] = uses;
+                        if (uses == 1) caps.Orbs = true;
+                        caps.Omni = uses % 2 != 0;
+                        if (caps.AirJumps > 0) caps.AirJumps = Math.Max(1, treeJumps + (caps.Omni ? 0 : 1));
+                        if (caps.Dashes > 0) caps.Dashes = Math.Max(1, treeDashes + 1);
+                        break;
+                    }
+                }
+            }
+            return caps;
         }
 
         internal string NearestBox(float x, float y, float range)

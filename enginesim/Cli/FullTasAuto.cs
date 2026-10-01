@@ -1290,7 +1290,7 @@ namespace IGTAP.EngineSim.Cli
                     bests[course] = t;
                 }
                 FullTasGoal last = p > 0 && p <= _goals ? _runGoals.Goals[p - 1] : null;
-                if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(_eval.Player).Id; }
+                if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(_eval).Id; }
                 if (field != null && p != avoidFor && p < _goals)
                 {
                     avoidFor = p;
@@ -1349,7 +1349,7 @@ namespace IGTAP.EngineSim.Cli
                 if (at == null) continue;
                 _eval.SetStart(at, prefixLength);
                 _eval.Restore(at);
-                string capsId = PlayerCaps.Of(_eval.Player).Id;
+                string capsId = PlayerCaps.Of(_eval).Id;
                 bool omni = capsId.Contains("om", StringComparison.OrdinalIgnoreCase);
                 foreach (var (moves, links) in SpeedMoves(omni))
                 {

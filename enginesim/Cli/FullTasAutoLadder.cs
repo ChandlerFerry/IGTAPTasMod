@@ -203,7 +203,7 @@ namespace IGTAP.EngineSim.Cli
                     if (s.T < 0)
                     {
                         sim.Restore(at);
-                        has = PlayerCaps.Of(sim.Player);
+                        has = PlayerCaps.Of(sim);
                         s.Before = PathTicks((float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == s.Course)));
                         object[] clones = sim.Shop.Economy?.CloneStates().FirstOrDefault(x => (int)x[0] == s.Course);
                         s.Clones = clones == null ? 0 : (int)clones[1];

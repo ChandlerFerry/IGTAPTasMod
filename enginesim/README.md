@@ -1408,7 +1408,10 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   ends the run (`Unmodeled economy: an atom`: the engine doesn't step `AtomColliderSystem`'s 0.4 s `callAddNewAtom`), as
   does the Green Power box's first buy (its door opens unless the machine's PlayerPrefs hold `OpenA2Door`). Snapshots
   carry what these change: the touched boxes, `globalStats`, a course outside `Simulation.Courses`, the economy's
-  globals and the transition's countdown.
+  globals and the transition's countdown. A Full-TAS window's unlocks (`FullTas.WindowCaps`: `PlayerCaps.Of` the run, then
+  `Shop.AfterBuys` for its goals' boxes) follow the same rules: an Omni Dash buy goal turns the omnidash on or off, its
+  air jumps and dashes and, on the first, the refill orbs, so the search after it presses what the player then has.
+  `PlayerCaps.Of` reads the orbs and zip movers from the run's own global upgrades, not the trace's start.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,

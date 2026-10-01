@@ -95,7 +95,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 int p = _eval.Progress;
                 Movement m = _eval.Player;
-                if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(m).Id; }
+                if (p != capsFor) { capsFor = p; caps = PlayerCaps.Of(_eval).Id; }
                 if (p != avoidFor && p < _goals)
                 {
                     avoidFor = p;

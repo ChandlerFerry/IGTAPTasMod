@@ -879,7 +879,7 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = sim.Advance(best.Inputs.GetRange(0, l.A));
             if (at == null) { why = $"the best ends before input {l.A}"; return null; }
             sim.Restore(at);
-            Caps has = PlayerCaps.Of(sim.Player);
+            Caps has = PlayerCaps.Of(sim);
             caps = has;
             float Path() => (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == l.Course));
             sim.SetStart(at, l.A);
@@ -966,7 +966,7 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = sim.Advance(best.Inputs.GetRange(0, head));
             if (at == null) { why = $"the best ends before input {head}"; return null; }
             sim.Restore(at);
-            Caps has = PlayerCaps.Of(sim.Player);
+            Caps has = PlayerCaps.Of(sim);
             float before = (float)BestPathTime.GetValue(sim.Courses.First(c => c.courseNumber == course));
             var tried = new List<string>();
             var ways = LapWays(sim, at, head, new InputTick { reset = true }, k + 3, course, has, own, before, tried);
@@ -1020,7 +1020,7 @@ namespace IGTAP.EngineSim.Cli
                 return false;
             }
             _eval.Restore(there);
-            string caps = PlayerCaps.Of(_eval.Player).Id;
+            string caps = PlayerCaps.Of(_eval).Id;
             LoadCourseRoutes();
             var seeds = _courseRoutes.Where(r => r.course == l.Course && r.caps.IsSubsetOf(Caps.Parse(caps)))
                 .SelectMany(r => new[] { r.inputs, r.inputs.Skip(1).ToList() }).ToList();

@@ -93,7 +93,7 @@ namespace IGTAP.EngineSim.Cli
             if (run.LogJson != null) File.WriteAllText(run.LogJson, "");
 
             // The category's unlocks: the start's player has them (the capture set them); a trace captured with others isn't this category.
-            string startCaps = Solve.OnThread(() => PlayerCaps.Of(run.Plain().Player).Id);
+            string startCaps = Solve.OnThread(() => PlayerCaps.Of(run.Plain()).Id);
             if (startCaps != caps)
                 throw new InvalidOperationException($"{Path.GetFileName(trace)} is {caps}, but its start's player has {startCaps} unlocked: capture the category's start again");
 
