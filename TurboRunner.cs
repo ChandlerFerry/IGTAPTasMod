@@ -980,7 +980,9 @@ namespace IGTAPTasMod
                             _update(movement);
                             if (player.position != at)
                             {
-                                Physics2D.SyncTransforms();
+                                // The tick's last frame: the write reaches the body at the next step's sync, as at 1x, so the
+                                // next FixedUpdate's squish check (Collider2D.Distance) still sees the body where it was.
+                                if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
                                 _stepFrom = _stepTo = player.position;
                             }
                             float frameDt = repeat == repeats ? frames.Step(ticks, k) : 0f;

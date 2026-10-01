@@ -65,6 +65,8 @@ namespace IGTAPTasMod
             trace = CourseTrace(course, caps);
             if (trace == null) return "No start trace for " + course.Token + "_" + CapsOf(caps).Label + " yet: run Improve once in the Optimize tab.";
             if (string.IsNullOrEmpty(EngineSimExe) || !File.Exists(EngineSimExe)) return "The offline engine isn't built.";
+            // A run that ended (a death, the finish) has no player to try techs from: the held tick is past its end.
+            if (s.ended != null) return "The run ended here (" + s.ended + "): hold a tick before it.";
             return null;
         }
 
@@ -159,8 +161,10 @@ namespace IGTAPTasMod
             {
                 if (!found.done)
                 {
-                    string[] lines = s.techsOutput?.ToArray() ?? new string[0];
-                    string output = string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 4))).Trim();
+                    // The message, not the stack: an exception's "   at" frames and "--- End of" lines are noise in the studio.
+                    string[] lines = (s.techsOutput?.ToArray() ?? new string[0])
+                        .Where(l => !l.TrimStart().StartsWith("at ", StringComparison.Ordinal) && !l.TrimStart().StartsWith("--- ", StringComparison.Ordinal)).ToArray();
+                    string output = string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 2))).Trim();
                     found.error = output.Length > 0 ? output : "enginesim techs stopped without a result";
                 }
                 TasStopTechs(s);

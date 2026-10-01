@@ -625,8 +625,7 @@ namespace IGTAPTasMod
             _stepIndex++;
             _elapsedTicks = 0;
             _wallJumpTriggered = false;
-            if (_stepIndex >= _steps.Count)
-                Finish(movement);
+            // The last step's input stands for its whole tick: FixedTick finishes on the next one (Finish puts the stick at rest).
         }
 
         private void Fail(Movement movement, string reason)

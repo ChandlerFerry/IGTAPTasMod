@@ -235,8 +235,13 @@ namespace IGTAP.EngineSim
                 Engine.WallTouch((Movement)m, touchedGround);
             };
             Hooks.HitSpring = (_, up) => { Events |= StepEvents.SpringHit; SpringUp = up; };
-            Hooks.SpecialWallJump = m => { Events |= StepEvents.WallBoost; WallBoostSide = ((Movement)m).transform.localScale.x < 0f ? -1f : 1f; };
-            Hooks.SteppedUp = _ => { Events |= StepEvents.SteppedUp; StepUpSide = Player.facingRight ? 1f : -1f; };
+            Hooks.SpecialWallJump = (m, mod) =>
+            {
+                Events |= StepEvents.WallBoost;
+                WallBoostSide = ((Movement)m).transform.localScale.x < 0f ? -1f : 1f;
+                WallKick?.Invoke(mod);
+            };
+            Hooks.SteppedUp = _ => { Events |= StepEvents.SteppedUp; StepUpSide = Player.facingRight ? 1f : -1f; SteppedUp?.Invoke(Player); };
             Hooks.Death = m =>
             {
                 if (!Engine.IsRunning) return;
@@ -244,12 +249,16 @@ namespace IGTAP.EngineSim
                 Engine.Abort("Player death at action " + (Engine.StepIndex + 1));
             };
             Hooks.CourseStop = CourseStop;
-            Hooks.Respawn = m => ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns;
-            Hooks.UpgradeBoxStay = Shop.Stay;
+            Hooks.Respawn = m => { ((Movement)m).isRespawningAtCheckpoints = CheckpointRespawns; Respawned?.Invoke((Movement)m); };
+            Hooks.UpgradeBoxStay = (box, collision) => { BoxTouched?.Invoke((upgradeBox)box, collision); Shop.Stay(box, collision); };
+            Hooks.SuperJumpCheck = m => SuperJumpCheck?.Invoke((Movement)m);
+            Hooks.SpriteDirection = m => AfterInput?.Invoke((Movement)m);
+            Hooks.Intangible = mover => Intangible?.Invoke((PlatformMover)mover);
             Hooks.SwapBlocks = (swapper, blueActive) =>
             {
                 Touch((MonoBehaviour)swapper);
                 SetLabColours(blueActive);
+                Swapped?.Invoke(blueActive);
             };
             Hooks.TimeStop = (_, duration) => { if (_freezeFor < 0f || duration < _freezeFor) _freezeFor = duration; };
             Hooks.RefillOrbState = RefillOrbState;
@@ -899,6 +908,17 @@ namespace IGTAP.EngineSim
         /// contact branch has run, so OnWall and wallCoyoteFrames say whether the wall rays hit on this tick.</summary>
         public Action<Movement> BeforeInput;
 
+        /// <summary>The tech observers (<see cref="TechSteps"/>; null when nothing watches): CheckForSuperJump's entry (its state
+        /// before it runs), determineSpriteDirection's (right after getPlayerControlledInput, also in the dash branch and the
+        /// wall jump lock), a respawn, a step-up (in a rendered frame), a special wall jump's directionMagnitudeMod (1: a
+        /// wallbounce, 0.6: a dash boost), a block swap (to blue or not), a zip mover made intangible and an upgrade box's
+        /// trigger stay.</summary>
+        public Action<Movement> SuperJumpCheck, AfterInput, Respawned, SteppedUp;
+        public Action<float> WallKick;
+        public Action<bool> Swapped;
+        public Action<PlatformMover> Intangible;
+        public Action<upgradeBox, Collider2D> BoxTouched;
+
         /// <summary>
         /// The run from the start snapshot begins inside its first tick, as an in-game lab demo or probe from a placed start
         /// does (TasPlugin starts the engine in Movement.FixedUpdate's prefix after MacroEngine.BeforeTick ran idle): that tick
@@ -933,7 +953,10 @@ namespace IGTAP.EngineSim
                     _update();
                     if (Physics.PlayerTransformDirty)
                     {
-                        Physics.SyncTransforms();
+                        // At 1x the write reaches the body at the next frame's start. After the tick's last frame that is the
+                        // next tick's step, so its FixedUpdate still queries the body where it was (the squish check's
+                        // Collider2D.Distance) and the sync before the step moves it.
+                        if (k < alphas.Length - 1 || repeat > 0) Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
                     Shop.StepClones(repeat == repeats ? Frames.Step(ticks, k) : 0f);

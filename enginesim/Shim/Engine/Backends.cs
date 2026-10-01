@@ -54,7 +54,11 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, float> TimeStop;
         [ThreadStatic] public static Action<object> RefillOrbState;
         [ThreadStatic] public static Action<object, Vector2> HitSpring;
-        [ThreadStatic] public static Action<object> SpecialWallJump, SteppedUp;
+        [ThreadStatic] public static Action<object> SteppedUp;
+        [ThreadStatic] public static Action<object, float> SpecialWallJump;
+        /// <summary>Tech observers (Runtime\TechSteps.cs): CheckForSuperJump's entry, determineSpriteDirection's (right after
+        /// getPlayerControlledInput, the dash branch and the wall jump lock), a zip mover made intangible.</summary>
+        [ThreadStatic] public static Action<object> SuperJumpCheck, SpriteDirection, Intangible;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }
         public static void OnWallTouch(object movement, bool touchedGround) { WallTouch?.Invoke(movement, touchedGround); }
@@ -71,7 +75,10 @@ namespace IGTAP.EngineSim
         public static void OnTimeStop(object movement, float duration) { TimeStop?.Invoke(movement, duration); }
         public static void OnRefillOrbState(object orb, bool regrow) { RefillOrbState?.Invoke(orb); }
         public static void OnHitSpring(object movement, float upForce, float strength, float movementLock, Vector2 up) { HitSpring?.Invoke(movement, up); }
-        public static void OnSpecialWallJump(object movement, float directionMagnitudeMod, float durationMult, Vector2 momentumToAdd) { SpecialWallJump?.Invoke(movement); }
+        public static void OnSpecialWallJump(object movement, float directionMagnitudeMod, float durationMult, Vector2 momentumToAdd) { SpecialWallJump?.Invoke(movement, directionMagnitudeMod); }
         public static void OnSteppedUp(object anim, Vector3 stepUpAmount) { SteppedUp?.Invoke(anim); }
+        public static void OnCheckForSuperJump(object movement, bool isDashBounce) { SuperJumpCheck?.Invoke(movement); }
+        public static void OnDetermineSpriteDirection(object movement) { SpriteDirection?.Invoke(movement); }
+        public static void OnMakeIntangible(object mover) { Intangible?.Invoke(mover); }
     }
 }

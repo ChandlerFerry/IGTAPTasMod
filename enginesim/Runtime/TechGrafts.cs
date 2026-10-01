@@ -519,6 +519,9 @@ namespace IGTAP.EngineSim
     public sealed class TechDemo
     {
         public string Tech, Name, Category, Requires, Start, Source, Error;
+        /// <summary>The tech's overlay detector (techs.json "detector", the TAS overlay's Tech name; null: none): what
+        /// <see cref="TechChecks"/> looks for in a run to say the tech happened.</summary>
+        public string Detector;
         /// <summary>The tech's graftKey (techs.json): the contact kind its key window sits on, near this demo input tick (optional).</summary>
         public Contact? KeyContact;
         public int? KeyTick;
@@ -744,9 +747,9 @@ namespace IGTAP.EngineSim
 
         // ---- mining ----
 
-        sealed class TechDef
+        internal sealed class TechDef
         {
-            public string id, name, category, requires, start, routeId, labmap, labDemo;
+            public string id, name, category, requires, start, routeId, labmap, labDemo, detector;
             /// <summary>The live entry's own demo wiring when the repo seed's differs (Catalog): the seed's is the tech's, this is mined too.</summary>
             public string LiveLabmap, LiveLabDemo;
             /// <summary>Where the tech happens when the last button isn't it (a demo with trailing inputs): {"contact": a Contact
@@ -762,7 +765,7 @@ namespace IGTAP.EngineSim
             public int fastForward;
         }
 
-        sealed class GraftKeyDef
+        internal sealed class GraftKeyDef
         {
             public string contact;
             public int? tick;
@@ -770,7 +773,7 @@ namespace IGTAP.EngineSim
 
         const string NoDemoRoute = "no demo route";
 
-        sealed class DemoSource
+        internal sealed class DemoSource
         {
             public TechDef Tech;
             public string Trace, Savestate;   // the trace the demo replays over, and its own savestate (macro demos)
@@ -800,6 +803,39 @@ namespace IGTAP.EngineSim
         public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null, string cacheFile = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
+            List<DemoSource> sources = Sources(tracesDir);
+            string key = CacheKey(sources);
+            string cache = cacheFile == null ? Path.Combine(tracesDir, "tech-grafts.cache.json") : Path.GetFullPath(cacheFile);
+            if (!refresh && File.Exists(cache))
+            {
+                try
+                {
+                    TechGrafts cached = JsonSerializer.Deserialize<TechGrafts>(File.ReadAllText(cache), Json);
+                    if (cached != null && cached.Key == key)
+                    {
+                        cached.CacheFile = cache;
+                        cached.FromCache = true;
+                        return cached.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
+                    }
+                }
+                catch (Exception) { }
+            }
+            var mined = new TechGrafts { CacheFile = cache, Key = key };
+            foreach (DemoSource source in sources) mined.Demos.Add(Mine(source, tracesDir));
+            foreach (TechDemo demo in mined.Demos) mined.Patterns.AddRange(demo.Patterns);
+            mined.Dedupe();
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(cache));
+                File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
+            }
+            catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
+            return mined.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
+        }
+
+        /// <summary>Every tech's demo sources, as <see cref="Load"/> mines them (a "todo" tech's has no trace).</summary>
+        static List<DemoSource> Sources(string tracesDir)
+        {
             string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
             List<TechDef> techs = Catalog(config);
             Dictionary<string, MacroDefinition> macros = Macros(config);
@@ -837,33 +873,56 @@ namespace IGTAP.EngineSim
                 }
                 sources.AddRange(forTech);
             }
-            string key = CacheKey(sources);
-            string cache = cacheFile == null ? Path.Combine(tracesDir, "tech-grafts.cache.json") : Path.GetFullPath(cacheFile);
-            if (!refresh && File.Exists(cache))
+            return sources;
+        }
+
+        /// <summary>A demo the tech checks are measured on (<c>techs --demos</c>, <see cref="TechChecks"/>): one a tech is mined
+        /// from, or a comparison ghost of its lab (labmaps/&lt;lab&gt;.json "ghosts": most miss the tech on purpose).</summary>
+        public sealed class CheckDemo
+        {
+            public string Tech, Detector, Name, Label, Error;
+            public bool Ghost;
+            internal DemoSource Source;
+
+            /// <summary>Plays <paramref name="run"/> on the demo's simulation at its start, with its inputs.</summary>
+            public T Play<T>(Func<Simulation, List<InputTick>, T> run) => WithDemo(Source, (sim, inputs, _, _) => run(sim, inputs));
+        }
+
+        /// <summary>Every tech's mined demos and its labs' ghosts (<see cref="CheckDemo"/>).</summary>
+        public static List<CheckDemo> CheckDemos(string tracesDir, string techDir = null)
+        {
+            tracesDir = ResolveTechDir(tracesDir, techDir);
+            string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
+            List<DemoSource> sources = Sources(tracesDir).Where(s => s.Tech.graft != "todo").ToList();
+            var demos = new List<CheckDemo>();
+            foreach (DemoSource source in sources)
             {
-                try
+                string name = source.Lab ? source.LabId + (string.IsNullOrEmpty(source.LabDemo) ? "" : "." + source.LabDemo) : Path.GetFileName(source.Trace);
+                bool resolved = source.Trace != null && File.Exists(source.Trace);
+                demos.Add(new CheckDemo { Tech = source.Tech.id, Detector = source.Tech.detector, Name = name, Source = source, Error = resolved ? null : source.Trace ?? NoDemoRoute });
+            }
+            foreach (DemoSource source in sources)
+            {
+                if (!source.Lab || !string.IsNullOrEmpty(source.LabDemo) || source.LabMapPath == null) continue;
+                using JsonDocument lab = JsonDocument.Parse(File.ReadAllText(source.LabMapPath));
+                if (!lab.RootElement.TryGetProperty("ghosts", out JsonElement ghosts) || ghosts.ValueKind != JsonValueKind.Array) continue;
+                foreach (JsonElement g in ghosts.EnumerateArray())
                 {
-                    TechGrafts cached = JsonSerializer.Deserialize<TechGrafts>(File.ReadAllText(cache), Json);
-                    if (cached != null && cached.Key == key)
+                    if (!g.TryGetProperty("demo", out JsonElement demo) || demo.ValueKind != JsonValueKind.String) continue;
+                    string name = source.LabId + "." + demo.GetString();
+                    if (demos.Any(d => d.Tech == source.Tech.id && d.Name == name)) continue;
+                    var ghost = new DemoSource { Tech = source.Tech, Lab = true, LabId = source.LabId, LabDemo = demo.GetString() };
+                    string error = null;
+                    try { Resolve(ghost, tracesDir, config, new Dictionary<string, MacroDefinition>()); }
+                    catch (Exception ex) { error = ex.Message; }
+                    demos.Add(new CheckDemo
                     {
-                        cached.CacheFile = cache;
-                        cached.FromCache = true;
-                        return cached.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
-                    }
+                        Tech = source.Tech.id, Detector = source.Tech.detector, Name = name, Ghost = true, Source = ghost, Error = error,
+                        Label = g.TryGetProperty("label", out JsonElement label) ? label.GetString() : null,
+                    });
                 }
-                catch (Exception) { }
             }
-            var mined = new TechGrafts { CacheFile = cache, Key = key };
-            foreach (DemoSource source in sources) mined.Demos.Add(Mine(source, tracesDir));
-            foreach (TechDemo demo in mined.Demos) mined.Patterns.AddRange(demo.Patterns);
-            mined.Dedupe();
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(cache));
-                File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
-            }
-            catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
-            return mined.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
+            return demos;
         }
 
         // The configured traces dir (tools/gamepaths.py's TRACES: the game's config folder's enginesim dir) when it exists:
@@ -908,10 +967,12 @@ namespace IGTAP.EngineSim
             {
                 if (byId.TryGetValue(seed.id, out TechDef mine))
                 {
-                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap.
+                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap. So does the
+                    // detector: the code that runs it (the overlay, TechChecks) is the repo's.
                     mine.graftKey = seed.graftKey ?? mine.graftKey;
                     mine.graftDemos = seed.graftDemos ?? mine.graftDemos;
                     mine.graft = seed.graft ?? mine.graft;
+                    mine.detector = seed.detector ?? mine.detector;
                     if (!string.IsNullOrEmpty(seed.labmap) && (seed.labmap != mine.labmap || seed.labDemo != mine.labDemo))
                     {
                         if (!string.IsNullOrEmpty(mine.labmap)) { mine.LiveLabmap = mine.labmap; mine.LiveLabDemo = mine.labDemo; }
@@ -1153,7 +1214,7 @@ namespace IGTAP.EngineSim
             TechDef tech = source.Tech;
             var demo = new TechDemo
             {
-                Tech = tech.id, Name = tech.name, Category = tech.category, Requires = tech.requires, Start = tech.start,
+                Tech = tech.id, Name = tech.name, Category = tech.category, Requires = tech.requires, Start = tech.start, Detector = tech.detector,
                 KeyContact = tech.graftKey?.contact != null && Enum.TryParse(tech.graftKey.contact, out Contact want) ? want : null,
                 KeyTick = tech.graftKey?.tick,
                 Source = source.Lab ? "lab " + source.LabId + (source.LabDemoPath == null ? "" : " (" + Path.GetFileName(source.LabDemoPath) + ")")
@@ -1168,80 +1229,94 @@ namespace IGTAP.EngineSim
             }
             try
             {
-                using JsonDocument trace = JsonDocument.Parse(File.ReadAllText(source.Trace), new JsonDocumentOptions { MaxDepth = 256 });
-                JsonElement root = trace.RootElement;
-                LabMapDef lab = source.Lab ? LabMapDef.Load(source.LabMapPath) : null;
-                World world = World.Load(WorldOf(source.Trace));
-                if (lab != null) LabMap.Inject(world, lab);
-                var sim = new Simulation(world);
-                sim.SetTarget(root);
-                sim.LoadStart(root.GetProperty("start"));
-                List<InputTick> inputs;
-                List<GraftSpec> specs = null;
-                if (lab != null)
+                WithDemo(source, (sim, inputs, specs, requires) =>
                 {
-                    // A lab demo's start is the lab's own (its geometry injected above), and its inputs are `lab solve`'s; a lab
-                    // run is judged on its own finish box, not the host trace's course (Cli\Lab.cs's lab replay).
-                    using JsonDocument solved = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
-                    inputs = SolveInputs(solved.RootElement);
-                    specs = GraftSpec.Parse(solved.RootElement);
-                    // A lab demo's windows need what its tech needs and its lab runs with: the demo's own "requires", else the tech's
-                    // requires narrowed to the lab's category (a lab variant may need less than the tech's label: a side spring
-                    // without the omnidash, a spring double hit with no double jump; and a lab run with every unlock needs no more).
-                    if (solved.RootElement.TryGetProperty("requires", out JsonElement needs) && needs.ValueKind == JsonValueKind.String) demo.Requires = needs.GetString();
-                    else if (lab.CategoryGiven && Caps.TryParse(lab.category, out Caps labCaps) && Caps.TryParse(tech.requires ?? "NONE", out Caps techCaps))
-                        demo.Requires = Narrow(techCaps, labCaps).Label;
-                    lab.UseDemoStart(solved.RootElement);
-                    DemoStart.ApplyLabStart(sim, lab);
-                    (float fx, float fy, float fw, float fh) = lab.Finish;
-                    (float ax, float ay) = lab.Anchor;
-                    sim.TargetCourse = -1;
-                    CapturePos finishAt = sim.ToCapture(new WorldPos(fx + ax, fy + ay));
-                    sim.TargetFinish = new CaptureRect(finishAt, fw, fh);
-                }
-                else if (source.Macro == null)
-                {
-                    inputs = SolveInputs(root);
-                    demo.Source = Path.GetFileName(source.Trace);
-                }
-                else
-                {
-                    inputs = ToInputs(source.Macro);
-                    if (source.Savestate != null) DemoStart.ApplySavestate(sim, source.Savestate);
-                    // A demo plays with the omnidirectional dash on top of its start's unlocks (TechCatalog.ApplyTechAbilities).
-                    if (Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
-                    sim.SetStart(sim.Capture(0), 0);
-                }
-                demo.InputTicks = inputs.Count;
-                var log = new ContactLog();
-                var probe = new ContactProbe(sim);
-                int lastTick = 0;
-                RunResult run = sim.Run(inputs, afterTick: tick =>
-                {
-                    lastTick = tick;
-                    log.Tick(tick, sim.Player, probe.NearGate());
-                    return true;
-                }, extraTicks: 200, onStep: _ =>
-                {
-                    log.Slide((int)sim.Engine.RunTicks, sim.Player);
-                    log.Step(sim);
+                    if (requires != null) demo.Requires = requires;
+                    demo.InputTicks = inputs.Count;
+                    var log = new ContactLog();
+                    var probe = new ContactProbe(sim);
+                    int lastTick = 0;
+                    RunResult run = sim.Run(inputs, afterTick: tick =>
+                    {
+                        lastTick = tick;
+                        log.Tick(tick, sim.Player, probe.NearGate());
+                        return true;
+                    }, extraTicks: 200, onStep: _ =>
+                    {
+                        log.Slide((int)sim.Engine.RunTicks, sim.Player);
+                        log.Step(sim);
+                    });
+                    demo.PhysicsTicks = run.Stepped;
+                    demo.Finished = run.Finished;
+                    demo.Died = run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal);
+                    if (demo.Died) log.Contacts.Add((lastTick, Contact.Died));
+                    // A demo that finishes inside a dash (its steps consume no input tick) never had its last steps' contact changes
+                    // looked at (a dash off a wall cling leaves the wall mid-dash): the finish files them at the dash's tick.
+                    if (demo.Finished && (int)sim.Engine.RunTicks == lastTick) log.Tick(lastTick, sim.Player, probe.NearGate());
+                    demo.Contacts.AddRange(log.Contacts);
+                    if (specs != null) CutSpecs(demo, inputs, specs);
+                    else Cut(demo, inputs);
+                    return 0;
                 });
-                demo.PhysicsTicks = run.Stepped;
-                demo.Finished = run.Finished;
-                demo.Died = run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal);
-                if (demo.Died) log.Contacts.Add((lastTick, Contact.Died));
-                // A demo that finishes inside a dash (its steps consume no input tick) never had its last steps' contact changes
-                // looked at (a dash off a wall cling leaves the wall mid-dash): the finish files them at the dash's tick.
-                if (demo.Finished && (int)sim.Engine.RunTicks == lastTick) log.Tick(lastTick, sim.Player, probe.NearGate());
-                demo.Contacts.AddRange(log.Contacts);
-                if (specs != null) CutSpecs(demo, inputs, specs);
-                else Cut(demo, inputs);
             }
             catch (Exception ex)
             {
                 demo.Error = ex.GetBaseException().Message;
             }
             return demo;
+        }
+
+        /// <summary>
+        /// The demo's simulation at its start and its inputs, handed to <paramref name="run"/>: a lab demo on its lab (its own
+        /// finish box judges it), a captured trace from its own start, a macro over its category start (from its savestate, with
+        /// the omnidash its tech needs). Also the lab demo's graft specs (null: none) and what its windows need (null: the tech's
+        /// own requires): the demo's own "requires", else the tech's narrowed to the lab's category.
+        /// </summary>
+        static T WithDemo<T>(DemoSource source, Func<Simulation, List<InputTick>, List<GraftSpec>, string, T> run)
+        {
+            TechDef tech = source.Tech;
+            using JsonDocument trace = JsonDocument.Parse(File.ReadAllText(source.Trace), new JsonDocumentOptions { MaxDepth = 256 });
+            JsonElement root = trace.RootElement;
+            LabMapDef lab = source.Lab ? LabMapDef.Load(source.LabMapPath) : null;
+            World world = World.Load(WorldOf(source.Trace));
+            if (lab != null) LabMap.Inject(world, lab);
+            var sim = new Simulation(world);
+            sim.SetTarget(root);
+            sim.LoadStart(root.GetProperty("start"));
+            List<InputTick> inputs;
+            List<GraftSpec> specs = null;
+            string requires = null;
+            if (lab != null)
+            {
+                // A lab demo's start is the lab's own (its geometry injected above), and its inputs are `lab solve`'s; a lab
+                // run is judged on its own finish box, not the host trace's course (Cli\Lab.cs's lab replay).
+                using JsonDocument solved = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
+                inputs = SolveInputs(solved.RootElement);
+                specs = GraftSpec.Parse(solved.RootElement);
+                // A lab demo's windows need what its tech needs and its lab runs with: the demo's own "requires", else the tech's
+                // requires narrowed to the lab's category (a lab variant may need less than the tech's label: a side spring
+                // without the omnidash, a spring double hit with no double jump; and a lab run with every unlock needs no more).
+                if (solved.RootElement.TryGetProperty("requires", out JsonElement needs) && needs.ValueKind == JsonValueKind.String) requires = needs.GetString();
+                else if (lab.CategoryGiven && Caps.TryParse(lab.category, out Caps labCaps) && Caps.TryParse(tech.requires ?? "NONE", out Caps techCaps))
+                    requires = Narrow(techCaps, labCaps).Label;
+                lab.UseDemoStart(solved.RootElement);
+                DemoStart.ApplyLabStart(sim, lab);
+                (float fx, float fy, float fw, float fh) = lab.Finish;
+                (float ax, float ay) = lab.Anchor;
+                sim.TargetCourse = -1;
+                CapturePos finishAt = sim.ToCapture(new WorldPos(fx + ax, fy + ay));
+                sim.TargetFinish = new CaptureRect(finishAt, fw, fh);
+            }
+            else if (source.Macro == null) inputs = SolveInputs(root);
+            else
+            {
+                inputs = ToInputs(source.Macro);
+                if (source.Savestate != null) DemoStart.ApplySavestate(sim, source.Savestate);
+                // A demo plays with the omnidirectional dash on top of its start's unlocks (TechCatalog.ApplyTechAbilities).
+                if (Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
+                sim.SetStart(sim.Capture(0), 0);
+            }
+            return run(sim, inputs, specs, requires);
         }
 
         static List<InputTick> SolveInputs(JsonElement trace)

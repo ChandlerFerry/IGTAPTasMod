@@ -66,6 +66,9 @@ namespace IGTAP.EngineSim.Cli
         /// window best (wall s, time, runTicks: the physics tick at the window's last goal, ticks simulated, how, process CPU s).</summary>
         readonly int _rng;
         readonly string _logJson;
+        /// <summary>--reach-polish S: with --unsolved, each goal the reach gets to is built alone and the window of --window goals
+        /// ending there polished for up to S seconds before the next goal is built, so later goals stand on the fast prefix (0: off).</summary>
+        readonly double _reachPolish;
         bool _unsolved;
         string _name, _runFile, _closestFile, _outDir;
         string[] _labels;
@@ -136,6 +139,7 @@ namespace IGTAP.EngineSim.Cli
             _lookahead = Math.Max(0, Solve.Option(args, "--lookahead", 0));
             _rng = Solve.Option(args, "--rng", 0);
             _logJson = Solve.Option(args, "--log-json", (string)null);
+            _reachPolish = Solve.Option(args, "--reach-polish", 0.0);
             if (_logJson != null) File.WriteAllText(_logJson, "");
             _seedFiles.AddRange(Solve.Args(args, "--seed"));
             // --seed-list: a file of seed paths, one per line (a run's seeds can pass Windows' 32767-character command line).
@@ -252,6 +256,7 @@ namespace IGTAP.EngineSim.Cli
             Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
                 from, best = RouteJson(_best) });
             foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            AddHumanSeeds();
             if (_seeds.Count > 0)
                 Console.WriteLine($"Seeds: {_seeds.Count} saved routes for " + string.Join(", ", _seeds.SelectMany(s => s.Goals).Distinct()
                     .Select(g => g + " (" + _seeds.Count(s => s.Goals.Contains(g)) + ")")));
@@ -314,12 +319,18 @@ namespace IGTAP.EngineSim.Cli
             }
 
             (int, long) reachFrontier = (-1, -1);
-            int reachRound = 0, reachBack = 0;
+            int reachRound = 0, reachBack = 0, polishedTo = 0;
             string stopped = null;
             while (!TimeUp && stopped == null)
             {
                 Route best = _best;
                 int reached = best.Progress;
+                if (_reachPolish > 0 && _unsolved && reached > polishedTo)
+                {
+                    polishedTo = reached;
+                    PolishFrontier();
+                    continue;
+                }
                 if (reached < _goals && (_unsolved || reached == 0))
                 {
                     if (SeedFrontier() || GraftKnownTails()) continue;
@@ -1292,6 +1303,39 @@ namespace IGTAP.EngineSim.Cli
             }
             Log($"known tails: {runs.Count} saved routes of {_name} beside its run file");
             return runs;
+        }
+
+        /// <summary>
+        /// Each course seed's human versions in offline-best (<c>&lt;course&gt;_&lt;caps&gt;-&lt;time&gt;-human.json</c>, fastest first) as
+        /// seeds of their own: a run reaches a course's restart a little differently from the category start the TAS line was
+        /// found from, and the looser inputs can still finish there (FalseEnding%-280's goal 200: `3_WJ_DS 3.68` died after a
+        /// landing 0.01 u off, the 3.72's human version finished).
+        /// </summary>
+        void AddHumanSeeds()
+        {
+            string dir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "offline-best");
+            if (!Directory.Exists(dir)) return;
+            foreach (Seed course in _seeds.ToList())
+            {
+                string finish = course.Goals.FirstOrDefault(g => g.StartsWith("finish:", StringComparison.Ordinal));
+                if (course.At != null || !course.Standing || finish == null) continue;
+                string prefix = finish.Substring("finish:".Length) + "_" + course.Caps.Id + "-";
+                var files = Directory.GetFiles(dir, prefix + "*-human.json")
+                    .Select(f => (file: f, time: float.TryParse(Path.GetFileName(f).Substring(prefix.Length).Split('-')[0], NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out float t) ? t : float.MaxValue))
+                    .OrderBy(f => f.time);
+                foreach (var (file, _) in files)
+                {
+                    Seed human = ReadSeed(file);
+                    if (_seeds.Any(s => s.Inputs.SequenceEqual(human.Inputs))) continue;
+                    human.Name = Path.GetFileNameWithoutExtension(file);
+                    human.Goals = course.Goals;
+                    human.Standing = true;
+                    human.Restart = course.Restart;
+                    human.Caps = course.Caps;
+                    _seeds.Add(human);
+                }
+            }
         }
 
         static Seed ReadSeed(string path)

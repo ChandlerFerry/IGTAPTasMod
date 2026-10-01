@@ -55,10 +55,13 @@
     in the plugin's category start and the offline engine's course trace load). Course 9's end is reachable only through it.
 22. Their lowest category is `WJ_DS_DJ_BS`.
 23. Courses 11–15 are Courses 1–5 with Area 1 overgrown: the game's own Course 1–5 gates and timer on the overgrown
-    terrain (spikes, moss, zip movers).
+    terrain (spikes, moss, zip movers) and boxes (no movement, prestige, breaker-light or unlock-prestige box in Courses
+    1–5; the RP boxes and Course 6's atom RP box shown).
 24. Every quick restart onto one sets Area 1 overgrown the game's way (`currentA1State`, then
-    `OvergrowthLoadScript.OnLoad`, as the zone loader does); onto Courses 1–5 it sets it back to not overgrown, and
-    every other route runs in the save's own state.
+    `OvergrowthLoadScript.OnLoad`, as the zone loader does). A save that never bought the OmniDash box
+    (`Zone2toZone1PathOpen` off) never ran its `SetA1CourseTiers`, so the restart stands in for that call's boxes too
+    (which go and come, the caps and buy max), not its course prestige; it undoes them when Area 1 is set back. Onto
+    Courses 1–5 it sets Area 1 back to not overgrown, and every other route runs in the save's own state.
 25. Saves wait until the save's state is back.
 26. Their only categories are `WJ_DS_DJ_BS` and the categories outside the ladder that run there (19); transitions to
     or from them aren't supported.

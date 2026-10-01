@@ -27,6 +27,7 @@ namespace IGTAP.EngineSim.Cli
             public string Caps;
             public JsonElement Header;
             public Func<Simulation> Plain;
+            public OfflineSolver.ForcedPath Rules;
             public List<FullTasGoal> Goals;
             public Stopwatch Clock;
         }
@@ -38,7 +39,12 @@ namespace IGTAP.EngineSim.Cli
             public float Time;
             public long RunTicks;
             public string EndReason;
+            /// <summary>Entered one of the run's avoid boxes or missed a via box: off the course's forced path.</summary>
+            public bool OffPath;
         }
+
+        /// <summary>The direction blocks (forced-paths.json): a course with both lets a run go either way from the start.</summary>
+        static readonly string[] Directions = { "avoid-forwards", "avoid-backwards" };
 
         public static int CourseAuto(string[] args)
         {
@@ -58,7 +64,29 @@ namespace IGTAP.EngineSim.Cli
                 WaypointsFile = Solve.Option(args, "--waypoints-out", (string)null), LogJson = Solve.Option(args, "--log-json", (string)null),
             };
             List<string> optional = Solve.Optional(args, course, caps);
+            // Both directions open (neither direction block picked): the waypoints follow one route, so one loop would only ever
+            // improve the direction its best goes. Each direction gets half the minutes, its own run and waypoints: farm forwards
+            // first, record backwards first. A picked block, or --focus on the studio's list, keeps the one run.
+            var blocks = Solve.OptionalBlocks(course, caps, new OfflineSolver.ForcedPath()).Select(b => b.Name).ToList();
+            if (Directions.All(blocks.Contains) && !Directions.Any(optional.Contains) && run.WaypointsFile == null && !args.Contains("--focus"))
+            {
+                double minutes = Solve.Option(args, "--minutes", 60.0);
+                var rest = new List<string>();
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] == "--minutes") { i++; continue; }
+                    rest.Add(args[i]);
+                }
+                int code = 0;
+                foreach (string block in run.Timing == "farm" ? new[] { "avoid-backwards", "avoid-forwards" } : new[] { "avoid-forwards", "avoid-backwards" })
+                {
+                    Console.WriteLine($"--auto: course {course} goes either way from its start; {block} for {minutes / 2:0.##} min");
+                    code = Math.Max(code, CourseAuto(rest.Concat(new[] { "--optional", block, "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }).ToArray()));
+                }
+                return code;
+            }
             OfflineSolver.ForcedPath rules = Solve.ForcedPaths(args, course, caps);
+            run.Rules = rules;
             run.Name = "course" + course + "_" + caps + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional)) + (run.Timing == "farm" ? "-farm" : "");
             string dir = Path.Combine(Path.GetDirectoryName(trace), "course-auto");
             Directory.CreateDirectory(dir);
@@ -76,15 +104,19 @@ namespace IGTAP.EngineSim.Cli
             if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add(("course-auto/fulltas/" + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
             foreach (var p in played)
-                Console.WriteLine($"{p.how}: " + (p.result.Finished ? $"record {p.result.Time:0.00}s, farm {p.result.RunTicks * .02:0.00}s ({p.result.RunTicks} ticks)" : "no finish (" + p.result.EndReason + ")"));
-            var finishing = played.Where(p => p.result.Finished).ToList();
+                Console.WriteLine($"{p.how}: " + (!p.result.Finished ? "no finish (" + p.result.EndReason + ")"
+                    : $"record {p.result.Time:0.00}s, farm {p.result.RunTicks * .02:0.00}s ({p.result.RunTicks} ticks)" + (p.result.OffPath ? ", off the forced path (an avoid box or a missed via)" : "")));
+            // The waypoints follow the best, so it has to keep the run's rules: one through an avoid box (the direction a picked
+            // block shuts) would set every window's goals where the windows are cut.
+            var finishing = played.Where(p => p.result.Finished && !p.result.OffPath).ToList();
             if (finishing.Count == 0)
             {
                 if (run.WaypointsFile != null)
-                    throw new InvalidOperationException("--auto improves a complete route: neither the trace's route nor a --seed finishes the course");
+                    throw new InvalidOperationException("--auto improves a complete route: neither the trace's route nor a --seed finishes the course on its forced path");
                 // Only a narrower category's routes (the seeds) and none finishes here (an added OM or ORB changes what the same
-                // inputs do): nothing to improve yet, so the plain solve finds a first finish, those routes still its seeds.
-                Console.WriteLine("--auto: neither the trace's route nor a --seed finishes the course; solving for a first finish instead");
+                // inputs do), or none keeps the forced path: nothing to improve yet, so the plain solve finds a first finish, those
+                // routes still its seeds.
+                Console.WriteLine("--auto: neither the trace's route nor a --seed finishes the course on its forced path; solving for a first finish instead");
                 var plain = new List<string>();
                 for (int i = 0; i < args.Length; i++)
                 {
@@ -166,6 +198,8 @@ namespace IGTAP.EngineSim.Cli
             head["fulltas"] = new JsonObject
             {
                 ["name"] = run.Name,
+                // A category route may walk through any box (bonus5's 3.56 brushes GLOBALWatt): no buy is a stray one here.
+                ["buys"] = "loose",
                 ["goals"] = new JsonArray(run.Goals.Select(g =>
                 {
                     var o = new JsonObject { ["label"] = g.label, ["kind"] = g.kind };
@@ -183,13 +217,25 @@ namespace IGTAP.EngineSim.Cli
             return file;
         }
 
-        /// <summary>The route on a new plain course simulation (its own thread): the game's finish, timer and physics ticks.</summary>
+        /// <summary>The route on a new plain course simulation (its own thread): the game's finish, timer and physics ticks, and
+        /// whether it keeps the run's forced path.</summary>
         static CourseResult PlayCourse(CourseRun run, List<InputTick> inputs)
         {
             return Solve.OnThread(() =>
             {
-                RunResult r = run.Plain().Run(inputs, null, null, 1000000);
-                return new CourseResult { Finished = r.Finished, Time = r.Time, RunTicks = r.PhysicsTicks, EndReason = r.EndReason };
+                Simulation sim = run.Plain();
+                OfflineSolver.ForcedPath rules = run.Rules ?? new OfflineSolver.ForcedPath();
+                int via = 0;
+                bool avoided = false;
+                Action<int> onStep = rules.IsEmpty ? null : _ =>
+                {
+                    WorldPos p = sim.PlayerWorld;
+                    if (via < rules.Via.Count && rules.Via[via].Contains(p)) via++;
+                    foreach (OfflineSolver.Box box in rules.Avoid) if (box.Contains(p)) avoided = true;
+                };
+                RunResult r = sim.Run(inputs, null, null, 1000000, onStep);
+                return new CourseResult { Finished = r.Finished, Time = r.Time, RunTicks = r.PhysicsTicks, EndReason = r.EndReason,
+                    OffPath = avoided || via < rules.Via.Count };
             });
         }
 

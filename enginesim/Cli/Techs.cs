@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -37,20 +38,26 @@ namespace IGTAP.EngineSim.Cli
             ContactLog.Mark _mark;
             public WorldPos Start;
             public bool Ground, Wall;
+            /// <summary>The last <see cref="Play"/>'s steps, for the tech checks.</summary>
+            public readonly TechSteps Record;
 
             public Runner(Func<Simulation> create)
             {
                 _sim = create();
                 _body = _sim.Player.GetComponent<Rigidbody2D>();
                 _gate = new ContactProbe(_sim);
+                Record = new TechSteps(_sim);
+                Record.Attach();
             }
 
             /// <summary>The state and the contact detection after the first <paramref name="n"/> of <paramref name="inputs"/>.</summary>
             public void Prime(List<InputTick> inputs, int n)
             {
                 if (_at != null) return;
+                int reached = 0;
                 RunResult r = _sim.Run(inputs, null, tick =>
                 {
+                    reached = tick;
                     _log.Tick(tick, _sim.Player, _gate.NearGate());
                     if (tick < n) return true;
                     _at = _sim.Capture(tick);
@@ -60,8 +67,10 @@ namespace IGTAP.EngineSim.Cli
                     Wall = _sim.Player.OnWall;
                     return false;
                 }, extraTicks: 1000000, onStep: _ => Step());
+                // A route that dies or finishes before N (a session held after its death) has no player there to try techs from.
                 if (_at == null)
-                    throw new InvalidOperationException($"the route doesn't reach input tick {n} offline (" + (r.Finished ? "it finishes before" : r.EndReason ?? "it stops") + ")");
+                    throw new RunEndedException($"the run ends on input tick {reached}, before input tick {n} ("
+                        + (r.Finished ? "the finish" : r.EndReason ?? "it stops") + "): hold a tick before that");
             }
 
             void Step()
@@ -72,10 +81,12 @@ namespace IGTAP.EngineSim.Cli
 
             /// <summary><paramref name="inputs"/> played from input tick N to their end (not the idle steps the engine runs after
             /// them): the contacts from there, the input tick it died on (-1: none), the player's world position after every physics
-            /// step (the first: at N), the path's step where input tick <paramref name="mark"/> starts, and the speed at the end.</summary>
+            /// step (the first: at N), the path's step where input tick <paramref name="mark"/> starts, and the speed at the end.
+            /// Its steps are in <see cref="Record"/>.</summary>
             public (List<(int tick, Contact kind)> contacts, int died, List<float> path, int marked, float speed) Play(List<InputTick> inputs, int mark = -1)
             {
                 _log.Load(_mark);
+                Record.Clear();
                 var path = new List<float> { Start.x, Start.y };
                 int last = _at.Tick, marked = 0;
                 RunResult r = _sim.Run(inputs, _at, tick =>
@@ -87,15 +98,23 @@ namespace IGTAP.EngineSim.Cli
                 }, 60, _ =>
                 {
                     Step();
+                    Record.Step();
                     WorldPos p = _sim.PlayerWorld;
                     path.Add(p.x);
                     path.Add(p.y);
                 });
+                Record.End(r);
                 bool died = r.EndReason != null && r.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 var contacts = new List<(int, Contact)>(_log.Contacts);
                 if (died) contacts.Add((last + 1, Contact.Died));
                 return (contacts, died ? last + 1 : -1, path, marked, _sim.Physics.GetVelocity(_body).magnitude);
             }
+        }
+
+        /// <summary>The route doesn't reach the held input tick offline: a plain message for the studio, no stack.</summary>
+        sealed class RunEndedException : Exception
+        {
+            public RunEndedException(string message) : base(message) { }
         }
 
         sealed class Job
@@ -148,10 +167,63 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
+        /// <summary>
+        /// <c>techs --demos [tech ...] [--dump dir] [--tech-dir D]</c>: every tech's check (<see cref="TechChecks"/>) on its own
+        /// demos and its labs' ghosts: each demo replayed from its start, a line with where its tech happened ("-": nowhere) and
+        /// what the overlay's detectors saw. A demo should show its tech and a ghost (built to miss it) mostly shouldn't.
+        /// <c>--dump</c> writes each run's recorded steps (<see cref="TechSteps"/>) as dir/&lt;demo&gt;.steps.json.
+        /// </summary>
+        static int Demos(string[] args)
+        {
+            var only = new HashSet<string>(args.TakeWhile(a => !a.StartsWith("--", StringComparison.Ordinal)), StringComparer.Ordinal);
+            string dump = Solve.Option(args, "--dump", (string)null);
+            if (dump != null) Directory.CreateDirectory(dump);
+            List<TechGrafts.CheckDemo> demos = TechGrafts.CheckDemos(Directory.GetCurrentDirectory(), Solve.Option(args, "--tech-dir", (string)null))
+                .Where(d => only.Count == 0 || only.Contains(d.Tech)).ToList();
+            var json = new JsonSerializerOptions { IncludeFields = true, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+            int missed = 0;
+            foreach (TechGrafts.CheckDemo demo in demos)
+            {
+                string head = $"{demo.Tech,-34} {(demo.Ghost ? "ghost" : "demo "),-5} {demo.Name,-48}";
+                bool checkable = TechChecks.Checkable(demo.Tech, demo.Detector);
+                if (demo.Error != null) { Console.WriteLine(head + " ERROR " + demo.Error); continue; }
+                try
+                {
+                    string line = demo.Play((sim, inputs) =>
+                    {
+                        var record = new TechSteps(sim);
+                        record.Attach();
+                        record.Clear();
+                        // Past a lab's finish box too: what the tech does on the finish tick shows a step later (a box's buy
+                        // trigger stay comes the step after the touch).
+                        sim.TargetFinish = default;
+                        RunResult run = sim.Run(inputs, extraTicks: 200, onStep: _ => record.Step());
+                        record.End(run);
+                        record.Detach();
+                        if (dump != null)
+                            File.WriteAllText(Path.Combine(dump, demo.Name + (demo.Tech == demo.Name.Split('.')[0] ? "" : "@" + demo.Tech) + ".steps.json"),
+                                JsonSerializer.Serialize(new { demo.Tech, demo.Name, demo.Ghost, demo.Label, record.MaxCoyote, record.MaxWallCoyote, record.Spans, record.Steps }, json));
+                        int at = checkable ? TechChecks.Find(demo.Tech, demo.Detector, record, 0, record.Steps.Count - 1) : -1;
+                        if (checkable && at < 0 && !demo.Ghost) missed++;
+                        string seen = string.Join(" ", record.Spans.Select(s => s.Tech + "@" + record.Steps[s.End].Tick).Distinct());
+                        return (checkable ? at >= 0 ? "tick " + record.Steps[at].Tick : "-" : "no check").PadRight(9)
+                            + (run.Finished ? " finish " : run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal) ? " died   " : " ended  ")
+                            + seen + (demo.Ghost && demo.Label != null ? "  (" + demo.Label + ")" : "");
+                    });
+                    Console.WriteLine(head + " " + line);
+                }
+                catch (Exception ex) { Console.WriteLine(head + " ERROR " + ex.GetBaseException().Message); }
+            }
+            Console.WriteLine($"techs --demos: {demos.Count} runs, {missed} demos whose check missed their tech");
+            return missed == 0 ? 0 : 1;
+        }
+
         public static int Run(string[] args)
         {
+            if (args.FirstOrDefault() == "--demos") return Demos(args.Skip(1).ToArray());
             if (args.Length < 2 || !args.Contains("--at") || !args.Contains("--caps"))
-                throw new ArgumentException("techs <start-trace.json> <route.json> --at N --caps <id> [--out file.jsonl] [--threads T] [--tech-dir D]");
+                throw new ArgumentException("techs <start-trace.json> <route.json> --at N --caps <id> [--out file.jsonl] [--threads T] [--tech-dir D]\n"
+                    + "techs --demos [tech ...] [--dump dir] [--tech-dir D]");
             string trace = args[0], routePath = args[1];
             int at = Solve.Option(args, "--at", -1), threads = Solve.Option(args, "--threads", Math.Max(1, Environment.ProcessorCount / 2));
             Caps caps = Caps.Parse(Solve.Option(args, "--caps", ""));
@@ -173,7 +245,10 @@ namespace IGTAP.EngineSim.Cli
                     continuations.Add(Continue(prefix, x, held));
 
             TechGrafts mined = TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(trace)), techDir: Solve.Option(args, "--tech-dir", (string)null));
-            ILookup<Contact, TechPattern> keys = mined.Patterns.Where(p => p.Key && !p.Resets && p.Kind != Contact.Died && p.Requires.IsSubsetOf(caps))
+            // Only a tech whose happening can be checked in a run (TechChecks): a window that merely plays is not the tech.
+            Dictionary<string, string> detectors = mined.Demos.GroupBy(d => d.Tech).ToDictionary(g => g.Key, g => g.Select(d => d.Detector).FirstOrDefault(d => d != null));
+            ILookup<Contact, TechPattern> keys = mined.Patterns.Where(p => p.Key && !p.Resets && p.Kind != Contact.Died && p.Requires.IsSubsetOf(caps)
+                    && TechChecks.Checkable(p.Tech, detectors.GetValueOrDefault(p.Tech)))
                 .Select(p => { TechPattern q = p.Copy(); q.Vary = null; return q; }).ToLookup(p => p.Kind);
             Func<Simulation> create = Solve.Creator(trace, Solve.ReadHeader(trace));
             var workers = Enumerable.Range(0, Math.Max(1, threads)).Select(_ => new Worker<Runner>(() => new Runner(create), "techs")).ToList();
@@ -204,7 +279,7 @@ namespace IGTAP.EngineSim.Cli
                             finally { done.Signal(); }
                         });
                     done.Wait();
-                    if (failure != null) throw new InvalidOperationException("techs replay failed", failure);
+                    if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
                 }
 
                 var contacts = new List<(int tick, Contact kind)>[continuations.Count];
@@ -246,7 +321,12 @@ namespace IGTAP.EngineSim.Cli
                     var (hits, died, path, lead, speed) = j.Play(job.Inputs, at + job.Start);
                     if (!hits.Any(h => h.kind == job.Pattern.Kind && h.tick >= job.Placed - 1 && h.tick <= job.Placed + 2)) return;
                     // A death before the window's own inputs end is the tech failing (one in its coast is shown, marked).
-                    if (died >= 0 && died < job.Inputs.Count - TechGrafts.GraftCoast) return;
+                    int end = job.Inputs.Count - TechGrafts.GraftCoast;
+                    if (died >= 0 && died < end) return;
+                    // The tech itself has to happen between the window's start and its last input: its key contact only
+                    // places the window (a kb wall clip's is the wall coming ahead, which a turn alone makes).
+                    if (TechChecks.Find(job.Pattern.Tech, detectors.GetValueOrDefault(job.Pattern.Tech), j.Record,
+                        TechChecks.StepAt(j.Record, at + job.Start), TechChecks.StepAt(j.Record, end + 1) - 1) < 0) return;
                     lock (found)
                     {
                         if (found.TryGetValue(job.Key, out int best) && best <= job.Start) return;
@@ -262,6 +342,11 @@ namespace IGTAP.EngineSim.Cli
                 Write(new { done = true, tried });
                 Console.WriteLine($"techs: at {at}, {continuations.Count} continuations, {jobs.Count} placements, {tried} tried, {works} work, "
                     + $"{found.Keys.Select(k => k.Split('|')[0]).Distinct().Count()} techs ({clock.Elapsed.TotalSeconds:0.0}s, {workers.Count} threads) -> {outPath}");
+            }
+            catch (RunEndedException ex)
+            {
+                Console.Error.WriteLine("techs: " + ex.Message);
+                return 1;
             }
             finally
             {

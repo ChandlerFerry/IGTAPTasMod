@@ -226,7 +226,12 @@ namespace IGTAP.EngineSim.Cli
         Route RetuneSweep(Route best)
         {
             double c0 = CpuSeconds();
-            var starts = Enumerable.Range(1, _goals - 1).Where(g => Enumerable.Range((int)best.GoalInput[g - 1] + 1, Math.Max(0, (int)(best.GoalInput[g] - best.GoalInput[g - 1]) - 1)).Any(i => best.Inputs[i].reset)).ToList();
+            // A goal reached in the no-input ticks after the last input (a dash) has its input tick at the inputs' end.
+            var starts = Enumerable.Range(1, _goals - 1).Where(g =>
+            {
+                int from = (int)best.GoalInput[g - 1] + 1, to = (int)Math.Min(best.GoalInput[g], best.Inputs.Count);
+                return Enumerable.Range(from, Math.Max(0, to - from)).Any(i => best.Inputs[i].reset);
+            }).ToList();
             var results = new Route[starts.Count];
             Solve.Workers(_threads, starts.Count, () => { Simulation sim = _create(); return (sim, sim.Start); },
                 (s, i) => results[i] = Retune(s.sim, s.Start, best, best.Inputs, starts[i]))();

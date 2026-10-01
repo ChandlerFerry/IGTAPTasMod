@@ -551,7 +551,7 @@ namespace IGTAP.EngineSim.Cli
                     foreach (int course in Refs("courses"))
                         foreach (int box in BoxesUnder(owner.TryGetValue(course, out int co) ? co : course))
                             if (Fields(components[box]) is var bf && bf.TryGetValue("upgrade", out JsonElement up) && up.ValueKind == JsonValueKind.Number
-                                && (up.GetInt32() is 1 or 6 or 10 || up.GetInt32() == 0 && bf.TryGetValue("globalUpgrade", out JsonElement gu) && gu.ValueKind == JsonValueKind.Number && gu.GetInt32() == 14))
+                                && (up.GetInt32() is 1 or 6 or 10 || up.GetInt32() == 0 && bf.TryGetValue("globalUpgrade", out JsonElement gu) && gu.ValueKind == JsonValueKind.Number && gu.GetInt32() == 10))
                                 roots[owner[box]] = "area1:normal|vman";
                     foreach (int box in Refs("boxesToEnable").Append(Refs("rpAtomBox").FirstOrDefault()).Where(b => b != 0))
                         if (owner.TryGetValue(box, out int bo)) roots[bo] = "area1:overgrown";

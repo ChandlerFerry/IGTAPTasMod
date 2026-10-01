@@ -40,6 +40,12 @@
           "note": "x 4726.5 to 4919.2, y 2398.2 to 2439.1. Off unless picked.",
           "avoid": [[4726.5, 2398.2, 4919.2, 2439.1]],
           "via": []
+        },
+        {
+          "name": "avoid-forwards",
+          "note": "x 4991.2 to 5021, y 1801.5 to 2116.8. Off unless picked.",
+          "avoid": [[4991.2, 1801.5, 5021.0, 2116.8]],
+          "via": []
         }
       ]
     },
@@ -47,7 +53,7 @@
       "course": 3,
       "capabilities": ["wjds", "wjdsdj", "wjdsdjbsorbzipom"],
       "note": "Top-hole shortcut out of the first room: runs through the right hole are cut. Buy-machine room: a wall on the left side of CashPerLoop (the rightmost machine) cuts runs heading left past it; every route turns back right of it, and the search otherwise spends most of its runs out there. The pocket above and right of the climb, over Checkpoint (1)'s floor (from the floor's left edge to the wall right of the spiked block, up to the hanging pillar's spikes), is cut: every route climbs left of it.",
-      "avoid": [[10350, 6950, 11000, 7800], [8833.5, 6815, 9033.5, 7815], [10016, 7881, 10496, 8233]],
+      "avoid": [[10350, 6950, 11000, 7800], [8833.5, 6815, 9033.5, 7815], [10016, 7881, 10496, 8233], [9293.5, 8130.2, 9747.4, 8473.6], [9885.4, 8000.4, 10155.6, 8762.7], [8869.7, 8578.0, 9091.2, 8760.8], [8473.9, 6813.0, 8842.6, 7816.2]],
       "via": [],
       "optional": [
         {
@@ -68,7 +74,7 @@
       "course": 4,
       "capabilities": ["none", "wj", "wjds", "wjdsdj", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "Left side: everything left of the rightmost buy machine's left edge (x 19644.9), top to bottom, is cut. Every route goes right from the start; the search otherwise spends most of its runs out west.",
-      "avoid": [[-10039.6, -4300, 19644.9, 25700], [19636.4, 10402.1, 19958.1, 11139.7], [20092.5, 11043.2, 20330.5, 11087.6], [20287.9, 10242.0, 21283.6, 10365.4]],
+      "avoid": [[-10039.6, -4300, 19644.9, 25700], [19636.4, 10402.1, 19958.1, 11139.7], [20092.5, 11043.2, 20330.5, 11087.6], [20287.9, 10242.0, 21283.6, 10365.4], [21285.5, 10286.7, 22991.8, 10367.1]],
       "via": []
     },
     {

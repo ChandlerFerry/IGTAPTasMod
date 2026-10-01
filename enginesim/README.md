@@ -480,8 +480,15 @@ momentum carries through them, and a window is scored on its arrival.
 - **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
   and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
   else it stops.
-- **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed` and the last `--auto` best;
-  the others are the loop's `--ref` routes (combine splices their goal runs in).
+- **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed` and the last `--auto` best
+  that keeps the rules (no avoid box, every via box): the waypoints follow it, so a route through a picked direction
+  block can't be it. The others that keep them are the loop's `--ref` routes (combine splices their goal runs in). None:
+  the plain solve finds a first finish under the rules.
+- **Directions.** Courses 1-3 go either way from the start (`avoid-forwards` and `avoid-backwards` in
+  `forced-paths.json`; backwards usually for the record, forwards for the farm). A job that picks neither runs each
+  direction in turn, half the minutes each (farm forwards first, record backwards first), each with its own run and
+  waypoints; picking one (`--optional`) runs that direction only, as does `--focus` or `--waypoints-out`. Courses 4 and 5
+  go forwards only.
 - **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
   archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept best is played
   again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve` writes it
@@ -1200,7 +1207,7 @@ route).
 ## Techs
 
 The TAS editor's **Techs here** (docs/superpowers/specs/2026-09-30-techs-here-design.md): `techs <start-trace> <route.json>
---at N --caps <id>` lists the techs whose key window works from input tick N. Suggestions, not judged or timed.
+--at N --caps <id>` lists the techs that happen from input tick N. Suggestions, not judged or timed.
 
 ```powershell
 & $exe techs $traces\optimize-c4-wjdsdj.json route.json --at 120 --caps wjdsdj [--out result.jsonl] [--threads T] [--tech-dir D]
@@ -1213,16 +1220,35 @@ a wall). Each tech's key window (`TechGrafts`: `Key`, not quick-restarting, not 
 every direction: a window with no side both ways; a dash's stick in 8 directions with the omnidash, else left and right; a
 freeze aim's (`turnX`/`turnY`) freeze stick in 8, the diagonals also at x 0.30 and 0.35 with y at full tilt (from 0.40 up,
 `MacroEngine.ControllerAxis` snaps x to full tilt: the 45° diagonal). A variant
-works when its key contact happens −1..+2 ticks from where Compose placed it and it doesn't die before its window's inputs
-end (a death in the coast is kept, `died`). Placements run soonest first; a tech's direction (and angle) found once is
-skipped where it would start later.
+works when its key contact happens −1..+2 ticks from where Compose placed it, it doesn't die before its window's inputs
+end (a death in the coast is kept, `died`), and **the tech itself happens** between the window's first and last input
+(`TechChecks`, below): a key contact only places the window (a KB wall clip's is the wall coming ahead, which the turn alone
+makes; a jump-through buy's is leaving the ground). A tech with no check is never listed. Placements run soonest first; a
+tech's direction (and angle) found once is skipped where it would start later. A route that dies or finishes before N
+(a session held after its death) stops with one line, `techs: the run ends on input tick T, before input tick N (…)`.
+
+**Tech checks** (`Runtime\TechSteps.cs`, `Runtime\TechChecks*.cs`). Each variant's run is recorded step by step
+(`TechSteps`): the game calls the hooks see inside the step, in order (getPlayerControlledInput's start and the
+determineSpriteDirection right after it, CheckForSuperJump's start, SpecialWallJump with its directionMagnitudeMod, a
+step-up, a respawn, a zip mover made intangible; `hooks.txt`), each with Movement's state then, and the step's events, the
+upgrade boxes whose buy trigger held the player, spike, slope and overhang touches, a spring's up, a block swap, the course
+timer and the state after it. A tech with a techs.json `detector` happens where the TAS overlay's detector of that name would
+mark it (`TechChecks.Detect`: TasOverlayTechs.cs ported to the recorded calls); any other tech by a check of its own (a
+`[TechCheck("id")]` method: a jump-through buy is one jump whose arc is in the buy triggers of two or more boxes).
+`techs --demos [tech ...] [--dump dir]` replays every tech's demos and its labs' ghosts (played past a lab's finish box) and
+prints where each check saw its tech: every demo should show it, the ghosts built to miss it shouldn't; `--dump` writes each
+run's recorded steps as JSON.
 
 `--out` (default `<route>-techs.jsonl`) gets a line per working variant as it is found: `tech`, `name`, `dir` (`U`, `UR`,
 `R`, … or `""`), `angle` (a steep freeze aim's degrees from vertical, else null), `start` (input ticks after N the window
 starts), `lead` (the path's step there: the continuation before it is the lead-in), `speed` (at the end), `died`, `ticks` (from N: the continuation's, the window's, 40 of coast) and `path` (the
 player's origin-free world position after every physics step, from N: `[x0, y0, x1, y1, …]`); the last line is
-`{"done": true, "tried": n}`. Course 4 `WJ_DS_DJ` human 13.28 at N = 120: 841 placements, 407 tried, 27 variants of 15 techs
-in 4.2 s on 4 threads; `WJ_DS_DJ_BS_ORB_ZIP_OM` human 8.10 at N = 60: 25 techs in 6.2 s.
+`{"done": true, "tried": n}`. Course 4 `WJ_DS_DJ` standing at its quick restart (N = 15 of 20 idle ticks): 2576
+placements, 1772 tried, 8 variants of 5 techs (super, coyote jump, wall coyote jump, dash mid air coyote jump, spike grace)
+in 20 s on 4 threads, the mining cached. Course 1 `NONE`, a studio session at N = 10 by the start: the coyote jump alone
+(an earlier session's search by the start, under the key contact rule alone, had listed eight: a jump-through buy, a roof
+squeeze, a corner jump, a GC wall clip, both landing jumps, the late gate touch and the coyote jump); at N = 90, beside the
+pillar and rising, none (the KB wall clip window the session had taken there, inputs 91-93, never grounds the dot).
 
 ## Rules
 

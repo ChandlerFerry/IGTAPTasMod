@@ -23,8 +23,12 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
   the freeze (`turnX`/`turnY`): the freeze stick in 8 directions, and the 4 diagonals also at x 0.30 and 0.35 with y at
   full tilt (16.7°, 19.3° from vertical; from 0.40 up `ControllerAxis` snaps x to full tilt, the 45° diagonal); without
   the omnidash left and right.
-- **Works.** The key contact happens where the demo had it (−1..+2 ticks of where Compose placed it). A variant that
-  dies still counts (marked `died`).
+- **Works.** The key contact happens where the demo had it (−1..+2 ticks of where Compose placed it), and the tech itself
+  happens between the window's first and last input: its overlay detector marks it (`TechChecks.Detect`, the TAS overlay's
+  detectors on the recorded run), or its own check does (`[TechCheck]`: a jump-through buy is one jump through the buy
+  triggers of two or more boxes). The key contact alone only places the window (a KB wall clip's is the wall coming ahead,
+  which a turn makes without any clip). A tech with no check is never listed. A variant that dies in its coast still counts
+  (marked `died`); one that dies before its window's inputs end doesn't.
 - **Output**, one JSON line per working variant as it is found: `tech`, `name`, `dir` (`L`, `R`, `U`, `D`, `UL`, `UR`,
   `DL`, `DR`, or `""` for none), `angle` (degrees from vertical, a steep freeze aim only), `start` (input ticks after N
   its window starts), `speed` (at the end), `died`, `ticks` (from N: continuation, window, coast) and `path` (the player's
@@ -33,7 +37,9 @@ Suggestions, not judged: nothing is saved, and a suggestion is not claimed to sa
 ## Plugin
 
 - **Automatic.** A held course/category session starts `techs` for the held input tick once it has stayed there 1 s.
-  Moving on or editing kills it; results are kept per input tick until the inputs change, so going back is instant.
+  Moving on or editing kills it; results are kept per input tick until the inputs change, so going back is instant. A run
+  that ended (a death, the finish) has no player to try techs from: past its end the panel says so (`unavailable`) instead
+  of starting a search, and a search's error shows its message, not its stack.
 - **Best per direction.** The plugin keeps, per tech and direction (and angle), the variant that starts soonest, then
   the fastest. Directions that play the same path (within 0.5 u every step) are one move, shown by the simplest input
   (a cardinal before a diagonal before a steep aim) with the others listed as the same: a ground dash aimed down-right

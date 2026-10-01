@@ -45,3 +45,9 @@ prefix Movement::hitSpring OnHitSpring
 prefix Movement::SpecialWallJump OnSpecialWallJump
 # The step-up's animation call (Movement.Update lifting the player onto a step; its body is cut): the step-up contact.
 prefix StepUpAnimationScript::onSteppedUp OnSteppedUp
+# The tech checks (Runtime\TechSteps.cs, the overlay's detectors offline): CheckForSuperJump's state before it runs,
+# determineSpriteDirection (the call right after getPlayerControlledInput) for the state the input left, and a zip
+# mover made intangible (a jump touching it). Observers only.
+prefix Movement::CheckForSuperJump OnCheckForSuperJump
+prefix Movement::determineSpriteDirection OnDetermineSpriteDirection
+prefix PlatformMover::MakeIntangible OnMakeIntangible

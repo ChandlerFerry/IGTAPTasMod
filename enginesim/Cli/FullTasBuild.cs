@@ -586,7 +586,7 @@ namespace IGTAP.EngineSim.Cli
                 // after the statue; its lap before buy:buydj took 14.6 s from start:3). Standing still first (the player already at
                 // the box: an area goal on it before the buy), then a search that may walk there and stand until it can pay; either
                 // is taken only when it buys the box, else the lap follows.
-                if (laps == 0 && AffordableWithin(at, built.Inputs, g, ShortWaitTicks))
+                if (laps == 0 && AffordableWithin(at, built.Inputs, g, ShortWaitTicks) && !LapSooner(built, at, goal, target))
                 {
                     Step stand = Stand(at, built.Inputs.Count, target);
                     if (stand != null && Append(built, ref at, stand, target))
@@ -622,6 +622,26 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static string Advanced(Built built) { built.Reached++; return null; }
+
+        /// <summary>
+        /// --reach-polish: whether an extra lap, then the buy, buys target sooner than standing under its box for the clones' income
+        /// (<see cref="Stand"/>). FalseEnding%-280's goal 97 (buy:buyclone2) stood 16 s where a Course 2 lap and the walk back take 4.
+        /// </summary>
+        bool LapSooner(Built built, SimSnapshot at, int goal, Target target)
+        {
+            int course = LoopCourse(goal);
+            if (_reachPolish == 0 || course == 0) return false;
+            Step stand = Stand(at, built.Inputs.Count, target);
+            // No hop under the box buys it: the lap, not a search for a wait (minutes, at buy:buystatue).
+            if (stand == null) return true;
+            var trial = new Built { Inputs = built.Inputs.ToList(), Reached = built.Reached };
+            foreach (FullTasGoal part in new[] { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) })
+                if (BuildStep(trial, ref at, new Target { Goal = goal, Extra = new[] { part }, Key = part.label }, new List<List<InputTick>>(), false) != null) return false;
+            Step buy = BestKnown(at, trial.Inputs, goal, target);
+            if (buy == null || stand.Physics <= buy.Physics) return false;
+            Log($"build: goal {goal + 1} ({_labels[goal]}): a lap of Course {course} first buys it at tick {buy.Physics}, standing at {stand.Physics}");
+            return true;
+        }
 
         /// <summary>Ticks of clone income a buy may wait for instead of an extra lap (<see cref="BuildGoal"/>): about a lap and its walk.</summary>
         const int ShortWaitTicks = 900;
@@ -715,7 +735,7 @@ namespace IGTAP.EngineSim.Cli
         {
             Phase("build");
             int reached = _best.Progress, until = reached;
-            while (until < _goals && IsLoop(until)) until++;
+            while (until < _goals && IsLoop(until) && (_reachPolish == 0 || until == reached)) until++;
             Log($"build goals {reached + 1}-{until}/{_goals} from loop pieces ({_pieces.Count} in the library)");
             void Save(Built b)
             {
@@ -726,6 +746,27 @@ namespace IGTAP.EngineSim.Cli
             Built built = BuildLoops(_best, reached, until, null, Save);
             Save(built);
             return TimeUp ? null : built.Stuck;
+        }
+
+        /// <summary>
+        /// --reach-polish: the window of --window goals ending at the best's frontier, searched for up to --reach-polish seconds (a
+        /// third of that without a faster way ends it). A faster way is kept (nothing after the frontier to replay) and its goals
+        /// filed as library pieces, so the next laps build from it.
+        /// </summary>
+        void PolishFrontier()
+        {
+            Route best = _best;
+            int limit = best.Progress, i = Math.Max(0, limit - _window);
+            int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
+            var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
+            double minutes = _reachPolish / 60;
+            List<List<InputTick>> found = SearchWindow("polish", best, prefixLength, limit, seeds, best.GoalPhysics[limit - 1], minutes, 0, minutes / 3);
+            if (found.Count > 0) Merge("faster through goals " + (i + 1) + "-" + limit, best, prefixLength, limit, found);
+            if (_best == best) return;
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot at = prefixLength == 0 ? _origin : _eval.Advance(_best.Inputs.GetRange(0, prefixLength));
+            if (at != null && at.Goal.Next == i) Harvest(at, _best.Inputs.GetRange(0, prefixLength), i, _best.Progress);
         }
 
         /// <summary>

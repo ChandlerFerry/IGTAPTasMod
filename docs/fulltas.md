@@ -311,8 +311,14 @@ touched since the savestate start`, `FullTasTracker.RestartRefused`) in the offl
 alike. A death ends every run anyway. Traces and routes from before this (`startSetup` 1) respawned at the savestate's
 own spot, a checkpoint the game never set: `Test-No-Omni-Skip`'s best quick-restarted there on ticks 3, 85 and 96.
 
-A savestate carries the game's `Assembly-CSharp` hash, and a game update (Steam) makes every older savestate
-unrestorable (`Savestate rejected: Assembly-CSharp hash changed`): the run then never leaves the Vman start. A restore
+A savestate carries the game build it was captured on (version and `Assembly-CSharp` hash). A game update (Steam) used
+to make every older savestate unrestorable (`Savestate rejected: Assembly-CSharp hash changed`), the run then never
+leaving the Vman start: all 102 were rejected on build 25640326, some since 2026-09-26. Now the plugin stamps one from
+another build with the running one when it loads it (at launch, and a savestate start's reread) if every field it holds
+is still on `Movement` or the body and its value still decodes (`SavestateService.AdoptGameBuild`); one that doesn't
+stays rejected, and the log says which field. A savestate is the player alone (no course, box or Cash state), so the
+game's course resets (the breaker, the OmniDash box's `SetA1CourseTiers`, atoms) never touch one. A run's traces from
+while its savestate was rejected started at the Vman start: capture them again. A restore
 snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map: it takes
 the camera back from a camera room that held it, looks down as the restored speed would, and cancels a death's queued
 respawn (turbo's restore cancels every invoke).
@@ -510,7 +516,7 @@ inputs past the last unchanged goal the same way.
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --seed FILE, --seed-list FILE
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --seed FILE, --seed-list FILE, --reach-polish S
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
@@ -533,6 +539,17 @@ inputs past the last unchanged goal the same way.
   is kept when the whole run is better. After a goals edit the reach windows stalled in `FalseEnding-Any%`'s ending
   (goals 277-280), which the old route's ending from `buy:buydj` on finished when spliced in by hand. Polishing starts
   once a run reaches every goal.
+- `--reach-polish S` (with `--unsolved`; 0, off, by default): polish as you go. The builder builds one loop goal at a
+  time, and each time the best reaches further, the window of `--window` goals ending at its frontier is polished for up
+  to S seconds (ended after S/3 without a faster way) before the next goal is built. Nothing comes after the frontier, so
+  a faster way is kept as it is (no repair of later goals), and its goals are filed as library pieces, so the next laps
+  build from it. The reach takes the first way to a goal; `FalseEnding%-280` built that way laps Course 1 in 4.48 s
+  (a detour right to x 3274) where 1.62 s laps exist, and patching the laps in afterwards shifts the Cash, the clones
+  and the RNG under every later goal. A buy short of Cash takes an extra lap of its course whenever the lap and the buy
+  get there before standing under the box for the clones' income does, or when no hop there buys it (`LapSooner`:
+  goal 97, `buy:buyclone2`, stood 16 s where a Course 2 lap and the walk back take 4; `buy:buystatue` searched a wait for
+  12 minutes). With 30 s, its rebuild (`--unsolved --reach-polish 30`, from goal 3, about 45 minutes on 7 threads)
+  finished in 355.72 s against the 465.37 built without it.
 - Polishing: first the loop goals are rebuilt from the piece library and the best's own ways, stretch by stretch (kept
   when the whole run gets faster). Then each piece the best plays there is searched for a faster one (`--window-minutes`,
   most-played first, each at most once a solve), from the best's own states, and when any is found the stretch is

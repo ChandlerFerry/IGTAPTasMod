@@ -98,6 +98,9 @@ namespace IGTAP.EngineSim
         /// <summary>The box is one of these (by id or hierarchy path).</summary>
         bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
 
+        /// <summary>The box's id (FullTasGoal.BoxId).</summary>
+        internal string Id(upgradeBox box) => _ids[box];
+
         /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
         internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
 

@@ -367,12 +367,96 @@ namespace IGTAPTasMod
         void SetArea1State(globalStats stats, globalStats.area1states state, string reason)
         {
             bool wasOvergrown = stats.currentA1State == globalStats.area1states.Overgrown, overgrown = state == globalStats.area1states.Overgrown;
-            stats.currentA1State = state;
             OvergrowthLoadScript overgrowth = FindAnyObjectByType<OvergrowthLoadScript>(FindObjectsInactive.Include);
+            // Before OnLoad, as the game's order is: the omnidash's purchase sets the tiers, the next zone load runs OnLoad.
+            if (overgrown && !wasOvergrown && overgrowth != null && !stats.Zone2toZone1PathOpen) ApplyOmnidashBoxTiers(overgrowth);
+            stats.currentA1State = state;
             if (overgrowth != null) overgrowth.OnLoad();
             else Logger.LogWarning("No OvergrowthLoadScript: Area 1's terrain was not switched.");
+            if (!overgrown && wasOvergrown) UndoOmnidashBoxTiers();
             if (wasOvergrown != overgrown) SwapArea1CourseBests();
             Logger.LogInfo("Area 1 " + state + " for " + reason + ".");
+        }
+
+        static readonly FieldInfo OvergrowthCoursesField = AccessTools.Field(typeof(OvergrowthLoadScript), "courses");
+        static readonly FieldInfo OvergrowthRpAtomBoxField = AccessTools.Field(typeof(OvergrowthLoadScript), "rpAtomBox");
+        static readonly FieldInfo OvergrowthBoxesToEnableField = AccessTools.Field(typeof(OvergrowthLoadScript), "boxesToEnable");
+
+        sealed class BoxTier
+        {
+            public bool active, visible, buyMax;
+            public int cap;
+            public double capMult, powerScale;
+        }
+
+        // Every box ApplyOmnidashBoxTiers may change, as the save had it; empty when the boxes are the save's own.
+        readonly Dictionary<upgradeBox, BoxTier> _omnidashBoxUndo = new Dictionary<upgradeBox, BoxTier>();
+
+        // A save turns Area 1 overgrown by buying the OmniDash box (zone 2's tree, upgradeBox OmniDash at TimesUsed 1): it sets
+        // currentA1State, Zone2toZone1PathOpen and moreRefreshOrbs, and runs OvergrowthLoadScript.SetA1CourseTiers, whose box
+        // changes the course saves keep from then on (a1Statesetter triggers and the zone loader's OnLoad switch only the
+        // state and the terrain). So the boxes are overgrown's only in a save that bought it (Zone2toZone1PathOpen); in any
+        // other this stands in for SetA1CourseTiers' boxes: in Courses 1-5 the movement, prestige, breaker-light and
+        // unlock-prestige boxes go and the scaling boxes get the higher caps and buy max; the RP and atom boxes come. Not the
+        // course prestige it runs (localUpgrades.OnPrestige: the save's course levels, no box comes or goes) nor the orbs and
+        // the path (the category's unlocks set the orbs; the path is above Course 10). Undone when Area 1 is set back.
+        void ApplyOmnidashBoxTiers(OvergrowthLoadScript overgrowth)
+        {
+            courseScript[] courses = OvergrowthCoursesField?.GetValue(overgrowth) as courseScript[] ?? new courseScript[0];
+            upgradeBox atom = OvergrowthRpAtomBoxField?.GetValue(overgrowth) as upgradeBox;
+            upgradeBox[] enable = OvergrowthBoxesToEnableField?.GetValue(overgrowth) as upgradeBox[] ?? new upgradeBox[0];
+            foreach (upgradeBox stale in _omnidashBoxUndo.Keys.Where(b => b == null).ToList()) _omnidashBoxUndo.Remove(stale);
+            void Keep(upgradeBox box)
+            {
+                if (box != null && !_omnidashBoxUndo.ContainsKey(box))
+                    _omnidashBoxUndo[box] = new BoxTier { active = box.gameObject.activeSelf, visible = box.visible, buyMax = box.buyMax, cap = box.Cap,
+                        capMult = box.baseCapMult, powerScale = box.upgradePowerScaleFactor };
+            }
+            foreach (courseScript course in courses.Where(c => c != null))
+                foreach (upgradeBox box in course.GetComponentsInChildren<upgradeBox>(true)) Keep(box);
+            Keep(atom);
+            foreach (upgradeBox box in enable) Keep(box);
+            if (atom != null) { atom.visible = true; atom.gameObject.SetActive(true); }
+            int hidden = 0;
+            for (int i = 0; i < courses.Length; i++)
+            {
+                if (courses[i] == null) continue;
+                // The game's GetComponentsInChildren: the boxes that are on.
+                foreach (upgradeBox box in courses[i].GetComponentsInChildren<upgradeBox>())
+                {
+                    if (box.upgradePowerScaleFactor == 1.0 && box.Cap > 1)
+                    {
+                        box.baseCapMult = 2.0 * (1.0 + 0.2 * i);
+                        box.Cap = (int)Math.Round(box.baseCap * box.baseCapMult);
+                        box.buyMax = true;
+                    }
+                    if (box.upgrade == localUpgrades.localUpgradeSet.activateNextBreakerLights || box.upgrade == localUpgrades.localUpgradeSet.prestige
+                        || box.upgrade == localUpgrades.localUpgradeSet.Movement
+                        || box.upgrade == localUpgrades.localUpgradeSet.GLOBAL && box.globalUpgrade == globalStats.globalUpgradeSet.unlockPrestige)
+                    {
+                        box.visible = false;
+                        box.gameObject.SetActive(false);
+                        hidden++;
+                    }
+                }
+            }
+            foreach (upgradeBox box in enable.Where(b => b != null)) { box.visible = true; box.gameObject.SetActive(true); }
+            Logger.LogInfo("Area 1's boxes as the omnidash leaves them: " + hidden + " hidden, " + (enable.Count(b => b != null) + (atom != null ? 1 : 0)) + " shown.");
+        }
+
+        void UndoOmnidashBoxTiers()
+        {
+            foreach (var (box, was) in _omnidashBoxUndo.Select(kv => (kv.Key, kv.Value)))
+            {
+                if (box == null) continue;
+                box.visible = was.visible;
+                box.buyMax = was.buyMax;
+                box.Cap = was.cap;
+                box.baseCapMult = was.capMult;
+                if (box.upgradePowerScaleFactor != was.powerScale) { box.upgradePowerScaleFactor = was.powerScale; box.CalcBoxCost(); }
+                box.gameObject.SetActive(was.active);
+            }
+            _omnidashBoxUndo.Clear();
         }
 
         static readonly FieldInfo CourseBestPathTimeField = AccessTools.Field(typeof(courseScript), "bestPathTime");

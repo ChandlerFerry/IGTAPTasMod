@@ -812,3 +812,32 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   1.04, `bonus2_WJ_DS_DJ_BS_ORB_ZIP_OM` in 0.76 s); the rest die or run out of inputs.
 - **Where:** `MacroEngine.FrameGrid`, `TasPlugin.FixedClockStep`, `PacePlayback`, `TurboRunner.Run`,
   `Simulation.InterpolatedFrames`.
+
+## A step-up in a tick's last frame reached the body too early
+
+- **Symptom:** `2_WJ_DS 1.20` (a pauselift, Course 2) was judged 1.20 in turbo and offline and ran 1.32 at 1x
+  (2026-10-01): two ticks after the pause, a step-up in the last rendered frame before a tick (y 2781 to 2829) was
+  followed at 1x by a physics step that didn't move the player, then a jump off the ledge a tick later.
+- **Cause:** at 1x a transform write in `Movement.Update` reaches the body at the next frame's start. After a tick's last
+  frame that is the next tick's physics step, so that tick's `Movement.FixedUpdate` still sees the body where it was:
+  the squish check's `normalCollider.Distance` (`Movement.FixedUpdate`, 846-870) measured the collider against the ledge
+  it had stepped onto, called it squished, and set the body's velocity to the moving platform's (0) instead of
+  `Velocity + momentum`; the step's sync then moved the body to the written position, where it stood for that tick.
+  Turbo and the engine synced a step-up into the body at once, in every frame. 807 earlier last-frame step-ups in the
+  probe logs moved normally (no squish), so only a squish or another body query in that FixedUpdate shows it.
+- **Fix:** a write in a tick's last frame (not a freeze's or pause's repeat) stays pending for the next tick's sync before
+  `Physics.Simulate`; earlier frames still sync at once. The 1.20's inputs now finish in 1.32 offline and in turbo,
+  every body within 0.001 of the 1x probe's (`c2wjds120`); every tech demo still matches turbo.
+- **Where:** `Simulation.InterpolatedFrames`, `TurboRunner.Run`.
+
+## A route's last input was played at rest
+
+- **Symptom:** bonus1's solve kept a 6.90 best (345 ticks) that every replay of the saved route finished in 6.92 (2026-10-01).
+- **Cause:** `MacroEngine.Advance` called `Finish` on the last step's own tick, and `Finish` puts the stick at rest
+  (`SetDirection(0)`) in that tick's input hook, so a route's last input never stood. The solver timed its best with the
+  inputs that followed and saved it cut to the finish tick (`Adopt`: `finishTick + 1`), so the saved route ended a tick
+  differently. 1x, turbo and the engine share `MacroEngine`, so all three played the cut route alike.
+- **Fix:** `Advance` leaves the finish to the next `FixedTick` (which finishes when the steps are done), so the last input
+  stands for its whole tick. The cut 6.90 now replays in 6.90; `validate.py`: all 31 saved category routes finish at
+  their names' times.
+- **Where:** `MacroEngine.Advance`.

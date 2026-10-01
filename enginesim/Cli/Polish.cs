@@ -481,6 +481,9 @@ namespace IGTAP.EngineSim.Cli
                 {
                     WorldPos p = _sim.PlayerWorld;
                     if (_waypoints < path.Via.Count && path.Via[_waypoints].Contains(p)) _waypoints++;
+                    // Past the run's last goal nothing counts (README ### Rules 32): a strict run plays 12 ticks on
+                    // (StrictFinishTicks), where a course run's player can drift into a box beside its finish.
+                    if (_sim.Goals != null && _sim.Goals.Done) return;
                     foreach (OfflineSolver.Box box in path.Avoid) if (box.Contains(p) && (box.After == 0 || _sim.Progress >= box.After)) _avoided = true;
                 };
                 RunResult r = _sim.Run(inputs, from, tick =>
