@@ -99,7 +99,7 @@ namespace IGTAP.EngineSim.Cli
                 sources.Add(new Source { Name = name, RoutePath = route, TracePath = trace, HeldOut = heldOut });
             }
             // Mined: every run's saved best (fulltas/<run>.json) and the fastest judged route of each run (offline-best/judged).
-            foreach (string run in new[] { "VMAN", "FalseEnding-Any%", "TrueEnding-ANY%" })
+            foreach (string run in new[] { "VMAN", "FalseEnding%-280", "TrueEnding-ANY%" })
                 Add(run + " best", Path.Combine(tracesDir, "fulltas", run + ".json"), false);
             foreach (var run in JudgedRuns(tracesDir))
             {

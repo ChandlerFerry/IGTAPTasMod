@@ -10,7 +10,7 @@ The run's own goal list is replayed through the same model and walks (a buy it c
 the route did), so the two predictions compare like for like. The model is calibrated on the run's offline best: Cash
 and Course 1/2's paths at the phase's start (read from the trace at that tick), the arrival, lap and restart lead.
 
-  python tools/plan-buytable.py --table <buytable.json> --run FalseEnding-Any% [--out planned.json] [--verbose]
+  python tools/plan-buytable.py --table <buytable.json> --run FalseEnding%-280 [--out planned.json] [--verbose]
 
 Course 2's stretch (reward:bonus1 .. buy:buyds) is the phase the economy model covers; docs/fulltas.md "Buy planner".
 """
