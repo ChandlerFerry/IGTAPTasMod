@@ -84,10 +84,17 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The (course, unlock set) keys a goals pull already searched a restart lap for (kept in the memory).</summary>
         readonly HashSet<string> _lapSearched = new HashSet<string>();
 
-        bool GoalsDue()
+        /// <summary>When the last goals pull ended: the other parts get as long after it as it took (a pull can take 7 minutes,
+        /// 2500 CPU s on FalseEnding-Any%, and a new best found in it made the next due at once), so a short run's windows, idle,
+        /// waste and grafts get turns between them.</summary>
+        TimeSpan _goalsEnd;
+
+        /// <summary>A goals pull is due (anyTime: whatever the waits, when nothing else is left to pull).</summary>
+        bool GoalsDue(bool anyTime = false)
         {
             if (!Part("goals") || ReferenceEquals(_goalsFor, _best)) return false;
-            return _goalsFor == null || _goalsAgain || (_clock.Elapsed - _goalsAt).TotalMinutes >= GoalsEveryMinutes;
+            if (_goalsFor == null || anyTime) return true;
+            return _clock.Elapsed - _goalsEnd >= _goalsEnd - _goalsAt && (_goalsAgain || (_clock.Elapsed - _goalsAt).TotalMinutes >= GoalsEveryMinutes);
         }
 
         /// <summary>
@@ -197,6 +204,7 @@ namespace IGTAP.EngineSim.Cli
             string outcome = invested != null ? $"{invested.Text}, re-found: {Describe(_best)}"
                 : win.route == null ? $"no edit of {edits.Count} beats the best" : $"{win.edit.Text}: {Describe(win.route)}";
             _goalsAgain = adopted;
+            _goalsEnd = _clock.Elapsed;
             double cpu = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             long gain = GainTicks(best);
             _order.Add("goals" + (gain > 0 ? $"(-{gain})" : ""));
@@ -1559,7 +1567,27 @@ namespace IGTAP.EngineSim.Cli
                 inputs = Solve.ReadInputs(root);
             }
             int mine = from.FindIndex(l => l.SequenceEqual(_labels));
-            if (goals.SequenceEqual(_labels) || mine < 0 || FullTasGoal.EditRefused(_labels, goals) != null) return;
+            if (goals.SequenceEqual(_labels) || mine < 0) return;
+            // A reward goal the trace doesn't have came from --insert-goal (the loop adopts those past EditRefused, the trace's header
+            // has no entry for it): its entry is made again as the option makes it. Anything else that changes the skeleton stays refused.
+            string[] added = goals.Where(l => !_labels.Contains(l) && l.StartsWith("reward:bonus", StringComparison.Ordinal)).ToArray();
+            if (FullTasGoal.EditRefused(_labels, goals.Except(added).ToArray()) is string refused)
+            {
+                Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) aren't an edit of the trace's ({refused}); the trace's goals stay");
+                return;
+            }
+            var made = new List<string>();
+            try
+            {
+                foreach (string l in added)
+                    if (!_insertedGoals.ContainsKey(l)) { InsertGoalOption($"{l}@{Array.IndexOf(goals, l) + 1}"); made.Add(l); }
+            }
+            catch (Exception e)
+            {
+                foreach (string l in made) _insertedGoals.Remove(l);
+                Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals add {string.Join(", ", added)}, whose goal can't be made again ({e.Message}); the trace's goals stay");
+                return;
+            }
             var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
             string[] trace = _labels;
             SwitchGoals(goals);
@@ -1572,6 +1600,7 @@ namespace IGTAP.EngineSim.Cli
                 return;
             }
             (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+            foreach (string l in made) _insertedGoals.Remove(l); // not an --insert-goal the loop was asked for
             RebindEval();
             Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) replay as {r.Progress}/{goals.Length} goals"
                 + (r.Progress == goals.Length ? $" ({Describe(r)}), no faster than the trace's best" : "") + "; the trace's goals stay");

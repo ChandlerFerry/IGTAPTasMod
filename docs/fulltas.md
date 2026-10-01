@@ -936,8 +936,10 @@ baseline). The default is set by the measurements below, and has every part exce
    the loop's thread it left the loop's simulation replaying the best to no goal at all.
 5. **Goals** (`goals`, `FullTasAutoGoals.cs`): edits of the run's goal list. Every stretch of a Full-TAS economy is
    Cash-bound at its target buy, so a lap or walk made faster only turns into a wait there; what pays is a list that needs
-   fewer laps. A goals pull runs at the start, at once after it adopted an edit, and otherwise after a new best at most
-   every 5 minutes; it plays every edit of the best on a copy, in parallel:
+   fewer laps. A goals pull runs at the start, and after one that adopted an edit or a new best at most every 5 minutes;
+   after a pull the other parts get as long as it took before the next (a FalseEnding-Any% pull takes about 7 minutes,
+   2500 CPU s, so a short run's idle, windows, waste and grafts never had a turn), unless no arm is left. It plays every
+   edit of the best on a copy, in parallel:
    - **Drops**: the last lap (start and finish goals, the inputs from the quick restart before the gate to the next step's)
      of each run of back-to-back laps of a course, and its last two.
    - **Adds**: 1..N more laps of a course in place of a wait (a lap earns its reward, standing earns nothing): n copies of
@@ -970,7 +972,9 @@ baseline). The default is set by the measurements below, and has every part exce
    - **Inserted reward goals** (`--insert-goal reward:bonusN@K`, repeatable): a bonus the run doesn't take, put in at goal K
      (its box: the one nearest the bonus's end rect in `courses.json`), re-found as an investment from the goal before it.
      While one is due a pull offers nothing else. It adds a reward goal to the skeleton, so the game won't adopt the list
-     from a judged route (`EditRefused`): put it in `fulltas.json` by hand. Bonus 5's box (`buyfree3`, free) is +1 global
+     from a judged route (`EditRefused`): put it in `fulltas.json` by hand. A later `--auto` resumes on such an adopted
+     list (its run file's `goalsFrom`) without the option: the inserted goal's entry is made again from `courses.json`, and
+     the list is taken only if the run file's route plays it through faster than the trace's best. Bonus 5's box (`buyfree3`, free) is +1 global
      cashPerLoop level, as bonuses 1-3 are: every reward goes with 3 + 2n (n global levels), 15 -> 17 at Course 3's
      start. On the 350.35 s record, `reward:bonus5@174` (after bonus 2: from bonus 2's quick restart at Checkpoint (3),
      120 ticks to the box and a quick restart back) is 2.65 s behind at `start:3` and re-found to 348.50 s (one pull).

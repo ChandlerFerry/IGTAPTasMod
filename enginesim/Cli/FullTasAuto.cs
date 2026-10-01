@@ -291,7 +291,8 @@ namespace IGTAP.EngineSim.Cli
                     if (ReferenceEquals(from, _labels) && route.Live < _best.Live && AdoptGoals(e, route, _best)) Probe();
                     continue;
                 }
-                // At the start and after new bests (at most every few minutes): the economy goals' edits (--parts goals). An
+                // At the start and after new bests (at most every few minutes, and no sooner after a goals pull than it took: the
+                // other parts get their turns in between): the economy goals' edits (--parts goals). An
                 // adopted edit renumbers the goals, so the probes start over.
                 if (GoalsDue())
                 {
@@ -367,6 +368,11 @@ namespace IGTAP.EngineSim.Cli
                 else
                 {
                     List<(Arm arm, double score)> ranked = RankArms();
+                    if (ranked.Count == 0 && GoalsDue(anyTime: true))
+                    {
+                        if (GoalsPull()) Probe();
+                        continue;
+                    }
                     if (ranked.Count == 0) { Log("auto: no arm left to pull"); Outlook(exhausted: true); break; }
                     // The best arm alone when it isn't a window (polish, graft, reset study and plan use every thread); else the best
                     // windows whose goals don't overlap, side by side.
