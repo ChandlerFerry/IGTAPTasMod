@@ -151,6 +151,7 @@ namespace IGTAPTasMod
                 return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state/live") return BuildLiveWebState();
+            if (request.Method == "GET" && request.Path == "/api/perf") return BuildPerfReport();
             if (request.Method == "GET" && request.Path == "/api/state/static") return BuildStaticWebState();
             if (request.Method == "GET" && request.Path == "/api/state") return BuildWebState();
             if (request.Method != "POST") throw new InvalidOperationException("Unsupported request method.");

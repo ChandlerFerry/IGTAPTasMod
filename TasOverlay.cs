@@ -397,6 +397,12 @@ namespace IGTAPTasMod
 
         private void OnGUI()
         {
+            PerfGuiStart();
+            try { OverlayGui(); } finally { PerfGuiEnd(); }
+        }
+
+        void OverlayGui()
+        {
             // Only Repaint draws (useGUILayout is off, so the other events are input): they skip even the checks below.
             if (Event.current.type != EventType.Repaint) return;
             // Under the game's pause menu nothing anchored in the world is drawn (it would sit on top of the menu): the lab
@@ -410,21 +416,32 @@ namespace IGTAPTasMod
             float scale = Screen.height / 1080f;
             if (_overlayTitle == null || _overlayStyleHeight != Screen.height) BuildOverlayStyles(scale);
             if (ghosts) { DrawLabGhostBadges(scale); DrawLabGhostLegend(scale); }
+            PerfSection(0);
             if (trainer) DrawLabTrainer();
+            PerfSection(1);
             if (goals) DrawFullTasGoals(scale);
+            PerfSection(2);
             if (origin) DrawOriginOverlay(scale);
+            PerfSection(3);
             if (techs && !menu) DrawTechPaths(scale);
+            PerfSection(4);
             if (!_settings.showOverlay) return;
             if (_overlayPlayer != null) SampleSpikes(_overlayPlayer, FixedStep());
             if (!menu)
             {
                 DrawSpikes(scale);
+                PerfSection(5);
                 DrawCheckpointLabels(scale);
+                PerfSection(6);
                 DrawHitbox(scale);
+                PerfSection(7);
                 DrawGraze(scale);
+                PerfSection(8);
             }
             DrawCachedPanels(scale);
+            PerfSection(9);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
+            PerfSection(10);
         }
 
         void DrawDroppedFrames(float scale)
@@ -1007,6 +1024,7 @@ namespace IGTAPTasMod
 
         static void Label(Rect r, string text, GUIStyle style, Color color)
         {
+            if (GlyphLabel(r, text, style, color)) return;
             Color saved = GUI.contentColor;
             GUI.contentColor = color;
             GUI.Label(r, text, style);
@@ -1017,8 +1035,12 @@ namespace IGTAPTasMod
 
         static float Segment(float x, float y, float height, float gap, string text, GUIStyle style, Color color)
         {
-            OverlayMeasure.text = text;
-            float width = style.CalcSize(OverlayMeasure).x;
+            float width = GlyphWidth(text, style);
+            if (width < 0f)
+            {
+                OverlayMeasure.text = text;
+                width = style.CalcSize(OverlayMeasure).x;
+            }
             Label(new Rect(x, y, width, height), text, style, color);
             return x + width + gap;
         }

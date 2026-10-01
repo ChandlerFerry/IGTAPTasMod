@@ -9,6 +9,7 @@ namespace IGTAPTasMod
     {
         Vector2 _velocityRun, _velocityMomentum, _velocityPlatform;
         float _velocityCap;
+        Rect _velocityPanelRect;
         bool _velocityDirty = true;
         string _velocityRatioText;
         readonly string[] _velocityText = new string[8];
@@ -162,6 +163,7 @@ namespace IGTAPTasMod
             float height = bandHeight + 10 * scale + totalLine + 12 * scale + barHeight + 14 * scale + parts * rowHeight + 8 * scale + 1 + 8 * scale + 5 * rowHeight + 12 * scale
                 + DebugSectionHeight(scale);
             Rect panel = new Rect(Screen.width - width, 0f, width, height);
+            _velocityPanelRect = panel;
             Fill(panel, PanelBase);
             Fill(new Rect(panel.x, panel.y, width, bandHeight), PanelBand);
             Fill(new Rect(panel.x, panel.y, 1, panel.height), PanelLine);

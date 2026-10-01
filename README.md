@@ -190,10 +190,13 @@ over the socket too (`{"id", "method", "path", "body"}`, answered `{"type": "rep
 state they left). The HTTP API stays for tools; `GET /api/state` is both parts in one. Selecting a route saves it to
 `settings.json` (`selectedRouteId`), not the whole `routes.json`.
 
-1x playback runs in real time: each frame waits until the wall clock reaches the fixed clock's time since the start
-(`WaitForFixedClock`: every frame's step summed, a dash freeze's frames included), and the frames after a late one
-catch up, up to 0.1 s behind. It does not use a 280 fps cap: six frames make a 0.02 s tick, so a cap would play at
-0.933x. Real time is the route's time plus its dash freezes, as long as the game renders the ~310 fps it needs.
+1x playback runs at most in real time: each frame waits until the wall clock reaches the fixed clock's time since the
+last frame (`WaitForFixedClock`: the frame's step, a dash freeze's frames included), and a late frame is never made up,
+so playback never speeds up. It does not use a 280 fps cap: six frames make a 0.02 s tick (five 1/280 s and the
+crossing frame's 2.14 ms, 300 fps on average), so a cap would play at 0.933x. Real time is the route's time plus its
+dash freezes only while every frame renders within its step; each late one leaves the rest of the run that much later
+(`GET /api/perf`: the last 4096 frames' wall time, split into the pace wait, the plugin's Update and OnGUI and the
+rest, and the playback's speed against real time).
 **Fast** next to **Run route** (`POST /api/settings/fast-playback {"on": true}`, settings `fastPlayback`, off by
 default) drops the wait, so a route plays as fast as the game renders. The simulation is unchanged: each frame's game
 time is the fixed clock's step (`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock,
@@ -203,9 +206,13 @@ the fixed clock. A probe (`ProbeRunner`, its frame rate is what it measures) kee
 
 A slower frame rate plays the same frames, only later. In every mode (a listed playback, hand play, turbo) the overlay
 draws its input panel, pad and velocity panel into a texture once a physics tick, or when a setting, the unlocks or a
-displayed count changes (`TasOverlayCache.cs`), and puts the texture on screen each frame. Only POS, ULTRA, TIMESTOP
-and the nudge are drawn live, and the pad too when no route lists its ticks (hand play shows the buttons held now).
-Drawing all of it every frame cost 0.65 ms of the 3.57 ms a 280 fps frame has; cached, it costs 0.26 ms.
+displayed count changes (`TasOverlayCache.cs`), and puts the panels' columns of the texture on screen each frame. Only
+POS, ULTRA, TIMESTOP and the nudge are drawn live, and the pad too when no route lists its ticks (hand play shows the
+buttons held now). Its text comes from a glyph atlas (`TasOverlayGlyphs.cs`): each font's glyphs drawn once by IMGUI
+into a texture, each label then one batch of quads. IMGUI (Unity 6's TextCore) generates every new string it draws,
+about 2 KB of garbage each, and the overlay draws new numbers every tick and frame: 6.6 KB a frame and a 10 ms garbage
+collection every few seconds. With the atlas the overlay costs 0.18 ms a frame and 0.12 KB of garbage; without either,
+it cost 0.35 ms, and a strictly paced 1x played at 0.94–0.97x real time instead of 0.99x.
 
 ## TAS editor
 

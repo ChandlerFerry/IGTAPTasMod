@@ -365,6 +365,15 @@ namespace IGTAPTasMod
             public List<(string label, JObject body, string category)> judgings;
         }
 
+        /// <summary>Whether <see cref="ReadOfflineBest"/> can make anything of this file name (pool thread: no game state).</summary>
+        static bool OfflineBestActionable(string file, HashSet<int> courseIds, HashSet<string> runs)
+        {
+            Match m = OfflineBestFile.Match(file);
+            if (m.Success) return int.TryParse(m.Groups[1].Value, out int id) && courseIds.Contains(id) && Categories.IsCategory(m.Groups[2].Value);
+            m = OfflineFullTasBestFile.Match(file);
+            return m.Success && runs.Contains(m.Groups[1].Value);
+        }
+
         OfflineBest ReadOfflineBest(string path, string solving)
         {
             string file = Path.GetFileName(path);
@@ -407,8 +416,11 @@ namespace IGTAPTasMod
 
         int _offlineWaiting;
         // The offline bests waiting, counted on a pool thread (the directory listing, beside the offline solver's own writes,
-        // could stall a paced frame every 5 s): -1 while that count runs, which _offlineCounting is set for.
+        // could stall a paced frame every 5 s): -1 while that count runs, which _offlineCounting is set for. Only files the
+        // pump can act on count (a known course and category, or a Full-TAS run still in fulltas.json): an orphan stays in
+        // the folder unjudged, and counting it ran the whole pass, 3.4 ms and 400 KB on the main thread, every 5 s.
         int _offlineCount = -1;
+        string[] _offlineFiles = new string[0];
         bool _offlineCounting;
 
         void PumpOfflineBests()
@@ -420,19 +432,22 @@ namespace IGTAPTasMod
                 if (Time.unscaledTime < _offlineBestCheckAt || PlaybackActive || _recorder.IsRecording) return;
                 _offlineBestCheckAt = Time.unscaledTime + 5f;
                 string scanned = Path.Combine(EngineSimDir, "offline-best");
+                var courseIds = new HashSet<int>(_courses.Select(c => c.id));
+                var runs = new HashSet<string>(_fullTasRuns.Select(r => r.name), StringComparer.OrdinalIgnoreCase);
                 _offlineCount = -1;
                 _offlineCounting = true;
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    int count = 0;
+                    string[] files = new string[0];
                     try
                     {
-                        count = !Directory.Exists(scanned) ? 0 : Directory.GetFiles(scanned, "*.json")
-                            .Count(p => OfflineBestFile.IsMatch(Path.GetFileName(p)) || OfflineFullTasBestFile.IsMatch(Path.GetFileName(p)));
+                        if (Directory.Exists(scanned))
+                            files = Directory.GetFiles(scanned, "*.json").Where(p => OfflineBestActionable(Path.GetFileName(p), courseIds, runs)).ToArray();
                     }
                     // A directory that went mid-scan: none waiting until the next count.
                     catch (Exception) { }
-                    System.Threading.Volatile.Write(ref _offlineCount, count);
+                    System.Threading.Volatile.Write(ref _offlineFiles, files);
+                    System.Threading.Volatile.Write(ref _offlineCount, files.Length);
                 });
                 return;
             }
@@ -446,8 +461,9 @@ namespace IGTAPTasMod
             Movement player = FindWorldMovement();
             if (player == null || IsMenuPlayer(player)) return;
             string solving = !_solverRunning ? null : _solveCourse + "_" + _solveCaps;
-            string[] bestFiles = Directory.GetFiles(dir, "*.json");
-            foreach (string gone in _offlineRunTicks.Keys.Where(p => Array.IndexOf(bestFiles, p) < 0).ToList()) _offlineRunTicks.Remove(gone);
+            string[] bestFiles = System.Threading.Volatile.Read(ref _offlineFiles);
+            var listed = new HashSet<string>(bestFiles);
+            foreach (string gone in _offlineRunTicks.Keys.Where(p => !listed.Contains(p)).ToList()) _offlineRunTicks.Remove(gone);
             var groups = bestFiles.Select(f => ReadOfflineBest(f, solving)).Where(f => f != null).GroupBy(f => f.group);
             string judged = Path.Combine(dir, "judged");
             foreach (var group in groups)

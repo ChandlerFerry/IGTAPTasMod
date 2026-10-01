@@ -328,9 +328,14 @@ namespace IGTAPTasMod
         double _paceDue;
         /// <summary>The last paced frame's game time (Time.timeAsDouble), NaN at a playback's start: a frame that doesn't move it stood still.</summary>
         double _pacedTime;
-        const double MaxPaceDebt = 0.1;
 
         private void Update()
+        {
+            PerfFrameStart();
+            try { UpdateFrame(); } finally { PerfUpdateEnd(); }
+        }
+
+        void UpdateFrame()
         {
             // Paced from the moment a playback is asked for, so its first ticks already run on the fixed clock: before, a hitch
             // at the start (the savestate restore) could run several ticks in one frame, with no frames between them.
@@ -338,7 +343,9 @@ namespace IGTAPTasMod
             PaceWalk();
             OverlayFrame();
             BreakerLightsFrame();
+            double pumpStart = PerfMs(_perfClock);
             if (_webServer != null) _webServer.Pump(HandleWebRequest);
+            _perfNow.pump = (float)(PerfMs(_perfClock) - pumpStart);
             PumpSolver();
             PumpBootstrap();
             PumpNewGame();

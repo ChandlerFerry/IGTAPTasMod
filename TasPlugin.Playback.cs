@@ -95,27 +95,28 @@ namespace IGTAPTasMod
             // Time.timeScale == 0: the freeze starts in the FixedUpdate of the frame that crosses the tick, so that frame's Update
             // runs at timeScale 0 though its time moved (the step that ran the tick): one frame too many per dash freeze.
             double gameTime = Time.timeAsDouble;
-            if (gameTime == _pacedTime) _engine.CountHeldFrames(1);
+            bool held = gameTime == _pacedTime;
+            if (held) _engine.CountHeldFrames(1);
             _pacedTime = gameTime;
             bool skipping = _fastUntilTick > 0 && (_pendingReplay != null || _engine.RunTicks < _fastUntilTick);
-            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f);
+            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f, held ? _clockFrame : EvenFrameStep(_pacedFps));
             _clockNext = FixedClockStep(_pacedFps);
             Time.captureDeltaTime = _clockNext;
         }
 
         /// <summary>
-        /// Holds this frame until the wall clock reaches the fixed clock's time since the playback started (its frames' steps
-        /// summed, a freeze's frames included, times <paramref name="scale"/>), so 1x plays in real time. The frames after a
-        /// late one catch up, up to <see cref="MaxPaceDebt"/> behind; a longer stall (a load) is let go, not fast-forwarded.
+        /// Holds this frame until <paramref name="wallStep"/> times <paramref name="scale"/> after the last one was due, so 1x
+        /// plays at most in real time. A late frame is never made up: playback never speeds up, it plays on that much later.
         /// Scale 0: no wait.
         /// </summary>
-        void WaitForFixedClock(float scale)
+        void WaitForFixedClock(float scale, double wallStep)
         {
-            double now = _paceClock.Elapsed.TotalSeconds;
-            _paceDue = scale > 0f ? Math.Max(_paceDue + _clockFrame * scale, now - MaxPaceDebt) : now;
+            double now = _paceClock.Elapsed.TotalSeconds, start = now;
+            _paceDue = scale > 0f ? Math.Max(_paceDue + wallStep * scale, now) : now;
             // Sleep only while a coarse (15.6 ms) timer tick can't overshoot, then yield.
             for (double left; (left = _paceDue - now) > 0; now = _paceClock.Elapsed.TotalSeconds)
                 if (left > 0.016) System.Threading.Thread.Sleep(1); else System.Threading.Thread.Yield();
+            _perfNow.wait += (float)((now - start) * 1000);
         }
 
         /// <summary>
@@ -124,6 +125,18 @@ namespace IGTAPTasMod
         void SnapCameraAtPlaybackStart(Movement movement)
         {
             if (movement != null) SavestateService.SnapCamera(movement.transform.position);
+        }
+
+        /// <summary>
+        /// The wall time a frame that moved game time is shown for: its tick's time split evenly over the tick's frames (six
+        /// at 280 fps, 3.33 ms each), not its own step. The grid's crossing frame steps only 2.14 ms, less than a frame takes
+        /// to render, so pacing by the step lost time on every tick; split evenly a tick still takes exactly its 20 ms, and
+        /// each frame's game time stays its step (captureDeltaTime).
+        /// </summary>
+        static double EvenFrameStep(int fps)
+        {
+            double frame = 1.0 / fps, tick = Time.fixedDeltaTime;
+            return tick / (Math.Floor((tick - frame / 2) / frame) + 1);
         }
 
         /// <summary>

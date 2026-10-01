@@ -55,6 +55,13 @@ namespace IGTAPTasMod
                 || Mathf.Max(0, p.wallJumpsLeft) != _padCountLeft[2] || p.maxWallJumps != _padCountMax[2];
         }
 
+        Rect _panelCacheLeft, _panelCacheRight;
+
+        void DrawPanelCacheRect(Rect r, int width, int height)
+        {
+            if (r.width > 0f) GUI.DrawTextureWithTexCoords(r, _panelCache, new Rect(r.x / width, 1f - r.yMax / height, r.width / width, r.height / height));
+        }
+
         void DrawCachedPanels(float scale)
         {
             bool list = _inputRows.Count > 0, velocity = _overlayPlayer != null;
@@ -73,6 +80,7 @@ namespace IGTAPTasMod
                 _panelCacheDirty = true;
             }
             float now = Time.unscaledTime;
+            PerfSection(9);
             int state = PanelCacheState(list, velocity, padLive);
             if (_panelCacheDirty || Time.fixedTime != _panelCacheFixedTime || state != _panelCacheState || !ReferenceEquals(_fpsText, _panelCacheFps)
                 || !ReferenceEquals(_clonesText, _panelCacheClones) || !ReferenceEquals(_playbackSpeedText, _panelCacheSpeed)
@@ -86,6 +94,9 @@ namespace IGTAPTasMod
                 {
                     if (list) DrawInputPanel(scale, !padLive);
                     if (velocity) DrawVelocityPanel(scale);
+                    // Only the panels' columns are blended onto the screen each frame, not the whole texture.
+                    _panelCacheLeft = list ? new Rect(0f, 0f, PanelWidth * PanelScale(scale), height) : Rect.zero;
+                    _panelCacheRight = velocity ? _velocityPanelRect : Rect.zero;
                 }
                 finally
                 {
@@ -100,10 +111,13 @@ namespace IGTAPTasMod
                 _panelCacheSpeed = _playbackSpeedText;
                 _panelCacheDrawnAt = now;
             }
+            PerfSection(11);
             Color saved = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, PanelBack.a);
-            GUI.DrawTexture(new Rect(0f, 0f, width, height), _panelCache);
+            DrawPanelCacheRect(_panelCacheLeft, width, height);
+            DrawPanelCacheRect(_panelCacheRight, width, height);
             GUI.color = saved;
+            PerfSection(12);
             if (padLive)
             {
                 // No route lists its ticks: the pad shows the buttons held now (or, with no input actions, the newest tick).
@@ -112,9 +126,11 @@ namespace IGTAPTasMod
                 if (list) DrawInputPad(InputPadRect(panelScale), live ?? _inputRows[_inputRows.Count - 1], panelScale);
                 else if (live != null) DrawInputPad(InputPadRect(panelScale), live, panelScale);
             }
+            PerfSection(13);
             if (!velocity) return;
             DrawNudge(_nudgeRect);
             DrawLiveDebugValues(PanelScale(scale));
+            PerfSection(14);
         }
     }
 }
