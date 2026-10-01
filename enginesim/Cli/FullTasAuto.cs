@@ -187,12 +187,14 @@ namespace IGTAP.EngineSim.Cli
             _parts = ParseParts(Solve.Option(args, "--parts", string.Join(",", AllParts.Except(OptInParts))));
             // A course run's goals are its waypoints: no economy to edit.
             if (_course != null) _parts.Remove("goals");
+            // A class keeps the run's goals: only the major record adopts other goals (the gate refuses a class route with them).
+            if (Classed && _parts.Remove("goals")) Log($"auto: {Glitches.Key(_class)}: the goals part is off (a class keeps the run's goals)");
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
             if (Part("goals")) ResumeAdoptedGoals();
             var refs = new List<(string file, Route route)>();
             foreach (string file in Solve.Args(args, "--ref")) refs.Add((file, Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file))));
             foreach (var (file, r) in refs)
-                if (r.Progress == _goals && (_best.Progress < _goals || r.Live < _best.Live))
+                if (r.Progress == _goals && (_best.Progress < _goals || Ahead(r, _best)))
                 {
                     Log($"auto: --ref {Path.GetFileName(file)} ({Describe(r)}) beats the best ({Describe(_best)}): the loop starts from it");
                     _best = r;
@@ -218,9 +220,9 @@ namespace IGTAP.EngineSim.Cli
             bool focused = ReadFocus(args);
             if (focused && _parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
-            _autoLog = Path.Combine(dir, "fulltas", _name + ".auto.jsonl");
-            _refsFile = Path.Combine(dir, "fulltas", _name + ".auto-refs.json");
-            _memoryFile = Path.Combine(dir, "fulltas", _name + ".auto-memory.json");
+            _autoLog = Path.Combine(dir, "fulltas", _runKey + ".auto.jsonl");
+            _refsFile = Path.Combine(dir, "fulltas", _runKey + ".auto-refs.json");
+            _memoryFile = Path.Combine(dir, "fulltas", _runKey + ".auto-memory.json");
             Directory.CreateDirectory(Path.GetDirectoryName(_autoLog));
             // The planner's field cell (plan's --field-cell default): the bounds and the plan lever share it.
             DistanceField.CellSize = 8f;
@@ -513,10 +515,10 @@ namespace IGTAP.EngineSim.Cli
                         EndReason = $"the best's state at goal {a - 1} isn't the route's" };
                     c = TailWindows(broken, best, how + ", splice-in repaired", follow, CombineRepairGoals, _combineRepairMinutes, 2) ?? broken;
                 }
-                if (c.Progress == _goals && c.Live < _best.Live)
+                if (c.Progress == _goals && Ahead(c, _best))
                 {
                     Commit(c, how);
-                    if (_best.Live < best.Live) return ($"{how}{(same ? "" : ", splice-in repaired")}: {Describe(_best)}", a);
+                    if (Ahead(_best, best)) return ($"{how}{(same ? "" : ", splice-in repaired")}: {Describe(_best)}", a);
                 }
             }
             string counts = $"{exact} with the same state at the splice-in, {repairs} repaired there, {skipped} over the repair budget";
@@ -623,11 +625,11 @@ namespace IGTAP.EngineSim.Cli
                 string how = $"revive: {r.How} (goal {p}, {best.GoalPhysics[p - 1] - r.GoalPhysics[p - 1]} ticks ahead)";
                 Route broken = TraceRun(inputs, how), c = broken;
                 if (c.Progress < _goals) c = WaitFix(broken, best, changedEnd, how, changedStart) ?? broken;
-                if ((c.Progress < _goals || c.Live >= _best.Live) && broken.Progress < _goals && Part("tail")) c = TailWindows(broken, best, how) ?? c;
-                if (c.Progress == _goals && c.Live < _best.Live)
+                if ((c.Progress < _goals || !Ahead(c, _best)) && broken.Progress < _goals && Part("tail")) c = TailWindows(broken, best, how) ?? c;
+                if (c.Progress == _goals && Ahead(c, _best))
                 {
                     Commit(c, how);
-                    if (_best.Live < best.Live) return ($"{how}: {Describe(_best)}", p);
+                    if (Ahead(_best, best)) return ($"{how}: {Describe(_best)}", p);
                 }
             }
             return tried == 0 ? ("revive: no known route ahead of the best is left to try", 0) : ($"revive: {tried} known routes ahead of the best, none rescued faster", first);
@@ -716,13 +718,14 @@ namespace IGTAP.EngineSim.Cli
             int per = Math.Max(1, _threads / batch.Count);
             double c0 = CpuSeconds();
             TimeSpan w0 = _clock.Elapsed;
-            var jobs = new List<(Arm arm, int pull, double budget, double score, int k, int limit, int prefixLength, OfflineSolver solver, Thread[] threads, List<List<InputTick>> found, long[] bestAt)>();
+            var jobs = new List<(Arm arm, int pull, double budget, double score, int k, int limit, int prefixLength, long baseline, OfflineSolver solver, Thread[] threads, List<List<InputTick>> found, long[] bestAt)>();
             foreach (var (arm, budget, score) in batch)
             {
                 StartPull(arm, budget, score);
                 int k = arm.Goal, limit = WindowLimit(arm), prefixLength = PrefixAt(best, k);
                 List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
-                long baseline = best.GoalPhysics[limit - 1];
+                // A class's baseline is the best's score inside the window, which its solver's finds are priced against (Allowance).
+                long baseline = Allowance(best, k - 1, limit, best.GoalPhysics[limit - 1]);
                 Func<Simulation> create = () =>
                 {
                     Simulation s = _create();
@@ -740,6 +743,7 @@ namespace IGTAP.EngineSim.Cli
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), windowSeeds,
                     null, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
                 TuneGrafts(solver, k, limit, prefixLength);
+                solver.Penalty = WindowPenalty(k - 1);
                 var found = new List<List<InputTick>>();
                 long[] bestAt = { long.MaxValue };
                 solver.Improved += (time, runTicks, inputs, how) =>
@@ -749,9 +753,12 @@ namespace IGTAP.EngineSim.Cli
                     {
                         bestAt[0] = Math.Min(bestAt[0], atGoal);
                         if (atGoal < baseline) { found.Add(inputs); GraftFind(how); }
+                        // A priced window's finds say what they cost: a slower way can rank ahead on its penalty.
+                        if (solver.Penalty != null)
+                            Log($"auto: window {k}-{limit} find {FindText(solver, inputs, atGoal)} against the best's {(baseline == long.MaxValue ? "(any: it has a major span here)" : baseline.ToString())}");
                     }
                 };
-                jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, solver, solver.Start(per), found, bestAt));
+                jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, baseline, solver, solver.Start(per), found, bestAt));
             }
             var stopped = new bool[jobs.Count];
             while (stopped.Any(x => !x))
@@ -764,7 +771,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (var j in jobs) GraftTally(j.solver);
             double search = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             Log($"auto: {jobs.Count} windows side by side on {per} threads each: {search:0} CPU s, {wall:0} s; "
-                + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit}{(j.solver.Mined != null ? $" ({j.solver.TechGrafted} grafts of {j.solver.Runs} runs)" : "")} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})" : "nothing faster")}")));
+                + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit}{(j.solver.Mined != null ? $" ({j.solver.TechGrafted} grafts of {j.solver.Runs} runs)" : "")} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {j.baseline})" : "nothing faster")}")));
             // Each merge runs under its own pull's number; the batch's last number is put back after, so the next pull doesn't reuse one.
             int lastPull = _pullNo;
             foreach (var j in jobs.OrderByDescending(j => j.k))
@@ -789,11 +796,12 @@ namespace IGTAP.EngineSim.Cli
                     {
                         Log($"auto: merge of goals {j.k}-{j.limit} failed: {ex.GetBaseException().Message}");
                     }
-                    outcome = $"goals {j.k}-{j.limit}: {found.Count} faster through goal {j.limit} (at {j.bestAt[0]} against {best.GoalPhysics[j.limit - 1]})";
+                    outcome = $"goals {j.k}-{j.limit}: {found.Count} faster through goal {j.limit} (at {j.bestAt[0]} against {j.baseline})";
                 }
                 // A window's own lead feeds the scheduler only while its finds can still win: one whose every find the cost-to-go
                 // dropped arrived in states the later goals can't use (VMAN: 35 such windows, none converted).
-                long lead = !_findsHopeless && j.bestAt[0] < best.GoalPhysics[j.limit - 1] ? best.GoalPhysics[j.limit - 1] - j.bestAt[0] : 0;
+                long bar = j.baseline == long.MaxValue ? best.GoalPhysics[j.limit - 1] : j.baseline;
+                long lead = !_findsHopeless && j.bestAt[0] < bar ? bar - j.bestAt[0] : 0;
                 // Only the part of the lead this window hasn't shown on this best before: its earlier finds were merged and failed, and
                 // re-found every round they kept the scheduler from retiring a region, so the bandit's other levers never got a pull
                 // (VMAN: an hour of the same windows at goals 5, 6, 16-19, the same repairs failing each round).
@@ -1136,7 +1144,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// A repaired run can't win any more: even at every later goal's lower bound it ends no sooner than the best, or it is more
         /// than --repair-slack ticks behind the best at its last goal (the window's gain is gone and more), or its CPU budget is
-        /// spent. An investment (<see cref="InvestRepair"/>) is held to its budget alone.
+        /// spent. An investment (<see cref="InvestRepair"/>) is held to its budget alone. A human class compares scores in ticks
+        /// (<see cref="ScoreAt"/>: the run's ticks and its penalty so far, the bounds' ticks with no penalty after) with the best's.
         /// </summary>
         string Hopeless(Route run)
         {
@@ -1144,16 +1153,18 @@ namespace IGTAP.EngineSim.Cli
             if (p == 0 || p > _best.Progress) return null;
             long at = run.Clock(p);
             // An investment (a goals edit being re-found) is behind until its income pays, and the model's bounds and cost-to-go are
-            // the old goals': only its budget ends it.
-            if (!_investing)
+            // the old goals': only its budget ends it. An nmg class's best with a major span ranks behind any cleaner run: no bound.
+            long bar = EndBar(_best);
+            if (!_investing && bar != long.MaxValue)
             {
+                long score = ScoreAt(run, p);
                 if (_bounds != null)
                 {
-                    long floor = at + Enumerable.Range(p, Math.Max(0, _goals - p)).Sum(j => _bounds[j]);
-                    if (floor >= _best.Last) return $"at goal {p} (tick {at}) even the later goals' lower bounds end at tick {floor}, no sooner than the best's {_best.Last}";
+                    long floor = score + Enumerable.Range(p, Math.Max(0, _goals - p)).Sum(j => _bounds[j]);
+                    if (floor >= bar) return $"at goal {p} (tick {at}{(Human ? $", score {score}" : "")}) even the later goals' lower bounds end at {(Human ? "score " : "tick ")}{floor}, no sooner than the best's {bar}";
                 }
-                long behind = at - _best.Clock(p);
-                if (behind > _repairSlack) return $"{behind} ticks behind the best at goal {p} (--repair-slack {_repairSlack})";
+                long behind = score - ScoreAt(_best, p);
+                if (behind > _repairSlack) return $"{behind} ticks{(Human ? " of score" : "")} behind the best at goal {p} (--repair-slack {_repairSlack})";
                 string ctgBound = CostToGoBound(run);
                 if (ctgBound != null) return ctgBound;
             }
@@ -1170,11 +1181,12 @@ namespace IGTAP.EngineSim.Cli
 
         (double cpu, long lead)? _repairAt;
 
-        /// <summary>A repair starts: its budget is --repair-cpu-per-tick CPU seconds per tick it is ahead of the best at its goal.</summary>
+        /// <summary>A repair starts: its budget is --repair-cpu-per-tick CPU seconds per tick it is ahead of the best at its goal (a
+        /// human class: ticks of score).</summary>
         void RepairBegin(Route run)
         {
             int p = run.Progress;
-            long lead = p > 0 && p <= _best.Progress ? _best.GoalPhysics[p - 1] - run.GoalPhysics[p - 1] : 1;
+            long lead = p > 0 && p <= _best.Progress ? (Human ? ScoreAt(_best, p) - ScoreAt(run, p) : _best.GoalPhysics[p - 1] - run.GoalPhysics[p - 1]) : 1;
             _repairAt = (CpuSeconds(), Math.Max(1, lead));
         }
 

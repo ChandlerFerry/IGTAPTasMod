@@ -700,7 +700,7 @@ namespace IGTAP.EngineSim.Cli
                 SimSnapshot Snap(int i) { _eval.SetStart(_origin, 0); _eval.Goals.Limit = _goals; return _eval.Advance(best.Inputs.GetRange(0, i)); }
                 var (w, how) = UnderBoxWait(best, g, from, (int)best.GoalInput[g], Snap);
                 Log($"rng study: under the box at goal {k}: {(w == null ? "nothing complete" : Describe(w) + ", " + how)}");
-                if (w != null && w.Live < _best.Live) Commit(w, $"under the box at goal {k}");
+                if (w != null && Ahead(w, _best)) Commit(w, $"under the box at goal {k}");
             }
             foreach (int k in Solve.Args(_args, "--stand").SelectMany(a => a.Split(',')).Select(int.Parse))
             {
@@ -709,7 +709,7 @@ namespace IGTAP.EngineSim.Cli
                 _eval.Goals.Limit = _goals;
                 var (w, how) = StandWindow(best, g, from, (int)best.GoalInput[g], _eval.Advance(best.Inputs.GetRange(0, from)));
                 Log($"rng study: stand window at goal {k}: {(w == null ? "nothing complete" : Describe(w) + ", " + how)}");
-                if (w != null && w.Live < _best.Live) Commit(w, $"stand window at goal {k}");
+                if (w != null && Ahead(w, _best)) Commit(w, $"stand window at goal {k}");
             }
             double c0 = CpuSeconds();
             Route re = Retune(_eval, _origin, best, best.Inputs, 0);

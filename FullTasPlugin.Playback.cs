@@ -27,7 +27,7 @@ namespace IGTAPTasMod
             StartNewGame(null, run.Vman, run.savestate, run.RebaseAt);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
-            int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasBestRoute(run.name) == route ? tracker.Goals.Length : offline?.reached ?? 0);
+            int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasSavedRoute(run.name, route) ? tracker.Goals.Length : offline?.reached ?? 0);
             TechDef tech = _techs.Find(t => t.routeId == route.id);
             _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = fromTick > 0 ? fromTick : tech?.fastForward ?? 0, fastForwardFrames = fromTick > 0 };
         }
@@ -93,9 +93,17 @@ namespace IGTAPTasMod
                 droppedFrames = _droppedFrames, splits });
             if (!finished && _droppedFrames == 0 && play.expected == tracker.Goals.Length)
                 RetireBrokenFullTasRoute(play.route, "1x play", reason, tracker);
-            if (finished && FullTasBestRoute(play.run.name) == play.route && !_fullTasSplits.ContainsKey(play.route.id)
-                && Mathf.Abs(CategoryBest(FullTasCategory(play.run.name)) - time) <= .0001f)
+            // A saved route of any class times its splits on its first finish (major: RememberBestSplits on a trace too).
+            if (finished && FullTasSavedRoute(play.run.name, play.route) && !_fullTasSplits.ContainsKey(play.route.id)
+                && FullTasRouteOf(play.route.name, out _, out _, out float named) && Mathf.Abs(named - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);
+            FullTasQueuePlayed(play, finished, time, tracker.Next, reason);
+        }
+
+        /// <summary>A route the gate saved for the run, of any class (not stale), in the library.</summary>
+        bool FullTasSavedRoute(string run, MacroDefinition route)
+        {
+            return FullTasRouteOf(route.name, out string r, out _, out _) && string.Equals(r, run, StringComparison.OrdinalIgnoreCase) && _library.macros.Contains(route);
         }
 
         /// <summary>MacroEngine.RefreshRewards in a Full-TAS run (1x and turbo): each active course with local upgrades updates its

@@ -1317,6 +1317,11 @@ namespace IGTAP.EngineSim.Cli
                 Commit(route, "goals: " + e.Text);
                 return false;
             }
+            if (Classed)
+            {
+                Log($"auto goals: {e.Text} not adopted: a {Glitches.Key(_class)} solve keeps the run's goals");
+                return false;
+            }
             var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
             string[] from = _labels;
             SwitchGoals(e.Labels);
@@ -1505,28 +1510,11 @@ namespace IGTAP.EngineSim.Cli
             finally { (_best, _model, _bounds) = keep; }
         }
 
-        /// <summary>The run's goals become these: the trace's header with this goal list (its goals' own entries, a grouped buy made
-        /// of its boxes' entries) makes every simulation from here on, the loop's own included.</summary>
+        /// <summary>The run's goals become these: the trace's header with this goal list (<see cref="GoalsHeader"/>) makes every
+        /// simulation from here on, the loop's own included.</summary>
         void SwitchGoals(string[] labels)
         {
-            JsonNode node = JsonNode.Parse(AutoHeader().GetRawText());
-            JsonArray old = node["fulltas"]["goals"].AsArray();
-            var byLabel = new Dictionary<string, JsonNode>();
-            foreach (JsonNode g in old) byLabel.TryAdd(g["label"].GetValue<string>(), g);
-            var goals = new JsonArray();
-            foreach (string l in labels)
-            {
-                if (byLabel.TryGetValue(l, out JsonNode g)) { goals.Add(g.DeepClone()); continue; }
-                if (_insertedGoals.TryGetValue(l, out var x)) { goals.Add(x.header.DeepClone()); continue; }
-                string[] parts = l.Substring("buy:".Length).Split('+');
-                JsonNode first = byLabel["buy:" + parts[0]].DeepClone();
-                first["label"] = l;
-                first["boxes"] = new JsonArray(parts.SelectMany(p => byLabel["buy:" + p]["boxes"].AsArray().Select(b => (JsonNode)b.GetValue<string>())).ToArray());
-                goals.Add(first);
-            }
-            node["fulltas"]["goals"] = goals;
-            JsonElement header;
-            using (JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 })) header = doc.RootElement.Clone();
+            JsonElement header = GoalsHeader(AutoHeader(), labels, l => _insertedGoals.TryGetValue(l, out var x) ? x.header : null);
             _autoHeader = header;
             Func<Simulation> make = Solve.Creator(_trace, header);
             _create = () => { Simulation sim = make(); sim.StrictBuys = true; return sim; };
@@ -1536,6 +1524,30 @@ namespace IGTAP.EngineSim.Cli
             _labels = labels;
             _goals = labels.Length;
             _focusTo = _goals;
+        }
+
+        /// <summary>A Full-TAS trace's header with this goal list: each goal's own entry from the header (else
+        /// <paramref name="inserted"/>'s, an --insert-goal's), a grouped buy (buy:a+b) made of its boxes' entries.</summary>
+        internal static JsonElement GoalsHeader(JsonElement header, string[] labels, Func<string, JsonNode> inserted = null)
+        {
+            JsonNode node = JsonNode.Parse(header.GetRawText());
+            JsonArray old = node["fulltas"]["goals"].AsArray();
+            var byLabel = new Dictionary<string, JsonNode>();
+            foreach (JsonNode g in old) byLabel.TryAdd(g["label"].GetValue<string>(), g);
+            var goals = new JsonArray();
+            foreach (string l in labels)
+            {
+                if (byLabel.TryGetValue(l, out JsonNode g)) { goals.Add(g.DeepClone()); continue; }
+                if (inserted?.Invoke(l) is JsonNode x) { goals.Add(x.DeepClone()); continue; }
+                string[] parts = l.Substring("buy:".Length).Split('+');
+                JsonNode first = byLabel["buy:" + parts[0]].DeepClone();
+                first["label"] = l;
+                first["boxes"] = new JsonArray(parts.SelectMany(p => byLabel["buy:" + p]["boxes"].AsArray().Select(b => (JsonNode)b.GetValue<string>())).ToArray());
+                goals.Add(first);
+            }
+            node["fulltas"]["goals"] = goals;
+            using JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 });
+            return doc.RootElement.Clone();
         }
 
         /// <summary>After the goals change back: the loop's simulation made again. A Simulation made on this thread since (SwitchGoals')

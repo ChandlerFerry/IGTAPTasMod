@@ -1354,7 +1354,7 @@ namespace IGTAPTasMod
             return _silentFinished && time > 0f;
         }
 
-        string SolverCategory { get { return _solverFullTas != null ? FullTasCategory(_solverFullTas.name)
+        string SolverCategory { get { return _solverFullTas != null ? FullTasClassCategory(_solverFullTas.name, _solverFullTasClass.cls)
             : _solverTarget.Token + "_" + Caps.Parse(_solverCaps).Label; } }
 
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }

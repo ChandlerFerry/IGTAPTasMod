@@ -10,7 +10,8 @@ namespace IGTAP.EngineSim.Cli
     /// or a better arrival does, its state is kept there, keyed by the hash of the run's inputs up to it. A solve or window
     /// starts from the stored state instead of replaying the run up to there, and an archive cell replays its prefix from
     /// the later of its worker's own state and these (docs/fulltas.md "Offline search"). They go with the archive: the
-    /// run's start.key drops both together, a route edit hashes differently, and another engine build drops the states.
+    /// run's start.key drops both together, a route edit hashes differently, and another engine build or world export (a
+    /// recapture: the same start, other instance ids, which the states hold) drops the states.
     /// </summary>
     sealed class FullTasStates
     {
@@ -19,12 +20,13 @@ namespace IGTAP.EngineSim.Cli
         readonly string _dir;
         public int Saved;
 
-        public FullTasStates(string archiveDir, bool fresh)
+        public FullTasStates(string archiveDir, bool fresh, string worldExport)
         {
             _dir = Path.Combine(archiveDir, "states");
             if (!Directory.Exists(_dir)) return;
-            // Another engine build can play the same inputs to another state (a fidelity fix): its states go.
-            string engineFile = Path.Combine(_dir, "engine"), engine = EngineHash();
+            // Another engine build can play the same inputs to another state (a fidelity fix), and another world export has
+            // other instance ids (a state of the old one names bodies the new one lacks): its states go.
+            string engineFile = Path.Combine(_dir, "engine"), engine = EngineHash() + ":" + FileHash(worldExport);
             if (!File.Exists(engineFile) || File.ReadAllText(engineFile) != engine)
             {
                 foreach (string file in Directory.GetFiles(_dir, "*.bin")) File.Delete(file);
@@ -59,6 +61,14 @@ namespace IGTAP.EngineSim.Cli
             }
             sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
             return Convert.ToHexString(sha.Hash);
+        }
+
+        static string FileHash(string path)
+        {
+            if (!File.Exists(path)) return "";
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            using FileStream stream = File.OpenRead(path);
+            return Convert.ToHexString(sha.ComputeHash(stream));
         }
 
         /// <summary>Records the state at the run's input tick unless this arrival is stored already.</summary>

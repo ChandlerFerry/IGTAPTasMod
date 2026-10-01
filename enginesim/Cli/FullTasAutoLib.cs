@@ -351,7 +351,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!tried.Add(hash) || _lib.Knows(hash)) return null;
                 plays++;
                 Route r = TraceRun(inputs, $"{how}, {what}");
-                if (r.Progress == _goals && r.Live < _best.Live)
+                if (r.Progress == _goals && Ahead(r, _best))
                 {
                     Log($"auto sync: {how}: {what} -> {Describe(r)}");
                     return r;
@@ -389,7 +389,7 @@ namespace IGTAP.EngineSim.Cli
             return null;
         }
 
-        string SpeedsFile() => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_trace)), "fulltas", _name + ".auto-speeds.json");
+        string SpeedsFile() => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(_trace)), "fulltas", _runKey + ".auto-speeds.json");
 
         /// <summary>The speed probes' top path speeds, kept for the trace's start state and goals (StartKey + labels).</summary>
         string SpeedsKey() => StartKey(AutoHeader()).ToString("x16") + ":" + ValueHash(string.Join("|", _labels)).ToString("x16");
@@ -468,12 +468,15 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Stage 2's repair bound: a partial repaired run at goal p (tick t) whose cost-to-go from its arrival state puts its end
-        /// more than 10 ticks after the best's can't win: dropped. Null: search on.
+        /// more than 10 ticks after the best's can't win: dropped. A human class adds the run's penalty so far (none after: the
+        /// cost-to-go is ticks) and compares with the best's score in ticks (<see cref="EndBar"/>). Null: search on.
         /// </summary>
         string CostToGoBound(Route run)
         {
             if (_ctg == null || _lib == null || run.Progress == 0 || run.Progress >= _goals) return null;
             int p = run.Progress;
+            long bar = EndBar(_best);
+            if (bar == long.MaxValue) return null;
             TraceRun(run.Inputs, "a repair's partial run");
             StateLibrary.LibRun traced = _lib.RunOf(SnapshotIndex.Hash(run.Inputs, run.Inputs.Count));
             LibState s = traced?.States.Select(_lib.State).FirstOrDefault(x => x.Goal == p && (x.Kind & LibPoint.Goal) != 0);
@@ -481,8 +484,8 @@ namespace IGTAP.EngineSim.Cli
             LibFeatures f = s.Features;
             double ctg = SafePart(() => _ctg.Ticks(p, f), "cost-to-go Ticks");
             if (double.IsNaN(ctg) || ctg <= 0) return null;
-            double end = run.Clock(p) + ctg;
-            return end > _best.Last + 10 ? $"at goal {p} (tick {run.GoalPhysics[p - 1]}) the cost-to-go ({ctg:0} ticks) puts its end at {end:0}, after the best's {_best.Last}" : null;
+            double end = ScoreAt(run, p) + ctg;
+            return end > bar + 10 ? $"at goal {p} (tick {run.GoalPhysics[p - 1]}{(Human ? $", score {ScoreAt(run, p)}" : "")}) the cost-to-go ({ctg:0} ticks) puts its end at {(Human ? "score " : "")}{end:0}, after the best's {bar}" : null;
         }
 
         FullTasAutoCostToGo _ctg;
@@ -736,10 +739,10 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto stitch: library {_lib.Describe()}; "
                     + $"shortest path {path.Count} segments over runs {string.Join(",", path.Select(s => s.Run).Distinct())}, predicted {Seconds(end):0.00}s, replayed {Describe(r)}"
                     + (exact ? " (exactly as predicted)" : " (NOT as predicted)") + $"; {_stitchExact} of {_stitchTried} stitches replayed exactly so far");
-                if (r.Progress == _goals && r.Live < _best.Live)
+                if (r.Progress == _goals && Ahead(r, _best))
                 {
                     Commit(r, how);
-                    return _best == r || _best.Live <= r.Live;
+                    return _best == r || !Ahead(r, _best);
                 }
                 // Where the replay left the prediction: the first goal it missed or reached at another tick.
                 long offset = 0;
@@ -1046,7 +1049,7 @@ namespace IGTAP.EngineSim.Cli
             // 8723, repaired three times for 4,600 CPU s).
             if (_mergedOn != best) { _mergedOn = best; _merged.Clear(); }
             int given = found.Count, short_ = 0;
-            found = Enumerable.Reverse(found).Take(5).Reverse().Where(f =>
+            found = Enumerable.Reverse(found).Take(MergeFinds).Reverse().Where(f =>
             {
                 Route at = Evaluate(best.Inputs.Take(prefixLength).Concat(f).ToList(), limit);
                 if (at.Progress < limit) { short_++; return false; }
@@ -1055,11 +1058,11 @@ namespace IGTAP.EngineSim.Cli
             if (found.Count == 0)
             {
                 Log($"auto: {where}: " + (short_ == 0 ? $"its {given} finds were merged onto this best already"
-                    : $"{short_} of its last {Math.Min(5, given)} finds replay from the run's start short of goal {limit}"));
+                    : $"{short_} of its last {Math.Min(MergeFinds, given)} finds replay from the run's start short of goal {limit}"));
                 return;
             }
             var broken = new List<Route>();
-            foreach (List<InputTick> f in Enumerable.Reverse(found).Take(5))
+            foreach (List<InputTick> f in Enumerable.Reverse(found).Take(MergeFinds))
             {
                 List<InputTick> inputs = best.Inputs.Take(prefixLength).Concat(f).ToList();
                 Route through = Evaluate(inputs, limit);
@@ -1073,7 +1076,7 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = 1; i < inputs.Count; i++) if (inputs[i].reset && inputs[i - 1].reset) twice = true;
                 if (twice) continue;
                 Route c = TraceRun(inputs, where);
-                if (c.Progress == _goals && c.Live < _best.Live) { Commit(c, where); return; }
+                if (c.Progress == _goals && Ahead(c, _best)) { Commit(c, where); return; }
                 if (c.Progress >= limit && c.Progress < _goals) broken.Add(c);
                 if (c.Progress == _goals) broken.Add(c);
             }
@@ -1089,15 +1092,15 @@ namespace IGTAP.EngineSim.Cli
             foreach (Route c in broken.Where(c => c.Progress < _goals).OrderByDescending(c => c.Progress))
             {
                 Route fixedRun = WaitFix(c, best, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where, prefixLength);
-                if (fixedRun != null && fixedRun.Live < _best.Live) { Commit(fixedRun, where + ", waiting for the Cash"); return; }
+                if (fixedRun != null && Ahead(fixedRun, _best)) { Commit(fixedRun, where + ", waiting for the Cash"); return; }
             }
-            foreach (Route c in broken.Where(c => c.Progress < _goals || c.Live >= _best.Live).OrderByDescending(c => c.Progress).Take(3))
+            foreach (Route c in broken.Where(c => c.Progress < _goals || !Ahead(c, _best)).OrderByDescending(c => c.Progress).Take(3))
             {
                 Route synced = RouteSync(c, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where);
                 if (synced != null) { Commit(synced, where + ", route-synced"); return; }
             }
             // The cheap repair (--parts tail): the goals after the break re-searched as one window from the broken run's state.
-            Route ahead = Part("tail") ? broken.Where(c => c.Progress > 0 && c.Progress < _goals && c.Clock(c.Progress) < best.Clock(c.Progress))
+            Route ahead = Part("tail") ? broken.Where(c => c.Progress > 0 && c.Progress < _goals && ScoreAt(c, c.Progress) < ScoreAt(best, c.Progress))
                 .OrderByDescending(c => c.Progress).FirstOrDefault() : null;
             if (ahead != null)
             {
@@ -1126,16 +1129,20 @@ namespace IGTAP.EngineSim.Cli
         {
             follow ??= best;
             if (minutes < 0) minutes = _tailMinutes;
-            // Follow's ticks from its goal k to its end: a run at goal k ends at best as fast as its tick there plus these.
-            long Rest(int k) => follow.End - follow.GoalPhysics[k - 1];
+            // Follow's ticks from its goal k to its end: a run at goal k ends at best as fast as its tick there plus these (a human
+            // class: and follow's penalty after goal k, against the best's score in ticks; no bound when an nmg class's best has a
+            // major span).
+            long Rest(int k) => follow.End - follow.GoalPhysics[k - 1] + PenaltyTicksTo(follow, follow.Progress) - PenaltyTicksTo(follow, k);
+            long bar = EndBar(best);
             for (int round = 0; round < rounds && c != null && c.Progress < _goals && !TimeUp; round++)
             {
                 int p = c.Progress;
-                if (p == 0 || c.Clock(p) + Rest(p) >= best.Last) return null;
+                if (p == 0 || bar != long.MaxValue && ScoreAt(c, p) + Rest(p) >= bar) return null;
                 int first = p + 1, limit = Math.Min(_goals, p + goals);
                 int prefixLength = PrefixAt(c, first);
                 List<InputTick> prefix = c.Inputs.GetRange(0, prefixLength);
-                long baseline = best.Last + c.Origin - Rest(limit);
+                // The window's finds are unpriced: their tick at goal limit, with the broken run's penalty so far, must leave room.
+                long baseline = bar == long.MaxValue ? long.MaxValue : bar + c.Origin - Rest(limit) - PenaltyTicksTo(c, p);
                 // The window's start, played once here first: a prefix the engine can't play (a Movement.FixedUpdate
                 // NullReferenceException in Advance, seen on a course 4 find) would throw on every solver thread and end the process.
                 try { Solve.OnThread(() => { Simulation s = _create(); s.Goals.Limit = limit; return s.Advance(prefix) != null; }); }
@@ -1167,6 +1174,8 @@ namespace IGTAP.EngineSim.Cli
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(first - 1).Take(limit - first + 1)), seeds, null, path, VisitCell,
                     WindowGrafts(first, limit));
                 TuneGrafts(solver, 0, 0, 0);
+                // Held to a time bound (the best's end): unpriced, but an nmg class's tail never takes a major span.
+                solver.Penalty = WindowPenalty(p, priced: false);
                 var found = new List<List<InputTick>>();
                 long bestAt = long.MaxValue;
                 solver.Improved += (time, runTicks, inputs, how) =>
@@ -1201,11 +1210,11 @@ namespace IGTAP.EngineSim.Cli
                     int changedEnd = inputs.Count;
                     inputs.AddRange(follow.Inputs.Skip((int)Math.Min(follow.GoalInput[limit - 1], follow.Inputs.Count)));
                     Route r = TraceRun(inputs, where + ", tail re-found");
-                    if (r.Progress == _goals && r.Live < _best.Live) return r;
+                    if (r.Progress == _goals && Ahead(r, _best)) return r;
                     if (r.Progress < _goals)
                     {
                         Route waited = WaitFix(r, follow, changedEnd, where + ", tail re-found", prefixLength);
-                        if (waited != null && waited.Live < _best.Live) return waited;
+                        if (waited != null && Ahead(waited, _best)) return waited;
                     }
                     if (next == null || r.Progress > next.Progress) { next = r; nextChanged = changedEnd; }
                 }

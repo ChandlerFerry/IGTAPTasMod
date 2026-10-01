@@ -274,5 +274,26 @@ namespace IGTAP.EngineSim
             }
             return -1;
         }
+
+        /// <summary>
+        /// Inslope wallbounce: a wall kick (SpecialWallJump in the wall branch: the superbounce's dash boost or the omnidash
+        /// wallbounce) off a slope. The wall rays run level, so a steep slope's face is a wall to them, and the dash that reaches it
+        /// is pressed into the slanted face (the hitbox's corner inside it) when the kick fires: the dot touches a slanted surface
+        /// facing up (<see cref="TechStep.Slope"/>) on the step before the kick or on the kick's own, on the side the kick leaves
+        /// from (its Velocity.x points away). A kick off a plain wall touches no slant.
+        /// </summary>
+        [TechCheck("inslope-wallbounce")]
+        static int ShopInslopeWallbounce(TechSteps run, int from, int to)
+        {
+            List<TechStep> steps = run.Steps;
+            for (int k = Math.Max(from, 1); k <= to; k++)
+            {
+                TechStep step = steps[k];
+                if (!step.Calls.Any(e => e.Call == TechCall.Kick) || step.After.Vx == 0f) continue;
+                float side = -Math.Sign(step.After.Vx);
+                if (steps[k - 1].Slope == side || step.Slope == side) return k;
+            }
+            return -1;
+        }
     }
 }

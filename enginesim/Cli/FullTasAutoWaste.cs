@@ -630,8 +630,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 string techDir = Solve.Option(_args, "--tech-dir", (string)null), cache = Solve.Option(_args, "--tech-cache", (string)null);
                 TechGrafts all = Solve.OnThread(() => TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(_trace)), techDir: techDir, cacheFile: cache));
+                // An nmg class grafts glitchless and nmg techs only (techs.json category; the route corpus's windows aren't sorted so).
+                all.Patterns.RemoveAll(p => !Glitches.Allows(_class, p.Category));
                 all.Patterns.Add(ChainPattern());
-                Log($"grafts: {all.Patterns.Count} tech windows of {all.Patterns.Select(p => p.Tech).Distinct().Count()} techs ({(all.FromCache ? "cache" : "mined")})");
+                Log($"grafts: {all.Patterns.Count} tech windows of {all.Patterns.Select(p => p.Tech).Distinct().Count()} techs ({(all.FromCache ? "cache" : "mined")})"
+                    + (Glitches.NoMajors(_class) ? $", {Glitches.Key(_class)}: glitchless and nmg techs only" : ""));
                 return _graftLib = all;
             }
             catch (Exception ex) when (ex is IOException || ex is InvalidOperationException || ex is JsonException)

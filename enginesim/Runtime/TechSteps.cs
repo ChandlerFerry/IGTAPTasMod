@@ -82,6 +82,8 @@ namespace IGTAP.EngineSim
     {
         /// <summary>The input tick the step's contacts file at (MacroEngine.RunTicks after it) and the step's index in the run.</summary>
         public int Tick, Index;
+        /// <summary>The run's physics ticks after the step (MacroEngine.PhysicsTicks: what goal ticks count).</summary>
+        public long Physics;
         public readonly List<TechEvent> Calls = new List<TechEvent>();
         public StepEvents Events;
         /// <summary>A jump or dash press went in on this step (MacroEngine's press counters moved).</summary>
@@ -94,6 +96,10 @@ namespace IGTAP.EngineSim
         public List<string> Boxes;
         /// <summary>A solid within 40 u at -x / +x of the player's position, probed only on a dash's first step.</summary>
         public bool WallLeft, WallRight;
+        /// <summary>Standing (onGround, no spike touching the hurtbox) with a spike trigger the first thing straight under the
+        /// player's centre within the ground rays' reach (y - 18, 22 u down): the dot stands on a platform's end over a pit of
+        /// spikes flush with it, held up by the ground rays still on the platform.</summary>
+        public bool SpikeUnder;
         /// <summary>The target course's timer runs after the step (Simulation.TimingCourse).</summary>
         public bool Timing;
         /// <summary>The spring's up at a hit this step (<see cref="StepEvents.SpringHit"/>).</summary>
@@ -114,6 +120,8 @@ namespace IGTAP.EngineSim
     {
         readonly Simulation _sim;
         static readonly AccessTools.FieldRef<courseScript, bool> CourseTracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
+        /// <summary>The game's spikes' layer (spikeScript triggers).</summary>
+        const int SpikeLayer = 6;
         public readonly List<TechStep> Steps = new List<TechStep>();
         /// <summary>Movement.maxCoyoteFrames and maxWallCoyoteFrames (the overlay's detectors compare the counts with them).</summary>
         public float MaxCoyote, MaxWallCoyote;
@@ -182,6 +190,7 @@ namespace IGTAP.EngineSim
             TechStep s = _now;
             s.Index = Steps.Count;
             s.Tick = (int)_sim.Engine.RunTicks;
+            s.Physics = _sim.Engine.PhysicsTicks;
             s.Events = _sim.Events;
             s.JumpPress = _sim.Engine.JumpPresses != _jumps;
             s.DashPress = _sim.Engine.DashPresses != _dashes;
@@ -201,6 +210,12 @@ namespace IGTAP.EngineSim
                 int layer = ContactRays.GroundLayer(m);
                 s.WallLeft = Physics2D.Raycast(new Vector2(p.x, p.y), Vector2.left, 40f, layer);
                 s.WallRight = Physics2D.Raycast(new Vector2(p.x, p.y), Vector2.right, 40f, layer);
+            }
+            if (m.onGround && !s.Spike)
+            {
+                Vector3 p = m.transform.position;
+                RaycastHit2D under = Physics2D.Raycast(new Vector2(p.x, p.y - 18f), Vector2.down, 22f, ContactRays.GroundLayer(m) | 1 << SpikeLayer);
+                s.SpikeUnder = under && under.collider.GetComponent<spikeScript>() != null;
             }
             Steps.Add(s);
             _now = new TechStep();

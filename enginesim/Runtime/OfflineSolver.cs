@@ -125,6 +125,19 @@ namespace IGTAP.EngineSim
         public double GraftRate = .5;
         /// <summary>Run input ticks (from the search's start) whose contacts a graft prefers, 3 picks in 4 (a waste audit's span); null: any.</summary>
         public (int lo, int hi)? GraftFocus;
+        /// <summary>
+        /// A classed Full-TAS window's price of a finished run (FullTasClasses.cs; null: runs rank by their time alone): made once per
+        /// worker for its simulation (on its thread), given a run played whole from the window's start and its result, the seconds
+        /// to add (+infinity: the run never counts). Such a run ranks by its time plus these, its runTicks by them in ticks (so a
+        /// window's baseline compares scores); a run resumed from a state inside the window ranks by its time alone, a lower bound,
+        /// and is played whole and priced before it is kept. Set before the search starts.
+        /// </summary>
+        public Func<Simulation, Func<List<InputTick>, RunResult, double>> Penalty;
+        readonly System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long> _penaltyTicks
+            = new System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long>(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The ticks of <see cref="Penalty"/> in a reported best's runTicks (0 without one).</summary>
+        public long PenaltyTicks(List<InputTick> inputs) => _penaltyTicks.TryGetValue(inputs, out long ticks) ? ticks : 0;
 
         public string ArchiveStatus()
         {
@@ -294,7 +307,7 @@ namespace IGTAP.EngineSim
             = new System.Collections.Concurrent.ConcurrentQueue<(float, long, List<InputTick>, string)>();
         readonly object _reporting = new object();
 
-        bool Offer(float time, long runTicks, List<InputTick> inputs, string how)
+        bool Offer(float time, long runTicks, List<InputTick> inputs, string how, long penaltyTicks)
         {
             lock (Shared)
             {
@@ -303,6 +316,7 @@ namespace IGTAP.EngineSim
                 Shared.RunTicks = runTicks;
                 Shared.Inputs = inputs;
                 Shared.Version++;
+                if (Penalty != null) _penaltyTicks[inputs] = penaltyTicks;
                 _reports.Enqueue((time, runTicks, inputs, how));
             }
             Report();
@@ -632,6 +646,7 @@ namespace IGTAP.EngineSim
                 _evictWeight = (key, cell) => Weight(key, cell, 0f);
                 _onStep = OnStep;
                 _sim = sim;
+                _penalty = owner.Penalty?.Invoke(sim);
                 _store = new SnapshotStore(sim);
                 _gate = new ContactProbe(sim);
                 _rng = new System.Random(seed);
@@ -1518,7 +1533,8 @@ namespace IGTAP.EngineSim
             {
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (from != null && from.Tick >= inputs.Count) from = null;
-                bool finished = Evaluate(inputs, from, null, mode == "optimize", out float time, out _, out long runTicks, converge: converge);
+                // A priced window keeps a run slower to a cell than the best: it may be cleaner (the segment cut compares times alone).
+                bool finished = Evaluate(inputs, from, null, mode == "optimize" && _penalty == null, out float time, out _, out long runTicks, converge: converge);
                 bool converged = _converged;
                 if (from != null && _rng.Next(BranchCheckEvery) == 0)
                 {
@@ -1532,18 +1548,21 @@ namespace IGTAP.EngineSim
                 if (finished) Interlocked.Increment(ref _owner.Finishes);
                 bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !Beats(_best, _bestRunTicks, time, runTicks));
                 if (!drift && (!finished || !Beats(time, runTicks, _best, _bestRunTicks))) return;
-                // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too.
-                SimSnapshot resume = mode == "optimize" ? from : null;
+                // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too;
+                // a priced window's replay is the whole run, which is what the price is of.
+                SimSnapshot resume = mode == "optimize" && _penalty == null ? from : null;
                 var record = new Replay(inputs.Count);
                 if (resume != null) record.CopyPrefix(_bestRun, resume.Tick);
                 if (!Evaluate(inputs, resume, record, false, out float replayed, out int finishTick, out long replayedTicks)
                     || Beats(_best, _bestRunTicks, replayed, replayedTicks)) return;
                 bool improved = Beats(replayed, replayedTicks, _best, _bestRunTicks);
                 Adopt(inputs, replayed, finishTick, replayedTicks, record);
-                if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode);
+                if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode, _pricedTicks);
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 
+            /// <summary>Plays a run. With a <see cref="OfflineSolver.Penalty"/>, a finished run played whole (no <paramref name="from"/>,
+            /// judged throughout) has its price in its time and runTicks (<see cref="_pricedTicks"/> the ticks), or doesn't finish.</summary>
             /// <param name="encoded">The inputs already run-length stored (a restored source, a cell's replay): the cells this run
             /// files share it. Otherwise they're stored at the run's first filed cell (a run never changes its inputs).</param>
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, Replay replay, bool cut,
@@ -1574,8 +1593,19 @@ namespace IGTAP.EngineSim
                 time = result.Time;
                 finishTick = result.FinishTick;
                 runTicks = result.PhysicsTicks;
-                return result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
+                _pricedTicks = 0;
+                bool finished = result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
+                if (!finished || _penalty == null || from != null || judgeAfter >= 0) return finished;
+                double price = _penalty(inputs, result);
+                if (double.IsPositiveInfinity(price)) return false;
+                _pricedTicks = (long)Math.Ceiling(price / _sim.World.FixedDeltaTime);
+                time += (float)price;
+                runTicks += _pricedTicks;
+                return true;
             }
+
+            readonly Func<List<InputTick>, RunResult, double> _penalty;
+            long _pricedTicks;
 
             // The run Evaluate is on, for its step and tick callbacks: the delegates are made once, so a run allocates no
             // closure. (Evaluate never runs inside one of its own callbacks.)

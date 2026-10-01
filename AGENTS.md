@@ -27,7 +27,9 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
   is live time, physics ticks plus dash freezes and pauses (README `### Rules` 31), and its splits carry both the
   ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
-  next trace (`RememberBestSplits`).
+  next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (README `### Rules` 54) are
+  `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>`,
+  one best each, a human one ranked by its score (`fulltas-classes.json`).
 - All are saved only by `SaveSolverRoute`, which replays them from their start: a category or farm route from the
   course start, a Full-TAS route from a fresh new game. Every judged candidate is checked for both: a new record and
   fewer physics ticks than the farm route.

@@ -127,7 +127,7 @@ namespace IGTAP.EngineSim.Cli
                 // engine hooks the loop's own Simulation plays with (its next run would end at once, "Solver run ended").
                 string techDir = Solve.Option(_args, "--tech-dir", (string)null);
                 TechGrafts all = Solve.OnThread(() => TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(_trace)), techDir: techDir));
-                all.Patterns.RemoveAll(p => Array.IndexOf(WallResetTechs, p.Tech) < 0 || Array.IndexOf(WallResetContacts, p.Kind) < 0 || !p.Resets);
+                all.Patterns.RemoveAll(p => Array.IndexOf(WallResetTechs, p.Tech) < 0 || Array.IndexOf(WallResetContacts, p.Kind) < 0 || !p.Resets || !Glitches.Allows(_class, p.Category));
                 if (all.Patterns.Count == 0)
                 {
                     Log("wallreset: no wall-coyote tech window is mined (techs.json " + string.Join(", ", WallResetTechs) + ")");

@@ -100,6 +100,7 @@ namespace IGTAPTasMod
         /// Improve (the default): `fulltas --auto` from the run's best, with the saved record as a --ref (the engine's run file can
         /// trail it) and `--focus a-b` when goals are picked. `unsolved: true`: the old reach search (`--unsolved`, with the seed
         /// routes) for a run whose best misses goals, which --auto can't start from. Either leaves the game 4 cores by default.
+        /// `class` (README ### Rules 54) solves for that class (`--class`), its own best the --ref.
         /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
@@ -107,16 +108,18 @@ namespace IGTAPTasMod
             int threads = Number(body, "threads", 0);
             if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 4);
             args.Append(" --threads ").Append(threads);
+            string cls = FullTasClassOf(Text(body, "class"));
+            if (cls != MajorClass) args.Append(" --class ").Append(cls);
             bool unsolved = Truthy(body, "unsolved");
             // Improve runs until Stop (a day's worth of minutes); the reach search keeps its hour.
             float minutes = FloatNumber(body, "minutes", unsolved ? 60f : 24 * 60f);
             args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
-            string what;
+            string what, of = run.name + (cls == MajorClass ? "" : " (" + cls + ")");
             if (unsolved)
             {
                 args.Append(" --unsolved");
                 int seeds = WriteFullTasSeeds(run, args);
-                what = "Reaching the missing goals of " + run.name + " on " + threads + " threads from " + seeds + " seed routes";
+                what = "Reaching the missing goals of " + of + " on " + threads + " threads from " + seeds + " seed routes";
             }
             else
             {
@@ -128,14 +131,14 @@ namespace IGTAPTasMod
                         throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
                     args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
                 }
-                MacroDefinition record = FullTasBestRoute(run.name);
+                MacroDefinition record = FullTasClassBest(run.name, cls, out _);
                 if (record != null)
                 {
-                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + "-record.json");
+                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
                     File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
                     args.Append(" --ref ").Append(Quote(file));
                 }
-                what = "Improving " + run.name + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
+                what = "Improving " + of + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
             }
             while (_fullTasOutput.TryDequeue(out _)) { }
             _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
@@ -255,6 +258,7 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
             FullTasRunDef run = FindFullTasRun(Text(body, "name"));
             ResolveFullTasGoals(run);
+            FullTasClassOf(Text(body, "class"));
             string trace = FullTasTracePath(run.name);
             bool current = FullTasTraceCurrent(run, trace);
             var options = (JObject)body.DeepClone();

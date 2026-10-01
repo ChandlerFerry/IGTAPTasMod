@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "id": "inslope-wallbounce",
+  "name": "Inslope wallbounce: a superbounce off a slope's face",
+  "tech": "inslope-wallbounce",
+  "techNote": "A moss slope rising 400 over 60 (81.5 degrees; x 0-60) on a moss floor, the finish box floating over its top (y 560-640). The start falls past the slope's foot at 460 u/s with one dash and no wall jumps (wallJumpsLeft -1, maxWallJumps 0; moss refills nothing, so no final cling either). Dash right with the jump on dash frame 1: the dash runs its hitbox's corner into the face, the level wall rays hit the face, and the wall branch ends the dash with the jump buffered inside dashBoostMax: the superbounce off the slope on tick 4 (Velocity (-276, 703), momentum.y 400.8), over the slope's top into the box (finish tick 26). Ghosts: `no-jump` (the same dash without the jump: clings to the face and slides down), `super` (the dash two inputs later grounds on the face first: a super, peak 507, under the box) and `jump` (no dash, a ground jump off the face: peak 475).",
+  "category": "WJ_DS",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "polygon",
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          60,
+          0
+        ],
+        [
+          60,
+          400
+        ]
+      ],
+      "layer": "Ground",
+      "tag": "Moss"
+    },
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Moss"
+    }
+  ],
+  "start": {
+    "x": -60,
+    "y": 200,
+    "vx": 460,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": false,
+      "coyoteFrames": 0,
+      "wallCoyoteFrames": 0,
+      "wallJumpsLeft": -1,
+      "maxWallJumps": 0,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "finish": [
+    120,
+    600,
+    200,
+    80
+  ],
+  "maxTicks": 60,
+  "ghosts": [
+    {
+      "label": "Superbounce off the slope's face"
+    },
+    {
+      "demo": "no-jump",
+      "label": "The same dash without the jump: clings to the face"
+    },
+    {
+      "demo": "super",
+      "label": "Dash two ticks later: grounds on the face, a super"
+    },
+    {
+      "demo": "jump",
+      "label": "No dash: a ground jump off the face"
+    }
+  ]
+}

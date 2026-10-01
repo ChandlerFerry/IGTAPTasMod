@@ -377,10 +377,10 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
-        /// lab tools write (Full-TAS bests, closest attempts, faster ways, traces, lab maps and demos, forced-paths.json),
-        /// fulltas.json edited by hand, the lists' sizes, playback, recording and solving starting or ending, the scene, and
-        /// the bonus reward boxes' purchases (the courses' hints). The files come as <paramref name="files"/>, the last
-        /// <see cref="StartWebStateFileScan"/>'s hash.
+        /// lab tools write (Full-TAS bests, closest attempts, human candidates, faster ways, traces, lab maps and demos,
+        /// forced-paths.json), fulltas.json edited by hand, the lists' sizes, playback, recording and solving starting or
+        /// ending, the scene, and the bonus reward boxes' purchases (the courses' hints). The files come as
+        /// <paramref name="files"/>, the last <see cref="StartWebStateFileScan"/>'s hash.
         /// </summary>
         long WebStateStamp(long files)
         {
@@ -398,6 +398,7 @@ namespace IGTAPTasMod
             Add(_techs.Count);
             Add(_fullTasRuns.Count);
             Add(_fullTasSplits.Count);
+            Add(_fullTasClasses.Count);
             foreach (upgradeBox box in _bonusRewardBoxes.Values) Add(box != null ? box.TimesUsed : -1);
             // The files not while a route plays: a static state rebuilt for them would cost 1x playback's paced frames. What
             // changed on disk meanwhile shows at the first check after it.
@@ -415,10 +416,14 @@ namespace IGTAPTasMod
         void StartWebStateFileScan()
         {
             if (System.Threading.Interlocked.CompareExchange(ref _webStateFilesBusy, 1, 0) != 0) return;
-            string fullTas = FullTasPath, splits = FullTasSplitsPath, fullTasDir = Path.Combine(EngineSimDir, "fulltas"), labs = LabMapsDir,
+            string fullTas = FullTasPath, splits = FullTasSplitsPath, classes = FullTasClassesPath, fullTasDir = Path.Combine(EngineSimDir, "fulltas"), labs = LabMapsDir,
                 forced = ForcedPathsFile;
-            string[] traces = new string[_fullTasRuns.Count];
-            for (int i = 0; i < traces.Length; i++) traces[i] = FullTasTracePath(_fullTasRuns[i].name);
+            string[] traces = new string[_fullTasRuns.Count], candidates = new string[_fullTasRuns.Count];
+            for (int i = 0; i < traces.Length; i++)
+            {
+                traces[i] = FullTasTracePath(_fullTasRuns[i].name);
+                candidates[i] = FullTasCandidatesDir(_fullTasRuns[i].name);
+            }
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -438,8 +443,10 @@ namespace IGTAPTasMod
                     }
                     AddFile(fullTas);
                     AddFile(splits);
+                    AddFile(classes);
                     AddDirectory(fullTasDir);
                     foreach (string trace in traces) Add(File.Exists(trace) ? 1 : 0);
+                    foreach (string dir in candidates) AddDirectory(dir);
                     AddDirectory(labs);
                     if (forced != null) AddFile(forced);
                     System.Threading.Interlocked.Exchange(ref _webStateFiles, h);

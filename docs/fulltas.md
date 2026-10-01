@@ -58,6 +58,11 @@ states carry each type's field layout: a state of another build is dropped and r
 An event that isn't the next goal changes nothing (buying another box, finishing another course), except under loose
 buys (below). Unlocks come only from the game's purchases; the plugin writes none.
 
+A run's `"human": {"major": 60, "nmg": 20, "grace": 2}` (those when unset) are its human classes' score weights
+(README `### Rules` 54, [Routes](#routes)): the seconds a major span, an nmg span and a spike-grace tick add to the live
+time. A goals edit keeps them, and changing them retires no route: the gate scores with them, and a solve's trace
+carries them (`fulltas.human`), so an edit captures the start again before the next solve.
+
 ### Loose buys
 
 A run's `"buys"` is `"strict"` (the default, also when unset) or `"loose"` (`VMAN`:
@@ -289,6 +294,15 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
+On the 280 fps grid (2026-10-01; the 5.12 died at input 33) its class bests are: `major` and `nmg` 5.63 s (2 spike
+wallbounces and 2 spike supers, 10 spike-grace ticks: score 105.63), `human-major` and `human-nmg` 6.35 s with no nmg
+span and 5 grace ticks (score 16.35). Six parallel classed solves (`--tag`s `autob`, `fresh`, `fresh2`, `bare`, `hmaj`,
+`nmgauto`/`fromnmg`) left 242 candidates in 29 families: the clean climb (0 nmg, 16.35-24.11 by grace ticks 5-9, 6.05-6.43 s),
+the inwall reverse super line (an inwall reverse super and a spike wallbounce, 61.11, 7.11 s, from a solve with no seeds),
+two spike wallbounces without the super (71.98, 7.98 s), and the TAS line (two spike wallbounces and a spike super, 79.83 at
+5.83 s down to 85.55 at 5.55 s). The clean climb came from a goals 1-2 window seeded with the first from-scratch goal 1 (no
+spike super) once windows were priced by score.
+
 `"rebaseAt": [x, y]` (world) on a savestate run moves the world once the restored player has rested: FloatingOrigin's own
 moves (roots, camera, backgrounds, particles, trails, lines, `currentOrigin`) by that point's scene position, then a physics
 sync, as if the game had rebased with the player standing there. The player then rests again and the start is taken, so
@@ -449,6 +463,25 @@ rests, windows, the library) and compares whole runs by live time (`Route.Live`)
 scores; its run file carries `goalHeldFrames` beside `goalPhysicsTicks`. A record named when a run's time was its
 ticks alone is renamed to its live time on its next trace (`RememberBestSplits`).
 
+Each run keeps a best per class (README `### Rules` 54, [Classes](#classes)): the record above is `major`;
+`fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>` are
+the others, one each (a new one replaces the old). `/api/fulltas/submit` takes `class` (unset: major) and judges the route
+as above; then, for every class, the gate runs the engine's `techs-used <trace> <route> --json` on it from the run's
+trace (`fulltas-<run>.json`; the route goes to `fulltas-<run>-classes.json` with the goals it's judged under). An `nmg`
+or `human-nmg` route with a major span is refused (`uses pauselift (major) at tick 142`), and a human one unless its
+score, the gate's live time plus `"human"`'s weights for the engine's counts, is strictly lower than its class best's
+(`fulltas-classes.json`; a human route without a result there ranks at its live time). A class other than major is
+also refused when the engine's replay can't stand for the judged one: no current trace, short of its goals, or another
+live time (by more than 0.0005 s). A major route is ranked by live time as before and saved without a result then. A
+saved route's result (`class`, `score`, `live`, `major`, `nmg`, `graceTicks`, `spans`) goes to
+`fulltas-classes.json` by route id, and the reply carries `class` and `score`. Only a major record adopts other goals;
+a class route of other goals is refused.
+
+**Improve** for a class (`/api/fulltas/solve {name, class}`) runs `fulltas ... --class <class>` with that class's best
+as its `--ref` (`fulltas-<run>-<class>-record.json`). A candidate queue (`/api/fulltas/queue {name, files}`) plays each
+file of `<traces>\fulltas\candidates\<run>\` (only those of the run's current goals) as **Play** plays a route: from a
+fresh new game (or the run's savestate) at 1x, waiting for its last goal; the next starts 2 s after one ends.
+
 A turbo judge or trace (`TurboRunner.Run`) runs every tick of the route inside one frame on Unity's main thread, so a
 long run (a `FalseEnding-Any%` judge, about 19,500 ticks) holds the picture frozen for tens of seconds. Every 250 ms it
 looks at the window's message queue without taking a message (`PeekMessage`, `PM_NOREMOVE`), so Windows keeps the
@@ -513,6 +546,91 @@ inputs past the last unchanged goal the same way.
   type its new centre, then **Save goal** (`POST /api/fulltas/move-goal {name, index, label, x, y}`: `index` 0-based,
   `label` the goal as the map drew it, refused if the goal list changed since). The goal keeps its size and any
   `from=`; the edit is a goals edit like **Save goals** (disabled while a solve or playback runs).
+- **Bests by class** (static `fullTas.runs[].classes`, `human`, `candidates`): the run's four class bests (major, nmg,
+  human-major, human-nmg) with time, score and major / nmg / spike-grace counts (the spans in the row's tooltip), each
+  with **Play** (`/api/fulltas/play {name, class}`) and **Improve** (`/api/fulltas/solve {name, class}`), and the
+  score's weights. **Human candidates** lists the routes human-class solves judged for the run's current goals, by
+  score; tick some (or all, in the header) and **Play selected back to back** (`/api/fulltas/queue {name, files}`)
+  plays them at 1x from the run's start in score order. The live `fullTas.queue` shows which one plays and each one's
+  1x result in the table (finished time, or the goal it got to and why in its tooltip); it stays once done (`index >=
+  of`) until the next queue. **Stop** (`/api/fulltas/queue/stop`, or any Full-TAS Stop) ends it; the one playing still
+  gets its result.
+
+## Classes
+
+Every run keeps four bests, one per class (`enginesim\Runtime\Glitches.cs`, `enginesim\Cli\FullTasClasses.cs`):
+
+| class | may use | ranked by |
+|---|---|---|
+| `major` | anything | goals reached, then live time (the solve as it always was) |
+| `nmg` | glitchless and nmg techs | goals, then fewer major spans, then live time; a route with a major span is never saved |
+| `human-major` | anything | goals, then score |
+| `human-nmg` | glitchless and nmg techs | goals, then fewer major spans, then score; a route with a major span is never saved |
+
+Score = live seconds + 60 × major spans + 20 × nmg spans + 2 × spike-grace ticks; the run's `"human"` weights in
+`fulltas.json` (the trace header's `fulltas.human`) replace the defaults. A span is one occurrence of a tech, however long
+it lasts; a spike-grace tick is a step whose hurtbox touches a spike the run lives through (spike grace stays glitchless).
+
+- **What a route uses** (`Glitches.Classify`): the route replayed with a `TechSteps` recorder; for every `nmg` and `major`
+  tech of techs.json (the config copy merged with the repo seed, as `TechGrafts.Load` reads it), every occurrence: its own
+  check (`[TechCheck]`) asked again from the step after each hit, else every span of its overlay `detector`, one per
+  (tech, step), hits on consecutive steps one span. A Full-TAS route's count stops at its last goal. A tech with neither
+  is listed `undetected` (a route may use it unseen).
+- **`techs-used <trace.json> <route.json> [--json]`** prints a route's spans (input and physics tick), spike-grace ticks,
+  undetected techs and both human scores (`human-nmg` none when it has a major span), on a course trace (to its finish)
+  or a Full-TAS one (as `--check` replays it, strict buys; the route's own `"goals"` when it carries an adopted list).
+  The route is a run file's `inputs` or an offline best's or submit body's `ticks`. `--json` is one line for the gate:
+  `{finished, progress, goals, live, spans: [{tech, category, tick, physics}], major, nmg, graceTicks, undetected,
+  weights, score: {"human-major", "human-nmg"}}`. `techs-used --demos [tech ...]` plays every tech's demos: an nmg or
+  major tech's demo must show its own tech (`ok`, `MISSED`, `undetected`), a glitchless tech's none (`FALSE` lists what it
+  saw). On 2026-10-01: `FalseEnding%-280` 355.07 s uses 7 pauselifts (major), 122 nmg spans (44 GC wall clips, 27
+  momentum after quick restart, 20 KB wall clips, 20 inwall wallbounces, 7 spike wallbounces, 3 spike supers, an inwall
+  super into a wall) and 68 spike-grace ticks: human-major 3351.07 s. `Test-No-Omni-Skip` 6.95 s: 2 spike wallbounces, a
+  spike super, 11 grace ticks, 88.95 s in both human classes.
+- **`fulltas <trace> --class nmg|human-major|human-nmg [--tag T]`** solves for that class (`--class major`, the default,
+  is the solve as before, files and all). Its run file is `fulltas\<run>.<class>.json` (`--tag T`:
+  `<run>.<class>.<T>.json`, so several solves of a class run side by side), with its archive, visits, closest and
+  `--auto` files named the same way, and its complete bests `offline-best\fulltas-<run>.<class>[.<T>]-<time>.json`. The
+  run file adds `class`, `score` (a human class's, else null) and `glitches: {major, nmg, graceTicks, spans}`; the gate
+  submission adds `class`. A classed solve starts from the better (in its class) of the trace's route, the major best
+  `fulltas\<run>.json` and its own run file.
+- **One ranking.** Every acceptance (reach and polish windows, merges and splices, repairs, rebuilt loop goals, known
+  tails, `--auto`'s levers, the fresh check, a commit's re-timing) compares with `Better` / `Ahead`: major by live time
+  exactly as before; a class by its table above. A route's report is made only when it could win (its live time under
+  the best's, or under the best's score in a human class) and kept on the route. A lever that picks by live time alone
+  still has its route ranked by the class before it is kept.
+- **Windows.** A major window's search ranks its finds by their tick at the window's last goal. A class's window
+  (`SearchWindow`'s and `--auto`'s side-by-side windows) prices them: every run that finishes the window, played whole
+  from the window's start, is played again on the worker's simulation with a `TechSteps` recorder, and its spans and
+  spike-grace ticks from the tick of the goal before the window to the window's last goal go into its time as the class
+  scores them (`OfflineSolver.Penalty`; a run resumed from a state inside the window ranks by its time alone, a lower
+  bound, and is played whole and priced before it is kept, and the segment cut that drops a run slower to a cell than the
+  best is off). The best's own way is priced over the same ticks (a window's run starts at its prefix's last input,
+  which can come before the goal before the window is touched: a spike super there is the prefix's, not the find's), so
+  a slower but cleaner way ranks ahead, and the window's baseline is the best's tick there plus its penalty inside the
+  window in ticks. In an nmg class a run with a major span never counts (also in the tail windows, which stay held to
+  time otherwise), and when the best has a major span in the window any find counts. A priced find logs its ticks, its
+  penalty and its score (`auto: window 1-2 find 2.48s (124 physics ticks) + 2701 ticks of penalty = score 2825 against
+  the best's 3891`). The merge splices the 16 latest finds (5 for major) and judges each whole route by the class.
+- **Repairs.** A human class's repair bounds compare scores in ticks: a run's tick at its goal plus its penalty so far,
+  plus the bound's ticks for the rest (the model's lower bounds, the cost-to-go, a tail window's follow-on with its
+  penalty), against the best's end plus its penalty. That covers `--auto`'s hopeless check (the bounds, `--repair-slack`,
+  the cost-to-go), the repair's "falls behind the best at goal k", which broken finds get repaired (ahead at the window's
+  last goal) and the tail windows' bound. Major and nmg compare ticks as always; an nmg class whose best has a major span
+  sets no bound.
+- **nmg classes** graft glitchless and nmg techs only (the mined library filtered by techs.json category; the route
+  corpus's windows, `route`, are left out). A route with a major span can still be the search's working best (it reaches
+  more goals, or has fewer major spans than the one before), but it is never written, submitted or offered.
+- **Candidates.** Every distinct complete route a human class judges (human-nmg: without a major span) is written to
+  `fulltas\candidates\<run>\<class>-<score>-<hash8>.json` in the run file's shape: what the studio's **Human candidates**
+  plays back to back at 1x. A candidate is the route's own replay from the run's start, written only when that replay
+  reaches every goal, with its goal ticks and spans; a route that only claims every goal (`--auto`'s combine composes a
+  known route's way with the best's tail and its shifted goal ticks) never is (on bin-classes4 14 such candidates of
+  `Test-No-Omni-Skip` died or stopped short on replay). A class commits, writes and submits a best only when its
+  replay from the start reaches the goal ticks it claims. A classed solve writes its run file from the route it starts
+  from when that isn't its own.
+- A class keeps the run's goals: `--auto`'s goals part is off, a goals edit isn't adopted (the gate refuses a class route
+  with other goals; only the major record adopts them).
 
 ## Offline search
 
@@ -579,7 +697,8 @@ inputs past the last unchanged goal the same way.
   resumes it; `--fresh` ignores it.
 - The run's goal-boundary states are kept in `archive\fulltas-<run>\states\`: when the run first reaches goal k, or a
   better arrival does, its state is written there, keyed by the hash of the run's inputs up to it (a route edit hashes
-  differently; the start.key drops them with the archive). A window starts from the stored state at its prefix's end
+  differently; the start.key drops them with the archive, and another engine build or world export drops them alone: a
+  recapture keeps the start but renumbers the instance ids a state holds). A window starts from the stored state at its prefix's end
   instead of replaying the run up to there, and an archive cell replays its prefix from the later of its worker's own
   ancestor and a stored goal state on the same inputs. A state is a byte-for-byte snapshot walk (`enginesim/README.md`
   "Memory"); one whose world this can't write is simply not kept, and the run replays to it as before.
@@ -854,7 +973,7 @@ end with the verdict.
 #### Parts: goal-state library, tail windows, combine, scheduler, cost-to-go, macros, goals
 
 ```powershell
-& $exe fulltas $traces\fulltas-FalseEnding-Any%.json --auto --minutes 10 --window-minutes 0.5 --threads 16 --no-submit   # --parts LIST, --tail-minutes t, --combine-repair-minutes m, --library-runs R (150)
+& $exe fulltas $traces\fulltas-FalseEnding%-280.json --auto --minutes 10 --window-minutes 0.5 --threads 16 --no-submit   # --parts LIST, --tail-minutes t, --combine-repair-minutes m, --library-runs R (150)
 ```
 
 `--parts LIST` picks the loop's parts, comma-separated: `lib`, `tail`, `combine`, `sched`, `ctg`, `macros`, `stray`, `goals`, `idle`,

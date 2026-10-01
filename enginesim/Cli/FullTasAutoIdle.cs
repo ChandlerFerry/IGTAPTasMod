@@ -179,10 +179,11 @@ namespace IGTAP.EngineSim.Cli
                 + (notes.Count == 0 ? "" : ": " + string.Join("; ", notes.Take(12)) + (notes.Count > 12 ? $"; and {notes.Count - 12} more" : "")));
             if (!ReferenceEquals(current, best) && ReferenceEquals(_best, best))
             {
-                if (current.Live < best.Live) Commit(current, $"idle under the box ({moved} waits moved)");
-                else
+                if (Ahead(current, best)) Commit(current, $"idle under the box ({moved} waits moved)");
+                else if (!Classed || !Ahead(best, current))
                 {
-                    // As fast, and every wait stands under its box: the best from here on (not a record, so no gate submission).
+                    // As fast, and every wait stands under its box: the best from here on (not a record, so no gate submission; in a
+                    // class, unless the best ranks ahead of it).
                     _best = current;
                     _idledFor = current;
                     WriteRunFile(current);

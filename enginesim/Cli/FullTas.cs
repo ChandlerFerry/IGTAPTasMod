@@ -47,6 +47,8 @@ namespace IGTAP.EngineSim.Cli
             public double LiveSeconds { get { return Progress == 0 ? double.MaxValue : LiveSecondsAt(Progress); } }
             /// <summary>Goal k's arrival in live seconds on the run's own clock.</summary>
             public double LiveSecondsAt(int k) { return Math.Round(MacroEngine.LiveSeconds(Clock(k), Held(k)), 4); }
+            /// <summary>Its nmg and major spans up to its last goal, once a classed ranking made them (<see cref="FullTas.Report"/>).</summary>
+            public GlitchReport Report;
         }
 
         /// <summary>
@@ -148,6 +150,8 @@ namespace IGTAP.EngineSim.Cli
             _harvestFiles.AddRange(Solve.Args(args, "--harvest"));
             _auto = args.Contains("--auto");
             _args = args;
+            _class = Glitches.Parse(Solve.Option(args, "--class", "major"));
+            _tag = ParseTag(args);
         }
 
         public static int Run(string[] args)
@@ -253,6 +257,13 @@ namespace IGTAP.EngineSim.Cli
         {
             string from = Open();
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
+            if (Classed)
+            {
+                Console.WriteLine($"Class {Glitches.Key(_class)}" + (Human ? $" (score: live time + {_weights.Major} s a major span, {_weights.Nmg} s an nmg span, {_weights.Grace} s a spike-grace tick)" : "")
+                    + $", run file fulltas/{Path.GetFileName(_runFile)}" + (Report(_best).Undetected.Count == 0 ? "" : $"; undetected nmg/major techs: {string.Join(", ", _best.Report.Undetected)}"));
+                // The class's run file starts as the route the solve starts from (the trace's or the major best, when better).
+                if (from != "fulltas/" + Path.GetFileName(_runFile)) WriteRunFile(_best);
+            }
             Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
                 from, best = RouteJson(_best) });
             foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
@@ -394,9 +405,11 @@ namespace IGTAP.EngineSim.Cli
             _name = fulltas.GetProperty("name").GetString();
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
+            _weights = HumanWeights.Of(fulltas);
+            _runKey = _name + Suffix;
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
-            _runFile = Path.Combine(dir, "fulltas", _name + ".json");
-            _closestFile = Path.Combine(dir, "fulltas", _name + ".closest.json");
+            _runFile = Path.Combine(dir, "fulltas", _runKey + ".json");
+            _closestFile = Path.Combine(dir, "fulltas", _runKey + ".closest.json");
             _outDir = Path.Combine(dir, "offline-best");
             // Every purchase is a goal: a route that buys a box other than its next goal's spends Cash and levels the goals
             // (and the plans that wrote them) don't count, so no search or check here plays one (docs/fulltas.md).
@@ -408,28 +421,45 @@ namespace IGTAP.EngineSim.Cli
             _dt = _eval.World.FixedDeltaTime;
             _runGoals = _eval.Goals;
             ReloadAvoids();
-            _visitsFile = VisitsFile(dir, _name);
-            _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _name);
+            _visitsFile = VisitsFile(dir, _runKey);
+            _archiveDir = Path.Combine(dir, "archive", "fulltas-" + _runKey);
             string startKey = StartKey(header).ToString("x16");
-            bool startChanged = StartChanged(dir, _name, startKey);
+            bool startChanged = StartChanged(dir, _runKey, startKey);
             _eval.Restore(_origin);
             _startAt = (_eval.PlayerWorld.x, _eval.PlayerWorld.y, _eval.Player.facingRight);
             if (!_fresh && File.Exists(_runFile)) RefuseOtherStart();
             if (startChanged)
             {
-                Log($"Start state changed since the last solve of {_name}: dropping its archive and visits map");
+                Log($"Start state changed since the last solve of {_runKey}: dropping its archive and visits map");
                 Directory.Delete(_archiveDir, true);
                 File.Delete(_visitsFile);
             }
             Directory.CreateDirectory(_archiveDir);
-            File.WriteAllText(StartFile(dir, _name), startKey);
+            File.WriteAllText(StartFile(dir, _runKey), startKey);
             _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
             LoadPieces(dir);
-            _states = new FullTasStates(_archiveDir, _fresh);
-            if (_states.Index.Count > 0) Log($"goal states: {_states.Index.Count} in {Path.Combine("archive", "fulltas-" + _name, "states")}");
+            _states = new FullTasStates(_archiveDir, _fresh, Path.ChangeExtension(_trace, ".world.json"));
+            if (_states.Index.Count > 0) Log($"goal states: {_states.Index.Count} in {Path.Combine("archive", "fulltas-" + _runKey, "states")}");
 
             _best = Padded(Evaluate(Solve.ReadInputs(header)));
             string from = Path.GetFileName(_trace);
+            // A classed solve starts from the run's major best too when it ranks better in the class.
+            string majorFile = Path.Combine(dir, "fulltas", _name + ".json");
+            if (Classed && !_fresh && File.Exists(majorFile))
+            {
+                using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(majorFile));
+                List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
+                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
+                if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
+                Route major = Padded(Evaluate(inputs));
+                if (Better(major, _best))
+                {
+                    _best = major;
+                    from = "fulltas/" + Path.GetFileName(majorFile);
+                }
+            }
             if (!_fresh && File.Exists(_runFile))
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
@@ -445,7 +475,7 @@ namespace IGTAP.EngineSim.Cli
                 // replay the solve then saves over it never loses the old route.
                 if (run.Progress < recorded)
                 {
-                    string backup = Path.Combine(Path.GetDirectoryName(_runFile), $"{_name}.before-repair-{recorded}-of-{_goals}.json");
+                    string backup = Path.Combine(Path.GetDirectoryName(_runFile), $"{_runKey}.before-repair-{recorded}-of-{_goals}.json");
                     if (!File.Exists(backup)) File.Copy(_runFile, backup);
                     Log($"fulltas/{Path.GetFileName(_runFile)} recorded {recorded} goals, but replayed from {Path.GetFileName(_trace)} it reaches {run.Progress} "
                         + $"({(run.Progress < _goals ? _labels[run.Progress] + ": " : "")}{run.EndReason}); repairing from there (the old file is kept as {Path.GetFileName(backup)})");
@@ -581,14 +611,15 @@ namespace IGTAP.EngineSim.Cli
 
         string Describe(Route r)
         {
-            if (r.Progress == _goals) return r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s";
-            return r.Progress + "/" + _goals + " goals" + (r.Progress > 0 ? " (" + r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s)" : "");
+            if (r.Progress == _goals) return r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s" + ClassNote(r);
+            return r.Progress + "/" + _goals + " goals" + (r.Progress > 0 ? " (" + r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s)" : "") + ClassNote(r);
         }
 
-        static bool Better(Route a, Route b)
+        /// <summary>The ranking every acceptance uses: more goals, then <see cref="Ahead"/> (live time, or the class's rank).</summary>
+        bool Better(Route a, Route b)
         {
             if (a.Progress != b.Progress) return a.Progress > b.Progress;
-            return a.Progress > 0 && a.Live < b.Live;
+            return a.Progress > 0 && Ahead(a, b);
         }
 
         Route Evaluate(List<InputTick> inputs, int limit = -1)
@@ -614,6 +645,8 @@ namespace IGTAP.EngineSim.Cli
             double? stallMinutes = null)
         {
             List<InputTick> prefix = route.Inputs.GetRange(0, prefixLength);
+            // A classed window's baseline needs the route's report: made before the replay below leaves _eval at the window's start.
+            if (Classed && baseline != long.MaxValue) Report(route);
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = _goals;
             // The replay to the window's start also keeps every goal state along the way on disk (docs/fulltas.md).
@@ -627,6 +660,7 @@ namespace IGTAP.EngineSim.Cli
             _eval.Restore(at);
             int first = _eval.Progress;
             if (first >= limit) return new List<List<InputTick>>();
+            baseline = Allowance(route, first, limit, baseline);
             var key = (_eval.MovementFingerprint(), _labels[first]);
             string caps = WindowCaps(_runGoals.Goals.Skip(first).Take(limit - first));
             var seeded = new HashSet<List<InputTick>>(seeds, SequenceComparer.Instance);
@@ -669,7 +703,7 @@ namespace IGTAP.EngineSim.Cli
             var tried = new HashSet<long>();
             List<List<InputTick>> found = Explore(id, title, span, create, caps, seeds, archiveFile, baseline, budgetMinutes,
                 stallMinutes ?? (kind == "reach" ? 0.0 : _stallMinutes), kind == "reach" ? prefix : null, _labels.Skip(first).Take(limit - first).ToList(), out List<InputTick> bestInputs,
-                walkers.Count == 0 ? null : solver => CellWalks(solver, at, prefix.Count, limit, walkers, tried, title));
+                walkers.Count == 0 ? null : solver => CellWalks(solver, at, prefix.Count, limit, walkers, tried, title), first);
             if (bestInputs != null) Remember(key, bestInputs);
             return found;
         }
@@ -706,11 +740,12 @@ namespace IGTAP.EngineSim.Cli
         /// One offline search from <paramref name="create"/>'s start for its goals, for up to <paramref name="budgetMinutes"/>, ended
         /// early once it has found a route and gone <paramref name="stallMinutes"/> without a faster one. Returns the routes faster than
         /// <paramref name="baseline"/> in the order found; <paramref name="bestInputs"/> is its best (null: none reached the goals).
-        /// A reach window passes its <paramref name="closestPrefix"/> for the studio's Test best.
+        /// A reach window passes its <paramref name="closestPrefix"/> for the studio's Test best. A class's window prices its finds
+        /// from goal <paramref name="penaltyFrom"/>'s tick (<see cref="WindowPenalty"/>; null: the goals its start has).
         /// </summary>
         List<List<InputTick>> Explore(int id, string title, string span, Func<Simulation> create, string caps, List<List<InputTick>> seeds,
             string archiveFile, long baseline, double budgetMinutes, double stallMinutes, List<InputTick> closestPrefix, ICollection<string> goals,
-            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null)
+            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null, int? penaltyFrom = null)
         {
             var found = new List<List<InputTick>>();
             ReloadAvoids(goals);
@@ -725,6 +760,8 @@ namespace IGTAP.EngineSim.Cli
             if (ownModes) _findModes = new HashSet<string>();
             solver.Resume = _states.Index;
             solver.NoResets = _noResets;
+            // A class's window ranks its finds by score inside the window (FullTasClasses.cs); the baseline is the best's score there.
+            solver.Penalty = WindowPenalty(penaltyFrom);
             TimeSpan begin = _clock.Elapsed, last = begin;
             bool finished = false;
             long windowBest = long.MaxValue;
@@ -740,7 +777,7 @@ namespace IGTAP.EngineSim.Cli
                     finished = true;
                     if (atGoal < windowBest)
                     {
-                        Log($"{title} {span} finish {Seconds(atGoal):0.00}s ({atGoal} physics ticks) at {(_clock.Elapsed - begin).TotalSeconds:0.0}s, "
+                        Log($"{title} {span} finish {FindText(solver, inputs, atGoal)} at {(_clock.Elapsed - begin).TotalSeconds:0.0}s, "
                             + $"{Interlocked.Read(ref solver.Ticks)} ticks simulated");
                         if (_logJson != null)
                             File.AppendAllText(_logJson, JsonSerializer.Serialize(new { wall = _clock.Elapsed.TotalSeconds, time = Seconds(atGoal), runTicks = atGoal,
@@ -1277,9 +1314,9 @@ namespace IGTAP.EngineSim.Cli
             var runs = new List<(string, string[], long[], List<InputTick>)>();
             string dir = Path.GetDirectoryName(_runFile);
             if (!Directory.Exists(dir)) return runs;
-            foreach (string file in Directory.GetFiles(dir, _name + ".*.json").OrderBy(f => f, StringComparer.Ordinal))
+            foreach (string file in Directory.GetFiles(dir, _runKey + ".*.json").OrderBy(f => f, StringComparer.Ordinal))
             {
-                if (Path.GetFileName(file).StartsWith(_name + ".auto", StringComparison.Ordinal)) continue;
+                if (Path.GetFileName(file).StartsWith(_runKey + ".auto", StringComparison.Ordinal) || OtherClassFile(Path.GetFileName(file))) continue;
                 try
                 {
                     using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 256 });
@@ -1371,7 +1408,7 @@ namespace IGTAP.EngineSim.Cli
         {
             Route broken = null;
             int missed = 0, slower = 0;
-            foreach (List<InputTick> route in Enumerable.Reverse(found).Take(5))
+            foreach (List<InputTick> route in Enumerable.Reverse(found).Take(MergeFinds))
             {
                 Route candidate = Splice(best, prefixLength, route, limit, best);
                 if (candidate == null) { missed++; continue; }
@@ -1385,14 +1422,14 @@ namespace IGTAP.EngineSim.Cli
                 // Only one ahead at the window's last goal is worth re-finding the rest for (spliced into the whole run, a window that
                 // was faster on its own can arrive later: a buy waiting on cash).
                 if (broken == null && candidate.Progress < best.Progress && candidate.Progress >= limit
-                    && candidate.GoalPhysics[limit - 1] < best.GoalPhysics[limit - 1]) broken = candidate;
+                    && AheadAt(candidate, best, limit)) broken = candidate;
             }
             if (broken == null)
             {
                 // Faster through the window, and the old route after it still reaches every goal, only later: it was played for the
                 // old state. Re-find the goals from where it falls behind (Repair), rather than dropping the faster window.
                 Route slow = found.Count == 0 ? null : Splice(best, prefixLength, found[found.Count - 1], limit, best);
-                if (slow != null && slow.Progress >= best.Progress && slow.Progress >= limit && slow.GoalPhysics[limit - 1] < best.GoalPhysics[limit - 1]) broken = slow;
+                if (slow != null && slow.Progress >= best.Progress && slow.Progress >= limit && AheadAt(slow, best, limit)) broken = slow;
             }
             if (broken != null)
             {
@@ -1501,7 +1538,7 @@ namespace IGTAP.EngineSim.Cli
                     // Complete but slower: it gets ahead and the old inputs after that lose it again, played from a state they weren't
                     // made for. Search on from the goal where it first falls behind the best, while that moves forward. An investment
                     // is behind from its change on: its goals are planned again instead (FullTasAutoGoals.cs, Replan).
-                    int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => run.Clock(g + 1) > _best.Clock(g + 1), -1);
+                    int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => ScoreAt(run, g + 1) > ScoreAt(_best, g + 1), -1);
                     if (behind > resynced && !_investing)
                     {
                         Log($"repaired run {Describe(run)} is no better: it falls behind the best at goal {behind + 1}; re-finding from there");
@@ -1514,7 +1551,7 @@ namespace IGTAP.EngineSim.Cli
                     Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." + lost });
                     return;
                 }
-                if (run.Live >= _best.Live)
+                if (run.Live >= Bar(_best))
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
                     Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." + lost });
@@ -1602,23 +1639,42 @@ namespace IGTAP.EngineSim.Cli
             r = Padded(r);
             if (_verify != null && (r = _verify(r, where)) == null) return;
             Route previous = _best;
+            // A class writes and submits only a route its inputs play from the run's start to the goal ticks it claims (the report it
+            // was ranked by is then its own).
+            if (Classed && !Replays(r))
+            {
+                RunResult played = _reports[ArchiveHash(r.Inputs, _labels)].run;
+                Log($"not kept ({where}): {Describe(r)} doesn't replay from the start as claimed ({played.Progress} of {_goals} goals: {played.EndReason})");
+                return;
+            }
+            // A route a lever chose by live time alone (a goals edit, a re-timing) is kept in a class only when it ranks ahead there.
+            if (Classed && r.Progress == previous.Progress && !Ahead(r, previous))
+            {
+                Log($"not kept ({where}): {Describe(r)} ranks behind the best {Describe(previous)} in {Glitches.Key(_class)}");
+                return;
+            }
             _best = r;
             WriteRunFile(r);
             string file = _runFile;
-            if (r.Progress == _goals)
+            if (r.Progress == _goals && Clean(r))
             {
                 float time = (float)r.LiveSeconds;
                 Directory.CreateDirectory(_outDir);
-                file = Path.Combine(_outDir, "fulltas-" + _name + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
+                file = Path.Combine(_outDir, "fulltas-" + _runKey + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
                 // A route of goals the loop adopted (--parts goals) carries them and the lists they came from: the game judges it
                 // under them and takes them as the run's when it saves the record.
                 string[] goals = _goalLineage.Count == 0 ? null : _labels;
                 List<string[]> goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage.ToList();
-                Solve.WriteShared(file, JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, goals, goalsFrom, ticks = r.Inputs.Select(t => t.ToJson()) }));
+                Solve.WriteShared(file, Classed
+                    ? JsonSerializer.Serialize(new { fulltas = _name, @class = Glitches.Key(_class), time, score = Human ? ScoreSeconds(r) : (double?)null, runTicks = r.Last, goals, goalsFrom,
+                        ticks = r.Inputs.Select(t => t.ToJson()) })
+                    : JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, goals, goalsFrom, ticks = r.Inputs.Select(t => t.ToJson()) }));
                 _pending?.Set(new Submission { Inputs = r.Inputs, Goals = goals, GoalsFrom = goalsFrom });
             }
-            Log($"new best {Describe(r)} ({where}) -> {Path.GetFileName(file)}");
-            Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = Path.GetFileName(file),
+            // An nmg class's route with a major span is the search's working route only: nothing of it is saved or submitted.
+            GlitchSpan major = Clean(r) ? null : r.Report.Spans.First(s => s.Category == Glitches.MajorCategory);
+            Log($"new best {Describe(r)} ({where}) -> " + (major == null ? Path.GetFileName(file) : $"not saved: it uses {major.Tech} (major) at input tick {major.Tick}"));
+            Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = major == null ? Path.GetFileName(file) : null,
                 complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals, goalsEdit = _goalsEdit,
                 goals = _goalsEdit == null ? null : _labels });
             _committed?.Invoke(r, where);
@@ -1629,7 +1685,7 @@ namespace IGTAP.EngineSim.Cli
             try
             {
                 Route re = Retune(_eval, _origin, r, r.Inputs, 0);
-                if (re != null && re.Progress == _goals && re.Live < r.Live) Commit(re, where + ", waits re-timed from the start");
+                if (re != null && re.Progress == _goals && Ahead(re, r)) Commit(re, where + ", waits re-timed from the start");
             }
             finally { _retuningCommit = false; }
         }
@@ -1639,11 +1695,18 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>After a new best is kept (a course run: CourseAuto writes the course's offline best); null for a Full-TAS run.</summary>
         Action<Route, string> _committed;
 
-        /// <summary>The run file (fulltas/&lt;run&gt;.json): the route's inputs with the goal ticks it reaches them at.</summary>
+        /// <summary>The run file (fulltas/&lt;run&gt;.json, a class's fulltas/&lt;run&gt;.&lt;class&gt;[.&lt;tag&gt;].json with its class, score and
+        /// spans): the route's inputs with the goal ticks it reaches them at. An nmg class never writes a route with a major span.</summary>
         void WriteRunFile(Route r)
         {
+            if (!Clean(r)) return;
             Directory.CreateDirectory(Path.GetDirectoryName(_runFile));
-            Solve.WriteShared(_runFile, JsonSerializer.Serialize(new
+            Solve.WriteShared(_runFile, RunJson(r, RunFields(r)));
+        }
+
+        object RunFields(Route r)
+        {
+            return new
             {
                 name = _name,
                 goals = _labels,
@@ -1655,7 +1718,7 @@ namespace IGTAP.EngineSim.Cli
                 live = r.Progress == _goals ? r.LiveSeconds : -1,
                 startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
                 goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage,
-            }));
+            };
         }
 
         /// <summary>A complete route for the gate, with its goals when they are the loop's adopted ones (null: the run's).</summary>
@@ -1673,7 +1736,9 @@ namespace IGTAP.EngineSim.Cli
             while (true)
             {
                 Submission inputs = _pending.Take();
-                string body = JsonSerializer.Serialize(new { name = _name, ticks = inputs.Inputs.Select(t => t.ToJson()), goals = inputs.Goals, goalsFrom = inputs.GoalsFrom });
+                string body = Classed
+                    ? JsonSerializer.Serialize(new { name = _name, @class = Glitches.Key(_class), ticks = inputs.Inputs.Select(t => t.ToJson()), goals = inputs.Goals, goalsFrom = inputs.GoalsFrom })
+                    : JsonSerializer.Serialize(new { name = _name, ticks = inputs.Inputs.Select(t => t.ToJson()), goals = inputs.Goals, goalsFrom = inputs.GoalsFrom });
                 try
                 {
                     string reply = Solve.Post(http, "/api/fulltas/submit", body);

@@ -406,7 +406,8 @@ namespace IGTAP.EngineSim.Cli
             // A held-back run (the best's own goals) that beats the best is a best of its own: saved as any (the run file, offline-best).
             Route won = spots.SelectMany(s => s.Ladders).Select(l => l.basis).Where(b => b != null && b.Progress == _goals && b.Live < best.Live).OrderBy(b => b.Live).FirstOrDefault();
             int fastest = Enumerable.Range(0, edits.Count).Where(i => results[i].route != null).OrderBy(i => results[i].route.Live).DefaultIfEmpty(-1).First();
-            if (fastest >= 0 && results[fastest].route.Live < Math.Min(best.Live, won?.Live ?? long.MaxValue))
+            // A class keeps the run's goals (only the major record adopts other goals): its held-back run alone.
+            if (!Classed && fastest >= 0 && results[fastest].route.Live < Math.Min(best.Live, won?.Live ?? long.MaxValue))
             {
                 // Its goals (the ladder's, fitted to its strays) become the run's, the old list its lineage, as an adopted goals edit.
                 GoalEdit e = edits[fastest];

@@ -37,9 +37,20 @@ namespace IGTAPTasMod
             /// it's current (docs/fulltas.md "Loose buys"). Unset or "strict": only the next goal's box may be bought.
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string buys;
+            /// <summary>The human classes' score weights (README ### Rules 54): seconds a major span, an nmg span and a spike-grace
+            /// tick add to the live time. Unset: 60, 20 and 2.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
             public List<string> goals = new List<string>();
             [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
+            [JsonIgnore] public FullTasHumanWeights Human { get { return human ?? new FullTasHumanWeights(); } }
+        }
+
+        public sealed class FullTasHumanWeights
+        {
+            public float major = 60f, nmg = 20f, grace = 2f;
+
+            public bool Same(FullTasHumanWeights o) { return major == o.major && nmg == o.nmg && grace == o.grace; }
         }
 
         const string VmanStart = "vman";
@@ -76,6 +87,54 @@ namespace IGTAPTasMod
             public long runTicks;
             public string reason;
             public List<FullTasSplit> splits;
+            [JsonProperty("class")] public string cls;
+            /// <summary>The route's score (FullTasClassRecord.score) when the engine's tech checks classed it.</summary>
+            public float? score;
+        }
+
+        /// <summary>
+        /// The Full-TAS classes (README ### Rules 54): `major` today's runs, by live time; `nmg` without any major tech span, by
+        /// live time; `human-major` and `human-nmg` the same two by score. Each keeps its own best.
+        /// </summary>
+        const string MajorClass = "major";
+        static readonly string[] FullTasClasses = { MajorClass, "nmg", "human-major", "human-nmg" };
+        static bool HumanClass(string cls) { return cls.StartsWith("human-", StringComparison.Ordinal); }
+        static bool NoMajorClass(string cls) { return cls == "nmg" || cls == "human-nmg"; }
+
+        /// <summary>A class key from a request (null or empty: major).</summary>
+        static string FullTasClassOf(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return MajorClass;
+            return FullTasClasses.FirstOrDefault(c => c == key)
+                ?? throw new InvalidOperationException("class: " + string.Join(", ", FullTasClasses) + ", not \"" + key + "\".");
+        }
+
+        /// <summary>A tech span the engine's tech checks found on a route (`techs-used --json`): <see cref="tick"/> its input tick.</summary>
+        public sealed class FullTasSpan
+        {
+            public string tech, category;
+            public int tick;
+            public long physics;
+        }
+
+        /// <summary>A saved route's class result (fulltas-classes.json, by route id): its counts and its score, live time plus the
+        /// weights' seconds for each major span, nmg span and spike-grace tick.</summary>
+        public sealed class FullTasClassRecord
+        {
+            [JsonProperty("class")] public string cls;
+            public float score, live;
+            public int major, nmg, graceTicks;
+            public List<FullTasSpan> spans;
+        }
+
+        /// <summary>What the gate judges a Full-TAS route's class by (FullTasViolation): the run whose trace the engine replays it
+        /// from, the class and its saved best (live time, or score for a human class), and the class result once it holds up.</summary>
+        sealed class FullTasClassJudge
+        {
+            public FullTasRunDef run;
+            public string cls;
+            public float best;
+            public FullTasClassRecord record;
         }
 
         sealed class FullTasPlay
@@ -111,12 +170,15 @@ namespace IGTAPTasMod
         DateTime _fullTasStatOf;
         int _fullTasStatBusy;
         Dictionary<string, List<FullTasSplit>> _fullTasSplits = new Dictionary<string, List<FullTasSplit>>();
+        /// <summary>fulltas-classes.json: each saved Full-TAS route's class result, by route id.</summary>
+        Dictionary<string, FullTasClassRecord> _fullTasClasses = new Dictionary<string, FullTasClassRecord>();
 
         FullTasTracker _fullTas;
         FullTasUnlocks _fullTasUnlocks;
         bool _fullTasStartWasTracking;
         int _fullTasFinishCourse = -1;
         FullTasRunDef _solverFullTas;
+        FullTasClassJudge _solverFullTasClass;
         FullTasPlay _fullTasPlay;
         FullTasPending _fullTasPending;
         int _fullTasParkedFrame = -1000;
@@ -151,15 +213,21 @@ namespace IGTAPTasMod
 
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
+        /// <summary>A saved Full-TAS route of any class (README "Route names"): `fulltas/&lt;run&gt;_NONE [&lt;class&gt; ]&lt;time&gt;`, no class for major.</summary>
+        static readonly Regex FullTasClassRoute = new Regex(@"^fulltas/(?<run>[A-Za-z0-9%-]+)_NONE (?:(?<class>nmg|human-major|human-nmg) )?(?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%-]+)-([\d.]+)\.json$");
         static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
         const int MaxBuyGoalBoxes = 8;
 
         string FullTasPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas.json"); } }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
+        string FullTasClassesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-classes.json"); } }
+        string FullTasCandidatesDir(string run) { return Path.Combine(EngineSimDir, "fulltas", "candidates", run); }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
         /// <summary>A Full-TAS run's route category (README "Route names"): its own unlocks, so the fixed NONE.</summary>
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + default(Caps).Label; }
+        /// <summary>A Full-TAS run's route name for a class: the category, then the class unless it's major.</summary>
+        static string FullTasClassCategory(string run, string cls) { return FullTasCategory(run) + (cls == MajorClass ? "" : " " + cls); }
 
         struct FullTasUnlocks
         {

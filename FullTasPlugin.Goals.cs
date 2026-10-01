@@ -27,6 +27,7 @@ namespace IGTAPTasMod
                         ?? new Dictionary<string, List<FullTasSplit>>();
             }
             catch (Exception ex) { Logger.LogWarning("fulltas-splits.json rejected: " + ex.Message); }
+            LoadFullTasClasses();
             try
             {
                 string text = File.Exists(FullTasPath) ? File.ReadAllText(FullTasPath) : "";
@@ -69,12 +70,10 @@ namespace IGTAPTasMod
             string[] labels;
             try { labels = ResolveFullTasGoals(run).Select(g => g.label).ToArray(); }
             catch (InvalidOperationException) { return; }
-            string category = FullTasCategory(run.name);
             bool retired = false;
             foreach (MacroDefinition m in _library.macros)
             {
-                Match g = MatchCategoryRoute(m.name);
-                if (!g.Success || !string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!FullTasRouteOf(m.name, out string r, out _, out _) || !string.Equals(r, run.name, StringComparison.OrdinalIgnoreCase)) continue;
                 if (_fullTasSplits.TryGetValue(m.id, out List<FullTasSplit> splits) ? splits.Select(s => s.label).SequenceEqual(labels) : !changed) continue;
                 FullTasLog("Retired " + m.name + ": solved for other goals than " + run.name + "'s");
                 m.name += " stale";
@@ -175,7 +174,7 @@ namespace IGTAPTasMod
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, buys = old?.buys, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, buys = old?.buys, human = old?.human, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
@@ -185,20 +184,7 @@ namespace IGTAPTasMod
             return run;
         }
 
-        MacroDefinition FullTasBestRoute(string run)
-        {
-            string category = FullTasCategory(run);
-            MacroDefinition best = null;
-            float bestTime = float.PositiveInfinity;
-            foreach (MacroDefinition m in _library.macros)
-            {
-                Match g = MatchCategoryRoute(m.name);
-                if (!g.Success || !string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)) continue;
-                float time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture);
-                if (time < bestTime) { best = m; bestTime = time; }
-            }
-            return best;
-        }
+        MacroDefinition FullTasBestRoute(string run) { return FullTasClassBest(run, MajorClass, out _); }
 
         MacroDefinition FullTasPlayableRoute(FullTasRunDef run)
         {
@@ -391,6 +377,11 @@ namespace IGTAPTasMod
             if (!finished || Mathf.Abs(replayed - time) > .0001f)
                 audit.Insert(0, "a replay from the new game's start " + (finished ? "finished in " + replayed.ToString("0.00", CultureInfo.InvariantCulture)
                     : "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals"));
+            if (audit.Count == 0)
+            {
+                string refused = FullTasClassViolation(_solverFullTasClass, _solverFullTas.goals, inputs, time);
+                if (refused != null) audit.Add(refused);
+            }
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 
@@ -405,7 +396,11 @@ namespace IGTAPTasMod
             return (goals.Select(g => (string)g).ToList(), from);
         }
 
-        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<string> goals = null, List<List<string>> goalsFrom = null)
+        /// <summary>
+        /// The gate's check of a route of the run for a class (README ### Rules 54; major: today's record): saved as that class's
+        /// best when it holds up and beats it, live time for major and nmg, score for a human class.
+        /// </summary>
+        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<string> goals = null, List<List<string>> goalsFrom = null, string cls = MajorClass)
         {
             // A route of other goals (the engine's goals part dropped or added economy laps): judged under its own goals, and when
             // it's saved as the record those become the run's. Only when they were derived from the run's goals as they are now, and
@@ -416,12 +411,13 @@ namespace IGTAPTasMod
             {
                 string refused = goalsFrom == null || !goalsFrom.Any(l => l.SequenceEqual(current))
                     ? "its goals (" + goals.Count + ") come from another goal list than " + run.name + "'s " + current.Length + " goals"
+                    : cls != MajorClass ? "a " + cls + " route keeps the run's goals (only the major record adopts other goals)"
                     : FullTasGoal.EditRefused(current, goals);
                 if (refused != null)
                 {
                     string text = "Full-TAS " + run.name + ": route not judged: " + refused;
-                    SetFullTasResult(text, new { kind = "judge", text, run = run.name, error = true, finished = false, saved = false, reason = refused });
-                    return new FullTasVerdict { finished = false, reason = refused, splits = new List<FullTasSplit>() };
+                    SetFullTasResult(text, new { kind = "judge", text, run = run.name, @class = cls, error = true, finished = false, saved = false, reason = refused });
+                    return new FullTasVerdict { finished = false, reason = refused, splits = new List<FullTasSplit>(), cls = cls };
                 }
                 judged = JsonConvert.DeserializeObject<FullTasRunDef>(JsonConvert.SerializeObject(run));
                 judged.goals = goals.ToList();
@@ -431,35 +427,44 @@ namespace IGTAPTasMod
             long runTicks = _engine.PhysicsTicks;
             string status = _engine.Status;
             ParkAtNewGameStart();
-            string category = FullTasCategory(run.name);
-            float best = CategoryBest(category);
-            var verdict = new FullTasVerdict { finished = finished, time = time, runTicks = runTicks, splits = FullTasSplits(tracker) };
+            string category = FullTasClassCategory(run.name, cls);
+            FullTasClassBest(run.name, cls, out float best);
+            bool human = HumanClass(cls);
+            var verdict = new FullTasVerdict { finished = finished, time = time, runTicks = runTicks, splits = FullTasSplits(tracker), cls = cls };
             if (!finished)
             {
                 FullTasGoal next = tracker.Current;
                 verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + status + ")";
             }
+            // A human score is the live time and more: a time that isn't under the best score can't make a lower one.
             else if (!(time < best - .0001f))
-                verdict.reason = "not faster than " + category + " " + best.ToString("0.00", CultureInfo.InvariantCulture);
+                verdict.reason = (human ? "live time not under " + category + "'s score " : "not faster than " + category + " ") + best.ToString("0.00", CultureInfo.InvariantCulture);
             else
             {
                 List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
                 string name = category + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
+                var classJudge = new FullTasClassJudge { run = run, cls = cls, best = best };
                 _solverFullTas = judged;
+                _solverFullTasClass = classJudge;
                 try { verdict.saved = SaveSolverRoute(route, time); }
-                finally { _solverFullTas = null; }
+                finally { _solverFullTas = null; _solverFullTasClass = null; }
+                verdict.score = classJudge.record?.score;
                 if (verdict.saved)
                 {
-                    StoreFullTasSplits(_library.macros.LastOrDefault(m => m.name == name), verdict.splits);
-                    verdict.reason = "saved as " + name;
+                    MacroDefinition saved = _library.macros.LastOrDefault(m => m.name == name);
+                    StoreFullTasSplits(saved, verdict.splits);
+                    if (cls != MajorClass) PruneFullTasClass(run.name, cls, saved);
+                    if (classJudge.record != null) StoreFullTasClass(saved, classJudge.record);
+                    verdict.reason = "saved as " + name + (classJudge.record == null ? "" : ", score " + FullTasScoreText(classJudge.record, run.Human));
                     if (judged != run) verdict.reason += "; " + AdoptFullTasGoals(run, judged.goals);
                 }
                 else verdict.reason = _solverLog[_solverLog.Count - 1];
             }
-            string line = "Full-TAS " + run.name + ": " + (finished ? time.ToString("0.00", CultureInfo.InvariantCulture) + "s live in turbo (" + runTicks + " frames)" : "no finish in turbo")
-                + ", " + verdict.reason;
-            SetFullTasResult(line, new { kind = "judge", text = line, run = run.name, error = !finished, finished, time = finished ? time : (float?)null, saved = verdict.saved,
-                reason = verdict.reason, reached = tracker.Next, of = tracker.Goals.Length, next = tracker.Current?.label, splits = verdict.splits });
+            string line = "Full-TAS " + run.name + (cls == MajorClass ? "" : " " + cls) + ": "
+                + (finished ? time.ToString("0.00", CultureInfo.InvariantCulture) + "s live in turbo (" + runTicks + " frames)" : "no finish in turbo") + ", " + verdict.reason;
+            SetFullTasResult(line, new { kind = "judge", text = line, run = run.name, @class = cls, error = !finished, finished, time = finished ? time : (float?)null,
+                score = verdict.score, saved = verdict.saved, reason = verdict.reason, reached = tracker.Next, of = tracker.Goals.Length, next = tracker.Current?.label,
+                splits = verdict.splits });
             return verdict;
         }
 

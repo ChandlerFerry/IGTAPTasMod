@@ -56,6 +56,14 @@ namespace IGTAPTasMod
                 if (run.Vman) { w.WritePropertyName("start"); w.WriteValue(VmanStart); }
                 if (run.savestate != null) { w.WritePropertyName("savestate"); w.WriteValue(run.savestate); }
                 if (run.LooseBuys) { w.WritePropertyName("buys"); w.WriteValue("loose"); }
+                if (run.human != null)
+                {
+                    w.WritePropertyName("human"); w.WriteStartObject();
+                    w.WritePropertyName("major"); w.WriteValue(run.human.major);
+                    w.WritePropertyName("nmg"); w.WriteValue(run.human.nmg);
+                    w.WritePropertyName("grace"); w.WriteValue(run.human.grace);
+                    w.WriteEndObject();
+                }
                 if (run.rebaseAt != null)
                 {
                     w.WritePropertyName("rebaseAt"); w.WriteStartArray();
@@ -165,7 +173,7 @@ namespace IGTAPTasMod
         void RetireBrokenFullTasRoute(MacroDefinition route, string how, string reason, FullTasTracker tracker)
         {
             bool broken = reason != null && (reason.StartsWith("Player death", StringComparison.Ordinal) || reason == "Timeline complete");
-            if (!broken || tracker.Next >= tracker.Goals.Length || !MatchCategoryRoute(route.name).Success || !_library.macros.Contains(route)) return;
+            if (!broken || tracker.Next >= tracker.Goals.Length || !FullTasRouteOf(route.name, out _, out _, out _) || !_library.macros.Contains(route)) return;
             FullTasLog("Retired " + route.name + ": its " + how + " " + reason.ToLowerInvariant() + " after " + tracker.Next + " of " + tracker.Goals.Length + " goals");
             route.name += " stale";
             SaveLibrary();
@@ -197,7 +205,10 @@ namespace IGTAPTasMod
             return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, world));
         }
 
-        bool FullTasTraceCurrent(FullTasRunDef run, string trace)
+        /// <summary>The trace was captured for the run as it is now (start, goals, game build, ...); with <paramref name="weights"/>
+        /// also for its human weights, which only a solve's scores read (the gate takes fulltas.json's), so an edit of them
+        /// recaptures before a solve.</summary>
+        bool FullTasTraceCurrent(FullTasRunDef run, string trace, bool weights = true)
         {
             if (!File.Exists(trace)) return false;
             try
@@ -221,9 +232,10 @@ namespace IGTAPTasMod
                 }
                 if (header == null) return false;
                 string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
+                FullTasHumanWeights human = header["human"]?.ToObject<FullTasHumanWeights>() ?? new FullTasHumanWeights();
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
-                    && ((string)header["buys"] == "loose") == run.LooseBuys
+                    && ((string)header["buys"] == "loose") == run.LooseBuys && (!weights || human.Same(run.Human))
                     && RebaseOf(header) == run.RebaseAt && (string)header["build"] == Application.buildGUID
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }

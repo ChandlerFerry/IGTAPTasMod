@@ -35,6 +35,7 @@ namespace IGTAP.EngineSim.Cli
                     case "humanize": return Humanize.Run(args.Skip(1).ToArray());
                     case "suggest": return Suggest.Run(args.Skip(1).ToArray());
                     case "techs": return Techs.Run(args.Skip(1).ToArray());
+                    case "techs-used": return TechsUsed.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
@@ -164,9 +165,15 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the tech itself seen in it), each direction with its inputs and path,\n"
                             + "                                         a line each as found: <route>-techs.jsonl\n"
                             + "  techs --demos [tech ...] [--dump dir]   each tech's check on its demos and its labs' ghosts\n"
+                            + "  techs-used <trace.json> <route.json> [--json] | techs-used --demos [tech ...] [--tech-dir D]\n"
+                            + "                                         the nmg and major techs a route uses (every occurrence), its spike-grace\n"
+                            + "                                         ticks and human scores (course or Full-TAS trace; a route's \"goals\" are\n"
+                            + "                                         judged instead of the trace's); --json: one line for the gate;\n"
+                            + "                                         --demos: every tech demo, its own tech and no stray glitch\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] [--no-tech-grafts] [--graft-rate r]\n"
+                            + "          [--class major|nmg|human-major|human-nmg] [--tag T]\n"
                             + "          | --check <route.json> [--chain-vs <old route.json>] | --waste-audit <route.json> [--expect a-b,..] [--clean kind:a-b,..]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
@@ -176,6 +183,8 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
                             + "                                         (archive/fulltas-pieces.json; a missing piece is searched for up to\n"
                             + "                                         p minutes, default 3); run state in <traces>/fulltas/<run>.json,\n"
+                            + "                                         (--class C, --tag T: fulltas/<run>.C[.T].json, ranked by the class, the\n"
+                            + "                                         human candidates in fulltas/candidates/<run>/; docs/fulltas.md \"Classes\"),\n"
                             + "                                         bests to the gate (/api/fulltas/submit) when the game runs; --seed:\n"
                             + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
                             + "                                         (--seed-list: a file of seed paths, one per line);\n"

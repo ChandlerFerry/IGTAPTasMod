@@ -131,6 +131,7 @@ namespace IGTAPTasMod
             }
             PumpFullTasPending();
             PumpFullTasSolve();
+            PumpFullTasQueue();
         }
 
         object HandleFullTas(WebStudioRequest request, JObject body)
@@ -154,6 +155,14 @@ namespace IGTAPTasMod
                 case "/api/fulltas/play":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
+                    if (body["class"] != null)
+                    {
+                        string cls = FullTasClassOf(Text(body, "class"));
+                        MacroDefinition best = FullTasClassBest(run.name, cls, out _)
+                            ?? throw new InvalidOperationException("Full-TAS run " + run.name + " has no " + cls + " route yet.");
+                        StartFullTasPlayback(run, best, null, Number(body, "fromTick", 0));
+                        return new { ok = true };
+                    }
                     if (!Truthy(body, "closest"))
                     {
                         StartFullTasPlayback(run, FullTasPlayableRoute(run), null, Number(body, "fromTick", 0));
@@ -166,6 +175,14 @@ namespace IGTAPTasMod
                         steps = ToSteps(closest.inputs) }, closest.reached);
                     return new { ok = true };
                 }
+                case "/api/fulltas/queue":
+                    return StartFullTasQueue(body);
+                case "/api/fulltas/queue/stop":
+                {
+                    StopFullTasQueue();
+                    if (_fullTasPlay != null) StopPlayback("Queue stopped from Web Studio");
+                    return new { ok = true };
+                }
                 case "/api/fulltas/solve":
                     return StartFullTasSolve(request, body);
                 case "/api/fulltas/stop":
@@ -176,6 +193,7 @@ namespace IGTAPTasMod
                         if (_fullTasProcess == null && _fullTasSolveStatus.StartsWith("Capturing", StringComparison.Ordinal)) _fullTasSolveStatus = "Stopped";
                         CompleteFullTasPending(409, new { ok = false, error = _fullTasPending.what + ": stopped." });
                     }
+                    StopFullTasQueue();
                     if (_fullTasPlay != null) StopPlayback("Stopped from Web Studio");
                     return new { ok = true };
                 }
@@ -185,9 +203,10 @@ namespace IGTAPTasMod
                     ResolveFullTasGoals(run);
                     if (!(body["ticks"] is JArray)) throw new InvalidOperationException("ticks: the run's inputs.");
                     List<SolverTick> inputs = body["ticks"].ToObject<List<SolverTick>>();
+                    string cls = FullTasClassOf(Text(body, "class"));
                     // A route of goals `fulltas --auto` adopted (its goals part) carries them and the goal lists they came from.
                     var (goals, from) = FullTasRouteGoals(body);
-                    return FullTasWhenReady(request, run, "Judging a " + run.name + " route", () => FullTasJudge(run, inputs, goals, from));
+                    return FullTasWhenReady(request, run, "Judging a " + run.name + (cls == MajorClass ? "" : " " + cls) + " route", () => FullTasJudge(run, inputs, goals, from, cls));
                 }
                 case "/api/fulltas/avoid":
                 {
@@ -236,7 +255,8 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown Full-TAS endpoint." };
         }
 
-        /// <summary>The runs (studio static state): goals, bests, offline bests, closest attempts; they change with files and routes.</summary>
+        /// <summary>The runs (studio static state): goals, bests (the record and each class's), offline bests, closest attempts,
+        /// human candidates; they change with files and routes.</summary>
         object[] BuildFullTasRunsWebState()
         {
             return _fullTasRuns.Select(r =>
@@ -257,12 +277,13 @@ namespace IGTAPTasMod
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
+                    classes = FullTasClassesWebState(r.name), human = r.Human, candidates = FullTasCandidatesWebState(r.name, labels),
                     playable = best != null || offline != null && offline.inputs.Count > 0,
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
         }
 
-        /// <summary>The solve, the last result and the playback (studio live state).</summary>
+        /// <summary>The solve, the last result, the playback and the candidate queue (studio live state).</summary>
         object BuildFullTasLiveWebState()
         {
             FullTasPlay play = _fullTasPlay;
@@ -274,6 +295,7 @@ namespace IGTAPTasMod
                 lastResult = _fullTasLastResult,
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,
+                queue = FullTasQueueWebState(),
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
                     next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks,
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };

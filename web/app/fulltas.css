@@ -31,6 +31,27 @@
 .fullTasInline { display: flex; gap: 9px; align-items: flex-end; }
 .fullTasInline .field { flex: 1; margin-top: 12px; }
 .fullTasSearch { margin-top: 18px; }
+.ftClasses { margin-top: 18px; }
+.ftClassTable .tableHead, .ftClassTable .tableRow { grid-template-columns: minmax(0,1fr) 80px 70px 52px 52px 52px 170px; align-items: center; }
+.ftClassTable .tableRow { padding-top: 7px; padding-bottom: 7px; }
+.ftClassTable .tableRow.pending { color: var(--muted); }
+.ftClassTable .tableRow.human > span:first-child { color: var(--human); font-weight: 700; }
+.ftRowButtons { display: flex; gap: 6px; justify-content: flex-end; }
+.ftRowButtons button { padding: 5px 10px; }
+.ftQueue { display: flex; gap: 12px; align-items: center; margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: #1d1430; box-shadow: inset 3px 0 0 var(--human); }
+.ftQueue > div { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.ftQueue small { color: var(--muted); font-size: 12px; word-break: break-all; }
+.ftQueue .ftMeter i { background: var(--human); }
+.ftCandidatesTitle { margin-top: 18px; }
+.ftCandidates { max-height: 50vh; overflow-y: auto; }
+.ftCandidates > .tableHead { position: sticky; top: 0; z-index: 1; background: #0b1829; }
+.ftCandidates .tableHead, .ftCandidates .tableRow { grid-template-columns: 24px 70px 80px minmax(0,1fr) 52px 52px 52px 110px; align-items: center; }
+.ftCandidates .tableRow { cursor: pointer; user-select: none; }
+.ftCandidates .tableRow:hover { background: #10263d; }
+.ftCandidates .tableRow.picked { background: #1d1430; }
+.ftCandidates .tableRow.playing { box-shadow: inset 3px 0 0 var(--human); }
+.ftCandidates .good { color: var(--green); }
+.ftCandidates .bad { color: var(--red); }
 
 .ftSolve { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .ftProblem { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--red); border-radius: 10px; background: #3a1420; }

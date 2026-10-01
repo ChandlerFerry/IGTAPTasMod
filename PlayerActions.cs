@@ -35,6 +35,7 @@ namespace IGTAPTasMod
 
         void StopPlayback(string reason)
         {
+            StopFullTasQueue();
             if (_tas != null) { TasClose(reason); return; }
             _pendingReplay = null;
             _pendingReplayStartDelayTicks = 0;

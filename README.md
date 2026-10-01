@@ -75,7 +75,8 @@
     time, what it takes at 1x: its physics ticks at 0.02 s plus the frames it stood still in (a dash freeze's, a pause's,
     1/280 s each on the 280 fps clock; `MacroEngine.HeldFrames`, `MacroEngine.LiveSeconds`), and reported with both,
     live time and game frames (the ticks). Turbo, the offline engine and 1x count the same frames (the gate: a replay's
-    live time must match).
+    live time must match). Every class of a run (54) is timed so and named by it: `fulltas/<run>_NONE <time>` (major),
+    `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>`, `fulltas/<run>_NONE human-nmg <time>`.
 32. Nothing after the finish is part of the route.
 33. No teleports, position offsets or moving the player.
 34. Only reset: the game's quick restart, `Movement.respawn(true)` (the gate refuses "a quick restart on two ticks in a
@@ -104,8 +105,17 @@
 51. `FloatingOrigin` rebases in turbo and offline as at 1x: turbo runs the game's own `LateUpdate` and `MoveOrigin`, and
     a turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`). A course, bonus or transition
     start is judged at one origin, whatever ran before: where the game's own rebase on the player standing there leaves it.
-52. Only save strictly faster times: record by the game timer, farm by physics ticks.
+52. Only save strictly faster times: record by the game timer, farm by physics ticks; human classes: strictly lower
+    score.
 53. Trace every new best and name its trick.
+54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
+    and `human-nmg` the same two by score. Score: live time plus 60 s a major span, 20 s an nmg span and 2 s a
+    spike-grace tick (per run, `fulltas.json` `"human": {"major", "nmg", "grace"}`); a span is one occurrence of a tech,
+    however long, and a grace tick a step on spikes the run lives through. A tech's category (glitchless, nmg, major) is
+    `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks: after its
+    replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
+    `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one and keeps each
+    route's result (`fulltas-classes.json`). A tech no check detects isn't counted (`techs-used` lists them).
 
 #### Exceptions
 

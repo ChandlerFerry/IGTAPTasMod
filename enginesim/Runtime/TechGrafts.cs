@@ -882,7 +882,7 @@ namespace IGTAP.EngineSim
         /// from, or a comparison ghost of its lab (labmaps/&lt;lab&gt;.json "ghosts": most miss the tech on purpose).</summary>
         public sealed class CheckDemo
         {
-            public string Tech, Detector, Name, Label, Error;
+            public string Tech, Category, Detector, Name, Label, Error;
             public bool Ghost;
             internal DemoSource Source;
 
@@ -901,7 +901,8 @@ namespace IGTAP.EngineSim
             {
                 string name = source.Lab ? source.LabId + (string.IsNullOrEmpty(source.LabDemo) ? "" : "." + source.LabDemo) : Path.GetFileName(source.Trace);
                 bool resolved = source.Trace != null && File.Exists(source.Trace);
-                demos.Add(new CheckDemo { Tech = source.Tech.id, Detector = source.Tech.detector, Name = name, Source = source, Error = resolved ? null : source.Trace ?? NoDemoRoute });
+                demos.Add(new CheckDemo { Tech = source.Tech.id, Category = source.Tech.category, Detector = source.Tech.detector, Name = name, Source = source,
+                    Error = resolved ? null : source.Trace ?? NoDemoRoute });
             }
             foreach (DemoSource source in sources)
             {
@@ -919,7 +920,7 @@ namespace IGTAP.EngineSim
                     catch (Exception ex) { error = ex.Message; }
                     demos.Add(new CheckDemo
                     {
-                        Tech = source.Tech.id, Detector = source.Tech.detector, Name = name, Ghost = true, Source = ghost, Error = error,
+                        Tech = source.Tech.id, Category = source.Tech.category, Detector = source.Tech.detector, Name = name, Ghost = true, Source = ghost, Error = error,
                         Label = g.TryGetProperty("label", out JsonElement label) ? label.GetString() : null,
                     });
                 }
@@ -939,6 +940,15 @@ namespace IGTAP.EngineSim
                     ?? @"C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer",
                 "BepInEx", "config", "IGTAPTasMod", "enginesim");
             return Directory.Exists(canonical) ? canonical : Path.GetFullPath(tracesDir);
+        }
+
+        /// <summary>Every tech of the catalog (<see cref="Catalog"/>: the config folder's techs.json merged with the repo seed, as
+        /// <see cref="Load"/> reads it) with its category and detector.</summary>
+        public static List<(string id, string category, string detector)> Categories(string tracesDir, string techDir = null)
+        {
+            tracesDir = ResolveTechDir(tracesDir, techDir);
+            string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
+            return Catalog(config).Select(t => (t.id, t.category, t.detector)).ToList();
         }
 
         // The catalog as the plugin merges it (TechCatalog.MergeSeedTechs): the config folder's techs.json (the Tech tab's live
@@ -969,11 +979,12 @@ namespace IGTAP.EngineSim
             {
                 if (byId.TryGetValue(seed.id, out TechDef mine))
                 {
-                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap. So does the
-                    // detector: the code that runs it (the overlay, TechChecks) is the repo's.
+                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap, and a live "todo"
+                    // goes once the seed has a lab and no marker (as TechCatalog.FillSeedGaps). So does the detector: the code
+                    // that runs it (the overlay, TechChecks) is the repo's.
                     mine.graftKey = seed.graftKey ?? mine.graftKey;
                     mine.graftDemos = seed.graftDemos ?? mine.graftDemos;
-                    mine.graft = seed.graft ?? mine.graft;
+                    mine.graft = seed.graft ?? (mine.graft == "todo" && !string.IsNullOrEmpty(seed.labmap) ? null : mine.graft);
                     mine.detector = seed.detector ?? mine.detector;
                     if (!string.IsNullOrEmpty(seed.labmap) && (seed.labmap != mine.labmap || seed.labDemo != mine.labDemo))
                     {
