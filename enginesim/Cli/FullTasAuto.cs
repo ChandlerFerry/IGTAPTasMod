@@ -1506,8 +1506,7 @@ namespace IGTAP.EngineSim.Cli
         /// cash, so every later buy is still paid. Most ticks per cash earned first; each drop lowers the cash after it. A dropped
         /// lap's slack is its ticks less the straight walk at top speed from where it starts to where it ends, filed on its finish.
         /// A break (a lap that sets a new best time) has none: it pays every clone in flight at once and the clones run the faster
-        /// path from then on (build 25630570: the pool then runs in step and each later break pays C (1 - o / T')), which the Cash
-        /// after it doesn't show as spare.
+        /// path from then on, which the Cash after it doesn't show as spare.
         /// </summary>
         void EconomySlack(List<GoalRow> rows, List<Sample> s)
         {

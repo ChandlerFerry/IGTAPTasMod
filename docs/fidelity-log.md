@@ -735,6 +735,19 @@ ordered as the sections they came from.
   route then plays at 1x in 358.69 s live (0 dropped frames), as turbo and offline time it.
 - **Where:** `TasPlugin.PacePlayback` (`_pacedTime`).
 
+## Game build 25640326: the spawn reserve
+
+- **Symptom:** Steam updated the game on 2026-09-30 16:37 (build 25640326); `FalseEnding-Any%` 346.74 dies at goal 86
+  in turbo (`buy:buywj` not yet affordable).
+- **Cause:** one statement: an on-screen spawn sets `timeSinceLastClone` to 0 when it is at least 4000, so a course's
+  first spawn spends `Start`'s 10000 and bought clones fill one an interval
+  ([`docs/fulltas.md`](fulltas.md#clones-on-build-25640326)). The scenes gained `Moss` tilemaps (no other collider
+  changed).
+- **Fix:** the engine's spawn does the same (`Economy.cs:318`); turbo runs the game's own. The engine matches the game's
+  turbo trace (`fe-b640-34674`) in RNG, Cash and position on every tick to the death at 5270. `plan_fulltas.py` fills
+  bought clones and a break's refill one an interval.
+- **Where:** `Economy.cs:318`, `tools/plan_fulltas.py`.
+
 ## Game build 25630570: clones and buy-max
 
 - **Symptom:** Steam updated the game on 2026-09-30 10:34 (build 25630570); routes judged before it pay different Cash

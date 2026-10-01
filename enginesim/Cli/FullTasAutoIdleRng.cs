@@ -10,9 +10,10 @@ namespace IGTAP.EngineSim.Cli
     // --parts idle, the RNG under the box (docs/fulltas.md, "Parts" item 7): a wait for Cash is time the player can spend drawing
     // the RNG. The clones' spawn rolls (Economy.RollCount) draw it, and so do the player's own sounds: a jump 2 (playSFX's clip and
     // pitch), a landing's footstep 2 (Audio.PlayAudio with pitch variance; 5 after 0.8 s in the air), a quick restart, a dash, a
-    // wall slide. Since build 25630570 an on-screen course with clones rolls on every rendered frame (SpawnClone runs whenever
-    // its timer is past due, and a spawn now only takes the interval off it: 2 draws a frame, more on a success, 6 frames a
-    // physics tick), and a roll on a frame with no free slot is drawn and thrown away. So any extra draw moves which rolls
+    // wall slide. On build 25640326 an on-screen course with a full pool rolls on every frame its timer is past due (SpawnClone
+    // runs, and a spawn only takes the interval off it: 2 draws a frame, more on a success, 6 frames a physics tick), and the
+    // pool banks the timer, about 1.5 frames a lap, until it rolls on every frame (Courses 1 and 2 within about a minute); a roll
+    // on a frame with no free slot is drawn and thrown away. So any extra draw moves which rolls
     // fall on the frames that spawn, from then on; before, only a roll between a hop's jump and landing did. Each hop schedule
     // is a lottery ticket (its class: the RNG's state where the wait ends); each class is played whole with the later waits
     // re-timed to their Cash (Retune), and the earliest end is kept.

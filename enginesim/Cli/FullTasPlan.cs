@@ -846,8 +846,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// Cash per tick laps earn from s (just after inputs): the course's lap reward over a lap of lapTicks, plus the clones' income
         /// standing still after a quick restart (off any box) after IdleSettle (a clone just bought first pays about a path later),
-        /// over the whole clone laps of the course that fit in IdleTicks: on build 25630570 a record lap leaves its pool in step,
-        /// paying in a bunch once a lap, so a window cut mid-lap is off by up to a bunch. formula: the same from the clones' own
+        /// over the whole clone laps of the course that fit in IdleTicks: a pool that runs in step pays in a bunch once a lap, so a
+        /// window cut mid-lap is off by up to a bunch. formula: the same from the clones' own
         /// numbers (<see cref="CloneIncome"/>), a cross-check. Null when no restart or stand plays.
         /// </summary>
         double? Rate(SimSnapshot s, List<InputTick> inputs, int course, long lapTicks, out double formula)
@@ -876,10 +876,11 @@ namespace IGTAP.EngineSim.Cli
         /// break (docs/fulltas.md, "Engine farm planner"). K is at most the ticks between the best before the record lap and the
         /// fastest. The laps after the first are played here as the record lap's way from the restart (no break: its time is the
         /// best already), then K(K-1)/2 idle ticks for the slowing; each of those K - 1 breaks is credited with the Cash the model
-        /// gives it (build 25630570: while the course keeps Start's spawn reserve a free slot refills on the next frame, so after a
-        /// break the pool runs in step, and at the next break every clone has run the restart's overhead o of its new path T': it
-        /// pays the rest, C (1 - o / T') payouts). A course that has been off screen with clones has lost the reserve for good: its
-        /// pool refills one an interval, and a break's C / 2 is only an advance the emptier pool pays back over T' (none credited).
+        /// gives it (while the course keeps Start's spawn reserve a free slot refills on the next frame, so after a break the pool
+        /// runs in step, and at the next break every clone has run the restart's overhead o of its new path T': it pays the rest,
+        /// C (1 - o / T') payouts). A course whose clones have spawned (on build 25640326 on screen too) or been off screen has lost
+        /// the reserve for good: its pool refills one an interval, and a break's C / 2 is only an advance the emptier pool pays back
+        /// over T' (none credited).
         /// </summary>
         List<(string what, FullTasGoal[] goals, List<InputTick> inputs, SimSnapshot state, long tick, double credit)> Ladders(
             List<InputTick> inputs, SimSnapshot state, long tick, List<FullTasGoal> planned, FullTasGoal[] lap, int course)
@@ -929,7 +930,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         // The studio's 280 fps clock renders six frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
-        // before its slot refills (clonesScript on build 25630570: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
+        // before its slot refills (clonesScript, builds 25630570 and 25640326: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
         const double FramesPerTick = 6, CloneLifeFrames = 1.5;
 
         /// <summary>The course's clone count, and whether it still has Start's spawn reserve (its spawn timer far past any interval).</summary>
@@ -985,8 +986,8 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The clones' Cash per physics tick by formula, every course with clones and a path (build 25630570). On screen every slot
-        /// refills the frame after its clone pays, so min(C, path frames) clones fly and each pays once a path: C pay / path, less
+        /// The clones' Cash per physics tick by formula, every course with clones and a path (build 25640326). On screen a full pool
+        /// banks its spawn timer, so every slot refills the frame after its clone pays, so min(C, path frames) clones fly and each pays once a path: C pay / path, less
         /// 1.5 frames a lap. Off screen a course pays ceil(pay C / path) (the rolls' speed counted) once its timer reaches 1 s:
         /// every 50 ticks.
         /// </summary>

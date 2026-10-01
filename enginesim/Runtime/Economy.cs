@@ -317,9 +317,8 @@ namespace IGTAP.EngineSim
                     c.V.OffscreenDivisor = 1f;
                     c.V.Pooled--;
                     c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j });
-                    // Build 25630570 (2026-09-30) keeps the overshoot (before: 0f). Start's 10000 then never runs down on screen: once a
-                    // course's clones spawn on screen, SpawnClone runs every frame and spawns whenever a slot is free.
-                    c.V.SinceLast = (float)(c.V.SinceLast - (double)c.V.NextDue);
+                    // Build 25640326: a timer still at Start's 10000 (>= 4000) goes to 0, any other keeps the overshoot.
+                    c.V.SinceLast = c.V.SinceLast >= 4000f ? 0f : (float)(c.V.SinceLast - (double)c.V.NextDue);
                     if (!ColourCheck(c)) return false;
                 }
                 return true;

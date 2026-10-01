@@ -38,9 +38,10 @@ TOKEN = {"R": "buyreward2", "C": "buyclone2", "M": "buyclonemult2", "G": "buyglo
 # Off screen a course spawns (and pays) once its timer reaches 1 s, reset to 0: 300 rendered frames on the 280 fps clock's
 # grid (six a physics tick), 50 ticks.
 OFFSCREEN = 50
-# Game build 25630570: on screen a spawn keeps the timer's overshoot (Start's 10000 never runs down), so a free slot fills
-# on the next rendered frame and every clone in flight runs its path and one to two frames more: 1.5 frames a lap on
-# average, of six a tick.
+# Game build 25640326: on screen the course's first spawn spends Start's 10000 (the timer goes to 0) and every later one keeps
+# the timer's overshoot. A full pool banks the timer, so a freed slot fills on the next rendered frame and every clone in
+# flight runs its path and one to two frames more: 1.5 frames a lap on average, of six a tick. An emptied pool (clones
+# bought, a break) fills one an interval.
 FRAMES = 6
 LIFE_EXTRA = 1.5 / FRAMES
 # The fastest known Course 2 lap from its gate (ticks, which the course timer counts): a ladder of K record laps runs it
@@ -96,7 +97,7 @@ def move(a, b):
     return REPEAT + ROW_STEP * max(abs(ROW[a] - ROW[b]) - 1, 0)
 
 def clone_life(path):
-    """Ticks a clone takes to run path ticks and be back in flight (build 25630570, on screen)."""
+    """Ticks a clone takes to run path ticks and be back in flight (build 25640326, on screen, the pool full)."""
     return path + LIFE_EXTRA
 
 def run_clones(active, path, t0, T):
@@ -104,9 +105,9 @@ def run_clones(active, path, t0, T):
     life = clone_life(path)
     return sum(max(0, math.ceil((T - a) / life) - 1) - max(0, math.ceil((t0 - a) / life) - 1) for a in active)
 
-def respawn(t, n):
-    """A break: every clone in flight has paid, and the pool refills one a rendered frame from t on."""
-    return tuple(t + i / FRAMES for i in range(n))
+def refill(t, n, path):
+    """A break: every clone in flight has paid, and the pool refills one an interval over a life from t on."""
+    return tuple(t + i * clone_life(path) / n for i in range(n))
 
 def wait_for(s, cost, deadline):
     """Advances s to the tick it can pay cost, before deadline. deadline None: only if it can pay on arrival; a plan never
@@ -181,7 +182,7 @@ class State:
         self.cash += self.reward2()
         if path < self.P:
             self.cash += self.N * self.pay2()
-            self.active, self.P, self.Pt = respawn(self.t, self.N), path, self.t
+            self.active, self.P, self.Pt = refill(self.t, self.N, path), path, self.t
 
     def lap(self):
         s = self.child()
@@ -198,7 +199,7 @@ class State:
         if FAST_LAP is None:
             return None
         s = self.child()
-        if not hold_back(s, FAST_LAP + K, s.N * s.pay2()):
+        if not hold_back(s, FAST_LAP + K, s.N * s.pay2(), s.N == 0):
             return None
         for k in range(K):
             path = FAST_LAP + K - 1 - k
@@ -223,8 +224,8 @@ class State:
             s.n += 1
         elif b == "C":
             s.N += 1
-            # The new clone's slot fills on the next rendered frame.
-            s.active = s.active + (s.t,)
+            # The course's first clone fills its slot on the next rendered frame, a later one about half an interval later.
+            s.active = s.active + (s.t + (clone_life(s.P) / s.N / 2 if s.active else 0),)
         elif b == "M":
             s.m += 1
         elif b == "G":
@@ -360,9 +361,6 @@ class Course:
         self.capmult = 1.0
         # A boosted course's local boxes are buy-max boxes (BoostOldCourses).
         self.buymax = False
-        # Start's 10000 s spawn reserve: a free slot fills the next frame. The course's first off-screen spawn resets the timer to
-        # 0 for good (once it has clones and a path), and then a slot fills only once the timer reaches the interval.
-        self.reserve = True
         self.P = None
         self.reward = 0
 
@@ -505,10 +503,8 @@ class LateState:
             life = clone_life(self.P)
             self.cash += self.pay() * sum(1 - (self.t - a) % life / life for a in self.clones if a <= self.t)
         self.P, self.Pt = path, self.t
-        n = len(self.clones)
-        # The reserve refills the pool one a frame (in step); without it one an interval, over a whole life: the break's Cash
-        # is then an advance the emptier pool pays back over the next life.
-        self.clones = respawn(self.t, n) if ph.c.reserve else tuple(self.t + i * clone_life(path) / n for i in range(n))
+        # The pool refills one an interval, over a whole life: the break's Cash is an advance the emptier pool pays back.
+        self.clones = refill(self.t, len(self.clones), path)
 
     def done(self):
         return (self.lapped or not self.ph.need_lap) and all(l >= r for l, r in zip(self.lv, self.ph.req))
@@ -530,7 +526,7 @@ class LateState:
         if self.P is None:
             return None
         s = self.child()
-        if not hold_back(s, ph.lap + K, len(s.clones) * s.pay(), ph.c.reserve):
+        if not hold_back(s, ph.lap + K, len(s.clones) * s.pay(), not s.clones):
             return None
         for k in range(K):
             path = ph.lap + K - 1 - k
@@ -565,9 +561,11 @@ class LateState:
         s.cash -= cost
         s.lv = s.lv[:i] + (s.lv[i] + n,) + s.lv[i + 1:]
         if box.kind == "C":
-            # A new clone's slot fills on the next rendered frame after its level is bought.
-            wait = 0 if c.reserve or not s.P else clone_life(s.P) / (len(s.clones) + n) / 2
-            s.clones = s.clones + tuple(s.t + j + wait for j in range(n))
+            # The course's first clone fills its slot on the next rendered frame after its level is bought, a later one about half
+            # an interval later; the rest of a buy-max one an interval (and a level a tick).
+            gap = clone_life(s.P) / (len(s.clones) + n) if s.P else 0
+            first = gap / 2 if s.clones else 0
+            s.clones = s.clones + tuple(s.t + max(j, first + j * gap) for j in range(n))
         elif box.kind == "G":
             s.g += 1
         s.tokens = (box.goal,)
@@ -649,7 +647,6 @@ class Late:
                     cs[2].P = LATE_LAP[2][0]
             self.g += dg
             self.say(f"  tick {self.t:6d}  {what:44s} -> {self.cash:12.4g} W  G {self.g}")
-        cs[2].reserve = False
         cs[3].P = LATE_LAP[3][0]
         cs[3].update_reward(self.g)
         self.cash += cs[3].reward
@@ -713,21 +710,13 @@ class Late:
         self.g += 1
         self.tokens.append(goal)
         self.where = "done"
-        self.off_screen(0)
         self.say(f"  tick {self.t:6d}  {goal} ({ticks} ticks)" + " " * 20 + f"-> {self.cash:12.4g} W  G {self.g}")
         self.steps.append((goal, t0, self.t, self.cash, 1))
-
-    def off_screen(self, here):
-        """Every course but here with clones and a path has been off screen: its reserve is gone."""
-        for n, c in self.cs.items():
-            if n != here and c.level.get("C", 0) and c.P:
-                c.reserve = False
 
     def phase(self, course, keys, required, need_lap, name, given=None):
         cs, c = self.cs, self.cs[course]
         if course != self.here:
             self.travel(course)
-        self.off_screen(course)
         keys = [k for k in keys if k in c.boxes]
         if required == "caps":
             required = {k: c.cap(k) for k in keys}

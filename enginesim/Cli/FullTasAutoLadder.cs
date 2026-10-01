@@ -11,10 +11,10 @@ namespace IGTAP.EngineSim.Cli
     // --parts goals, record-break ladders (docs/fulltas.md "Parts" item 5, Payout breaks): K laps of a course back to back, each
     // breaking the record the one before set. The course's fastest lap from the quick restart, T ticks on the course timer, is
     // played T+K-1, ..., T+1, then T: every finish replaces the clone path and pays each clone in flight at once
-    // (clonesScript.updateClonePath). On build 25630570, while the course's spawn timer keeps Start's reserve, the slots refill one
-    // a rendered frame after a break, so the pool runs in step and the next break, a lap later, pays about C(1 - o/T') more
-    // payouts (o: the restart's overhead); once it lost it, a break only brings Cash forward. K laps cost K(K-1)/2 ticks over K
-    // laps at T.
+    // (clonesScript.updateClonePath). While the course's spawn timer keeps Start's reserve, the slots refill one a rendered frame
+    // after a break, so the pool runs in step and the next break, a lap later, pays about C(1 - o/T') more payouts (o: the
+    // restart's overhead); once it lost it, a break only brings Cash forward. On build 25640326 the course's first on-screen spawn
+    // spends the reserve, so a course with clones never has it. K laps cost K(K-1)/2 ticks over K laps at T.
     sealed partial class FullTas
     {
         /// <summary>A ladder has at most LadderKmax laps; a hold-back slows an earlier lap by at most MaxHoldBack ticks; a pull plays at
@@ -106,9 +106,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>A course's spawn timer at or past this still holds Start's 10000 reserve (clonesScript.Start): after a break the
-        /// slots refill one a rendered frame, so the next break a lap later pays nearly every clone again. The first off-screen tick
-        /// resets it to 0 (SpawnClone), and nothing in a run gives it back: a break then only brings Cash forward (about half the
-        /// clones' pay at once, repaid over one path).</summary>
+        /// slots refill one a rendered frame, so the next break a lap later pays nearly every clone again. The course's first spawn
+        /// (on screen, build 25640326) or first off-screen tick resets it to 0 (SpawnClone), and nothing in a run gives it back: a
+        /// break then only brings Cash forward (about half the clones' pay at once, repaid over one path).</summary>
         const float ReserveKept = 1000f;
 
         /// <summary>The run with a ladder's earlier laps held back (<see cref="Retune"/> after each), by the best and the held laps.</summary>

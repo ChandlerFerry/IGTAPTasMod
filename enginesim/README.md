@@ -39,8 +39,8 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   frames. Its history is fixed (`CourseStart`, shared with the engine): the Movement fields a quick restart keeps
   (`facingRight` true, `wallJumpFacing` (1, 0), `dashDirection` (0, 0), `wallCoyoteDir` 0, `framesSinceLastDash` 1000,
   `MostRecentUpwardsMoveWasNormalJump` false, afterimage and wall-slide flags, `preDashMomentum`, `finalWallClingTimeLeft`;
-  in the air `lastHyperY` 1e8), the RNG and every `clonesScript.timeSinceLastClone` (10000, `Start`'s: on build 25630570
-  the reserve that lets an on-screen course spawn one clone a frame while a slot is free), set after the quick restart and again at
+  in the air `lastHyperY` 1e8), the RNG and every `clonesScript.timeSinceLastClone` (10000, `Start`'s: the reserve,
+  spent on build 25640326 by the course's first on-screen spawn), set after the quick restart and again at
   the capture. Its FloatingOrigin is fixed too: the quick restart puts the world where the game's own
   rebase on the player standing at the start leaves it (each scene root at its loaded position minus the reset point
   12 down, `currentOrigin` minus that point, the player at scene (0, 0); `TurboRunner.PutCanonicalOrigin`). The start
@@ -1288,9 +1288,9 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   ticks come 0.0199999929 s apart on the fixed clock (a probe's frame times; clone pointers then match 1x to the bit). On
   the pre-2026-09-30 build a spawn reset `timeSinceLastClone` to 0 and dropped the overshoot, so a per-tick step
   (Δt 0.02) spawned less often than 1x and its Cash came in later ([`docs/fidelity-log.md`](../docs/fidelity-log.md),
-  *Clones stepped once a tick*). Build 25630570 takes the rolled interval off instead (`Economy.cs:308`), so an
-  on-screen course keeps `Start`'s 10000 until its first off-screen tick and spawns one clone a frame while a slot is
-  free ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). `--ticks-out` rows carry each
+  *Clones stepped once a tick*). Build 25640326 takes the rolled interval off instead, except that a timer still at
+  `Start`'s 10000 (>= 4000) goes to 0 (`Economy.cs:318`): a full pool banks the timer and refills a freed slot the next
+  frame, an emptied one fills one an interval ([`docs/fulltas.md`](../docs/fulltas.md#clones-on-build-25640326)). `--ticks-out` rows carry each
   course's clones (`Economy.CloneStates`: count, path, on screen, in flight, spawn timer).
 - `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
   it lists. Cash here is start − spent + awarded + earned, the game's a running total: they differ in the last bit
@@ -1397,9 +1397,9 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   `obj/fulldecomp-steam`'s):
   - `clonesScript.SpawnClone` (clonesScript.cs:172,182): one `Random.Range(0, 101)` per speed and size roll loop, at
     least one draw each per call, spawn or not — modeled in `Runtime/Economy.cs` (the rolls pick the clone's
-    Fastness/Bigness and the next spawn's due time). On build 25630570 an on-screen course with clones calls it every
-    rendered frame (12 draws a tick at 280 fps, was about 0.3):
-    [`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570).
+    Fastness/Bigness and the next spawn's due time). On build 25640326 an on-screen course calls it on every frame
+    its timer is past due: rarely while its pool fills, then, as a full pool banks the timer, on every rendered frame
+    (12 draws a tick at 280 fps): [`docs/fulltas.md`](../docs/fulltas.md#clones-on-build-25640326).
   - `clonesScript.checkIfColourClone` (clonesScript.cs:379,389): drawn only when a colour counter passes 100; such a
     run ends (`Unmodeled economy: colour clone`), so the draws are never needed.
   - `Movement.playSFX` (Movement.cs:1869-1919): a clip (or wall-slide time) draw and a pitch draw, plus the two draws

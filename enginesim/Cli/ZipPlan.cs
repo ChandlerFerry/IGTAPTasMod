@@ -207,7 +207,8 @@ namespace IGTAP.EngineSim.Cli
         // Expected payout per second of one course's clones in one currency, frame by frame as clonesScript.Update steps them
         // (one per rendered frame). Off screen (SpawnClone's else branch) a clone spawns
         // once timeSinceLastClone reaches 1 s and pays ceil(value (2j+1) / the previous spawn's interval). On screen (game build
-        // 25630570: a spawn keeps the timer's overshoot) the pool stays full: a freed slot spawns again on the next frame, so
+        // 25640326: a spawn after the first keeps the timer's overshoot, which a full pool banks) the pool stays full: a freed slot
+        // spawns again on the next frame, so
         // each slot pays ceil(value (2j+1)) once per its clone's path in frames plus one, and at most one spawns a frame.
         static double ClonePay(Data d, double value, double path, int count, double[] fast, double[] big, bool onscreen)
         {

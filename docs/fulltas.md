@@ -1801,6 +1801,35 @@ keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on 
 off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
 Vman speedrun's start is lit with no breaker light on.
 
+### Clones on build 25640326
+
+Steam's update of 2026-09-30 16:37 (build 25640326) changed one statement: an on-screen `clonesScript.SpawnClone` sets
+`timeSinceLastClone` to 0 when it is at least 4000 (`Start`'s 10000), and takes the interval off otherwise (25630570
+always took it off). A course's first on-screen spawn spends the reserve. The engine plays it (`Economy.cs:318`) and
+matches the game's turbo tick for tick (RNG, Cash, position) through `FalseEnding-Any%` 346.74's 5,269 ticks on the
+new build, 18 clone buys included. That route then dies at goal 86: `buy:buywj` comes before its Cash, and the climb after it
+needs the wall jump. Float32 simulation (`C:\tmp\igtap\clonesim640.py`, 280 fps clock, no rolls):
+
+- **Steady income** is unchanged (to 4 digits): a full pool banks the timer (about 1.5 frames a lap), so a freed slot
+  still refills the next frame.
+- **A purchase** of C clones fills one an interval over one path, not one a frame: about C/2 payouts later, once
+  (Course 1, 9 clones at 1.40 s: 3.9; Course 2, 52 at 2.20 s: 23.5; Course 3, 19 at 3.80 s: 8.8).
+- **Record breaks** refill one an interval: the "reserve lost" column of the 25630570 break table holds everywhere
+  (-0.1 to -3 payouts per extra break). A banked timer refills part of the pool one a frame, once: +3 payouts per extra
+  break at most (52 clones, 0.7 s banked; banking 0.7 s takes about 140 laps), usually within ±0.1. Ladders and
+  hold-backs stay in the planners (`FullTasPlan`, `FullTasAutoLadder` gate on the course's real timer; `plan_fulltas.py`
+  on whether the course has clones): a break still brings about C/2 payouts, half a path of clone income, forward, which
+  can pay right before a Cash-bound buy, more so on long courses (Courses 6-15).
+- **RNG:** `SpawnClone` runs only on frames its timer is past due: a few percent of frames while the pool fills, then
+  every frame once the banked timer passes the interval (Courses 1 and 2 within about a minute; Course 3's 19 clones at
+  3.80 s half the frames after two minutes).
+
+The update also added `Moss`-tagged solid tilemaps (`Grid/RegularSizeMoss`, `colouredBlocks/RegularSizeMossBlue` and
+`Orange`, `biggerGrid/MossBlue` and `MossOrange`). Only `MossBlue` has geometry so far (15 shapes, x 1474-1662, y 334-510
+from the new game's origin, on while blue is active; none in Course 11's overgrown start), and `Movement` treats moss as
+its own ground type. No other collider changed. World exports from before 16:37 lack them: capture again the traces
+whose routes pass there.
+
 ### Clones and buy-max (build 25630570)
 
 Steam's update of 2026-09-30 10:34 (build 25630570) changed two game statements: `clonesScript.SpawnClone` on screen
