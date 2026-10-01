@@ -21,7 +21,8 @@ namespace IGTAP.EngineSim.Cli
         static string Hex(ulong v) { return v.ToString("x16", CultureInfo.InvariantCulture); }
         static ulong FromHex(string s) { return ulong.Parse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture); }
         ulong BestKey() { return SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count); }
-        static ulong EditKey(GoalEdit e) { return Mix(SnapshotIndex.Hash(e.Inputs, e.Inputs.Count), ValueHash(string.Join("|", e.Labels))); }
+        // An add's key is new since adds re-time their later waits (AddRetunes): ones played before without it play again once.
+        static ulong EditKey(GoalEdit e) { ulong h = Mix(SnapshotIndex.Hash(e.Inputs, e.Inputs.Count), ValueHash(string.Join("|", e.Labels))); return e.Kind == "add" ? Mix(h, 0xADD) : h; }
 
         void SaveMemory()
         {

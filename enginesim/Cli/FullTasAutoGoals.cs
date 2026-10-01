@@ -71,6 +71,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A goals pull tries its edits again only after a new best and this long since the last pull (it replays every
         /// lap edit of the run: about a CPU minute a pull on FalseEnding-Any%), or at once after it adopted one.</summary>
         const double GoalsEveryMinutes = 5;
+        /// <summary>The adds that play through but aren't faster whose later waits a goals pull re-times (Retune: a play per idle tick of each).</summary>
+        const int AddRetunes = 2;
         const int MaxPadFixes = 6, RecordRoutes = 12, RecordReached = 4, InvestTries = 2;
         /// <summary>A record lap's repair budget: CPU seconds per goal it re-finds (its lead where it stops is a few ticks).</summary>
         const double RecordRepairCpuPerGoal = 20;
@@ -141,6 +143,17 @@ namespace IGTAP.EngineSim.Cli
                 GoalEdit e = edits[i];
                 sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
                 results[i] = PlayedRetuned(sim, origin, e, best);
+            });
+            // An add that plays through keeps the best's later waits for Cash, so its laps' extra Cash buys nothing sooner: the
+            // AddRetunes fastest of them get every wait after their laps re-timed to their Cash (Retune, as a ladder's) and play again.
+            List<int> slow = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "add" && edits[i].Refind == 0 && results[i].route != null && results[i].route.Live >= best.Live)
+                .OrderBy(i => results[i].route.Live).Take(AddRetunes).ToList();
+            RunOnThreads(slow.Count, (sim, origin, tracker, j) =>
+            {
+                GoalEdit e = edits[slow[j]];
+                e.Retune = Array.LastIndexOf(e.OldOf, -1) + 1;
+                sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
+                results[slow[j]] = PlayedRetuned(sim, origin, e, best);
             });
             (GoalEdit edit, Route route) win = default;
             for (int i = 0; i < edits.Count; i++)
@@ -407,6 +420,7 @@ namespace IGTAP.EngineSim.Cli
         {
             const int MinIdle = 20;
             List<InputTick> all = best.Inputs;
+            var keys = new HashSet<string>();
             for (int k = 0; k + 1 < _goals; k++)
             {
                 FullTasGoal s = _runGoals.Goals[k], f = _runGoals.Goals[k + 1];
@@ -434,7 +448,7 @@ namespace IGTAP.EngineSim.Cli
                         for (int n = 1; n * lap < j - i; n++)
                         {
                             yield return AddLaps(best, k, a, fin, fin, k + 2, i, j, n);
-                            if (r >= 0) yield return AddLaps(best, k, a, fin, r, GoalsBefore(r), i, j, n);
+                            if (r >= 0 && Unbuffered(all, r) && keys.Add($"{k}:{r}:{i}:{n}")) yield return AddLaps(best, k, a, fin, r, GoalsBefore(r), i, j, n);
                         }
                     i = j;
                 }
@@ -455,6 +469,45 @@ namespace IGTAP.EngineSim.Cli
                     }
                 }
             }
+            // Copies of any course's lap, not only the one before the wait: the shortest lap of each course the route laps (from a
+            // quick restart with no press buffered across it) put in at the last quick restart before a wait of MinIdle idle ticks
+            // or more that lands at that course (the last gate the run crossed before it is the course's), the wait cut. Only at a
+            // restart with no press or dash buffered across it: one pressed before it fires after it, into the copy.
+            var shortest = new Dictionary<int, (int k, int a, int fin)>();
+            for (int k = 0; k + 2 < _goals; k++)
+            {
+                FullTasGoal s = _runGoals.Goals[k], f = _runGoals.Goals[k + 1];
+                if (s.kind != FullTasGoal.Start || f.kind != FullTasGoal.Finish || s.course != f.course) continue;
+                int a = (int)Math.Min(best.GoalInput[k], all.Count) - 1;
+                while (a >= 0 && !all[a].reset) a--;
+                int fin = (int)Math.Min(best.GoalInput[k + 1], all.Count);
+                if (a < 0 || k > 0 && a < best.GoalInput[k - 1] || fin <= a || !Unbuffered(all, a)) continue;
+                if (!shortest.TryGetValue(s.course, out var l) || fin - a < l.fin - l.a) shortest[s.course] = (k, a, fin);
+            }
+            int last = (int)Math.Min(best.GoalInput[_goals - 1], all.Count);
+            for (int i = 0; i < last;)
+            {
+                if (!Idle(all[i])) { i++; continue; }
+                int j = i;
+                while (j < last && Idle(all[j])) j++;
+                int r = i - 1;
+                while (r >= 0 && !all[r].reset) r--;
+                int g0 = 0;
+                while (g0 < _goals && best.GoalInput[g0] <= r) g0++;
+                int gate = Array.FindLastIndex(_runGoals.Goals, Math.Max(0, g0 - 1), g0, x => x.kind == FullTasGoal.Start);
+                if (j - i >= MinIdle && r >= 0 && Unbuffered(all, r) && gate >= 0 && shortest.TryGetValue(_runGoals.Goals[gate].course, out var lap))
+                    for (int n = 1; n * (lap.fin - lap.a) < j - i; n++)
+                        if (keys.Add($"{lap.k}:{r}:{i}:{n}")) yield return AddLaps(best, lap.k, lap.a, lap.fin, r, g0, i, j, n);
+                i = j;
+            }
+        }
+
+        /// <summary>No press or dash in the inputs before input <paramref name="at"/> within the longest buffer window (jump cut's
+        /// 15 ticks + 2 slack): nothing pressed before a quick restart there fires after it.</summary>
+        static bool Unbuffered(List<InputTick> inputs, int at)
+        {
+            for (int i = Math.Max(0, at - 17); i < at; i++) if (inputs[i].press || inputs[i].dash) return false;
+            return true;
         }
 
         /// <summary>The best with n copies of the lap of goals K, K+1 (inputs [a, fin)) put in at input <paramref name="at"/> (its
