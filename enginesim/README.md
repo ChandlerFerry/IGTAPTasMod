@@ -1231,10 +1231,13 @@ tech's direction (and angle) found once is skipped where it would start later. A
 (`TechSteps`): the game calls the hooks see inside the step, in order (getPlayerControlledInput's start and the
 determineSpriteDirection right after it, CheckForSuperJump's start, SpecialWallJump with its directionMagnitudeMod, a
 step-up, a respawn, a zip mover made intangible; `hooks.txt`), each with Movement's state then, and the step's events, the
-upgrade boxes whose buy trigger held the player, spike, slope and overhang touches, a spring's up, a block swap, the course
-timer and the state after it. A tech with a techs.json `detector` happens where the TAS overlay's detector of that name would
-mark it (`TechChecks.Detect`: TasOverlayTechs.cs ported to the recorded calls); any other tech by a check of its own (a
-`[TechCheck("id")]` method: a jump-through buy is one jump whose arc is in the buy triggers of two or more boxes).
+upgrade boxes whose buy trigger held the player, spike, slope and overhang touches, a spike straight under a standing dot's
+centre (`SpikeUnder`: the ground rays' height, 22 u down, no spike touching the hurtbox), a spring's up, a block swap, the
+course timer and the state after it. A tech with a techs.json `detector` happens where the TAS overlay's detector of that
+name would mark it (`TechChecks.Detect`: TasOverlayTechs.cs ported to the recorded calls); any other tech by a check of its
+own (a `[TechCheck("id")]` method: a jump-through buy is one jump whose arc is in the buy triggers of two or more boxes; a
+corner jump a ground jump after two still steps with `SpikeUnder`; an inslope wallbounce a wall kick with a slope touch on
+the side it leaves from).
 `techs --demos [tech ...] [--dump dir]` replays every tech's demos and its labs' ghosts (played past a lab's finish box) and
 prints where each check saw its tech: every demo should show it, the ghosts built to miss it shouldn't; `--dump` writes each
 run's recorded steps as JSON.

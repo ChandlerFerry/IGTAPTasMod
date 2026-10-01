@@ -9,8 +9,6 @@ namespace IGTAP.EngineSim
     // Stay) and its first overlapping tick is only an Enter, so a hurtbox may touch one on two ticks and has to be clear on the
     // third: the "SpikeGrace" span is such a touch the run lives through. A spring hit (Movement.hitSpring) refills the jumps and
     // dashes, ends a dash in progress and adds the spring's momentum; SpringScript's cooldown is 0.15 s (8 steps).
-    // Not checked: corner-jump (stands with only the back ground ray on a platform end over a spike pit that the hurtbox does not
-    // touch: the record has neither the rays nor the spikes under the dot, so a standing jump cannot be told from any other).
     public static partial class TechChecks
     {
         /// <summary>
@@ -39,6 +37,28 @@ namespace IGTAP.EngineSim
                 if (!before.Spike || !before.After.Ground || before.After.Coyote < run.MaxCoyote) continue;
                 if (Dies(steps, j, 3)) continue;
                 if (wall && !HazardHeldSideways(steps, j)) continue;
+                return j;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Corner jump: a ground jump from a stand on a platform's end over a flush spike pit. The two steps before the jump the dot
+        /// stands still (x within 0.5 u) with a spike straight under its centre and none touching its hurtbox (<see
+        /// cref="TechStep.SpikeUnder"/>: the back ground rays still on the platform hold it), and it lives through the jump. A
+        /// running jump off the edge is never still over the pit, and a stand with the centre still over the platform is no
+        /// corner.
+        /// </summary>
+        [TechCheck("corner-jump")]
+        static int HazardCornerJump(TechSteps run, int from, int to)
+        {
+            List<TechStep> steps = run.Steps;
+            for (int j = Math.Max(from, 2); j <= to; j++)
+            {
+                if (!HazardGroundJump(steps[j])) continue;
+                TechStep stand = steps[j - 1], before = steps[j - 2];
+                if (!stand.SpikeUnder || !before.SpikeUnder || Math.Abs(stand.After.X - before.After.X) >= 0.5f) continue;
+                if (Dies(steps, j, 3)) continue;
                 return j;
             }
             return -1;
@@ -115,20 +135,27 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// Spike super: a super jump (CheckForSuperJump, the SuperJump / ReversedSuper / HighSuper spans) that leaves a spike inside
         /// its grace: a spike graze the run lives through on the step before the super or on the super's own step (a dashing dot
-        /// may touch a spike on one step only: the next Stay kills it).
+        /// may touch a spike on one step only: the next Stay kills it). A graze the dash's own block swap began (<see
+        /// cref="HazardSwapGraze"/>) is the super in switching spikes instead.
         /// </summary>
         [TechCheck("spike-super")]
         static int HazardSpikeSuper(TechSteps run, int from, int to)
         {
+            List<TechStep> steps = run.Steps;
             foreach (Span super in run.Spans)
             {
                 int s = super.End;
                 if (!HazardIsSuper(super) || s < from || s > to) continue;
                 foreach (Span grace in run.Spans)
-                    if (grace.Tech == "SpikeGrace" && grace.End >= s - 1 && grace.End <= s) return s;
+                    if (grace.Tech == "SpikeGrace" && grace.End >= s - 1 && grace.End <= s && !HazardSwapGraze(steps, grace.End)) return s;
             }
             return -1;
         }
+
+        /// <summary>Step k's dash press swapped the coloured blocks (Swapped) and its hurtbox touches a spike it did not touch the
+        /// step before: the swap turned spikes on around the dot.</summary>
+        static bool HazardSwapGraze(List<TechStep> steps, int k) =>
+            steps[k].Swapped && steps[k].DashPress && steps[k].Spike && (k == 0 || !steps[k - 1].Spike);
 
         static bool HazardIsSuper(Span span) => span.Tech == "SuperJump" || span.Tech == "ReversedSuper" || span.Tech == "HighSuper";
 
@@ -164,10 +191,7 @@ namespace IGTAP.EngineSim
                 int s = super.End;
                 if (!HazardIsSuper(super) || s < from || s > to) continue;
                 for (int k = Math.Max(s - 1, 0); k <= s; k++)
-                {
-                    TechStep swap = steps[k];
-                    if (swap.Swapped && swap.DashPress && swap.Spike && (k == 0 || !steps[k - 1].Spike) && !Dies(steps, k, 3)) return s;
-                }
+                    if (HazardSwapGraze(steps, k) && !Dies(steps, k, 3)) return s;
             }
             return -1;
         }

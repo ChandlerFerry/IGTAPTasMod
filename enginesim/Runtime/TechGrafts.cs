@@ -967,11 +967,12 @@ namespace IGTAP.EngineSim
             {
                 if (byId.TryGetValue(seed.id, out TechDef mine))
                 {
-                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap. So does the
-                    // detector: the code that runs it (the overlay, TechChecks) is the repo's.
+                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap, and a live "todo"
+                    // goes once the seed has a lab and no marker (as TechCatalog.FillSeedGaps). So does the detector: the code
+                    // that runs it (the overlay, TechChecks) is the repo's.
                     mine.graftKey = seed.graftKey ?? mine.graftKey;
                     mine.graftDemos = seed.graftDemos ?? mine.graftDemos;
-                    mine.graft = seed.graft ?? mine.graft;
+                    mine.graft = seed.graft ?? (mine.graft == "todo" && !string.IsNullOrEmpty(seed.labmap) ? null : mine.graft);
                     mine.detector = seed.detector ?? mine.detector;
                     if (!string.IsNullOrEmpty(seed.labmap) && (seed.labmap != mine.labmap || seed.labDemo != mine.labDemo))
                     {
