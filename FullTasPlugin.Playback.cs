@@ -86,7 +86,7 @@ namespace IGTAPTasMod
             string splitText = string.Join(" + ", splits.Select(s => s.label + " " + s.Live.ToString("0.00", CultureInfo.InvariantCulture)));
             FullTasGoal next = tracker.Current;
             string line = "Full-TAS " + play.run.name + (finished ? " finished in " + time.ToString("0.00", CultureInfo.InvariantCulture) + "s live (" + _engine.PhysicsTicks + " frames)"
-                : " stopped after " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : " (next " + next.label + ")") + ": " + reason)
+                : " stopped after " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : " (next " + next.label + ")") + ": " + tracker.Explain(reason))
                 + DroppedFramesText() + (splitText.Length > 0 ? " [" + splitText + "]" : "");
             SetFullTasResult(line, new { kind = "play", text = line, run = play.run.name, error = !finished && tracker.Next < play.expected, finished, time,
                 reached = tracker.Next, of = tracker.Goals.Length, expected = play.expected, next = next?.label, reason = finished ? null : reason,

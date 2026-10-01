@@ -119,6 +119,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(Saveloader), "delayedManualSave", nameof(BlockSharedSave), null);
             PatchOptional(typeof(Saveloader), "Awake", nameof(BeforeSaveloaderAwake), null);
             PatchOptional(typeof(upgradeBox), "DoBuyUpgrade", null, nameof(AfterBuyUpgrade));
+            PatchOptional(typeof(upgradeBox), "OnTriggerStay2D", nameof(BeforeUpgradeBoxStay), null);
             PatchOptional(typeof(Movement), "respawn", nameof(BeforeRespawn), null);
             PatchOptional(typeof(Movement), "ToggleCheckpointUse", null, nameof(AfterToggleCheckpointUse));
             PatchOptional(typeof(StepUpAnimationScript), "onSteppedUp", nameof(BeforeSteppedUp), null);
@@ -206,6 +207,13 @@ namespace IGTAPTasMod
                 if (fallback == null) fallback = m;
             }
             return fallback ?? all[0];
+        }
+
+        /// <summary>Why the world can't be used (null: it can): at the main menu there is no world player, only the menu's.</summary>
+        static string WorldNotLoaded()
+        {
+            Movement m = FindWorldMovement();
+            return m != null && !IsMenuPlayer(m) ? null : "The world scene isn't loaded (the game is at its main menu): POST /api/oracle/bootstrap loads it.";
         }
 
         // The studio's live state reads the world player on every push (every 33 ms or more), and FindWorldMovement is a full

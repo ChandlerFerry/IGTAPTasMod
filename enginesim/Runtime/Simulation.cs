@@ -1371,7 +1371,7 @@ namespace IGTAP.EngineSim
                 Stepped = stepped,
                 PhysicsTicks = Engine.PhysicsTicks,
                 HeldFrames = Engine.HeldFrames,
-                EndReason = _endReason,
+                EndReason = Goals == null ? _endReason : Goals.Explain(_endReason, Shop.Describe),
                 Progress = Progress,
                 GoalInputTicks = Goals == null ? null : (long[])Goals.InputTicks.Clone(),
                 GoalPhysicsTicks = Goals == null ? null : (long[])Goals.PhysicsTicks.Clone(),

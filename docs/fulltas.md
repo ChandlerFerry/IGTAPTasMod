@@ -1764,6 +1764,35 @@ three buys (3, 4, then 21 for the cap: 104,000 NP per tick) and the zip box. Cou
 their routes are saved, and the walks are distance guesses. The engine can't play these goals yet (Area 2's economy is
 unmodeled there); the plan is for building the run's goals.
 
+## When a game update breaks a route
+
+A Steam update can move the Cash, the RNG or a collider, and a route that played through stops short. In order:
+
+1. **Diff the code.** Decompile the new `IGTAPfullGame_Data/Managed/Assembly-CSharp.dll` with `ilspycmd -p` (its
+   references: `-r` that `Managed` folder) and diff it against the previous build's decompile (keep one per build:
+   `C:\tmp\igtap\b640raw` is 25640326's). Port each gameplay change to the engine and turbo as the game has it
+   ([Clones on build 25640326](#clones-on-build-25640326)).
+2. **Diff the world.** Export the world on both builds at the same state and the same FloatingOrigin (the same new game
+   or savestate): at another origin every world-space shape differs. Capture again the traces whose routes pass a
+   changed collider.
+3. **Each goal's input.** Replay the route on the previous build's engine (`fulltas <trace> --check <route>` built
+   from that commit) and write each goal's `input` column as a JSON array.
+4. **Re-time the waits.** `fulltas <trace> --check <route> --retune <goal inputs> --out <file>` moves each wait (the
+   idle ticks before a goal's quick restart) to its Cash (`Retune`). When a goal is lost it says which, at which wait
+   (the quick restart's input), what it tried (up to `RetuneCap`, 60, idle ticks added) and how the best try ended, and
+   which case it is: *needs more than RetuneCap idle ticks*; *no wait site before this goal* (its walk has no quick
+   restart since the goal before, as Course 2's finish straight to `buyds`: only a wait at an earlier site fixes it);
+   *stray buy* (waits can't drop it).
+5. **Fit strays.** A stray buy takes a goal fit: the box's later buy goal moved up to it, `buy:<box>` put in there, or
+   the goal it stopped at dropped (`--auto`'s stray fit, `StrayFit`). Then a wait at the quick restart before the goal's
+   walk, for its Cash.
+
+A run's end reason says why it stopped (`FullTasTracker.Why`, after `; why: `), in `--check`, `--retune`, the `--auto`
+logs and the plugin's 1x play and turbo judge: a death or stop at a buy goal names the goal and whether its box was
+touched, with the most Cash held at a touch against its cost (`Player death at action 1835; why: died after missing goal
+86 buy:buywj (5 Cash short at input 5022: held 695 of its 700, its one touch)`); a strict run's stray buy names the goal
+it expected and that goal's box, its cost against the Cash held.
+
 ## Offline economy
 
 The whole run needs Cash offline. A start state whose economy carries the clones (every Full-TAS trace) runs the

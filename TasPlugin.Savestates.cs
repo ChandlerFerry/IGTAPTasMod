@@ -140,7 +140,7 @@ namespace IGTAPTasMod
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning("respawn(true) failed (" + (ex.InnerException != null ? ex.InnerException.Message : ex.Message) + "); applying restart geometry directly.");
+                    Logger.LogWarning("respawn(true) failed (" + (WorldNotLoaded() ?? (ex.InnerException != null ? ex.InnerException.Message : ex.Message)) + "); applying restart geometry directly.");
                 }
                 if (!respawnRan) ApplyRestartGeometry(movement);
                 if (_hasPreservedCourseResetPoint) movement.courseResetPoint = _preservedCourseResetPoint + CurrentOrigin();

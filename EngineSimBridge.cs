@@ -55,6 +55,11 @@ namespace IGTAPTasMod
                 request.StatusCode = 409;
                 return new { ok = false, error = "A new game is loading; retry in a moment." };
             }
+            if (WorldNotLoaded() is string notLoaded)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = notLoaded };
+            }
             string key = SelectSolverTarget(body);
             if (CapabilitiesLocked)
             {
@@ -629,6 +634,11 @@ namespace IGTAPTasMod
             {
                 request.StatusCode = 409;
                 return new { ok = false, error = "Stop playback and recording, and let a new game finish loading, first." };
+            }
+            if (WorldNotLoaded() is string notLoaded)
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = notLoaded };
             }
             SelectSolverTarget(new JObject { ["course"] = def.id, ["capabilities"] = CapsOf(parts[1]).Id });
             if (CapabilitiesLocked)

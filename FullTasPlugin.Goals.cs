@@ -270,7 +270,7 @@ namespace IGTAPTasMod
             if (_fullTasRewardBoxes.TryGetValue(bonus.name, out string cached)) return cached;
             upgradeBox best = BonusRewardBox(bonus, out bool loaded);
             if (!loaded) return null;
-            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": no upgrade box near the bonus's end rect.");
+            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": " + (WorldNotLoaded() ?? "no upgrade box near the bonus's end rect."));
             string id = FullTasBoxId(best);
             _fullTasRewardBoxes[bonus.name] = id;
             return id;
@@ -437,7 +437,7 @@ namespace IGTAPTasMod
             if (!finished)
             {
                 FullTasGoal next = tracker.Current;
-                verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + status + ")";
+                verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + tracker.Explain(status) + ")";
             }
             else if (!(time < best - .0001f))
                 verdict.reason = "not faster than " + category + " " + best.ToString("0.00", CultureInfo.InvariantCulture);
