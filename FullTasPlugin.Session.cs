@@ -116,11 +116,7 @@ namespace IGTAPTasMod
             int index = _savestates.FindIndex(s => s.id == _newGameSavestate);
             if (index < 0) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
             string path = Path.Combine(_savestatesPath, SafeId(_newGameSavestate) + ".json");
-            if (File.Exists(path))
-            {
-                _savestates[index] = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path)) ?? _savestates[index];
-                AdoptGameBuild(_savestates[index], path);
-            }
+            if (File.Exists(path)) _savestates[index] = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path)) ?? _savestates[index];
             Savestate state = _savestates[index];
             if (CapabilitiesLocked && state.movementFields.Keys.Any(SavestateService.IsUnlockField))
             {

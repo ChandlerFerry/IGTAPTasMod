@@ -10,6 +10,11 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
+    /// <summary>
+    /// Where a savestate can be restored: its scene and snapshot schema. The game build it was captured on (version and
+    /// Assembly-CSharp hash) is kept as a record only: a Steam update leaves a savestate restorable as long as every field it
+    /// holds is still on the player (<see cref="SavestateService.Restore"/> checks them).
+    /// </summary>
     [Serializable]
     public sealed class CompatibilityFingerprint
     {
@@ -20,17 +25,13 @@ namespace IGTAPTasMod
 
         public bool Matches(CompatibilityFingerprint other)
         {
-            return other != null && gameVersion == other.gameVersion
-                && assemblySha256 == other.assemblySha256 && scene == other.scene
-                && pluginSchemaVersion == other.pluginSchemaVersion;
+            return other != null && scene == other.scene && pluginSchemaVersion == other.pluginSchemaVersion;
         }
 
         public string DescribeMismatch(CompatibilityFingerprint other)
         {
             if (other == null) return "savestate has no compatibility fingerprint";
             List<string> differences = new List<string>();
-            if (gameVersion != other.gameVersion) differences.Add("game version");
-            if (assemblySha256 != other.assemblySha256) differences.Add("Assembly-CSharp hash");
             if (scene != other.scene) differences.Add("scene");
             if (pluginSchemaVersion != other.pluginSchemaVersion) differences.Add("snapshot schema");
             return differences.Count == 0 ? "compatible" : string.Join(", ", differences.ToArray()) + " changed";
@@ -134,6 +135,12 @@ namespace IGTAPTasMod
             CompatibilityFingerprint current = CreateFingerprint(movement);
             if (!current.Matches(savestate.fingerprint)) {
                 result.Message = "Savestate rejected: " + current.DescribeMismatch(savestate.fingerprint);
+                return result;
+            }
+            string unrestorable = UnrestorableField(typeof(Movement), savestate.movementFields)
+                ?? UnrestorableField(typeof(Rigidbody2D), savestate.bodyFields);
+            if (unrestorable != null) {
+                result.Message = "Savestate rejected: " + unrestorable;
                 return result;
             }
 
@@ -310,27 +317,10 @@ namespace IGTAPTasMod
         internal static string GameAssemblyHash() { return HashAssembly(typeof(Movement).Assembly); }
 
         /// <summary>
-        /// Stamps a savestate from another game build (a Steam update changes Assembly-CSharp's hash, and may change the
-        /// version) with this one when every field it holds is still on the player or its body and its value still decodes to
-        /// that member's type: a savestate is the player's state alone, which the update leaves meaning the same. True when it
-        /// was stamped; <paramref name="problem"/> says why one from another build can't be (it stays rejected).
+        /// The first field a savestate holds that this game build can't take back (a renamed or removed member, or a value its
+        /// type no longer decodes), or null. A restore writes the fields by name, so without this a game update that changed one
+        /// would restore the player only in part, silently.
         /// </summary>
-        internal static bool AdoptGameBuild(Savestate savestate, out string problem)
-        {
-            problem = null;
-            CompatibilityFingerprint saved = savestate.fingerprint;
-            if (saved == null) { problem = "it has no compatibility fingerprint"; return false; }
-            string version = Application.version ?? "", hash = GameAssemblyHash();
-            if (saved.gameVersion == version && saved.assemblySha256 == hash) return false;
-            if (hash == "unavailable") { problem = "this build's Assembly-CSharp can't be hashed"; return false; }
-            if (saved.pluginSchemaVersion != MacroLibrary.CurrentSchemaVersion) { problem = "its snapshot schema changed"; return false; }
-            problem = UnrestorableField(typeof(Movement), savestate.movementFields) ?? UnrestorableField(typeof(Rigidbody2D), savestate.bodyFields);
-            if (problem != null) return false;
-            saved.gameVersion = version;
-            saved.assemblySha256 = hash;
-            return true;
-        }
-
         static string UnrestorableField(Type type, Dictionary<string, SnapshotValue> values)
         {
             if (values == null) return null;

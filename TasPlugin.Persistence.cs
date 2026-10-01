@@ -107,7 +107,6 @@ namespace IGTAPTasMod
                         Savestate savestate = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path));
                         if (savestate == null || savestate.schemaVersion != Savestate.CurrentSchemaVersion || string.IsNullOrEmpty(savestate.id))
                             throw new InvalidDataException("Unsupported or incomplete savestate.");
-                        AdoptGameBuild(savestate, path);
                         _savestates.Add(savestate);
                     }
                     catch (Exception ex)
@@ -119,17 +118,6 @@ namespace IGTAPTasMod
                 _savestates.Sort((a, b) => string.CompareOrdinal(b.createdUtc, a.createdUtc));
             }
             catch (Exception ex) { Logger.LogError("Could not load savestates: " + ex); }
-        }
-
-        /// <summary>A savestate file from another game build, stamped with this one when it still restores (<see cref="SavestateService.AdoptGameBuild"/>).</summary>
-        void AdoptGameBuild(Savestate savestate, string path)
-        {
-            if (SavestateService.AdoptGameBuild(savestate, out string problem))
-            {
-                WriteJsonAtomic(path, savestate, false);
-                Logger.LogInfo("Savestate " + savestate.name + " stamped with this game build: its fields all restore.");
-            }
-            else if (problem != null) Logger.LogWarning("Savestate " + savestate.name + " is from another game build and can't be restored: " + problem + ".");
         }
 
         private void SaveRecording(RecordingDefinition recording)

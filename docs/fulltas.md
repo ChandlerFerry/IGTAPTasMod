@@ -311,14 +311,15 @@ touched since the savestate start`, `FullTasTracker.RestartRefused`) in the offl
 alike. A death ends every run anyway. Traces and routes from before this (`startSetup` 1) respawned at the savestate's
 own spot, a checkpoint the game never set: `Test-No-Omni-Skip`'s best quick-restarted there on ticks 3, 85 and 96.
 
-A savestate carries the game build it was captured on (version and `Assembly-CSharp` hash). A game update (Steam) used
-to make every older savestate unrestorable (`Savestate rejected: Assembly-CSharp hash changed`), the run then never
-leaving the Vman start: all 102 were rejected on build 25640326, some since 2026-09-26. Now the plugin stamps one from
-another build with the running one when it loads it (at launch, and a savestate start's reread) if every field it holds
-is still on `Movement` or the body and its value still decodes (`SavestateService.AdoptGameBuild`); one that doesn't
-stays rejected, and the log says which field. A savestate is the player alone (no course, box or Cash state), so the
-game's course resets (the breaker, the OmniDash box's `SetA1CourseTiers`, atoms) never touch one. A run's traces from
-while its savestate was rejected started at the Vman start: capture them again. A restore
+A savestate records the game build it was captured on (version and `Assembly-CSharp` hash), as a record only. A restore
+checks its scene and snapshot schema, and that every field it holds is still on `Movement` or the body with a value its
+type still decodes (`SavestateService.UnrestorableField`); a game update that renamed or removed one rejects it, naming
+the field (`Savestate rejected: Movement.X is gone`), instead of restoring the player only in part. A Steam update used to
+reject every older savestate on the hash alone (`Assembly-CSharp hash changed`), the run then never leaving the Vman
+start: all 102 were rejected on build 25640326, some since 2026-09-26, with every field still there. A savestate is the
+player alone (no course, box or Cash state), so the game's course resets (the breaker, the OmniDash box's
+`SetA1CourseTiers`, atoms) never touch one. A run's traces from while its savestate was rejected started at the Vman
+start: capture them again. A restore
 snaps the camera onto the player (cameraMover's position, lerp and zoom), so it doesn't pan across the map: it takes
 the camera back from a camera room that held it, looks down as the restored speed would, and cancels a death's queued
 respawn (turbo's restore cancels every invoke).
