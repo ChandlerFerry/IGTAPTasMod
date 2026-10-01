@@ -49,6 +49,10 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
+- Several searches share `enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe` (the plugin's Optimize and Full-TAS
+  solves, other agents). Stop only your own engine processes, by PID, never `taskkill /IM IGTAP.EngineSim.exe`; while
+  others run, build an engine of your own to a private folder (`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c
+  Release -o <dir>`), since the shared exe is locked while it runs.
 - The player body's interpolation stays on, as the game ships it: `Movement.FixedUpdate` reads the last frame's blend
   and its position writes pull the body back by the lag, and the step-up runs ungated in every frame. 1x playback runs
   on a fixed 280 fps clock, a frame every 1/280 s across ticks as at the game's 280 cap (README `### Rules` 8); turbo
