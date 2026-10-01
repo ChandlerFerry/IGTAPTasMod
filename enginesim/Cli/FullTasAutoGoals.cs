@@ -495,7 +495,8 @@ namespace IGTAP.EngineSim.Cli
                 int g0 = 0;
                 while (g0 < _goals && best.GoalInput[g0] <= r) g0++;
                 int gate = Array.FindLastIndex(_runGoals.Goals, Math.Max(0, g0 - 1), g0, x => x.kind == FullTasGoal.Start);
-                if (j - i >= MinIdle && r >= 0 && Unbuffered(all, r) && gate >= 0 && shortest.TryGetValue(_runGoals.Goals[gate].course, out var lap))
+                // No goal touched from the restart through the wait (a wait that spans a lap's finish touch isn't one).
+                if (j - i >= MinIdle && r >= 0 && g0 < _goals && best.GoalInput[g0] >= j && Unbuffered(all, r) && gate >= 0 && shortest.TryGetValue(_runGoals.Goals[gate].course, out var lap))
                     for (int n = 1; n * (lap.fin - lap.a) < j - i; n++)
                         if (keys.Add($"{lap.k}:{r}:{i}:{n}")) yield return AddLaps(best, lap.k, lap.a, lap.fin, r, g0, i, j, n);
                 i = j;
