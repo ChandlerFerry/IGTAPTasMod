@@ -435,9 +435,10 @@ namespace IGTAP.EngineSim
             return (x0, x1, y0, y1);
         }
 
+        /// <summary>Keeps the script's fields in snapshots from now on (the player and the active courses always are: <see cref="Courses"/>).</summary>
         internal void Touch(MonoBehaviour script)
         {
-            if (script == Player || script is courseScript || !_touched.Add(script)) return;
+            if (script == Player || script is courseScript course && Array.IndexOf(Courses, course) >= 0 || !_touched.Add(script)) return;
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
         }
 
@@ -1423,14 +1424,22 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// JiggleDropScript.SetActiveVisualState without the sprites: the orb is usable when its cooldown is over and the refill
-        /// upgrades (unlockJiggleDrops + moreRefreshOrbs) are above its ActivationSequence.
+        /// upgrades (unlockJiggleDrops + moreRefreshOrbs) are above its ActivationSequence. The run's own global upgrades when
+        /// it has the native economy (the Omni Dash box's first buy adds a refresh orb: Economy.OmniDashFirstBuy).
         /// </summary>
         void RefillOrbState(object target)
         {
             var orb = (JiggleDropScript)target;
             Touch(orb);
-            Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
-            double orbs = upgrades[globalStats.globalUpgradeSet.unlockJiggleDrops] + upgrades[globalStats.globalUpgradeSet.moreRefreshOrbs];
+            Economy economy = Shop.Economy;
+            double orbs;
+            if (economy != null)
+                orbs = economy.GlobalOf(globalStats.globalUpgradeSet.unlockJiggleDrops) + economy.GlobalOf(globalStats.globalUpgradeSet.moreRefreshOrbs);
+            else
+            {
+                Dictionary<globalStats.globalUpgradeSet, double> upgrades = globalStats.globalUpgradeDict;
+                orbs = upgrades[globalStats.globalUpgradeSet.unlockJiggleDrops] + upgrades[globalStats.globalUpgradeSet.moreRefreshOrbs];
+            }
             OrbUsable(orb) = OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb);
         }
 

@@ -1720,7 +1720,8 @@ earlier. The model's income needs calibrating against the trace's Cash before a 
 
 `zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
 NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
-(green clones, clone dust, atoms and the tree are unmodeled, below). The start is the trace's start, or `--route FILE`
+(green clones, clone dust, the atoms' collider and the tree are unmodeled, below: an atom box's course reset is
+modeled, its atom ends the run). The start is the trace's start, or `--route FILE`
 (a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
 global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
 engine holds them there.
@@ -1744,7 +1745,8 @@ The model follows the decompiled code:
 - **Rewards** (`courseScript.UpdateReward`): W, GP, CD rewards and the comp boost (`2 + 0.5 × strength`, `30 + 10 ×
   time` s, renewed by a lap once TreePart12's box is bought).
 - **Atoms** (`AtomColliderSystem`): the atom box (`AtomUpgrades/AtomUpgrade`, GP, buy-max) first resets Courses 1-10
-  that aren't exempt (local upgrades, clone counts; paths kept) and sets W to 0 (`doNewAtomPrestige`), then queues its
+  that aren't exempt (local upgrades, clone counts; paths kept) and sets W to 0 (`doNewAtomPrestige`; not once
+  `GPAtomsDontResetCourses` is bought), then queues its
   atoms; one lands every 0.4 s (+1 NP), its tier from `atomLevelChance × 25` per atom, `3 + t` atoms of tier t merge
   into one of t + 1 (craft time from `HandleTierLogic`), the first merge into a new tier pays 1000 ticks of NP. The
   collider stops while zone 1 is loaded. The atom level boxes (`buyatomlevel9`, `buyatomlevel10`) clear the atoms and

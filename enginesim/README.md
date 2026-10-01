@@ -1393,6 +1393,22 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
   and whether turbo can buy the box depends on the live save (1to2 NONE:
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Wall jump box the live save had bought*).
+- Course resets (`Economy.LocalPrestige`: localUpgrades.OnPrestige with the course's and clones' onPrestige and every
+  child box's): the trip breaker, the Omni Dash box's first buy and the atom boxes. The Omni Dash box's first buy
+  (upgradeBox.cs:833-840, `Economy.OmniDashFirstBuy`) sets `currentA1State` to Overgrown, adds a refresh orb (the orbs read
+  the run's global upgrades: `Simulation.RefillOrbState`), opens `Zone2toZone1PathOpen`, plays the transition's
+  `doStateVisuals` to its first yield as turbo does, and runs `OvergrowthLoadScript.SetA1CourseTiers` (each of its five
+  courses' linear boxes at 2 (1 + 0.2 i) × base cap and buy-max, its breaker-light, prestige, movement and
+  unlock-prestige boxes hidden, the course reset to tier 9.45 + 3.6 i, reward tier 6.6 + i, clone time reset; the RP atom
+  box and `boxesToEnable` shown). Every buy then toggles the omnidirectional dash (`Shop.OmniDashToggle`: air jumps and
+  dashes from `globalStats`' tree box counts, which a tree's dash and double-jump boxes raise) and leaves the box
+  free. `setA1CoursePowMults` only runs on a zone load, which never happens in a run. An atom box touch
+  (upgradeBox.cs:641-654, `Economy.AtomPrestige`) resets every `coursesToReset` course not `exemptFromAtomPrestige` at its
+  own tiers and zeroes Cash, except a Green Power box once `GPAtomsDontResetCourses` is bought; then each of its buys
+  ends the run (`Unmodeled economy: an atom`: the engine doesn't step `AtomColliderSystem`'s 0.4 s `callAddNewAtom`), as
+  does the Green Power box's first buy (its door opens unless the machine's PlayerPrefs hold `OpenA2Door`). Snapshots
+  carry what these change: the touched boxes, `globalStats`, a course outside `Simulation.Courses`, the economy's
+  globals and the transition's countdown.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
@@ -1436,16 +1452,17 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
     `hooks.txt`'s `OnPlayAudio` keeps the draws (callers in a run: springs (SpringScript.cs:37), jiggle drops
     (JiggleDropScript.cs:105), footsteps/landings (Movement.cs:2483-2493), the moss tired sound (Movement.cs:2400,2409),
     the wall jump's grass step (Movement.cs:1743), tree growth (TreeController.cs:99), a box touch (upgradeBox.cs:344),
-    the trip breaker's TurbineBreak (tripBreakerScript.cs:64, kept by `Economy.TripBreaker`)). `PlayAudioSetPitch` has
+    the trip breaker's TurbineBreak (tripBreakerScript.cs:64, kept by `Economy.TripBreaker`), the Omni Dash buy's
+    treeGrowing (Zone2to1TransitionController.cs:40, kept by `Economy.GrowTransition`)). `PlayAudioSetPitch` has
     no caller; `PlayAudioAtPoint` (the zip movers' end boom, PlatformMover.cs:165) draws the same way, cut with its
     draws kept by `OnPlayAudioAtPoint`.
   - `upgradeBox.buyUpgrade` and its trigger (upgradeBox.cs:662,344): the buy's particle Emit (non-buy-max), the growth
     sound of the tree a bought segment grows (upgradeTree.growSegments, once per 0.3 s audio cooldown) and BoxHit's
     clip and pitch. `hooks.txt` replaces the trigger with `Runtime/Shop.cs`, which keeps the draws.
   - `OnEnable` of what a modeled purchase turns on (`Economy.Activate`: two per woken `upgradeBox`, upgradeBox.cs:319,323,
-    one per woken `ObjectBobber`, ObjectBobber.cs:33): the trip breaker's `boxToActivate`, and the statue's
+    one per woken `ObjectBobber`, ObjectBobber.cs:33): the trip breaker's `boxToActivate`, the statue's
     `StatuePrestigeText` (an ObjectBobber) that `unlockPrestige` (Course 3's `enablePrestige`) turns on
-    (upgradeBox.cs:741).
+    (upgradeBox.cs:741), and the Omni Dash buy's first trunk, RP atom box and `boxesToEnable` (OvergrowthLoadScript.cs:31-32,59-60).
   - Before the start snapshot, so already in its state, never in a run: `courseScript.Start`'s UpdateReward phase
     (courseScript.cs:268), LightFlicker.cs:26, playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20,
     JiggleDropScript.cs:41, and the OnEnable of what the world loads with on (the pooled clone prefab is Transform +
@@ -1456,9 +1473,11 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
     after two `yield return null`, a Unity-run coroutine, so never inside a turbo run; `cuts.txt` drops them.
   - Not reproduced, each behind a purchase that ends the run: a block swap's re-activated boxes (upgradeBox.cs:804)
     and a tree segment's `SetActive` (TreeController.cs:104: its box and ObjectBobber's OnEnable; tree boxes are all
-    global upgrades behind a `PlantTreeBox` (`treeGrowth`), which the engine doesn't model), and the Omni Dash buy's
-    Area 2 → 1 transition (`Zone2to1TransitionController.doStateVisuals`). The tree's own growth sound draws are kept
-    (Shop.GrowTree) but its collider changes are not modeled.
+    global upgrades behind a `PlantTreeBox` (`treeGrowth`), which the engine doesn't model). The tree's own growth sound
+    draws are kept (Shop.GrowTree) but its collider changes are not modeled. The Omni Dash buy's Area 2 → 1 transition
+    (`Zone2to1TransitionController.doStateVisuals`) runs to its first yield, as in turbo; at 1x its later frames turn
+    `closedObject` off (the "Transition ground" collider over the box) 4.31 s after the buy at the earliest, so a run
+    still going then ends (`Economy.TransitionOpensAfter`).
 
 ## Course 9 WJ_DS_DJ_BS: no finish found
 

@@ -181,6 +181,7 @@ namespace IGTAP.EngineSim
             Cooldown(box) = 0.2f;
             int currency = (int)Currency(box);
             if (!(Available(currency) >= box.upgradeCost && box.isActive)) return;
+            if (box.upgrade == localUpgrades.localUpgradeSet.GLOBAL && box.globalUpgrade == globalStats.globalUpgradeSet.spawnNewAtom && !AtomPrestige(box, currency)) return;
             if (!(box.buyMax && !box.neverBuyMax))
             {
                 Buy(box, currency, collision);
@@ -194,6 +195,14 @@ namespace IGTAP.EngineSim
             GrowTree(box);
             UnityEngine.Random.Draw();
             UnityEngine.Random.Draw();
+        }
+
+        /// <summary>buyUpgrade's atom block, before the touch's buys (upgradeBox.cs:641-654): <see cref="Economy.AtomPrestige"/>.</summary>
+        bool AtomPrestige(upgradeBox box, int currency)
+        {
+            if (Economy != null) return Economy.AtomPrestige(box, (globalStats.Currencies)currency);
+            _sim.Engine.Abort("Unmodeled purchase: " + _paths[box] + " (an atom box's course reset needs the native economy: this trace's start state has no clones)");
+            return false;
         }
 
         static readonly AccessTools.FieldRef<upgradeBox, TreeController> UpgradeTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
@@ -263,7 +272,8 @@ namespace IGTAP.EngineSim
                     || box.globalUpgrade == globalStats.globalUpgradeSet.cashPerLoop
                     || box.globalUpgrade == globalStats.globalUpgradeSet.maxCloneFastness
                     || box.globalUpgrade == globalStats.globalUpgradeSet.maxCloneBigness
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.unlockPrestige;
+                    || box.globalUpgrade == globalStats.globalUpgradeSet.unlockPrestige
+                    || box.globalUpgrade == globalStats.globalUpgradeSet.spawnNewAtom;
                 modeled = known && Economy != null && (kind != localUpgrades.localUpgradeSet.prestige || !VmanScript.isCurrentlyVman);
                 why = !known ? " (global upgrade " + box.globalUpgrade + ")"
                     : Economy == null ? " (a global upgrade needs the native economy: this trace's start state has no clones)"
@@ -271,10 +281,14 @@ namespace IGTAP.EngineSim
             }
             else if (kind == localUpgrades.localUpgradeSet.Movement)
             {
+                // The Omni Dash box's first buy resets Courses 1-5 (Economy.OmniDashFirstBuy); its later ones only toggle.
+                bool omniFirst = move == upgradeBox.movementUpgrades.OmniDash && box.TimesUsed == 0;
                 modeled = player != null && (swapBlocks || move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.wallJump
                     || move == upgradeBox.movementUpgrades.doubleJump || move == upgradeBox.movementUpgrades.unlockBlockSwap
-                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash);
-                why = player == null ? " (no player at the box)" : " (movement upgrade " + move + ")";
+                    || move == upgradeBox.movementUpgrades.freeVmanOmnidash || move == upgradeBox.movementUpgrades.OmniDash && (!omniFirst || Economy != null));
+                why = player == null ? " (no player at the box)"
+                    : omniFirst && Economy == null ? " (the Omni Dash box's first buy needs the native economy: this trace's start state has no clones)"
+                    : " (movement upgrade " + move + ")";
             }
             else
             {
@@ -301,16 +315,29 @@ namespace IGTAP.EngineSim
             {
                 unlocksChange = move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.doubleJump
                     || move == upgradeBox.movementUpgrades.freeVmanOmnidash || move == upgradeBox.movementUpgrades.unlockBlockSwap
+                    || move == upgradeBox.movementUpgrades.OmniDash
                     || move == upgradeBox.movementUpgrades.wallJump && !player.wallJumpUnlocked;
                 switch (box.movementUpgrade)
                 {
-                    case upgradeBox.movementUpgrades.dash: player.dashUnlocked = true; player.maxAirDashes++; break;
+                    case upgradeBox.movementUpgrades.dash:
+                        player.dashUnlocked = true;
+                        player.maxAirDashes++;
+                        if (UpgradeTree(box) != null) TreeBoxTriggered(dash: true);
+                        break;
                     case upgradeBox.movementUpgrades.wallJump: player.wallJumpUnlocked = true; break;
-                    case upgradeBox.movementUpgrades.doubleJump: player.doubleJumpUnlocked = true; player.maxAirJumps++; break;
+                    case upgradeBox.movementUpgrades.doubleJump:
+                        player.doubleJumpUnlocked = true;
+                        player.maxAirJumps++;
+                        if (UpgradeTree(box) != null) TreeBoxTriggered(dash: false);
+                        break;
                     case upgradeBox.movementUpgrades.unlockBlockSwap: player.blockSwapUnlocked = true; break;
                     case upgradeBox.movementUpgrades.freeVmanOmnidash: player.dashUnlocked = true; player.omniDashUnlocked = true; player.maxAirDashes++; break;
+                    case upgradeBox.movementUpgrades.OmniDash:
+                        if (box.TimesUsed == 1 && !Economy.OmniDashFirstBuy(box)) return;
+                        if (!OmniDashToggle(box, player)) return;
+                        break;
                 }
-                box.isActive = false;
+                if (move != upgradeBox.movementUpgrades.OmniDash) box.isActive = false;
             }
             else if (global)
             {
@@ -323,6 +350,45 @@ namespace IGTAP.EngineSim
             _sim.Bought(path, _ids[box], _continuing);
             if (unlocksChange && _sim.Goals == null && _sim.Engine.IsRunning)
                 _sim.Engine.Abort("Category unlocks changed: bought " + move + " at " + path);
+        }
+
+        /// <summary>A tree's dash or double-jump box counts itself (upgradeBox.cs:788-791,799-802): the Omni Dash toggle sets the
+        /// air jumps and dashes from these counts.</summary>
+        void TreeBoxTriggered(bool dash)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null)
+            {
+                if (_sim.Engine.IsRunning) _sim.Engine.Abort("Unmodeled purchase: a tree movement box without globalStats (the game throws)");
+                return;
+            }
+            _sim.Touch(stats);
+            if (dash) stats.DashBoxesTriggered++;
+            else stats.DjBoxesTriggered++;
+        }
+
+        /// <summary>
+        /// The Omni Dash box's on/off toggle (upgradeBox.cs:841-860): an odd buy turns the omnidirectional dash on with the
+        /// tree's double jumps, an even one off with one more; dashes are the tree's plus one either way. The box is free from
+        /// then on (its cost and base cost 0, then ScaleBoxCost).
+        /// </summary>
+        bool OmniDashToggle(upgradeBox box, Movement player)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null)
+            {
+                if (_sim.Engine.IsRunning) _sim.Engine.Abort("Unmodeled purchase: the Omni Dash box without globalStats (the game throws)");
+                return false;
+            }
+            bool on = box.TimesUsed % 2 != 0;
+            player.omniDashUnlocked = on;
+            player.maxAirJumps = stats.DjBoxesTriggered + (on ? 0 : 1);
+            player.airJumpsLeft = player.maxAirJumps;
+            player.maxAirDashes = stats.DashBoxesTriggered + 1;
+            box.upgradeCost = 0.0;
+            box.baseUpgradeCost = 0.0;
+            ScaleBoxCost(box);
+            return true;
         }
 
         internal static void ScaleBoxCost(upgradeBox box)

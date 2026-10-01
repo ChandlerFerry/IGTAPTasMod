@@ -36,6 +36,18 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo ActiveLightsField = typeof(tripBreakerScript).GetField("activeLights", Fields);
         static readonly FieldInfo OrangeBlocksField = typeof(colouredBlockSwapper).GetField("orange", Fields);
         static readonly FieldInfo BlueBlocksField = typeof(colouredBlockSwapper).GetField("blue", Fields);
+        static readonly FieldInfo BoxDoorToOpenField = typeof(upgradeBox).GetField("doorToOpen", Fields);
+        static readonly FieldInfo RpAtomBoxField = typeof(OvergrowthLoadScript).GetField("rpAtomBox", Fields);
+        static readonly FieldInfo A1CoursesField = typeof(OvergrowthLoadScript).GetField("courses", Fields);
+        static readonly FieldInfo BoxesToEnableField = typeof(OvergrowthLoadScript).GetField("boxesToEnable", Fields);
+        static readonly FieldInfo TrunksField = typeof(Zone2to1TransitionController).GetField("trunks", Fields);
+        /// <summary>
+        /// The earliest the Omni Dash buy's Area 2 → 1 transition can open at 1x, in seconds after the buy
+        /// (Zone2to1TransitionController.cs:46-81): the first trunk grows 0.6 a frame-second from the buy's own physics step
+        /// (0.02 s, then the buy frame's whole deltaTime, at most Unity's 1/3 s maximumDeltaTime), then WaitForSeconds(3),
+        /// then a fade a single long frame can finish, then updateState(open: true) turns closedObject off.
+        /// </summary>
+        const float TransitionOpensAfter = 1f / 0.6f - 0.02f - 1f / 3f + 3f;
         static readonly int LocalCount = Enum.GetValues(typeof(localUpgrades.localUpgradeSet)).Cast<int>().Max() + 1;
         static readonly int GlobalCount = Enum.GetValues(typeof(globalStats.globalUpgradeSet)).Cast<int>().Max() + 1;
 
@@ -72,6 +84,7 @@ namespace IGTAP.EngineSim
             public int LocalsHash;
             public double[] Global;
             public bool TripBroken;
+            public float TransitionOpensIn;
         }
 
         readonly Simulation _sim;
@@ -84,6 +97,8 @@ namespace IGTAP.EngineSim
         double[] _global = new double[GlobalCount];
         readonly double _gameSpeed, _vmanMult;
         bool _tripBroken;
+        // Seconds of run time until the Omni Dash buy's Area 2 → 1 transition can open at 1x (0: none under way).
+        float _transitionOpensIn;
 
         public double Earned { get; private set; }
 
@@ -256,6 +271,12 @@ namespace IGTAP.EngineSim
 
         internal void Step(float dt)
         {
+            if (_transitionOpensIn > 0f && (_transitionOpensIn -= dt) <= 0f)
+            {
+                Unmodeled("the Omni Dash buy's Area 2 → 1 transition (Zone2to1TransitionController.doStateVisuals) can have opened at 1x by now: "
+                    + "its closedObject's \"Transition ground\" collider goes off on 1x frames turbo never plays within a run");
+                return;
+            }
             foreach (Clones c in _stepped)
             {
                 if (!c.Script.isActiveAndEnabled) continue;
@@ -513,6 +534,11 @@ namespace IGTAP.EngineSim
         internal bool BoughtGlobal(upgradeBox box)
         {
             globalStats.globalUpgradeSet upgrade = box.globalUpgrade;
+            // DoBuyUpgrade's spawnNewAtom (upgradeBox.cs:752-754): BuyNewAtom queues an atom (waitingAtoms++) that
+            // AtomColliderSystem.callAddNewAtom, its 0.4 s InvokeRepeating, turns into AtomicPower and an atom (crafting, NP).
+            // The engine doesn't step the collider. The touch's course reset ran first (AtomPrestige).
+            if (upgrade == globalStats.globalUpgradeSet.spawnNewAtom)
+                return Unmodeled("an atom (AtomColliderSystem.BuyNewAtom: the collider that lands it, +1 AtomicPower every 0.4 s, isn't stepped)");
             if (upgrade != globalStats.globalUpgradeSet.cashPerLoop && upgrade != globalStats.globalUpgradeSet.maxCloneFastness
                 && upgrade != globalStats.globalUpgradeSet.maxCloneBigness && upgrade != globalStats.globalUpgradeSet.unlockPrestige)
                 return Unmodeled("global upgrade " + upgrade);
@@ -530,6 +556,125 @@ namespace IGTAP.EngineSim
             if (upgrade != globalStats.globalUpgradeSet.cashPerLoop) return true;
             var course = BoxCourseField.GetValue(box) as courseScript;
             return (object)course == null || UpdateReward(course);
+        }
+
+        /// <summary>
+        /// upgradeBox.buyUpgrade's atom block (upgradeBox.cs:641-654), once a touch before its buys: the first buy of a box
+        /// with a door opens it unless the machine's PlayerPrefs already hold "OpenA2Door", then, unless it is a Green Power
+        /// box with GPAtomsDontResetCourses, doNewAtomPrestige (upgradeBox.cs:688-696): every coursesToReset course not
+        /// exempt from atom prestige resets its upgrades, clones and boxes at its own tiers, and Cash goes to 0.
+        /// </summary>
+        internal bool AtomPrestige(upgradeBox box, globalStats.Currencies currency)
+        {
+            if (box.TimesUsed == 0 && (object)(BoxDoorToOpenField.GetValue(box) as PlatformMover) != null)
+                return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
+                    + "\"OpenA2Door\", which the engine can't read");
+            if (currency == globalStats.Currencies.GreenPower && Global(globalStats.globalUpgradeSet.GPAtomsDontResetCourses) != 0.0) return true;
+            if (BoxCoursesToResetField.GetValue(box) is not courseScript[] reset) return Unmodeled("an atom box without coursesToReset (the game throws)");
+            foreach (courseScript course in reset)
+            {
+                if ((object)course == null || (object)course.localUpgradesScript == null)
+                    return Unmodeled("an atom reset of a course without local upgrades (the game throws)");
+                if (!LocalPrestige(course.localUpgradesScript, false, course.tier, course.rewardTier, false, true, false)) return false;
+            }
+            Earned = 0.0;
+            _sim.Shop.ZeroCash();
+            return true;
+        }
+
+        /// <summary>
+        /// The Omni Dash box's first buy (upgradeBox.cs:833-840): Area 1 overgrown, one more refresh orb, the way back from
+        /// Area 2 open, the transition's growth started and Courses 1-5 set to their overgrown tiers. Its on/off toggle is
+        /// the shop's (Shop.Buy).
+        /// </summary>
+        internal bool OmniDashFirstBuy(upgradeBox box)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            var transition = BoxObjectReferenceField.GetValue(box) as GameObject;
+            Zone2to1TransitionController controller = (object)transition == null ? null : transition.GetComponent<Zone2to1TransitionController>();
+            OvergrowthLoadScript overgrowth = Singleton<OvergrowthLoadScript>.Instance;
+            if ((object)stats == null || (object)controller == null || (object)overgrowth == null)
+                return Unmodeled("the Omni Dash box's first buy without globalStats, its Zone2to1TransitionController or OvergrowthLoadScript (the game throws)");
+            _sim.Touch(stats);
+            stats.currentA1State = globalStats.area1states.Overgrown;
+            _tripBroken = false;
+            _global = (double[])_global.Clone();
+            _global[(int)globalStats.globalUpgradeSet.moreRefreshOrbs] += 1.0;
+            stats.Zone2toZone1PathOpen = true;
+            return GrowTransition(controller) && SetA1CourseTiers(overgrowth);
+        }
+
+        /// <summary>
+        /// Zone2to1TransitionController.doStateVisuals' coroutine to its first yield (Zone2to1TransitionController.cs:40-64),
+        /// all a turbo run plays of it: the growth sound's clip draw (Audio.PlayAudio, no pitch variance), every trunk off,
+        /// the first back on (its scale and shader are presentation: trunks have no colliders). Its later frames open the way
+        /// at 1x (closedObject's ground collider off); a run still going by the earliest of them ends (<see cref="Step"/>).
+        /// </summary>
+        bool GrowTransition(Zone2to1TransitionController controller)
+        {
+            var trunks = TrunksField.GetValue(controller) as GameObject[];
+            if (trunks == null || trunks.Length == 0 || trunks.Any(t => (object)t == null))
+                return Unmodeled("the Area 2 → 1 transition without its trunks (the game throws)");
+            UnityEngine.Random.Draw();
+            foreach (GameObject trunk in trunks) trunk.SetActive(false);
+            Activate(trunks[0]);
+            _transitionOpensIn = TransitionOpensAfter;
+            return true;
+        }
+
+        /// <summary>
+        /// OvergrowthLoadScript.SetA1CourseTiers (OvergrowthLoadScript.cs:29-62): the RP atom box shown; on each of its
+        /// courses (i = 0..4, its array's order) every active box that scales its cost linearly with more than one level
+        /// gets 2 (1 + 0.2 i) times its base cap and buy-max, its breaker-light, prestige, movement and unlock-prestige
+        /// boxes are hidden, and the course resets to tier 9.45 + 3.6 i, reward tier 6.6 + i, its clone time reset
+        /// (localUpgrades.OnPrestige without the A1 prestige mod); then boxesToEnable shown.
+        /// </summary>
+        bool SetA1CourseTiers(OvergrowthLoadScript overgrowth)
+        {
+            var rpAtomBox = RpAtomBoxField.GetValue(overgrowth) as upgradeBox;
+            var courses = A1CoursesField.GetValue(overgrowth) as courseScript[];
+            var enable = BoxesToEnableField.GetValue(overgrowth) as upgradeBox[];
+            if ((object)rpAtomBox == null || courses == null || enable == null)
+                return Unmodeled("SetA1CourseTiers without its rpAtomBox, courses or boxesToEnable (the game throws)");
+            Show(rpAtomBox);
+            for (int i = 0; i < courses.Length; i++)
+            {
+                courseScript course = courses[i];
+                if ((object)course == null || (object)course.localUpgradesScript == null)
+                    return Unmodeled("SetA1CourseTiers on a course without local upgrades (the game throws)");
+                foreach (upgradeBox b in course.transform.GetComponentsInChildren<upgradeBox>())
+                {
+                    if (b.upgradePowerScaleFactor == 1.0 && b.Cap > 1)
+                    {
+                        _sim.Touch(b);
+                        b.baseCapMult = 2.0 * (1.0 + 0.2 * (double)i);
+                        b.Cap = (int)Math.Round((double)b.baseCap * b.baseCapMult);
+                        b.buyMax = true;
+                    }
+                    if (b.upgrade == localUpgrades.localUpgradeSet.activateNextBreakerLights || b.upgrade == localUpgrades.localUpgradeSet.prestige
+                        || b.upgrade == localUpgrades.localUpgradeSet.Movement
+                        || b.upgrade == localUpgrades.localUpgradeSet.GLOBAL && b.globalUpgrade == globalStats.globalUpgradeSet.unlockPrestige)
+                    {
+                        _sim.Touch(b);
+                        b.visible = false;
+                        b.gameObject.SetActive(false);
+                    }
+                }
+                if (!LocalPrestige(course.localUpgradesScript, true, 9.45 + 3.6 * (double)i, 6.6 + (double)i, false, false, false)) return false;
+            }
+            foreach (upgradeBox b in enable)
+            {
+                if ((object)b == null) return Unmodeled("SetA1CourseTiers with a null box to enable (the game throws)");
+                Show(b);
+            }
+            return true;
+        }
+
+        void Show(upgradeBox box)
+        {
+            _sim.Touch(box);
+            box.visible = true;
+            Activate(box.gameObject);
         }
 
         bool BoostOldCourses(upgradeBox box)
@@ -576,16 +721,25 @@ namespace IGTAP.EngineSim
                 if ((object)local == null) return Unmodeled("course " + reset1.courseNumber + " without local upgrades (the game throws)");
                 bool four = reset1.courseNumber == 4;
                 bool ok = reset1.courseNumber == 5
-                    ? LocalPrestige(local, true, course.tier, course.rewardTier, false)
-                    : LocalPrestige(local, four, course.tier + reset1.tier, course.tier + reset1.tier, !four);
+                    ? LocalPrestige(local, true, course.tier, course.rewardTier, false, false, true)
+                    : LocalPrestige(local, four, course.tier + reset1.tier, course.tier + reset1.tier, !four, false, true);
                 if (!ok) return false;
                 referenceBox.enabled = false;
             }
             return TripBreaker(breaker);
         }
 
-        bool LocalPrestige(localUpgrades script, bool resetCloneTime, double newTier, double newRewardTier, bool breakerPrestige)
+        /// <summary>localUpgrades.OnPrestige (localUpgrades.cs:409-444) with clonesScript.onPrestige and courseScript.onPrestige
+        /// (courseScript.cs:542-564): an atom prestige leaves a course exempt from it as it is.</summary>
+        bool LocalPrestige(localUpgrades script, bool resetCloneTime, double newTier, double newRewardTier, bool breakerPrestige,
+            bool atomPrestige, bool useA1PrestigeMod)
         {
+            if (atomPrestige)
+            {
+                courseScript owner = script.GetComponentInParent<courseScript>();
+                if ((object)owner == null) return Unmodeled("an atom reset of local upgrades without a course (the game throws)");
+                if (owner.exemptFromAtomPrestige) return true;
+            }
             int local = LocalIndex(script);
             if (local < 0) return Unmodeled("local upgrades the economy doesn't know");
             _locals[local] = new double[LocalCount];
@@ -604,16 +758,22 @@ namespace IGTAP.EngineSim
                 c.V.PathLength = 1E+16f;
             }
             UpdateCloneInterval(c);
+            _sim.Touch(course);
             if (breakerPrestige)
             {
                 double tierMod = (double)BreakerLayerTierModField.GetValue(course);
                 course.tier = newTier + tierMod;
                 course.rewardTier = newRewardTier + tierMod + (double)BreakerLayerRewardTierModField.GetValue(course);
             }
-            else
+            else if (useA1PrestigeMod)
             {
                 course.tier = newTier - 1.0 + course.RewardPrestigeMod;
                 course.rewardTier = newRewardTier - 1.0 + course.RewardPrestigeMod;
+            }
+            else
+            {
+                course.tier = newTier;
+                course.rewardTier = newRewardTier;
             }
             if (resetCloneTime) BestPathTimeField.SetValue(course, 1E+11f);
             if (!UpdateReward(course)) return false;
@@ -728,7 +888,8 @@ namespace IGTAP.EngineSim
         internal State Capture()
         {
             var s = new State { Earned = Earned, Values = new CloneValues[_clones.Length], Active = new Clone[_clones.Length][],
-                Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken };
+                Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken,
+                TransitionOpensIn = _transitionOpensIn };
             for (int i = 0; i < _clones.Length; i++)
             {
                 s.Values[i] = _clones[i].V;
@@ -750,6 +911,7 @@ namespace IGTAP.EngineSim
             _localsHash = s.LocalsHash;
             _global = s.Global;
             _tripBroken = s.TripBroken;
+            _transitionOpensIn = s.TransitionOpensIn;
         }
 
         internal void AddTo(ref HashCode h)
@@ -767,6 +929,7 @@ namespace IGTAP.EngineSim
             h.Add(_localsHash);
             foreach (double g in _global) h.Add(g);
             h.Add(_tripBroken);
+            h.Add(_transitionOpensIn);
         }
 
         int HashLocals()
