@@ -164,6 +164,7 @@ namespace IGTAPTasMod
         void OverlayTick(Movement player)
         {
             _overlayPlayer = player;
+            ApplyTasSkin(player);
             // Every tick can change the list, the velocity and the pad: the cached panels (DrawCachedPanels) are drawn again.
             _panelCacheDirty = true;
             if (!OverlayListsRun)
@@ -433,15 +434,13 @@ namespace IGTAPTasMod
                 PerfSection(5);
                 DrawCheckpointLabels(scale);
                 PerfSection(6);
-                DrawHitbox(scale);
-                PerfSection(7);
                 DrawGraze(scale);
-                PerfSection(8);
+                PerfSection(7);
             }
             DrawCachedPanels(scale);
-            PerfSection(9);
+            PerfSection(8);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
-            PerfSection(10);
+            PerfSection(9);
         }
 
         void DrawDroppedFrames(float scale)
@@ -496,57 +495,6 @@ namespace IGTAPTasMod
             foreach (BoxCollider2D box in buffer)
                 if (box.enabled && !ReferenceEquals(box, body)) return box;
             return null;
-        }
-
-        void DrawHitbox(float scale)
-        {
-            Movement player = _overlayPlayer;
-            Camera cam = Camera.main;
-            if (player == null || cam == null) return;
-            BoxCollider2D box = Hurtbox(player, _hitboxes);
-            if (box == null) return;
-            Rect r = ScreenRect(cam, box.bounds);
-            Color color = _grazeTicks > 0 && !_grazeKilled ? GraceColor : HurtboxColor;
-            Fill(r, new Color(color.r, color.g, color.b, 0.6f));
-            DrawHitboxBadge(r, color);
-        }
-
-        const string BadgeText = "TAS";
-        static readonly GUIContent BadgeContent = new GUIContent(BadgeText);
-        GUIStyle _badgeStyle;
-        // The badge's fit for a box size (its width's font size, the box height in whole pixels): kept, so the font size and
-        // the text layout aren't set and measured twice every frame.
-        int _badgeSize = -1, _badgeHeight = -1;
-        Vector2 _badgeText;
-
-        void DrawHitboxBadge(Rect box, Color fill)
-        {
-            if (box.width < 6f || box.height < 6f) return;
-            if (_badgeStyle == null)
-                _badgeStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false, padding = new RectOffset(), margin = new RectOffset() };
-            int size = Mathf.Max(6, Mathf.FloorToInt(box.width * 0.8f)), height = Mathf.FloorToInt(box.height);
-            if (size != _badgeSize || height != _badgeHeight)
-            {
-                _badgeSize = size;
-                _badgeHeight = height;
-                _badgeStyle.fontSize = size;
-                _badgeText = _badgeStyle.CalcSize(BadgeContent);
-                if (_badgeText.x > height * 0.9f)
-                {
-                    _badgeStyle.fontSize = Mathf.Max(6, Mathf.FloorToInt(size * height * 0.9f / _badgeText.x));
-                    _badgeText = _badgeStyle.CalcSize(BadgeContent);
-                }
-            }
-            Vector2 text = _badgeText;
-            Vector2 pivot = box.center;
-            Rect at = new Rect(pivot.x - text.x / 2f, pivot.y - text.y / 2f, text.x, text.y);
-            Color.RGBToHSV(fill, out float hue, out float saturation, out _);
-            Color dark = Color.HSVToRGB(hue, Mathf.Min(1f, saturation + 0.2f), 0.5f);
-            dark.a = 0.35f;
-            Matrix4x4 saved = GUI.matrix;
-            GUIUtility.RotateAroundPivot(-90f, pivot);
-            Label(at, BadgeText, _badgeStyle, dark);
-            GUI.matrix = saved;
         }
 
         static Rect ScreenRect(Camera cam, Bounds bounds)

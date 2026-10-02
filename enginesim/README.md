@@ -226,7 +226,8 @@ with exactly the ones it names, each a key window: `contact` (+ `tick`: the demo
 `shift` `[lo, hi]` (where the window's contact lands relative to the run's; default ±3), `vary` (runs of equal ticks
 sampled at graft time: `{"at": offset, "ticks": length choices, "x": stick magnitudes, "stick": [x, y] pairs, "dashJump":
 frames, "button": "run"}`; a choice list or an `"a..b"` integer range; `"button": "run"` keeps the grafted run's own hold,
-no new edge), `coast` `{"x": choices, "held"}` (the 40 coast ticks after it), `dir` (the way the run was going for a window
+no new edge), `coast` `{"x": choices, "held"}` (the 40 coast ticks after it; `"held"` true or false, or hold lengths
+to draw from for a jump down at the window's end, a dash jump's included: a jump's height is how long it is held), `dir` (the way the run was going for a window
 whose stick is against it: a backwards dash), `tries` (grafts per contact, each sampled anew), `weight` (how often a pick
 draws it: a tech is drawn by its largest weight at that kind) and `chain` `{"depth", "on": kinds, "with": tech, "expect":
 kind, "shift"}` (the graft's run records its contacts; the first contact of an `on` kind 2+ ticks after the placement gets
@@ -243,8 +244,8 @@ deep expecting its `Landed`; the rest at `WallAbove*`, 3–30 ticks; the turn aw
 0–20, tap 2–6 ticks 0.5–1, back 1–2, rest 5–30, 8 tries, chaining clips), `coyote-ledge.graft` (the jump at a ledge −4..+3,
 hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing), `wall-coyote-window.graft` (the wall jump:
 0..+4 after leaving a wall, −3..+3 of a touch), `spike-grace.graft` (the jump 1–7 ticks before a death), `coyote-ledge.super`
-(tech `super`: the dash with its jump on frame 1–4, or none, at a ledge, landing, wall or death), `coyote-ledge.primed`
-(`super`: the jump held into a dash 1–6 ticks later), `backwards-dash-jump.graft`, `superbounce-wall.graft`, and for the
+(tech `super`: the dash with its jump on frame 1–4, or none, at a ledge, landing, wall or death, the jump held 0–40 ticks
+after), `coyote-ledge.primed` (`super`: the jump held into a dash 1–6 ticks later, and 2–40 after it), `backwards-dash-jump.graft`, `superbounce-wall.graft`, and for the
 omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the wavejump), `wall-dash` (the eight aims),
 `freeze-aim` and `corner-boost` (the corner hyper, frame 4–12, and the corner ultra) `.graft` demos, and `updiag-wall-climb`
 (at `TouchedWall`, 0..+2: the dash at rest turned up-diagonally toward the wall and two rests, weight 4, chained 8 deep on the
@@ -500,11 +501,16 @@ momentum carries through them, and a window is scored on its arrival.
   goals: a `finish:<course>` per lead lap, then per loop lap the first lap's waypoints it passes in order and its finish,
   under a goal tracker so a finish doesn't end the run (`LoopSim`). `MeasureLoop` plays the lead and the loop 4 times: it
   repeats exactly when every loop finishes on its own last input and the last two cycles are equal; the farm time is a
-  lap's share of that cycle. The start (`StartLoop`): every candidate cut at its finishes and tried as a loop of its last
+  lap's share of that cycle. One that doesn't logs why (the first loop that broke: its death or end, or the input it
+  finished on). Its run has no tick cap but the goals' (`Run`'s cap counts physics ticks, a dash's no-input ones too:
+  before 2026-10-02 the inputs plus none cut every loop of dashes off in its 4th lap). The start (`StartLoop`): every candidate cut at its finishes and tried as a loop of its last
   1, 2 or 3 laps (the fewest that repeats), the loops before the steady one moved into the lead. With none, loop laps
   are searched one after another from the fastest first lap (`SearchLoopLap`: the course solve from the state after the
   lead, `UseGoals(null)` so the next finish ends a run, seeded with the first lap after a quick restart and a few idle
-  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each; after each, the loops
+  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each. A lap the search doesn't
+  find is repaired (`RepairLoopLap`): the lap before (the first lap after a quick restart) played after the lead, and the
+  reach windows (`fulltas --unsolved`, stopping once every goal is reached) take it on from where it breaks through the
+  first lap's waypoints to the finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
   ending with the newest lap are checked, so laps whose carried state alternates (a buffered jump carried through one
   restart and not the next) still make a loop. The loop the run starts from is written at once (the search's, or a
   seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged), and every kept
@@ -512,7 +518,12 @@ momentum carries through them, and a window is scored on its arrival.
   `loopTicks`, `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`, and one that
   doesn't is logged and not written. Course 1 `NONE`, 2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart
   carries its last jump press: the next lap starts in the air and dies); the lap search found a loop of 2 laps, 225
-  ticks, 2.2500 s a lap.
+  ticks, 2.2500 s a lap. Course 3 `WJ_DS`, 2026-10-02: the finish clears the course reset point, so the quick restart
+  lands on the course's checkpoint, 1 u right of the course start (x 9506 against 9505); every saved route, the 3.68
+  record among them, passes spikes too close to replay from there, and the lap search, with no seed that finishes, found
+  none in 13.8M runs. The repair takes a lap there through the waypoints to the finish in seconds (6.93 s live); seeded
+  with it, the next lap search finishes at once. With the 4th-lap cap gone, a 15-minute Improve (avoid-backwards) keeps
+  a steady one-lap loop, 5.2179 s a lap.
 - **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
   and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
   else it stops.
@@ -523,7 +534,8 @@ momentum carries through them, and a window is scored on its arrival.
 - **Directions.** Courses 1-3 go either way from the start (`avoid-forwards` and `avoid-backwards` in
   `forced-paths.json`; backwards usually for the record, forwards for the farm). A job that picks neither runs each
   direction in turn, half the minutes each (farm forwards first, record backwards first), each with its own run and
-  waypoints; picking one (`--optional`) runs that direction only, as does `--focus` or `--waypoints-out`. Courses 4 and 5
+  waypoints, and fails (exit 1) only when neither gets a route; picking one (`--optional`) runs that direction only, as
+  does `--focus` or `--waypoints-out`. Courses 4 and 5
   go forwards only.
 - **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
   archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept record best
@@ -1361,7 +1373,7 @@ timer), every nudge tick +2..+8 and the falls that finish (the jump at 123 after
 at 115-119); a jump cut in the rise loses the clip. The widest is centred: −0.486 at +4 (x 2542.976) clears the corner
 by 0.029 u and the gate by 0.028, against the saved −0.49's 0.021 and 0.036 (finished 1.40 in turbo too). The corner at
 +54 (moving left at 460, a wall face at x 2553.5 stops it) is no threshold: x 2557.37-2558.72 passes there, 0.6 u either
-side. Difficulty is 2.6e-7 either way (segment 2, the take-off to the finish, p 0.0019 on the same draws): a 0.05 step of
+side. The sampled difficulty then (retired 2026-10-01) was 2.6e-7 either way (segment 2, the take-off to the finish, p 0.0019 on the same draws): a 0.05 step of
 either nudge moves the column 0.1 u. The human version (`offline-best\1_none-1.40-human.json`, 44 exact inputs of the
 best's 49) clears the corner by 0.032 u and the gate by 0.028.
 
@@ -1414,22 +1426,23 @@ in 20 s on 4 threads, the mining cached. Course 1 `NONE`, a studio session at N 
 squeeze, a corner jump, a GC wall clip, both landing jumps, the late gate touch and the coyote jump); at N = 90, beside the
 pillar and rising, none (the KB wall clip window the session had taken there, inputs 91-93, never grounds the dot).
 
-`techs-used <trace.json> <route.json> [--json] [--no-difficulty]` lists every occurrence of an nmg or major tech in a route
+`techs-used <trace.json> <route.json> [--json] [--no-difficulty] [--tech-weight <tech>=<s>]` lists every occurrence of an nmg or major tech in a route
 (`Glitches.Classify` over its recorded steps: a tech's own check asked again after each hit, else every span of its
 detector), its spike-grace ticks, its difficulty (a finished route's, `Difficulty.Meter`) and its human scores, for a course
-or a Full-TAS trace; `--json` is the one line the plugin's gate reads for the Full-TAS classes. `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
+or a Full-TAS trace; `--json` is the one line the plugin's gate reads for the Full-TAS classes. `--tech-weight <tech>=<s>`
+prices a tech's spans at its own seconds, a glitchless tech's included, as `fulltas --tech-weight` does
+([docs/fulltas.md](../docs/fulltas.md#classes)). `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
 tech, a glitchless tech's no nmg or major span ([docs/fulltas.md](../docs/fulltas.md#classes)).
 
-`difficulty <trace.json> <route.json> [--json]` measures how likely one human attempt at a route works: humanize's
-version of it cut at its anchors (where a player re-syncs: the start, standing, a wall cling, a respawn, a goal, a
-dash's freeze), each segment played from the route's own state at its first anchor (every worker's snapshots from one
-straight replay) with its input events moved by a rounded normal (`--sigma`, input ticks) and played closed loop (the
-player re-times the rest of the plan by the lag they see 100 ms before each input chunk and at each anchor, and corrects
-the next segment when off an anchor's state; `--open`: the open-loop measure before it), the bottlenecks close together
-sampled again as one chain, seeded by the measured inputs; `--candidates <dir>` writes every candidate's sidecar. The
-model, options and JSON: [docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and
-`Difficulty.SameState` are its anchors and its same-state test for other commands, `Difficulty.Meter` its whole-route
-measure for `techs-used` and the human classes' score.
+`difficulty <trace.json> <route.json> [--json]` counts how hard a route's inputs are to time, with no player's skill
+assumed: humanize's version of the route, each input (a stick change, a jump press or release, a dash, a jump on a dash
+frame) moved alone a tick at a time up to `--radius` ticks either way and played from the route's own state at the last
+anchor before it (every worker's snapshots from one straight replay); it holds when the run reaches the next anchor in its
+state or its next goal. Frame-perfect: an input that works on one tick only; back-to-back: two actions under 3 ticks (60 ms)
+apart that no timing of the inputs inside their windows avoids. `--candidates <dir>` writes every candidate's sidecar. The model,
+options and JSON: [docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and `Difficulty.SameState` are
+its anchors and its same-state test for other commands, `Difficulty.Meter` its whole-route measure for `techs-used` and
+the human classes' score.
 
 ## Rules
 

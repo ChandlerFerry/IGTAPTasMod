@@ -159,8 +159,10 @@ namespace IGTAPTasMod
         };
         static readonly string[] ZipTargets =
         {
-            "4", "7", "8", "10", "14", "15", "bonus13", "bonus14",
+            "4", "7", "8", "10", "14", "15", "bonus4", "bonus9", "bonus10", "bonus11", "bonus12", "bonus13", "bonus14",
         };
+        /// <summary>Targets whose end needs the zip movers: they run only the categories with them, whatever their ladder range.</summary>
+        static readonly string[] ZipOnlyTargets = { "bonus4" };
 
         /// <summary>courses.json bonuses that run no category (the batch solver has no row for them): their end is an unlock
         /// box, not a bonus stretch (bonus17 refill orbs, bonus18 clone dust, bonus19 buy max, bonus20/21 the 1x and ∞x
@@ -169,6 +171,9 @@ namespace IGTAPTasMod
 
         /// <summary>The target with this courses.json token runs categories at all.</summary>
         public static bool IsTarget(string token) { return Array.IndexOf(NoCategoryTargets, token) < 0; }
+
+        /// <summary>The category can finish the target at all (<see cref="ZipOnlyTargets"/>).</summary>
+        public static bool CanFinish(string token, Caps caps) { return caps.Zip || Array.IndexOf(ZipOnlyTargets, token) < 0; }
 
         public static readonly CategoryDef[] All =
         {

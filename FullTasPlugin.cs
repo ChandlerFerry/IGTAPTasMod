@@ -37,8 +37,8 @@ namespace IGTAPTasMod
             /// it's current (docs/fulltas.md "Loose buys"). Unset or "strict": only the next goal's box may be bought.
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string buys;
-            /// <summary>The human classes' score weights (README ### Rules 54): seconds a major span, an nmg span and a spike-grace
-            /// tick add to the live time, and seconds per ln(attempts) of the route's difficulty. Unset: 60, 20, 2 and 5.</summary>
+            /// <summary>The human classes' score weights (README ### Rules 54): seconds a spike-grace tick, a frame-perfect input
+            /// and a forced back-to-back pair add to the live time. Unset: 2, 5 and 20.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
             public List<string> goals = new List<string>();
             [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
@@ -46,11 +46,19 @@ namespace IGTAPTasMod
             [JsonIgnore] public FullTasHumanWeights Human { get { return human ?? new FullTasHumanWeights(); } }
         }
 
+        /// <summary>
+        /// The human classes' score weights: score = live seconds + <see cref="grace"/> per spike-grace tick + <see cref="framePerfect"/>
+        /// per frame-perfect input + <see cref="backToBack"/> per forced back-to-back pair of the route's humanized version
+        /// (<see cref="FullTasDifficulty"/>). 0 for both of the last two: difficulty isn't scored (nor measured).
+        /// </summary>
         public sealed class FullTasHumanWeights
         {
-            public float major = 60f, nmg = 20f, grace = 2f, difficulty = 5f;
+            public float grace = 2f, framePerfect = 5f, backToBack = 20f;
 
-            public bool Same(FullTasHumanWeights o) { return major == o.major && nmg == o.nmg && grace == o.grace && difficulty == o.difficulty; }
+            public bool Same(FullTasHumanWeights o) { return grace == o.grace && framePerfect == o.framePerfect && backToBack == o.backToBack; }
+
+            /// <summary>The weights price difficulty: a human class's route is measured and its score adds the counts' seconds.</summary>
+            public bool PricesDifficulty() { return framePerfect != 0f || backToBack != 0f; }
         }
 
         const string VmanStart = "vman";
@@ -118,25 +126,43 @@ namespace IGTAPTasMod
         }
 
         /// <summary>A saved route's class result (fulltas-classes.json, by route id): its counts, its difficulty (null when not
-        /// measured: a major or nmg class, or a run whose weights don't price it) and its score, live time plus the weights' seconds
-        /// for each major span, nmg span and spike-grace tick and per ln of its difficulty's priced attempts.</summary>
+        /// measured: a major or nmg class, a run whose weights don't price it, or a record from before the counts) and its score,
+        /// live time plus the weights' seconds for each spike-grace tick, frame-perfect input and forced back-to-back pair.</summary>
         public sealed class FullTasClassRecord
         {
             [JsonProperty("class")] public string cls;
             public float score, live;
             public int major, nmg, graceTicks;
             public List<FullTasSpan> spans;
-            public FullTasOdds difficulty;
+            public FullTasDifficulty difficulty;
         }
 
-        /// <summary>A route's difficulty as the engine prices it (techs-used's and a candidate's `difficulty`): the chance one human
-        /// attempt works, the attempts that takes (1/P, null at P 0) and the attempts the score prices (at P 0, each span no sample
-        /// works in as one in its samples).</summary>
-        public sealed class FullTasOdds
+        /// <summary>
+        /// A route's difficulty as the engine counts it on humanize's version of the route (techs-used's, a run file's and a
+        /// candidate's `difficulty`): its inputs, the frame-perfect ones (they work on one tick only) and the forced back-to-back
+        /// pairs (two actions fewer than 3 ticks apart that no timing of the inputs inside their windows avoids). Null where it isn't measured;
+        /// a route from before the counts has an old-shape object, which reads as null (<see cref="FullTasDifficultyConverter"/>).
+        /// </summary>
+        [JsonConverter(typeof(FullTasDifficultyConverter))]
+        public sealed class FullTasDifficulty
         {
-            public float P;
-            public float? attempts;
-            public float priced;
+            public int inputs, framePerfect, backToBack;
+        }
+
+        /// <summary>Reads a difficulty object that has the three counts; any other object (the old shape) or null reads as null.</summary>
+        public sealed class FullTasDifficultyConverter : JsonConverter
+        {
+            public override bool CanWrite { get { return false; } }
+            public override bool CanConvert(Type type) { return type == typeof(FullTasDifficulty); }
+            public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) { throw new NotSupportedException(); }
+            public override object ReadJson(JsonReader reader, Type type, object existing, JsonSerializer serializer)
+            {
+                JToken token = JToken.Load(reader);
+                if (!(token is JObject o)) return null;
+                JToken inputs = o["inputs"], framePerfect = o["framePerfect"], backToBack = o["backToBack"];
+                if (inputs?.Type != JTokenType.Integer || framePerfect?.Type != JTokenType.Integer || backToBack?.Type != JTokenType.Integer) return null;
+                return new FullTasDifficulty { inputs = (int)inputs, framePerfect = (int)framePerfect, backToBack = (int)backToBack };
+            }
         }
 
         /// <summary>What the gate judges a Full-TAS route's class by (FullTasViolation): the run whose trace the engine replays it

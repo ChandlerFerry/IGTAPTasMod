@@ -465,9 +465,11 @@ namespace IGTAP.EngineSim
         public int ShiftLo = -TechGrafts.Jitter, ShiftHi = TechGrafts.Jitter;
         /// <summary>The runs of equal ticks sampled at graft time (null: the window as the demo played it).</summary>
         public PatternVary[] Vary;
-        /// <summary>The coast's stick choices (relative to <see cref="Dir"/>; null: the window's last stick) and hold (null: as the window ends).</summary>
+        /// <summary>The coast's stick choices (relative to <see cref="Dir"/>; null: the window's last stick) and hold (null: as the window ends;
+        /// <see cref="CoastHolds"/>: a jump down at the window's end held one of these many ticks).</summary>
         public float[] CoastX;
         public bool? CoastHeld;
+        public int[] CoastHolds;
         /// <summary>How many sampled grafts one contact gets (a gate tap brushes the gate only at the right height).</summary>
         public int Tries = 1;
         /// <summary>How often a pick draws it over the other windows at its contact kind (the tech's weight is its largest).</summary>
@@ -569,8 +571,8 @@ namespace IGTAP.EngineSim
         /// <summary>What the miner detects and cuts, versioned: part of the cache key (bump it when the detection changes).
         /// 2: the per-step tech contacts (ContactLog.Step) and the repo catalog/lab maps read from the source tree.
         /// 3: lab demos' graft specs ("grafts"), their variant demos and techs.json's graftDemos, the window's direction, windows
-        /// with a quick restart.</summary>
-        const int MinerVersion = 3;
+        /// with a quick restart. 4: a coast's hold lengths ("held": [ticks]), a window ending on a dash jump coasting with its jump down.</summary>
+        const int MinerVersion = 4;
 
         /// <summary>The patterns ready for one solve's unlocks (its caps id, <see cref="Caps"/>), by contact kind and then by
         /// tech (read-only once prepared): those whose <see cref="TechPattern.Requires"/> is a subset of the run's unlocks,
@@ -682,23 +684,12 @@ namespace IGTAP.EngineSim
             // The coast keeps the window's last stick and hold, as the demo's follow-up would (or the pattern's coast); the hold
             // ends at the run's end.
             InputTick last = t[t.Count - 1];
-            bool endDown = (last.held || last.press) && !last.release;
-            bool held = endDown && (p.CoastHeld ?? true);
-            var coast = new InputTick { x = p.CoastX != null ? p.CoastX[rng.Next(p.CoastX.Length)] * (dir == 0 ? 1 : dir) : last.x, y = last.y, held = held };
-            for (int i = 0; i < GraftCoast; i++) t.Add(coast);
-            if (endDown && !held)
-            {
-                InputTick r = t[t.Count - GraftCoast];
-                r.release = true;
-                t[t.Count - GraftCoast] = r;
-            }
-            else if (held)
-            {
-                InputTick r = t[t.Count - 1];
-                r.release = true;
-                r.held = false;
-                t[t.Count - 1] = r;
-            }
+            // A dash jump presses the jump in its dash: the button is down after it.
+            bool endDown = (last.held || last.press || last.dash && last.dashJump > 0) && !last.release;
+            float coastX = p.CoastX != null ? p.CoastX[rng.Next(p.CoastX.Length)] * (dir == 0 ? 1 : dir) : last.x;
+            int hold = !endDown ? 0 : p.CoastHolds != null ? p.CoastHolds[rng.Next(p.CoastHolds.Length)] : p.CoastHeld ?? true ? GraftCoast : 0;
+            hold = Math.Min(hold, GraftCoast - 1);
+            for (int i = 0; i < GraftCoast; i++) t.Add(new InputTick { x = coastX, y = last.y, held = i < hold, release = endDown && i == hold });
             grafted = t;
             return true;
         }
@@ -1486,7 +1477,7 @@ namespace IGTAP.EngineSim
                         Kind = a.Kind, First = first, Last = hi - tick, Ticks = window.ToArray(), DemoContact = tick, DemoStart = demo.Source,
                         Key = true, Dir = !Sided(a.Kind) && spec.Dir is int d ? d : DirOf(a.Kind, window, tick - lo),
                         ShiftLo = a.ShiftLo ?? spec.ShiftLo, ShiftHi = a.ShiftHi ?? spec.ShiftHi,
-                        Vary = vary.Count > 0 ? vary.ToArray() : null, CoastX = spec.CoastX, CoastHeld = spec.CoastHeld, Tries = spec.Tries,
+                        Vary = vary.Count > 0 ? vary.ToArray() : null, CoastX = spec.CoastX, CoastHeld = spec.CoastHeld, CoastHolds = spec.CoastHolds, Tries = spec.Tries,
                         Weight = a.Weight ?? spec.Weight, Chain = chain, Spec = true, Resets = window.Any(k => k.reset),
                     };
                     Tag(pattern, demo.Requires, demo.Contacts, lo, hi);
@@ -1515,6 +1506,7 @@ namespace IGTAP.EngineSim
             public List<Run> Vary = new List<Run>();
             public float[] CoastX;
             public bool? CoastHeld;
+            public int[] CoastHolds;
             public int ChainDepth, ChainShiftLo, ChainShiftHi = 8;
             public Contact[] ChainOn;
             public string ChainWith;
@@ -1572,7 +1564,11 @@ namespace IGTAP.EngineSim
                     if (s.TryGetProperty("coast", out JsonElement c))
                     {
                         if (c.TryGetProperty("x", out JsonElement cx)) spec.CoastX = Floats(cx);
-                        if (c.TryGetProperty("held", out JsonElement ch)) spec.CoastHeld = ch.GetBoolean();
+                        if (c.TryGetProperty("held", out JsonElement ch))
+                        {
+                            if (ch.ValueKind == JsonValueKind.Array) spec.CoastHolds = Ints(ch);
+                            else spec.CoastHeld = ch.GetBoolean();
+                        }
                     }
                     if (s.TryGetProperty("chain", out JsonElement chain))
                     {
@@ -1737,6 +1733,7 @@ namespace IGTAP.EngineSim
             }
             if (p.CoastX != null) s.Append(" coast x ").Append(Choices(p.CoastX));
             if (p.CoastHeld == false) s.Append(" coast released");
+            if (p.CoastHolds != null) s.Append(" coast held ").Append(Choices(p.CoastHolds));
             if (p.Tries > 1) s.Append($" tries {p.Tries}");
             if (p.Weight > 1) s.Append($" weight {p.Weight}");
             if (p.Chain is PatternChain c)

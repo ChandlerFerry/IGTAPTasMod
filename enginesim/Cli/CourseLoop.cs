@@ -23,6 +23,10 @@ namespace IGTAP.EngineSim.Cli
         internal const int LoopRepeats = 4;
         /// <summary>The most laps a loop is made of.</summary>
         const int MaxLoopLaps = 3;
+        /// <summary>Run's extra ticks for a whole route: its cap counts physics ticks, a dash's no-input ones too, so a route of
+        /// several laps of dashes outruns inputs + a few (a loop's 4th lap was cut off). A run still ends at its last goal, a
+        /// death, or 20 idle ticks after its inputs.</summary>
+        const int AnyTicks = 1000000;
 
         /// <summary>A farm loop's steady-state check (<see cref="MeasureLoop"/>).</summary>
         sealed class LoopCycle
@@ -42,13 +46,15 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<long> Cycles = new List<long>();
             /// <summary>The last loop's finish near miss (<see cref="BusEdge"/>), null when it didn't finish.</summary>
             public BusEdge Finish;
+            /// <summary>Why the first loop that didn't finish on its own last input didn't; null when all did.</summary>
+            public string Broke;
 
             public override string ToString()
             {
                 string cycles = string.Join(", ", Cycles.Select(c => c < 0 ? "-" : (c / 1400.0).ToString("0.0000", CultureInfo.InvariantCulture)));
                 string laps = Laps == 1 ? "" : $" a lap of {Laps}";
                 return Steady ? $"steady {Lap.ToString("0.0000", CultureInfo.InvariantCulture)}s{laps} ({Ticks} ticks, {Held} held a loop) after {Settled} loops (cycles {cycles})"
-                    : $"not steady{laps} (cycles {cycles})";
+                    : $"not steady{laps} (cycles {cycles}{(Broke == null ? "" : "; " + Broke)})";
             }
         }
 
@@ -83,7 +89,7 @@ namespace IGTAP.EngineSim.Cli
         {
             const int MaxLaps = 16;
             List<InputTick> idled = inputs.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList();
-            RunResult r = Solve.OnThread(() => LoopSim(run, MaxLaps).Run(idled, null, null, 0));
+            RunResult r = Solve.OnThread(() => LoopSim(run, MaxLaps).Run(idled, null, null, AnyTicks));
             return (idled, Enumerable.Range(0, r.Progress).Select(k => (int)r.GoalInputTicks[k]).ToList(), r.Progress == 0 ? 0 : r.GoalPhysicsTicks[0]);
         }
 
@@ -109,7 +115,7 @@ namespace IGTAP.EngineSim.Cli
                 var ticks = new List<long>();
                 var toEnd = new List<float>();
                 var body = new List<(float x, float y)>();
-                RunResult r = sim.Run(inputs, null, null, 0, _ =>
+                RunResult r = sim.Run(inputs, null, null, AnyTicks, _ =>
                 {
                     ticks.Add(sim.Engine.PhysicsTicks);
                     toEnd.Add(Nearest(sim, hitbox, ends));
@@ -124,7 +130,13 @@ namespace IGTAP.EngineSim.Cli
                     int g = route.LeadLaps - 1 + k * p, s = g - p;
                     bool on = (k == 1 || c.Cycles[k - 2] >= 0) && g < r.Progress && r.GoalInputTicks[g] == route.Lead.Count + (long)k * route.Loop.Count;
                     c.Cycles.Add(on ? MacroEngine.LiveUnits(r.GoalPhysicsTicks[g] - r.GoalPhysicsTicks[s], r.GoalHeldFrames[g] - r.GoalHeldFrames[s]) : -1);
-                    if (!on) continue;
+                    if (!on)
+                    {
+                        long own = route.Lead.Count + (long)k * route.Loop.Count;
+                        c.Broke ??= g >= r.Progress ? $"loop {k}: {r.EndReason} at goal {r.Progress + 1}"
+                            : $"loop {k} finished on input {r.GoalInputTicks[g]}, its last is {own}";
+                        continue;
+                    }
                     c.Ticks = r.GoalPhysicsTicks[g] - r.GoalPhysicsTicks[s];
                     c.Held = r.GoalHeldFrames[g] - r.GoalHeldFrames[s];
                     int at = ticks.IndexOf(r.GoalPhysicsTicks[g]);
@@ -164,15 +176,7 @@ namespace IGTAP.EngineSim.Cli
         {
             List<InputTick> lead = route.Lead;
             int laps = route.LeadLaps;
-            Simulation Create()
-            {
-                Simulation sim = LoopSim(run, laps + 1);
-                SimSnapshot at = sim.Advance(lead);
-                sim.SetStart(at, lead.Count);
-                sim.UseGoals(null);
-                sim.TargetCourse = run.Course;
-                return sim;
-            }
+            Simulation Create() => AfterLead(run, route);
             List<InputTick> lap = route.FirstLap;
             List<InputTick> Idle(int n) => Enumerable.Repeat(new InputTick(), n).ToList();
             var seeds = new List<List<InputTick>>();
@@ -204,20 +208,70 @@ namespace IGTAP.EngineSim.Cli
             solver.Stop();
             foreach (Thread t in workers) t.Join(60000);
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: {Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {solver.GuideStatus()}");
-            if (found == null) return null;
-            // A finish in the idle ticks after the solver's inputs needs those ticks as inputs: the loop is cut at its finish.
-            List<InputTick> idled = found.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList();
-            RunResult rr = Solve.OnThread(() => Create().Run(idled, null, null, 0));
-            return rr.Finished ? idled.GetRange(0, rr.FinishTick + 1) : null;
+            return found == null ? null : CutAtFinish(run, route, found);
+        }
+
+        /// <summary>The course run after the route's lead, without goals: a course solve's from where the lead leaves the player.</summary>
+        static Simulation AfterLead(CourseRun run, LoopRoute route)
+        {
+            Simulation sim = LoopSim(run, route.LeadLaps + 1);
+            SimSnapshot at = sim.Advance(route.Lead);
+            sim.SetStart(at, route.Lead.Count);
+            sim.UseGoals(null);
+            sim.TargetCourse = run.Course;
+            return sim;
+        }
+
+        /// <summary>A lap played after the route's lead, cut at its finish (a finish in the idle ticks after its inputs takes those
+        /// ticks as inputs), or null when it doesn't finish.</summary>
+        static List<InputTick> CutAtFinish(CourseRun run, LoopRoute route, List<InputTick> lap)
+        {
+            List<InputTick> idled = lap.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList();
+            RunResult r = Solve.OnThread(() => AfterLead(run, route).Run(idled, null, null, AnyTicks));
+            return r.Finished ? idled.GetRange(0, r.FinishTick + 1) : null;
+        }
+
+        /// <summary>
+        /// A loop lap repaired where the lap search found none: the lap before (the route's loop, else its first lap after a quick
+        /// restart) played after the lead, and the reach windows (FullTas --unsolved) take it on from where it breaks, through the
+        /// first lap's waypoints to the finish. The finish clears the course reset point, so the restart lands on the course's
+        /// checkpoint, which needn't be the course start (Course 3: 1 u right of it): a first lap through spikes on grace breaks
+        /// there, and the lap search has no seed that finishes. The lap cut at its finish, or null when the reach doesn't get there.
+        /// </summary>
+        static List<InputTick> RepairLoopLap(CourseRun run, LoopRoute route, WaypointOptions options, string dir, double minutes, int threads)
+        {
+            List<InputTick> lap = route.Loop ?? new[] { new InputTick { reset = true } }.Concat(route.FirstLap).ToList();
+            List<FullTasGoal> goals = Enumerable.Range(0, route.LeadLaps).Select(_ => FinishGoal(run.Course))
+                .Concat(CourseWaypoints.Build(run.Trace, route.FirstLap, options).Goals.Where(g => g.kind == FullTasGoal.At))
+                .Append(FinishGoal(run.Course)).ToList();
+            string name = run.Name + "-lap";
+            string synthetic = WriteCourseTrace(run, dir, route.Lead.Concat(lap).ToList(), name, goals);
+            Solve.CourseRuns[name] = run.Rules;
+            TimerGoal = route.LeadLaps;
+            LoopTiming = true;
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: repairing the lap before from where it breaks, through {goals.Count - route.LeadLaps - 1} "
+                + $"waypoints to the finish, for {minutes:0.##} min");
+            var repair = new FullTas(new[] { synthetic, "--unsolved", "--fresh", "--no-submit", "--threads", threads.ToString(CultureInfo.InvariantCulture),
+                "--minutes", minutes.ToString("0.##", CultureInfo.InvariantCulture) }) { _course = run, _reachOnly = true };
+            repair.Search();
+            Route best = repair._best;
+            if (best.Progress < goals.Count)
+            {
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: the repair reached {best.Progress} of {goals.Count} goals");
+                return null;
+            }
+            // The reach may redo the lead's inputs: the lap is replayed after the route's own lead, null if it needs the redone one.
+            return CutAtFinish(run, route, best.Inputs.Skip(route.Lead.Count).ToList());
         }
 
         /// <summary>
         /// The farm loop the search starts from: the candidate with the fastest steady cycle, settled (<see cref="SettleLoop"/>).
         /// Without one, a loop lap is searched after the fastest lead, and while a found loop doesn't repeat exactly, after the
-        /// lead and that loop once more (a few times at most). Null when no steady loop came of it.
+        /// lead and that loop once more (a few times at most); a lap the search doesn't find is repaired (<see cref="RepairLoopLap"/>).
+        /// Null when no steady loop came of it.
         /// </summary>
         static (LoopRoute route, LoopCycle cycle, string how)? StartLoop(CourseRun run, List<(string how, List<InputTick> inputs)> candidates, double lapMinutes,
-            int threads, bool search)
+            int threads, bool search, WaypointOptions options, string dir)
         {
             (LoopRoute route, LoopCycle cycle, string how)? best = null;
             (LoopRoute route, string how)? lead = null;
@@ -252,7 +306,7 @@ namespace IGTAP.EngineSim.Cli
             var found = new List<List<InputTick>>();
             for (int attempt = 0; attempt < 2 * MaxLoopLaps && best == null; attempt++)
             {
-                List<InputTick> lap = SearchLoopLap(run, at, lapMinutes, threads);
+                List<InputTick> lap = SearchLoopLap(run, at, lapMinutes, threads) ?? RepairLoopLap(run, at, options, dir, lapMinutes, threads);
                 if (lap == null) break;
                 found.Add(lap);
                 for (int p = 1; p <= found.Count && p <= MaxLoopLaps && best == null; p++)
@@ -283,7 +337,9 @@ namespace IGTAP.EngineSim.Cli
             run.Loop = true;
             double minutes = Solve.Option(args, "--minutes", 60.0);
             int threads = Solve.Option(args, "--threads", Math.Max(1, Environment.ProcessorCount - 4));
-            var start = StartLoop(run, candidates, Math.Min(5.0, Math.Max(0.25, minutes / 3)), threads, run.WaypointsFile == null);
+            WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
+            options.Record = false;
+            var start = StartLoop(run, candidates, Math.Min(5.0, Math.Max(0.25, minutes / 3)), threads, run.WaypointsFile == null, options, dir);
             if (start == null)
             {
                 if (run.WaypointsFile != null)
@@ -299,8 +355,6 @@ namespace IGTAP.EngineSim.Cli
             // it improves on (LoopCommitted). A loop the lap search just found or a seed's (a library route) reaches the judge here; the
             // last --auto best was written when kept, and a read-only run (--waypoints-out) writes nothing.
             if (run.WaypointsFile == null) WriteStartingLoop(run, route, cycle, candidates.Any(c => c.how == how) ? "start: " + how : how);
-            WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
-            options.Record = false;
             List<FullTasGoal> lap = LoopLapWaypoints(run, route, options);
             run.Goals = LoopGoals(run, route, lap);
             string synthetic = WriteCourseTrace(run, dir, route.Inputs);
@@ -335,12 +389,7 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> inputs = route.Inputs;
             try
             {
-                Simulation sim = LoopSim(run, route.LeadLaps + 1);
-                SimSnapshot at = sim.Advance(route.Lead);
-                sim.SetStart(at, route.Lead.Count);
-                sim.UseGoals(null);
-                sim.TargetCourse = run.Course;
-                return CourseWaypoints.Build(run.Trace, run.Header, sim, route.Loop, options,
+                return CourseWaypoints.Build(run.Trace, run.Header, AfterLead(run, route), route.Loop, options,
                     goals => CourseWaypoints.Check(run.Trace, inputs, leadFinishes.Concat(goals).ToList()).Skip(route.LeadLaps).ToArray())
                     .Goals.Where(g => g.kind == FullTasGoal.At).ToList();
             }

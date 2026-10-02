@@ -80,7 +80,7 @@ namespace IGTAPTasMod
                 _panelCacheDirty = true;
             }
             float now = Time.unscaledTime;
-            PerfSection(9);
+            PerfSection(8);
             int state = PanelCacheState(list, velocity, padLive);
             if (_panelCacheDirty || Time.fixedTime != _panelCacheFixedTime || state != _panelCacheState || !ReferenceEquals(_fpsText, _panelCacheFps)
                 || !ReferenceEquals(_clonesText, _panelCacheClones) || !ReferenceEquals(_playbackSpeedText, _panelCacheSpeed)
@@ -111,13 +111,13 @@ namespace IGTAPTasMod
                 _panelCacheSpeed = _playbackSpeedText;
                 _panelCacheDrawnAt = now;
             }
-            PerfSection(11);
+            PerfSection(10);
             Color saved = GUI.color;
             GUI.color = new Color(1f, 1f, 1f, PanelBack.a);
             DrawPanelCacheRect(_panelCacheLeft, width, height);
             DrawPanelCacheRect(_panelCacheRight, width, height);
             GUI.color = saved;
-            PerfSection(12);
+            PerfSection(11);
             if (padLive)
             {
                 // No route lists its ticks: the pad shows the buttons held now (or, with no input actions, the newest tick).
@@ -126,11 +126,11 @@ namespace IGTAPTasMod
                 if (list) DrawInputPad(InputPadRect(panelScale), live ?? _inputRows[_inputRows.Count - 1], panelScale);
                 else if (live != null) DrawInputPad(InputPadRect(panelScale), live, panelScale);
             }
-            PerfSection(13);
+            PerfSection(12);
             if (!velocity) return;
             DrawNudge(_nudgeRect);
             DrawLiveDebugValues(PanelScale(scale));
-            PerfSection(14);
+            PerfSection(13);
         }
     }
 }

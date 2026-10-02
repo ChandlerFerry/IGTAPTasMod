@@ -257,11 +257,20 @@ namespace IGTAPTasMod
         }
 
         /// <summary>A file written aside (<paramref name="temporary"/>) moved over <paramref name="path"/>: a crash mid-write
-        /// never leaves it half written.</summary>
-        static void ReplaceAtomic(string temporary, string path, string backup = null)
+        /// never leaves it half written, and a reader (an engine process loading a trace or world) never sees it so. A reader
+        /// that holds it open without delete sharing blocks the replace: it is tried again for up to 2 s.</summary>
+        internal static void ReplaceAtomic(string temporary, string path, string backup = null)
         {
-            if (File.Exists(path)) File.Replace(temporary, path, backup);
-            else File.Move(temporary, path);
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(path)) File.Replace(temporary, path, backup);
+                    else File.Move(temporary, path);
+                    return;
+                }
+                catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < 100) { System.Threading.Thread.Sleep(20); }
+            }
         }
 
         private static string SafeId(string id)

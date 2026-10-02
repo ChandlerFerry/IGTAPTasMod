@@ -59,10 +59,9 @@ namespace IGTAPTasMod
                 if (run.human != null)
                 {
                     w.WritePropertyName("human"); w.WriteStartObject();
-                    w.WritePropertyName("major"); w.WriteValue(run.human.major);
-                    w.WritePropertyName("nmg"); w.WriteValue(run.human.nmg);
                     w.WritePropertyName("grace"); w.WriteValue(run.human.grace);
-                    w.WritePropertyName("difficulty"); w.WriteValue(run.human.difficulty);
+                    w.WritePropertyName("framePerfect"); w.WriteValue(run.human.framePerfect);
+                    w.WritePropertyName("backToBack"); w.WriteValue(run.human.backToBack);
                     w.WriteEndObject();
                 }
                 if (run.rebaseAt != null)

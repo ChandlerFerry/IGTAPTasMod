@@ -7,12 +7,13 @@ using UnityEngine;
 namespace IGTAPTasMod
 {
     // GET /api/perf: a ring of the last frames, each split into the pace wait, the plugin's Update (the web pump on its own),
-    // its OnGUI (by overlay section) and the rest (the game's scripts, rendering, Unity's cap), with the bytes each allocated.
+    // its OnGUI (by overlay section) and the rest (the game's scripts, rendering, Unity's cap), with the bytes each allocated;
+    // skin is the TAS skin's own work (its tick and its pre-render placement), part of the rest.
     public sealed partial class TasPlugin
     {
-        struct PerfFrame { public float dt, clock, wait, update, pump, gui; public int gc; public bool ticked; public long allocUpdate, allocGui, allocRest; }
-        static readonly string[] PerfSectionNames = { "ghosts", "trainer", "goals", "origin", "techs", "spikes", "checkpoints", "hitbox", "graze", "panels", "dropped", "redraw", "blit", "pad", "live" };
-        const int PerfSectionCount = 15;
+        struct PerfFrame { public float dt, clock, wait, update, pump, gui, skin; public int gc; public bool ticked; public long allocUpdate, allocGui, allocRest; }
+        static readonly string[] PerfSectionNames = { "ghosts", "trainer", "goals", "origin", "techs", "spikes", "checkpoints", "graze", "panels", "dropped", "redraw", "blit", "pad", "live" };
+        const int PerfSectionCount = 14;
         readonly float[] _perfSections = new float[PerfFrames * PerfSectionCount];
         readonly float[] _perfSectionsNow = new float[PerfSectionCount];
         readonly long[] _perfSectionAlloc = new long[PerfSectionCount];
@@ -97,7 +98,7 @@ namespace IGTAPTasMod
                 screen = Screen.width + "x" + Screen.height, fullScreenMode = Screen.fullScreenMode.ToString(),
                 refresh = Screen.currentResolution.refreshRateRatio.value, gcFrames = frames.Count(f => f.gc > 0),
                 over4ms = over(4f), over5ms = over(5f), over10ms = over(10f), over20ms = over(20f),
-                dt = stat(f => f.dt), wait = stat(f => f.wait), update = stat(f => f.update), pump = stat(f => f.pump), gui = stat(f => f.gui),
+                dt = stat(f => f.dt), wait = stat(f => f.wait), update = stat(f => f.update), pump = stat(f => f.pump), gui = stat(f => f.gui), skin = stat(f => f.skin),
                 rest = stat(f => f.dt - f.wait - f.update - f.gui),
                 allocUpdate = stat(f => f.allocUpdate), allocGui = stat(f => f.allocGui), allocRest = stat(f => f.allocRest),
                 allocPerSecond = Math.Round(frames.Sum(f => (double)(f.allocUpdate + f.allocGui + f.allocRest)) / seconds),

@@ -687,7 +687,7 @@ namespace IGTAP.EngineSim.Cli
             return s.ToString();
         }
 
-        static string Input(Humanizer.Event e)
+        internal static string Input(Humanizer.Event e)
         {
             int ticks = e.End - e.Tick;
             string span = (e.Kind == Humanizer.Kind.StickX || e.Kind == Humanizer.Kind.StickY) && ticks <= 3 ? $" for {ticks} tick{(ticks == 1 ? "" : "s")}" : "";

@@ -58,9 +58,9 @@ states carry each type's field layout: a state of another build is dropped and r
 An event that isn't the next goal changes nothing (buying another box, finishing another course), except under loose
 buys (below). Unlocks come only from the game's purchases; the plugin writes none.
 
-A run's `"human": {"major": 60, "nmg": 20, "grace": 2, "difficulty": 5}` (those when unset) are its human classes' score
-weights (README `### Rules` 54, [Routes](#routes)): the seconds a major span, an nmg span and a spike-grace tick add to the
-live time, and the seconds per ln(attempts) of the whole route's [difficulty](#difficulty) (0: unpriced). A goals edit keeps
+A run's `"human": {"grace": 2, "framePerfect": 5, "backToBack": 20}` (those when unset) are its human classes' score
+weights (README `### Rules` 54, [Routes](#routes)): the seconds a spike-grace tick, a frame-perfect input and a
+back-to-back pair of the whole route's [difficulty](#difficulty) add to the live time (the last two 0: unpriced). A goals edit keeps
 them, and changing them retires no route: the gate scores with them, and a solve's trace carries them (`fulltas.human`),
 so an edit captures the start again before the next solve.
 
@@ -295,7 +295,8 @@ right end, the credits trigger) from savestate `test-no-omni-skip` (`c1382aa8df7
 world (20933, 14987) under the tunnel with wall jump, 1 dash (no omnidash) and 1 double jump. A test of whether the
 stretch goes without the omnidash; it teleports and writes unlocks, so it is not a whole-game route.
 
-On the 280 fps grid (2026-10-01; the 5.12 died at input 33) its class bests are: `major` and `nmg` 5.63 s (2 spike
+On the 280 fps grid (2026-10-01; the 5.12 died at input 33; scores here under the span weights then, 60 s a major and 20 s
+an nmg span) its class bests are: `major` and `nmg` 5.63 s (2 spike
 wallbounces and 2 spike supers, 10 spike-grace ticks: score 105.63), `human-major` and `human-nmg` 6.35 s with no nmg
 span and 5 grace ticks (score 16.35). Six parallel classed solves (`--tag`s `autob`, `fresh`, `fresh2`, `bare`, `hmaj`,
 `nmgauto`/`fromnmg`) left 242 candidates in 29 families: the clean climb (0 nmg, 16.35-24.11 by grace ticks 5-9, 6.05-6.43 s),
@@ -304,11 +305,21 @@ two spike wallbounces without the super (71.98, 7.98 s), and the TAS line (two s
 5.83 s down to 85.55 at 5.55 s). The clean climb came from a goals 1-2 window seeded with the first from-scratch goal 1 (no
 spike super) once windows were priced by score.
 
-With the difficulty term (5 s × ln attempts) the human classes rank by how often a human finishes too. Four 25-minute
-`--auto` solves (`--tag`s `dclean`, `dclean2`, `dinwall`, `dmaj`, 7 threads each, `--ref` a family's best) took the human
-best to 6.41 s with no nmg span, 5 grace ticks and 14.3 attempts (score 29.72; the 6.35 route scores 32.80 at 26.9
-attempts). The clean climb's variants lead the 430 candidates; the inwall and TAS lines stay above 100 (their spans and
-narrow openings: the inwall line 4800 attempts). The top six played back to back at 1x all finish at their offline times.
+With the sampled difficulty term (5 s × ln attempts, retired 2026-10-01) four 25-minute `--auto` solves (`--tag`s
+`dclean`, `dclean2`, `dinwall`, `dmaj`, 7 threads each, `--ref` a family's best) took the human best to 6.41 s with no nmg
+span and 5 grace ticks. The clean climb's variants lead the 430 candidates. The top six played back to back at 1x all
+finish at their offline times.
+
+Under the counted difficulty (2026-10-02) the 535 candidates measured again put the clean climb's 6.35 s
+(`human-nmg-16.35-e7bd42d6`, 4 frame-perfect, 2 back-to-back of 32 inputs, 5 grace ticks) first at 76.35: both human
+classes took it through the gate (it beat the 6.41 s's 76.41). Four 25-minute `--auto` solves (`--tag`s `hb2`-`hb5`, 7
+threads each, `--ref` the clean climb and the 5.93 s three-nmg-span line `human-major-81.93-1fff25d3`) found nothing
+lower: the best of the three-nmg-span line came to 6.11 s at 80.11 (8 frame-perfect, 1 back-to-back, 7 grace). The search
+prices time and grace in its windows, not difficulty, so its finds keep the TAS's tight timing. Moving the hard inputs
+by hand, one or two at a time up to 2 ticks (a neighbour within 10 ticks too, any stick value; 1,086 variants of the
+clean climb, 2,208 of the 6.11 s), and the start's jump and dash 3-4 ticks apart or together with the rest of the route
+moved 1-2 ticks to catch up (4,032), kept every count or broke the route. The clean climb's two pairs are its start
+(jump on tick 0 or 1, the dash on tick 2 only) and its jump on tick 32 and again on 34 (each on its tick only).
 
 `"rebaseAt": [x, y]` (world) on a savestate run moves the world once the restored player has rested: FloatingOrigin's own
 moves (roots, camera, backgrounds, particles, trails, lines, `currentOrigin`) by that point's scene position, then a physics
@@ -477,14 +488,15 @@ as above; then, for every class, the gate runs the engine's `techs-used <trace> 
 trace (`fulltas-<run>.json`; the route goes to `fulltas-<run>-classes.json` with the goals it's judged under), with
 `--no-difficulty` but for a human class whose weights price difficulty. An `nmg` or `human-nmg` route with a major span is
 refused (`uses pauselift (major) at tick 142`), and a human one unless its score, the gate's live time plus `"human"`'s
-weights for the engine's counts and ln of its priced attempts, is strictly lower than its class best's
+weights for the engine's grace ticks, frame-perfect inputs and back-to-back pairs, is strictly lower than its class best's
 (`fulltas-classes.json`; a human route without a result there ranks at its live time). A class best whose result has no
-`difficulty` while the weights price it (saved before the term) is scored again by `techs-used` first, so the new route is
+`difficulty` while the weights price it (saved before the term, or with the sampled `{P, attempts, priced}`), or whose
+score isn't its counts under the weights now, is scored again by `techs-used` first, so the new route is
 judged against its whole score (said in the log; kept at its old score, a floor, when the engine can't). A class other
 than major is also refused when the engine's replay can't stand for the judged one: no current trace, short of its goals,
 another live time (by more than 0.0005 s), or a human class's route the engine measured no difficulty for while the
 weights price it. A major route is ranked by live time as before and saved without a result then. A saved route's result
-(`class`, `score`, `live`, `major`, `nmg`, `graceTicks`, `spans`, `difficulty` (`{P, attempts, priced}`, null unmeasured))
+(`class`, `score`, `live`, `major`, `nmg`, `graceTicks`, `spans`, `difficulty` (`{inputs, framePerfect, backToBack}`, null unmeasured))
 goes to `fulltas-classes.json` by route id, and the reply carries `class` and `score`. Only a major record adopts other
 goals; a class route of other goals is refused.
 
@@ -558,13 +570,15 @@ inputs past the last unchanged goal the same way.
   `label` the goal as the map drew it, refused if the goal list changed since). The goal keeps its size and any
   `from=`; the edit is a goals edit like **Save goals** (disabled while a solve or playback runs).
 - **Bests by class** (static `fullTas.runs[].classes`, `human`, `candidates`): the run's four class bests (major, nmg,
-  human-major, human-nmg) with time, score (a human class's with its difficulty term, `≥` when its result has none: a
-  floor; the term in its tooltip), attempts and major / nmg / spike-grace counts (the spans in the row's tooltip), each
-  with **Play** (`/api/fulltas/play {name, class}`) and **Improve** (`/api/fulltas/solve {name, class}`), and the
-  score's weights. **Human candidates** lists the routes human-class solves judged for the run's current goals, by
-  score: a candidate's own `difficulty` prices its score (the solve wrote it), else its sidecar's `priced` under the run's
-  weights (`candidates[].difficultySeconds`, the term; null, shown `≥`: neither, the score without it); a candidate the
-  solve measured but `difficulty` hasn't mapped shows its P and attempts from `candidates[].odds`. Tick some (or all, in
+  human-major, human-nmg) with time, score (the result's counts under the run's weights now; a human class's with its
+  difficulty term, `≥` when its result has none: a floor; the terms in its tooltip), **Frame-perfect** and
+  **Back-to-back** (`—` unmeasured: major and nmg are judged without difficulty) and major / nmg / spike-grace counts
+  (the spans in the row's tooltip), each with **Play** (`/api/fulltas/play {name, class}`) and **Improve**
+  (`/api/fulltas/solve {name, class}`), and the score's weights. **Human candidates** lists the routes human-class solves
+  judged for the run's current goals, by score (live time, grace ticks and the difficulty term under the run's weights
+  now): a candidate's own `difficulty` counts price its score (the solve wrote them), else its sidecar's
+  (`candidates[].difficulty` the counts, `candidates[].difficultyMap` the sidecar, `candidates[].difficultySeconds` the
+  term; null, shown `≥`: neither, the score without it). Tick some (or all, in
   the header) and **Play selected back to back** (`/api/fulltas/queue {name, files}`)
   plays them at 1x from the run's start in score order. The live `fullTas.queue` shows which one plays and each one's
   1x result in the table (finished time, or the goal it got to and why in its tooltip); it stays once done (`index >=
@@ -573,21 +587,21 @@ inputs past the last unchanged goal the same way.
 - **Measure difficulty** (`POST /api/fulltas/difficulty {name}`) runs the engine's `difficulty <trace> --candidates
   <traces>\fulltas\candidates\<run>\ --threads <cores − 4>` from the run's current trace (refused without one: Capture
   start), a process of its own beside any solve. Each candidate's measurement goes to the folder's `difficulty\<file>`
-  (one already measured with the same parameters and seeding, `params.seed` `played`, is skipped) and shows as its row's
-  `difficulty` (static `fullTas.runs[].candidates[].difficulty`, the sidecar as written, null until measured; the static state follows the
+  (one already measured with the same parameters, `params.measure` `windows-3`, is skipped) and shows as its row's
+  `difficultyMap` (static `fullTas.runs[].candidates[].difficultyMap`, the sidecar as written, null until measured or
+  measured the old sampled way; the static state follows the
   folder). The live `fullTas.difficulty` is `{name, running, done, of}` from the engine's `@difficulty {"type":
   "progress", "done", "of", "file"}` lines (`of` null until the first; the rest goes to the log); it stays after the
   batch until the next, whose end or failure is also `lastResult`. Any Full-TAS **Stop** kills it; the sidecars written
   so far stay.
-- A measured candidate's row shows **P %** (one human attempt's chance), **Attempts** (1/P, ∞ at P 0), **Necks**
-  (bottlenecks, p < 0.9; their spacing in its tooltip) and **Chains**; P's tooltip adds the tightest segment, the spacing
-  and the parameters it was measured with. The **Score** and **Attempts** headers sort the table (attempts: fewest
-  first, P 0 after the rest, unmeasured last; a tie keeps score order); **Play selected back to back** still plays in
-  score order. Under the row a strip spans its input ticks (0 to the last segment's end): each segment a block shaded by
-  its p (clear at 1, amber to solid red as it falls, a bottleneck underlined red), each chain a bracket below its span,
-  each nmg span an amber mark and each major span a violet one at its tick; hovering one gives its p, anchors, input and
-  physics ticks, events, techs and spike-grace ticks. The amber bar above the table follows `fullTas.difficulty` (done
-  of `of`, with its own **Stop**).
+- A candidate's row shows **Frame-perfect** and **Back-to-back**; the first's tooltip lists each frame-perfect input
+  (tick and input), the second's each forced pair (its ticks, gap and inputs). The **Score** and **Frame-perfect**
+  headers sort the table (frame-perfect: fewest first, then back-to-back, unmeasured last; a tie keeps score order);
+  **Play selected back to back** still plays in score order. Under a measured row a strip spans its input ticks: each
+  frame-perfect input a red mark at its tick, each pair under 3 ticks apart a bracket between its ticks (bright when
+  forced, faint when the fewest-pairs timing spreads or merges it), each nmg span an amber mark and each major span a
+  violet one at its tick; hovering one gives its input, window and limits, or the pair's ticks, gap and spread. The amber bar above the table
+  follows `fullTas.difficulty` (done of `of`, with its own **Stop**).
 
 ## Classes
 
@@ -600,13 +614,12 @@ Every run keeps four bests, one per class (`enginesim\Runtime\Glitches.cs`, `eng
 | `human-major` | anything | goals, then score |
 | `human-nmg` | glitchless and nmg techs | goals, then fewer major spans, then score; a route with a major span is never saved |
 
-Score = live seconds + 60 × major spans + 20 × nmg spans + 2 × spike-grace ticks + 5 × ln(attempts) of the whole route's
+Score = live seconds + 2 × spike-grace ticks + 5 × frame-perfect inputs + 20 × back-to-back pairs of the whole route's
 [difficulty](#difficulty); the run's `"human"` weights in `fulltas.json` (the trace header's `fulltas.human`) replace the
-defaults. A span is one occurrence of a tech, however long it lasts; a spike-grace tick is a step whose hurtbox touches a
-spike the run lives through (spike grace stays glitchless). Attempts are the measure's priced attempts (`difficulty`'s
-defaults, seeded by the route's inputs, so a route scores alike wherever it is measured): 1/P, and at P 0 each span no
-sample works in counted as one in its samples (one chain with no working sample in 4800: ln 4800 × 5 = 42.4 s). A
-route short of its last goal has no difficulty term.
+defaults. A major or nmg span adds nothing of its own (before 2026-10-01: 60 s and 20 s): a glitch is as hard as the
+inputs that make it, which the difficulty counts. A span is one occurrence of a tech, however long it lasts; a
+spike-grace tick is a step whose hurtbox touches a spike the run lives through (spike grace stays glitchless). A route
+short of its last goal has no difficulty term.
 
 - **What a route uses** (`Glitches.Classify`): the route replayed with a `TechSteps` recorder; for every `nmg` and `major`
   tech of techs.json (the config copy merged with the repo seed, as `TechGrafts.Load` reads it), every occurrence: its own
@@ -619,55 +632,59 @@ route short of its last goal has no difficulty term.
   (`human-nmg` none when it has a major span), on a course trace (to its finish) or a Full-TAS one (as `--check` replays
   it, strict buys; the route's own `"goals"` when it carries an adopted list). The route is a run file's `inputs` or an
   offline best's or submit body's `ticks`. `--json` is one line for the gate: `{finished, progress, goals, live, spans:
-  [{tech, category, tick, physics}], major, nmg, graceTicks, undetected, difficulty: {P, attempts, priced} (null
-  unmeasured), weights: {major, nmg, grace, difficulty}, score: {"human-major", "human-nmg"}}`. `techs-used --demos [tech
-  ...]` plays every tech's demos: an nmg or major tech's demo must show its own tech (`ok`, `MISSED`, `undetected`), a
-  glitchless tech's none (`FALSE` lists what it saw). On 2026-10-01: `FalseEnding%-280` 355.07 s uses 7 pauselifts
-  (major), 122 nmg spans (44 GC wall clips, 27 momentum after quick restart, 20 KB wall clips, 20 inwall wallbounces, 7
-  spike wallbounces, 3 spike supers, an inwall super into a wall) and 68 spike-grace ticks: human-major 3351.07 s before
-  the difficulty term. `Test-No-Omni-Skip` 6.95 s: 2 spike wallbounces, a spike super, 11 grace ticks, 88.95 s in both
-  human classes before it. With it (2026-10-01, ~4.5 s a route on 16 threads): `human-nmg-16.35-e7bd42d6` P 0.07, 14.29
-  attempts, 29.64 s; `human-nmg-22.15-cdb767b6` P 0.0362, 27.64 attempts, 38.75 s; `human-nmg-85.55-f99f7796` (3 nmg
-  spans) P 0.00034, 2944 attempts, 125.49 s.
+  [{tech, category, tick, physics}], major, nmg, graceTicks, undetected, difficulty: {inputs, framePerfect, backToBack}
+  (null unmeasured), weights: {grace, framePerfect, backToBack, techs}, score: {"human-major", "human-nmg"}}`.
+  `techs-used --demos [tech ...]` plays every tech's demos: an nmg or major tech's demo must show its own tech (`ok`,
+  `MISSED`, `undetected`), a glitchless tech's none (`FALSE` lists what it saw). On 2026-10-01: `FalseEnding%-280`
+  355.07 s uses 7 pauselifts (major), 122 nmg spans (44 GC wall clips, 27 momentum after quick restart, 20 KB wall
+  clips, 20 inwall wallbounces, 7 spike wallbounces, 3 spike supers, an inwall super into a wall) and 68 spike-grace
+  ticks. `Test-No-Omni-Skip`'s human best (6.35 s, 5 grace ticks, 4 frame-perfect, 2 back-to-back of 32 inputs) scores
+  76.35 s in both human classes; its major run file (5.65 s, 3 nmg spans, 10 grace ticks, 8 frame-perfect, 1
+  back-to-back of 36) 85.65 s.
 - **`fulltas <trace> --class nmg|human-major|human-nmg [--tag T]`** solves for that class (`--class major`, the default,
   is the solve as before, files and all). Its run file is `fulltas\<run>.<class>.json` (`--tag T`:
   `<run>.<class>.<T>.json`, so several solves of a class run side by side), with its archive, visits, closest and
   `--auto` files named the same way, and its complete bests `offline-best\fulltas-<run>.<class>[.<T>]-<time>.json`. The
-  run file adds `class`, `score` (a human class's, else null), `difficulty` (`{P, attempts, priced}`, a whole route's in a
-  human class that prices it, else null) and `glitches: {major, nmg, graceTicks, spans}`; the gate
+  run file adds `class`, `score` (a human class's, else null), `difficulty` (`{inputs, framePerfect, backToBack}`, a whole
+  route's in a human class that prices it, else null) and `glitches: {major, nmg, graceTicks, spans}`; the gate
   submission adds `class`. A classed solve starts from the better (in its class) of the trace's route, the major best
   `fulltas\<run>.json` and its own run file.
+- **`--tech-weight <tech>=<seconds>`** (repeatable or comma-separated; `fulltas` with a human class, `techs-used`) prices
+  each span of a techs.json tech at its seconds in the score (a span adds nothing otherwise). A glitchless tech so
+  weighted is classified too (its spans count as neither major nor nmg). A solve's own experiment, best with `--tag` and
+  `--no-submit`: the run file, the candidates and the log score with it, the gate with the run's `"human"` weights alone.
+  `Test-No-Omni-Skip`'s human-nmg best (6.41 s) takes one stored wall jump (input tick 35); `--tech-weight
+  stored-wall-jump=100` searches for the way without it.
 - **One ranking.** Every acceptance (reach and polish windows, merges and splices, repairs, rebuilt loop goals, known
   tails, `--auto`'s levers, the fresh check, a commit's re-timing) compares with `Better` / `Ahead`: major by live time
   exactly as before; a class by its table above. A route's report is made only when it could win (its live time under
   the best's, or under the best's score in a human class) and kept on the route; a whole route's difficulty only when its
   score without it is under the best's whole score (the best's own is measured once), once per inputs, kept on the route
-  and logged (`difficulty of 019510b0 (6.11s [0 major, 3 nmg, 8 grace, score >= 82.11 (difficulty not measured)]): P
-  0.008333, 120 attempts, 23.94 s in 5.4 s`). A term of ~24 s leaves that floor far under the best, so a merge measures
-  most of its finds, 3-6 s each on 8 threads (`Test-No-Omni-Skip` human-nmg, 2026-10-01: 12 after one window, 53 s; a
-  3-minute `--auto` ended at 4:04). A lever that picks by live time alone still has its route ranked by the class before it
-  is kept.
+  and logged (`difficulty of <hash8> (<route>): 4 frame-perfect, 2 back-to-back of 32 inputs, 60.00 s in <t> s`). The
+  measure is humanize's version of the route and a few hundred short replays, mostly the humanize part. A lever that
+  picks by live time alone still has its route ranked by the class before it is kept.
 - **Windows.** A major window's search ranks its finds by their tick at the window's last goal. A class's window
   (`SearchWindow`'s and `--auto`'s side-by-side windows) prices them: every run that finishes the window, played whole
   from the window's start, is played again on the worker's simulation with a `TechSteps` recorder, and its spans and
   spike-grace ticks from the tick of the goal before the window to the window's last goal go into its time as the class
-  scores them (`OfflineSolver.Penalty`; a run resumed from a state inside the window ranks by its time alone, a lower
-  bound, and is played whole and priced before it is kept, and the segment cut that drops a run slower to a cell than the
-  best is off). The best's own way is priced over the same ticks (a window's run starts at its prefix's last input,
+  scores them (`OfflineSolver.Penalty`: the grace ticks, and the spans of `--tech-weight` techs; a run resumed from a
+  state inside the window ranks by its time alone, a lower bound, and is played whole and priced before it is kept, and
+  the segment cut that drops a run slower to a cell than the best is off). The best's own way is priced over the same
+  ticks (a window's run starts at its prefix's last input,
   which can come before the goal before the window is touched: a spike super there is the prefix's, not the find's), so
   a slower but cleaner way ranks ahead, and the window's baseline is the best's tick there plus its penalty inside the
   window in ticks. In an nmg class a run with a major span never counts (also in the tail windows, which stay held to
   time otherwise), and when the best has a major span in the window any find counts. A priced find logs its ticks, its
   penalty and its score (`auto: window 1-2 find 2.48s (124 physics ticks) + 2701 ticks of penalty = score 2825 against
   the best's 3891`). The merge splices the 16 latest finds (5 for major) and judges each whole route by the class. A
-  window prices glitches only, never difficulty: a measure takes seconds on every thread, and a window prices thousands of
+  window prices its penalty only, never difficulty: a measure replays the whole route, and a window prices thousands of
   finds (the merge's whole-route judging adds it).
 - **Repairs.** A human class's repair bounds compare scores in ticks: a run's tick at its goal plus its penalty so far,
   plus the bound's ticks for the rest (the model's lower bounds, the cost-to-go, a tail window's follow-on with its
   penalty), against the best's end plus its penalty. That covers `--auto`'s hopeless check (the bounds, `--repair-slack`,
   the cost-to-go), the repair's "falls behind the best at goal k" and "reached no sooner than the best's last goal", which
   broken finds get repaired (ahead at the window's last goal) and the tail windows' bound. Like the windows they price
-  glitches only: a partial run has no difficulty, and the best's term would loosen every bound by its seconds. Major and
+  the penalty only: a partial run has no difficulty, and the best's term would loosen every bound by its seconds. Major and
   nmg compare ticks as always; an nmg class whose best has a major span sets no bound.
 - **nmg classes** graft glitchless and nmg techs only (the mined library filtered by techs.json category; the route
   corpus's windows, `route`, are left out). A route with a major span can still be the search's working best (it reaches
@@ -686,12 +703,14 @@ route short of its last goal has no difficulty term.
 
 ### Difficulty
 
-How likely one human attempt at a route works, and where it fails (`enginesim\Cli\Difficulty.cs`). A route is a chain of
-bottlenecks: the width of a segment is the share of human-like plays of it that still work, the route's chance P the
-product of its segments'. The human classes' score adds its weight × ln(attempts) ([Classes](#classes)).
+How hard a route's inputs are to time (`enginesim\Cli\Difficulty.cs`), counted, not sampled: no player's skill is
+assumed, so there is no success chance and no attempts count. Two counts: **frame-perfect inputs**, each working on one
+tick only (20 ms), and **back-to-back pairs**, two actions under 3 ticks (60 ms) apart that no timing of the inputs inside
+their windows avoids. A human needs about 60 ms between two inputs: two ticks between them, the second on the third. The
+human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair ([Classes](#classes)).
 
 ```powershell
-& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json route.json   # --json, --samples 300, --sigma 1, --chain 15, --pos 4, --vel 0.05, --raw, --open, --threads N
+& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json route.json   # --json, --radius 6, --pos 4, --vel 0.05, --raw, --threads N
 & $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json --candidates $traces\fulltas\candidates\Test-No-Omni-Skip\
 ```
 
@@ -699,77 +718,61 @@ product of its segments'. The human classes' score adds its weight × ln(attempt
   course: its finish's), less every trailing input it plays alike without (the same goals at the same input and physics
   ticks; a course: the same finish, time and physics ticks), as the engine's idle step after a route's inputs (stick at
   rest) can play the last goal's step. Fields the engine never plays are cleared first, as a saved route drops them
-  (`Simulation.ToSteps`: a dash's turn and jump frame off its dash tick, a pause's tick and frame without a pause): a
-  search's stray `turnX` on ten non-dash ticks measured the route at 15.6 attempts and its saved copy at 25.3 (sidecars of
-  either earlier seeding, `params.seed` `inputs` or `canonical`, are measured again). A route then measures alike whatever follows it: the plugin's gate saves it cut at
-  its turbo finish, a search hands on inputs past it (one Test-No-Omni-Skip route measured 259, 260 and 280 inputs long:
-  P 0.029, 0.07, 0.07 before, 0.029 each now; the 260th, a jump and a dash on the goal's step, rescued the samples
-  that release the down-tilt a tick early). Then humanize's version of it (`Humanizer.Simplified`: the greedy passes that
-  keep its live time, no slack report; played as `humanize` plays a Full-TAS route, without strict buys: its finish is
-  at the last goal, not the strict finish's 12 ticks later, which a run that touches its last goal after its last input
-  never reaches, as it stops 20 idle steps after that input): a search's stray presses, dashes and stick changes are no
-  part of what a player does. It replays as `techs-used` does (strict buys, the route's own adopted goals), on a course
-  trace too. `--raw`, a route humanize can't finish, or a human version that doesn't finish under strict buys where the
-  route does, plays the route's own inputs, cut alike (said on stderr; `human` false).
+  (`Simulation.ToSteps`: a dash's turn and jump frame off its dash tick, a pause's tick and frame without a pause), so a
+  saved route measures as the inputs it came from, whatever follows its end. Then humanize's version of it
+  (`Humanizer.Simplified`: the greedy passes that keep its live time, no slack report; played as `humanize` plays a
+  Full-TAS route, without strict buys: its finish is at the last goal, not the strict finish's 12 ticks later, which a
+  run that touches its last goal after its last input never reaches, as it stops 20 idle steps after that input): a
+  search's stray presses, dashes and stick changes are no part of what a player does. It replays as `techs-used` does
+  (strict buys, the route's own adopted goals), on a course trace too. `--raw`, a route humanize can't finish, or a human
+  version that doesn't finish under strict buys where the route does, plays the route's own inputs, cut alike (said on
+  stderr; `human` false).
+- **The inputs** a player times: every stick change (x or y, a stick held from the start excepted), jump press, jump
+  release and dash (`Humanizer.Events`) before the route's end, and each dash's jump on a dash frame (`dashJump` n:
+  `MacroEngine.BeforeTick` presses it n dash frames in, its tick the dash's plus n). Inputs on one tick are one action.
+- **A window**: each input moved alone a tick at a time, earlier and later, up to `--radius` (6) ticks, both sides at
+  once on every thread, a side stopping at its first tick that doesn't hold. A stick change keeps both runs around it
+  (`Humanizer.Shift`). A jump press moves earlier only while the button is up, and later inside its hold, or past its
+  release with the release as late (the whole tap comes late). A release stays after its press and before the next
+  press. A dash crosses no other dash and takes its own fields (jump frame, turn, lock, pause). A dash's jump stays on
+  a dash frame (the first is 1). A move that can't be made (`blocked`) ends the window as a failing one does (`fail`);
+  `open` is no limit within the radius. The moved inputs play from the route's state at the last anchor before the
+  change. They **hold** when the run goes on as the route does: in the state of the first anchor after the change within
+  3 ticks and the move's own early or late, or reaching the next goal (a course: the finish) at most 25 ticks and the
+  move after the route. The route's last anchor is its last goal: reaching it is all. A death ends the run.
 - **Anchors** are where a player re-syncs: the start, standing (the second step on the ground), a wall cling (the second
   step on a wall off the ground), a respawn, a goal, a dash's freeze starting (`TechSteps`); anchors fewer than 3 input
-  ticks apart are one, and the last is the last goal (a course: its finish). A segment is the inputs between two.
-- **A sample** plays a span (a segment, or a chain of them, below) from the route's own state at its first anchor (each
-  worker's snapshots from one straight replay): every input event in it (`Humanizer.Events`: a press, a release, a dash,
-  a stick change) moved by a normal of `--sigma` input ticks rounded, kept from where the player is to 2 ticks past its
-  segment's end and moved no further than humanize's moves allow (no event crosses another input, a press keeps its
-  hold, a dash its freeze stick); a partial x goes a controller step up or down (0.05; under 0.3 rest, over 0.8 full
-  tilt) half the time. Sigma 0 is the route itself. Seeded by the measured inputs (their hash) and the span's ticks: a
-  measure repeats exactly, on any thread count and under any file name (`techs-used`, a solve and `--candidates` agree).
-  Before 2026-10-01's score term the file name seeded it; one route measured both ways: P 0.035 then, 0.07 now (the
-  measure's own spread at 300 samples).
-- **The same state**: the player has the anchor's goals, air jumps, air dashes, wall jumps and jump buffer (a press still
-  to come out as a jump), is within `--pos` u of its position and within `--vel` of its velocity (at least 1 u/s).
-- **It works** (closed loop, a player who sees where they are): the span plays an event chunk at a time (events under 5
-  input ticks apart are one), each event moved as it comes up. Before each chunk the player looks 5 ticks (100 ms)
-  earlier: off the route's state at that tick but in it 1 to 3 ticks earlier or later (the smallest first), the rest of
-  the plan moves by that much (coasting ticks inserted after the last event played, or clean ticks cut). At each of the
-  span's anchors the sample re-syncs when it is in the anchor's state 3 input ticks either way of its (moved) tick, the
-  rest of the plan moving by how early or late it got there. When it isn't, the player picks a correction of the next
-  segment from where they are: the first of the rest of the plan 1 to 3 ticks later or earlier, then one of its events
-  moved 1 or 2 ticks, or a partial stick a controller step either way (at most 24) that reaches the anchor after in its
-  state when played as planned (so the pick never sees the draws), and plays it with its draws from there; with none
-  the sample fails. At the span's last anchor it works in that anchor's state, when its run reaches the next goal (a
-  course: the finish) at most 25 input ticks after the route, or when a correction to the anchor after exists (that
-  segment's own draws are its own p's). At the route's last goal reaching it is all.
-- **`--open`** is the measure before the closed loop: all of a span's events moved at once and played open loop, working
-  in the next anchor's state (but for the jump buffer) or reaching the next goal at most 25 ticks late on the route's
-  own inputs.
-- **p** = working samples / samples, `--samples` (300) at a time while fewer than 20 work, up to 16 times as many. A
-  segment under 0.9 is a bottleneck; bottlenecks less than `--chain` input ticks apart (one's end to the next's start)
-  leave no time to reset and are sampled again as one span from the first one's anchor: a chain, whose p replaces its
-  segments'. A closed-loop chain no sample works in (narrower than its samples see) takes its segments' product, at most
-  1/its samples. P = the chains' p times the other segments', attempts = 1/P. The score's priced attempts (`priced`) are
-  1/P with each span (a chain, or a segment outside one) no sample works in counted as one in its samples, so a route
-  nothing gets through still scores, worse the more such spans: at P > 0 they are the attempts.
-- **Calibration** (2026-10-01, closed loop, open in brackets; the lab traces are copies of `tech-<id>.json` with the
-  lab's finish box as the header's `finish`, in the capture frame): the GC wall clip lab, its demo's own inputs to the
-  first clip, a finish box one clip reaches: P 0.887 (0.887); the demo, two clips to the wall's top: 0.217
-  (0.090): the second clip is timed off the first, and the first must leave the back edge within 8 u of the wall for it.
-  The KB wall clip lab's demo, one clip: 0.563. Plain movement, `1_wjdsdj-2.48-human` on Course 1 (no nmg or major
-  span): segments 1.000, 1.000, 0.993 (0.727), then 0.667 at the finish (humanize's version presses on the last tick of
-  the 4 that work). `1_none-1.42-human` (Course 1 NONE, GC then KB clips): P 0 either way, its 160-tick
-  air segment (35 events) never working; on `1_none-2.02-human`'s like segment most stick changes work moved alone on
-  one tick only.
+  ticks apart are one, and the last is the last goal (a course: its finish).
+- **The same state**: the player has the anchor's goals, air jumps, air dashes and wall jumps, is within `--pos` u of its
+  position and within `--vel` of its velocity (at least 1 u/s).
+- **Frame-perfect**: a window of one tick. **Back-to-back**: the fewest pairs of action ticks under 3 apart over every
+  timing that puts each input on a tick inside its window (inputs on one tick are one action): a set of action ticks
+  hitting every window, found by dynamic programming over the ticks (from one action tick, the next may come no later
+  than the earliest end of the windows starting after it). Each close pair of that timing is forced, shown by an input on
+  each (the narrowest window). Then the route's own close action ticks that timing spreads or merges are listed, not
+  counted, with the ticks it puts between them (`spread`, 0: one tick). The windows are each measured alone, so the
+  timing assumes their moves combine. Before 2026-10-02 two ticks were judged at a time, one way round
+  (`params.measure` `windows`), so a release free to come late still counted against the input after it.
+- **Measured** (2026-10-02, `Test-No-Omni-Skip`, 0.1 s each on 8 threads): the clean climb's 6.35 s
+  (`human-nmg-16.35-e7bd42d6`) has 4 frame-perfect inputs and 2 back-to-back pairs of 32 inputs. Its start presses jump
+  on tick 0 (window 0-1), down on tick 1 (1-2), x 0.3 on tick 2 (1-2) and dash on tick 2 (tick 2 only): down and x 0.3
+  can join either neighbour, but the jump and the dash stay two ticks apart, a back-to-back pair; the other is its
+  jump on tick 32 and jump again on 34 (each on its tick only). The sampled chance before rated that start (start to
+  freeze, input ticks 0-3) p 0.48 on the 6.41 s route and 0.54 on six candidates with the same start: its samples moved
+  every input by a normal of one tick and never let two inputs swap. Of the 535 candidates, 159 come out at 8
+  frame-perfect and 1 back-to-back, 74 at 4 and 2.
 - **JSON** (`--json` one line; `--candidates` writes it to `<dir>\difficulty\<file>`, kept while newer than its candidate
-  and made with the same parameters and seeding, with an `@difficulty {"type": "progress", "done", "of", "file"}` line after each and
-  a failed candidate on stderr): `{route, finished, goals (reached), live, human (humanize's version played), params:
-  {samples, sigma, chain, pos, vel, raw, open, seed ("played")}, P, attempts (null at P 0), priced, bottlenecks, chains,
-  tightest: {segment, p}, spacing (input ticks between consecutive bottlenecks), segments: [{index, from, to, fromPhysics, toPhysics, anchor,
-  next, events, samples, p, bottleneck, chain (its chainList index or null), techs (nmg and major techs seen there),
-  grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, works, p}]}`; `from`/`to`
-  input ticks, the physics ones the run's physics ticks there. The anchor kinds: `start`, `land`, `wall`, `freeze`,
-  `respawn`, `goal`, `finish`, `end` (a route that reaches no goal).
+  and made with the same parameters, `params.measure` `windows-3`, with an `@difficulty {"type": "progress", "done", "of",
+  "file"}` line after each and a failed candidate on stderr): `{route, finished, goals (reached), live, human
+  (humanize's version played), params: {radius, sync, pos, vel, raw, measure}, inputs, framePerfect, backToBack, events:
+  [{index, tick, physics, kind (stick-x, stick-y, press, release, dash, dash-jump), input, earliest, latest, window,
+  early, late (fail, blocked, open), framePerfect}], pairs: [{first, second (event indices), gap (as the route plays them),
+  spread (as the fewest-pairs timing places them), forced}]}`; only pairs under 3 ticks apart are listed.
 - **The anchors as an API**: `Difficulty.Anchors(sim, route, from, states)` gives each anchor's kind, input and physics
   ticks, snapshot, `MoveState` and goals reached; `Difficulty.Anchors(steps, goalTicks, first, fullTas)` the kinds from a
-  recorded run; `Difficulty.SameState` is the same-state test. `Difficulty.Meter(trace, header, labels, threads)` measures
-  whole routes with the defaults (`Measure(name, inputs)`: `Odds` `{P, Priced}`, `Json` the `{P, attempts, priced}` that
-  `techs-used`, run files and candidates carry).
+  recorded run; `Difficulty.SameState` is the same-state test. `Difficulty.Meter(trace, header, labels, threads)`
+  measures whole routes with the defaults (`Measure(name, inputs)`: a `Tally` `{Inputs, FramePerfect, BackToBack}`,
+  `Json` the `{inputs, framePerfect, backToBack}` that `techs-used`, run files and candidates carry).
 
 ## Offline search
 
@@ -2109,7 +2112,7 @@ and its buy goal only — the colliders it swaps aren't — so it works as a run
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
-`localUpgrades.OnPrestige` (local upgrades, clones and best path reset; Courses 1–3 get the breaker layer's tier mods,
+`localUpgrades.OnPrestige` (local upgrades and clones reset, the best path on Courses 4–5 only; Courses 1–3 get the breaker layer's tier mods,
 Course 4 `c5.tier + c4.tier - 1 + 4`, Course 5 keeps its tier), the Course 1–3 movement boxes turned into
 `activateNextBreakerLights` boxes (their purchase is modeled too), `PrestigeUpgradeBox4` disabled, then
 `tripBreakerScript.TripBreaker`: Cash 0, `buyswap`'s box off and `buyblockswap5`'s on, and the coloured blocks swapped
@@ -2122,6 +2125,61 @@ changes (box GameObjects and enabled flags, Area 1's state, the breaker's lights
 keeps are the game's own (`GameBreakerLights`: GlobalLight and BreakerLights on unless Area 1 is overgrown, GlobalLight
 off once tripped, each area light per `activeLights`), never the studio's **Breaker lights** forcing, so a new game's or a
 Vman speedrun's start is lit with no breaker light on.
+
+### Tiers through the trip breaker
+
+A course has two powers of ten: `tier` prices its boxes (`baseUpgradeCost × 10^(tier + TierMod)`, then each level's
+scaling) and `rewardTier` pays its laps (`baseReward × multipliers × 10^rewardTier`). A new game sets both equal
+(`courseScript.Start`). A prestige box's `BoostOldCourses` (`upgradeBox.cs:398`) sets each old course's
+`rewardTier = buyer.tier + RewardPrestigeMod` and leaves its `tier` alone: the boost is the gap between pay and price, a
+one-time write, not a multiplier kept anywhere. The scene's values (`payout-test/fulltas-FalseEnding-Any%.world.json`):
+
+| Course | `tier` | `RewardPrestigeMod` | `BreakerLayerTierMod` | `BreakerLayerRewardTierMod` |
+|---|---|---|---|---|
+| 1 | 0 | 1 | 0 | −0.85 |
+| 2 | 2 | 0.5 | 1 | −0.7 |
+| 3 | 5.2 | 1 | 1.2 | 0.5 |
+| 4 | 10 | 4 | 0 | 0 |
+| 5 | 16.5 | 1 | 0 | 0 |
+
+The statue (`buystatue`, Course 3's tier) boosts Courses 1–2, `buyprestige4` (`PrestigeUpgradeBox4`) Courses 1–3,
+`buyprestige5` (the breaker) Courses 1–4. The breaker's own boost (Courses 1–4 to 17.5, 17, 17.5, 20.5) is overwritten
+at once: the same call resets Courses 1–5 (`localUpgrades.OnPrestige` → `courseScript.onPrestige`, `courseScript.cs:542`)
+and sets price and pay tier together from Course 5's tier (`c5.tier`, 16.5; nothing changes it before the breaker):
+
+| Course | Formula | Price tier | Pay tier | Pay − price after | Before (`buyprestige4` bought) |
+|---|---|---|---|---|---|
+| 1 | `c5 + c1 + BreakerLayerTierMod` (pay `+ BreakerLayerRewardTierMod`) | 16.5 | 15.65 | −0.85 | +11 (pay 11, price 0) |
+| 2 | same | 19.5 | 18.8 | −0.7 | +8.5 (10.5, 2) |
+| 3 | same | 22.9 | 23.4 | +0.5 | +5.8 (11, 5.2) |
+| 4 | `c5 + c4 − 1 + RewardPrestigeMod` | 29.5 | 29.5 | 0 | 0 |
+| 5 | `c5 − 1 + RewardPrestigeMod` | 16.5 | 16.5 | 0 | 0 |
+
+So a lap pays far more after the breaker (Course 1 about 10^15.65 against 10^11), but prices rise as much or more, Cash
+is 0 and every local level is 0: the statue's and `buyprestige4`'s lead is gone, and Courses 1–2 sit below their own
+prices. What survives the breaker:
+
+- The statue's global `cloneMult` (+1 × `effectMult`; global upgrades never reset): a clone pays
+  `reward × (2 × size + 1) × (0.1 + 0.2 × global cloneMult + 0.1 × local cloneMult)` (`clonesScript.cs:230`, `:311`), 0.3×
+  instead of 0.1× with the local level at 0.
+- The boosted boxes' caps (`baseCapMult` +0.5 per boost) and buy-max: `upgradeBox.onPrestige` resets only their levels
+  and price.
+- The statue and `buyprestige4` stay bought: `upgradeBox.onPrestige` skips `prestige`, `GLOBAL` and `Movement` boxes
+  (`upgradeBox.cs:958`), and the breaker disables `PrestigeUpgradeBox4`'s component (`upgradeBox.cs:445`). Neither can
+  be bought again.
+- Courses 1–3 keep their clones' path: their `OnPrestige` passes `isResettingCloneTime` false (`upgradeBox.cs:443`), so
+  only Courses 4 and 5 need a lap before new clones fly.
+
+`buyprestige4` *not* bought before the breaker can still be bought after it, once. The disabled component still gets
+`OnTriggerStay2D` (Unity sends trigger messages to disabled behaviours; the engine's `PhysicsWorld.Call` does too), but
+its `FixedUpdate` no longer counts `boxCooldown` down. The first touch after the breaker passes the cooldown and buys if
+Cash holds its 1.2e15; a touch short of it sets the cooldown to 0.2 s for good and the box is dead. Bought then, it runs
+`BoostOldCourses` from Course 4's post-breaker tier 29.5: Courses 1–3 pay at 30.5, 30 and 30.5 against prices of
+16.5, 19.5 and 22.9, the run's way to `buyblockswap5`'s 9.49e34. Bought before the breaker it boosts them only to 11,
+10.5 and 11, below Course 5's 16.5, and is gone for after.
+
+While tripped every `UpdateReward` paints the course's reward red (`courseScript.cs:503`), a fixed area's too after its
+breaker-light box turned it green. It is display only: no payout reads `currentA1State` or `fixedAreas`.
 
 ### Clones on build 25640326
 

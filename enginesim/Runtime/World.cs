@@ -50,11 +50,27 @@ namespace IGTAP.EngineSim
         readonly List<(Rigidbody2D body, JsonElement props)> _pendingBodies = new List<(Rigidbody2D, JsonElement)>();
         readonly List<(ColliderData data, JsonElement props)> _pendingColliders = new List<(ColliderData, JsonElement)>();
 
+        // Each world file is read once a process: every simulation a run creates (a thread's, a later phase's) builds from the
+        // same bytes even when the plugin publishes a new capture under the name meanwhile, and the file is open only for that
+        // one read, shared so the plugin's replace (TasPlugin.ReplaceAtomic) never meets a sharing violation.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> Files =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+
+        static byte[] ReadShared(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var memory = new MemoryStream())
+            {
+                stream.CopyTo(memory);
+                return memory.ToArray();
+            }
+        }
+
         public static World Load(string path)
         {
             var world = new World();
-            using (FileStream stream = File.OpenRead(path))
-            using (JsonDocument doc = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = 256 }))
+            byte[] bytes = Files.GetOrAdd(Path.GetFullPath(path), ReadShared);
+            using (JsonDocument doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 256 }))
                 world.Build(doc.RootElement);
             return world;
         }

@@ -55,8 +55,8 @@ namespace IGTAP.EngineSim.Cli
             public double LiveSecondsAt(int k) { return Math.Round(MacroEngine.LiveSeconds(Clock(k), Held(k)), 4); }
             /// <summary>Its nmg and major spans up to its last goal, once a classed ranking made them (<see cref="FullTas.Report"/>).</summary>
             public GlitchReport Report;
-            /// <summary>Its difficulty, once a human class's whole-route ranking measured it (<see cref="FullTas.Odds"/>).</summary>
-            public Difficulty.Odds? Odds;
+            /// <summary>Its difficulty, once a human class's whole-route ranking measured it (<see cref="FullTas.Tally"/>).</summary>
+            public Difficulty.Tally? Tally;
         }
 
         /// <summary>
@@ -85,6 +85,8 @@ namespace IGTAP.EngineSim.Cli
         /// ending there polished for up to S seconds before the next goal is built, so later goals stand on the fast prefix (0: off).</summary>
         readonly double _reachPolish;
         bool _unsolved;
+        /// <summary>The search ends once the best reaches every goal (a farm loop's lap repair, CourseLoop.cs).</summary>
+        bool _reachOnly;
         string _name, _runFile, _closestFile, _outDir;
         string[] _labels;
         int _goals;
@@ -272,8 +274,9 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
             if (Classed)
             {
-                Console.WriteLine($"Class {Glitches.Key(_class)}" + (Human ? $" (score: live time + {_weights.Major} s a major span, {_weights.Nmg} s an nmg span, {_weights.Grace} s a spike-grace tick"
-                    + (PricesDifficulty ? $", {_weights.Difficulty} s x ln(attempts) of a whole route's difficulty" : "") + ")" : "")
+                Console.WriteLine($"Class {Glitches.Key(_class)}" + (Human ? $" (score: live time + {_weights.Grace} s a spike-grace tick"
+                    + (_weights.Techs.Count > 0 ? ", " + _weights.TechsText : "")
+                    + (PricesDifficulty ? $", {_weights.FramePerfect} s a frame-perfect input and {_weights.BackToBack} s a back-to-back pair of a whole route" : "") + ")" : "")
                     + $", run file fulltas/{Path.GetFileName(_runFile)}" + (Report(_best).Undetected.Count == 0 ? "" : $"; undetected nmg/major techs: {string.Join(", ", _best.Report.Undetected)}"));
                 // The class's run file starts as the route the solve starts from (the trace's or the major best, when better).
                 if (from != "fulltas/" + Path.GetFileName(_runFile)) WriteRunFile(_best);
@@ -350,6 +353,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Route best = _best;
                 int reached = best.Progress;
+                if (_reachOnly && reached == _goals) break;
                 if (_reachPolish > 0 && _unsolved && reached > polishedTo)
                 {
                     polishedTo = reached;
@@ -359,7 +363,8 @@ namespace IGTAP.EngineSim.Cli
                 if (reached < _goals && (_unsolved || reached == 0))
                 {
                     if (SeedFrontier() || GraftKnownTails()) continue;
-                    if (IsLoop(reached))
+                    // A course run's finish is its lap's end, reached as a waypoint is: loop pieces are Full-TAS laps from a restart.
+                    if (IsLoop(reached) && _course == null)
                     {
                         stopped = BuildFrontier();
                         continue;
@@ -419,7 +424,9 @@ namespace IGTAP.EngineSim.Cli
             _name = fulltas.GetProperty("name").GetString();
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
-            _weights = HumanWeights.Of(fulltas);
+            // --tech-weight <tech>=<seconds>: this solve's own price of a tech's spans in a human class (docs/fulltas.md "Classes").
+            _weights = HumanWeights.Of(fulltas).WithTechWeights(_args);
+            if (_weights.Techs.Count > 0 && !Human) throw new ArgumentException("--tech-weight prices a human class's score: give --class human-major or human-nmg");
             if (PricesDifficulty) _meter = new Difficulty.Meter(_trace, header, _labels, _threads);
             _runKey = _name + Suffix;
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
@@ -577,7 +584,9 @@ namespace IGTAP.EngineSim.Cli
 
         bool TimeUp { get { return _stopRequested || _clock.Elapsed.TotalMinutes >= _minutes; } }
 
-        volatile bool _stopRequested;
+        // The process's, not a run's: a farm loop's lap repair runs a FullTas before the loop's own, and one watcher reads stdin for both.
+        static volatile bool _stopRequested;
+        static int _watchingStdin;
 
         /// <summary>
         /// A "stop" line on stdin (the studio's Stop) ends the solve as its time limit would: the window ends, its archive and
@@ -585,6 +594,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         void WatchStdin()
         {
+            if (Interlocked.Exchange(ref _watchingStdin, 1) != 0) return;
             for (string line; (line = Console.In.ReadLine()) != null;)
                 if (line.Trim() == "stop")
                 {

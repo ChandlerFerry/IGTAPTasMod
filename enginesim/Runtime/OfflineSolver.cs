@@ -297,6 +297,25 @@ namespace IGTAP.EngineSim
             return all;
         }
 
+        /// <summary>
+        /// The inputs without each pause the run doesn't need: <paramref name="kept"/> plays them with that pause dropped and says
+        /// whether the run is no worse (then it stays dropped). A pause's frames aren't physics ticks, so a record's ranking can't
+        /// see one that lifts nothing (a pauselift graft left on a tick where it does nothing), yet 1x opens the menu for them.
+        /// </summary>
+        public static List<InputTick> DropIdlePauses(List<InputTick> inputs, Func<List<InputTick>, bool> kept)
+        {
+            for (int i = 0; i < inputs.Count; i++)
+            {
+                if (inputs[i].pause <= 0) continue;
+                var without = new List<InputTick>(inputs);
+                InputTick k = without[i];
+                k.pause = k.pauseTick = k.pauseFrame = 0;
+                without[i] = k;
+                if (kept(without)) inputs = without;
+            }
+            return inputs;
+        }
+
         public static bool Beats(float time, long runTicks, float bestTime, long bestRunTicks)
         {
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
@@ -1080,7 +1099,7 @@ namespace IGTAP.EngineSim
                 if (bestTick < _bestInputs.Count) t.AddRange(CollectionsMarshal.AsSpan(_bestInputs)[Math.Max(0, bestTick)..]);
                 if (t.Count <= at) return;
                 InputTick k = t[at], before = t[at - 1];
-                if (k.held && !before.held) k.press = true;
+                if (k.held && !before.held && before.dashJump == 0) k.press = true;
                 if (!k.held) k.release = before.held;
                 if (k.press && before.held)
                 {
@@ -1153,6 +1172,8 @@ namespace IGTAP.EngineSim
                             if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
                             if (d.x == 0f && _rng.NextDouble() < .15) d.turnX = _rng.NextDouble() < .5 ? -1f : 1f;
                             inputs[at] = d;
+                            // A super's height is how long its jump is held: bonus15's gap takes 24+ inputs.
+                            if (d.dashJump > 0) holdEnd = HoldJump(inputs, at, OneOf(DashHolds));
                             if (d.dashJump == 0 && _rng.NextDouble() < .5)
                                 holdEnd = start > 0 && inputs[start - 1].x != 0f && _rng.NextDouble() < .3
                                     ? BackDash(inputs, at, start)
@@ -1210,8 +1231,8 @@ namespace IGTAP.EngineSim
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
             static readonly string[] OmniKinds = { "aim", "aim", "steep", "wavedash", "wavedash", "ultra", "dashbounce", "dashbounce", "wavebounce", "wavebounce",
                 "wavejump", "superground", "bouncechain", "bouncechain" };
-            static readonly int[] DashHolds = { 3, 6, 10, 16, 24 };
-            static readonly int[] BounceHolds = { 3, 6, 10, 16 }, DashJumpHolds = { 2, 5, 10, 16 }, LateHolds = { 0, 2, 5, 10 };
+            static readonly int[] DashHolds = { 3, 6, 10, 16, 24, 32, 40 };
+            static readonly int[] BounceHolds = { 3, 6, 10, 16, 24, 40 }, DashJumpHolds = { 2, 5, 10, 16, 24, 40 }, LateHolds = { 0, 2, 5, 10, 16, 24, 40 };
             static readonly int[] Steps = { 1, 1, 2, 3, 5, 8 }, Nudges = { 1, 2, 3, 5, 8 }, Inserts = { 1, 2, 4, 8, 15 }, VerticalSpans = { 1, 3, 6, 12, 25, 50 };
             static readonly float[] Sticks = { -1f, 0f, 1f };
 
@@ -1298,8 +1319,14 @@ namespace IGTAP.EngineSim
                 if (jump > 0) d.press = false;
                 t[at] = d;
                 for (int i = at + 1; i < at + 9; i++) { InputTick k = t[i]; k.x = side; k.y = 0f; t[i] = k; }
-                if (jump == 0) return at;
+                return jump == 0 ? at : HoldJump(t, at, hold);
+            }
+
+            /// <summary>Holds a dash jump's jump for <paramref name="hold"/> inputs after the dash at <paramref name="at"/>, then releases it.</summary>
+            static int HoldJump(List<InputTick> t, int at, int hold)
+            {
                 int end = at + 1 + hold;
+                Pad(t, end + 1);
                 for (int i = at + 1; i < end; i++) { InputTick k = t[i]; k.held = true; k.press = false; k.release = false; t[i] = k; }
                 for (int i = end; i < t.Count && t[i].held && !t[i].press; i++) { InputTick k = t[i]; k.held = false; k.release = false; t[i] = k; }
                 InputTick r = t[end]; r.release = true; t[end] = r;
@@ -1324,7 +1351,7 @@ namespace IGTAP.EngineSim
             {
                 int old = HoldEnd(t, q);
                 end = Math.Max(q + 1, end);
-                InputTick first = t[q]; first.held = true; t[q] = first;
+                InputTick first = t[q]; if (first.dashJump == 0) first.held = true; t[q] = first;
                 for (int i = q + 1; i < Math.Min(t.Count, Math.Max(old, end) + 1); i++)
                 {
                     if (t[i].press) break;
@@ -1346,7 +1373,7 @@ namespace IGTAP.EngineSim
             }
 
             static readonly float?[] LockValues = { null, -1f, 0f, 1f };
-            static readonly Func<InputTick, bool> IsDash = k => k.dash, IsPress = k => k.press, IsPressOrDash = k => k.press || k.dash, IsReset = k => k.reset;
+            static readonly Func<InputTick, bool> IsDash = k => k.dash, IsPress = k => k.press, IsJump = k => k.press || k.dashJump > 0, IsPressOrDash = k => k.press || k.dash, IsReset = k => k.reset;
 
             /// <summary>A random tick of <paramref name="t"/> that matches; -1 for none.</summary>
             int Pick(List<InputTick> t, Func<InputTick, bool> match)
@@ -1404,7 +1431,7 @@ namespace IGTAP.EngineSim
                     case "latejump":
                     {
                         InputTick k = t[p]; k.dash = true; k.press = false; k.dashJump = _rng.Next(1, 11); t[p] = k;
-                        for (int i = p + 1; i < Math.Min(n, p + 1 + OneOf(LateHolds)); i++) { InputTick h = t[i]; h.held = true; t[i] = h; }
+                        HoldJump(t, p, OneOf(LateHolds));
                         Cut(t, p + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     }
@@ -1421,7 +1448,7 @@ namespace IGTAP.EngineSim
                     }
                     case "hold":
                     {
-                        int q = Pick(t, IsPress);
+                        int q = Pick(t, IsJump);
                         if (q < 0) return;
                         int end = _rng.NextDouble() < .5 ? q + OneOf(Holds)
                             : HoldEnd(t, q) + (_rng.NextDouble() < .5 ? -1 : 1) * OneOf(Nudges);
@@ -1479,8 +1506,10 @@ namespace IGTAP.EngineSim
                         InputTick k = t[q];
                         k.lockX = OneOf(LockValues);
                         k.lockY = OneOf(LockValues);
-                        if (k.dash && k.dashJump == 0 && _rng.NextDouble() < .5) k.dashJump = _rng.Next(1, 11);
+                        bool jump = k.dash && k.dashJump == 0 && _rng.NextDouble() < .5;
+                        if (jump) k.dashJump = _rng.Next(1, 11);
                         t[q] = k;
+                        if (jump) HoldJump(t, q, OneOf(DashHolds));
                         break;
                     }
                     case "dashturn":
@@ -1566,6 +1595,15 @@ namespace IGTAP.EngineSim
                 if (resume != null) record.CopyPrefix(_bestRun, resume.Tick);
                 if (!Evaluate(inputs, resume, record, false, out float replayed, out int finishTick, out long replayedTicks)
                     || _owner.Ranks(_best, _bestRunTicks, replayed, replayedTicks)) return;
+                long priced = _pricedTicks;
+                inputs = DropIdlePauses(inputs, without =>
+                {
+                    var bare = new Replay(without.Count);
+                    if (!Evaluate(without, null, bare, false, out float t, out int f, out long ticks) || _owner.Ranks(replayed, replayedTicks, t, ticks)) return false;
+                    (record, replayed, finishTick, replayedTicks, priced) = (bare, t, f, ticks, _pricedTicks);
+                    return true;
+                });
+                _pricedTicks = priced;
                 bool improved = _owner.Ranks(replayed, replayedTicks, _best, _bestRunTicks);
                 Adopt(inputs, replayed, finishTick, replayedTicks, record);
                 if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode, _pricedTicks);

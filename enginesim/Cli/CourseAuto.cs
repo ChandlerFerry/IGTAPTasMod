@@ -113,11 +113,12 @@ namespace IGTAP.EngineSim.Cli
                     if (args[i] == "--minutes") { i++; continue; }
                     rest.Add(args[i]);
                 }
-                int code = 0;
+                // Each way is a try: the run fails only when neither way gets a route (Course 3's farm loops one way).
+                int code = int.MaxValue;
                 foreach (string block in run.Timing == "farm" ? new[] { "avoid-backwards", "avoid-forwards" } : new[] { "avoid-forwards", "avoid-backwards" })
                 {
                     Console.WriteLine($"--auto: course {course} goes either way from its start; {block} for {minutes / 2:0.##} min");
-                    code = Math.Max(code, CourseAuto(rest.Concat(new[] { "--optional", block, "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }).ToArray()));
+                    code = Math.Min(code, CourseAuto(rest.Concat(new[] { "--optional", block, "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }).ToArray()));
                 }
                 return code;
             }
@@ -238,8 +239,9 @@ namespace IGTAP.EngineSim.Cli
 
         CourseRun _course;
 
-        /// <summary>The course trace as a Full-TAS run's: its header with the goals added and the best as its inputs, and its world.</summary>
-        static string WriteCourseTrace(CourseRun run, string dir, List<InputTick> inputs)
+        /// <summary>The course trace as a Full-TAS run's: its header with the goals added and the best as its inputs, and its world
+        /// (another run's <paramref name="name"/> and <paramref name="goals"/>: a farm loop's lap repair).</summary>
+        static string WriteCourseTrace(CourseRun run, string dir, List<InputTick> inputs, string name = null, List<FullTasGoal> goals = null)
         {
             // The run ends at its goals (GoalHeader drops a bonus's reward box and a transition's next gate: its last goal is the finish).
             var head = JsonNode.Parse(CourseWaypoints.GoalHeader(run.Header).GetRawText()).AsObject();
@@ -249,10 +251,10 @@ namespace IGTAP.EngineSim.Cli
             head["inputs"] = JsonSerializer.SerializeToNode(inputs.Select(t => t.ToJson()));
             head["fulltas"] = new JsonObject
             {
-                ["name"] = run.Name,
+                ["name"] = name ?? run.Name,
                 // A category route may walk through any box (bonus5's 3.56 brushes GLOBALWatt): no buy is a stray one here.
                 ["buys"] = "loose",
-                ["goals"] = new JsonArray(run.Goals.Select(g =>
+                ["goals"] = new JsonArray((goals ?? run.Goals).Select(g =>
                 {
                     var o = new JsonObject { ["label"] = g.label, ["kind"] = g.kind };
                     if (g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish) o["course"] = g.course;
@@ -261,7 +263,7 @@ namespace IGTAP.EngineSim.Cli
                     return (JsonNode)o;
                 }).ToArray()),
             };
-            string file = Path.Combine(dir, "fulltas-" + run.Name + ".json");
+            string file = Path.Combine(dir, "fulltas-" + (name ?? run.Name) + ".json");
             File.WriteAllText(file, head.ToJsonString());
             string world = Path.ChangeExtension(run.Trace, null) + ".world.json", copy = Path.ChangeExtension(file, null) + ".world.json";
             if (!File.Exists(copy) || new FileInfo(copy).Length != new FileInfo(world).Length || File.GetLastWriteTimeUtc(copy) < File.GetLastWriteTimeUtc(world))
@@ -378,7 +380,14 @@ namespace IGTAP.EngineSim.Cli
             long timer = (long)Math.Round(c.Time / _dt), want = _course.Timing == "record" ? timer : c.RunTicks;
             if (want != r.Last)
                 Log($"course check: DISAGREES: the course's simulation times it {(_course.Timing == "record" ? $"{timer} ticks on the game timer" : $"{c.RunTicks} physics ticks")}, the loop {r.Last}");
-            WriteRecordBest(_course, r.Inputs, c, "auto: " + where);
+            List<InputTick> inputs = OfflineSolver.DropIdlePauses(r.Inputs, without =>
+            {
+                CourseResult bare = PlayCourse(_course, without);
+                if (!bare.Finished || bare.OffPath || OfflineSolver.Beats(c.Time, c.RunTicks, bare.Time, bare.RunTicks)) return false;
+                c = bare;
+                return true;
+            });
+            WriteRecordBest(_course, inputs, c, "auto: " + where);
         }
 
         /// <summary>Where a run keeps its last --auto best (under the traces folder); a candidate by that path is that best.</summary>

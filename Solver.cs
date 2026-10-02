@@ -43,7 +43,7 @@ namespace IGTAPTasMod
             public bool HasCategory(string idOrLabel)
             {
                 CategoryDef def = Categories.Find(idOrLabel);
-                return def != null && Categories.IsTarget(Token) && def.RunsOn(Token, MinStep, MaxStep);
+                return def != null && Categories.IsTarget(Token) && Categories.CanFinish(Token, def.Caps) && def.RunsOn(Token, MinStep, MaxStep);
             }
             /// <summary>Every category it runs, in registry order.</summary>
             [JsonIgnore] public string[] CategoryIds { get { return Categories.All.Where(d => HasCategory(d.Id)).Select(d => d.Id).ToArray(); } }
@@ -1130,6 +1130,8 @@ namespace IGTAPTasMod
             return null;
         }
 
+        static readonly Regex EngineRefusal = new Regex(@"^System\.InvalidOperationException: (.+)$");
+
         void RunMapProcess(MapJob job, string args, string output)
         {
             try
@@ -1142,9 +1144,13 @@ namespace IGTAPTasMod
                     if (process.ExitCode == 0) job.Response = File.ReadAllText(output);
                     else
                     {
-                        job.Status = 500;
-                        string error = errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode;
-                        job.Response = JsonConvert.SerializeObject(new { ok = false, error = args.Substring(0, args.IndexOf(' ')) + " failed: " + error.Trim() });
+                        string error = (errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode).Trim();
+                        // The engine's InvalidOperationException is its refusal of a state ("No farm loop yet: ..."): its message alone,
+                        // a note for the studio, not a failure.
+                        Match refusal = EngineRefusal.Match(error);
+                        job.Status = refusal.Success ? 409 : 500;
+                        job.Response = JsonConvert.SerializeObject(new { ok = false,
+                            error = refusal.Success ? refusal.Groups[1].Value : args.Substring(0, args.IndexOf(' ')) + " failed: " + error });
                     }
                 }
             }

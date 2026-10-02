@@ -14,10 +14,11 @@ namespace IGTAP.EngineSim.Cli
     // --class (docs/fulltas.md, "Classes"): every acceptance of a Full-TAS solve goes through Better and Ahead, which rank by the
     // run class. major: goals, then live time (the solve as it always was, nothing below runs). nmg: goals, then fewer major
     // spans, then live time; a route with a major span is never saved. human-major: goals, then score (live time plus the
-    // penalty, HumanWeights, and a whole route's difficulty term); human-nmg: goals, fewer major spans, then score. A route's
-    // GlitchReport is its replay with a TechSteps recorder (Glitches.Classify), and a whole route's Odds its difficulty measure,
-    // each computed when a ranking needs it and kept on the route. The search's own pricing (windows, repair bounds, the
-    // cost-to-go) prices glitches only: a measure takes seconds, a window prices thousands of finds, and a partial run has none.
+    // penalty, HumanWeights: spike-grace ticks, and a whole route's difficulty term: its frame-perfect inputs and back-to-back
+    // pairs); human-nmg: goals, fewer major spans, then score. A route's GlitchReport is its replay with a TechSteps recorder
+    // (Glitches.Classify), and a whole route's Tally its difficulty measure, each computed when a ranking needs it and kept on
+    // the route. The search's own pricing (windows, repair bounds, the cost-to-go) prices the penalty only: a measure takes
+    // seconds, a window prices thousands of finds, and a partial run has none.
     sealed partial class FullTas
     {
         readonly RunClass _class;
@@ -33,9 +34,9 @@ namespace IGTAP.EngineSim.Cli
         readonly HashSet<ulong> _candidates = new HashSet<ulong>();
         /// <summary>A human class's difficulty measures, when its weights price difficulty (made in <see cref="Open"/>).</summary>
         Difficulty.Meter _meter;
-        /// <summary>Whole routes' odds by inputs and goals (<see cref="ArchiveHash"/>), measured once each.</summary>
-        readonly Dictionary<ulong, Difficulty.Odds> _odds = new Dictionary<ulong, Difficulty.Odds>();
-        /// <summary>Complete replays the class may save, filed as candidates once their odds are measured (<see cref="Odds"/>).</summary>
+        /// <summary>Whole routes' difficulty by inputs and goals (<see cref="ArchiveHash"/>), measured once each.</summary>
+        readonly Dictionary<ulong, Difficulty.Tally> _tallies = new Dictionary<ulong, Difficulty.Tally>();
+        /// <summary>Complete replays the class may save, filed as candidates once their difficulty is measured (<see cref="Tally"/>).</summary>
         readonly Dictionary<ulong, Route> _unfiled = new Dictionary<ulong, Route>();
 
         /// <summary>Live units (MacroEngine.LiveUnits) per second.</summary>
@@ -45,7 +46,7 @@ namespace IGTAP.EngineSim.Cli
         bool Human => Glitches.Human(_class);
         bool NoMajors => Glitches.NoMajors(_class);
         /// <summary>A whole route's score adds its difficulty term: a human class whose weights price it.</summary>
-        bool PricesDifficulty => Human && _weights.Difficulty != 0f;
+        bool PricesDifficulty => Human && _weights.PricesDifficulty;
 
         static string ParseTag(string[] args)
         {
@@ -71,7 +72,7 @@ namespace IGTAP.EngineSim.Cli
         /// inputs don't play (combine's composite of a known route and the best's tail, a stand-in): its report is cut at the ticks it
         /// claims, for ranking. A human class files the replay itself as a candidate when it finishes every goal and the class may
         /// save it (human-nmg: no major span; <see cref="WriteCandidate"/>), never the route's claimed ticks; when its weights price
-        /// difficulty, once the route's odds are measured (<see cref="Odds"/>: only a route that could win is).</summary>
+        /// difficulty, once the route's difficulty is measured (<see cref="Tally"/>: only a route that could win is).</summary>
         GlitchReport Report(Route r)
         {
             if (r.Report != null) return r.Report;
@@ -106,7 +107,7 @@ namespace IGTAP.EngineSim.Cli
                 record.End(run);
             }
             finally { record.Detach(); }
-            return _reports[key] = (Glitches.Classify(record), run);
+            return _reports[key] = (Glitches.Classify(record, _weights), run);
         }
 
         /// <summary>The route's inputs play from the run's start to the goal ticks it claims (its report is the route's own): what a
@@ -119,34 +120,39 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// A whole route's difficulty (<see cref="Difficulty.Meter"/>: humanize's version of its inputs, the closed-loop measure with
-        /// <c>difficulty</c>'s defaults, seeded by the inputs), once per inputs and goals and kept on the route. Only a ranking that
-        /// could go the route's way asks (<see cref="Ahead"/>: its score without the term under the other's whole score; the best's
-        /// own). A complete replay waiting to be filed (<see cref="Report"/>) is written as a candidate with it.
+        /// A whole route's difficulty (<see cref="Difficulty.Meter"/>: humanize's version of its inputs, each input's timing window
+        /// with <c>difficulty</c>'s defaults), once per inputs and goals and kept on the route. Only a ranking that could go the
+        /// route's way asks (<see cref="Ahead"/>: its score without the term under the other's whole score; the best's own). A
+        /// complete replay waiting to be filed (<see cref="Report"/>) is written as a candidate with it.
         /// </summary>
-        Difficulty.Odds Odds(Route r)
+        Difficulty.Tally Tally(Route r)
         {
-            if (r.Odds is Difficulty.Odds known) return known;
+            if (r.Tally is Difficulty.Tally known) return known;
             ulong key = ArchiveHash(r.Inputs, _labels);
-            if (!_odds.TryGetValue(key, out Difficulty.Odds odds))
+            if (!_tallies.TryGetValue(key, out Difficulty.Tally tally))
             {
                 var watch = Stopwatch.StartNew();
-                odds = _odds[key] = _meter.Measure($"{_runKey} {(uint)key:x8}", r.Inputs);
-                Log($"difficulty of {(uint)key:x8} ({Describe(r)}): P {odds.P.ToString("G4", CultureInfo.InvariantCulture)}, "
-                    + $"{odds.Priced.ToString("0.#", CultureInfo.InvariantCulture)} attempts, {_weights.DifficultySeconds(odds.Priced):0.00} s in {watch.Elapsed.TotalSeconds:0.0} s");
+                tally = _tallies[key] = _meter.Measure($"{_runKey} {(uint)key:x8}", r.Inputs);
+                Log($"difficulty of {(uint)key:x8} ({Describe(r)}): {tally}, "
+                    + $"{_weights.DifficultySeconds(tally.FramePerfect, tally.BackToBack):0.00} s in {watch.Elapsed.TotalSeconds:0.0} s");
             }
-            r.Odds = odds;
+            r.Tally = tally;
             if (_unfiled.Remove(key, out Route played))
             {
-                played.Odds = odds;
+                played.Tally = tally;
                 WriteCandidate(played, key);
             }
-            return odds;
+            return tally;
         }
 
         /// <summary>The seconds a whole route's difficulty adds to its score (<see cref="HumanWeights.DifficultySeconds"/>); none for a
         /// route short of the last goal, or when the class doesn't price difficulty.</summary>
-        float DifficultySeconds(Route r) => PricesDifficulty && r.Progress == _goals ? _weights.DifficultySeconds(Odds(r).Priced) : 0f;
+        float DifficultySeconds(Route r)
+        {
+            if (!PricesDifficulty || r.Progress != _goals) return 0f;
+            Difficulty.Tally t = Tally(r);
+            return _weights.DifficultySeconds(t.FramePerfect, t.BackToBack);
+        }
 
         /// <summary>The route's score in live units: its live time, its penalty and (unless <paramref name="difficulty"/> is off: its
         /// floor, no measure made) its difficulty term.</summary>
@@ -243,7 +249,7 @@ namespace IGTAP.EngineSim.Cli
                     record.Clear();
                     try { record.End(sim.Run(inputs, null, null, 400 + inputs.Count, _ => record.Step())); }
                     finally { record.Detach(); }
-                    GlitchReport g = Glitches.Classify(record).Within(from == 0 ? -1 : result.GoalPhysicsTicks[from - 1], result.GoalPhysicsTicks[result.Progress - 1]);
+                    GlitchReport g = Glitches.Classify(record, weights).Within(from == 0 ? -1 : result.GoalPhysicsTicks[from - 1], result.GoalPhysicsTicks[result.Progress - 1]);
                     if (noMajors && g.Major > 0) return double.PositiveInfinity;
                     return price ? g.Penalty(weights) : 0.0;
                 };
@@ -272,7 +278,7 @@ namespace IGTAP.EngineSim.Cli
             bool whole = Human && r.Progress == _goals;
             node["class"] = Glitches.Key(_class);
             node["score"] = whole ? ScoreSeconds(r) : null;
-            node["difficulty"] = whole && PricesDifficulty ? JsonSerializer.SerializeToNode(Odds(r).Json) : null;
+            node["difficulty"] = whole && PricesDifficulty ? JsonSerializer.SerializeToNode(Tally(r).Json) : null;
             node["glitches"] = JsonSerializer.SerializeToNode(new
             {
                 major = g.Major, nmg = g.Nmg, graceTicks = g.GraceTicks,
@@ -298,8 +304,8 @@ namespace IGTAP.EngineSim.Cli
             if (!Classed || r.Report == null) return "";
             string F(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
             string score = !Human || r.Progress != _goals ? ""
-                : PricesDifficulty && r.Odds == null ? ", score >= " + F(r.LiveSeconds + r.Report.Penalty(_weights)) + " (difficulty not measured)"
-                : ", score " + F(ScoreSeconds(r)) + (r.Odds is Difficulty.Odds o ? $", {o.Priced.ToString("0.#", CultureInfo.InvariantCulture)} attempts" : "");
+                : PricesDifficulty && r.Tally == null ? ", score >= " + F(r.LiveSeconds + r.Report.Penalty(_weights)) + " (difficulty not measured)"
+                : ", score " + F(ScoreSeconds(r)) + (r.Tally is Difficulty.Tally t ? $", {t}" : "");
             return $" [{r.Report.Major} major, {r.Report.Nmg} nmg, {r.Report.GraceTicks} grace{score}]";
         }
     }

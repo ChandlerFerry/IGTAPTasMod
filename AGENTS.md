@@ -20,7 +20,8 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   Outside the ladder every course (1–15), bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
   `WJ_DS_DJ_BS_ORB_ZIP_OM` (the old omnidash top category of the ladder, every refill orb and the zip movers included;
   renamed, no alias); `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only on the targets with refill orbs in reach and
-  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19). Bonuses 17–21
+  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 needs the zip
+  movers, so it runs only the `ZIP` categories. Bonuses 17–21
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <lap>`, a lap of the course's steady-state loop
   (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###

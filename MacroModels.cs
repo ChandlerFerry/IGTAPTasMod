@@ -152,5 +152,7 @@ namespace IGTAPTasMod
         public string selectedRouteId = "";
         /// <summary>1x playback without the 280 fps cap on real frames; the game time per frame stays on the fixed grid.</summary>
         public bool fastPlayback;
+        /// <summary>The player drawn as its hurtbox (TasSkin.cs) instead of its sprite.</summary>
+        public bool tasSkin = true;
     }
 }

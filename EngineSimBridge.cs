@@ -616,7 +616,8 @@ namespace IGTAPTasMod
             float time;
             int finishTick;
             Vector2 end;
-            using (var writer = new StreamWriter(path))
+            string temporary = path + ".tmp";
+            using (var writer = new StreamWriter(temporary))
             {
                 var json = new EngineSimJson(writer);
                 JsonTextWriter w = json.W;
@@ -644,6 +645,7 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
+            TasPlugin.ReplaceAtomic(temporary, path);
             return new { ok = true, path = path, finished = finished, time = time, finishTick = finishTick };
         }
 
@@ -714,7 +716,8 @@ namespace IGTAPTasMod
             bool finished;
             float time;
             int finishTick, samples = 0;
-            using (var writer = new StreamWriter(path))
+            string temporary = path + ".tmp";
+            using (var writer = new StreamWriter(temporary))
             {
                 // Snapshots read the player's live transform and contacts, so each is written on its tick; the header after the run.
                 var json = new EngineSimJson(writer);
@@ -766,6 +769,7 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
+            TasPlugin.ReplaceAtomic(temporary, path);
             return new { ok = true, path, finished, time, finishTick, ticks = samples };
         }
 
@@ -982,7 +986,8 @@ namespace IGTAPTasMod
                 if (go != null && go.scene.IsValid() && (go.hideFlags & HideFlags.HideAndDontSave) == 0) gameObjects.Add(go);
             var materials = new Dictionary<int, PhysicsMaterial2D>();
             Dictionary<CompositeCollider2D, PhysicsShapeGroup2D> sourceShapes = ColouredBlockSourceShapes();
-            using (var writer = new StreamWriter(path))
+            string temporary = path + ".tmp";
+            using (var writer = new StreamWriter(temporary))
             {
                 var json = new EngineSimJson(writer);
                 JsonTextWriter w = json.W;
@@ -1024,6 +1029,7 @@ namespace IGTAPTasMod
                 w.WritePropertyName("statics"); WriteGameStatics(json);
                 w.WriteEndObject();
             }
+            TasPlugin.ReplaceAtomic(temporary, path);
             return gameObjects.Count;
         }
 

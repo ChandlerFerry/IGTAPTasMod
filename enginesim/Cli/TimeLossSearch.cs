@@ -42,7 +42,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The gaining candidates of a segment (each mode) played whole, the most gaining first.</summary>
         const int Splice = 64;
         /// <summary>An added jump press's held ticks.</summary>
-        static readonly int[] PressHolds = { 1, 2, 3, 4, 6, 8, 11, 15 };
+        static readonly int[] PressHolds = { 1, 2, 3, 4, 6, 8, 11, 15, 24, 40 };
 
         sealed class Settings
         {

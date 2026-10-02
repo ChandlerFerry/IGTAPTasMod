@@ -85,6 +85,12 @@ namespace IGTAPTasMod
                 SaveSettings();
                 return new { ok = true, on = _settings.fastPlayback };
             }
+            if (request.Path == "/api/settings/tas-skin")
+            {
+                _settings.tasSkin = Truthy(body, "on");
+                SaveSettings();
+                return new { ok = true, on = _settings.tasSkin };
+            }
             if (request.Path == "/api/settings/checkpoint-respawns")
             {
                 if (PlaybackActive || _solverRunning || _fullTasProcess != null || _recorder.IsRecording)
@@ -480,6 +486,7 @@ namespace IGTAPTasMod
                 breakerLightsForced = _settings.forceBreakerLights,
                 checkpointRespawns = _settings.checkpointRespawns,
                 fastPlayback = _settings.fastPlayback,
+                tasSkin = _settings.tasSkin,
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,

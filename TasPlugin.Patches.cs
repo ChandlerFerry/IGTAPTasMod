@@ -161,7 +161,9 @@ namespace IGTAPTasMod
                 Instance.OverlayBeforeTick(__instance);
             }
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
-            if (course != null && course.HasFinish && Instance.TouchesEndBox(__instance, course))
+            // A bonus with a reward box finishes on the box's hit instead (RewardHit).
+            if (course != null && course.HasFinish && (course.IsTransition || Instance.BonusRewardBox(course, out _) == null)
+                && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                     Instance._engine.PhysicsTicks * Time.fixedDeltaTime);
             if (!IsMenuPlayer(__instance)) Instance.FullTasAreaGoal(__instance);

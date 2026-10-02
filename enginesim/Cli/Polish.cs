@@ -370,7 +370,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>Input ticks per plateau slot: the strictly best of a slot's candidates is kept.</summary>
         const int PlateauSlot = 8, WideRadius = 16, PairSpan = 8;
-        static readonly int[] PairShifts = { -2, -1, 1, 2 }, BandTicks = { 2, 6 }, PressHolds = { 2, 5, 10 };
+        static readonly int[] PairShifts = { -2, -1, 1, 2 }, BandTicks = { 2, 6 }, PressHolds = { 2, 5, 10, 16, 24, 40 };
         static readonly (float x, float y)[] DashAims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
 
         /// <summary>The plateau families, first change in input ticks [from, to): wider shifts (up to <see cref="WideRadius"/>), pairs

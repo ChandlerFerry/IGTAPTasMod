@@ -57,7 +57,7 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; tasSkin?: boolean;
   saveUnlocks?: Caps | null;
   selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
@@ -125,9 +125,13 @@ export default function Studio() {
           <input type="checkbox" checked={state.capabilitiesLocked} disabled={!state.connected} onChange={e => command("/settings/lock-capabilities", { locked: e.target.checked })} />
           <strong>Don&apos;t touch my unlocks</strong>
         </label>
-        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: shows hurtbox, spikes, velocity, recent inputs and jumps left.">
+        <label className={`capabilityLock executable ${state.overlayShown ? "on" : ""}`} title="In game: shows spikes, velocity, recent inputs and jumps left.">
           <input type="checkbox" checked={state.overlayShown} disabled={!state.connected} onChange={e => command("/settings/overlay", { shown: e.target.checked })} />
           <strong>Overlay</strong>
+        </label>
+        <label className={`capabilityLock executable ${state.tasSkin ? "on" : ""}`} title="In game: draws the player as its exact hurtbox instead of its sprite.">
+          <input type="checkbox" checked={!!state.tasSkin} disabled={!state.connected} onChange={e => command("/settings/tas-skin", { on: e.target.checked })} />
+          <strong>TAS skin</strong>
         </label>
         <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker. Saved lights unchanged.">
           <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
@@ -222,7 +226,7 @@ const BONUS_WHERE: Record<string, string> = {
   bonus5: "Below Course 3's left upgrades (buyfree3). Starts at Course 3's restart.",
   bonus6: "Above Course 3, left of Course 4 (buyfree4c). Starts at Course 4.",
   bonus7: "Left of Course 4's upgrades (buyfree4a), higher. Starts at Course 4.",
-  bonus8: "Far above Course 4 (Course 6's box). Starts at Course 6.",
+  bonus8: "Far above Course 4 (Course 6's box). Starts at Checkpoint (2) (20201, 13045).",
   bonus9: "Below and left of Course 9's start. Starts at Course 6.",
   bonus10: "Left of Course 7's start, lower. Starts at Course 6.",
   bonus11: "Just below Course 7's start, right. Starts at Course 6.",

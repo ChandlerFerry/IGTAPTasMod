@@ -43,7 +43,8 @@
 19. Outside the ladder, every course, bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
     `WJ_DS_DJ_BS_ORB_ZIP_OM`. `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only where refill orbs are in reach,
     `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs)):
-    anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. Bonuses 17–21
+    anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. Bonus 4's end
+    needs the zip movers: it runs only the categories with `ZIP`, none of its ladder. Bonuses 17–21
     and 23 run no category: their end is an unlock box (refill orbs, clone dust, buy max, the 1x and ∞x Start a VMAN
     speedrun boxes, block swap on dash), not a bonus stretch.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
@@ -77,7 +78,9 @@
     the course start plays the lead and the loop four times, every loop finishing on its own last input, the last two
     cycles equal and the cycle the claimed one, `Solver.cs` `EvaluateLoop`). Named `<course>_<CAT> farm <lap>`, seconds to
     4 places. A farm route saved as one lap from the quick restart is stale.
-31. Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included. A Full-TAS run is timed in live
+31. Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included. A bonus ends when its reward box (the
+    box nearest its end rect) takes the player's hit, its `OnTriggerStay2D` past the box's cooldown, the step the game buys
+    it, not at the first touch of the rect (a trigger's first step is Enter, never a buy). A Full-TAS run is timed in live
     time, what it takes at 1x: its physics ticks at 0.02 s plus the frames it stood still in (a dash freeze's, a pause's,
     1/280 s each on the 280 fps clock; `MacroEngine.HeldFrames`, `MacroEngine.LiveSeconds`), and reported with both,
     live time and game frames (the ticks). Turbo, the offline engine and 1x count the same frames (the gate: a replay's
@@ -115,16 +118,18 @@
     classes: strictly lower score.
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
-    and `human-nmg` the same two by score. Score: live time plus 60 s a major span, 20 s an nmg span, 2 s a spike-grace
-    tick and 5 s × ln(attempts) of the whole route's difficulty (per run, `fulltas.json` `"human": {"major", "nmg", "grace",
-    "difficulty"}`); a span is one occurrence of a tech, however long, a grace tick a step on spikes the run lives through,
-    and attempts 1/P, P the engine's chance that one human attempt at the route works (`difficulty`, its defaults, seeded
-    by the inputs; at P 0 a span no sample works in counts as one in its samples). A tech's category (glitchless, nmg,
-    major) is `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks:
-    after its replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an
-    `nmg` or `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its
-    difficulty measured there) and keeps each route's result (`fulltas-classes.json`). A tech no check detects isn't
-    counted (`techs-used` lists them).
+    and `human-nmg` the same two by score. Score: live time plus 2 s a spike-grace tick, 5 s a frame-perfect input and
+    20 s a back-to-back pair of the whole route's difficulty (per run, `fulltas.json` `"human": {"grace", "framePerfect",
+    "backToBack"}`). A major or nmg span adds nothing of its own: what makes a glitch hard is the inputs in it. The
+    difficulty is the engine's count over humanize's version of the route (`difficulty`): each input (a stick change, a
+    jump press or release, a dash, a jump on a dash frame) moved alone a tick at a time; frame-perfect: it works on one
+    tick only (20 ms); back-to-back: two actions (inputs on one tick are one) under 3 ticks (60 ms) apart that no timing of
+    the inputs inside their windows avoids. A grace tick is a step on spikes the run lives through. A tech's category (glitchless, nmg, major) is
+    `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks: after its
+    replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
+    `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its difficulty
+    measured there) and keeps each route's result (`fulltas-classes.json`). A tech no check detects isn't counted
+    (`techs-used` lists them).
 
 #### Exceptions
 

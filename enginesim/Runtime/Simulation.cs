@@ -394,6 +394,17 @@ namespace IGTAP.EngineSim
                 Engine.CompleteFromGame("Course finish detected", time);
         }
 
+        /// <summary>The bonus's reward box (the box nearest its end rect, TasPlugin.BonusRewardBox): it finishes on the box's hit,
+        /// not the rect's touch (TasPlugin.RewardHit). Null for a transition or a bonus without one.</summary>
+        string _rewardBox;
+
+        internal bool RewardHit(upgradeBox box, Collider2D collision)
+        {
+            if (!Engine.IsRunning || _rewardBox == null || Shop.Id(box) != _rewardBox || collision.GetComponent<Movement>() == null) return false;
+            Engine.CompleteFromGame(MacroEngine.RewardFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
+            return true;
+        }
+
         bool TouchesReward(Vector3? pose)
         {
             ScenePos at = FromCapture(TargetFinish.At);
@@ -649,6 +660,8 @@ namespace IGTAP.EngineSim
             if (header.TryGetProperty("finish", out JsonElement finish))
                 TargetFinish = new CaptureRect(new CapturePos(finish[0].GetSingle(), finish[1].GetSingle()), finish[2].GetSingle(), finish[3].GetSingle());
             Transition = header.TryGetProperty("transition", out JsonElement transition) && transition.GetBoolean();
+            ScenePos finishAt = FromCapture(TargetFinish.At);
+            _rewardBox = TargetFinish.W > 0f && !Transition ? Shop.NearestBox(finishAt.x, finishAt.y, FullTasGoal.RewardBoxRange) : null;
             if (header.TryGetProperty("finishStart", out JsonElement next))
             {
                 TargetStart = next.GetInt32();
@@ -1366,7 +1379,7 @@ namespace IGTAP.EngineSim
                 FloatingOriginFrame();
                 // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
                 Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;
-                if (Engine.IsRunning && TargetFinish.W > 0f && TouchesReward(boundsPose))
+                if (Engine.IsRunning && TargetFinish.W > 0f && _rewardBox == null && TouchesReward(boundsPose))
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                         Engine.PhysicsTicks * World.FixedDeltaTime);
                 if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && Tracking(_targetStartCourse))

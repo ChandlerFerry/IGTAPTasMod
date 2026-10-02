@@ -179,6 +179,8 @@ namespace IGTAP.EngineSim
             var box = (upgradeBox)boxObject;
             if (!(Cooldown(box) <= 0f)) return;
             Cooldown(box) = 0.2f;
+            // Nothing after a bonus's finish is part of its route (a global box's buy may not be modeled without the economy).
+            if (_sim.RewardHit(box, collision)) return;
             int currency = (int)Currency(box);
             if (!(Available(currency) >= box.upgradeCost && box.isActive))
             {

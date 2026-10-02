@@ -208,7 +208,9 @@ move a press or a dash a few ticks while keeping where the hold ends.
   (`MacroEngine.FrameRepeats`): opened at once, time holds on the tick's first frame, whose blend is the step's start plus
   0.089 of the step (a freeze on the same tick overlaps it; the longer counts); opened after frame k, it holds frame k's
   blend for `pauseFrames` more Updates. `tools/tech-check.py pauselift` matches turbo and offline, and offline climbs to
-  13037.0 as the 1x probe does.
+  13037.0 as the 1x probe does. A pause's frames aren't physics ticks, so a record's ranking can't see a pause that lifts
+  nothing; the search drops every pause a best plays no worse without before it keeps the best
+  (`OfflineSolver.DropIdlePauses`, in `solve` and in `--auto`'s course commits), so 1x never opens the menu for nothing.
 
   The pause lifts only if that first-frame blend already has the step-up's down ray inside the wall, so the dash must
   start pressed flush against the face with the hitbox's short side (15.5 u; the long side is 25.5), facing away: the

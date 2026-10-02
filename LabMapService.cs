@@ -602,7 +602,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>A filled box (a scaled 1-unit sprite) as a child of <paramref name="parent"/>, centred at <paramref name="at"/>.</summary>
-        static void LabBox(Transform parent, Vector2 at, Vector2 size, Color color)
+        static SpriteRenderer LabBox(Transform parent, Vector2 at, Vector2 size, Color color, Sprite image = null)
         {
             if (_labPixel == null)
             {
@@ -616,11 +616,12 @@ namespace IGTAPTasMod
             go.transform.localPosition = at;
             go.transform.localScale = new Vector3(size.x, size.y, 1f);
             var sprite = go.AddComponent<SpriteRenderer>();
-            sprite.sprite = _labPixel;
+            sprite.sprite = image != null ? image : _labPixel;
             sprite.color = color;
             Material material = LabMaterial();
             if (material != null) sprite.sharedMaterial = material;
             LabSorting(sprite);
+            return sprite;
         }
 
         /// <summary>A line through <paramref name="points"/> (local to <paramref name="parent"/>), closed when <paramref name="loop"/>.</summary>
