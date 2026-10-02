@@ -124,6 +124,8 @@ the right (9.2 u a tick, the 2.50 ms lag: 1.15 u back to the left), positions af
 
 - A neutral dash goes the way the player faces, so its 20 u go behind; without `OM`, a stick held only up or down is
   neutral. A turn in the frames after the press redirects the velocity, not the 20 u already written.
+- The stick is normalised before any of this (`Movement.NormaliseInput`): x becomes ±1 when |x| > 0.8, or when
+  |x| > 0.4 with |y| > 0.3, and 0 below 0.3.
 - The dash reads the game's normalised stick (`NormaliseInput`), snapped to eight directions. Measured with `OM`: (0.5,
   0.7), (0.7, 0.7) and (0.9, 0.5) dash diagonally, (0.3, 1) straight up, (1, 0.3) and (0.5, 0.3) sideways.
 - Without `OM` the dash's vertical part is zeroed (a diagonal stick dashes sideways); on the ground its down part is.
@@ -181,12 +183,22 @@ Course 1's start gate, walking right into it, a dash on the tick shown, the time
 - **Finish:** the end gate counts the first tick of overlap, a start-of-step write included: an up dash, a jump's +5 or a
   dash away from a gate behind can catch it a tick sooner when it is within the write's reach.
 
+Saved with these, 2026-10-01, each confirmed in turbo before the plugin judged it: `1_WJ_DS_BS_ZIP_OM` 1.42 → 0.78
+(the `1_WJ_DS` 0.80 route with an up dash on its last fall, 12.54 u above `RealEnd`: the finish comes on the dash tick),
+`1_WJ_DS` 1.42 → 0.80, `1_WJ_DS2_BS_ZIP_OM` 1.42 → 0.66, `1_WJ` 1.42 → 1.40 (the `1_NONE` route, never judged in `WJ`
+before), and `1_WJ_DS_DJ` and `1_WJ_DS_DJ_BS_ORB_ZIP_OM` 0.86 from the `WJ_DS` route.
+
 ## In the tools
 
 - `IGTAP.EngineSim probe`: every tick row carries `courseTime` (null while no course is timing).
 - The near misses (`bus`, `CourseAuto.MeasureBus`, the Optimize tab's **Near misses**): hurtbox-to-gate gaps after each
   step. Start gate: its Enter tick, the tick before the timer; a shallow overlap there (`at`) means a hair less and the
   timer starts a tick later. Finish: a small gap the tick before (`before`) means a hair further finishes a tick sooner.
+  A shallow `at` is a real chance only if the hurtbox can still overlap the gate on the tick after the timer's start
+  (`after` ≤ 0; the Optimize tab says "no tick to gain" otherwise). `1_NONE` 1.40's 0.036 u and `2_WJ` 2.22's 1.14 u are
+  false ones: a facing flip there (a ceiling-corner pass, a wall jump) takes the hurtbox out of the gate on that tick, so
+  both routes already start the timer on the last tick they can (Improves around each gate, ~70,000 probe branches on
+  `1_NONE` and a hill-climb on `2_WJ` found nothing).
 - The late gate touch: `ContactProbe.NearGate` (the gate within 16 u of the hurtbox while untimed), the tech's grafts
   (taps of 2–6 ticks at 0.5–1) and the planner's gate tap (2 or 4 ticks at full tilt), which start the timer where a
   one-tick tap from a stand doesn't.
@@ -195,3 +207,14 @@ Course 1's start gate, walking right into it, a dash on the tick shown, the time
   off). A route that moves from tick 0 used to keep its first input fixed.
 - `solve --auto` writes its starting best (a library seed already faster than the saved record) to offline-best for the
   plugin to judge; before, only strict improvements over it were written, so a faster seed was never judged.
+
+## Bonuses and transitions
+
+They have no game timer: their end is the plugin's own rect (`courses.json` `endX/endY/endW/endH`, a trace header's
+`finish`), tested at the start of every `Movement.FixedUpdate` (`TasPlugin.BeforeMovementFixedUpdate`) against the
+`Collider2D.bounds` of **both** player boxes, so tick k's end pose finishes at k+1's prefix with physics ticks × 0.02. A
+transition into a course also ends when that course's `startTracking` runs. `bounds` reads the body: after a step-up in
+a tick's last frame the transform stands on the ledge while the body hasn't moved yet, and the box is reached a tick
+later than the transform suggests (turbo-confirmed; the engine tests the body's pose there too, `Simulation.BoundsPose`;
+the Full-TAS `at:` goals use the same test). docs/fidelity-log.md, "Area goals and end boxes were tested at a pending
+step-up's pose".

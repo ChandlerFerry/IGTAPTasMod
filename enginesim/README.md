@@ -539,9 +539,11 @@ momentum carries through them, and a window is scored on its arrival.
   course's start gates and finishing end gates (the gap, negative while they overlap; a trigger's touch is tested there,
   `PhysicsWorld.CollectTouching`). `gate`: the Enter tick of the touch that started the timer (`tick`, the tick before
   `timerTick`: `startGate` starts it on Stay), the gap the tick before (`before`), the overlap on it (`at`) and the
-  body's move between them (`travel`). `finish`: the same at the finishing tick. A shallow gate `at` means a hair less
-  and the timer would have started a tick later (a tick off the record); the finish's `before` is how much further
-  along the route must be the tick before to finish a tick sooner. A bonus or transition has none.
+  body's move between them (`travel`), and the gap on the tick after the timer's start (`after`). `finish`: the same at
+  the finishing tick. A shallow gate `at` means a hair less and the timer would have started a tick later (a tick off the
+  record), but only if `after` ≤ 0: a route that leaves the gate on that tick (a facing flip, a wall jump: `1_NONE` 1.40,
+  `2_WJ` 2.22) already starts the timer on the last tick it can. The finish's `before` is how much further along the
+  route must be the tick before to finish a tick sooner. A bonus or transition has none.
 - **Studio.** The Optimize tab's **Improve** runs this (`Solver.cs` `CourseSolveArgs`): the Improve a course panel
   improves one target, record or farm (**Timing**), and the Improve many matrix queues the picked cells, one course and
   category each (a picked cell is highlighted): each runs Improve on the record, then (a course) on its farm loop. A

@@ -841,3 +841,24 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   stands for its whole tick. The cut 6.90 now replays in 6.90; `validate.py`: all 31 saved category routes finish at
   their names' times.
 - **Where:** `MacroEngine.Advance`.
+
+## Area goals and end boxes were tested at a pending step-up's pose
+
+- **Symptom:** (2026-10-01, found by reading the plugin's box test against the engine's, then run in turbo) a Full-TAS area
+  goal that only a step-up written in a tick's last frame reaches fired a tick earlier offline than in turbo. A test run
+  from `lab/c1 wall bottom cling` (Course 1's hanging wall, wall jump and 1 dash) pressing down with a turned dash every 3rd
+  tick lifts 56 u in the last frame of ticks 1, 5, 9 and 13; the goal `at:2555,127,60,6` (only tick 9's raised pose reaches
+  it) was reached at 0.3629 s in turbo and 0.3429 s offline, `at:2555,179,60,6` (tick 13) at 0.4893 s against 0.4693 s.
+  Every tick's state was identical; the turbo trace has the transform 56 u above the body at the end of those ticks. A
+  bonus or transition end box (`finish` in the trace header, courses.json `endX..endH`) is tested by the same plugin
+  function, so it finished a tick early in the same case; no saved bonus or transition route has one.
+- **Cause:** the plugin tests both at the start of the next tick's `Movement.FixedUpdate` (`TasPlugin.TouchesBox`, from
+  `BeforeMovementFixedUpdate` and `FullTasAreaGoal`) with `Collider2D.bounds`, the physics pose, which a transform write
+  reaches only at the next sync. After a last-frame step-up (the entry above) the transform stands on the ledge and the body
+  does not. `Simulation.TouchesReward` and the area goal tested the transform.
+- **Fix:** while that step-up is pending (`Physics.PlayerTransformDirty` after the frames, no rebase that tick) the boxes
+  are tested around the body, and so is the previous-tick bounds an area goal's `from=` side reads (`BoundsPose`). Other
+  ticks are unchanged: the transform is the body's step end there. Both turbo traces now replay `[MATCH]`; the other 262
+  turbo traces in the traces folder (bonuses, transitions, courses, techs, Full-TAS runs) replay the same before and after,
+  and so do the 158 lab demos.
+- **Where:** `Simulation.BoundsPose`, `Simulation.TouchesReward`, `Simulation.PlayerBounds`, `Simulation.Run`.

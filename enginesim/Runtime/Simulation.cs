@@ -394,28 +394,39 @@ namespace IGTAP.EngineSim
                 Engine.CompleteFromGame("Course finish detected", time);
         }
 
-        bool TouchesReward()
+        bool TouchesReward(Vector3? pose)
         {
             ScenePos at = FromCapture(TargetFinish.At);
-            return Touches(at.x, at.y, TargetFinish.W, TargetFinish.H);
+            return Touches(at.x, at.y, TargetFinish.W, TargetFinish.H, pose);
         }
 
-        bool Touches(float x, float y, float w, float h)
+        /// <summary>
+        /// The pose the plugin's box tests read (<c>TasPlugin.TouchesBox</c>, at the start of the next tick's Movement.FixedUpdate:
+        /// an end box, a Full-TAS area goal), <c>Collider2D.bounds</c>: the body, not the transform. A step-up written in a tick's
+        /// last frame is still pending then (<see cref="InterpolatedFrames"/>): the transform stands on the ledge, the body where
+        /// the step left it, so a touch of the raised pose counts a tick later. The body's pose while one is pending, else null
+        /// (the transform, which is the body's step end). Turbo measured it: a 60x6 goal only a last-frame step-up's 56 u lift
+        /// reaches fired a tick after the offline engine's (docs/fidelity-log.md, *Area goals and end boxes were tested at a
+        /// pending step-up's pose*).
+        /// </summary>
+        Vector3? BoundsPose() { return Physics.PlayerTransformDirty ? BodyPosition() : (Vector3?)null; }
+
+        bool Touches(float x, float y, float w, float h, Vector3? pose = null)
         {
             float x0 = x - w / 2f, x1 = x + w / 2f;
             float y0 = y - h / 2f, y1 = y + h / 2f;
             foreach (BoxCollider2D box in _playerColliders)
-                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1) && bx1 > x0 && bx0 < x1 && by1 > y0 && by0 < y1) return true;
+                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1, pose) && bx1 > x0 && bx0 < x1 && by1 > y0 && by0 < y1) return true;
             return false;
         }
 
-        /// <summary>An enabled player box's extents in the scene frame; false for a disabled one.</summary>
-        bool Extents(BoxCollider2D box, out float x0, out float x1, out float y0, out float y1)
+        /// <summary>An enabled player box's extents in the scene frame (around the transform, or <paramref name="pose"/>); false for a disabled one.</summary>
+        bool Extents(BoxCollider2D box, out float x0, out float x1, out float y0, out float y1, Vector3? pose = null)
         {
             x0 = x1 = y0 = y1 = 0f;
             if (!box.enabled) return false;
             Vector3 scale = box.transform.m_LossyScale;
-            Vector3 center = Player.transform.m_Position;
+            Vector3 center = pose ?? Player.transform.m_Position;
             center.x += box.offset.x * scale.x;
             center.y += box.offset.y * scale.y;
             float hx = box.size.x * MathF.Abs(scale.x) / 2f, hy = box.size.y * MathF.Abs(scale.y) / 2f;
@@ -426,8 +437,9 @@ namespace IGTAP.EngineSim
         (float, float, float, float) PlayerBounds()
         {
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
+            Vector3? pose = BoundsPose();
             foreach (BoxCollider2D box in _playerColliders)
-                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1))
+                if (Extents(box, out float bx0, out float bx1, out float by0, out float by1, pose))
                 {
                     x0 = MathF.Min(x0, bx0); x1 = MathF.Max(x1, bx1);
                     y0 = MathF.Min(y0, by0); y1 = MathF.Max(y1, by1);
@@ -1352,7 +1364,9 @@ namespace IGTAP.EngineSim
                 Scheduler.Resume(Scheduler.Wait.Frame);
                 Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();
-                if (Engine.IsRunning && TargetFinish.W > 0f && TouchesReward())
+                // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
+                Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;
+                if (Engine.IsRunning && TargetFinish.W > 0f && TouchesReward(boundsPose))
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
                         Engine.PhysicsTicks * World.FixedDeltaTime);
                 if (Engine.IsRunning && !nextWasTracking && _targetStartCourse != null && Tracking(_targetStartCourse))
@@ -1368,7 +1382,7 @@ namespace IGTAP.EngineSim
                         Vector3 by = _rebases[_rebases.Length - 1];
                         px0 -= by.x; px1 -= by.x; py0 -= by.y; py1 -= by.y;
                     }
-                    if (now != null && now.kind == FullTasGoal.At && Touches(goalAt.x, goalAt.y, now.w, now.h)
+                    if (now != null && now.kind == FullTasGoal.At && Touches(goalAt.x, goalAt.y, now.w, now.h, boundsPose)
                         && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
                 }

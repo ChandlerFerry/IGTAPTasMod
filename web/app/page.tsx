@@ -418,8 +418,9 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
   </div>;
 }
 
-/** A gate's near miss: the hurtbox-to-trigger gap the tick before it was first overlapped, and the overlap on that tick. */
-type BusEdge = { tick: number; timerTick?: number | null; before: number | null; at: number | null; travel: number | null };
+/** A gate's near miss: the hurtbox-to-trigger gap the tick before it was first overlapped, the overlap on that tick, and
+ * (start gate) the gap on the tick after the timer's start: a delayed start needs the hurtbox still in the gate then. */
+type BusEdge = { tick: number; timerTick?: number | null; before: number | null; at: number | null; travel: number | null; after?: number | null };
 
 const units = (v: number | null) => v == null ? "—" : `${Math.abs(v).toFixed(2)} u`;
 
@@ -433,13 +434,15 @@ function NearMisses({bus,farm}:{bus:NonNullable<Waypoints["bus"]>;farm:boolean})
   const row=(name:string,e:BusEdge,meaning:string)=><div className="tableRow" title={meaning}>
     <span>{name}</span>
     <span>{e.before!=null&&e.before>0?<><b>{units(e.before)}</b> short at tick {e.tick-1}</>:`touching at tick ${e.tick-1}`}</span>
-    <span>{units(e.at)} in at tick {e.tick}{e.timerTick!=null?` (timer from ${e.timerTick})`:""}</span>
+    <span>{e.at!=null&&e.at>0?"touched only at the tick's start (a position write)":`${units(e.at)} in`} at tick {e.tick}{e.timerTick!=null?` (timer from ${e.timerTick})`:""}{e.timerTick!=null&&e.after!=null&&e.after>0?" · out of the gate the tick after: no tick to gain":""}</span>
     <span>{units(e.travel)}</span></div>;
   return <div className="nearMisses">
     <p className="eyebrow">NEAR MISSES · HURTBOX TO TRIGGER, AFTER EACH PHYSICS TICK</p>
     <div className="resultTable">
       <div className="tableHead"><span>Gate</span><span>Tick before</span><span>First touch</span><span>Moved that tick</span></div>
-      {!farm&&bus.gate&&row("Start gate",bus.gate,`The timer starts the tick after the first touch. First touch ${units(bus.gate.at)} deep: that much less by tick ${bus.gate.tick} and the timer starts a tick later, a tick off the record.`)}
+      {!farm&&bus.gate&&row("Start gate",bus.gate,bus.gate.after!=null&&bus.gate.after>0
+        ?`The hurtbox has left the gate by tick ${bus.gate.timerTick!+1}, so the timer already starts on the last tick it can: a shallower first touch would start no timer.`
+        :`The timer starts the tick after the first touch. First touch ${units(bus.gate.at)} deep: that much less by tick ${bus.gate.tick} and the timer starts a tick later, a tick off the record.`)}
       {bus.finish&&row("Finish",bus.finish,`Short of the finish the tick before: be ${units(bus.finish.before)} further along by tick ${bus.finish.tick-1} to finish a tick sooner.`)}
     </div>
   </div>;

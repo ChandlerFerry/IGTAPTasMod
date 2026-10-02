@@ -73,6 +73,10 @@ namespace IGTAP.EngineSim.Cli
             public float Before, At;
             /// <summary>How far the player's body moved between the two ticks.</summary>
             public float Travel;
+            /// <summary>The start gate only: the gap on the tick after the timer's start (NaN: none). A shallow <see cref="At"/>
+            /// delays the start a tick only if the hurtbox still overlaps the gate then (≤ 0); a route that leaves the gate there
+            /// (a facing flip, a wall jump) has no such tick to give, and its near miss is false.</summary>
+            public float After = float.NaN;
         }
 
         /// <summary>The direction blocks (forced-paths.json): a course with both lets a run go either way from the start.</summary>
@@ -349,7 +353,8 @@ namespace IGTAP.EngineSim.Cli
             for (int i = 1; i < n; i++) if (timing[i] && !timing[i - 1]) t = i;
             if (t < 2) return bus;
             int e = t - 1;
-            bus.Gate = new BusEdge { Tick = ticks[e], TimerTick = ticks[t], Before = toStart[e - 1], At = toStart[e], Travel = Travel(e) };
+            bus.Gate = new BusEdge { Tick = ticks[e], TimerTick = ticks[t], Before = toStart[e - 1], At = toStart[e], Travel = Travel(e),
+                After = t + 1 < n ? toStart[t + 1] : float.NaN };
             return bus;
         }
 
@@ -440,7 +445,8 @@ namespace IGTAP.EngineSim.Cli
         static object BusJson(BusEdge e)
         {
             static float? Finite(float v) => float.IsFinite(v) ? (float)Math.Round(v, 3) : null;
-            return e == null ? null : new { tick = e.Tick, timerTick = e.TimerTick == 0 ? (long?)null : e.TimerTick, before = Finite(e.Before), at = Finite(e.At), travel = Finite(e.Travel) };
+            return e == null ? null : new { tick = e.Tick, timerTick = e.TimerTick == 0 ? (long?)null : e.TimerTick, before = Finite(e.Before), at = Finite(e.At),
+                travel = Finite(e.Travel), after = Finite(e.After) };
         }
     }
 }
