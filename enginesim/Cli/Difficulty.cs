@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim.Cli
             public bool Open;
             /// <summary>What seeds the samples: the route's canonical inputs (<see cref="Canonical"/>, then <see cref="Seed"/>), so a route
             /// measures alike under any file name and whatever follows its end; a sidecar of another kind is measured again.</summary>
-            public const string SeedKind = "canonical";
+            public const string SeedKind = "played";
             public object Json => new { samples = Samples, sigma = Sigma, chain = Chain, pos = Pos, vel = Vel, raw = Raw, open = Open, seed = SeedKind };
         }
 
@@ -734,10 +734,18 @@ namespace IGTAP.EngineSim.Cli
         /// The route up to its end, so it measures alike whatever follows it (the plugin's gate saves a route cut at its finish, a
         /// search hands on its inputs past it): its inputs before its last goal's input tick (a course: its finish's), less every
         /// trailing input it plays alike without (<see cref="Alike"/>: the engine's idle step after a route's inputs, stick at
-        /// rest, can play the last goal's step). Kept whole where it reaches no goal and doesn't finish.
+        /// rest, can play the last goal's step). Kept whole where it reaches no goal and doesn't finish. Fields the engine never
+        /// plays are cleared as a saved route drops them (<see cref="Simulation.ToSteps"/>: a dash's turn and jump frame off its
+        /// dash tick, a pause's tick and frame without a pause), so a saved route measures as the inputs it was saved from.
         /// </summary>
         static List<InputTick> Canonical(Simulation sim, List<InputTick> route)
         {
+            route = route.Select(c =>
+            {
+                if (!c.dash) { c.turnX = c.turnY = null; c.dashJump = 0; }
+                if (c.pause == 0) c.pauseTick = c.pauseFrame = 0;
+                return c;
+            }).ToList();
             bool fullTas = sim.Goals != null;
             int extra = fullTas ? 1000000 : 400;
             RunResult run = sim.Run(route, null, null, extra);

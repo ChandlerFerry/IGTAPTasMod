@@ -567,7 +567,7 @@ inputs past the last unchanged goal the same way.
 - **Measure difficulty** (`POST /api/fulltas/difficulty {name}`) runs the engine's `difficulty <trace> --candidates
   <traces>\fulltas\candidates\<run>\ --threads <cores − 4>` from the run's current trace (refused without one: Capture
   start), a process of its own beside any solve. Each candidate's measurement goes to the folder's `difficulty\<file>`
-  (one already measured with the same parameters and seeding, `params.seed` `canonical`, is skipped) and shows as its row's
+  (one already measured with the same parameters and seeding, `params.seed` `played`, is skipped) and shows as its row's
   `difficulty` (static `fullTas.runs[].candidates[].difficulty`, the sidecar as written, null until measured; the static state follows the
   folder). The live `fullTas.difficulty` is `{name, running, done, of}` from the engine's `@difficulty {"type":
   "progress", "done", "of", "file"}` lines (`of` null until the first; the rest goes to the log); it stays after the
@@ -692,7 +692,10 @@ product of its segments'. The human classes' score adds its weight × ln(attempt
 - **The route played** is cut to its end first (`Difficulty.Canonical`): its inputs before its last goal's input tick (a
   course: its finish's), less every trailing input it plays alike without (the same goals at the same input and physics
   ticks; a course: the same finish, time and physics ticks), as the engine's idle step after a route's inputs (stick at
-  rest) can play the last goal's step. A route then measures alike whatever follows it: the plugin's gate saves it cut at
+  rest) can play the last goal's step. Fields the engine never plays are cleared first, as a saved route drops them
+  (`Simulation.ToSteps`: a dash's turn and jump frame off its dash tick, a pause's tick and frame without a pause): a
+  search's stray `turnX` on ten non-dash ticks measured the route at 15.6 attempts and its saved copy at 25.3 (sidecars of
+  either earlier seeding, `params.seed` `inputs` or `canonical`, are measured again). A route then measures alike whatever follows it: the plugin's gate saves it cut at
   its turbo finish, a search hands on inputs past it (one Test-No-Omni-Skip route measured 259, 260 and 280 inputs long:
   P 0.029, 0.07, 0.07 before, 0.029 each now; the 260th, a jump and a dash on the goal's step, rescued the samples
   that release the down-tilt a tick early). Then humanize's version of it (`Humanizer.Simplified`: the greedy passes that
@@ -750,7 +753,7 @@ product of its segments'. The human classes' score adds its weight × ln(attempt
 - **JSON** (`--json` one line; `--candidates` writes it to `<dir>\difficulty\<file>`, kept while newer than its candidate
   and made with the same parameters and seeding, with an `@difficulty {"type": "progress", "done", "of", "file"}` line after each and
   a failed candidate on stderr): `{route, finished, goals (reached), live, human (humanize's version played), params:
-  {samples, sigma, chain, pos, vel, raw, open, seed ("canonical")}, P, attempts (null at P 0), priced, bottlenecks, chains,
+  {samples, sigma, chain, pos, vel, raw, open, seed ("played")}, P, attempts (null at P 0), priced, bottlenecks, chains,
   tightest: {segment, p}, spacing (input ticks between consecutive bottlenecks), segments: [{index, from, to, fromPhysics, toPhysics, anchor,
   next, events, samples, p, bottleneck, chain (its chainList index or null), techs (nmg and major techs seen there),
   grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, works, p}]}`; `from`/`to`
