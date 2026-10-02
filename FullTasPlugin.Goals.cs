@@ -371,12 +371,14 @@ namespace IGTAPTasMod
             bool finished;
             float replayed;
             FullTasTracker tracker;
+            _engine.HumanJumpButtons = _solverFullTasClass != null && HumanClass(_solverFullTasClass.cls);
             try { finished = EvaluateFullTas(_solverFullTas, inputs, out replayed, out _, out tracker); }
-            finally { _audit = null; }
+            finally { _audit = null; _engine.HumanJumpButtons = false; }
+            string status = _engine.Status;
             ParkAtNewGameStart();
             if (!finished || Mathf.Abs(replayed - time) > .0001f)
                 audit.Insert(0, "a replay from the new game's start " + (finished ? "finished in " + replayed.ToString("0.00", CultureInfo.InvariantCulture)
-                    : "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals"));
+                    : "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals (" + tracker.Explain(status) + ")"));
             if (audit.Count == 0)
             {
                 string refused = FullTasClassViolation(_solverFullTasClass, _solverFullTas.goals, inputs, time);
@@ -423,7 +425,13 @@ namespace IGTAPTasMod
                 judged.goals = goals.ToList();
                 ResolveFullTasGoals(judged);
             }
-            bool finished = EvaluateFullTas(judged, inputs, out float time, out int finishTick, out FullTasTracker tracker);
+            bool finished;
+            float time;
+            int finishTick;
+            FullTasTracker tracker;
+            _engine.HumanJumpButtons = HumanClass(cls);
+            try { finished = EvaluateFullTas(judged, inputs, out time, out finishTick, out tracker); }
+            finally { _engine.HumanJumpButtons = false; }
             long runTicks = _engine.PhysicsTicks;
             string status = _engine.Status;
             ParkAtNewGameStart();

@@ -124,7 +124,9 @@
     difficulty is the engine's count over humanize's version of the route (`difficulty`): each input (a stick change, a
     jump press or release, a dash, a jump on a dash frame) moved alone a tick at a time; frame-perfect: it works on one
     tick only (20 ms); back-to-back: two actions (inputs on one tick are one) under 3 ticks (60 ms) apart that no timing of
-    the inputs inside their windows avoids. A grace tick is a step on spikes the run lives through. A tech's category (glitchless, nmg, major) is
+    the inputs inside their windows avoids. A grace tick is a step on spikes the run lives through. A human class has two
+    jump buttons (`Jump`, `Jump2`, a release lifting both): a jump press while both are down ends its replay
+    (`MacroEngine.HumanJumpButtons`); `major` and `nmg` may make it. A tech's category (glitchless, nmg, major) is
     `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks: after its
     replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
     `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its difficulty

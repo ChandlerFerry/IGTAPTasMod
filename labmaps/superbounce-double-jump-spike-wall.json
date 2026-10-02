@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "id": "superbounce-double-jump-spike-wall",
+  "name": "Superbounce double jump up a spiked wall: superbounces off the spikes themselves, a double jump after each",
+  "tech": "fast-fall-wallbounce-double-jump",
+  "techNote": "WJ_DS_DJ, the climb of the bonus8_WJ_DS_DJ_BS_ZIP_OM 5.32 route (physics 194-226: three superbounces off the spiked wall, each with a double jump the next tick). A floor, a wall block (face x 380, top y 1100) and on its face a spike strip as the game's spike tilemaps have it: an edge outline (EdgeCollider2D, layer 6 Spikes, spikeScript) from x 361 to 388, 19 u out of the face and 8 u into the wall, y 40-1100 (bonus8's strip: x 21944-21971 against the face at 21952). The wall branch (Movement.cs 1006) needs a Ground-layer hit and no Spikes-layer hit (blockingGroundRaycastLayer 64) on the wall rays, 12 u (15 while dashing) from x+15: flush (x 354.5) they run 369.5-384.5, inside the outline, crossing neither of its edges, so the spikes don't block the bounce (a box strip of the same extent does: the ray starts inside it and finds it, no bounce, the dash dies on it). The dash's last step must reach the face from outside the strip (x 328.9 -> 354.5): its one tick in the strip while dashing is the OnTriggerEnter2D (spike3 *0, nothing counts), and the next tick's superbounce (jump buffered within dashBoostMax 6 frames of the dash: SpecialWallJump(0.6, 1, up*410), Velocity (-276, 703), momentum.y 400.8) ends the dash before that tick's OnTriggerStay2D, so killPlayerOnDash doesn't fire and the Stay counts 1 at most (graceFrames 1); the bounce turns the facing from the wall (the hurtbox, x + 5 x facing +-20, moves 10 u back), writes x -0.6 and moves 5.5 u a tick away, so it is clear the tick after (ticks 10, 28: spike3 *1; ticks 19, 37: already clear). The wall touch is touchedSolidGround: the dash and the double jump come back with every bounce. Jump right from x 210, dash right on input 6 with the jump on dash frame 1: superbounce on tick 10. Then each cycle: release on the bounce tick, press on the next (the double jump: after a jump that wasn't a normal one it only needs Velocity.y < 700, and keeps half: 745 + 676/2 = 1083), press the second jump button 5 inputs later (the air jump is spent, so it stays buffered), dash right on the next input from x 315 (the bounce's drift stops 40 u out): the next superbounce 2 dash frames later. Bounces on ticks 10, 19, 28, 37 (y 150.3, 336.5, 525.4, 712.5), 187-189 u a 9-tick cycle; the last double jump carries the dot to y 1100.6 on tick 53, and a dash right on input 48 steps over the top corner (tick 55: spike3 *0 only) into the finish box on the wall top on tick 57. `no-double` (the same inputs without the double jump presses): the press meant for the next bounce takes the unspent air jump (a boosted double jump on tick 16, 541 -> 1015.5), the dash meets the face with nothing buffered, ends on the wall inside the strip and dies on tick 20 (spike3 *2). `superbounce-only` (each bounce's jump on the dash's frame 1, no double jump): 139 u a cycle, 7 superbounces, finish on tick 74. `late-dash` (the opening's dash one input later): its second-last dash step already ends 1.1 u into the strip, and the next tick's Stay finds the dash active: killPlayerOnDash, dead on tick 10.",
+  "category": "WJ_DS_DJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -10.0,
+        -20.0
+      ],
+      "size": [
+        780,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        580.0,
+        530.0
+      ],
+      "size": [
+        400,
+        1140
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "edge",
+      "points": [
+        [
+          361,
+          40
+        ],
+        [
+          388,
+          40
+        ],
+        [
+          388,
+          1100
+        ],
+        [
+          361,
+          1100
+        ],
+        [
+          361,
+          40
+        ]
+      ],
+      "layer": "6",
+      "tag": "Untagged",
+      "trigger": true,
+      "spike": true
+    }
+  ],
+  "start": {
+    "x": 210,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    450,
+    1300,
+    100,
+    400
+  ],
+  "maxTicks": 120,
+  "ghosts": [
+    {
+      "label": "Superbounces off the spiked face, a double jump after each"
+    },
+    {
+      "demo": "no-double",
+      "label": "No double jump: the next press is spent in the air, no bounce, dies on the spikes"
+    },
+    {
+      "demo": "superbounce-only",
+      "label": "Superbounces alone (jump on dash frame 1): 139 u a cycle against 188"
+    },
+    {
+      "demo": "late-dash",
+      "label": "Dash one input later: the dash is already in the strip, dies"
+    }
+  ]
+}

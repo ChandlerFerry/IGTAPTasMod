@@ -65,8 +65,11 @@ checks captured traces against the same windows.
 
 The game reads two jump actions (`Jump`, `Jump2`) and two dash actions (`Dash`, `Dash2`), and only a press or a jump
 release reaches it (`Movement.Update`); holding is never read. A jump press while one jump button is down is the other
-going down; with both down, one is released and pressed again within the tick, where the press clears the release's jump
-cut before the tick reads it. A release lifts both. Dash presses on consecutive ticks alternate the two dash buttons. The
+going down. A release lifts both. With both down there is no third button: a TAS route (a category route, a Full-TAS
+`major` or `nmg` one) still presses, as one button released and pressed again within the tick (the press clears the
+release's jump cut before the tick reads it, a 3.6 ms retap no human makes), but a human class's replay (`human-major`,
+`human-nmg`) ends there (`MacroEngine.HumanJumpButtons`, README `### Rules` 54). The `two-button-jump` lab shows what the
+second button is for. Dash presses on consecutive ticks alternate the two dash buttons. The
 overlay's JUMP and DASH columns and the pad under the input list show each tick this way (J1/J2 and D1/D2: bright on the
 tick a button goes down, dim while held), with "release" and "cut" while a release's jump cut is armed.
 

@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "id": "two-button-jump",
+  "name": "Two-button jump: J1 + J2 double jumps on the first tick it can at full height; one button must release first",
+  "tech": "two-button-jump",
+  "techNote": "Stand on a floor (top y 0) with the double jump. The finish box is a 200x100 block hanging over the floor, its bottom at y 570 (drawn purple: a trigger with no script, so it changes nothing). The game reads two jump buttons, Jump and Jump2 (Movement.Update 747-767): a press of either buffers a jump, a release of either arms the jump cut, which sets Velocity.y to 50 on the next tick while a normal jump rises at 150-580 (1668). The double jump waits for Velocity.y under 200 after a normal jump (1763) and leaves at 745 + half of it (1769-1774). J1 + J2 (cyan): hold J1 for the full-height jump and press J2 on input 20, still holding J1; the press buffers (0.12 s) and the double jump goes on tick 23, the first tick it can (840 up at y 290), and touches the box on tick 53 (its arc would peak at y 547.5). Any J2 press from input 17 to 23 is the same run. With one button the press needs a release first, a tick earlier at the least: J1 + J1 at J2's timing (green: release on input 22, press on 23) cuts the rise to 50 and the double jump leaves at 759.5 (peak y 495.9); the best one-button timing (magenta: release on input 25, once Velocity.y is under 150 so the cut does nothing, press on 26) double jumps 3 ticks late, 808.5 up, and peaks at 537.9, short of the box. Every one-button timing was swept (a release on inputs 4-30, the press 1 or 2 inputs later): none reaches it, and none double jumps on tick 23 at full speed. A human class (human-major, human-nmg) can't press a third time while both buttons are down (README ### Rules 54).",
+  "category": "WJ_DS_DJ",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        0,
+        -20
+      ],
+      "size": [
+        200,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        0,
+        620
+      ],
+      "size": [
+        200,
+        100
+      ],
+      "layer": "Default",
+      "tag": "Untagged",
+      "trigger": true
+    }
+  ],
+  "start": {
+    "x": 0,
+    "y": 34,
+    "vx": 0,
+    "vy": 0,
+    "facing": 1,
+    "fields": {
+      "onGround": true,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "maxAirDashes": 1,
+      "airDashesLeft": 1,
+      "doubleJumpUnlocked": true,
+      "maxAirJumps": 1,
+      "airJumpsLeft": 1
+    }
+  },
+  "finish": [
+    0,
+    620,
+    200,
+    100
+  ],
+  "maxTicks": 70,
+  "ghosts": [
+    {
+      "label": "J1 + J2: hold J1, press J2 on the way up",
+      "badge": "J2"
+    },
+    {
+      "demo": "one-button-cut",
+      "label": "J1 + J1 at J2's timing: the release cuts the rise",
+      "badge": "J1",
+      "offset": [
+        300,
+        0
+      ]
+    },
+    {
+      "demo": "one-button",
+      "label": "J1 + J1, best timing: release after the rise, 3 ticks late",
+      "badge": "J1",
+      "offset": [
+        600,
+        0
+      ]
+    }
+  ]
+}

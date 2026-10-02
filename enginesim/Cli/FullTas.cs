@@ -191,6 +191,7 @@ namespace IGTAP.EngineSim.Cli
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
             _eval = Solve.Creator(_trace, header)();
+            _eval.Engine.HumanJumpButtons = Human;
             // --loose-buys: a stray purchase doesn't end the replay (to line it up with a trace capture, which plays on).
             _eval.StrictBuys = !_args.Contains("--loose-buys");
             var bought = new List<string>();
@@ -436,7 +437,7 @@ namespace IGTAP.EngineSim.Cli
             // Every purchase is a goal: a route that buys a box other than its next goal's spends Cash and levels the goals
             // (and the plans that wrote them) don't count, so no search or check here plays one (docs/fulltas.md).
             Func<Simulation> make = Solve.Creator(_trace, header);
-            _create = () => { Simulation sim = make(); sim.StrictBuys = true; return sim; };
+            _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanJumpButtons = Human; return sim; };
             _clock = Stopwatch.StartNew();
             _eval = _create();
             _origin = _eval.Start;

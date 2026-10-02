@@ -69,6 +69,10 @@ namespace IGTAPTasMod
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
         public event Action<bool, string> AttemptEnded;
         public bool Quiet;
+        /// <summary>A human class's replay (README ### Rules 54): a jump press while both jump buttons are down
+        /// (<see cref="JumpButtonsDown"/> 2) ends the run instead of pressing. A setting of the replay, not engine state: FieldState
+        /// skips it, so a restore keeps it.</summary>
+        public bool HumanJumpButtons;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
@@ -252,6 +256,7 @@ namespace IGTAPTasMod
             _tickStick = Vector2.zero;
             LastJumpPress = LastJumpRelease = LastDashPress = Never;
             JumpHeld = false;
+            JumpButtonsDown = 0;
             _waitingForStable = synchronizeStart;
             _stableTicks = 0;
             _hasSynchronizationPosition = synchronizationPosition.HasValue;
@@ -448,6 +453,7 @@ namespace IGTAPTasMod
         {
             _rawJumpHeld = false;
             JumpHeld = false;
+            JumpButtonsDown = 0;
             if (movement == null) return;
             SetDirection(movement, 0);
             JumpBuffer(movement) = false;
@@ -672,9 +678,18 @@ namespace IGTAPTasMod
         const int Never = -1000000;
         public int JumpPresses, DashPresses;
         public bool JumpHeld;
+        /// <summary>The game's two jump buttons (Jump, Jump2) down: a press takes the next one, a release lifts both
+        /// (docs/human-input.md).</summary>
+        public int JumpButtonsDown;
 
         private void PressJump(Movement movement)
         {
+            if (JumpButtonsDown >= 2 && HumanJumpButtons)
+            {
+                Abort("A third jump press while both jump buttons are down at action " + (_stepIndex + 1));
+                return;
+            }
+            JumpButtonsDown = Math.Min(2, JumpButtonsDown + 1);
             LastJumpPress = Clock;
             JumpPresses++;
             JumpHeld = true;
@@ -690,6 +705,7 @@ namespace IGTAPTasMod
         {
             LastJumpRelease = Clock;
             JumpHeld = false;
+            JumpButtonsDown = 0;
             JumpCutBuffer(movement) = true;
             movement.CancelInvoke("cancelJumpCutBuffer");
             movement.Invoke("cancelJumpCutBuffer", 0.26f);

@@ -1053,7 +1053,27 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   `landing-jump-momentum-carry` (tech `landing-jump-momentum-carry`, `NONE`) is spring-clip's ledge and ceiling spring
   with a ledge 200 u under the start and the finish box under y -1000: a jump buffered for the landing tick (tick 38)
   keeps `momentum.y` -365.7, and the hop and the drop off the ledge reach the box on tick 90; `late-jump` (one tick
-  later, the momentum zeroed) on tick 100, `walk-off` on tick 95. A lab map with
+  later, the momentum zeroed) on tick 100, `walk-off` on tick 95.
+  `superbounce-double-jump-spike-wall` (tech `fast-fall-wallbounce-double-jump`, `WJ_DS_DJ`) is the climb of bonus8's
+  5.32 routes (physics 194-226): a wall (face x 380, top y 1100) whose face carries a spike strip drawn as the game's
+  spike tilemaps are, an edge outline 19 u out of the face and 8 u into it (x 361-388; bonus8's 21944-21971 against the
+  face at 21952). Flush, the wall rays (x+15, 15 u while dashing) end inside the outline and cross none of its edges, so
+  the Spikes-layer blocking ray finds nothing and the superbounce comes off the spikes themselves (a box strip blocks
+  it: that is why `spike-wallbounce` needs a plain window). Each dash's last step reaches the face from outside the
+  strip, so its one dashing tick in it is the free Enter, and the superbounce ends the dash before the next tick's Stay
+  (no `killPlayerOnDash`, the Stay counts 1 at most); the wall touch gives back the dash and the double jump. Four
+  superbounces (ticks 10, 19, 28, 37), each with a double jump the next tick (`Velocity.y` 1083), climb 187-189 u a
+  9-tick cycle; a dash over the top corner reaches the box on the wall top on tick 57. `no-double` (no double jump: the
+  press meant for the next bounce takes the unspent air jump) dashes into the face with nothing buffered and dies on
+  tick 20 (`spike3 *2`), `superbounce-only` (the jump on each dash's frame 1) climbs 139 u a cycle and arrives on tick
+  74, `late-dash` (the opening's dash an input later) is already in the strip while dashing and dies on tick 10. An
+  exhaustive `lab solve --forbid-boosted-double-jump` from the first bounce doesn't finish: the wall keeps every state in
+  contact reach, so the free-flight bound never cuts, and the states double a tick (79,594 by tick 21 of 57).
+  `two-button-jump` (tech `two-button-jump`, `WJ_DS_DJ`) is a floor and a finish box hanging over it (bottom y 570, drawn
+  as a plain trigger): holding J1 for the full jump and pressing J2 on input 20 buffers the double jump for tick 23, the
+  first tick under 200 (840 up), and touches the box on tick 53; `one-button-cut` (release on input 22, press on 23)
+  cuts the rise to 50 and double jumps at 759.5 (peak y 495.9), and `one-button` (release on 25, under 150 so no cut,
+  press on 26), the best of every one-button timing swept, double jumps 3 ticks late at 808.5 (peak 537.9). A lab map with
   `"trainer": "pauselift"` (`pauselift-wall`) shows the input
   trainer (`LabTrainer.cs`) while it is injected, in hand play and in playback: one chip per button in order (the game's
   own bindings, with the pause's ms after the freeze ends: the freeze's own length is rounded up to a frame, so the window is timed from its end, with the spread of the last five dashes drawn faint), grey to do, green when the game shows it

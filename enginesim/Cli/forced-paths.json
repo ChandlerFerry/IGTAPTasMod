@@ -321,6 +321,30 @@
           "via": []
         }
       ]
+    },
+    {
+      "course": 108,
+      "capabilities": ["wjdsdj", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[18599.4, 12834.1, 19929.8, 19485.9], [19967.8, 19371.8, 25061.1, 19523.9], [22856.5, 12910.2, 23768.7, 19409.8]],
+      "via": [],
+      "optional": [
+        {
+          "name": "avoid-shark",
+          "note": "x 20529.8 to 20639.6, y 15663.4 to 16247.8. Off unless picked.",
+          "avoid": [[20529.8, 15663.4, 20639.6, 16247.8]],
+          "via": []
+        }
+      ]
+    },
+    {
+      "course": 116,
+      "capabilities": ["wjdsdj", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[9593.6, 12251.6, 10361.6, 14037.8], [8938.8, 13561.6, 9594.5, 14379.7], [5118.3, 12450.3, 8548.1, 12960.5]],
+      "via": []
     }
   ]
 }
