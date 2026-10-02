@@ -365,7 +365,17 @@ namespace IGTAP.EngineSim.Cli
         public static Result Build(string trace, IReadOnlyList<InputTick> route, WaypointOptions o)
         {
             JsonElement header = Solve.ReadHeader(trace);
-            Simulation sim = Solve.Creator(trace, header)();
+            return Build(trace, header, Solve.Creator(trace, header)(), route, o, goals => Check(trace, route, goals));
+        }
+
+        /// <summary>
+        /// The waypoints of the route as <paramref name="sim"/> plays it from its start (a course's start, or a farm loop's lap
+        /// from the lead's finish, CourseLoop.cs) to the course's finish there, each goal list replayed by
+        /// <paramref name="check"/> (each goal's physics tick, -1 where it isn't reached).
+        /// </summary>
+        internal static Result Build(string trace, JsonElement header, Simulation sim, IReadOnlyList<InputTick> route, WaypointOptions o,
+            Func<List<FullTasGoal>, long[]> check)
+        {
             Path p = Replay(sim, route, Reach);
             if (!p.Finished) throw new InvalidOperationException("the route doesn't finish offline on " + System.IO.Path.GetFileName(trace) + ": no waypoints to take from it");
             var result = new Result { FinishTick = p.N - 1 };
@@ -459,7 +469,7 @@ namespace IGTAP.EngineSim.Cli
             for (int attempt = 0; ; attempt++)
             {
                 List<FullTasGoal> goals = Assemble(chosen, start, gate, finish, out int startIndex);
-                long[] reached = Check(trace, route, goals);
+                long[] reached = check(goals);
                 int missed = Array.IndexOf(reached, -1L);
                 int crowded = -1;
                 for (int k = 1; k < goals.Count && missed < 0 && crowded < 0; k++)

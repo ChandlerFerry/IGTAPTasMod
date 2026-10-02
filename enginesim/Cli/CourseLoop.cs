@@ -155,7 +155,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// A loop lap from where the lead leaves the player (after its last finish): the course solve's search (OfflineSolver),
-        /// from that state with the run's forced path, for <paramref name="minutes"/>; the lap with the fewest physics ticks to
+        /// from that state with the run's forced path, for <paramref name="minutes"/>; the lap with the least live time to
         /// its finish, cut at the finish, or null when none finished. Seeded with the lead's first lap played after the two ways a
         /// farm loops: a quick restart (on the tick after the finish, then a few idle ticks for what the restart carries, a
         /// buffered jump among them, to land), and the drop through the end gate (idle until the player lands at the start).
@@ -186,14 +186,15 @@ namespace IGTAP.EngineSim.Cli
                 return seeds.Select(s => { RunResult r = sim.Run(s, null, null, 60); return r.Finished ? $"finish at tick {r.PhysicsTicks}" : r.EndReason; }).ToList();
             });
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap seeds: {string.Join("; ", played)}");
-            var solver = new OfflineSolver(Create, run.Caps, seeds, null, run.Rules);
+            // Ranked by live time to the lap's finish (ticks and held frames), the farm's own measure, not by the course timer.
+            var solver = new OfflineSolver(Create, run.Caps, seeds, null, run.Rules) { Farm = true };
             List<InputTick> found = null;
-            long foundTicks = long.MaxValue;
+            long foundLive = long.MaxValue;
             var guard = new object();
-            solver.Improved += (time, runTicks, inputs, how) =>
+            solver.Improved += (time, live, inputs, how) =>
             {
-                lock (guard) if (runTicks < foundTicks) (found, foundTicks) = (inputs, runTicks);
-                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: finish at tick {runTicks} ({time:0.00}s on the course timer) via {how}");
+                lock (guard) if (live < foundLive) (found, foundLive) = (inputs, live);
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: finish at {live / 1400.0:0.0000}s live from the course start ({time:0.00}s on the course timer) via {how}");
             };
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: searching Course {run.Course} ({run.Caps}) from the lead's finish {laps} "
                 + $"({lead.Count} inputs) for {minutes:0.##} min on {threads} threads");
@@ -294,11 +295,13 @@ namespace IGTAP.EngineSim.Cli
             TimerGoal = route.LeadLaps;
             LoopTiming = true;
             run.LoopLaps = route.LoopLaps;
-            // A loop the lap search just found is a farm route the plugin hasn't seen: written for it to judge now.
-            if (!candidates.Any(c => c.how == how)) WriteLoopBest(run, route, cycle, how);
+            // The loop the run starts from is a kept best too: the plugin judges only offline-best files, and the loop writes only what
+            // it improves on (LoopCommitted). A loop the lap search just found or a seed's (a library route) reaches the judge here; the
+            // last --auto best was written when kept, and a read-only run (--waypoints-out) writes nothing.
+            if (run.WaypointsFile == null) WriteStartingLoop(run, route, cycle, candidates.Any(c => c.how == how) ? "start: " + how : how);
             WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
             options.Record = false;
-            List<FullTasGoal> lap = CourseWaypoints.Build(run.Trace, route.FirstLap, options).Goals.Where(g => g.kind == FullTasGoal.At).ToList();
+            List<FullTasGoal> lap = LoopLapWaypoints(run, route, options);
             run.Goals = LoopGoals(run, route, lap);
             string synthetic = WriteCourseTrace(run, dir, route.Inputs);
             Solve.CourseRuns[run.Name] = run.Rules;
@@ -319,6 +322,33 @@ namespace IGTAP.EngineSim.Cli
                 return 0;
             }
             return loop.Search();
+        }
+
+        /// <summary>
+        /// The area waypoints of the loop's first lap, placed on that lap's own path (from the lead's finish, a quick restart's
+        /// landing or the drop through the end gate, to the next finish) and checked on the whole route under the lead's
+        /// finishes; the first lap's from the course start when that fails (a loop lap that starts where the first lap did).
+        /// </summary>
+        static List<FullTasGoal> LoopLapWaypoints(CourseRun run, LoopRoute route, WaypointOptions options)
+        {
+            List<FullTasGoal> leadFinishes = Enumerable.Range(0, route.LeadLaps).Select(_ => FinishGoal(run.Course)).ToList();
+            List<InputTick> inputs = route.Inputs;
+            try
+            {
+                Simulation sim = LoopSim(run, route.LeadLaps + 1);
+                SimSnapshot at = sim.Advance(route.Lead);
+                sim.SetStart(at, route.Lead.Count);
+                sim.UseGoals(null);
+                sim.TargetCourse = run.Course;
+                return CourseWaypoints.Build(run.Trace, run.Header, sim, route.Loop, options,
+                    goals => CourseWaypoints.Check(run.Trace, inputs, leadFinishes.Concat(goals).ToList()).Skip(route.LeadLaps).ToArray())
+                    .Goals.Where(g => g.kind == FullTasGoal.At).ToList();
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.WriteLine($"loop waypoints: the loop's own lap gave none ({ex.Message}); the first lap's instead");
+                return CourseWaypoints.Build(run.Trace, route.FirstLap, options).Goals.Where(g => g.kind == FullTasGoal.At).ToList();
+            }
         }
 
         /// <summary>A finish per lead lap, then per loop lap the waypoints it passes in order (one a lap misses, or reaches on
@@ -374,17 +404,36 @@ namespace IGTAP.EngineSim.Cli
         /// inputs, where the loop starts, its laps and cycle), and the `offline best farm loop` line the plugin reads.</summary>
         static void WriteLoopBest(CourseRun run, LoopRoute route, LoopCycle c, string how)
         {
-            string outDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(run.Trace), "offline-best");
-            System.IO.Directory.CreateDirectory(outDir);
-            string seconds = c.Lap.ToString("0.0000", CultureInfo.InvariantCulture);
-            string file = System.IO.Path.Combine(outDir, run.Label + "-loop-" + seconds + ".json");
-            Solve.WriteShared(file, System.Text.Json.JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, loopFrom = route.Lead.Count,
-                loopLaps = c.Laps, loopTicks = c.Ticks, loopHeld = c.Held, loopLive = c.Live, ticks = route.Inputs.Select(t => t.ToJson()) }));
+            var (file, text, seconds) = LoopBestFile(run, route, c);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file));
+            Solve.WriteShared(file, text);
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] offline best farm loop {seconds}s via {how} ({c.Ticks} ticks, {c.Held} held frames a loop of "
                 + $"{c.Laps} lap{(c.Laps == 1 ? "" : "s")}, {route.LeadLaps} lead laps) -> {System.IO.Path.GetFileName(file)}");
             if (run.LogJson != null)
                 System.IO.File.AppendAllText(run.LogJson, System.Text.Json.JsonSerializer.Serialize(new { wall = run.Clock.Elapsed.TotalSeconds, loop = c.Lap,
                     loopLaps = c.Laps, loopTicks = c.Ticks, loopHeld = c.Held, how }) + "\n");
+        }
+
+        /// <summary>The offline-best file of a steady farm loop: its path, text and lap seconds (the plugin reads the loop's laps and cycle from it).</summary>
+        static (string file, string text, string seconds) LoopBestFile(CourseRun run, LoopRoute route, LoopCycle c)
+        {
+            string seconds = c.Lap.ToString("0.0000", CultureInfo.InvariantCulture);
+            string file = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(run.Trace), "offline-best", run.Label + "-loop-" + seconds + ".json");
+            string text = System.Text.Json.JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, loopFrom = route.Lead.Count,
+                loopLaps = c.Laps, loopTicks = c.Ticks, loopHeld = c.Held, loopLive = c.Live, ticks = route.Inputs.Select(t => t.ToJson()) });
+            return (file, text, seconds);
+        }
+
+        /// <summary>The farm loop a run starts from, written like a kept one (<see cref="WriteLoopBest"/>) unless it is the last --auto
+        /// best's or its file is already there, waiting or judged. The plugin judges a loop file only when its lap beats the farm route's.</summary>
+        static void WriteStartingLoop(CourseRun run, LoopRoute route, LoopCycle c, string how)
+        {
+            if (how.StartsWith("start: " + AutoRunDir, StringComparison.Ordinal)) return;
+            var (file, text, _) = LoopBestFile(run, route, c);
+            string dir = System.IO.Path.GetDirectoryName(file);
+            foreach (string folder in new[] { dir, System.IO.Path.Combine(dir, "judged") })
+                if (System.IO.File.Exists(System.IO.Path.Combine(folder, System.IO.Path.GetFileName(file))) && System.IO.File.ReadAllText(System.IO.Path.Combine(folder, System.IO.Path.GetFileName(file))) == text) return;
+            WriteLoopBest(run, route, c, how);
         }
 
         /// <summary>The waypoints of a farm loop (WriteWaypoints' list, the lead's finishes first) with its steady-state check:

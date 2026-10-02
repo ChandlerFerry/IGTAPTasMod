@@ -302,6 +302,17 @@ namespace IGTAP.EngineSim
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
         }
 
+        /// <summary>A farm search (a farm loop's lap, README ### Rules 30): finishes rank by live time from the search's start
+        /// (runTicks is then MacroEngine.LiveUnits of the run's physics ticks and held frames), the course timer breaking a tie.
+        /// Set before the search starts.</summary>
+        public bool Farm;
+
+        /// <summary>The ranking the search keeps its best by: <see cref="Beats"/>, or by runTicks first in a <see cref="Farm"/> search.</summary>
+        bool Ranks(float time, long runTicks, float bestTime, long bestRunTicks)
+        {
+            return Farm ? runTicks < bestRunTicks || (runTicks == bestRunTicks && time < bestTime - .0001f) : Beats(time, runTicks, bestTime, bestRunTicks);
+        }
+
         // The bests taken, in order, waiting for Improved: queued under Shared's lock as Shared takes them, raised outside it.
         readonly System.Collections.Concurrent.ConcurrentQueue<(float time, long runTicks, List<InputTick> inputs, string how)> _reports
             = new System.Collections.Concurrent.ConcurrentQueue<(float, long, List<InputTick>, string)>();
@@ -311,7 +322,7 @@ namespace IGTAP.EngineSim
         {
             lock (Shared)
             {
-                if (!Beats(time, runTicks, Shared.Time, Shared.RunTicks)) return false;
+                if (!Ranks(time, runTicks, Shared.Time, Shared.RunTicks)) return false;
                 Shared.Time = time;
                 Shared.RunTicks = runTicks;
                 Shared.Inputs = inputs;
@@ -732,7 +743,7 @@ namespace IGTAP.EngineSim
                 LastHandover = new Handover
                 {
                     Pending = _restore.ToList(),
-                    Plateau = _bestInputs != null && !Beats(sharedTime, sharedTicks, _best, _bestRunTicks) ? _bestInputs : null,
+                    Plateau = _bestInputs != null && !_owner.Ranks(sharedTime, sharedTicks, _best, _bestRunTicks) ? _bestInputs : null,
                     Visits = Visits == null ? null : new Dictionary<long, float>(Visits),
                 };
                 Exported = generation;
@@ -767,7 +778,7 @@ namespace IGTAP.EngineSim
                     time = _owner.Shared.Time;
                     runTicks = _owner.Shared.RunTicks;
                 }
-                if (inputs == null || !Beats(time, runTicks, _best, _bestRunTicks)) return;
+                if (inputs == null || !_owner.Ranks(time, runTicks, _best, _bestRunTicks)) return;
                 var replay = new Replay(inputs.Count);
                 if (Evaluate(inputs, null, replay, false, out float replayed, out int finishTick, out long replayedTicks))
                     Adopt(inputs, replayed, finishTick, replayedTicks, replay);
@@ -1546,16 +1557,16 @@ namespace IGTAP.EngineSim
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
                 if (finished) Interlocked.Increment(ref _owner.Finishes);
-                bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !Beats(_best, _bestRunTicks, time, runTicks));
-                if (!drift && (!finished || !Beats(time, runTicks, _best, _bestRunTicks))) return;
+                bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !_owner.Ranks(_best, _bestRunTicks, time, runTicks));
+                if (!drift && (!finished || !_owner.Ranks(time, runTicks, _best, _bestRunTicks))) return;
                 // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too;
                 // a priced window's replay is the whole run, which is what the price is of.
                 SimSnapshot resume = mode == "optimize" && _penalty == null ? from : null;
                 var record = new Replay(inputs.Count);
                 if (resume != null) record.CopyPrefix(_bestRun, resume.Tick);
                 if (!Evaluate(inputs, resume, record, false, out float replayed, out int finishTick, out long replayedTicks)
-                    || Beats(_best, _bestRunTicks, replayed, replayedTicks)) return;
-                bool improved = Beats(replayed, replayedTicks, _best, _bestRunTicks);
+                    || _owner.Ranks(_best, _bestRunTicks, replayed, replayedTicks)) return;
+                bool improved = _owner.Ranks(replayed, replayedTicks, _best, _bestRunTicks);
                 Adopt(inputs, replayed, finishTick, replayedTicks, record);
                 if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode, _pricedTicks);
                 else Interlocked.Increment(ref _owner.Drifts);
@@ -1592,7 +1603,7 @@ namespace IGTAP.EngineSim
                 _died = result.EndReason != null && result.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 time = result.Time;
                 finishTick = result.FinishTick;
-                runTicks = result.PhysicsTicks;
+                runTicks = _owner.Farm ? MacroEngine.LiveUnits(result.PhysicsTicks, result.HeldFrames) : result.PhysicsTicks;
                 _pricedTicks = 0;
                 bool finished = result.Finished && (path == null || _waypoints == path.Via.Count && !_avoided);
                 if (!finished || _penalty == null || from != null || judgeAfter >= 0) return finished;

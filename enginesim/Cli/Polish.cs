@@ -47,8 +47,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A candidate whose player matches the route's after its last change (its inputs from there the route's) ends as
         /// the route does, shifted by the ticks between them: its replay stops there.</summary>
         public bool Sync = true;
-        /// <summary>A course's farm time: physics ticks from the route's start (the quick restart) to the finish come first, the
-        /// course timer breaks ties; candidates stop once past the route's physics ticks (the timer may get slower).</summary>
+        /// <summary>Physics ticks from the route's start (the quick restart) to the finish come first, the course timer breaks
+        /// ties; candidates stop once past the route's physics ticks (the timer may get slower). One lap from the restart: a farm
+        /// loop's lead lap, not the farm itself (README ### Rules 30: the loop, `solve --auto --farm`).</summary>
         public bool Farm;
 
         /// <summary>Strictly better by this polish's objective: the timer then physics ticks, or (<see cref="Farm"/>) physics
@@ -534,7 +535,8 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--out file] [--via/--avoid/--optional as solve];
         /// a Full-TAS trace polishes the whole run (its goals, as the run judges it), or with --from-goal N [--to-goal M] only the
-        /// inputs between those goals; --farm polishes a course route's farm time (restart to finish physics ticks).</summary>
+        /// inputs between those goals; --farm polishes a course route's ticks from the quick restart to the finish (one lap, not a
+        /// farm loop).</summary>
         public static int Command(string[] args)
         {
             string trace = args[0], routePath = args[1];

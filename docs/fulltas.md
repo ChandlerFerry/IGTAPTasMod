@@ -2006,9 +2006,9 @@ The model follows the decompiled code:
   is a drop from zone 1: once in it, nothing in zone 1 is reachable (`wayBackToZone1` or the game's
   `Zone2toZone1PathOpen` lifts that).
 
-**Course times.** A lap takes the course's farm time from its quick restart (the player is at its start) or its record
-plus the walk to it; the clones' path is the record. Both come from the saved routes (`routes.json`'s `<course>_<CAT>
-<time>` and `<course>_<CAT> farm <time>`, fastest in `categories`, non-stale first) as they're saved, and from
+**Course times.** A lap takes the course's farm time (a lap of its steady loop, finish to finish: README `### Rules` 30)
+or its record plus the walk to it; the clones' path is the record. Both come from the saved routes (`routes.json`'s
+`<course>_<CAT> <time>` and `<course>_<CAT> farm <lap>`, fastest in `categories`, non-stale first) as they're saved, and from
 `zip-plan.json`'s `laps` until then (Courses 7-10 have none yet: their estimates are printed as `ESTIMATE`; `"force":
 true` on an entry overrides a saved route). Which courses the plan may lap: `lapCourses` (default 1-10).
 

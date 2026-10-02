@@ -1268,7 +1268,8 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Lap times per course from the saved routes (routes.json in the config folder): the record (the game timer, the clones'
-        /// path) and the farm route (quick restart to finish), fastest in any category up to `caps`, non-stale first.
+        /// path) and the farm route (a lap of the course's steady loop, finish to finish in live time, README ### Rules 30; a stale
+        /// one from before farms were loops: one lap from the quick restart), fastest in any category up to `caps`, non-stale first.
         /// </summary>
         static Dictionary<int, (double game, double farm, string source)> SavedLaps(string routesFile, string[] caps)
         {
