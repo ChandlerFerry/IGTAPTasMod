@@ -531,7 +531,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>The route replayed under the goals from the trace's start: each goal's physics tick, -1 where it isn't reached.</summary>
-        static long[] Check(string trace, IReadOnlyList<InputTick> route, IReadOnlyList<FullTasGoal> goals)
+        internal static long[] Check(string trace, IReadOnlyList<InputTick> route, IReadOnlyList<FullTasGoal> goals)
         {
             Simulation sim = Solve.Creator(trace, GoalHeader(Solve.ReadHeader(trace)))();
             var tracker = new FullTasTracker(goals.ToArray());

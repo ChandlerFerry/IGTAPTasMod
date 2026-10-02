@@ -657,7 +657,7 @@ class ranks by it yet). A route is a chain of bottlenecks: the width of a segmen
 that still work, the route's chance P the product of its segments'.
 
 ```powershell
-& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json route.json   # --json, --samples 300, --sigma 1, --chain 15, --pos 4, --vel 0.05, --raw, --threads N
+& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json route.json   # --json, --samples 300, --sigma 1, --chain 15, --pos 4, --vel 0.05, --raw, --open, --threads N
 & $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json --candidates $traces\fulltas\candidates\Test-No-Omni-Skip\
 ```
 
@@ -671,32 +671,56 @@ that still work, the route's chance P the product of its segments'.
 - **Anchors** are where a player re-syncs: the start, standing (the second step on the ground), a wall cling (the second
   step on a wall off the ground), a respawn, a goal, a dash's freeze starting (`TechSteps`); anchors fewer than 3 input
   ticks apart are one, and the last is the last goal (a course: its finish). A segment is the inputs between two.
-- **A sample** plays a segment from the route's own state at its first anchor (each worker's snapshots from one straight
-  replay): every input event in it (`Humanizer.Events`: a press, a release, a dash, a stick change) moved by a normal of
-  `--sigma` input ticks rounded, kept from the anchor to 2 ticks past the segment's end and moved no further than
-  humanize's moves allow (no event crosses another input, a press keeps its hold, a dash its freeze stick); a partial x
-  goes a controller step up or down (0.05; under 0.3 rest, over 0.8 full tilt) half the time. Sigma 0 is the route itself.
-  Seeded by the route's file name and the segment's ticks: a measure repeats exactly, on any thread count.
-- **It works** when, 3 input ticks either way of the route's next anchor, the player has its goals, air jumps, air dashes
-  and wall jumps, is within `--pos` u of its position and within `--vel` of its velocity (at least 1 u/s), or when the
-  route's own inputs from there still reach the next goal (a course: the finish) at most 25 input ticks after the route
-  does. At the route's last goal reaching it is all. A death ends the sample.
+- **A sample** plays a span (a segment, or a chain of them, below) from the route's own state at its first anchor (each
+  worker's snapshots from one straight replay): every input event in it (`Humanizer.Events`: a press, a release, a dash,
+  a stick change) moved by a normal of `--sigma` input ticks rounded, kept from where the player is to 2 ticks past its
+  segment's end and moved no further than humanize's moves allow (no event crosses another input, a press keeps its
+  hold, a dash its freeze stick); a partial x goes a controller step up or down (0.05; under 0.3 rest, over 0.8 full
+  tilt) half the time. Sigma 0 is the route itself. Seeded by the route's file name and the span's ticks: a measure
+  repeats exactly, on any thread count.
+- **The same state**: the player has the anchor's goals, air jumps, air dashes, wall jumps and jump buffer (a press still
+  to come out as a jump), is within `--pos` u of its position and within `--vel` of its velocity (at least 1 u/s).
+- **It works** (closed loop, a player who sees where they are): the span plays an event chunk at a time (events under 5
+  input ticks apart are one), each event moved as it comes up. Before each chunk the player looks 5 ticks (100 ms)
+  earlier: off the route's state at that tick but in it 1 to 3 ticks earlier or later (the smallest first), the rest of
+  the plan moves by that much (coasting ticks inserted after the last event played, or clean ticks cut). At each of the
+  span's anchors the sample re-syncs when it is in the anchor's state 3 input ticks either way of its (moved) tick, the
+  rest of the plan moving by how early or late it got there. When it isn't, the player picks a correction of the next
+  segment from where they are: the first of the rest of the plan 1 to 3 ticks later or earlier, then one of its events
+  moved 1 or 2 ticks, or a partial stick a controller step either way (at most 24) that reaches the anchor after in its
+  state when played as planned (so the pick never sees the draws), and plays it with its draws from there; with none
+  the sample fails. At the span's last anchor it works in that anchor's state, when its run reaches the next goal (a
+  course: the finish) at most 25 input ticks after the route, or when a correction to the anchor after exists (that
+  segment's own draws are its own p's). At the route's last goal reaching it is all.
+- **`--open`** is the measure before the closed loop: all of a span's events moved at once and played open loop, working
+  in the next anchor's state (but for the jump buffer) or reaching the next goal at most 25 ticks late on the route's
+  own inputs.
 - **p** = working samples / samples, `--samples` (300) at a time while fewer than 20 work, up to 16 times as many. A
   segment under 0.9 is a bottleneck; bottlenecks less than `--chain` input ticks apart (one's end to the next's start)
-  leave no time to reset and are sampled again as one span, every event of it at once from the first one's anchor: a
-  chain, whose p replaces its segments'. P = the chains' p times the other segments', attempts = 1/P.
+  leave no time to reset and are sampled again as one span from the first one's anchor: a chain, whose p replaces its
+  segments'. A closed-loop chain no sample works in (narrower than its samples see) takes its segments' product, at most
+  1/its samples. P = the chains' p times the other segments', attempts = 1/P.
+- **Calibration** (2026-10-01, closed loop, open in brackets; the lab traces are copies of `tech-<id>.json` with the
+  lab's finish box as the header's `finish`, in the capture frame): the GC wall clip lab, its demo's own inputs to the
+  first clip, a finish box one clip reaches: P 0.887 (0.887); the demo, two clips to the wall's top: 0.217
+  (0.090): the second clip is timed off the first, and the first must leave the back edge within 8 u of the wall for it.
+  The KB wall clip lab's demo, one clip: 0.563. Plain movement, `1_wjdsdj-2.48-human` on Course 1 (no nmg or major
+  span): segments 1.000, 1.000, 0.993 (0.727), then 0.667 at the finish (humanize's version presses on the last tick of
+  the 4 that work). `1_none-1.42-human` (Course 1 NONE, GC then KB clips): P 0 either way, its 160-tick
+  air segment (35 events) never working; on `1_none-2.02-human`'s like segment most stick changes work moved alone on
+  one tick only.
 - **JSON** (`--json` one line; `--candidates` writes it to `<dir>\difficulty\<file>`, kept while newer than its candidate
   and made with the same parameters, with an `@difficulty {"type": "progress", "done", "of", "file"}` line after each and
   a failed candidate on stderr): `{route, finished, goals (reached), live, human (humanize's version played), params:
-  {samples, sigma, chain, pos, vel, raw}, P, attempts (null at P 0), bottlenecks, chains, tightest: {segment, p},
+  {samples, sigma, chain, pos, vel, raw, open}, P, attempts (null at P 0), bottlenecks, chains, tightest: {segment, p},
   spacing (input ticks between consecutive bottlenecks), segments: [{index, from, to, fromPhysics, toPhysics, anchor,
   next, events, samples, p, bottleneck, chain (its chainList index or null), techs (nmg and major techs seen there),
-  grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, p}]}`; `from`/`to` input
-  ticks, the physics ones the run's physics ticks there. The anchor kinds: `start`, `land`, `wall`, `freeze`, `respawn`,
-  `goal`, `finish`, `end` (a route that reaches no goal).
+  grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, works, p}]}`; `from`/`to`
+  input ticks, the physics ones the run's physics ticks there. The anchor kinds: `start`, `land`, `wall`, `freeze`,
+  `respawn`, `goal`, `finish`, `end` (a route that reaches no goal).
 - **The anchors as an API**: `Difficulty.Anchors(sim, route, from, states)` gives each anchor's kind, input and physics
   ticks, snapshot, `MoveState` and goals reached; `Difficulty.Anchors(steps, goalTicks, first, fullTas)` the kinds from a
-  recorded run; `Difficulty.SameState` is a sample's test.
+  recorded run; `Difficulty.SameState` is the same-state test.
 
 ## Offline search
 

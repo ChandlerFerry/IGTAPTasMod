@@ -1544,6 +1544,14 @@ namespace IGTAP.EngineSim
             return (layerMask & (1 << s.Layer)) != 0 && (_queriesHitTriggers || !s.Collider.m_IsTrigger);
         }
 
+        /// <summary>Whether the two colliders' layers and include/exclude masks let them touch at all (the contact filter's
+        /// test, <see cref="Filter"/>): of the player's two boxes only the 40×54 hurtbox meets the Default-layer course gates,
+        /// the body box excludes Default.</summary>
+        public bool CanTouch(Collider2D a, Collider2D b)
+        {
+            return (ContactMask(_layerMasks, a) & (1 << b.gameObject.layer)) != 0 && (ContactMask(_layerMasks, b) & (1 << a.gameObject.layer)) != 0;
+        }
+
         public ColliderDistance2D Distance(Collider2D a, Collider2D b)
         {
             Settle();

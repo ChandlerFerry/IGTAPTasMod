@@ -94,14 +94,12 @@
 .courseWaypoints .tableRow.pending { color: var(--muted); }
 .courseWaypoints .tableRow.picked { background: #0f2c46; box-shadow: inset 3px 0 0 var(--cyan); }
 .courseWaypoints + .ftImprove { margin-bottom: 12px; }
-.timeToBeat { margin: 0 0 16px; }
-.timeToBeat .eyebrow { margin: 0 0 6px; }
-.timeToBeatRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 9px; }
-.timeToBeatRow > button { display: grid; justify-items: start; gap: 1px; min-width: 110px; text-align: left; }
-.timeToBeatRow > button span { font-size: 11px; color: var(--muted); }
-.timeToBeatRow > button small { color: var(--muted); }
-.timeToBeatRow .field { width: 150px; }
-.timeToBeat .waypointNote b { color: var(--cyan); }
+.nearMisses { margin-top: 12px; }
+.nearMisses .eyebrow { margin: 0 0 6px; }
+.nearMisses .tableHead, .nearMisses .tableRow { grid-template-columns: 90px minmax(0,1fr) minmax(0,1fr) 110px; }
+.nearMisses .tableRow { cursor: default; }
+.nearMisses .tableRow:hover { background: none; }
+.nearMisses .tableRow b { color: var(--cyan); }
 
 .solveMap .panelTitle .buttonRow { margin: 0; }
 .mapLayers { user-select: none; -webkit-user-select: none; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 4px 0 10px; }

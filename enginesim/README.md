@@ -146,7 +146,7 @@ contacts, and the demos whose key windows graft there (`techgrafts` ends with th
 | a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | the GC wall clip (`wall-clip.graft`, 0..+24, x12), chained |
 | a wall ahead (in the air, not dashing, a wall within 12 u of the front edge at y − 18, y + 19 or y + 45) | the turn away that sets a clip up (`wall-clip.graft`, −2..+10, x12), then clips |
 | a wall above the back (the back ray at y + 19 or y + 45 hits it, the one at y − 18 not yet) | the rest that rises to it clip-ready (`wall-clip.graft`, x12), then clips |
-| the target course's start gate within 16 u of the hitbox while the timer is off | the late gate touch (`late-gate-touch`, 8 taps a contact, x12), then clips |
+| the target course's start gate within 16 u of the hurtbox (the 40×54 box the gates touch) while the timer is off | the late gate touch (`late-gate-touch`, 8 taps a contact, x12), then clips |
 | a spring, an air jump, a dash jump, a wall boost, a pause, a step-up, a spike, a slant (per physics step, below) | the demos that show them |
 
 The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
@@ -186,7 +186,8 @@ gate), tap toward the gate for 2–6 ticks (0.5–1: a one-tick tap from a stand
 running) and back for 1–2, then rest with the jump as it was; one contact tries 8 of these, each chaining clips. The
 planner's gate tap holds full tilt toward the gate for 2 or 4 ticks, then half back for one. The progress line counts
 `tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed the demo's contact after it: a clip that
-landed), and `at step contacts` (grafts at a per-step kind).
+landed), and `at step contacts` (grafts at a per-step kind). How the gates, the hurtbox and the position writes between
+ticks time a course: [`docs/course-timer.md`](../docs/course-timer.md).
 
 The graft library is the Tech tab's demos (techs.json), mined into graft patterns
 (`Runtime\TechGrafts.cs`). Each demo replays offline from its start (its category's start trace, its own savestate, a
@@ -501,16 +502,23 @@ momentum carries through them, and a window is scored on its arrival.
   is solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation
   doesn't confirm.
 - **Waypoints.** `waypoints {json}` on stdout at every kept best (goals, rects, splits, `timerGoal`, record and farm
-  ticks); `--waypoints-out FILE` writes it and exits without searching (the studio's list). `--focus a-b` numbers goals
-  in that list.
+  ticks, and on a gated course `bus`, its near misses); `--waypoints-out FILE` writes it and exits without searching (the
+  studio's list). `--focus a-b` numbers goals in that list.
+- **Near misses (`bus`).** The route replayed on the plain course simulation measures, after every physics step,
+  `Collider2D.Distance` from the player's hurtbox (the 40×54 box; the body box excludes the gates' Default layer) to the
+  course's start gates and finishing end gates (the gap, negative while they overlap; a trigger's touch is tested there,
+  `PhysicsWorld.CollectTouching`). `gate`: the Enter tick of the touch that started the timer (`tick`, the tick before
+  `timerTick`: `startGate` starts it on Stay), the gap the tick before (`before`), the overlap on it (`at`) and the
+  body's move between them (`travel`). `finish`: the same at the finishing tick. A shallow gate `at` means a hair less
+  and the timer would have started a tick later (a tick off the record); the finish's `before` is how much further
+  along the route must be the tick before to finish a tick sooner. A bonus or transition has none.
 - **Studio.** The Optimize tab's **Improve** runs this (`Solver.cs` `CourseSolveArgs`): the Improve a course panel
   improves one target, record or farm (**Timing**), and the Improve many matrix queues the picked cells, one course and
   category each (a picked cell is highlighted): each runs Improve on the record, and every candidate is judged for the
   farm time too, so one job improves both. A cell's ↗ opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
   capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
-  while that target improves) with each one's split, and **Show map** draws them numbered. Above them, **Time to beat**
-  counts the physics ticks from the target's saved time (record or farm) to a faster one: the next time down, the next
-  round 0.1 s and second, or a typed target (both clocks count 0.02 s ticks, so 1.42 → 1.40 is one tick). Click a waypoint
+  while that target improves) with each one's split, and **Show map** draws them numbered. Under the selection line,
+  **Near misses** shows the waypoints' `bus` (record: start gate and finish; farm: the finish). Click a waypoint
   (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its
   category or a narrower one runs the plain `solve` first (**Solve**); so does an Improve whose routes all come from a
   narrower category and none finishes this one (an added `OM` or `ORB` changes what the same inputs do: Course 10's
@@ -1238,11 +1246,12 @@ untimed, and "timed" is the timer's share (`max(0, P − T)`, T the physics tick
   events (`Polish.Candidates`: shifted ±R alone and with the route after, the other stick values, a dash's other jump
   frames, a press or dash dropped; a release moved anywhere in its hold or on towards the next press; a press added, held
   1-15 ticks), then the best B by arrival edited again, up to `--depth` edits. A candidate arrives on the first physics
-  tick its player is at the next anchor in the same state (`Difficulty.SameState`: 4 u, 5 % of the speed, the same goals;
-  a course's finish: finishing), scored by the course timer while it runs, else physics ticks; end-anchor-free, at the
-  anchor after next with the next segment's events edited too. On a course that finishes it adds an anchor of its own,
-  `timer`, the input tick after the step its timer last starts on; a start's tick is gained by starting it later in
-  another state, so a leg to it goes on to the anchor after it. `--window a-b` edits only input ticks a..b−1, from the
+  tick its player is at the next anchor in the same state (`Difficulty.SameState`: 4 u, 5 % of the speed, the same goals,
+  resources and jump buffer; a course's finish: finishing), scored by the course timer while it runs, else physics ticks;
+  end-anchor-free, at the anchor after next with the next segment's events edited too. On a course that finishes it adds
+  an anchor of its own, `timer`, the input tick after the step its timer last starts on; a start's tick is gained by
+  starting it later in another state, so a leg to it goes on to the anchor after it. `--window a-b` edits only input
+  ticks a..b−1, from the
   route's state at a, to the first anchor at or after b. Up to 64 gaining candidates a segment are played whole from
   the start: a segment's gain counts once it survives to the finish, and the best that beats the route goes to
   `<route>-timeloss.json`.
@@ -1272,6 +1281,16 @@ starts its timer 8 sooner: gate to finish 71 ticks against 70. `search` at depth
 finds no edit of up to two inputs that finishes sooner. `floor`: 51 of segment 1's 71 timed ticks are slack over a
 20-tick floor, the climb's looseness (above); segment 0 is untimed. So the tick is lost after the trigger: from nearly the
 same point the 1.40 goes on to the finish in 70 timed ticks and the 1.42 in 71.
+
+The 1.40 came back on the new grid (`1_NONE 1.40`, judged and saved 2026-10-01, turbo trace `c1phase-140b-turbo.json`
+matches all 208 ticks). Take-off height off the start floor is the standing or landing height + 21.1 + the frame lag ×
+the fall step, so it is set by the fall's shape, not by inputs near the gate: the 1.42's inputs to 90, then the fall with
+stick y 0 on 91-104 lands at input 120 and stands two ticks (y −306.0), a standing jump at 123 (the 1.42's frame phase)
+leaves from −284.88 instead of −282.0, the old 1.40's inputs follow from take-off +1, and a stick nudge x +0.30 then −0.49
+(y 0) at take-off +3/+4 puts the timer tick at x 2542.968, mid-window between a ceiling-corner bump (≤ 2542.927) and no
+timer start (≥ 2543.009). The timer starts one tick later in the same rise; the finish is on the same tick of the jump. The
+first version sat 0.002 u from the bump and died in turbo: the engine's 1e-5 u body drift from tick 1 grows to 0.002 u by
+the gate, so a route that close to a threshold needs its margin widened before it's judged.
 
 ## Techs
 
@@ -1331,7 +1350,9 @@ tech, a glitchless tech's no nmg or major span ([docs/fulltas.md](../docs/fullta
 `difficulty <trace.json> <route.json> [--json]` measures how likely one human attempt at a route works: humanize's
 version of it cut at its anchors (where a player re-syncs: the start, standing, a wall cling, a respawn, a goal, a
 dash's freeze), each segment played from the route's own state at its first anchor (every worker's snapshots from one
-straight replay) with its input events moved by a rounded normal (`--sigma`, input ticks), the bottlenecks close together
+straight replay) with its input events moved by a rounded normal (`--sigma`, input ticks) and played closed loop (the
+player re-times the rest of the plan by the lag they see 100 ms before each input chunk and at each anchor, and corrects
+the next segment when off an anchor's state; `--open`: the open-loop measure before it), the bottlenecks close together
 sampled again as one chain; `--candidates <dir>` writes every candidate's sidecar. The model, options and JSON:
 [docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and `Difficulty.SameState` are its anchors and its
 same-state test for other commands.

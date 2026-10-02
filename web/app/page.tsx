@@ -43,7 +43,9 @@ type PullNow = { pull: number; lever: string; goal: number; label: string; budge
  * world's (the map's), center x, y, w, h, null for a gate; `splits` that route's physics tick at each from the quick restart
  * (-1: not reached). Improve's focus picks goals by number (1-based).
  */
-type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number };
+type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number;
+  /** The route's near misses at its gates (a gated course's finished route; see NearMisses). */
+  bus?: { gate: BusEdge | null; finish: BusEdge | null } | null };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type CourseTarget = { course: number; capabilities: string; farm: boolean };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
@@ -380,7 +382,6 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
         <option value="record">Record{solo?` · ${solo.time.toFixed(2)}s`:""}</option><option value="farm">Farm{lap&&!lapless?` · ${lap.time.toFixed(2)}s`:""}</option></select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
-    <TimeToBeat key={`${chosen}:${chosenCaps}:${farm}`} time={route?.time} farm={farm}/>
     <div className="courseWaypoints">
       <p className="eyebrow">WAYPOINTS · {farm?"FARM":"RECORD"}{waypoints?` · ON ${waypoints.route}`:""}</p>
       {note&&<p className="waypointNote">{note}</p>}
@@ -389,6 +390,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
           ? <><span>Improve selected: <b>{waypointSpan(focus)}</b>{focusTicks!=null?` (${focusTicks} ticks, ${(focusTicks*TICK_SECONDS).toFixed(2)} s on this route)`:""}</span><button className="secondary" onClick={()=>setPicked(null)}>Clear selection</button></>
           : <span>Improve searches the whole course. Think a stretch is slow? Click its waypoints below (shift-click extends).</span>}
       </div>}
+      {waypoints?.bus&&<NearMisses bus={waypoints.bus} farm={waypoints.timing==="farm"}/>}
       {waypoints&&<div className="resultTable">
         <div className="tableHead"><span>#</span><span>Waypoint</span><span>Split</span><span>From restart</span></div>
         {waypoints.goals.map((label,i)=>{ const at=tickAt(i+1), before=tickAt(i), inPick=focus!=null&&i+1>=focus[0]&&i+1<=focus[1];
@@ -409,31 +411,30 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
   </div>;
 }
 
+/** A gate's near miss: the hurtbox-to-trigger gap the tick before it was first overlapped, and the overlap on that tick. */
+type BusEdge = { tick: number; timerTick?: number | null; before: number | null; at: number | null; travel: number | null };
+
+const units = (v: number | null) => v == null ? "—" : `${Math.abs(v).toFixed(2)} u`;
+
 /**
- * How many physics ticks the open target's time is from a faster one. Both clocks count 0.02 s ticks (the game timer
- * from the start gate, the farm from the quick restart), so a time `t` means finishing in at most floor(t / 0.02) ticks.
+ * How near the route came to its gates a tick sooner, in the simulation's own distances (Collider2D.Distance from the
+ * player's hurtbox to the gate's trigger, after each physics step; docs/course-timer.md). Record: the start gate, where a
+ * shallower first touch would have started the timer a tick later, and the finish, where a barely missed tick costs one.
+ * Farm: the finish only.
  */
-function TimeToBeat({time,farm}:{time?:number;farm:boolean}) {
-  const [typed,setTyped]=useState("");
-  if(time==null) return null;
-  const ticks=Math.round(time/TICK_SECONDS);
-  const timeOf=(k:number)=>`${(k*TICK_SECONDS).toFixed(2)}s`;
-  const away=(k:number)=>{ const n=ticks-k; return `${n} tick${n===1?"":"s"}`; };
-  // The next time down, the next round tenth and the next round second, each strictly under the current time.
-  const steps=[["Next time",ticks-1],["Next 0.1 s",Math.floor((ticks-1)/5)*5],["Next second",Math.floor((ticks-1)/50)*50]] as const;
-  const quick=steps.filter(([,k],i)=>k>0&&steps.findIndex(s=>s[1]===k)===i);
-  const target=typed.trim()===""?NaN:Number(typed);
-  // The epsilon keeps a grid time typed as 1.40 at 70 ticks despite 1.40 * 50 landing a hair under 70.
-  const want=Number.isFinite(target)&&target>0?Math.floor(target/TICK_SECONDS+1e-6):null;
-  return <div className="timeToBeat">
-    <p className="eyebrow">TIME TO BEAT · {farm?"FARM":"RECORD"} {time.toFixed(2)}s · {ticks} TICKS</p>
-    <div className="timeToBeatRow">
-      {quick.map(([label,k])=><button key={label} className="secondary" title={`Finish in ${k} ticks or fewer`} onClick={()=>setTyped((k*TICK_SECONDS).toFixed(2))}><span>{label}</span><b>{timeOf(k)}</b><small>{away(k)}</small></button>)}
-      <Field label="Target time (s)"><input type="number" min={0} step={0.01} value={typed} placeholder={quick.length?(quick[quick.length>1?1:0][1]*TICK_SECONDS).toFixed(2):""} onChange={e=>setTyped(e.target.value)}/></Field>
+function NearMisses({bus,farm}:{bus:NonNullable<Waypoints["bus"]>;farm:boolean}) {
+  const row=(name:string,e:BusEdge,meaning:string)=><div className="tableRow" title={meaning}>
+    <span>{name}</span>
+    <span>{e.before!=null&&e.before>0?<><b>{units(e.before)}</b> short at tick {e.tick-1}</>:`touching at tick ${e.tick-1}`}</span>
+    <span>{units(e.at)} in at tick {e.tick}{e.timerTick!=null?` (timer from ${e.timerTick})`:""}</span>
+    <span>{units(e.travel)}</span></div>;
+  return <div className="nearMisses">
+    <p className="eyebrow">NEAR MISSES · HURTBOX TO TRIGGER, AFTER EACH PHYSICS TICK</p>
+    <div className="resultTable">
+      <div className="tableHead"><span>Gate</span><span>Tick before</span><span>First touch</span><span>Moved that tick</span></div>
+      {!farm&&bus.gate&&row("Start gate",bus.gate,`The timer starts the tick after the first touch. First touch ${units(bus.gate.at)} deep: that much less by tick ${bus.gate.tick} and the timer starts a tick later, a tick off the record.`)}
+      {bus.finish&&row("Finish",bus.finish,`Short of the finish the tick before: be ${units(bus.finish.before)} further along by tick ${bus.finish.tick-1} to finish a tick sooner.`)}
     </div>
-    {want!=null&&<p className="waypointNote">{want>=ticks
-      ? `${typed}s is not faster than ${time.toFixed(2)}s: the time only saves when it drops a tick.`
-      : <><b>{away(want)}</b> ({((ticks-want)*TICK_SECONDS).toFixed(2)} s) to fix: finish in {want} ticks, {timeOf(want)}{Math.abs(want*TICK_SECONDS-target)>1e-6?` (the timer counts 0.02 s ticks; ${timeOf(want)} is the fastest time at or under ${typed}s)`:""}.</>}</p>}
   </div>;
 }
 

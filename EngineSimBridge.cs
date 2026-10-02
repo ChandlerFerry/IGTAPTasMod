@@ -114,11 +114,15 @@ namespace IGTAPTasMod
             return course + "_" + caps;
         }
 
+        /// <summary>The gate for a submitted route (`/api/enginesim/submit {course, capabilities, ticks | routeId, loopFrom?}`): a
+        /// farm loop (`loopFrom`, or a saved farm route's) is judged as the farm (<see cref="JudgeLoop"/>), any other as the record.</summary>
         object EngineSimSubmit(WebStudioRequest request, JObject body)
         {
             object error = PrepareEngineSimRun(request, body, out List<SolverTick> inputs);
             if (error != null) return error;
-            JudgeResult result = Judge(inputs);
+            string routeId = Text(body, "routeId");
+            int loopFrom = string.IsNullOrEmpty(routeId) ? Number(body, "loopFrom", 0) : _library.macros.Find(m => m.id == routeId)?.loopFrom ?? 0;
+            JudgeResult result = loopFrom > 0 ? JudgeLoop(inputs, loopFrom) : Judge(inputs);
             if (result != null) return result;
             request.StatusCode = 409;
             return new { ok = false, error = RecaptureError };
@@ -236,13 +240,12 @@ namespace IGTAPTasMod
             {
                 string caps = CapsOf(g.Groups["label"].Value).Id;
                 float routeTime = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture);
-                long farmTicks = FarmTicks(routeTime);
                 foreach (var file in OfflineBestFiles(course.id, caps, HumanSlackFile))
                 {
                     JObject slack;
                     try { slack = JObject.Parse(File.ReadAllText(file.path)); }
                     catch (Exception) { continue; }
-                    bool same = farm ? (long?)slack["runTicks"] == farmTicks
+                    bool same = farm ? (long?)slack["loopLive"] == FarmUnits(routeTime)
                         : slack["time"] != null && ((float)slack["time"]).ToString("0.00", CultureInfo.InvariantCulture) == routeTime.ToString("0.00", CultureInfo.InvariantCulture);
                     if (!same) continue;
                     string humanPath = file.path.Substring(0, file.path.Length - ".slack.json".Length) + ".json";
@@ -280,7 +283,7 @@ namespace IGTAPTasMod
                 JObject json;
                 try { json = JObject.Parse(File.ReadAllText(file.path)); }
                 catch (Exception) { continue; }
-                bool same = farm ? (long?)json["runTicks"] == FarmTicks(routeTime)
+                bool same = farm ? (long?)json["loopLive"] == FarmUnits(routeTime)
                     : json["time"] != null && ((float)json["time"]).ToString("0.00", CultureInfo.InvariantCulture) == routeTime.ToString("0.00", CultureInfo.InvariantCulture);
                 if (!same) continue;
                 return new MacroDefinition { id = HumanPlaybackId, name = route.name + " human", steps = ToSteps(json["ticks"].ToObject<List<SolverTick>>()) };
@@ -291,39 +294,49 @@ namespace IGTAPTasMod
         const string RecaptureError = "A new best: its start is loading again from a quick restart before the save; retry in a moment.";
 
         /// <summary>
-        /// Turbo replay of a candidate, saved (SaveSolverRoute) when it beats the record or the farm route. Null when it
-        /// would be saved but its start came from the cache: the cached start is dropped and the caller retries, so the
-        /// replay that saves starts from a quick restart captured for it, never from a snapshot an earlier game state left.
+        /// Turbo replay of a candidate, saved (SaveSolverRoute) when it beats the record. Null when it would be saved but its
+        /// start came from the cache: the cached start is dropped and the caller retries, so the replay that saves starts from a
+        /// quick restart captured for it, never from a snapshot an earlier game state left.
         /// </summary>
         JudgeResult Judge(List<SolverTick> inputs)
         {
             bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
             long runTicks = _engine.PhysicsTicks;
-            string category = SolverCategory;
-            float best = CategoryBest(category);
-            long farmBest = FarmTracked ? FarmBestTicks(category) : long.MaxValue;
+            float best = CategoryBest(SolverCategory);
             ParkAtStart();
             var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick, runTicks = runTicks,
-                previousBest = float.IsInfinity(best) ? (float?)null : best,
-                previousFarmTicks = farmBest == long.MaxValue ? (long?)null : farmBest };
-            if (!finished) return result;
-            if (!_startFresh && (time < best - .0001f || FarmTracked && runTicks < farmBest))
+                previousBest = float.IsInfinity(best) ? (float?)null : best };
+            if (!finished || time >= best - .0001f) return result;
+            if (!_startFresh)
             {
                 _startStates.Remove(_startKey);
                 _startState = null;
                 return null;
             }
-            List<SolverTick> route = inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList();
-            if (time < best - .0001f)
+            result.saved = SaveSolverRoute(inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList(), time);
+            if (!result.saved) result.rejected = _solverLog[_solverLog.Count - 1];
+            return result;
+        }
+
+        /// <summary>
+        /// Turbo replay of a farm loop (<see cref="EvaluateLoop"/>), saved (SaveFarmLoop) when its steady cycle beats the farm
+        /// route's. Null as <see cref="Judge"/>'s: a new best from a cached start is judged again from a fresh one.
+        /// </summary>
+        JudgeResult JudgeLoop(List<SolverTick> inputs, int loopFrom)
+        {
+            LoopResult loop = EvaluateLoop(inputs, loopFrom);
+            long farmBest = FarmTracked ? FarmBestUnits(SolverCategory) : long.MinValue;
+            ParkAtStart();
+            var result = new JudgeResult { finished = loop.steady, loop = loop, previousFarm = farmBest == long.MaxValue ? (long?)null : farmBest };
+            if (!loop.steady || loop.live >= farmBest) return result;
+            if (!_startFresh)
             {
-                result.saved = SaveSolverRoute(route, time);
-                if (!result.saved) result.rejected = _solverLog[_solverLog.Count - 1];
+                _startStates.Remove(_startKey);
+                _startState = null;
+                return null;
             }
-            if (FarmTracked && runTicks < farmBest)
-            {
-                result.farmSaved = SaveSolverRoute(route, time, runTicks);
-                if (!result.farmSaved) result.rejected = (result.rejected == null ? "" : result.rejected + "; ") + _solverLog[_solverLog.Count - 1];
-            }
+            result.farmSaved = SaveFarmLoop(inputs.Select(k => k.Clone()).ToList(), loopFrom, loop.live);
+            if (!result.farmSaved) result.rejected = _solverLog[_solverLog.Count - 1];
             return result;
         }
 
@@ -340,11 +353,15 @@ namespace IGTAPTasMod
             public int finishTick;
             public long runTicks;
             public float? previousBest;
-            public long? previousFarmTicks;
+            /// <summary>A farm loop's judging: its replay, and the farm route's cycle it was held to (live units).</summary>
+            public LoopResult loop;
+            public long? previousFarm;
             public string rejected;
         }
 
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)\.json$");
+        /// <summary>A farm loop's offline best (the engine's FullTas.LoopCommitted): its cycle in the name, its loop in the file.</summary>
+        static readonly Regex OfflineLoopFile = new Regex(@"^(\d+)_([a-z0-9]+)-loop-([\d.]+)\.json$");
         static readonly Regex HumanBestFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)-human\.json$");
         static readonly Regex HumanSlackFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)-human\.slack\.json$");
         const string HumanPlaybackId = "offline-best-human";
@@ -352,8 +369,8 @@ namespace IGTAPTasMod
         readonly HashSet<string> _offlineJudged = new HashSet<string>();
         // The files with at least one judging done (_offlineJudged's keys are "<path>|<label>").
         readonly HashSet<string> _offlineJudgedPaths = new HashSet<string>();
-        // Each offline best's runTicks by its path and write time: the pump reads them every 5 s, and a file doesn't change
-        // once the solver wrote it.
+        // Each offline best's runTicks (a farm loop's: its cycle, loopLive) by its path and write time: the pump reads them every
+        // 5 s, and a file doesn't change once the solver wrote it.
         readonly CachedFiles<long> _offlineRunTicks = new CachedFiles<long>();
 
         sealed class OfflineBest
@@ -362,6 +379,9 @@ namespace IGTAPTasMod
             public float time;
             public long runTicks = long.MaxValue;
             public bool farm;
+            /// <summary>A farm loop (judged for the farm only), its cycle in live units.</summary>
+            public bool loop;
+            public long loopLive = long.MaxValue;
             public List<(string label, JObject body, string category)> judgings;
         }
 
@@ -369,6 +389,7 @@ namespace IGTAPTasMod
         static bool OfflineBestActionable(string file, HashSet<int> courseIds, HashSet<string> runs)
         {
             Match m = OfflineBestFile.Match(file);
+            if (!m.Success) m = OfflineLoopFile.Match(file);
             if (m.Success) return int.TryParse(m.Groups[1].Value, out int id) && courseIds.Contains(id) && Categories.IsCategory(m.Groups[2].Value);
             m = OfflineFullTasBestFile.Match(file);
             return m.Success && runs.Contains(m.Groups[1].Value);
@@ -378,18 +399,21 @@ namespace IGTAPTasMod
         {
             string file = Path.GetFileName(path);
             Match m = OfflineBestFile.Match(file);
+            bool loop = !m.Success && (m = OfflineLoopFile.Match(file)).Success;
             if (m.Success)
             {
                 int id = int.Parse(m.Groups[1].Value);
                 string caps = m.Groups[2].Value;
                 CourseDef course = _courses.Find(c => c.id == id);
-                if (course == null || !Categories.IsCategory(caps) || id + "_" + caps == solving) return null;
-                long runTicks;
-                try { runTicks = _offlineRunTicks.Get(path, p => (long?)JObject.Parse(File.ReadAllText(p))["runTicks"] ?? long.MaxValue); }
+                if (course == null || !Categories.IsCategory(caps) || id + "_" + caps == solving || loop && (course.IsBonus || course.IsTransition)) return null;
+                long score;
+                try { score = _offlineRunTicks.Get(path, p => (long?)JObject.Parse(File.ReadAllText(p))[loop ? "loopLive" : "runTicks"] ?? long.MaxValue); }
                 catch (Exception) { return null; }
+                var judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>() : CategoryJudgings(course, id, caps);
+                if (loop)
+                    return new OfflineBest { path = path, group = id + "_" + caps, time = float.PositiveInfinity, farm = true, loop = true, loopLive = score, judgings = judgings };
                 return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
-                    runTicks = runTicks, farm = !course.IsBonus && !course.IsTransition,
-                    judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>() : CategoryJudgings(course, id, caps) };
+                    runTicks = score, farm = !course.IsBonus && !course.IsTransition, judgings = judgings };
             }
             m = OfflineFullTasBestFile.Match(file);
             if (m.Success)
@@ -470,15 +494,17 @@ namespace IGTAPTasMod
             {
                 if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
                 var files = group.OrderBy(f => f.time).ThenBy(f => f.runTicks).ToList();
-                OfflineBest fastest = files[0], fewest = files.OrderBy(f => f.runTicks).First();
-                bool judgeable = fastest.judgings.Count > 0;
-                float best = judgeable ? CategoryBest(fastest.judgings[0].category) : 0f;
-                long farmBest = judgeable && fastest.farm ? FarmBestTicks(fastest.judgings[0].category) : long.MinValue;
+                // The record from a plain best, the farm from a farm loop (README ### Rules 30): a plain best is no farm loop.
+                OfflineBest fastest = files.FirstOrDefault(f => !f.loop), fewest = files.Where(f => f.loop).OrderBy(f => f.loopLive).FirstOrDefault();
+                OfflineBest any = fastest ?? fewest;
+                bool judgeable = any.judgings.Count > 0;
+                float best = judgeable ? CategoryBest(any.judgings[0].category) : 0f;
+                long farmBest = judgeable && any.farm ? FarmBestUnits(any.judgings[0].category) : long.MinValue;
                 OfflineBest first = null;
                 (string label, JObject body, string category) next = default;
-                foreach (var (file, worth) in new[] { (fastest, fastest.time <= best + .0001f), (fewest, fewest.runTicks < farmBest) })
+                foreach (var (file, worth) in new[] { (fastest, fastest != null && fastest.time <= best + .0001f), (fewest, fewest != null && fewest.loopLive < farmBest) })
                 {
-                    if (!worth && !_offlineJudgedPaths.Contains(file.path)) continue;
+                    if (file == null || !worth && !_offlineJudgedPaths.Contains(file.path)) continue;
                     next = file.judgings.FirstOrDefault(j => !_offlineJudged.Contains(file.path + "|" + j.label));
                     if (next.body != null) { first = file; break; }
                 }
@@ -496,12 +522,16 @@ namespace IGTAPTasMod
                         {
                             object error = PrepareEngineSimRun(new WebStudioRequest(), next.body, out _);
                             if (error != null) return;
-                            List<SolverTick> inputs = JObject.Parse(File.ReadAllText(first.path))["ticks"].ToObject<List<SolverTick>>();
-                            JudgeResult r = Judge(inputs);
+                            JObject json = JObject.Parse(File.ReadAllText(first.path));
+                            List<SolverTick> inputs = json["ticks"].ToObject<List<SolverTick>>();
+                            JudgeResult r = first.loop ? JudgeLoop(inputs, (int?)json["loopFrom"] ?? 0) : Judge(inputs);
                             if (r == null) return; // a new best from a cached start: judged again from a fresh one on the next pump
-                            line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks"
-                                    + (r.previousFarmTicks is long farm ? ", farm route's " + farm : "") + ")" : "no finish in turbo")
-                                + (r.saved ? ", saved" : "") + (r.farmSaved ? ", saved as farm" : "") + (r.rejected != null ? ", " + r.rejected : "");
+                            if (first.loop)
+                                line += "turbo " + r.loop + (r.previousFarm is long farm ? ", farm route's " + FarmSeconds(farm) + "s" : "")
+                                    + (r.farmSaved ? ", saved as farm" : "") + (r.rejected != null ? ", " + r.rejected : "");
+                            else
+                                line += (r.finished ? "turbo " + r.time.ToString("0.00", CultureInfo.InvariantCulture) + "s (run " + r.runTicks + " ticks)" : "no finish in turbo")
+                                    + (r.saved ? ", saved" : "") + (r.rejected != null ? ", " + r.rejected : "");
                         }
                     }
                     catch (Exception ex) { line += "error " + ex.Message; }
@@ -533,14 +563,15 @@ namespace IGTAPTasMod
             return best;
         }
 
-        long FarmBestTicks(string category)
+        /// <summary>The category's farm route's loop cycle in live units (long.MaxValue: none yet).</summary>
+        long FarmBestUnits(string category)
         {
             long best = long.MaxValue;
             foreach (MacroDefinition m in _library.macros)
             {
                 Match g = MatchFarmRoute(m.name);
-                if (g.Success && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase))
-                    best = Math.Min(best, FarmTicks(float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture)));
+                if (g.Success && m.loopFrom > 0 && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase))
+                    best = Math.Min(best, FarmUnits(float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture)));
             }
             return best;
         }

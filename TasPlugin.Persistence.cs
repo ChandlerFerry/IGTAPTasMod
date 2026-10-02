@@ -33,7 +33,7 @@ namespace IGTAPTasMod
                 int selected = string.IsNullOrEmpty(_settings.selectedRouteId) ? -1 : _library.macros.FindIndex(r => r.id == _settings.selectedRouteId);
                 if (selected >= 0) _library.selectedIndex = selected;
                 bool recovered = RecoverTasJournal();
-                if (NormalizeLibraryFrameTiming(_library) | PruneSlowerRoutes() | recovered) SaveLibrary();
+                if (NormalizeLibraryFrameTiming(_library) | RetireLapFarms() | PruneSlowerRoutes() | recovered) SaveLibrary();
                 if (recovered) DeleteTasJournal();
             }
             catch (Exception ex)

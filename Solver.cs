@@ -84,7 +84,7 @@ namespace IGTAPTasMod
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
-        /// <summary>The fastest offline best's farm time (its run from the quick restart), for an Improve of the farm time.</summary>
+        /// <summary>The fastest offline best's farm loop cycle (live seconds, README ### Rules 30), for an Improve of the farm time.</summary>
         float _solveBestFarm = float.PositiveInfinity;
         /// <summary>Improve's last `waypoints {json}` line: the waypoints with the best's ticks at each (null before one).</summary>
         JObject _solveWaypoints;
@@ -707,7 +707,7 @@ namespace IGTAPTasMod
             SolveJob job = _solveQueue[_solveIndex];
             job.saved = _turboSaved;
             float best = job.farm ? _solveBestFarm : _solveBest;
-            job.result = outcome + (float.IsInfinity(best) ? "" : ", best " + (job.farm ? "farm " : "") + best.ToString("0.00", CultureInfo.InvariantCulture) + "s")
+            job.result = outcome + (float.IsInfinity(best) ? "" : ", best " + (job.farm ? "farm loop " + best.ToString("0.0000", CultureInfo.InvariantCulture) : best.ToString("0.00", CultureInfo.InvariantCulture)) + "s")
                 + ", " + _turboSaved + " saved" + OutlookNote();
             if (StartNextSolveJob(_solveIndex + 1)) return;
             if (_solveRepeat)
@@ -1156,7 +1156,8 @@ namespace IGTAPTasMod
         }
 
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
-        static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via .*, run ([\d.,]+)s from the start\)");
+        static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via ");
+        static readonly Regex SolveLoopBest = new Regex(@"offline best farm loop ([\d.,]+)s via ");
         const string AutoEvent = "@fulltas ", WaypointsLine = "waypoints ";
 
         void ReadSolveLine(string line)
@@ -1198,12 +1199,10 @@ namespace IGTAPTasMod
                 }
                 return;
             }
-            m = SolveBest.Match(line);
-            if (m.Success)
-            {
+            m = SolveLoopBest.Match(line);
+            if (m.Success) _solveBestFarm = Math.Min(_solveBestFarm, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
+            else if ((m = SolveBest.Match(line)).Success)
                 _solveBest = Math.Min(_solveBest, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
-                _solveBestFarm = Math.Min(_solveBestFarm, float.Parse(m.Groups[2].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
-            }
             if (line.Contains("turbo check of") && !line.Contains("deferred")) _turboChecks++;
             if (line.Contains("saved as the new route")) _turboSaved++;
             _solverLog.Add(line);
@@ -1359,29 +1358,122 @@ namespace IGTAPTasMod
 
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
 
-        static string FarmSeconds(long ticks) { return (ticks * (double)Time.fixedDeltaTime).ToString("0.00", CultureInfo.InvariantCulture); }
+        /// <summary>A farm loop's cycle in a route name: live seconds to 4 places (exact for whole 1/1400 s live units).</summary>
+        static string FarmSeconds(long live) { return (live / 1400.0).ToString("0.0000", CultureInfo.InvariantCulture); }
 
-        static long FarmTicks(float seconds) { return (long)Math.Round(seconds / Time.fixedDeltaTime); }
+        /// <summary>A farm route name's time in live units (MacroEngine.LiveUnits).</summary>
+        static long FarmUnits(float seconds) { return (long)Math.Round(seconds * 1400.0); }
 
-        bool SaveSolverRoute(List<SolverTick> inputs, float time, long farmTicks = 0)
+        bool SaveSolverRoute(List<SolverTick> inputs, float time)
         {
-            string category = SolverCategory;
-            string name = category + (farmTicks > 0 ? " farm " + FarmSeconds(farmTicks) : " " + time.ToString("0.00", CultureInfo.InvariantCulture));
+            string name = SolverCategory + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
             string violation = RouteViolation(inputs, time);
-            if (violation == null && farmTicks > 0 && _engine.PhysicsTicks != farmTicks)
-                violation = "a replay from the course start took " + _engine.PhysicsTicks + " physics ticks, not " + farmTicks;
-            if (violation != null)
-            {
-                string line = "REJECTED " + name + ": " + violation;
-                _solverLog.Add(line);
-                Logger.LogWarning(line);
-                return false;
-            }
-            var route = new MacroDefinition { name = name, steps = ToSteps(inputs) };
-            _library.macros.Add(route);
+            if (violation != null) return Rejected(name, violation);
+            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs) });
             PruneSlowerRoutes();
             SaveLibrary();
             return true;
+        }
+
+        bool Rejected(string name, string violation)
+        {
+            string line = "REJECTED " + name + ": " + violation;
+            _solverLog.Add(line);
+            Logger.LogWarning(line);
+            return false;
+        }
+
+        /// <summary>Loops played after a farm route's lead to find its steady cycle (the engine's FullTas.LoopRepeats).</summary>
+        const int LoopRepeats = 4;
+        // While a farm loop plays (EvaluateLoop): each finish of the target course (the input count, physics tick and held frames
+        // at it); the finish doesn't end the run then.
+        List<(long input, long physics, long held)> _loopFinishes;
+
+        /// <summary>A farm loop's replay (README ### Rules 30): the lead's last finish, then each loop's cycle.</summary>
+        sealed class LoopResult
+        {
+            /// <summary>Every loop finished on its own last input and the last two cycles are equal.</summary>
+            public bool steady;
+            /// <summary>The last loop's cycle: physics ticks and held frames from the finish before it.</summary>
+            public long ticks, held;
+            public long live { get { return MacroEngine.LiveUnits(ticks, held); } }
+            public readonly List<long> cycles = new List<long>();
+            public override string ToString()
+            {
+                string all = string.Join(", ", cycles.Select(c => c < 0 ? "-" : FarmSeconds(c)));
+                return steady ? FarmSeconds(live) + "s a loop (" + ticks + " ticks, " + held + " held frames; cycles " + all + ")" : "no steady loop (cycles " + all + ")";
+            }
+        }
+
+        /// <summary>
+        /// Plays a farm route's lead and then its loop (the inputs from <paramref name="loopFrom"/> on) LoopRepeats times, from
+        /// the course start through every finish: each loop must finish on its own last input, and the last two cycles must be
+        /// equal. Its cycle is the farm time.
+        /// </summary>
+        LoopResult EvaluateLoop(List<SolverTick> inputs, int loopFrom)
+        {
+            var result = new LoopResult();
+            if (loopFrom <= 0 || loopFrom >= inputs.Count) return result;
+            int length = inputs.Count - loopFrom;
+            var played = inputs.Take(loopFrom).ToList();
+            for (int k = 0; k < LoopRepeats; k++) played.AddRange(inputs.Skip(loopFrom).Select(t => t.Clone()));
+            var finishes = new List<(long input, long physics, long held)>();
+            _loopFinishes = finishes;
+            try { Evaluate(played, out _, out _, out _); }
+            finally { _loopFinishes = null; }
+            int prev = finishes.FindIndex(f => f.input == loopFrom);
+            for (int k = 1; k <= LoopRepeats; k++)
+            {
+                int at = prev < 0 ? -1 : finishes.FindIndex(f => f.input == loopFrom + (long)k * length);
+                if (at < 0)
+                {
+                    result.cycles.Add(-1);
+                    prev = -1;
+                    continue;
+                }
+                result.ticks = finishes[at].physics - finishes[prev].physics;
+                result.held = finishes[at].held - finishes[prev].held;
+                result.cycles.Add(result.live);
+                prev = at;
+            }
+            long last = result.cycles[LoopRepeats - 1];
+            result.steady = last >= 0 && result.cycles[LoopRepeats - 2] == last;
+            return result;
+        }
+
+        /// <summary>Saves a farm loop as the category's farm route, `<c>&lt;category&gt; farm &lt;cycle&gt;</c>`, when a replay from the
+        /// course start loops in exactly <paramref name="live"/> units and every tick obeys the category (the gate).</summary>
+        bool SaveFarmLoop(List<SolverTick> inputs, int loopFrom, long live)
+        {
+            string name = SolverCategory + " farm " + FarmSeconds(live);
+            List<string> audit = StartAudit();
+            LoopResult again;
+            try { again = EvaluateLoop(inputs, loopFrom); }
+            finally { _audit = null; }
+            if (!again.steady || again.live != live)
+                audit.Insert(0, "a replay from the course start " + (again.steady ? "loops in " + FarmSeconds(again.live) + "s" : "has " + again));
+            if (audit.Count > 0) return Rejected(name, string.Join("; ", audit));
+            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom });
+            PruneSlowerRoutes();
+            SaveLibrary();
+            return true;
+        }
+
+        /// <summary>
+        /// A farm route saved before farms were loops (README ### Rules 30) times one lap from the quick restart, not a loop: it
+        /// can't be compared with one, so it is renamed stale (out of the ranking, kept for its inputs).
+        /// </summary>
+        bool RetireLapFarms()
+        {
+            bool retired = false;
+            foreach (MacroDefinition m in _library.macros)
+            {
+                if (m.loopFrom > 0 || !MatchFarmRoute(m.name).Success) continue;
+                Logger.LogInfo("Retired " + m.name + ": a farm is a loop now (finish to finish), and this route is one lap");
+                m.name += " stale";
+                retired = true;
+            }
+            return retired;
         }
 
         // A route name's category part ("4_WJ_DS"): the label is matched in any case but must be one of the categories, so

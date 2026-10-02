@@ -29,15 +29,21 @@ namespace IGTAP.EngineSim.Cli
             public string EndReason;
             /// <summary>The last goal's physics tick from the run's start (tick arithmetic: splits, rests, the library).</summary>
             public long End { get { return Progress == 0 ? long.MaxValue : GoalPhysics[Progress - 1]; } }
-            /// <summary>The tick the run's time counts from: the start-gate goal's in a course record run (<see cref="TimerGoal"/>), else 0.</summary>
+            /// <summary>The tick the run's time counts from: <see cref="TimerGoal"/>'s (a course record's start gate, a farm loop's lead
+            /// finish), else 0.</summary>
             public long Origin { get { return TimerGoal > 0 && Progress >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0; } }
             /// <summary>The run's time in ticks, what better and worse compare: <see cref="End"/> less <see cref="Origin"/>.</summary>
             public long Last { get { return Progress == 0 ? long.MaxValue : End - Origin; } }
-            /// <summary>Goal k's arrival on the run's own clock (its tick less the start-gate goal's once that is behind it).</summary>
+            /// <summary>Goal k's arrival on the run's own clock (its tick less the timer goal's once that is behind it).</summary>
             public long Clock(int k) { return GoalPhysics[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0); }
-            /// <summary>The frames the run stood still in by goal k. A course record run (<see cref="TimerGoal"/>) is timed by the
-            /// game timer, physics ticks from its start gate: none count there.</summary>
-            public long Held(int k) { return GoalHeld == null || TimerGoal > 0 ? 0 : GoalHeld[k - 1]; }
+            /// <summary>The frames the run stood still in by goal k, on its own clock. A course record run is timed by the game
+            /// timer, physics ticks from its start gate: none count there. A farm loop (<see cref="LoopTiming"/>) counts them from
+            /// its lead finish.</summary>
+            public long Held(int k)
+            {
+                if (GoalHeld == null || TimerGoal > 0 && !LoopTiming) return 0;
+                return GoalHeld[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalHeld[TimerGoal - 1] : 0);
+            }
             /// <summary>
             /// The run's time as the gate scores it, in live units (MacroEngine.LiveUnits): a Full-TAS run's ticks and the frames it
             /// stood still in (README ### Rules 31). What a whole run's better and worse compare; the tick arithmetic (splits,
@@ -52,10 +58,15 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// A course record run (`solve --auto`, CourseAuto.cs) is timed by the game timer, from its start-gate crossing: that goal's
-        /// number (1-based). 0: the run is timed from its start (every Full-TAS run, a course's farm).
+        /// A course run timed from a goal other than its start (`solve --auto`, CourseAuto.cs): that goal's number (1-based). A
+        /// record run's start-gate crossing (the game timer), or a farm loop's lead finish (<see cref="LoopTiming"/>). 0: the run
+        /// is timed from its start (every Full-TAS run).
         /// </summary>
         internal static int TimerGoal;
+
+        /// <summary>A course farm loop (CourseLoop.cs): timed from <see cref="TimerGoal"/>, the lead's last finish, to the loop
+        /// lap's finish in live time, held frames included.</summary>
+        internal static bool LoopTiming;
 
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal;

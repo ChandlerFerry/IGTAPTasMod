@@ -358,6 +358,12 @@ namespace IGTAPTasMod
         {
             if (Instance != null && savePositionData && Instance._fullTasFinishCourse >= 0) Instance.FullTasCourseFinished(Instance._fullTasFinishCourse);
             if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
+            // A farm loop's replay (EvaluateLoop) plays through every finish: each is a lap's end, not the run's.
+            if (Instance._loopFinishes != null)
+            {
+                Instance._loopFinishes.Add((Instance._engine.RunTicks, Instance._engine.PhysicsTicks, Instance._engine.HeldFrames));
+                return;
+            }
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
             Instance._engine.CompleteFromGame("Course finish detected", Instance._pendingCourseTime);

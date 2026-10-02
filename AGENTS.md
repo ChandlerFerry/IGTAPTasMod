@@ -78,4 +78,6 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
 ## Before calling a new best real
 
 Trace it (`IGTAP.EngineSim path <trace> <route.json>`), check where the timer starts and stops, look at the jumps, and
-say what the new trick is. `python tools/audit-traces.py` checks captured traces for input-buffer violations.
+say what the new trick is. `python tools/audit-traces.py` checks captured traces for input-buffer violations. How the
+gates time a course (the start on the second tick of the hurtbox's touch, the finish on the first, the position writes
+between ticks): [`docs/course-timer.md`](docs/course-timer.md).

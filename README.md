@@ -65,7 +65,7 @@
 25. Saves wait until the save's state is back.
 26. Their only categories are `WJ_DS_DJ_BS` and the categories outside the ladder that run there (19); transitions to
     or from them aren't supported.
-27. Time runs from the course's start gate to end gate.
+27. Time runs from the course's start gate to end gate ([`docs/course-timer.md`](docs/course-timer.md)).
 28. Finishing a different course never counts.
 29. Score courses by the game timer, not tick counts: that is the runs record (the gate: a replay from the course start
     must finish in the recorded time, `Solver.cs` `RouteViolation`).

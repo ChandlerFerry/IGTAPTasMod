@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
+using UnityEngine;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 
 namespace IGTAP.EngineSim.Cli
@@ -30,6 +31,9 @@ namespace IGTAP.EngineSim.Cli
             public OfflineSolver.ForcedPath Rules;
             public List<FullTasGoal> Goals;
             public Stopwatch Clock;
+            /// <summary>A gated course's farm: a steady-state loop (CourseLoop.cs), timed finish to finish, of this many laps.</summary>
+            public bool Loop;
+            public int LoopLaps = 1;
         }
 
         /// <summary>A route played on the plain course simulation (the game's own finish and timer).</summary>
@@ -41,6 +45,34 @@ namespace IGTAP.EngineSim.Cli
             public string EndReason;
             /// <summary>Entered one of the run's avoid boxes or missed a via box: off the course's forced path.</summary>
             public bool OffPath;
+            /// <summary>The record's near misses at the start gate and the finish (a gated course's finished run), else null.</summary>
+            public Bus Bus;
+        }
+
+        /// <summary>
+        /// How near a run came to its gates a tick sooner, in the simulation's own distances: Collider2D.Distance between the
+        /// player's hurtbox (the 40×54 box; the body box excludes the gates' Default layer and never touches them) and the
+        /// gate's trigger, the gap between them, negative when they overlap (a trigger's touch is tested where the bodies stand
+        /// after the step, PhysicsWorld.CollectTouching). Gate: the start gate's Enter tick (startGate starts the timer on the
+        /// Stay, so the touch that started it entered the tick before the timer) against the tick before it. Finish: the end
+        /// gate's finishing tick against the tick before it. docs/course-timer.md.
+        /// </summary>
+        sealed class Bus
+        {
+            public BusEdge Gate, Finish;
+        }
+
+        sealed class BusEdge
+        {
+            /// <summary>The physics tick from the run's start the trigger was first overlapped on; the game timer's start
+            /// (<see cref="TimerTick"/>, the gate only) is the tick it ran on.</summary>
+            public long Tick, TimerTick;
+            /// <summary>The gap the tick before (positive: the hurtbox stopped short) and on the tick (negative: its overlap).
+            /// The start gate's opportunity is a shallow <see cref="At"/> (a hair less and the timer starts a tick later); the
+            /// finish's a small <see cref="Before"/> (a hair further and it finishes a tick sooner).</summary>
+            public float Before, At;
+            /// <summary>How far the player's body moved between the two ticks.</summary>
+            public float Travel;
         }
 
         /// <summary>The direction blocks (forced-paths.json): a course with both lets a run go either way from the start.</summary>
@@ -102,6 +134,8 @@ namespace IGTAP.EngineSim.Cli
             foreach (string seed in Solve.Args(args, "--seed")) candidates.Add((Path.GetFileName(seed), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed)));
             string runFile = Path.Combine(dir, "fulltas", run.Name + ".json");
             if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add(("course-auto/fulltas/" + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
+            // A gated course's farm is its steady-state loop, finish to finish (README ### Rules 30).
+            if (run.Timing == "farm" && gated) return LoopAuto(run, args, candidates, dir);
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
             foreach (var p in played)
                 Console.WriteLine($"{p.how}: " + (!p.result.Finished ? "no finish (" + p.result.EndReason + ")"
@@ -136,6 +170,7 @@ namespace IGTAP.EngineSim.Cli
             options.Record = run.Timing == "record" && gated;
             run.Goals = CourseWaypoints.Build(trace, best.inputs, options).Goals;
             TimerGoal = 0;
+            LoopTiming = false;
             if (options.Record)
             {
                 TimerGoal = run.Goals.FindIndex(g => g.kind == FullTasGoal.Start && g.course == course) + 1;
@@ -147,23 +182,7 @@ namespace IGTAP.EngineSim.Cli
                 + $"{run.Goals.Count} goals ({run.Goals.Count(g => g.kind == FullTasGoal.At)} waypoints): {string.Join(" ", run.Goals.Select(g => g.label))}; "
                 + $"avoid {(rules.Avoid.Count == 0 ? "-" : string.Join(", ", rules.Avoid))}");
 
-            var fullArgs = new List<string> { synthetic, "--auto", "--no-submit" };
-            // Record timing: a window is scored on its arrival's physics tick, which only matches the game timer once the gate
-            // crossing is in its prefix; windows from the quick restart would chase the farm instead. So the loop's windows start
-            // after the gate unless --focus says otherwise (combine, which compares the timer, still splices anywhere).
-            if (TimerGoal > 0 && !args.Contains("--focus")) fullArgs.AddRange(new[] { "--focus", (TimerGoal + 1) + "-" + run.Goals.Count });
-            for (int i = 1; i < args.Length; i++)
-            {
-                string a = args[i];
-                if (a == "--seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
-                    || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name")
-                {
-                    i++;
-                    continue;
-                }
-                if (a == "--auto" || a == "--farm" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan") continue;
-                fullArgs.Add(a);
-            }
+            var fullArgs = FullArgs(synthetic, args, run.Goals.Count);
             // The other finishing candidates are the loop's references (combine splices their leading goal runs into the best).
             foreach (var p in finishing.Where(p => p.inputs != best.inputs))
             {
@@ -182,6 +201,31 @@ namespace IGTAP.EngineSim.Cli
                 return 0;
             }
             return loop.Search();
+        }
+
+        /// <summary>
+        /// The Full-TAS --auto loop's arguments for a course run: its synthetic trace, then the solve's own options it takes. A
+        /// run timed from a later goal (<see cref="TimerGoal"/>: a record's start gate, a farm loop's lead finish) is scored on
+        /// arrival ticks that are its time only once that goal is in a window's prefix, so its windows start after that goal
+        /// unless --focus says otherwise (combine, which compares the run's time, still splices anywhere).
+        /// </summary>
+        static List<string> FullArgs(string synthetic, string[] args, int goals)
+        {
+            var fullArgs = new List<string> { synthetic, "--auto", "--no-submit" };
+            if (TimerGoal > 0 && !args.Contains("--focus")) fullArgs.AddRange(new[] { "--focus", (TimerGoal + 1) + "-" + goals });
+            for (int i = 1; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (a == "--seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
+                    || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name")
+                {
+                    i++;
+                    continue;
+                }
+                if (a == "--auto" || a == "--farm" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan") continue;
+                fullArgs.Add(a);
+            }
+            return fullArgs;
         }
 
         CourseRun _course;
@@ -227,16 +271,82 @@ namespace IGTAP.EngineSim.Cli
                 OfflineSolver.ForcedPath rules = run.Rules ?? new OfflineSolver.ForcedPath();
                 int via = 0;
                 bool avoided = false;
-                Action<int> onStep = rules.IsEmpty ? null : _ =>
+                // A gated course's gates: its start gates and the end gates that finish it (a bonus's reward box and a transition's
+                // next course have none of these).
+                bool gated = !run.Header.TryGetProperty("finish", out _) && !run.Header.TryGetProperty("finishStart", out _);
+                Collider2D[] hitbox = gated ? sim.Player.GetComponents<BoxCollider2D>() : null;
+                List<Collider2D> starts = gated ? GateColliders(sim, run.Course, true) : null, ends = gated ? GateColliders(sim, run.Course, false) : null;
+                var ticks = new List<long>();
+                var toStart = new List<float>();
+                var toEnd = new List<float>();
+                var timing = new List<bool>();
+                var body = new List<(float x, float y)>();
+                Action<int> onStep = _ =>
                 {
-                    WorldPos p = sim.PlayerWorld;
-                    if (via < rules.Via.Count && rules.Via[via].Contains(p)) via++;
-                    foreach (OfflineSolver.Box box in rules.Avoid) if (box.Contains(p)) avoided = true;
+                    if (!rules.IsEmpty)
+                    {
+                        WorldPos p = sim.PlayerWorld;
+                        if (via < rules.Via.Count && rules.Via[via].Contains(p)) via++;
+                        foreach (OfflineSolver.Box box in rules.Avoid) if (box.Contains(p)) avoided = true;
+                    }
+                    if (!gated) return;
+                    ticks.Add(sim.Engine.PhysicsTicks);
+                    toStart.Add(Nearest(sim, hitbox, starts));
+                    toEnd.Add(Nearest(sim, hitbox, ends));
+                    timing.Add(sim.TimingCourse()?.courseNumber == run.Course);
+                    var b = sim.Physics.PlayerBody();
+                    ScenePos origin = sim.WorldOriginInScene;
+                    body.Add((b.px - origin.x, b.py - origin.y));
                 };
                 RunResult r = sim.Run(inputs, null, null, 1000000, onStep);
                 return new CourseResult { Finished = r.Finished, Time = r.Time, RunTicks = r.PhysicsTicks, EndReason = r.EndReason,
-                    OffPath = avoided || via < rules.Via.Count };
+                    OffPath = avoided || via < rules.Via.Count, Bus = gated && r.Finished ? MeasureBus(ticks, toStart, toEnd, timing, body) : null };
             });
+        }
+
+        /// <summary>The course's start gates (start) or the end gates that finish it.</summary>
+        static List<Collider2D> GateColliders(Simulation sim, int course, bool start)
+        {
+            IEnumerable<MonoBehaviour> gates = start ? sim.World.All<startGate>()
+                : sim.World.All<endGate>().Where(g => DistanceField.EndOfCourse == null || (bool)DistanceField.EndOfCourse.GetValue(g));
+            return gates.Where(g => g.GetComponentInParent<courseScript>()?.courseNumber == course)
+                .Select(g => (Collider2D)g.GetComponent<BoxCollider2D>()).Where(c => c != null).ToList();
+        }
+
+        /// <summary>The smallest gap between the player's enabled boxes that can touch the triggers (the hurtbox) and the live
+        /// triggers (+inf: none live).</summary>
+        static float Nearest(Simulation sim, Collider2D[] hitbox, List<Collider2D> triggers)
+        {
+            float best = float.PositiveInfinity;
+            foreach (Collider2D a in hitbox)
+            {
+                if (!a.enabled) continue;
+                foreach (Collider2D b in triggers)
+                {
+                    if (!b.enabled || !b.gameObject.activeInHierarchy || !sim.Physics.CanTouch(a, b)) continue;
+                    ColliderDistance2D d = a.Distance(b);
+                    if (d.isValid) best = Math.Min(best, d.distance);
+                }
+            }
+            return best;
+        }
+
+        /// <summary>The run's gate and finish margins from its per-tick gaps (the run finished on its last tick).</summary>
+        static Bus MeasureBus(List<long> ticks, List<float> toStart, List<float> toEnd, List<bool> timing, List<(float x, float y)> body)
+        {
+            int n = ticks.Count;
+            if (n < 2) return null;
+            float Travel(int i) => (float)Math.Sqrt(Math.Pow(body[i].x - body[i - 1].x, 2) + Math.Pow(body[i].y - body[i - 1].y, 2));
+            var bus = new Bus { Finish = new BusEdge { Tick = ticks[n - 1], Before = toEnd[n - 2], At = toEnd[n - 1], Travel = Travel(n - 1) } };
+            // The timer's last start before the finish (an earlier start was a restart's). startGate starts it on the Stay, so
+            // the touch entered the tick before; walking back over overlapping ticks would cross a touch that lapsed at a step's
+            // start (a write pulled the hurtbox out and the step moved it back in: Enter again).
+            int t = -1;
+            for (int i = 1; i < n; i++) if (timing[i] && !timing[i - 1]) t = i;
+            if (t < 2) return bus;
+            int e = t - 1;
+            bus.Gate = new BusEdge { Tick = ticks[e], TimerTick = ticks[t], Before = toStart[e - 1], At = toStart[e], Travel = Travel(e) };
+            return bus;
         }
 
         /// <summary>A kept best: replayed on the course's own simulation, written to offline-best as solve writes it (the plugin
@@ -244,6 +354,11 @@ namespace IGTAP.EngineSim.Cli
         void CourseCommitted(Route r, string where)
         {
             if (r.Progress < _goals) return;
+            if (_course.Loop)
+            {
+                LoopCommitted(r, where);
+                return;
+            }
             CourseResult c = PlayCourse(_course, r.Inputs);
             WriteWaypoints(r, c);
             if (!c.Finished)
@@ -283,9 +398,16 @@ namespace IGTAP.EngineSim.Cli
                 timerGoal = TimerGoal,
                 record = c.Finished ? (long?)Math.Round(c.Time / _dt) : null,
                 farm = c.Finished ? (long?)c.RunTicks : null,
+                bus = c.Bus == null ? null : new { gate = BusJson(c.Bus.Gate), finish = BusJson(c.Bus.Finish) },
             });
             Console.WriteLine("waypoints " + json);
             if (_course.WaypointsFile != null) Solve.WriteShared(_course.WaypointsFile, json);
+        }
+
+        static object BusJson(BusEdge e)
+        {
+            static float? Finite(float v) => float.IsFinite(v) ? (float)Math.Round(v, 3) : null;
+            return e == null ? null : new { tick = e.Tick, timerTick = e.TimerTick == 0 ? (long?)null : e.TimerTick, before = Finite(e.Before), at = Finite(e.At), travel = Finite(e.Travel) };
         }
     }
 }

@@ -115,7 +115,8 @@ namespace IGTAP.EngineSim
         public ContactProbe(Simulation sim) { _sim = sim; }
 
         /// <summary>The side of the target course's start gate (-1: at -x) when the timer is off and the gate is within 16 u of the
-        /// hitbox (x + 5 × facing ± 20.5, y ± 36) at its height, 0 otherwise.</summary>
+        /// hurtbox (x + 5 × facing ± 20, y ± 27: the 40×54 box the gates touch; the 41×72 body box excludes their Default layer)
+        /// at its height, 0 otherwise.</summary>
         public float NearGate()
         {
             if (_sim.TimingCourse() != null) return 0f;
@@ -124,9 +125,9 @@ namespace IGTAP.EngineSim
             float cx = p.x + (player.facingRight ? 5f : -5f);
             foreach (Rect box in Gates())
             {
-                if (p.y + 36f < box.yMin || p.y - 36f > box.yMax) continue;
-                if (cx + 20.5f < box.xMin && box.xMin - (cx + 20.5f) <= 16f) return 1f;
-                if (cx - 20.5f > box.xMax && (cx - 20.5f) - box.xMax <= 16f) return -1f;
+                if (p.y + 27f < box.yMin || p.y - 27f > box.yMax) continue;
+                if (cx + 20f < box.xMin && box.xMin - (cx + 20f) <= 16f) return 1f;
+                if (cx - 20f > box.xMax && (cx - 20f) - box.xMax <= 16f) return -1f;
             }
             return 0f;
         }

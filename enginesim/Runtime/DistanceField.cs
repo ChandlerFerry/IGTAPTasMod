@@ -64,7 +64,7 @@ namespace IGTAP.EngineSim
         float _x0, _y0, _x1, _y1;
         int _region;
 
-        static readonly FieldInfo EndOfCourse = typeof(endGate).GetField("isEndOfCourse", BindingFlags.Instance | BindingFlags.NonPublic);
+        internal static readonly FieldInfo EndOfCourse = typeof(endGate).GetField("isEndOfCourse", BindingFlags.Instance | BindingFlags.NonPublic);
 
         DistanceField(Simulation sim)
         {
