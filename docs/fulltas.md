@@ -1231,6 +1231,15 @@ baseline). The default is set by the measurements below, and has every part exce
      (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
      on 357.73 s the same to +9. A Course 2 lap earned about what the clones pay while standing: none paid (on the
      pre-2026-09-30 build).
+     An add that plays through keeps every later wait for Cash as the best has it (the 310 idle ticks before the statue
+     walk), so the laps' extra Cash is never spent: such an add alone is never faster. So the two fastest adds of a pull
+     that play through but aren't faster (`AddRetunes`) get every wait after their laps re-timed to their Cash (`Retune`,
+     as a ladder's: front to back, each wait before a quick restart cut to the touch of the next one's goal) and play again.
+     The laps offered aren't only the one before the wait: the shortest lap of each course the run laps goes in at the last
+     quick restart before any wait of 20 idle ticks or more where the last gate crossed is that course's (the restart lands
+     there). A copy goes in only at a restart with no press or dash in the 17 inputs before it, and only from a lap whose
+     own restart had none (a dash pressed before a restart fires after it, into the copy). Adds played before this are
+     played once more (their memory key changed).
    - **Inserted reward goals** (`--insert-goal reward:bonusN@K`, repeatable): a bonus the run doesn't take, put in at goal K
      (its box: the one nearest the bonus's end rect in `courses.json`), re-found as an investment from the goal before it.
      While one is due a pull offers nothing else. It adds a reward goal to the skeleton, so the game won't adopt the list
