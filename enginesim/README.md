@@ -145,7 +145,7 @@ contacts, and the demos whose key windows graft there (`techgrafts` ends with th
 |---|---|
 | leaves the ground (a ledge) | coyote jump (`coyote-ledge.graft`, −4..+3, x6), super (`coyote-ledge.super`/`.primed`, x3), backwards dash-jump; omnidash: hyper, ultra, wavejump (`high-super`), aimed dash (`wall-dash`), freeze aim |
 | lands | buffered jump (`landing-tick-jump.graft`, −4..+1, x6), super; omnidash: ground bounce, wave bounce, hyper |
-| touches a wall | wall jump (`wall-coyote-window.graft`, −3..+3, x6), superbounce, wall dash, ground bounce |
+| touches a wall | wall jump (`wall-coyote-window.graft`, −3..+3, x6), up-diagonal turned dash climb (`updiag-wall-climb` and `.lean`, 0..+2, x4, chained), superbounce, wall dash, ground bounce |
 | leaves a wall | wall coyote jump (0..+4, x6), super, wavejump, wall dash |
 | dies (mostly spikes past their grace) | spike grace jump (`spike-grace.graft`, 1–7 ticks before, x6), super, superbounce, the omnidash `.graft` demos |
 | a hyper's flat dash slides off a floor's edge (`CornerHyper`, omnidash only) | corner hyper and corner ultra (`corner-boost.graft`) |
@@ -171,7 +171,9 @@ hitbox's front ground ray (x ∓ 25) starts inside it, which grounds you in mid 
 `wall-clip.graft` flicks the stick toward the wall (0.3–0.55) with the jump released on that tick (a held jump between 150
 and 580 up is cut to 50), presses the jump with a light flick back (0.3–1) the next tick, then holds the jump with the
 stick at rest for 0–26 ticks. A clip is a ground touch: on a Ground-tagged wall it refills air dashes, double jumps and
-wall jumps.
+wall jumps. The contact doesn't ask how the player got there: a super's or hyper's momentum carrying it back-first into a
+wall (the stick let go, so the facing holds) is clip-ready the same, and the clip lands there once `Velocity.y` is under 200
+(`techs` finds the GC and KB clips after a reverse super and after a hyper into a wall).
 
 Clips come in chains, and the states between them don't survive as cells: a square keeps its earliest arrival, which is
 seldom the slow one that stopped with a wall at its back. So a clip graft's run records its own contacts, and the next
