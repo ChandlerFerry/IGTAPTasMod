@@ -513,11 +513,14 @@ momentum carries through them, and a window is scored on its arrival.
   first lap's waypoints to the finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
   ending with the newest lap are checked, so laps whose carried state alternates (a buffered jump carried through one
   restart and not the next) still make a loop. The loop the run starts from is written at once (the search's, or a
-  seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged), and every kept
-  best that repeats exactly is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`,
-  `loopTicks`, `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`, and one that
-  doesn't is logged and not written. Course 1 `NONE`, 2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart
-  carries its last jump press: the next lap starts in the air and dies); the lap search found a loop of 2 laps, 225
+  seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged). The goals rank a
+  loop's first pass, so a complete route is kept as the search's best only when its loop repeats exactly and its steady
+  lap beats the best's (`LoopKeeps`; else `farm loop check (...): ... not kept`): a faster loop that almost repeats
+  (Course 1 `WJ_DS`, 2026-10-02: 1.49 s and 1.51 s laps that break on the 2nd and 4th loop) never becomes the working
+  route. Every kept best is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`,
+  `loopTicks`, `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`. Course 1 `NONE`,
+  2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart carries its last jump press: the next lap starts in the
+  air and dies); the lap search found a loop of 2 laps, 225
   ticks, 2.2500 s a lap. Course 3 `WJ_DS`, 2026-10-02: the finish clears the course reset point, so the quick restart
   lands on the course's checkpoint, 1 u right of the course start (x 9506 against 9505); every saved route, the 3.68
   record among them, passes spikes too close to replay from there, and the lap search, with no seed that finishes, found

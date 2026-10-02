@@ -432,18 +432,43 @@ namespace IGTAP.EngineSim.Cli
             return new LoopRoute { Lead = idled.GetRange(0, a), LeadLaps = TimerGoal, Loop = idled.GetRange(a, b - a), LoopLaps = _course.LoopLaps };
         }
 
-        /// <summary>A kept farm loop best: its steady-state check, its waypoints, and when it repeats exactly, written for the
-        /// plugin to judge as the farm route (<see cref="WriteLoopBest"/>).</summary>
-        void LoopCommitted(Route r, string where)
+        /// <summary>The last complete route whose steady-state check passed in <see cref="LoopKeeps"/> (or the best's, measured there).</summary>
+        (Route route, LoopCycle cycle) _loopChecked;
+
+        LoopCycle LoopCycleOf(Route r)
         {
-            LoopRoute route = RouteLoop(r);
-            LoopCycle c = MeasureLoop(_course, route);
-            WriteLoopWaypoints(r, c);
+            if (_loopChecked.route != r) _loopChecked = (r, MeasureLoop(_course, RouteLoop(r)));
+            return _loopChecked.cycle;
+        }
+
+        /// <summary>Commit's farm check, before a route becomes the best: the goals rank a loop's first pass, so a complete route is
+        /// kept only when its loop repeats exactly and its steady cycle beats the best's (README ### Rules 30, 52).</summary>
+        bool LoopKeeps(Route r, string where)
+        {
+            if (r.Progress < _goals) return true;
+            LoopCycle best = _best.Progress == _goals ? LoopCycleOf(_best) : null;
+            LoopCycle c = MeasureLoop(_course, RouteLoop(r));
             if (!c.Steady)
             {
-                Log($"farm loop check: {Describe(r)} doesn't repeat exactly ({c}); not written");
-                return;
+                Log($"farm loop check ({where}): {Describe(r)} doesn't repeat exactly ({c}); not kept");
+                return false;
             }
+            if (best != null && best.Steady && c.Live * best.Laps >= best.Live * c.Laps)
+            {
+                Log($"farm loop check ({where}): {Describe(r)} repeats at {c.Lap:0.0000}s a lap, no faster than the best's {best.Lap:0.0000}s; not kept");
+                return false;
+            }
+            _loopChecked = (r, c);
+            return true;
+        }
+
+        /// <summary>A kept farm loop best: its steady-state check (<see cref="LoopKeeps"/> passed it), its waypoints, written for
+        /// the plugin to judge as the farm route (<see cref="WriteLoopBest"/>).</summary>
+        void LoopCommitted(Route r, string where)
+        {
+            LoopCycle c = LoopCycleOf(r);
+            LoopRoute route = RouteLoop(r);
+            WriteLoopWaypoints(r, c);
             if (c.Live != r.Live)
                 Log($"farm loop check: the loop's steady cycle is {c.Live / 1400.0:0.0000}s, its first {r.LiveSeconds:0.0000}s");
             WriteLoopBest(_course, route, c, "auto: " + where);
