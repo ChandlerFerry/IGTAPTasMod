@@ -245,8 +245,9 @@ hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing
 (`super`: the jump held into a dash 1–6 ticks later), `backwards-dash-jump.graft`, `superbounce-wall.graft`, and for the
 omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the wavejump), `wall-dash` (the eight aims),
 `freeze-aim` and `corner-boost` (the corner hyper, frame 4–12, and the corner ultra) `.graft` demos, and `updiag-wall-climb`
-and its `.lean` (at `TouchedWall`, 0..+2: the dash at rest turned up-diagonally toward the wall, two rests, weight 4, chained
-8 deep on the next `TouchedWall` while the run clings again where the demo did).
+(at `TouchedWall`, 0..+2: the dash at rest turned up-diagonally toward the wall and two rests, weight 4, chained 8 deep on the
+next `TouchedWall` while the run clings again where the demo did) with its `.lean` (the same at (0.35, 1), which needs a cling
+dash and an air dash to reach the next cling, so its window holds both).
 
 The hand-written grafts are gone: every contact is grafted from these mined windows. Two tuning switches remain:
 `--no-graft-specs` (drop the spec'd windows) and `--mined-draws N` (mined windows per grafted contact, default 1). The

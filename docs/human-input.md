@@ -377,10 +377,17 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   at rest and push up and toward the wall in the dash freeze (`turnX`/`turnY` (±1, 1), or the analog lean (±0.35, 1)).
   The dash's first step flips away from the wall as any dash from a cling does, the freeze turn aims it back into the
   wall, and the wall turns it straight up at 1670 u/s while the wall branch (open while `dashActive`, Movement.cs 1006)
-  refills the dash on a Ground face: 266 u up (the lean 278), a cling, and the next turned dash, 13 ticks a dash, up any
-  Ground wall with one dash. A dash pressed up or up-diagonal from the cling flips away instead. Unlike the inwall
-  wallbounce it uses no step-up, so the frame rate doesn't change it, and (±1, 1) needs no analog stick. A Moss face
-  gives no dash back, and without the wall jump unlock there is no refill, no turn upward and no cling.
+  refills the dash on a Ground face: 266 u up, a cling, and the next turned dash, 13 ticks a dash, up any Ground wall
+  with one dash. A dash pressed up or up-diagonal from the cling flips away instead. Unlike the inwall wallbounce it uses
+  no step-up, so the frame rate doesn't change it, and (±1, 1) needs no analog stick. A Moss face gives no dash back, and
+  without the wall jump unlock there is no refill, no turn upward and no cling.
+
+  The wall rays (x∓15, 12 u long, 3 more while dashing) reach 1.5 u past a flush face, 4.5 u while dashing, so a dash
+  can get the refill and the turn up without touching the wall, and then not cling when it ends. The analog lean does
+  that: the flipped first step goes 13.4 u out and the lean's turned step comes back 11.0 (551.7 u/s), so it slides up
+  2.4 u off the face (278 u) and hangs in the air after. The next dash, pressed in the air facing the wall, doesn't flip:
+  its first step goes into the face, and it slides flush and clings. So a lean climb alternates a cling dash and an air
+  dash; both rise, and turbo plays it as offline does.
 - **Freeze aim** (`WJ_DS_DJ_BS_ORB_ZIP_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
   straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 1)). The stick
   that turns a waiting dash (`Movement.Update`, 821-833) skips the press's snap to straight up, so `dashDirection` is
