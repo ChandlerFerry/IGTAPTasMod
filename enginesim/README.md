@@ -621,11 +621,12 @@ seeds: `--arms '{"main": ["--exe", "main\\IGTAP.EngineSim.exe"], "new": []}'`):
 ```
 
 - A case (`Cli\searchbench-grafts.json`, copied beside the build) is a known-good stretch of a saved route with a waste
-  planted in it: a course route trace's inputs, or a Full-TAS `route` over its `trace`, window goals `goals[0]`+1 to
-  `goals[1]`. Wastes: `dashrun` (a super chain played as dashes and a run: from a super, every dash's jump and every
-  jump press dropped for `len` inputs, default 12), `bonk` (a jump pressed on a walk and held `hold` inputs, default 8;
-  kept only where the vertical speed drops from 150+ to 0 in the air), `dashpair` (a dash back and a dash forward
-  inserted), `restart` (a quick restart inserted, then the inputs since the last restart played again).
+  planted in it: a course record's `route` over its category's start `trace`, or a Full-TAS `route` over its `trace`,
+  window goals `goals[0]`+1 to `goals[1]`. Wastes: `dashrun` (a super chain played as dashes and a run: from a super,
+  every dash's jump and every jump press dropped for `len` inputs, default 12), `bonk` (a jump pressed on a walk and
+  held `hold` inputs, default 8; kept only where the vertical speed drops from 150+ to 0 in the air), `dashpair` (a
+  dash back and a dash forward inserted), `restart` (a quick restart inserted, then the inputs since the last restart
+  played again).
 - The planter replays the route and keeps the first input of the case's `at` range (inputs from the window's start)
   whose plant still finishes (reaches goal `goals[1]`) 5-100 ticks later (`minCost`, `maxCost`). A plant rarely
   finishes as it is, so after the waste the original inputs go on up to 8 inputs later or sooner (`rejoin`, tried 0, +1,
@@ -665,6 +666,11 @@ Course 4 and the DJ climb cost the most). Full-TAS windows graft no tech today (
 windows), so every Full-TAS row is the plain search's. The open cases say the plain window search already beats the
 record's split at goals 270 (by up to 10 ticks) and 275 (up to 4) within a minute, window-local (the rest of the run not
 replayed), and not at goal 174.
+
+The Course 4 and 5 cases are gone and `c2-dashpair` plants in the 1.20 record (input 24, seed 65, target 60) since
+2026-10-01: they played the old route traces' inputs (now `archive\route-traces\`), which no longer finish, and the
+fastest judged Course 4 and 5 `WJ_DS_DJ` routes (11.24-11.88, 12.14-12.52) die on today's grid. The Full-TAS cases'
+`handback` 355.92 dies at action 2126 today (`--check`: INVALID).
 
 ### Course head-to-head: plain `solve` against `solve --auto` (2026-09-29, stopped early)
 
