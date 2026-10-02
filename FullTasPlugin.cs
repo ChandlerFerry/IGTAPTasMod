@@ -38,7 +38,7 @@ namespace IGTAPTasMod
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string buys;
             /// <summary>The human classes' score weights (README ### Rules 54): seconds a major span, an nmg span and a spike-grace
-            /// tick add to the live time. Unset: 60, 20 and 2.</summary>
+            /// tick add to the live time, and seconds per ln(attempts) of the route's difficulty. Unset: 60, 20, 2 and 5.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
             public List<string> goals = new List<string>();
             [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
@@ -48,9 +48,9 @@ namespace IGTAPTasMod
 
         public sealed class FullTasHumanWeights
         {
-            public float major = 60f, nmg = 20f, grace = 2f;
+            public float major = 60f, nmg = 20f, grace = 2f, difficulty = 5f;
 
-            public bool Same(FullTasHumanWeights o) { return major == o.major && nmg == o.nmg && grace == o.grace; }
+            public bool Same(FullTasHumanWeights o) { return major == o.major && nmg == o.nmg && grace == o.grace && difficulty == o.difficulty; }
         }
 
         const string VmanStart = "vman";
@@ -117,14 +117,26 @@ namespace IGTAPTasMod
             public long physics;
         }
 
-        /// <summary>A saved route's class result (fulltas-classes.json, by route id): its counts and its score, live time plus the
-        /// weights' seconds for each major span, nmg span and spike-grace tick.</summary>
+        /// <summary>A saved route's class result (fulltas-classes.json, by route id): its counts, its difficulty (null when not
+        /// measured: a major or nmg class, or a run whose weights don't price it) and its score, live time plus the weights' seconds
+        /// for each major span, nmg span and spike-grace tick and per ln of its difficulty's priced attempts.</summary>
         public sealed class FullTasClassRecord
         {
             [JsonProperty("class")] public string cls;
             public float score, live;
             public int major, nmg, graceTicks;
             public List<FullTasSpan> spans;
+            public FullTasOdds difficulty;
+        }
+
+        /// <summary>A route's difficulty as the engine prices it (techs-used's and a candidate's `difficulty`): the chance one human
+        /// attempt works, the attempts that takes (1/P, null at P 0) and the attempts the score prices (at P 0, each span no sample
+        /// works in as one in its samples).</summary>
+        public sealed class FullTasOdds
+        {
+            public float P;
+            public float? attempts;
+            public float priced;
         }
 
         /// <summary>What the gate judges a Full-TAS route's class by (FullTasViolation): the run whose trace the engine replays it

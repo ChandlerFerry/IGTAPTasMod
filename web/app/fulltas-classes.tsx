@@ -5,14 +5,20 @@ import { runTime } from "./fulltas-solve";
 
 /** A Full-TAS run class: the techs its routes may use and how its best is ranked (enginesim Glitches.RunClass). */
 export type FullTasClass = "major" | "nmg" | "human-major" | "human-nmg";
-/** The human score's weights: seconds added per major span, per nmg span and per spike-grace tick (fulltas.json `human`). */
-export type HumanWeights = { major: number; nmg: number; grace: number };
+/** The human score's weights: seconds added per major span, per nmg span, per spike-grace tick, and per ln(attempts) of a
+ *  whole route's difficulty (fulltas.json `human`). */
+export type HumanWeights = { major: number; nmg: number; grace: number; difficulty: number };
 /** One occurrence of an nmg or major tech in a route: its techs.json id and category, and the tick it starts on. */
 export type GlitchSpan = { tech: string; category: string; tick: number; physics: number };
 /** A route's techs; null when it was never classified. */
 type Glitches = { major: number | null; nmg: number | null; graceTicks: number | null; spans: GlitchSpan[] | null };
-/** A class's saved best (fulltas-classes.json); every class has a score, but only the human ones rank by it. */
-export type ClassBest = Glitches & { routeId: string; name: string; time: number; score: number | null };
+/** A route's difficulty as the human score prices it: `P` the chance one human attempt succeeds, `attempts` 1/P (null at
+ *  P 0), `priced` the attempts whose ln the score adds (at P 0, each span no sample works in as one in its samples; absent
+ *  from sidecars measured before the score priced difficulty). */
+export type Odds = { P: number; attempts: number | null; priced?: number };
+/** A class's saved best (fulltas-classes.json); every class has a score, but only the human ones rank by it. A human best's
+ *  score includes its difficulty term (`difficulty`, null when not measured). */
+export type ClassBest = Glitches & { routeId: string; name: string; time: number; score: number | null; difficulty: Odds | null };
 /** One stretch of a route between two anchors (where a human re-syncs: `start`, `land`, `wall`, `freeze` (a dash freeze's
  *  start), `respawn`, `goal`, `finish`, `end`), `from`..`to` in input ticks (`fromPhysics`..`toPhysics` physics ticks):
  *  its input events, the share `p` of its `samples` human-noised plays that still reached the next anchor (no events: no
@@ -27,14 +33,15 @@ export type DifficultyChain = { index: number; segments: number[]; from: number;
  *  the chance one human attempt succeeds (the product over chains and lone segments), `attempts` 1/P (null at P 0),
  *  `spacing` the ticks between bottlenecks; `human` when the humanized route was measured (`params.raw` the route as
  *  saved). */
-export type Difficulty = { route: string; finished: boolean; goals: number; live: number; human: boolean;
+export type Difficulty = Odds & { route: string; finished: boolean; goals: number; live: number; human: boolean;
   params: { samples: number; sigma: number; chain: number; pos: number; vel: number; raw: boolean };
-  P: number; attempts: number | null; bottlenecks: number; chains: number; tightest: { segment: number; p: number } | null;
+  bottlenecks: number; chains: number; tightest: { segment: number; p: number } | null;
   spacing: number[]; segments: DifficultySegment[]; chainList: DifficultyChain[] };
 /** A complete route a human-class solve judged (`<traces>/fulltas/candidates/<run>/`, by score): what humans pick from.
- *  `difficulty` is null until measured. */
-export type FullTasCandidate = Glitches & { file: string; class: FullTasClass; score: number; time: number | null; reached: number; goals: number;
-  difficulty: Difficulty | null };
+ *  `score` includes `difficultySeconds`, its difficulty term (from its own `odds`, else its sidecar's priced attempts);
+ *  null `difficultySeconds`: the score is without the term, a floor. `difficulty` (its map) is null until measured. */
+export type FullTasCandidate = Glitches & { file: string; class: FullTasClass; score: number; difficultySeconds: number | null; time: number | null;
+  reached: number; goals: number; odds: Odds | null; difficulty: Difficulty | null };
 /** The difficulty batch (POST /fulltas/difficulty): `done` of `of` candidates measured (`of` null until the engine counts
  *  them). It stays once it ends or stops. */
 export type FullTasDifficultyJob = { name: string; running: boolean; done: number; of: number | null };
@@ -77,15 +84,22 @@ function percent(p: number) {
   return v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v > 0 ? v.toPrecision(2) : "0";
 }
 
-/** The expected attempts until one succeeds (1/P); Infinity when P is 0, whatever the sidecar wrote. */
-function attemptsOf(d: Difficulty) {
+/** The expected attempts until one succeeds (1/P); Infinity when P is 0, whatever the file wrote. */
+function attemptsOf(d: Odds) {
   return d.P > 0 ? d.attempts ?? 1 / d.P : Infinity;
 }
 
 /** The attempts as shown: one decimal below 10, whole below a million, then an exponent; ∞ at P 0. */
-function attemptsText(d: Difficulty) {
+function attemptsText(d: Odds) {
   const a = attemptsOf(d);
   return !isFinite(a) ? "∞" : a < 10 ? a.toFixed(1) : a < 1e6 ? Math.round(a).toString() : a.toExponential(1);
+}
+
+/** What a score's difficulty term adds, for a tooltip; a score without it is a floor. */
+function termText(seconds: number | null, odds: Odds | null, w: HumanWeights) {
+  if (!w.difficulty) return "The run's weights don't price difficulty.";
+  if (seconds == null) return "Without its difficulty term (a floor): Measure difficulty adds it.";
+  return `Includes ${seconds.toFixed(2)} s of difficulty: ${w.difficulty} × ln ${odds?.priced ?? "?"} attempts${odds && odds.P === 0 ? " (P 0: each span no sample works in as one in its samples)" : ""}.`;
 }
 
 /** A difficulty's summary for a tooltip: P, the tightest segment, the spacing and the parameters it was measured with. */
@@ -143,16 +157,23 @@ export function FullTasClasses({ run, queue, difficulty, busy, complete, onComma
   const measured = candidates.filter(c => c.difficulty).length;
   // P 0 (Infinity) sorts after every finite count and before the unmeasured; ties keep the score order (the sort is stable).
   const shown = order === "score" ? candidates
-    : candidates.slice().sort((a, b) => (a.difficulty ? attemptsOf(a.difficulty) : Infinity) - (b.difficulty ? attemptsOf(b.difficulty) : Infinity) || +!a.difficulty - +!b.difficulty);
+    : candidates.slice().sort((a, b) => {
+      const da = a.difficulty ?? a.odds, db = b.difficulty ?? b.odds;
+      return (da ? attemptsOf(da) : Infinity) - (db ? attemptsOf(db) : Infinity) || +!da - +!db;
+    });
   return <div className="ftClasses">
     <div className="panelTitle"><div><p className="eyebrow">CLASSES</p><h2>Bests by class</h2></div></div>
-    <p className="hint">Score = live s + {w.major} × major spans + {w.nmg} × nmg spans + {w.grace} × spike-grace ticks. A run&apos;s own weights: <code>&quot;human&quot;</code> in fulltas.json.</p>
+    <p className="hint">Score = live s + {w.major} × major spans + {w.nmg} × nmg spans + {w.grace} × spike-grace ticks + {w.difficulty} × ln(attempts) of the whole route&apos;s difficulty. A run&apos;s own weights: <code>&quot;human&quot;</code> in fulltas.json.</p>
     <div className="resultTable ftClassTable">
-      <div className="tableHead"><span>Class</span><span>Time</span><span>Score</span><span>Major</span><span>NMG</span><span>Grace</span><span/></div>
+      <div className="tableHead"><span>Class</span><span>Time</span><span>Score</span><span>Attempts</span><span>Major</span><span>NMG</span><span>Grace</span><span/></div>
       {CLASSES.map(c => {
         const b = run.classes[c.key];
-        return <div key={c.key} className={`tableRow ${b ? "" : "pending"} ${c.key.startsWith("human") ? "human" : ""}`} title={[c.rule, b ? `${b.name}\n${spansText(b)}` : "No route yet."].join("\n")}>
-          <span>{c.label}</span><span>{b ? runTime(b.time) : "—"}</span><span>{b?.score == null ? "—" : score2(b.score)}</span>
+        const human = c.key.startsWith("human");
+        const term = b?.difficulty?.priced == null ? null : w.difficulty * Math.log(b.difficulty.priced);
+        return <div key={c.key} className={`tableRow ${b ? "" : "pending"} ${human ? "human" : ""}`} title={[c.rule, b ? `${b.name}\n${spansText(b)}` : "No route yet."].join("\n")}>
+          <span>{c.label}</span><span>{b ? runTime(b.time) : "—"}</span>
+          <span title={b && human ? termText(term, b.difficulty, w) : undefined}>{b?.score == null ? "—" : `${human && term == null && w.difficulty ? "≥" : ""}${score2(b.score)}`}</span>
+          <span>{b?.difficulty ? attemptsText(b.difficulty) : "—"}</span>
           <span>{b?.major ?? "—"}</span><span>{b?.nmg ?? "—"}</span><span>{b?.graceTicks ?? "—"}</span>
           <span className="ftRowButtons">
             <button className="secondary" disabled={busy || !b} title={b ? `Plays ${b.name} in real time from a new game.` : "No route of this class yet."} onClick={() => onCommand("/fulltas/play", { name: run.name, class: c.key })}>Play</button>
@@ -197,14 +218,18 @@ export function FullTasClasses({ run, queue, difficulty, busy, complete, onComma
           const r = played.get(c.file);
           const playing = ours?.current === c.file;
           const d = c.difficulty;
+          const odds = d ?? c.odds;
           return <label key={c.file} className={`tableRow ${playing ? "playing" : ""} ${picked.has(c.file) ? "picked" : ""}`} title={`${c.file}\n${spansText(c)}`}>
             <span><input type="checkbox" checked={picked.has(c.file)} onChange={() => setPicked(p => { const n = new Set(p); if (!n.delete(c.file)) n.add(c.file); return n; })}/></span>
-            <span>{score2(c.score)}</span><span>{c.time == null ? "—" : runTime(c.time)}</span><span>{LABEL[c.class] ?? c.class}</span>
+            <span title={termText(c.difficultySeconds, c.odds ?? d, w)}>{c.difficultySeconds == null && w.difficulty ? "≥" : ""}{score2(c.score)}</span>
+            <span>{c.time == null ? "—" : runTime(c.time)}</span><span>{LABEL[c.class] ?? c.class}</span>
             <span>{c.major ?? "—"}</span><span>{c.nmg ?? "—"}</span><span>{c.graceTicks ?? "—"}</span>
             {d
               ? <><span className={d.finished ? "" : "bad"} title={difficultyText(d)}>{percent(d.P)}</span><span title={difficultyText(d)}>{attemptsText(d)}</span>
                 <span title={d.spacing.length ? `Spacing: ${d.spacing.join(", ")} ticks` : undefined}>{d.bottlenecks}</span><span>{d.chains}</span></>
-              : <><span>—</span><span>—</span><span>—</span><span>—</span></>}
+              : odds
+                ? <><span title="As the solve measured it; Measure difficulty maps its segments.">{percent(odds.P)}</span><span>{attemptsText(odds)}</span><span>—</span><span>—</span></>
+                : <><span>—</span><span>—</span><span>—</span><span>—</span></>}
             <span className={playing || !r ? "" : r.finished ? "good" : "bad"} title={r?.reason ?? undefined}>{playing ? "playing" : !r ? "" : r.finished ? `✓ ${r.time == null ? "" : runTime(r.time)}` : `✗ goal ${r.reached}/${c.goals}`}</span>
             {d && <DifficultyStrip d={d} spans={c.spans}/>}
           </label>;

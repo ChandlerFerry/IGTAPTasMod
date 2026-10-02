@@ -11,10 +11,13 @@ namespace IGTAP.EngineSim
     public enum RunClass { Major, Nmg, HumanMajor, HumanNmg }
 
     /// <summary>A human class's score weights (fulltas.json's "human", a trace header's <c>fulltas.human</c>): seconds per major
-    /// span, per nmg span and per spike-grace tick.</summary>
+    /// span, per nmg span, per spike-grace tick, and per unit of ln(attempts) a whole route's difficulty takes (0: unpriced).</summary>
     public sealed class HumanWeights
     {
-        public float Major = 60, Nmg = 20, Grace = 2;
+        public float Major = 60, Nmg = 20, Grace = 2, Difficulty = 5;
+
+        /// <summary>The seconds a whole route's difficulty adds to its score: <see cref="Difficulty"/> × ln(attempts).</summary>
+        public float DifficultySeconds(double attempts) => Difficulty * (float)Math.Log(attempts);
 
         /// <summary>A trace header's <c>fulltas</c> object's "human" weights; the defaults for the ones it leaves out.</summary>
         public static HumanWeights Of(JsonElement fulltas)
@@ -25,6 +28,7 @@ namespace IGTAP.EngineSim
             w.Major = Read("major", w.Major);
             w.Nmg = Read("nmg", w.Nmg);
             w.Grace = Read("grace", w.Grace);
+            w.Difficulty = Read("difficulty", w.Difficulty);
             return w;
         }
     }

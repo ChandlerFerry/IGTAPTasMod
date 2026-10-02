@@ -57,7 +57,9 @@ namespace IGTAP.EngineSim.Cli
             public bool Raw;
             /// <summary>--open: the open-loop test (<see cref="Open"/>), not the closed-loop one.</summary>
             public bool Open;
-            public object Json => new { samples = Samples, sigma = Sigma, chain = Chain, pos = Pos, vel = Vel, raw = Raw, open = Open };
+            /// <summary>What seeds the samples: the measured inputs (<see cref="Seed"/>), so a route measures alike under any file name.</summary>
+            public const string SeedKind = "inputs";
+            public object Json => new { samples = Samples, sigma = Sigma, chain = Chain, pos = Pos, vel = Vel, raw = Raw, open = Open, seed = SeedKind };
         }
 
         /// <summary>A point of a route where a player re-syncs (<see cref="Anchors"/>): its kind (<c>start</c>, <c>land</c>, <c>wall</c>,
@@ -135,8 +137,48 @@ namespace IGTAP.EngineSim.Cli
             public Settings Settings;
             public List<Span> Segments = new List<Span>(), Chains = new List<Span>();
             public double P;
+            /// <summary>The attempts the human score prices (<see cref="Odds.Priced"/>).</summary>
+            public double Priced;
             public int Runs;
             public double Seconds;
+        }
+
+        /// <summary>A measure's chance as the human score prices it (README ### Rules 54): P, and <see cref="Priced"/>, the attempts
+        /// whose log the score adds: 1/P with each span no sample works in counted as one in its samples, so a route nothing gets
+        /// through still scores, the higher the more such spans and the more samples saw them fail; to 4 places.</summary>
+        internal readonly struct Odds
+        {
+            public readonly double P, Priced;
+
+            public Odds(double p, double priced) { P = p; Priced = priced; }
+
+            /// <summary>{P, attempts (1/P, null at P 0), priced}: techs-used's, a run file's and a candidate's <c>difficulty</c>.</summary>
+            public object Json => new { P = G4(P), attempts = P > 0 ? Math.Round(1 / P, 1) : (double?)null, priced = Priced };
+        }
+
+        /// <summary>Measures whole routes as <c>difficulty</c> does with its defaults (humanize's version, closed loop), seeded by
+        /// their inputs, on threads of its own: what <c>techs-used</c> and a human class's whole-route judging price. One trace and
+        /// goal list per meter.</summary>
+        internal sealed class Meter : IDisposable
+        {
+            readonly Pool _pool;
+            readonly Settings _settings;
+
+            public Meter(string tracePath, JsonElement header, string[] labels, int threads)
+            {
+                _settings = new Settings { Threads = threads };
+                _pool = new Pool(tracePath, header, labels, threads);
+            }
+
+            /// <summary>The route's odds; <paramref name="name"/> names it on stderr only.</summary>
+            public Odds Measure(string name, List<InputTick> inputs)
+            {
+                List<InputTick> human = _pool.Human(new List<string> { name }, new List<List<InputTick>> { inputs })[0];
+                Result r = Difficulty.Measure(_pool, name, inputs, human, _settings);
+                return new Odds(r.P, r.Priced);
+            }
+
+            public void Dispose() => _pool.Dispose();
         }
 
         public static int Run(string[] args)
@@ -245,7 +287,7 @@ namespace IGTAP.EngineSim.Cli
                 bool Near(string name, float v) => Math.Abs(p.GetProperty(name).GetDouble() - v) < 1e-6;
                 return p.GetProperty("samples").GetInt32() == s.Samples && p.GetProperty("chain").GetInt32() == s.Chain
                     && Near("sigma", s.Sigma) && Near("pos", s.Pos) && Near("vel", s.Vel) && p.GetProperty("raw").GetBoolean() == s.Raw
-                    && p.GetProperty("open").GetBoolean() == s.Open;
+                    && p.GetProperty("open").GetBoolean() == s.Open && p.TryGetProperty("seed", out JsonElement seed) && seed.GetString() == Settings.SeedKind;
             }
             catch (Exception ex) when (ex is JsonException || ex is KeyNotFoundException || ex is InvalidOperationException || ex is FormatException)
             {
@@ -297,6 +339,8 @@ namespace IGTAP.EngineSim.Cli
             foreach (Span chain in r.Chains.Where(c => !s.Open && c.Works == 0))
                 chain.P = Math.Min(r.Segments.Skip(chain.From).Take(chain.To - chain.From).Aggregate(1.0, (p, x) => p * x.P), 1.0 / chain.Samples);
             r.P = r.Chains.Aggregate(1.0, (p, c) => p * c.P) * r.Segments.Where(x => x.Chain == null).Aggregate(1.0, (p, x) => p * x.P);
+            double Floor(Span x) => x.P > 0 ? x.P : 1.0 / x.Samples;
+            r.Priced = Math.Round(1 / (r.Chains.Aggregate(1.0, (p, c) => p * Floor(c)) * r.Segments.Where(x => x.Chain == null).Aggregate(1.0, (p, x) => p * Floor(x))), 4);
             r.Seconds = watch.Elapsed.TotalSeconds;
             return r;
         }
@@ -307,7 +351,8 @@ namespace IGTAP.EngineSim.Cli
         {
             int runs = 0;
             List<Span> open = spans.Where(x => x.Events.Count > 0).ToList();
-            foreach (Span span in open) span.Rng = new Random(Seed(line.Name, line.Anchors[span.From].Tick, line.Anchors[span.To].Tick));
+            ulong route = SnapshotIndex.Hash(line.Inputs, line.Inputs.Count);
+            foreach (Span span in open) span.Rng = new Random(Seed(route, line.Anchors[span.From].Tick, line.Anchors[span.To].Tick));
             while (open.Count > 0)
             {
                 List<Job> jobs = open.SelectMany(span => Sample(line, span, s)).ToList();
@@ -399,11 +444,10 @@ namespace IGTAP.EngineSim.Cli
             return Math.Sqrt(-2.0 * Math.Log(1.0 - rng.NextDouble())) * Math.Cos(2.0 * Math.PI * rng.NextDouble());
         }
 
-        /// <summary>FNV-1a of the route's name and the span's ticks (string.GetHashCode differs per process).</summary>
-        static int Seed(string name, int from, int to)
+        /// <summary>FNV-1a of the measured inputs (<paramref name="route"/>, their hash) and the span's ticks.</summary>
+        static int Seed(ulong route, int from, int to)
         {
-            ulong h = 14695981039346656037UL;
-            foreach (char c in name + "/" + from + "-" + to) h = (h ^ c) * 1099511628211UL;
+            ulong h = SnapshotStore.Feed(SnapshotStore.Feed(route, from, 4), to, 4);
             return (int)(h ^ (h >> 32));
         }
 
@@ -946,7 +990,7 @@ namespace IGTAP.EngineSim.Cli
             return new
             {
                 route = line.Name, finished = line.Finished, goals = line.Goals, live = line.Live, human = line.Human, @params = r.Settings.Json,
-                P = G4(r.P), attempts = r.P > 0 ? Math.Round(1 / r.P, 1) : (double?)null,
+                P = G4(r.P), attempts = r.P > 0 ? Math.Round(1 / r.P, 1) : (double?)null, priced = r.Priced,
                 bottlenecks = r.Segments.Count(x => x.P < Bottleneck), chains = r.Chains.Count,
                 tightest = tightest == null ? null : new { segment = r.Segments.IndexOf(tightest), p = Round(tightest.P) },
                 spacing = Spacing(r),

@@ -62,6 +62,7 @@ namespace IGTAPTasMod
                     w.WritePropertyName("major"); w.WriteValue(run.human.major);
                     w.WritePropertyName("nmg"); w.WriteValue(run.human.nmg);
                     w.WritePropertyName("grace"); w.WriteValue(run.human.grace);
+                    w.WritePropertyName("difficulty"); w.WriteValue(run.human.difficulty);
                     w.WriteEndObject();
                 }
                 if (run.rebaseAt != null)

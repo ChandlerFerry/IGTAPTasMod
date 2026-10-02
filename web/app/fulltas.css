@@ -32,7 +32,7 @@
 .fullTasInline .field { flex: 1; margin-top: 12px; }
 .fullTasSearch { margin-top: 18px; }
 .ftClasses { margin-top: 18px; }
-.ftClassTable .tableHead, .ftClassTable .tableRow { grid-template-columns: minmax(0,1fr) 80px 70px 52px 52px 52px 170px; align-items: center; }
+.ftClassTable .tableHead, .ftClassTable .tableRow { grid-template-columns: minmax(0,1fr) 80px 70px 64px 52px 52px 52px 170px; align-items: center; }
 .ftClassTable .tableRow { padding-top: 7px; padding-bottom: 7px; }
 .ftClassTable .tableRow.pending { color: var(--muted); }
 .ftClassTable .tableRow.human > span:first-child { color: var(--human); font-weight: 700; }

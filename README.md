@@ -115,13 +115,16 @@
     classes: strictly lower score.
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
-    and `human-nmg` the same two by score. Score: live time plus 60 s a major span, 20 s an nmg span and 2 s a
-    spike-grace tick (per run, `fulltas.json` `"human": {"major", "nmg", "grace"}`); a span is one occurrence of a tech,
-    however long, and a grace tick a step on spikes the run lives through. A tech's category (glitchless, nmg, major) is
-    `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks: after its
-    replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
-    `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one and keeps each
-    route's result (`fulltas-classes.json`). A tech no check detects isn't counted (`techs-used` lists them).
+    and `human-nmg` the same two by score. Score: live time plus 60 s a major span, 20 s an nmg span, 2 s a spike-grace
+    tick and 5 s × ln(attempts) of the whole route's difficulty (per run, `fulltas.json` `"human": {"major", "nmg", "grace",
+    "difficulty"}`); a span is one occurrence of a tech, however long, a grace tick a step on spikes the run lives through,
+    and attempts 1/P, P the engine's chance that one human attempt at the route works (`difficulty`, its defaults, seeded
+    by the inputs; at P 0 a span no sample works in counts as one in its samples). A tech's category (glitchless, nmg,
+    major) is `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks:
+    after its replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an
+    `nmg` or `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its
+    difficulty measured there) and keeps each route's result (`fulltas-classes.json`). A tech no check detects isn't
+    counted (`techs-used` lists them).
 
 #### Exceptions
 

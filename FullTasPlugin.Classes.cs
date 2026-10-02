@@ -18,7 +18,8 @@ namespace IGTAPTasMod
         const int FullTasTechsTimeoutMs = 300000;
 
         /// <summary>A human candidate file's summary (`fulltas/candidates/&lt;run&gt;/*.json`, the run file's shape); its inputs are
-        /// read only when it plays.</summary>
+        /// read only when it plays. Its score includes its difficulty term when it carries its difficulty (written by an engine
+        /// that prices it).</summary>
         sealed class FullTasCandidate
         {
             public string cls;
@@ -26,6 +27,7 @@ namespace IGTAPTasMod
             public int major, nmg, graceTicks, reached;
             public List<FullTasSpan> spans;
             public List<string> goals;
+            public FullTasOdds difficulty;
         }
         readonly CachedFiles<FullTasCandidate> _fullTasCandidates = new CachedFiles<FullTasCandidate>(StringComparer.OrdinalIgnoreCase);
         /// <summary>The candidates' difficulty sidecars (`fulltas/candidates/&lt;run&gt;/difficulty/&lt;file&gt;`), as the engine wrote them.</summary>
@@ -89,14 +91,14 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// The class half of the gate (README ### Rules 54): the engine's tech checks replay the route from the run's trace, an
-        /// nmg class refuses any major span, and a human class's score has to be strictly lower than its best's. The class
-        /// result goes to <c>judge.record</c>. A major route is ranked by live time alone: when the checks can't class it, it
-        /// is judged as before and saved without a class result.
+        /// nmg class refuses any major span, and a human class's score (with its difficulty term) has to be strictly lower than its
+        /// best's. The class result goes to <c>judge.record</c>. A major route is ranked by live time alone: when the checks can't
+        /// class it, it is judged as before and saved without a class result.
         /// </summary>
         string FullTasClassViolation(FullTasClassJudge judge, IList<string> goals, List<SolverTick> inputs, float time)
         {
             FullTasHumanWeights weights = judge.run.Human;
-            JObject used = FullTasTechsUsed(judge.run, goals, inputs, out string error);
+            JObject used = FullTasTechsUsed(judge.run, goals, inputs, HumanClass(judge.cls), out string error);
             FullTasClassRecord record = used == null ? null : FullTasClassRecordOf(used, judge.cls, time, weights, out error);
             if (record == null)
             {
@@ -121,7 +123,8 @@ namespace IGTAPTasMod
         /// <summary>
         /// A route's class result from the engine's `techs-used --json` line, timed by the gate's own live time; null, with why
         /// (<paramref name="error"/>), when the engine's replay isn't the run the gate judged: short of its goals, or another
-        /// live time. Score: live time plus the weights' seconds for each major span, nmg span and spike-grace tick.
+        /// live time, or a human class's route with no difficulty while the weights price it. Score: live time plus the weights'
+        /// seconds for each major span, nmg span and spike-grace tick, and per ln of the difficulty's priced attempts.
         /// </summary>
         static FullTasClassRecord FullTasClassRecordOf(JObject used, string cls, float time, FullTasHumanWeights weights, out string error)
         {
@@ -137,10 +140,22 @@ namespace IGTAPTasMod
                 error = "replay took " + live.ToString("0.0000", CultureInfo.InvariantCulture) + " s live, not " + time.ToString("0.0000", CultureInfo.InvariantCulture);
                 return null;
             }
+            FullTasOdds odds = (used["difficulty"] as JObject)?.ToObject<FullTasOdds>();
+            if (odds == null && HumanClass(cls) && weights.difficulty != 0f)
+            {
+                error = "measured no difficulty (an engine from before the difficulty term?)";
+                return null;
+            }
             var record = new FullTasClassRecord { cls = cls, live = time, major = (int?)used["major"] ?? 0, nmg = (int?)used["nmg"] ?? 0,
-                graceTicks = (int?)used["graceTicks"] ?? 0, spans = used["spans"]?.ToObject<List<FullTasSpan>>() ?? new List<FullTasSpan>() };
-            record.score = time + weights.major * record.major + weights.nmg * record.nmg + weights.grace * record.graceTicks;
+                graceTicks = (int?)used["graceTicks"] ?? 0, spans = used["spans"]?.ToObject<List<FullTasSpan>>() ?? new List<FullTasSpan>(), difficulty = odds };
+            record.score = time + weights.major * record.major + weights.nmg * record.nmg + weights.grace * record.graceTicks + FullTasDifficultySeconds(odds, weights);
             return record;
+        }
+
+        /// <summary>The seconds a route's difficulty adds to its score: the weight times ln of its priced attempts (none unmeasured).</summary>
+        static float FullTasDifficultySeconds(FullTasOdds odds, FullTasHumanWeights w)
+        {
+            return odds == null ? 0f : w.difficulty * (float)Math.Log(odds.priced);
         }
 
         static string FullTasScoreText(FullTasClassRecord r, FullTasHumanWeights w)
@@ -148,15 +163,37 @@ namespace IGTAPTasMod
             string F(float v) { return v.ToString("0.##", CultureInfo.InvariantCulture); }
             return r.score.ToString("0.00", CultureInfo.InvariantCulture) + " (live " + r.live.ToString("0.00", CultureInfo.InvariantCulture)
                 + (r.major > 0 ? " + " + r.major + " major x " + F(w.major) : "") + (r.nmg > 0 ? " + " + r.nmg + " nmg x " + F(w.nmg) : "")
-                + (r.graceTicks > 0 ? " + " + r.graceTicks + " grace ticks x " + F(w.grace) : "") + ")";
+                + (r.graceTicks > 0 ? " + " + r.graceTicks + " grace ticks x " + F(w.grace) : "")
+                + (r.difficulty == null ? "" : " + ln " + F(r.difficulty.priced) + " attempts x " + F(w.difficulty)) + ")";
+        }
+
+        /// <summary>
+        /// A human class's best whose record has no difficulty while the run's weights price it (saved before the difficulty term)
+        /// is scored again by the engine, so a new route is judged against its whole score, not the floor without the term; left
+        /// as it was (said in the log) when the engine can't.
+        /// </summary>
+        void RescoreFullTasClassBest(FullTasRunDef run, string cls)
+        {
+            if (!HumanClass(cls) || run.Human.difficulty == 0f) return;
+            MacroDefinition best = FullTasClassBest(run.name, cls, out _);
+            if (best == null || !_fullTasClasses.TryGetValue(best.id, out FullTasClassRecord old) || old.difficulty != null) return;
+            JObject used = FullTasTechsUsed(run, FullTasLabels(run), ToTicks(best.steps), true, out string error);
+            FullTasClassRecord record = used == null ? null : FullTasClassRecordOf(used, cls, old.live, run.Human, out error);
+            if (record == null)
+            {
+                FullTasLog("Full-TAS " + run.name + " " + cls + ": " + best.name + " kept its score without difficulty: the engine's tech checks (techs-used) " + error);
+                return;
+            }
+            StoreFullTasClass(best, record);
+            FullTasLog("Full-TAS " + run.name + " " + cls + ": " + best.name + " scored again with its difficulty: " + FullTasScoreText(record, run.Human));
         }
 
         /// <summary>
         /// The engine's `techs-used &lt;trace&gt; &lt;route&gt; --json` on a route of the run, replayed from the run's trace, with the goals
-        /// it is judged under: its one JSON line. Null, with why (<paramref name="error"/>), with no current trace or when the
-        /// engine fails.
+        /// it is judged under: its one JSON line; its difficulty measured only for a human class whose weights price it
+        /// (<paramref name="difficulty"/>). Null, with why (<paramref name="error"/>), with no current trace or when the engine fails.
         /// </summary>
-        JObject FullTasTechsUsed(FullTasRunDef run, IList<string> goals, List<SolverTick> inputs, out string error)
+        JObject FullTasTechsUsed(FullTasRunDef run, IList<string> goals, List<SolverTick> inputs, bool difficulty, out string error)
         {
             error = null;
             string trace = FullTasTracePath(run.name), exe = EngineSimExe;
@@ -164,7 +201,8 @@ namespace IGTAPTasMod
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) { error = "need the engine built (" + exe + ")"; return null; }
             string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + "-classes.json");
             File.WriteAllText(file, JsonConvert.SerializeObject(new { name = run.name, goals, ticks = inputs }));
-            using (Process process = StartEngineSim("techs-used " + Quote(trace) + " " + Quote(file) + " --json"))
+            using (Process process = StartEngineSim("techs-used " + Quote(trace) + " " + Quote(file) + " --json"
+                + (difficulty && run.Human.difficulty != 0f ? "" : " --no-difficulty")))
             {
                 var output = process.StandardOutput.ReadToEndAsync();
                 var errors = process.StandardError.ReadToEndAsync();
@@ -199,24 +237,35 @@ namespace IGTAPTasMod
                 if (best != null) _fullTasClasses.TryGetValue(best.id, out r);
                 FullTasRouteOf(best?.name, out _, out _, out float time);
                 classes[cls] = best == null ? null : new { routeId = best.id, name = best.name, time, score = r?.score, major = r?.major, nmg = r?.nmg,
-                    graceTicks = r?.graceTicks, spans = r?.spans };
+                    graceTicks = r?.graceTicks, spans = r?.spans, difficulty = r?.difficulty };
             }
             return classes;
         }
 
         /// <summary>The human candidates of the run's current goals (studio static state `candidates`), by score, each with its
-        /// difficulty sidecar (null until measured).</summary>
-        object[] FullTasCandidatesWebState(string run, string[] labels)
+        /// difficulty sidecar (null until measured). A candidate's score includes its difficulty term (`difficultySeconds`) from
+        /// its own `difficulty` (`odds`), else from its sidecar's priced attempts under the run's weights; null `difficultySeconds`:
+        /// its score is the file's without the term, a floor.</summary>
+        object[] FullTasCandidatesWebState(FullTasRunDef run, string[] labels)
         {
-            string dir = FullTasCandidatesDir(run);
+            string dir = FullTasCandidatesDir(run.name);
             if (!Directory.Exists(dir)) return new object[0];
             string difficulty = Path.Combine(dir, "difficulty");
+            FullTasHumanWeights w = run.Human;
             return Directory.GetFiles(dir, "*.json").Select(p => new { file = Path.GetFileName(p), c = ReadFullTasCandidate(p) })
                 .Where(x => x.c != null && x.c.goals.SequenceEqual(labels))
-                .OrderBy(x => x.c.score ?? float.PositiveInfinity).ThenBy(x => x.file, StringComparer.Ordinal)
-                .Select(x => (object)new { file = x.file, @class = x.c.cls, score = x.c.score, time = x.c.time, major = x.c.major, nmg = x.c.nmg,
-                    graceTicks = x.c.graceTicks, spans = x.c.spans, reached = x.c.reached, goals = x.c.goals.Count,
-                    difficulty = ReadFullTasDifficulty(Path.Combine(difficulty, x.file)) })
+                .Select(x =>
+                {
+                    JObject sidecar = ReadFullTasDifficulty(Path.Combine(difficulty, x.file));
+                    float? priced = (float?)sidecar?["priced"];
+                    float? term = x.c.difficulty != null ? FullTasDifficultySeconds(x.c.difficulty, w)
+                        : priced != null ? w.difficulty * (float)Math.Log(priced.Value) : w.difficulty == 0f ? 0f : (float?)null;
+                    return new { x.file, x.c, sidecar, term, score = x.c.difficulty != null || x.c.score == null ? x.c.score : x.c.score + (term ?? 0f) };
+                })
+                .OrderBy(x => x.score ?? float.PositiveInfinity).ThenBy(x => x.file, StringComparer.Ordinal)
+                .Select(x => (object)new { file = x.file, @class = x.c.cls, score = x.score, difficultySeconds = x.term, time = x.c.time, major = x.c.major,
+                    nmg = x.c.nmg, graceTicks = x.c.graceTicks, spans = x.c.spans, reached = x.c.reached, goals = x.c.goals.Count, odds = x.c.difficulty,
+                    difficulty = x.sidecar })
                 .ToArray();
         }
 
@@ -322,7 +371,7 @@ namespace IGTAPTasMod
                         {
                             string name = (string)reader.Value;
                             reader.Read();
-                            if (name == "class" || name == "score" || name == "live" || name == "goals" || name == "goalInputTicks" || name == "glitches")
+                            if (name == "class" || name == "score" || name == "live" || name == "goals" || name == "goalInputTicks" || name == "glitches" || name == "difficulty")
                                 o[name] = JToken.ReadFrom(reader);
                             else reader.Skip();
                         }
@@ -333,7 +382,8 @@ namespace IGTAPTasMod
                         major = (int?)glitches["major"] ?? 0, nmg = (int?)glitches["nmg"] ?? 0, graceTicks = (int?)glitches["graceTicks"] ?? 0,
                         spans = glitches["spans"]?.ToObject<List<FullTasSpan>>() ?? new List<FullTasSpan>(),
                         goals = o["goals"]?.ToObject<List<string>>() ?? new List<string>(),
-                        reached = (o["goalInputTicks"] as JArray ?? new JArray()).TakeWhile(t => (long)t >= 0).Count() };
+                        reached = (o["goalInputTicks"] as JArray ?? new JArray()).TakeWhile(t => (long)t >= 0).Count(),
+                        difficulty = (o["difficulty"] as JObject)?.ToObject<FullTasOdds>() };
                 });
             }
             catch (Exception ex)

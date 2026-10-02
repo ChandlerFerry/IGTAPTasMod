@@ -55,6 +55,8 @@ namespace IGTAP.EngineSim.Cli
             public double LiveSecondsAt(int k) { return Math.Round(MacroEngine.LiveSeconds(Clock(k), Held(k)), 4); }
             /// <summary>Its nmg and major spans up to its last goal, once a classed ranking made them (<see cref="FullTas.Report"/>).</summary>
             public GlitchReport Report;
+            /// <summary>Its difficulty, once a human class's whole-route ranking measured it (<see cref="FullTas.Odds"/>).</summary>
+            public Difficulty.Odds? Odds;
         }
 
         /// <summary>
@@ -270,7 +272,8 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
             if (Classed)
             {
-                Console.WriteLine($"Class {Glitches.Key(_class)}" + (Human ? $" (score: live time + {_weights.Major} s a major span, {_weights.Nmg} s an nmg span, {_weights.Grace} s a spike-grace tick)" : "")
+                Console.WriteLine($"Class {Glitches.Key(_class)}" + (Human ? $" (score: live time + {_weights.Major} s a major span, {_weights.Nmg} s an nmg span, {_weights.Grace} s a spike-grace tick"
+                    + (PricesDifficulty ? $", {_weights.Difficulty} s x ln(attempts) of a whole route's difficulty" : "") + ")" : "")
                     + $", run file fulltas/{Path.GetFileName(_runFile)}" + (Report(_best).Undetected.Count == 0 ? "" : $"; undetected nmg/major techs: {string.Join(", ", _best.Report.Undetected)}"));
                 // The class's run file starts as the route the solve starts from (the trace's or the major best, when better).
                 if (from != "fulltas/" + Path.GetFileName(_runFile)) WriteRunFile(_best);
@@ -417,6 +420,7 @@ namespace IGTAP.EngineSim.Cli
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
             _weights = HumanWeights.Of(fulltas);
+            if (PricesDifficulty) _meter = new Difficulty.Meter(_trace, header, _labels, _threads);
             _runKey = _name + Suffix;
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _runFile = Path.Combine(dir, "fulltas", _runKey + ".json");
@@ -1562,7 +1566,7 @@ namespace IGTAP.EngineSim.Cli
                     Emit(new { type = "dropped", text = "Re-found the later goals, but the whole run is no faster; dropped." + lost });
                     return;
                 }
-                if (run.Live >= Bar(_best))
+                if (run.Live >= Bar(_best, false))
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
                     Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." + lost });

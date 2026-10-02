@@ -1309,10 +1309,24 @@ matches all 208 ticks). Take-off height off the start floor is the standing or l
 the fall step, so it is set by the fall's shape, not by inputs near the gate: the 1.42's inputs to 90, then the fall with
 stick y 0 on 91-104 lands at input 120 and stands two ticks (y −306.0), a standing jump at 123 (the 1.42's frame phase)
 leaves from −284.88 instead of −282.0, the old 1.40's inputs follow from take-off +1, and a stick nudge x +0.30 then −0.49
-(y 0) at take-off +3/+4 puts the timer tick at x 2542.968, mid-window between a ceiling-corner bump (≤ 2542.927) and no
-timer start (≥ 2543.009). The timer starts one tick later in the same rise; the finish is on the same tick of the jump. The
-first version sat 0.002 u from the bump and died in turbo: the engine's 1e-5 u body drift from tick 1 grows to 0.002 u by
-the gate, so a route that close to a threshold needs its margin widened before it's judged.
+(y 0) at take-off +3/+4 puts the timer tick (+14) at x 2542.968. The timer starts one tick later in the same rise; the
+finish is on the same tick of the jump. The first version sat 0.002 u from the bump and died in turbo: the engine's 1e-5 u
+body drift from tick 1 grows to 0.002 u by the gate, so a route that close to a threshold needs its margin widened before
+it's judged.
+
+Its margins (2026-10-01, `_scratch/c1margins`: the column after take-off shifted by the +4 stick in 0.0005 steps, each
+shift played to the finish): the timer tick has to sit in x 2542.948-2543.004. Facing left there, the hurtbox's left
+edge (x − 25) has to touch the gate for the second tick (from 2543.005 no start). At +15 full right turns the player (the
+body's left edge from x − 25.5 to x − 15.5) and moves it 2.04 u while its head rises past a ceiling corner (y ≈ −87): from
+2542.947 down it bumps, the clip jump at +23 doesn't come and the player dies. The window, 0.057 u, is the same for every
+stick at +13..+16 that finishes (rest or the 0.30 stop at +14, 0.8 or full right at +15; the rest bump or start no
+timer), every nudge tick +2..+8 and the falls that finish (the jump at 123 after the y 0 fall on 91-104; the full left
+at 115-119); a jump cut in the rise loses the clip. The widest is centred: −0.486 at +4 (x 2542.976) clears the corner
+by 0.029 u and the gate by 0.028, against the saved −0.49's 0.021 and 0.036 (finished 1.40 in turbo too). The corner at
++54 (moving left at 460, a wall face at x 2553.5 stops it) is no threshold: x 2557.37-2558.72 passes there, 0.6 u either
+side. Difficulty is 2.6e-7 either way (segment 2, the take-off to the finish, p 0.0019 on the same draws): a 0.05 step of
+either nudge moves the column 0.1 u. The human version (`offline-best\1_none-1.40-human.json`, 44 exact inputs of the
+best's 49) clears the corner by 0.032 u and the gate by 0.028.
 
 ## Techs
 
@@ -1363,10 +1377,10 @@ in 20 s on 4 threads, the mining cached. Course 1 `NONE`, a studio session at N 
 squeeze, a corner jump, a GC wall clip, both landing jumps, the late gate touch and the coyote jump); at N = 90, beside the
 pillar and rising, none (the KB wall clip window the session had taken there, inputs 91-93, never grounds the dot).
 
-`techs-used <trace.json> <route.json> [--json]` lists every occurrence of an nmg or major tech in a route (`Glitches.Classify`
-over its recorded steps: a tech's own check asked again after each hit, else every span of its detector), its
-spike-grace ticks and its human scores, for a course or a Full-TAS trace; `--json` is the one line the plugin's gate reads
-for the Full-TAS classes. `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
+`techs-used <trace.json> <route.json> [--json] [--no-difficulty]` lists every occurrence of an nmg or major tech in a route
+(`Glitches.Classify` over its recorded steps: a tech's own check asked again after each hit, else every span of its
+detector), its spike-grace ticks, its difficulty (a finished route's, `Difficulty.Meter`) and its human scores, for a course
+or a Full-TAS trace; `--json` is the one line the plugin's gate reads for the Full-TAS classes. `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
 tech, a glitchless tech's no nmg or major span ([docs/fulltas.md](../docs/fulltas.md#classes)).
 
 `difficulty <trace.json> <route.json> [--json]` measures how likely one human attempt at a route works: humanize's
@@ -1375,9 +1389,10 @@ dash's freeze), each segment played from the route's own state at its first anch
 straight replay) with its input events moved by a rounded normal (`--sigma`, input ticks) and played closed loop (the
 player re-times the rest of the plan by the lag they see 100 ms before each input chunk and at each anchor, and corrects
 the next segment when off an anchor's state; `--open`: the open-loop measure before it), the bottlenecks close together
-sampled again as one chain; `--candidates <dir>` writes every candidate's sidecar. The model, options and JSON:
-[docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and `Difficulty.SameState` are its anchors and its
-same-state test for other commands.
+sampled again as one chain, seeded by the measured inputs; `--candidates <dir>` writes every candidate's sidecar. The
+model, options and JSON: [docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and
+`Difficulty.SameState` are its anchors and its same-state test for other commands, `Difficulty.Meter` its whole-route
+measure for `techs-used` and the human classes' score.
 
 ## Rules
 

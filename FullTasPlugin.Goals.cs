@@ -428,6 +428,7 @@ namespace IGTAPTasMod
             string status = _engine.Status;
             ParkAtNewGameStart();
             string category = FullTasClassCategory(run.name, cls);
+            RescoreFullTasClassBest(run, cls);
             FullTasClassBest(run.name, cls, out float best);
             bool human = HumanClass(cls);
             var verdict = new FullTasVerdict { finished = finished, time = time, runTicks = runTicks, splits = FullTasSplits(tracker), cls = cls };
