@@ -304,6 +304,12 @@ two spike wallbounces without the super (71.98, 7.98 s), and the TAS line (two s
 5.83 s down to 85.55 at 5.55 s). The clean climb came from a goals 1-2 window seeded with the first from-scratch goal 1 (no
 spike super) once windows were priced by score.
 
+With the difficulty term (5 s × ln attempts) the human classes rank by how often a human finishes too. Four 25-minute
+`--auto` solves (`--tag`s `dclean`, `dclean2`, `dinwall`, `dmaj`, 7 threads each, `--ref` a family's best) took the human
+best to 6.41 s with no nmg span, 5 grace ticks and 14.3 attempts (score 29.72; the 6.35 route scores 32.80 at 26.9
+attempts). The clean climb's variants lead the 430 candidates; the inwall and TAS lines stay above 100 (their spans and
+narrow openings: the inwall line 4800 attempts). The top six played back to back at 1x all finish at their offline times.
+
 `"rebaseAt": [x, y]` (world) on a savestate run moves the world once the restored player has rested: FloatingOrigin's own
 moves (roots, camera, backgrounds, particles, trails, lines, `currentOrigin`) by that point's scene position, then a physics
 sync, as if the game had rebased with the player standing there. The player then rests again and the start is taken, so
