@@ -9,10 +9,11 @@ between physics ticks. Read from the decompiled game (`courseScript`, `startGate
 
 - `courseScript.FixedUpdate` adds `0.02f` to `currentPathTime` every physics tick while `tracking` is on. Nothing reads
   a clock or a frame: the time is a tick count, 50 a second, and no part of a tick is ever timed.
-- The display rounds to the nearest hundredth (`ToString("0.00")`). The float sum stays within half a hundredth of
-  ticks × 0.02 up to tick 5069 (101.38 s; 500 ticks sum to 10.000039, 3000 to 60.001183), so every course time shown is
-  exactly ticks × 0.02. Past that the drift can show 0.01 low (101.394997 for 101.40); Unity's own float formatting there
-  is unchecked.
+- The display rounds to the hundredth (`ToString("0.00")`). The game's Mono (`mscorlib` 4.6.57) formats a float to 7
+  significant digits first and then rounds at 2 decimals, so the float sum shows exactly ticks × 0.02 up to tick 5083
+  (101.66 s): tick 5070's 101.394997 shows 101.40. The first tick that shows 0.01 low is 5084 (101.674950 shows 101.67);
+  measured by running the game's own `mono-2.0-bdwgc.dll` over ticks 1–30000. 500 ticks sum to 10.000039, 3000 to
+  60.001183.
 - A best is replaced only by a strictly lower raw float (`currentPathTime < bestPathTime`): the same tick count sums to the
   same float, so a tie is never a new best.
 - `startTracking` and `stopTracking` are the only writers of `tracking`. Their only callers are the two gate scripts.
@@ -42,13 +43,17 @@ The Player carries two boxes; every start and end gate is a trigger on layer 0 (
 
 | Box | Size | Offset | Excludes | Includes | Touches gates |
 |---|---|---|---|---|---|
-| Body (`normalCollider`, walls and floors) | 41×72; 41×54 at (5, 0) while dashing or after a jump | (5, 2) | Default, Spikes | Ground | no |
-| Hurtbox | 40×54 | (5, 0) | Ground | Default, Spikes | **yes** |
+| Body (`normalCollider`, walls and floors) | 41×72; 41×54 at (5, 0) while dashing or after a jump | (5, 2) | Default, Spikes (and Ground for 0.01 s after a wall jump) | Ground | no |
+| Hurtbox | 40×54, never changed | (5, 0) | Ground | Default, Spikes | **yes** |
 
 - The offset follows the facing (the scale's sign): turning around moves the hurtbox 10 u.
 - A touch is any overlap, not containment: each Box2D shape carries a skin of the contact offset (0.01 u, the project's
   `defaultContactOffset`), so boxes about 0.02 u apart already touch.
 - The engine applies the same filter (`PhysicsWorld.ContactMask`, `CanTouch`).
+- Across 423 traces (401,063 tick states) the hurtbox was always 40×54 at (5, 0), excluding Ground, enabled; no script
+  touches it, and zip intangibility (`PlatformMover.MakeIntangible`) re-layers the mover, not the player. The only way
+  past a gate is not to overlap it at any step's end or start: going around, or, for the 20 u-wide exit gates, more than
+  ~60 u in one tick (the 60 u start gates need ~100 u, the game's cap per step).
 
 ## When a tick sees the gates
 
@@ -66,14 +71,16 @@ The Player carries two boxes; every start and end gate is a trigger on layer 0 (
 
 `Movement` moves the player by writing `transform.position` directly:
 
-| When | Write |
-|---|---|
-| Jump | +5 up (a second jump path: +2 up) |
-| Wall jump | +1 sideways, +1 up |
-| Dash start | −20 along the dash direction |
-| Spring hit | +10 along the spring's up |
-| Step-up (`Update`, every frame) | onto the step's top |
-| Respawn | to the reset point or checkpoint, then −12 down |
+| When | Write | Interpolation pull-back |
+|---|---|---|
+| Jump | +5 up | yes |
+| Dash jump (super, hyper) | +2 up, the tick after the dash start (`CheckForSuperJump`) | yes |
+| Wall jump | +1 sideways, +1 up | yes |
+| Dash start | −20 along the dash direction | yes |
+| Foot-ray pop | +10 up when a foot ray's origin is 0–5 u above Ground (the body sunk 11–16 u); no saved route shows one | yes |
+| Spring hit (physics callback) | +10 along the spring's up, exactly | **no**, and the next tick's write gets none either |
+| Step-up (`Update`, a rendered frame) | onto the ledge's top (3–46 u up, 56 dashing), x at the frame's blend | loses the rest of that tick's move: (1 − blend) × the move |
+| Respawn | to the reset point or checkpoint, then −12 down | |
 
 The player body interpolates, so between ticks the transform holds the last rendered frame's position, which trails the
 body. `transform.position += d` in `Movement.FixedUpdate` (the jumps, wall jumps and dash starts) writes that drawn
@@ -93,8 +100,14 @@ and jumping on ticks 10–14 against a branch that kept walking:
 | 12 | 2.50 ms | 1.15 u | 1.15 u |
 | 14 | 3.21 ms | 1.48 u | 1.48 u |
 
-At dash speed (33.4 u a tick) the same lag is 0.6–5.4 u. Picking the lag: 1–4 idle ticks before the run-up rotate it for
-every later tick.
+At dash speed (33.4 u a tick) the same lag is 0.6–5.4 u. A spring hit, a physics callback, lands after the step has set
+the transform to the body, so it adds exactly its 10 u (1x probes of the four spring techs: residual 10.000 at lags
+0.36–2.50 ms; engine: 19.200 = 9.2 + 10 at all five lags). A step-up's raise is first seen by a gate on the next tick's
+step (a start-of-step touch there counts).
+
+Choosing the lag (1–4 idle ticks before the run-up) is not a record lever: of 11 routes that still finish, every
+converged one polished back to its own ticks from every shifted start, and most shifts broke the route outright. What
+did gain was letting polish move a route's first input (2_WJ_DS_DJ_BS_ORB_ZIP_OM 1.86 → 1.74): see the tools below.
 
 ## The dash start
 
@@ -116,18 +129,30 @@ the right (9.2 u a tick, the 2.50 ms lag: 1.15 u back to the left), positions af
 - Without `OM` the dash's vertical part is zeroed (a diagonal stick dashes sideways); on the ground its down part is.
 - A dash in full wall coyote flips the facing and dashes away from the wall: the 20 u go toward it.
 - An up dash is 20 u down at the step's start (plus the lag's pull down if rising), then about 13 u up net over the
-  tick: an end gate up to ~20 u under the hurtbox finishes on that tick (the start-of-step touch above). It starts no
-  start gate, which needs two ticks.
+  tick: an end gate under the hurtbox finishes on that tick (the start-of-step touch above). Confirmed in turbo on Course
+  1's `RealEnd` (`1_WJ_DS_BS_ZIP_OM`): a 13.4 u gap finished on the dash tick (1.42 against 1.44 falling); a 19.15 u gap
+  finished (1.40); a 20.0 u gap missed, the pull-back of a falling player taking it out of reach. It gains a tick over a
+  plain fall only when the gap is above ~12.5 u (a fall would touch anyway) and below ~18–19.8 u. It starts no start
+  gate, which needs two ticks.
 
 ## Respawns
 
-- No respawn calls `stopTracking`.
-- A quick restart (`respawn(true)`) while timing goes to the course's reset point. On Course 1 (engine) the timer was off
-  from the restart's tick, the player at x 2241: the game's own triggers there, presumably an exit gate (not confirmed).
-  Other courses unmeasured.
-- A death with checkpoint respawns on goes to the last checkpoint touched, and nothing in the respawn code stops the
-  timer: a checkpoint touched during the untimed run-up, then a death after the start, warps there with the timer
-  running. Read from the code, not run; a death also costs its respawn delay.
+No respawn calls `stopTracking`, but every one while timing lands in an exit gate that does. Measured offline on
+Courses 1–15 (11–15 identical to 1–5); the game's code paths read from the decompile:
+
+- `courseResetPoint` is the start `Checkpoint` (written by the start gate's Stay) while the hurtbox is in the start gate,
+  else the course's own `End (2)` (written by `courseScript.FixedUpdate` every timed tick): a 20×400 `endGate` with
+  `isEndOfCourse` off. Both spots overlap `End (2)` on every course.
+- **Quick restart** (`respawn(true)`, which ignores the checkpoint setting): lands there, and `End (2)`'s Enter on the
+  restart tick stops the timer without a finish (Course 1: x 2243.04 from the gate, 2227.33 after it).
+- **Death**: 30 frozen ticks, the timer running through them (Course 1: 0.20 at the death, 0.80 on the last frozen
+  tick), and control again on the 31st, when the respawn lands as above (checkpoints off) or at the last checkpoint
+  touched (on). The course's start `Checkpoint` is the only one within 540 u of each start gate and overlaps `End (2)`
+  too, so a death warp keeps the timer only if it lands on a checkpoint that touches no end gate (measured: a respawn
+  point forced past Course 1's gate kept counting). A checkpoint further into a course, touched during the untimed
+  run-up, is unmeasured.
+- TAS routes can't use a death: the plugin and the engine abort any judged run on a death. Saved records ran with the
+  studio's **Checkpoint respawns** off (`settings.json` and every trace header that carries it).
 
 ## Using it on a record
 
@@ -146,7 +171,9 @@ Course 1's start gate, walking right into it, a dash on the tick shown, the time
 - **A fast free tick:** the Enter tick is untimed, so arrive at top speed: a dash that enters at 33 u a tick beats walking
   in and dashing (0.12 against 0.14).
 - **Re-arming:** a write out of a dynamic-body gate before the step re-enters it: a dash on the tick the timer would
-  start started it a tick later (tick 18). A recovery when standing or landing in the gate, not a gain over entering fast.
+  start starts it a tick later. Confirmed in turbo: Course 1 (dynamic gate), walking in, first overlap tick 23, the
+  timer from 24, from 25 with a dash on 24; Course 2 (no body), the timer from 25 whatever the dash tick. A recovery when
+  standing or landing in the gate, not a gain over entering fast.
 - **Passing untimed:** one tick of overlap (or a start-of-step touch) starts nothing; crossing a 50–60 u gate whole in
   one tick takes ~90–100 u, so go around or clip a corner, reach the far side untimed (end gates do nothing yet) and
   brush the gate for two ticks at the last moment: the late gate touch (Course 1 NONE 1.62 → 1.40).
@@ -163,3 +190,8 @@ Course 1's start gate, walking right into it, a dash on the tick shown, the time
 - The late gate touch: `ContactProbe.NearGate` (the gate within 16 u of the hurtbox while untimed), the tech's grafts
   (taps of 2–6 ticks at 0.5–1) and the planner's gate tap (2 or 4 ticks at full tilt), which start the timer where a
   one-tick tap from a stand doesn't.
+- `polish` (course routes) also moves a route's front: `Lead ±d` adds or cuts leading idle ticks, and after the seed's
+  own polish it polishes again from the seed with 1–`--lead-ticks` (default 4) idle ticks in front (`--no-lead` turns it
+  off). A route that moves from tick 0 used to keep its first input fixed.
+- `solve --auto` writes its starting best (a library seed already faster than the saved record) to offline-best for the
+  plugin to judge; before, only strict improvements over it were written, so a faster seed was never judged.

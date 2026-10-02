@@ -19,7 +19,11 @@ namespace IGTAP.EngineSim.Cli
     /// the route at a goal. The strictly best candidate of an input whose replay from the start still beats the route is kept
     /// (course time, then physics ticks; <see cref="Farm"/>: physics ticks, then course time) and the sweep
     /// goes on from there; sweeps repeat until one keeps nothing, then one sweep of the plateau families (<see cref="Plateau"/>)
-    /// runs, and the plain sweeps again after one that keeps something. So its result ties the seed or beats it.
+    /// runs, and the plain sweeps again after one that keeps something. So its result ties the seed or beats it. With
+    /// <see cref="Lead"/> (a course route) the idle ticks in front of the route move too, which no input's shift reaches (the
+    /// route's first stick has nothing before it to shift against): <see cref="Leads"/> in the sweeps, and <see cref="Run"/>
+    /// polishing again from the seed with 1-4 idle ticks in front, since a tick more or fewer before the run's first input puts
+    /// every later tick on another interpolation lag (the lag cycles every five ticks, `docs/course-timer.md`).
     /// </summary>
     sealed class Polish
     {
@@ -51,6 +55,20 @@ namespace IGTAP.EngineSim.Cli
         /// ties; candidates stop once past the route's physics ticks (the timer may get slower). One lap from the restart: a farm
         /// loop's lead lap, not the farm itself (README ### Rules 30: the loop, `solve --auto --farm`).</summary>
         public bool Farm;
+
+        /// <summary>A course route's leading idle ticks are part of the polish: cut or added as a family of the sweeps
+        /// (<see cref="Leads"/>, the seed's own polish), and the whole polish repeated from the seed with 1-4 idle ticks in
+        /// front (the restart that finishes and ends strictly better than the best so far is the result; its sweeps leave the
+        /// front alone, or the first cut of the idle ticks would take it back to the seed's basin). Off for a Full-TAS run,
+        /// whose first ticks are its goals' own.</summary>
+        public bool Lead;
+
+        /// <summary>The most idle ticks in front of the seed <see cref="Lead"/>'s restarts try (1 to this many): the interpolation lag
+        /// repeats every five, so four reach every other phase.</summary>
+        public int LeadTicks = 4;
+
+        // The best result so far while a restart runs (a checkpoint is written only for what beats it).
+        Result _floor;
 
         /// <summary>Strictly better by this polish's objective: the timer then physics ticks, or (<see cref="Farm"/>) physics
         /// ticks then the timer.</summary>
@@ -93,10 +111,43 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>After each sweep that kept a change: the route so far (checked from the start), its time and physics ticks.</summary>
         public Action<List<InputTick>, float, long> Swept;
 
-        /// <summary>Polishes <paramref name="seed"/>: only the inputs from input tick <paramref name="from"/> to before <paramref name="to"/> move.</summary>
+        /// <summary>Polishes <paramref name="seed"/>: only the inputs from input tick <paramref name="from"/> to before <paramref name="to"/> move.
+        /// With <see cref="Lead"/> the polish also runs again from the seed with 1-4 idle ticks in front (the lag every later tick
+        /// lands on changes with them), keeping the result only if it is strictly better.</summary>
         public Result Run(List<InputTick> seed, int maxSweeps = 50, int from = 0, int to = int.MaxValue)
         {
+            _floor = null;
+            Result best = Sweeps(seed, maxSweeps, from, to, Lead);
+            if (!Lead || from != 0 || to <= 0 || seed.Count == 0 || seed[0].reset) return best;
+            _floor = best;
+            for (int d = 1; d <= LeadTicks; d++)
+            {
+                List<InputTick> shifted = Enumerable.Repeat(Idle(seed[0]), d).Concat(seed).ToList();
+                RunResult r = Check(shifted);
+                if (!r.Finished)
+                {
+                    _log?.Invoke($"polish: {d} idle ticks in front of the seed: {r.EndReason}, no restart");
+                    continue;
+                }
+                _log?.Invoke($"polish: restart with {d} idle ticks in front of the seed");
+                Result other = Sweeps(shifted, maxSweeps, from, to, false);
+                if (!Better(other.Time, other.RunTicks, best.Time, best.RunTicks))
+                {
+                    _log?.Invoke($"polish: the restart ends {other.Time:0.00}s ({other.RunTicks} physics ticks), not better than {best.Time:0.00}s ({best.RunTicks})");
+                    continue;
+                }
+                other.Changes.Insert(0, $"{d} idle ticks in front of the seed");
+                best = _floor = other;
+            }
+            _floor = null;
+            best.Ticks = Interlocked.Read(ref _ticks);
+            return best;
+        }
+
+        Result Sweeps(List<InputTick> seed, int maxSweeps, int from, int to, bool lead)
+        {
             var result = new Result();
+            _fromStart = false;
             RunResult start = Check(seed);
             if (!start.Finished) throw new InvalidOperationException("The seed doesn't finish offline (" + start.EndReason + ").");
             Set(seed.Take(start.FinishTick + 1).ToList(), start);
@@ -147,6 +198,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (!plateau)
                 {
+                    if (lead && from == 0) Keep(Leads(_route, 1, _radius));
                     List<Humanizer.Event> events = Humanizer.Events(_route, _route);
                     for (int i = 0; i < events.Count; i++)
                     {
@@ -162,8 +214,11 @@ namespace IGTAP.EngineSim.Cli
                         if (_route[i].reset) Keep(Resets(_route, i));
                 }
                 else
+                {
+                    if (lead && from == 0) Keep(Leads(_route, _radius + 1, WideRadius));
                     for (int t = Math.Max(1, from); t < Math.Min(to, _route.Count); t += PlateauSlot)
                         Keep(Plateau(_route, t, Math.Min(t + PlateauSlot, Math.Min(to, _route.Count))));
+                }
                 result.Kept += kept;
                 _log?.Invoke($"polish: {(plateau ? "plateau " : "")}sweep {sweep} kept {kept} ({tried} candidates, {finished} finished no slower), {_time:0.00}s ({_runTicks} physics ticks), "
                     + $"{Interlocked.Read(ref _ticks)} ticks");
@@ -176,7 +231,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 plateau = false;
                 // A checkpoint after every sweep that kept something (each change was replayed from the start as it was kept).
-                Swept?.Invoke(_route, _time, _runTicks);
+                if (_floor == null || Better(_time, _runTicks, _floor.Time, _floor.RunTicks)) Swept?.Invoke(_route, _time, _runTicks);
             }
             RunResult end = Check(_route);
             if (!end.Finished || Math.Abs(end.Time - _time) > Tie || end.PhysicsTicks != _runTicks)
@@ -263,6 +318,8 @@ namespace IGTAP.EngineSim.Cli
         /// it, or cut before it where nothing happens in them).</summary>
         static void Shifts(List<InputTick> route, Humanizer.Event e, int lo, int hi, List<(List<InputTick>, int, string)> c)
         {
+            // A stick that starts at tick 0 has no earlier value to shift against (Humanizer.Shift reads the tick before): the
+            // route's front is Leads'.
             if (e.Start) return;
             string name = $"{e.Kind} {e.Tick}";
             for (int d = -hi; d <= hi; d++)
@@ -289,6 +346,27 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
         }
+
+        /// <summary>The route's front: idle ticks put before it (every later input moves with them, and every later tick lands
+        /// on another interpolation lag), or its own leading idle ticks cut, [lo, hi] of them. A leading tick is idle when it
+        /// is what a run standing there has (no stick, the button as the first input carries it, nothing pressed).</summary>
+        internal static List<(List<InputTick> inputs, int first, string what)> Leads(List<InputTick> route, int lo, int hi)
+        {
+            var c = new List<(List<InputTick>, int, string)>();
+            if (route.Count == 0 || route[0].reset) return c;
+            for (int d = lo; d <= hi; d++)
+            {
+                var later = new List<InputTick>(route);
+                later.InsertRange(0, Enumerable.Repeat(Idle(route[0]), d));
+                c.Add((later, 0, $"Lead +{d}"));
+                if (d < route.Count && Enumerable.Range(0, d).All(j => route[j].Equals(Idle(route[d]))))
+                    c.Add((route.GetRange(d, route.Count - d), 0, $"Lead -{d}"));
+            }
+            return c;
+        }
+
+        /// <summary>A tick standing before <paramref name="next"/>: no stick, nothing pressed, the jump button as <paramref name="next"/> finds it.</summary>
+        static InputTick Idle(InputTick next) { return new InputTick { held = next.held && !next.press }; }
 
         /// <summary>Input ticks per plateau slot: the strictly best of a slot's candidates is kept.</summary>
         const int PlateauSlot = 8, WideRadius = 16, PairSpan = 8;
@@ -533,10 +611,10 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--out file] [--via/--avoid/--optional as solve];
+        /// <summary>polish &lt;trace&gt; &lt;route.json&gt; [--threads N] [--radius R] [--farm] [--no-lead] [--lead-ticks N] [--out file] [--via/--avoid/--optional as solve];
         /// a Full-TAS trace polishes the whole run (its goals, as the run judges it), or with --from-goal N [--to-goal M] only the
         /// inputs between those goals; --farm polishes a course route's ticks from the quick restart to the finish (one lap, not a
-        /// farm loop).</summary>
+        /// farm loop); a course route's leading idle ticks are polished too (<see cref="Lead"/>; --no-lead skips, --lead-ticks N sets how many idle ticks its restarts try).</summary>
         public static int Command(string[] args)
         {
             string trace = args[0], routePath = args[1];
@@ -568,7 +646,8 @@ namespace IGTAP.EngineSim.Cli
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var polish = new Polish(create, forced, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"),
                 Solve.Option(args, "--radius", Humanizer.Radius), Solve.Option(args, "--slack", DefaultSlack))
-            { Wide = !args.Contains("--no-wide"), Sync = !args.Contains("--no-sync"), Farm = args.Contains("--farm") };
+            { Wide = !args.Contains("--no-wide"), Sync = !args.Contains("--no-sync"), Farm = args.Contains("--farm"),
+                Lead = fulltas == null && !args.Contains("--no-lead"), LeadTicks = Solve.Option(args, "--lead-ticks", 4) };
             // Each sweep's route (checked from the start) goes to <route>-polished-<time>.json (--farm: -polished-farm-<farm
             // time>.json) as it's found, so a long polish's gains can be judged before it ends; the final one also carries the changes.
             string Named(float time, long runTicks) => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(routePath)),

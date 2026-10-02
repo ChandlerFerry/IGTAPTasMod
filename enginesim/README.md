@@ -498,11 +498,13 @@ momentum carries through them, and a window is scored on its arrival.
   lead, `UseGoals(null)` so the next finish ends a run, seeded with the first lap after a quick restart and a few idle
   ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each; after each, the loops
   ending with the newest lap are checked, so laps whose carried state alternates (a buffered jump carried through one
-  restart and not the next) still make a loop. A loop the search found is written at once; every kept best that
-  repeats exactly is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`, `loopTicks`,
-  `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`, and one that doesn't is logged
-  and not written. Course 1 `NONE`, 2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart carries its last jump
-  press: the next lap starts in the air and dies); the lap search found a loop of 2 laps, 225 ticks, 2.2500 s a lap.
+  restart and not the next) still make a loop. The loop the run starts from is written at once (the search's, or a
+  seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged), and every kept
+  best that repeats exactly is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`,
+  `loopTicks`, `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`, and one that
+  doesn't is logged and not written. Course 1 `NONE`, 2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart
+  carries its last jump press: the next lap starts in the air and dies); the lap search found a loop of 2 laps, 225
+  ticks, 2.2500 s a lap.
 - **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
   and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
   else it stops.
@@ -520,7 +522,14 @@ momentum carries through them, and a window is scored on its arrival.
   is played again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve`
   writes it (the game timer's time, `runTicks`), so the plugin judges it for the record as any solve's; the log line is
   solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation doesn't
-  confirm. A farm loop's are the loop files above.
+  confirm. The loop writes only what it improves on, so the best it starts from is written first the same way
+  (`offline best X.XXs via start: <candidate>`): a seed that already beats the saved route (a library route; Course 1
+  `WJ_DS`'s 1.02 s one against the saved 1.42 s, 2026-10-01) would otherwise never reach the judge, which sees only
+  `offline-best\` files. Not written: the last `--auto` best (written when kept), a route whose file (same inputs and
+  time) is already in `offline-best\` or `offline-best\judged\`, and anything of a `--waypoints-out` run. The plugin
+  judges a file only when it ties or beats the saved route, so a slower start is moved to `judged\` unjudged. Plain
+  `solve` writes its best seed the same way (`via seed`), submitting only what beats the seeds. A farm loop's are the
+  loop files above.
 - **Waypoints.** `waypoints {json}` on stdout at every kept best (goals, rects, splits, `timerGoal`, record and farm
   ticks, and on a gated course `bus`, its near misses; a farm loop's has `loop`, its steady-state check, and its loop
   finish's `bus`); `--waypoints-out FILE` writes it and exits without searching (the studio's list; a farm target
@@ -1087,7 +1096,7 @@ section.
 - Bounce chain edge (`--no-chains` drops it): an omnidash node plays 2 or 4 dashes straight down (jump frame 3 or 6, the
   stick sideways after), each jump held 3 ticks, then 3 or 7 ticks of air — the old route's down-dash landing chain as one
   edge, since one node per bounce ranks each link too late to keep.
-- `polish <trace> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--farm] [--out file]`
+- `polish <trace> <route.json> [--threads N] [--radius R] [--slack S] [--no-wide] [--no-sync] [--farm] [--no-lead] [--lead-ticks N] [--out file]`
   (`Cli\Polish.cs`; Full-TAS: the whole run, or `--from-goal N [--to-goal M]`): every press, release, dash and stick change
   in order, each shifted up to 6 ticks alone and with the whole route after it, at every other controller stick value, a
   dash at every jump frame 0–10, dropped; every quick restart dropped or moved up to 3 ticks. Candidates replay from the
@@ -1101,7 +1110,19 @@ section.
   the timer, which may get slower; up to 4 tried), sweeps repeat until one keeps nothing, then one plateau sweep (`--no-wide` skips) tries,
   8 input ticks at a time: shifts of 7–16 ticks, pairs of inputs within 8 ticks shifted ±1–2 together, stick bands (another
   full value for 2 or 6 ticks), an added jump press held 2/5/10 ticks, an added dash at each of 8 aims; after a plateau
-  sweep that keeps something the plain sweeps run again. It first replays the seed from its own recorded states and, if
+  sweep that keeps something the plain sweeps run again. A course route's front is polished too (`--no-lead` skips; not on a
+  Full-TAS run): the idle ticks before its first input, which no input's shift reaches (a stick that starts at tick 0 has
+  nothing before it to shift against, so a route that moves from its first tick could neither gain nor lose one), are added
+  or cut up to the same radii, and the whole polish repeats from the seed with 1–4 idle ticks in front (`--lead-ticks N`),
+  since a tick more or fewer before the run's first input puts every later tick on another interpolation lag (it cycles
+  every five ticks) and most routes don't finish with it alone (13 of 44 seeds with 1–4 idle ticks in front did, on 11
+  routes), while the polish that follows can use it: the restart that finishes and ends strictly better than the best so far
+  is the result (its own sweeps leave the front alone, or the first cut of the idle ticks would take it back to the seed's
+  basin). Measured: `2_WJ_DS_DJ_BS_ORB_ZIP_OM 2.80` (an old seed, 140 timer ticks) 93 → 87 timer ticks (a restart with 2 idle
+  ticks; 5 or more idle ticks end at the same timer in 97 physics ticks instead of 99). `1_NONE 1.42`, `2_WJ 2.22`,
+  `2_WJ_DS 1.20`, `1_WJ_DS 1.04`, `1_WJ_DS_DJ 0.86`, `3_WJ_DS 3.68`, `6_WJ_DS_DJ_BS_ORB_ZIP_OM 1.78`,
+  `7_WJ_DS_DJ_BS_ZIP 8.82` and `7_WJ_DS2_BS_ZIP_OM 8.82` end as without it (the restarts tie or die), up to 13 s more each
+  (the restarts re-polish). It first replays the seed from its own recorded states and, if
   that doesn't end as from the start, replays every candidate from the start. Without `--out`, every sweep that kept
   something writes `<route>-polished-<time>.json` (`--farm`: `-polished-farm-<farm time>.json`). `plan` runs it on its
   best (`--no-polish` skips).

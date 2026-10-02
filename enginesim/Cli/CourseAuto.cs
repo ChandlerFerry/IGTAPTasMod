@@ -133,7 +133,7 @@ namespace IGTAP.EngineSim.Cli
             var candidates = new List<(string how, List<InputTick> inputs)> { (Path.GetFileName(trace), Solve.ReadInputs(header)) };
             foreach (string seed in Solve.Args(args, "--seed")) candidates.Add((Path.GetFileName(seed), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed)));
             string runFile = Path.Combine(dir, "fulltas", run.Name + ".json");
-            if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add(("course-auto/fulltas/" + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
+            if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add((AutoRunDir + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
             // A gated course's farm is its steady-state loop, finish to finish (README ### Rules 30).
             if (run.Timing == "farm" && gated) return LoopAuto(run, args, candidates, dir);
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
@@ -164,6 +164,10 @@ namespace IGTAP.EngineSim.Cli
             }
             var best = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
                 : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
+            // The best the loop starts from is a kept best too: the loop writes only what it improves on (CourseCommitted), so a seed
+            // that already beats the saved route (a library route, a hand TAS) would never reach the plugin's judge, which sees only
+            // offline-best files. A read-only run (--waypoints-out) writes nothing.
+            if (run.WaypointsFile == null) WriteStartingBest(run, best.how, best.inputs, best.result);
 
             // The goals: the waypoints along the best (the start gate among them in record timing), then the finish.
             WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
@@ -369,13 +373,42 @@ namespace IGTAP.EngineSim.Cli
             long timer = (long)Math.Round(c.Time / _dt), want = _course.Timing == "record" ? timer : c.RunTicks;
             if (want != r.Last)
                 Log($"course check: DISAGREES: the course's simulation times it {(_course.Timing == "record" ? $"{timer} ticks on the game timer" : $"{c.RunTicks} physics ticks")}, the loop {r.Last}");
-            string outDir = Path.Combine(Path.GetDirectoryName(_course.Trace), "offline-best");
-            Directory.CreateDirectory(outDir);
-            string file = Path.Combine(outDir, _course.Label + "-" + c.Time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-            Solve.WriteShared(file, JsonSerializer.Serialize(new { course = _course.Course, capabilities = _course.Caps, time = c.Time, runTicks = c.RunTicks, ticks = r.Inputs.Select(t => t.ToJson()) }));
-            Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] offline best {c.Time:0.00}s via auto: {where} ({r.Inputs.Count} ticks, run {c.RunTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
-            if (_course.LogJson != null)
-                File.AppendAllText(_course.LogJson, JsonSerializer.Serialize(new { wall = _course.Clock.Elapsed.TotalSeconds, time = c.Time, runTicks = c.RunTicks, ticks = 0, how = "auto" }) + "\n");
+            WriteRecordBest(_course, r.Inputs, c, "auto: " + where);
+        }
+
+        /// <summary>Where a run keeps its last --auto best (under the traces folder); a candidate by that path is that best.</summary>
+        const string AutoRunDir = "course-auto/fulltas/";
+
+        /// <summary>The offline-best file of a finishing route as `solve` writes it (the game timer's time, `runTicks`): path and text.</summary>
+        static (string file, string text) RecordBestFile(CourseRun run, List<InputTick> inputs, CourseResult c)
+        {
+            string file = Path.Combine(Path.GetDirectoryName(run.Trace), "offline-best", run.Label + "-" + c.Time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
+            return (file, JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, time = c.Time, runTicks = c.RunTicks, ticks = inputs.Select(t => t.ToJson()) }));
+        }
+
+        /// <summary>A finishing route written to offline-best as `solve` writes it, and the `offline best` line the plugin reads.</summary>
+        static void WriteRecordBest(CourseRun run, List<InputTick> inputs, CourseResult c, string how)
+        {
+            var (file, text) = RecordBestFile(run, inputs, c);
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            Solve.WriteShared(file, text);
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] offline best {c.Time:0.00}s via {how} ({inputs.Count} ticks, run {c.RunTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
+            if (run.LogJson != null)
+                File.AppendAllText(run.LogJson, JsonSerializer.Serialize(new { wall = run.Clock.Elapsed.TotalSeconds, time = c.Time, runTicks = c.RunTicks, ticks = 0, how = how.StartsWith("auto", StringComparison.Ordinal) ? "auto" : "start" }) + "\n");
+        }
+
+        /// <summary>
+        /// The route a run starts from, written like a kept best. Not the last --auto best (the loop wrote it when it kept it), and
+        /// not a route whose file is already there, waiting or judged (the same inputs and time: a rerun writes nothing twice).
+        /// The plugin judges a file only when it ties or beats the saved route, so a slower start is moved to judged\ unjudged.
+        /// </summary>
+        static void WriteStartingBest(CourseRun run, string how, List<InputTick> inputs, CourseResult c)
+        {
+            if (how.StartsWith(AutoRunDir, StringComparison.Ordinal)) return;
+            var (file, text) = RecordBestFile(run, inputs, c);
+            foreach (string folder in new[] { Path.GetDirectoryName(file), Path.Combine(Path.GetDirectoryName(file), "judged") })
+                if (File.Exists(Path.Combine(folder, Path.GetFileName(file))) && File.ReadAllText(Path.Combine(folder, Path.GetFileName(file))) == text) return;
+            WriteRecordBest(run, inputs, c, "start: " + how);
         }
 
         /// <summary>The waypoints with the route's splits (--waypoints FILE and the `waypoints` line on stdout, for the studio).</summary>
