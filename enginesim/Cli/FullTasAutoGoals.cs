@@ -1339,7 +1339,7 @@ namespace IGTAP.EngineSim.Cli
                 // Progress in the old numbering's terms: a goal put in counts one more, a goal dropped one less.
                 int reach = r.Progress - (labels.Length - e.Labels.Length);
                 // Level with the stray counts when the run now ends otherwise: a walk that buys a row of boxes early takes one fit a box.
-                if ((reach > p || reach == p && r.EndReason != rr.EndReason) && (pick.how == null || reach > pick.progress)) pick = (how, labels, o.ToArray(), reach, r.Progress == labels.Length ? "complete" : r.EndReason);
+                if ((reach > p || reach == p && IGTAPTasMod.FullTasTracker.Unexplained(r.EndReason) != IGTAPTasMod.FullTasTracker.Unexplained(rr.EndReason)) && (pick.how == null || reach > pick.progress)) pick = (how, labels, o.ToArray(), reach, r.Progress == labels.Length ? "complete" : r.EndReason);
             }
             lock (StrayLog)
             {

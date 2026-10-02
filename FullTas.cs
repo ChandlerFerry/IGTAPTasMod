@@ -208,6 +208,7 @@ namespace IGTAPTasMod
             Next = 0;
             _bought = 0;
             _banked = 0;
+            _shortGoal = -1;
             for (int i = 0; i < Goals.Length; i++) InputTicks[i] = PhysicsTicks[i] = HeldFrames[i] = -1;
         }
 
@@ -354,8 +355,70 @@ namespace IGTAPTasMod
                 HeldFrames = (long[])HeldFrames.Clone() };
         }
 
+        // The current buy goal's box touched without the game buying it (upgradeBox.OnTriggerStay2D past its cooldown, with less
+        // held than upgradeCost or the box inactive): the goal, the touches, and the active one with the most held. For the end
+        // reason only (Why): not in State, and a restore clears it (snapshots sit at goal boundaries).
+        int _shortGoal = -1, _shortTouches;
+        long _shortInput;
+        double _shortHeld, _shortCost;
+        string _shortBox, _shortCurrency;
+
+        /// <summary>The game refused a purchase at a touch of this box: less held than its cost, or the box inactive.</summary>
+        public void TouchedShort(string path, string id, long input, double held, double cost, string currency, bool active)
+        {
+            FullTasGoal g = Current;
+            if (g?.boxes == null || Array.IndexOf(g.boxes, id) < 0 && Array.IndexOf(g.boxes, path) < 0) return;
+            if (_shortGoal != Next) { _shortGoal = Next; _shortTouches = 0; _shortBox = null; }
+            _shortTouches++;
+            if (!active || _shortBox != null && held <= _shortHeld) return;
+            (_shortBox, _shortInput, _shortHeld, _shortCost, _shortCurrency) = (path, input, held, cost, currency);
+        }
+
+        /// <summary>Between an end reason and its <see cref="Why"/>: <see cref="Unexplained"/> cuts there.</summary>
+        public const string WhyMark = "; why: ";
+        const string StrayTail = ", which isn't the next goal's box";
+
+        /// <summary>
+        /// Why a run of these goals ended where it did (null: nothing to add). A strict run's stray buy names the goal it expected
+        /// and, from <paramref name="boxes"/> (null: unknown), what that goal's boxes cost against what the run held. A death or
+        /// stop at a buy goal says whether its box was touched, the most held at a touch against its cost, and the shortfall.
+        /// </summary>
+        public string Why(string reason, Func<string[], string> boxes)
+        {
+            FullTasGoal g = Current;
+            if (reason == null || g == null) return null;
+            string goal = "goal " + (Next + 1) + " " + g.label;
+            bool buy = (g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && g.boxes != null;
+            if (reason.Contains(StrayTail))
+                return "the next goal is " + goal + (buy && boxes != null ? " (" + boxes(g.boxes) + ")" : "");
+            if (!buy) return null;
+            string touched;
+            if (_shortGoal != Next) touched = "its box not touched since " + (Next == 0 ? "the start" : "goal " + Next + " (input " + InputTicks[Next - 1] + ")");
+            else if (_shortBox == null) touched = "its box touched " + _shortTouches + "x, inactive (capped, or not unlocked yet)";
+            else touched = Num(_shortCost - _shortHeld) + " " + _shortCurrency + " short at input " + _shortInput + ": held " + Num(_shortHeld) + " of its " + Num(_shortCost)
+                + (g.boxes.Length > 1 ? " (" + _shortBox + ")" : "") + (_shortTouches == 1 ? ", its one touch" : ", the most of " + _shortTouches + " touches");
+            return (reason.StartsWith("Player death", StringComparison.Ordinal) ? "died after missing " : "stopped at ") + goal + " (" + touched + ")";
+        }
+
+        static string Num(double v) => v.ToString("G6", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>The end reason with its <see cref="Why"/> after <see cref="WhyMark"/>.</summary>
+        public string Explain(string reason, Func<string[], string> boxes = null)
+        {
+            string why = Why(reason, boxes);
+            return why == null ? reason : reason + WhyMark + why;
+        }
+
+        /// <summary>An end reason without its <see cref="Why"/> (to compare ends).</summary>
+        public static string Unexplained(string reason)
+        {
+            int at = reason?.IndexOf(WhyMark, StringComparison.Ordinal) ?? -1;
+            return at < 0 ? reason : reason.Substring(0, at);
+        }
+
         public void Restore(State s)
         {
+            _shortGoal = -1;
             Next = s.Next;
             _bought = s.Bought;
             _banked = s.Banked;

@@ -256,7 +256,7 @@ namespace IGTAPTasMod
             if (_fullTasRewardBoxes.TryGetValue(bonus.name, out string cached)) return cached;
             upgradeBox best = BonusRewardBox(bonus, out bool loaded);
             if (!loaded) return null;
-            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": no upgrade box near the bonus's end rect.");
+            if (best == null) throw new InvalidOperationException("Full-TAS goal reward:" + bonus.name + ": " + (WorldNotLoaded() ?? "no upgrade box near the bonus's end rect."));
             string id = FullTasBoxId(best);
             _fullTasRewardBoxes[bonus.name] = id;
             return id;
@@ -435,7 +435,7 @@ namespace IGTAPTasMod
             if (!finished)
             {
                 FullTasGoal next = tracker.Current;
-                verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + status + ")";
+                verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + tracker.Explain(status) + ")";
             }
             // A human score is the live time and more: a time that isn't under the best score can't make a lower one.
             else if (!(time < best - .0001f))

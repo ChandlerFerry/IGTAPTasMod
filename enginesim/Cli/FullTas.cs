@@ -248,8 +248,8 @@ namespace IGTAP.EngineSim.Cli
             {
                 long[] touches = JsonSerializer.Deserialize<long[]>(File.ReadAllText(_args[retune + 1]));
                 var b = new Route { Inputs = inputs, Progress = _goals, GoalInput = touches, GoalPhysics = new long[_goals] };
-                Route t = Retune(_eval, _origin, b, inputs, 0);
-                Console.WriteLine($"retuned: {(t == null ? "a goal is lost" : $"{t.Progress} of {_goals} goals" + (t.Progress == _goals ? $", {Describe(t)}" : $" ({t.EndReason})"))}");
+                Route t = Retune(_eval, _origin, b, inputs, 0, out string lost);
+                Console.WriteLine($"retuned: {(t == null ? lost : $"{t.Progress} of {_goals} goals" + (t.Progress == _goals ? $", {Describe(t)}" : $" ({t.EndReason})"))}");
                 string outFile = Solve.Option(_args, "--out", (string)null);
                 if (t != null && t.Progress == _goals && outFile != null)
                     File.WriteAllText(outFile, JsonSerializer.Serialize(new { fulltas = _name, time = t.LiveSeconds, runTicks = t.Last, goals = _labels, ticks = t.Inputs.Select(x => x.ToJson()) }));

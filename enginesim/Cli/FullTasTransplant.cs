@@ -258,7 +258,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!float.IsNaN(d) && !(d >= nearest)) nearest = d;
             });
             sim.Goals.Limit = lane.Goals;
-            bool alive = r.EndReason == null || r.EndReason == "Solver run ended" || r.Progress >= limit || r.EndReason.StartsWith("Full-TAS", StringComparison.Ordinal);
+            bool alive = r.EndReason == null || IGTAPTasMod.FullTasTracker.Unexplained(r.EndReason) == "Solver run ended" || r.Progress >= limit || r.EndReason.StartsWith("Full-TAS", StringComparison.Ordinal);
             return new Score
             {
                 Progress = r.Progress,
@@ -304,7 +304,7 @@ namespace IGTAP.EngineSim.Cli
             });
             var route = new Route { Inputs = g.Inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
             int end = (int)Math.Min(_eval.Engine.RunTicks, g.Inputs.Count - 1);
-            bool died = r.EndReason != null && r.EndReason != "Solver run ended" && !r.EndReason.StartsWith("Full-TAS", StringComparison.Ordinal);
+            bool died = r.EndReason != null && IGTAPTasMod.FullTasTracker.Unexplained(r.EndReason) != "Solver run ended" && !r.EndReason.StartsWith("Full-TAS", StringComparison.Ordinal);
             int fail = died || nearestAt < 0 ? end : (int)Math.Min(nearestAt, g.Inputs.Count - 1);
             if (left >= 0 && left < fail)
                 return (route, (int)left, $"leaves the old route's path on physics tick {leftTick} (then {r.EndReason})");

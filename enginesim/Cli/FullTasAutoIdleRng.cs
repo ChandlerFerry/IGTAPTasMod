@@ -37,8 +37,12 @@ namespace IGTAP.EngineSim.Cli
         /// them too. Returns the whole run replayed, or null when a goal is lost. <paramref name="goals"/>: the goal count of the
         /// simulation's goals when they aren't the run's (a goals edit's).
         /// </summary>
-        Route Retune(Simulation sim, SimSnapshot origin, Route b, List<InputTick> inputs, int start, int goals = 0)
+        Route Retune(Simulation sim, SimSnapshot origin, Route b, List<InputTick> inputs, int start, int goals = 0) => Retune(sim, origin, b, inputs, start, out _, goals);
+
+        /// <param name="lost">When null is returned: which goal is lost, at which wait, what was tried, and why the best try ended.</param>
+        Route Retune(Simulation sim, SimSnapshot origin, Route b, List<InputTick> inputs, int start, out string lost, int goals = 0)
         {
+            lost = null;
             int count = goals > 0 ? goals : _goals;
             inputs = new List<InputTick>(inputs);
             int shift = inputs.Count - b.Inputs.Count;
@@ -55,6 +59,8 @@ namespace IGTAP.EngineSim.Cli
             int extra = 0;
             for (int k = 0; k < sites.Count && snap != null;)
             {
+                // The try that reached the most goals (n idle ticks cut, n < 0: added), for the message when the site fails.
+                (int n, int progress, string reason) best = (0, -1, null);
                 int g = sites[k], limit = g == count ? count : sites[Math.Min(k + 1 + extra, sites.Count - 1)];
                 int reset = g < count && LastReset(g) + shift > at ? LastReset(g) + shift : -1, idle = 0;
                 if (reset > 0) while (reset - idle - 1 >= at && Idle(inputs[reset - idle - 1])) idle++;
@@ -72,6 +78,7 @@ namespace IGTAP.EngineSim.Cli
                     sim.Goals.Limit = limit;
                     // Extra ticks: a run cut where its inputs end can stop short of a goal its inputs reach (a reward's).
                     RunResult rr = sim.Run(list, null, null);
+                    if (rr.Progress > best.progress) best = (n, rr.Progress, rr.EndReason);
                     return rr.Progress >= limit && (rr.GoalInputTicks[limit - 1] < at + list.Count || stop == inputs.Count) ? (rr.GoalInputTicks[limit - 1], rr.GoalPhysicsTicks[limit - 1]) : (-1, -1);
                 }
                 int pick = 0;
@@ -84,7 +91,19 @@ namespace IGTAP.EngineSim.Cli
                 for (int m = 1; reset > 0 && m <= RetuneCap && touch < 0; m++) (pick, (touch, soonest)) = (-m, Reach(-m));
                 if (touch < 0)
                 {
-                    if (before == null || before.Value.extra >= MaxMerge) return null;
+                    if (before == null || before.Value.extra >= MaxMerge)
+                    {
+                        int p = Math.Min(best.progress, limit - 1);
+                        string why = StrayBox(best.reason) != null ? "stray buy: needs a goal fit (move, insert or drop a goal), waits can't drop it"
+                            : reset <= 0 ? $"no wait site before this goal (no quick restart since input {at}): only a wait at an earlier site can fix it"
+                            : p > g && LastReset(p) <= 0 ? $"no wait site before this goal (its walk has no quick restart since goal {p}): only a wait at an earlier site can fix it, and this one needs more than {RetuneCap} idle ticks"
+                            : $"needs more than RetuneCap ({RetuneCap}) idle ticks here";
+                        lost = $"goal {p + 1} ({sim.Goals.Goals[p].label}) is lost at "
+                            + (reset > 0 ? $"the wait before the quick restart at input {reset} (goal {g + 1}'s site; {idle} idle ticks cut to {RetuneCap} added tried"
+                                : $"goal {g + 1}'s site (no wait to retime: the route as it is tried") + (extra > 0 ? $"; through goal {limit}, {extra} later site(s) taken back" : "")
+                            + $"); the try reaching the most ({(best.n < 0 ? -best.n + " added" : best.n + " cut")}) reaches {best.progress} goals: {best.reason}; {why}";
+                        return null;
+                    }
                     (k, at, snap, inputs, shift, extra) = before.Value;
                     extra++;
                     before = null;
@@ -102,7 +121,11 @@ namespace IGTAP.EngineSim.Cli
                 k += 1 + extra;
                 extra = 0;
             }
-            if (snap == null) return null;
+            if (snap == null)
+            {
+                lost = $"the replay to input {at} (the last goal touched) ends early";
+                return null;
+            }
             sim.SetStart(origin, 0);
             sim.Goals.Limit = count;
             RunResult whole = sim.Run(inputs, null, null, 1000000);
@@ -622,8 +645,8 @@ namespace IGTAP.EngineSim.Cli
                 }
                 var old = new Route { Inputs = best.Inputs, Progress = lines.Count, GoalInput = input, GoalPhysics = physics };
                 double r0 = CpuSeconds();
-                Route fixedRun = Retune(_eval, _origin, old, best.Inputs, 0);
-                Log($"rng study: {Path.GetFileName(baseCheck)}'s route re-timed on this build: {(fixedRun == null ? "a goal is lost" : Describe(fixedRun))} (as it is: {Describe(best)}, {best.Progress}/{_goals} goals) in {CpuSeconds() - r0:0} CPU s");
+                Route fixedRun = Retune(_eval, _origin, old, best.Inputs, 0, out string retuneLost);
+                Log($"rng study: {Path.GetFileName(baseCheck)}'s route re-timed on this build: {(fixedRun == null ? retuneLost : Describe(fixedRun))} (as it is: {Describe(best)}, {best.Progress}/{_goals} goals) in {CpuSeconds() - r0:0} CPU s");
                 if (fixedRun == null || fixedRun.Progress < _goals) return;
                 Commit(fixedRun, "re-timed on this build");
                 best = fixedRun;
@@ -712,8 +735,8 @@ namespace IGTAP.EngineSim.Cli
                 if (w != null && Ahead(w, _best)) Commit(w, $"stand window at goal {k}");
             }
             double c0 = CpuSeconds();
-            Route re = Retune(_eval, _origin, best, best.Inputs, 0);
-            Log($"rng study: the best re-timed: {(re == null ? "a goal is lost" : Describe(re))} against {Describe(best)} in {CpuSeconds() - c0:0.0} CPU s");
+            Route re = Retune(_eval, _origin, best, best.Inputs, 0, out string reLost);
+            Log($"rng study: the best re-timed: {(re == null ? reLost : Describe(re))} against {Describe(best)} in {CpuSeconds() - c0:0.0} CPU s");
         }
     }
 }

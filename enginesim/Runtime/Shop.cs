@@ -180,7 +180,13 @@ namespace IGTAP.EngineSim
             if (!(Cooldown(box) <= 0f)) return;
             Cooldown(box) = 0.2f;
             int currency = (int)Currency(box);
-            if (!(Available(currency) >= box.upgradeCost && box.isActive)) return;
+            if (!(Available(currency) >= box.upgradeCost && box.isActive))
+            {
+                if (_sim.Goals != null && _sim.Engine.IsRunning)
+                    _sim.Goals.TouchedShort(_paths[box], _ids[box], _sim.InputBase + _sim.Engine.RunTicks, Available(currency), box.upgradeCost,
+                        ((globalStats.Currencies)currency).ToString(), box.isActive);
+                return;
+            }
             if (box.upgrade == localUpgrades.localUpgradeSet.GLOBAL && box.globalUpgrade == globalStats.globalUpgradeSet.spawnNewAtom && !AtomPrestige(box, currency)) return;
             if (!(box.buyMax && !box.neverBuyMax))
             {
