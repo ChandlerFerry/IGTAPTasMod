@@ -1162,8 +1162,19 @@ namespace IGTAP.EngineSim
 
         static string WorldOf(string trace) { return Path.ChangeExtension(trace, null) + ".world.json"; }
 
-        // The demo's category start: its start trace (start-<course>-<caps>.json), else a route captured from that same
-        // quick restart (route-<course>-<caps>-*.json); a full-tas demo plays from its run's fresh start.
+        /// <summary>A course target's category start: its start trace (start-c&lt;target&gt;-&lt;caps&gt;.json), else the Optimize
+        /// tab's capture of the same start (optimize-c&lt;target&gt;-&lt;caps&gt;.json); null when neither is there.</summary>
+        public static string CategoryStart(string tracesDir, string target, string capsId)
+        {
+            foreach (string prefix in new[] { "start-c", "optimize-c" })
+            {
+                string trace = Path.Combine(tracesDir, prefix + target + "-" + capsId + ".json");
+                if (File.Exists(trace)) return trace;
+            }
+            return null;
+        }
+
+        // The demo's category start (CategoryStart); a full-tas demo plays from its run's fresh start.
         static string StartTrace(string tracesDir, string start)
         {
             string course = null, caps = null;
@@ -1184,17 +1195,7 @@ namespace IGTAP.EngineSim
                     caps = start.Substring(under + 1).Replace("_", "").ToLowerInvariant();
                 }
             }
-            if (course != null)
-            {
-                string exact = Path.Combine(tracesDir, "start-c" + course + "-" + caps + ".json");
-                if (File.Exists(exact)) return exact;
-                string route = Directory.Exists(tracesDir)
-                    ? Directory.GetFiles(tracesDir, "route-c" + course + "-" + caps + "-*.json")
-                        .Where(f => !f.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase))
-                        .OrderBy(f => f, StringComparer.Ordinal).FirstOrDefault()
-                    : null;
-                if (route != null) return route;
-            }
+            if (course != null && CategoryStart(tracesDir, course, caps) is string found) return found;
             throw new InvalidDataException("no start trace for " + start);
         }
 

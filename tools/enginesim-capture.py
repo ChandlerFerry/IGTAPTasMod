@@ -5,6 +5,8 @@ BepInEx/config/IGTAPTasMod/enginesim/<name>.json (full state after every tick) a
 that run saw it).
 
   enginesim-capture.py routes             every "<course>_<CAT> <time>" and "<course>_<CAT> farm <time>" route in the studio library
+                                          (route-c<C>-<CAT>[-farm]-<time>.json: turbo ground truth for `replay`'s fidelity
+                                          check; the searches and grafts start from start-c/optimize-c traces, never these)
   enginesim-capture.py random [N]         N random-input runs per course/category (fidelity corpus)
   enginesim-capture.py start C CAT        just the start state (empty inputs) for course C, category CAT
   enginesim-capture.py starts [C ...]     every start trace already captured (start-c<C>-<CAT>.json) again, or just course C's

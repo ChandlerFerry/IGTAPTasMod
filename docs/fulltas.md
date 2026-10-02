@@ -869,10 +869,11 @@ straight down onto the floor, each jumped out of), and with the omnidirectional 
 
 `TechGrafts.Load` adds the saved routes' windows to the tech demos' (`enginesim\Runtime\RouteGrafts.cs`, one hook where
 it returns; `routegrafts <traces dir>` lists them). Every `routes.json` route named `<target>_<CAT>[ farm] <time>`
-replays from its start trace (`start-c<target>-<caps>.json`, else a `route-c<target>-<caps>-*.json`, loaded canonical as a
-solve does); one that doesn't reach its finish offline gives nothing. Each contact (`ContactLog`, the solver's own
-detection) gives the window −10..+30 around it (`TechGrafts.Cut`'s: travel without a button dropped), scored by its net
-displacement per physics tick from the contact to the window's end. A window's start key is what the run brings: the
+replays from its category start (`start-c<target>-<caps>.json`, else the Optimize tab's `optimize-c<target>-<caps>.json`:
+`TechGrafts.CategoryStart`, loaded canonical as a solve does); one that doesn't reach its finish offline gives nothing.
+Each contact (`ContactLog`, the solver's own detection) gives the window −10..+30 around it (`TechGrafts.Cut`'s: travel
+without a button dropped), scored by its net displacement per physics tick from the contact to the window's end. A
+window's start key is what the run brings: the
 unlocks the window spends, the contact kind, the facing, |vx| in 200 u/s bands and rising/level/falling, the dashes and
 air jumps left. Identical windows merge (the faster kept); per key those at or above the key's median stay, the fastest
 3, a sided one with its mirror. A window needs what it spends (its dashes and air jumps, a wall jump: a press on a wall,

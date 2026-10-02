@@ -63,8 +63,8 @@ The Player carries two boxes; every start and end gate is a trigger on layer 0 (
   moves it back out) enters and exits in that step: an end gate finishes there.
 - A write that takes the hurtbox out before a step, with the step moving it back in, ends the touch and begins a new one
   (Enter again) when the gate sits on a non-static body. The start gates of Courses 1 and 3–10 sit on dynamic bodies
-  (`Start`); Course 2's has none and its touch never lapses (the world of `route-c1-none-1.40`). Courses 11–15 use
-  Courses 1–5's gates.
+  (`Start`); Course 2's has none and its touch never lapses (the world of `archive\route-traces\route-c1-none-1.40`).
+  Courses 11–15 use Courses 1–5's gates.
 - Rendered frames never check gates. A frame matters only through the writes below.
 
 ## Position writes and the interpolation lag

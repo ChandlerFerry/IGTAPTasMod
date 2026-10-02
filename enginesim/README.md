@@ -64,8 +64,11 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   nmg|human-major|human-nmg [--tag T]` solves one of the run's other bests, ranked by what it uses (its own run file
   `fulltas/<run>.<class>[.<T>].json` and human candidates: [docs/fulltas.md](../docs/fulltas.md#classes)).
 
-`tools/enginesim-capture.py routes|random|start|route` captures traces; `tools/enginesim-redeploy.py` rebuilds and
-reloads the plugin.
+`tools/enginesim-capture.py routes|random|start|starts|route` captures traces (`routes`: every saved route as turbo
+played it, `route-c<C>-<CAT>-<time>.json`, ground truth for `replay` only; the searches, grafts and macro miners start a
+course route from its category start, `start-c<C>-<CAT>.json`, else the Optimize tab's `optimize-c<C>-<CAT>.json`:
+`TechGrafts.CategoryStart`). The route traces captured before the continuous grid are in `archive\route-traces\`.
+`tools/enginesim-redeploy.py` rebuilds and reloads the plugin.
 
 ## Use
 
@@ -78,13 +81,13 @@ dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release
 $exe = "enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe"
 $traces = "C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer\BepInEx\config\IGTAPTasMod\enginesim"
 & $exe replay $traces\rand-*.json $traces\route-*.json   # fidelity: first tick where offline != turbo
-& $exe bench  $traces\route-c1-none-4.14.json            # single-core speed
+& $exe bench  $traces\rand-c1-none-0.json                # single-core speed
 & $exe determinism $traces\fulltas-VMAN.json route.json  # a snapshot's runs depend on nothing else (orders, processes)
-& $exe solve  $traces\route-c1-none-4.14.json --threads 16 --minutes 60 --stall-minutes 5
-& $exe path   $traces\route-c1-none-4.14.json route.json  # where the course timer starts/stops along a route
+& $exe solve  $traces\start-c1-none.json --threads 16 --minutes 60 --stall-minutes 5
+& $exe path   $traces\start-c1-none.json route.json      # where the course timer starts/stops along a route
 & $exe humanize $traces\start-c1-none.json $traces\offline-best\1_none-1.66.json  # same-time, easier version + slack report
 & $exe suggest $traces\optimize-c1-none.json route.json --until 60  # edits of a hand TAS's first 60 ticks that get there sooner
-& $exe probe  $traces\route-c1-wjds-1.06.json probe.json --out result.json  # one start state, branches of inputs, every tick
+& $exe probe  $traces\start-c1-wjds.json probe.json --out result.json  # one start state, branches of inputs, every tick
 ```
 
 `solve` loads the trace's world and start state on every thread, seeds with the trace's inputs (plus `--seed` traces),
@@ -470,7 +473,7 @@ finish ended.
 ### Course --auto
 
 ```powershell
-& $exe solve $traces\route-c4-wjdsdj-13.28.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
+& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
 ```
 
 `--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
@@ -1318,7 +1321,7 @@ untimed, and "timed" is the timer's share (`max(0, P − T)`, T the physics tick
 Course 1 `NONE` (2026-10-01, `start-c1-none.json`). On today's engine (the continuous frame grid) the judged
 `1_none-1.40.json` dies at action 52 (115 ticks) and its human versions don't finish; `1_none-1.42.json` finishes in 1.42 s
 (203 physics ticks), `1_none-1.44.json` in 1.44 s. The 1.42 has three anchors: the start, a landing at input 43 and the
-finish at 203, so two segments. Against the captured 1.40 (`route-c1-none-1.40.json`, its states as turbo played it;
+finish at 203, so two segments. Against the captured 1.40 (`archive\route-traces\route-c1-none-1.40.json`, its states as turbo played it;
 its inputs no longer finish here) `split` puts the lost tick in segment 1 (land at 43 → finish), and at its timer start:
 both land at 43 in the same state and cross the start trigger at x 2542 on the way up, the 1.42 at physics tick 132 (y
 −121.8, vy 454), the 1.40 at 140 (y −116.3, vy 427). The 1.42 finishes 7 physics ticks sooner (203 against 210) but

@@ -165,7 +165,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>The trace a route file replays over: fulltas-&lt;run&gt;.json for a Full-TAS route (its "fulltas" run name or
-        /// its "name"), start-c&lt;course&gt;-&lt;caps&gt;.json (else a route-c&lt;course&gt;-&lt;caps&gt;-*.json) for a course route.</summary>
+        /// its "name"), its category start (<see cref="TechGrafts.CategoryStart"/>) for a course route.</summary>
         public static string TraceOf(string routePath, string tracesDir)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routePath), new JsonDocumentOptions { MaxDepth = 256 });
@@ -175,13 +175,7 @@ namespace IGTAP.EngineSim.Cli
                 if (run == null && root.TryGetProperty(key, out JsonElement r) && r.ValueKind == JsonValueKind.String) run = r.GetString();
             if (!string.IsNullOrEmpty(run)) return Path.Combine(tracesDir, "fulltas-" + run + ".json");
             if (root.TryGetProperty("course", out JsonElement c) && root.TryGetProperty("capabilities", out JsonElement caps))
-            {
-                string course = c.GetRawText(), id = caps.GetString().Replace("_", "").ToLowerInvariant();
-                string exact = Path.Combine(tracesDir, "start-c" + course + "-" + id + ".json");
-                if (File.Exists(exact)) return exact;
-                string[] found = Directory.GetFiles(tracesDir, "route-c" + course + "-" + id + "-*.json");
-                return found.Length == 0 ? null : found.OrderBy(f => f, StringComparer.Ordinal).First();
-            }
+                return TechGrafts.CategoryStart(tracesDir, c.GetRawText(), caps.GetString().Replace("_", "").ToLowerInvariant());
             return null;
         }
 

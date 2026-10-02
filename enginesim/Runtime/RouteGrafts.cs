@@ -12,8 +12,8 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim
 {
     /// <summary>Route-corpus grafts: the saved category, farm, bonus and transition routes (routes.json, <see cref="RouteName"/>)
-    /// mined like the tech demos. Each route replays offline from its start trace (start-c&lt;target&gt;-&lt;caps&gt;.json, else a
-    /// route-c&lt;target&gt;-&lt;caps&gt;-*.json captured from the same quick restart) with the solver's contact detection, and the
+    /// mined like the tech demos. Each route replays offline from its category start (<see cref="CategoryStart"/>: start-c&lt;target&gt;-&lt;caps&gt;.json,
+    /// else optimize-c&lt;target&gt;-&lt;caps&gt;.json) with the solver's contact detection, and the
     /// window around each contact (<see cref="WindowBefore"/>..<see cref="WindowAfter"/>, travel without a button dropped, as
     /// <see cref="Cut"/>) is scored by what it did: its net displacement per physics tick from the contact to its end. Windows
     /// are keyed by what the run brings to the contact (the unlocks the window spends, the contact kind, the facing, the
@@ -59,7 +59,7 @@ namespace IGTAP.EngineSim
                 if (!m.Success || !Caps.TryParse(m.Groups["cat"].Value, out Caps caps) || !names.Add(macro.name)) continue;
                 string target = m.Groups["target"].Value;
                 var source = new DemoSource { Tech = new TechDef { id = macro.name, requires = caps.Label, start = target }, Macro = macro };
-                source.Trace = RouteTrace(tracesDir, target, caps.Id);
+                source.Trace = CategoryStart(tracesDir, target, caps.Id);
                 if (source.Trace != null)
                 {
                     source.KeyFiles.Add(source.Trace);
@@ -95,18 +95,6 @@ namespace IGTAP.EngineSim
             }
             catch (Exception ex) { Console.Error.WriteLine("route grafts: cache not written (" + ex.Message + ")"); }
             return mined;
-        }
-
-        // The route's start: its target's start trace in this category, else a route captured from that same quick restart.
-        static string RouteTrace(string tracesDir, string target, string capsId)
-        {
-            string exact = Path.Combine(tracesDir, "start-c" + target + "-" + capsId + ".json");
-            if (File.Exists(exact)) return exact;
-            return Directory.Exists(tracesDir)
-                ? Directory.GetFiles(tracesDir, "route-c" + target + "-" + capsId + "-*.json")
-                    .Where(f => !f.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(f => f, StringComparer.Ordinal).FirstOrDefault()
-                : null;
         }
 
         /// <summary>One window of a route: its pattern, its start key and its speed (u per physics tick, contact to end).</summary>
