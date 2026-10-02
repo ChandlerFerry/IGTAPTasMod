@@ -373,6 +373,14 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   (1670 u/s, not the diagonal's 1181), the wall touch refills the dash, and the jump is the wall bounce (507 u high).
 - **Wall dash**: a dash from a wall cling goes away from the wall with x set to ±1 after the normalize, so a diagonal
   one moves at (1670, 1181) u/s, 2045 u/s in all. Down-diagonal onto a floor, it becomes a wavedash off the wall.
+- **Up-diagonal turned dash climb** (`WJ_DS_OM`, tech demo `updiag-wall-climb`): from a cling, press dash with the stick
+  at rest and push up and toward the wall in the dash freeze (`turnX`/`turnY` (±1, 1), or the analog lean (±0.35, 1)).
+  The dash's first step flips away from the wall as any dash from a cling does, the freeze turn aims it back into the
+  wall, and the wall turns it straight up at 1670 u/s while the wall branch (open while `dashActive`, Movement.cs 1006)
+  refills the dash on a Ground face: 266 u up (the lean 278), a cling, and the next turned dash, 13 ticks a dash, up any
+  Ground wall with one dash. A dash pressed up or up-diagonal from the cling flips away instead. Unlike the inwall
+  wallbounce it uses no step-up, so the frame rate doesn't change it, and (±1, 1) needs no analog stick. A Moss face
+  gives no dash back, and without the wall jump unlock there is no refill, no turn upward and no cling.
 - **Freeze aim** (`WJ_DS_DJ_BS_ORB_ZIP_OM`, Vman): press dash with the stick at rest, then during the dash freeze push the stick
   straight up (or down) with a slight lean, sideways 0.3-0.4 (`turnX`/`turnY`, e.g. (0.35, 1)). The stick
   that turns a waiting dash (`Movement.Update`, 821-833) skips the press's snap to straight up, so `dashDirection` is

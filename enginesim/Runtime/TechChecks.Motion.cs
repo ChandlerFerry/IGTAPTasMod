@@ -262,5 +262,33 @@ namespace IGTAP.EngineSim
             }
             return -1;
         }
+
+        /// <summary>
+        /// Up-diagonal turned dash climb: a dash pressed from a wall cling, which flips away from the wall on its first step
+        /// (Velocity.x away) while the freeze turn already aimed it back up-diagonally into the wall (dashDirection.x against that
+        /// Velocity.x, y up), then given back while it slides up the face (airDashesLeft from 0 to more on a later step of the same
+        /// dash, rising, in the air: FixedUpdate's wall branch, open while dashActive, refilling on a Ground-tagged wall). An
+        /// up-diagonal dash into a wall from the air isn't flipped; a dash from the cling left aimed away gets no refill. Reported on
+        /// the refill's step.
+        /// </summary>
+        [TechCheck("updiag-wall-climb")]
+        static int MotionUpdiagWallClimb(TechSteps run, int from, int to)
+        {
+            List<TechStep> steps = run.Steps;
+            bool turned = false;
+            for (int i = 0; i <= to; i++)
+            {
+                MoveState pre = i > 0 ? steps[i - 1].After : steps[0].Calls.Count > 0 ? steps[0].Calls[0].State : steps[0].After;
+                MoveState now = steps[i].After;
+                if (!now.Dash) { turned = false; continue; }
+                if (!pre.Dash || steps[i].DashPress)
+                {
+                    turned = pre.Wall && now.DashY > 0f && now.DashX != 0f && now.Vx != 0f && Math.Sign(now.DashX) != Math.Sign(now.Vx);
+                    continue;
+                }
+                if (i >= from && turned && pre.AirDashes == 0 && now.AirDashes > 0 && now.Vy > 0f && !now.Ground) return i;
+            }
+            return -1;
+        }
     }
 }

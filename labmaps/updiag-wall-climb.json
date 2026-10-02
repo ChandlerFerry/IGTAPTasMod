@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "updiag-wall-climb",
+  "name": "Up-diagonal turned dash climb: turned dashes from a cling slide up the wall and get the dash back",
+  "tech": "updiag-wall-climb",
+  "techNote": "A Ground wall (right face x 0, top y 1600) over a floor, the finish box on its top. The start is inwall-wallbounce's cling on its face at y 95 (stick toward the wall). Dash with the stick at rest and push up and toward the wall in the dash freeze (turnX -1, turnY 1): from a cling the dash flips away from the wall (its first tick goes 13.4 u out), the freeze turn aims it back up-diagonally into the wall, and the wall turns it straight up at full dash speed (1670 u/s) while FixedUpdate's wall branch, open while dashActive (Movement.cs 1006), calls touchedSolidGround on the Ground-tagged face and gives the air dash back. It slides 266.4 u up and clings again with the dash in hand; two rest inputs later the next turned dash goes. Six dashes, 13 ticks apart, carry the dot over the top at 1600: finish on tick 91. No step-up is involved, so the climb doesn't depend on the frame rate. A dash pressed up or up-diagonal from the cling flips away from the wall instead, and without the wall jump unlock the wall branch is off: no refill, no turn upward, no cling.",
+  "category": "WJ_DS_BS_ZIP_OM",
+  "anchor": [
+    -1333,
+    -10585
+  ],
+  "shapes": [
+    {
+      "kind": "box",
+      "at": [
+        -200.0,
+        780.0
+      ],
+      "size": [
+        400,
+        1640
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    },
+    {
+      "kind": "box",
+      "at": [
+        400.0,
+        -20.0
+      ],
+      "size": [
+        800,
+        40
+      ],
+      "layer": "Ground",
+      "tag": "Ground"
+    }
+  ],
+  "start": {
+    "x": 25.5,
+    "y": 98.5,
+    "vx": -460,
+    "vy": -177,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "dashUnlocked": true,
+      "omniDashUnlocked": true,
+      "airDashesLeft": 1,
+      "maxAirDashes": 1,
+      "airJumpsLeft": 0,
+      "maxAirJumps": 0,
+      "doubleJumpUnlocked": false
+    }
+  },
+  "finish": [
+    -150,
+    1650,
+    100,
+    100
+  ],
+  "maxTicks": 160
+}
