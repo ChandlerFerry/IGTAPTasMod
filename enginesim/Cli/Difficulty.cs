@@ -58,8 +58,9 @@ namespace IGTAP.EngineSim.Cli
             public bool Raw;
             /// <summary>--open: the open-loop test (<see cref="Open"/>), not the closed-loop one.</summary>
             public bool Open;
-            /// <summary>What seeds the samples: the measured inputs (<see cref="Seed"/>), so a route measures alike under any file name.</summary>
-            public const string SeedKind = "inputs";
+            /// <summary>What seeds the samples: the route's canonical inputs (<see cref="Canonical"/>, then <see cref="Seed"/>), so a route
+            /// measures alike under any file name and whatever follows its end; a sidecar of another kind is measured again.</summary>
+            public const string SeedKind = "canonical";
             public object Json => new { samples = Samples, sigma = Sigma, chain = Chain, pos = Pos, vel = Vel, raw = Raw, open = Open, seed = SeedKind };
         }
 

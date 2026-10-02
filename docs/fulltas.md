@@ -567,7 +567,7 @@ inputs past the last unchanged goal the same way.
 - **Measure difficulty** (`POST /api/fulltas/difficulty {name}`) runs the engine's `difficulty <trace> --candidates
   <traces>\fulltas\candidates\<run>\ --threads <cores − 4>` from the run's current trace (refused without one: Capture
   start), a process of its own beside any solve. Each candidate's measurement goes to the folder's `difficulty\<file>`
-  (one already measured with the same parameters and seeding, `params.seed` `inputs`, is skipped) and shows as its row's
+  (one already measured with the same parameters and seeding, `params.seed` `canonical`, is skipped) and shows as its row's
   `difficulty` (static `fullTas.runs[].candidates[].difficulty`, the sidecar as written, null until measured; the static state follows the
   folder). The live `fullTas.difficulty` is `{name, running, done, of}` from the engine's `@difficulty {"type":
   "progress", "done", "of", "file"}` lines (`of` null until the first; the rest goes to the log); it stays after the
@@ -750,7 +750,7 @@ product of its segments'. The human classes' score adds its weight × ln(attempt
 - **JSON** (`--json` one line; `--candidates` writes it to `<dir>\difficulty\<file>`, kept while newer than its candidate
   and made with the same parameters and seeding, with an `@difficulty {"type": "progress", "done", "of", "file"}` line after each and
   a failed candidate on stderr): `{route, finished, goals (reached), live, human (humanize's version played), params:
-  {samples, sigma, chain, pos, vel, raw, open, seed ("inputs")}, P, attempts (null at P 0), priced, bottlenecks, chains,
+  {samples, sigma, chain, pos, vel, raw, open, seed ("canonical")}, P, attempts (null at P 0), priced, bottlenecks, chains,
   tightest: {segment, p}, spacing (input ticks between consecutive bottlenecks), segments: [{index, from, to, fromPhysics, toPhysics, anchor,
   next, events, samples, p, bottleneck, chain (its chainList index or null), techs (nmg and major techs seen there),
   grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, works, p}]}`; `from`/`to`
