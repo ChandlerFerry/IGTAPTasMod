@@ -27,11 +27,13 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   `course` (and `gameCourse`, the game's `courseNumber`, when they differ: Courses 11–15 are Courses 1–5 overgrown), a bonus's
   reward box `finish`, and for a transition `transition: true` (timed in physics ticks, `MacroEngine.PhysicsTicks`)
   with an end box `finish` or `finishStart` (the course whose start gate ends it).
-- `POST /api/enginesim/submit {course, capabilities; ticks}` — turbo replay of an offline candidate; saved as the
-  category's record route (`<course>_<CAPS> <time>`) when it finishes faster than the current best, or as fast in fewer
-  physics ticks from the run start (`runTicks`; the saved route is replayed for its own). On a course it is also saved as
-  the farm route (`<course>_<CAPS> farm <runTicks × 0.02>`) when it takes fewer `runTicks` than the farm route
-  (`farmSaved`). The reply has both times. Runs are judged from the category's cached start state, but a run that would
+- `POST /api/enginesim/submit {course, capabilities; ticks | routeId; loopFrom?, loopLaps?}` — turbo replay of an
+  offline candidate; saved as the category's record route (`<course>_<CAPS> <time>`) when it finishes faster than the
+  current best, or as fast in fewer physics ticks from the run start (`runTicks`; the saved route is replayed for its
+  own). With `loopFrom` (or a saved farm route's `routeId`) it is a farm loop instead (README `### Rules` 30): the lead
+  and its loop played four times through every finish (`EvaluateLoop`), saved as the farm route (`<course>_<CAPS> farm
+  <lap>`) when it repeats exactly and its lap beats the farm route's (`farmSaved`, `loop`). Runs are judged from the
+  category's cached start state, but a run that would
   be saved never is from the cache: the cached start is dropped and the reply is a 409 ("loading; retry"), and the retry
   captures the start from a quick restart and judges the run again from it before `SaveSolverRoute` replays it.
   A start is captured only with the player parked at the course's reset point in the course's zone, the zone settled
@@ -92,11 +94,12 @@ exactly as fast (or rejoins the best's state) replaces it (`drifts` in the progr
 several mutations away, each alone no faster. A best is the fastest course time; at the same time, the fewest
 physics ticks from the run start (`runTicks`), which shortens a flying start's setup before its last start-gate
 crossing (off the timer, but a player still sits through it). The search never finishes a run slower on the course
-timer than its best, so it doesn't search for farm routes: those come from the judged candidates. With the game closed
-the best stays on disk; the plugin judges every waiting `offline-best\` file that beats or ties the saved route (its
-category, then the course's other categories), and the group's file with the fewest `runTicks` when that beats the farm
-route, as soon as the game is in the world and idle (a studio Optimize run holds the queue only while it starts
-each target, and its running target's own files until that `solve` ends), and moves them to `offline-best\judged\`.
+timer than its best, so it doesn't search for farm routes: those are farm loops, from `solve --auto --farm` (below).
+With the game closed the best stays on disk; the plugin judges every waiting `offline-best\` file that beats or ties
+the saved route (its category, then the course's other categories), and the group's fastest farm loop
+(`<course>_<caps>-loop-<lap>.json`) when its lap beats the farm route's, as soon as the game is in the world and idle (a
+studio Optimize run holds the queue only while it starts each target, and its running target's own files until that
+`solve` ends), and moves them to `offline-best\judged\`.
 
 Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
 time and input tick of its first arrival in each map cell. An explore run that reaches one of those cells at least a
@@ -481,8 +484,25 @@ momentum carries through them, and a window is scored on its arrival.
   (`FullTas.TimerGoal`; `Route.Last` compares that, `Route.End` is the finish's tick from the quick restart). A window is
   scored on its arrival's physics tick, which is the timer's only once the gate crossing is in its prefix, so in record
   timing the loop's windows start after the gate (`--focus` defaults to the goals after `start:`; combine still splices
-  the run-up). `--farm`: physics ticks from the quick restart to the finish. A bonus or transition is timed from its
-  start either way.
+  the run-up). `--farm` on a gated course: the farm loop (below). A bonus or transition is timed from its start either
+  way.
+- **Farm loop** (`Cli\CourseLoop.cs`, README `### Rules` 30). The farm is the course's steady-state loop: a lead (the
+  course start through its last lead finish) and the loop (the laps after it through the last one's finish), timed from
+  the lead's last finish in live time (`TimerGoal` that finish, `FullTas.LoopTiming`: held frames count from it). The
+  goals: a `finish:<course>` per lead lap, then per loop lap the first lap's waypoints it passes in order and its finish,
+  under a goal tracker so a finish doesn't end the run (`LoopSim`). `MeasureLoop` plays the lead and the loop 4 times: it
+  repeats exactly when every loop finishes on its own last input and the last two cycles are equal; the farm time is a
+  lap's share of that cycle. The start (`StartLoop`): every candidate cut at its finishes and tried as a loop of its last
+  1, 2 or 3 laps (the fewest that repeats), the loops before the steady one moved into the lead. With none, loop laps
+  are searched one after another from the fastest first lap (`SearchLoopLap`: the course solve from the state after the
+  lead, `UseGoals(null)` so the next finish ends a run, seeded with the first lap after a quick restart and a few idle
+  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each; after each, the loops
+  ending with the newest lap are checked, so laps whose carried state alternates (a buffered jump carried through one
+  restart and not the next) still make a loop. A loop the search found is written at once; every kept best that
+  repeats exactly is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`, `loopTicks`,
+  `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`, and one that doesn't is logged
+  and not written. Course 1 `NONE`, 2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart carries its last jump
+  press: the next lap starts in the air and dies); the lap search found a loop of 2 laps, 225 ticks, 2.2500 s a lap.
 - **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
   and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
   else it stops.
@@ -496,14 +516,15 @@ momentum carries through them, and a window is scored on its arrival.
   waypoints; picking one (`--optional`) runs that direction only, as does `--focus` or `--waypoints-out`. Courses 4 and 5
   go forwards only.
 - **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
-  archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept best is played
-  again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve` writes it
-  (the game timer's time, `runTicks`), so the plugin judges it for the record and the farm as any solve's; the log line
-  is solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation
-  doesn't confirm.
+  archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept record best
+  is played again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve`
+  writes it (the game timer's time, `runTicks`), so the plugin judges it for the record as any solve's; the log line is
+  solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation doesn't
+  confirm. A farm loop's are the loop files above.
 - **Waypoints.** `waypoints {json}` on stdout at every kept best (goals, rects, splits, `timerGoal`, record and farm
-  ticks, and on a gated course `bus`, its near misses); `--waypoints-out FILE` writes it and exits without searching (the
-  studio's list). `--focus a-b` numbers goals in that list.
+  ticks, and on a gated course `bus`, its near misses; a farm loop's has `loop`, its steady-state check, and its loop
+  finish's `bus`); `--waypoints-out FILE` writes it and exits without searching (the studio's list; a farm target
+  without a saved loop has none yet). `--focus a-b` numbers goals in that list.
 - **Near misses (`bus`).** The route replayed on the plain course simulation measures, after every physics step,
   `Collider2D.Distance` from the player's hurtbox (the 40×54 box; the body box excludes the gates' Default layer) to the
   course's start gates and finishing end gates (the gap, negative while they overlap; a trigger's touch is tested there,
@@ -514,11 +535,12 @@ momentum carries through them, and a window is scored on its arrival.
   along the route must be the tick before to finish a tick sooner. A bonus or transition has none.
 - **Studio.** The Optimize tab's **Improve** runs this (`Solver.cs` `CourseSolveArgs`): the Improve a course panel
   improves one target, record or farm (**Timing**), and the Improve many matrix queues the picked cells, one course and
-  category each (a picked cell is highlighted): each runs Improve on the record, and every candidate is judged for the
-  farm time too, so one job improves both. A cell's ↗ opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
+  category each (a picked cell is highlighted): each runs Improve on the record, then (a course) on its farm loop. A
+  cell's ↗ opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
   capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
-  while that target improves) with each one's split, and **Show map** draws them numbered. Under the selection line,
-  **Near misses** shows the waypoints' `bus` (record: start gate and finish; farm: the finish). Click a waypoint
+  while that target improves) with each one's split, and **Show map** draws them numbered. A farm target shows its
+  loop (a lap's time, its laps, the loop it repeats from) and its lead's finishes first. Under the selection line,
+  **Near misses** shows the waypoints' `bus` (record: start gate and finish; farm: the loop's finish). Click a waypoint
   (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its
   category or a narrower one runs the plain `solve` first (**Solve**); so does an Improve whose routes all come from a
   narrower category and none finishes this one (an added `OM` or `ORB` changes what the same inputs do: Course 10's

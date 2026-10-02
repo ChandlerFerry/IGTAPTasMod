@@ -22,17 +22,19 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   renamed, no alias); `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only on the targets with refill orbs in reach and
   `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19). Bonuses 17–21
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
-- Farm route (courses only; farm this course): `<course>_<CAT> farm <time>`, physics ticks × 0.02 s from the route
-  start (the quick restart) to the finish. A bonus or transition is timed that way already, so its record is its farm.
+- Farm route (courses only; farm this course): `<course>_<CAT> farm <lap>`, a lap of the course's steady-state loop
+  (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###
+  Rules` 30); the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from
+  its start already, so its record is its farm.
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
   is live time, physics ticks plus dash freezes and pauses (README `### Rules` 31), and its splits carry both the
   ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
   next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (README `### Rules` 54) are
   `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>`,
   one best each, a human one ranked by its score (`fulltas-classes.json`).
-- All are saved only by `SaveSolverRoute`, which replays them from their start: a category or farm route from the
-  course start, a Full-TAS route from a fresh new game. Every judged candidate is checked for both: a new record and
-  fewer physics ticks than the farm route.
+- All are saved only by `SaveSolverRoute`, which replays them from their start: a category route from the course start,
+  a farm route from it through its loop four times, a Full-TAS route from a fresh new game. A judged plain candidate is
+  checked for a new record; a farm loop (`offline-best\<course>_<caps>-loop-<lap>.json`) for a faster farm lap.
 
 ## Using the game
 

@@ -139,7 +139,7 @@ namespace IGTAP.EngineSim.Cli
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
             foreach (var p in played)
                 Console.WriteLine($"{p.how}: " + (!p.result.Finished ? "no finish (" + p.result.EndReason + ")"
-                    : $"record {p.result.Time:0.00}s, farm {p.result.RunTicks * .02:0.00}s ({p.result.RunTicks} ticks)" + (p.result.OffPath ? ", off the forced path (an avoid box or a missed via)" : "")));
+                    : $"record {p.result.Time:0.00}s, run {p.result.RunTicks * .02:0.00}s from the start ({p.result.RunTicks} ticks)" + (p.result.OffPath ? ", off the forced path (an avoid box or a missed via)" : "")));
             // The waypoints follow the best, so it has to keep the run's rules: one through an avoid box (the direction a picked
             // block shuts) would set every window's goals where the windows are cut.
             var finishing = played.Where(p => p.result.Finished && !p.result.OffPath).ToList();
@@ -178,7 +178,7 @@ namespace IGTAP.EngineSim.Cli
             }
             string synthetic = WriteCourseTrace(run, dir, best.inputs);
             Solve.CourseRuns[run.Name] = rules;
-            Console.WriteLine($"Course {course} ({caps}) --auto, {run.Timing} timing, from {best.how} (record {best.result.Time:0.00}s, farm {best.result.RunTicks * .02:0.00}s): "
+            Console.WriteLine($"Course {course} ({caps}) --auto, {run.Timing} timing, from {best.how} (record {best.result.Time:0.00}s, run {best.result.RunTicks * .02:0.00}s from the start): "
                 + $"{run.Goals.Count} goals ({run.Goals.Count(g => g.kind == FullTasGoal.At)} waypoints): {string.Join(" ", run.Goals.Select(g => g.label))}; "
                 + $"avoid {(rules.Avoid.Count == 0 ? "-" : string.Join(", ", rules.Avoid))}");
 

@@ -69,15 +69,21 @@
 28. Finishing a different course never counts.
 29. Score courses by the game timer, not tick counts: that is the runs record (the gate: a replay from the course start
     must finish in the recorded time, `Solver.cs` `RouteViolation`).
-30. A course's farm time counts physics ticks from the route start (the quick restart) to the finish (the gate: the
-    replay's physics tick count must match).
+30. A course's farm is its steady-state loop: the laps that repeat finish to finish, by a quick restart after the finish
+    (what a lap carries into the next, a buffered jump or a coyote count, carries) or by the drop through the end gate
+    into the next lap. A farm route is a lead (the course start through its last lead finish) and the loop (the laps after
+    it, through the last one's finish; more than one only when what a lap carries alternates). Its time is a lap's share
+    of the loop's cycle in live time (31's ticks and held frames), once the loop repeats exactly (the gate: a replay from
+    the course start plays the lead and the loop four times, every loop finishing on its own last input, the last two
+    cycles equal and the cycle the claimed one, `Solver.cs` `EvaluateLoop`). Named `<course>_<CAT> farm <lap>`, seconds to
+    4 places. A farm route saved as one lap from the quick restart is stale.
 31. Bonuses, transitions, purchases: count physics ticks, dash/spring ticks included. A Full-TAS run is timed in live
     time, what it takes at 1x: its physics ticks at 0.02 s plus the frames it stood still in (a dash freeze's, a pause's,
     1/280 s each on the 280 fps clock; `MacroEngine.HeldFrames`, `MacroEngine.LiveSeconds`), and reported with both,
     live time and game frames (the ticks). Turbo, the offline engine and 1x count the same frames (the gate: a replay's
     live time must match). Every class of a run (54) is timed so and named by it: `fulltas/<run>_NONE <time>` (major),
     `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>`, `fulltas/<run>_NONE human-nmg <time>`.
-32. Nothing after the finish is part of the route.
+32. Nothing after the finish is part of the route; a farm route's loop is (30).
 33. No teleports, position offsets or moving the player.
 34. Only reset: the game's quick restart, `Movement.respawn(true)` (the gate refuses "a quick restart on two ticks in a
     row").
@@ -105,8 +111,8 @@
 51. `FloatingOrigin` rebases in turbo and offline as at 1x: turbo runs the game's own `LateUpdate` and `MoveOrigin`, and
     a turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`). A course, bonus or transition
     start is judged at one origin, whatever ran before: where the game's own rebase on the player standing there leaves it.
-52. Only save strictly faster times: record by the game timer, farm by physics ticks; human classes: strictly lower
-    score.
+52. Only save strictly faster times: record by the game timer, farm by a lap of the steady loop in live time (30); human
+    classes: strictly lower score.
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
     and `human-nmg` the same two by score. Score: live time plus 60 s a major span, 20 s an nmg span and 2 s a

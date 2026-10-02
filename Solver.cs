@@ -1358,18 +1358,38 @@ namespace IGTAPTasMod
 
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
 
-        /// <summary>A farm loop's cycle in a route name: live seconds to 4 places (exact for whole 1/1400 s live units).</summary>
-        static string FarmSeconds(long live) { return (live / 1400.0).ToString("0.0000", CultureInfo.InvariantCulture); }
+        /// <summary>A farm route's time in its name: a lap's share of the loop's cycle, live seconds to 4 places.</summary>
+        static string FarmSeconds(double seconds) { return seconds.ToString("0.0000", CultureInfo.InvariantCulture); }
 
-        /// <summary>A farm route name's time in live units (MacroEngine.LiveUnits).</summary>
-        static long FarmUnits(float seconds) { return (long)Math.Round(seconds * 1400.0); }
-
-        bool SaveSolverRoute(List<SolverTick> inputs, float time)
+        /// <summary>
+        /// The only way a category route is saved (README ### Rules 43). A record (<paramref name="loopFrom"/> 0): when a replay
+        /// from the course start finishes in <paramref name="time"/> and every tick obeys the category. A farm loop (README ###
+        /// Rules 30; its loop from input <paramref name="loopFrom"/>, <paramref name="loopLaps"/> laps): when a replay from the
+        /// course start loops in exactly <paramref name="loopLive"/> units a loop (<see cref="EvaluateLoop"/>) and every tick obeys
+        /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`.
+        /// </summary>
+        bool SaveSolverRoute(List<SolverTick> inputs, float time, int loopFrom = 0, int loopLaps = 1, long loopLive = 0)
         {
-            string name = SolverCategory + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
-            string violation = RouteViolation(inputs, time);
+            string name;
+            string violation;
+            if (loopFrom > 0)
+            {
+                name = SolverCategory + " farm " + FarmSeconds(loopLive / 1400.0 / Math.Max(1, loopLaps));
+                List<string> audit = StartAudit();
+                LoopResult again;
+                try { again = EvaluateLoop(inputs, loopFrom, loopLaps); }
+                finally { _audit = null; }
+                if (!again.steady || again.live != loopLive)
+                    audit.Insert(0, "a replay from the course start " + (again.steady ? "loops in " + FarmSeconds(again.live / 1400.0) + "s" : "has " + again));
+                violation = audit.Count == 0 ? null : string.Join("; ", audit);
+            }
+            else
+            {
+                name = SolverCategory + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
+                violation = RouteViolation(inputs, time);
+            }
             if (violation != null) return Rejected(name, violation);
-            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs) });
+            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom, loopLaps = loopFrom > 0 ? Math.Max(1, loopLaps) : 0 });
             PruneSlowerRoutes();
             SaveLibrary();
             return true;
@@ -1394,25 +1414,29 @@ namespace IGTAPTasMod
         {
             /// <summary>Every loop finished on its own last input and the last two cycles are equal.</summary>
             public bool steady;
-            /// <summary>The last loop's cycle: physics ticks and held frames from the finish before it.</summary>
+            /// <summary>The last loop's cycle: physics ticks and held frames from the finish before it; its laps.</summary>
             public long ticks, held;
+            public int laps = 1;
             public long live { get { return MacroEngine.LiveUnits(ticks, held); } }
+            /// <summary>The farm time: a lap's share of the cycle, in live seconds.</summary>
+            public double lap { get { return MacroEngine.LiveSeconds(ticks, held) / laps; } }
             public readonly List<long> cycles = new List<long>();
             public override string ToString()
             {
-                string all = string.Join(", ", cycles.Select(c => c < 0 ? "-" : FarmSeconds(c)));
-                return steady ? FarmSeconds(live) + "s a loop (" + ticks + " ticks, " + held + " held frames; cycles " + all + ")" : "no steady loop (cycles " + all + ")";
+                string all = string.Join(", ", cycles.Select(c => c < 0 ? "-" : FarmSeconds(c / 1400.0)));
+                return steady ? FarmSeconds(lap) + "s a lap (" + ticks + " ticks, " + held + " held frames a loop of " + laps + "; cycles " + all + ")"
+                    : "no steady loop (cycles " + all + ")";
             }
         }
 
         /// <summary>
-        /// Plays a farm route's lead and then its loop (the inputs from <paramref name="loopFrom"/> on) LoopRepeats times, from
-        /// the course start through every finish: each loop must finish on its own last input, and the last two cycles must be
-        /// equal. Its cycle is the farm time.
+        /// Plays a farm route's lead and then its loop (the inputs from <paramref name="loopFrom"/> on, <paramref name="laps"/>
+        /// laps) LoopRepeats times, from the course start through every finish: each loop must finish on its own last input, and
+        /// the last two cycles must be equal. A lap's share of the cycle is the farm time.
         /// </summary>
-        LoopResult EvaluateLoop(List<SolverTick> inputs, int loopFrom)
+        LoopResult EvaluateLoop(List<SolverTick> inputs, int loopFrom, int laps)
         {
-            var result = new LoopResult();
+            var result = new LoopResult { laps = Math.Max(1, laps) };
             if (loopFrom <= 0 || loopFrom >= inputs.Count) return result;
             int length = inputs.Count - loopFrom;
             var played = inputs.Take(loopFrom).ToList();
@@ -1439,24 +1463,6 @@ namespace IGTAPTasMod
             long last = result.cycles[LoopRepeats - 1];
             result.steady = last >= 0 && result.cycles[LoopRepeats - 2] == last;
             return result;
-        }
-
-        /// <summary>Saves a farm loop as the category's farm route, `<c>&lt;category&gt; farm &lt;cycle&gt;</c>`, when a replay from the
-        /// course start loops in exactly <paramref name="live"/> units and every tick obeys the category (the gate).</summary>
-        bool SaveFarmLoop(List<SolverTick> inputs, int loopFrom, long live)
-        {
-            string name = SolverCategory + " farm " + FarmSeconds(live);
-            List<string> audit = StartAudit();
-            LoopResult again;
-            try { again = EvaluateLoop(inputs, loopFrom); }
-            finally { _audit = null; }
-            if (!again.steady || again.live != live)
-                audit.Insert(0, "a replay from the course start " + (again.steady ? "loops in " + FarmSeconds(again.live) + "s" : "has " + again));
-            if (audit.Count > 0) return Rejected(name, string.Join("; ", audit));
-            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom });
-            PruneSlowerRoutes();
-            SaveLibrary();
-            return true;
         }
 
         /// <summary>

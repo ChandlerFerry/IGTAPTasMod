@@ -45,7 +45,11 @@ type PullNow = { pull: number; lever: string; goal: number; label: string; budge
  */
 type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number;
   /** The route's near misses at its gates (a gated course's finished route; see NearMisses). */
-  bus?: { gate: BusEdge | null; finish: BusEdge | null } | null };
+  bus?: { gate: BusEdge | null; finish: BusEdge | null } | null;
+  /** A farm target's loop (README Rules 30): its steady-state check, a lap's share of the cycle (`lap`, live seconds), the
+   * loop's laps, ticks and held frames, the loops before it settled and each loop's cycle (live units, -1: didn't loop). The
+   * lead's finishes are the goals up to `timerGoal`. */
+  loop?: { steady: boolean; laps: number; ticks: number; held: number; live: number; lap: number; settled: number; cycles: number[] } };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type CourseTarget = { course: number; capabilities: string; farm: boolean };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
@@ -297,13 +301,13 @@ function RouteSidebar({routes,courses,categories,activeId,saveUnlocks,onCommand}
     return [<div className={`cmpRow ${beyond ? "beyondUnlocks" : ""}`} key={cat.id} title={beyond ? `Your unlocks only reach ${shortCaps(saveUnlocks)}` : undefined}>
       <span>{shortCaps(cat.caps)}</span>
       {cell(record?.route.id, record ? record.time.toFixed(2) : "—", record?.route.name ?? "No record route")}
-      {cell(lap?.route.id, lap ? lap.time.toFixed(2) : "—", lap ? `${lap.route.name}: ${Math.round(lap.time / .02)} ticks, quick restart to finish` : "No farm route yet")}
+      {cell(lap?.route.id, lap ? lap.time.toFixed(c.bonus || c.to ? 2 : 4) : "—", lap ? `${lap.route.name}: ${c.bonus || c.to ? "ticks from the start" : "a lap of the steady loop, finish to finish, in live time"}` : "No farm route yet")}
     </div>];
   });
   const section = (label: string, list: Course[]) => {
     const groups = list.map(c => ({c, r: rows(c)})).filter(g => g.r.length > 0);
     return groups.length > 0 && <>
-      <div className="cmpHead"><label className="sectionLabel">{label}</label><span title="Record: the game's timer, start gate to end gate">Record</span><span title="Farm: ticks from quick restart to finish">Farm</span></div>
+      <div className="cmpHead"><label className="sectionLabel">{label}</label><span title="Record: the game's timer, start gate to end gate">Record</span><span title="Farm: a lap of the steady loop, finish to finish, in live time (ticks and dash freezes)">Farm</span></div>
       {groups.map(({c, r}) => <div className="courseGroup" key={c.token}><strong className="courseName" title={placeTitle(c)}>{courseLabel(c, c.id)}</strong>{r}</div>)}
     </>;
   };
@@ -374,17 +378,20 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
   const route=farm?lap:solo;
   const runRoute=async()=>{ if(route&&await onCommand("/routes/select",{routeId:route.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>Improve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?solver.auto?"Improving":"Solving":"Idle"}</span></div>
-    <p className="lede">Captures the start in game, then improves the route offline.</p><details className="howTo"><summary>How it works</summary><ol><li><b>Improve</b> searches from the target&apos;s route and picks where to look itself.</li><li>Waypoints split the course into 1–3 s stretches; momentum carries through them.</li><li>Think a stretch is slow? Click its waypoints (shift-click extends), then Improve.</li><li>Record: the game timer, gate to gate. Farm: ticks × 0.02 s, restart to finish.</li><li>Every offline best is replayed in game (turbo check); held-up bests save as record, farm if fewer ticks.</li><li>No route yet: <b>Solve</b> finds a first finish.</li></ol></details>
+    <p className="lede">Captures the start in game, then improves the route offline.</p><details className="howTo"><summary>How it works</summary><ol><li><b>Improve</b> searches from the target&apos;s route and picks where to look itself.</li><li>Waypoints split the course into 1–3 s stretches; momentum carries through them.</li><li>Think a stretch is slow? Click its waypoints (shift-click extends), then Improve.</li><li>Record: the game timer, gate to gate. Farm: the steady loop, finish to finish by a quick restart or the drop through the end, a lap&apos;s live time (ticks and dash freezes).</li><li>Every offline best is replayed in game (turbo check); held-up bests save as record, and a farm loop that repeats exactly as farm.</li><li>No route yet: <b>Solve</b> finds a first finish.</li></ol></details>
     <div className="offlineControls">
       <Field label="1. Course"><select value={chosen} disabled={solver.running} title={placeTitle(chosenCourse)} onChange={e=>{ if(e.target.value==="new") { let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(()=>retarget({course:id})); } else retarget({course:Number(e.target.value)}); }}>{solver.courses.map(id=>{ const c=courses.find(c=>c.id===id); return <option key={id} value={id} title={placeTitle(c)}>{courseLabel(c,id)}</option>; })}<option value="new">+ New course from last recording</option></select></Field>
       <Field label="2. Capabilities"><select value={chosenCaps} disabled={solver.running} onChange={e=>retarget({capabilities:e.target.value})}>{capsOptions.map(cat=><option key={cat.id} value={cat.id}>{describeCaps(cat.caps)}</option>)}</select></Field>
-      <Field label="3. Timing"><select value={farm?"farm":"record"} disabled={solver.running||lapless} title={lapless?"Timed in ticks: the record is the farm time.":"Record: the game timer, start gate to end gate. Farm: ticks × 0.02 s, quick restart to finish."} onChange={e=>retarget({farm:e.target.value==="farm"})}>
-        <option value="record">Record{solo?` · ${solo.time.toFixed(2)}s`:""}</option><option value="farm">Farm{lap&&!lapless?` · ${lap.time.toFixed(2)}s`:""}</option></select></Field>
+      <Field label="3. Timing"><select value={farm?"farm":"record"} disabled={solver.running||lapless} title={lapless?"Timed in ticks: the record is the farm time.":"Record: the game timer, start gate to end gate. Farm: the steady loop, finish to finish, a lap's live time."} onChange={e=>retarget({farm:e.target.value==="farm"})}>
+        <option value="record">Record{solo?` · ${solo.time.toFixed(2)}s`:""}</option><option value="farm">Farm{lap&&!lapless?` · ${lap.time.toFixed(4)}s a lap`:""}</option></select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
     <div className="courseWaypoints">
       <p className="eyebrow">WAYPOINTS · {farm?"FARM":"RECORD"}{waypoints?` · ON ${waypoints.route}`:""}</p>
       {note&&<p className="waypointNote">{note}</p>}
+      {waypoints?.loop&&<p className="waypointNote">{waypoints.loop.steady
+        ?<>Loop: <b>{waypoints.loop.lap.toFixed(4)} s a lap</b>{waypoints.loop.laps>1?`, a loop of ${waypoints.loop.laps} laps`:""} ({waypoints.loop.ticks} ticks, {waypoints.loop.held} held frames a loop), repeating from loop {waypoints.loop.settled+1}</>
+        :<>Doesn&apos;t repeat exactly: each loop&apos;s cycle {waypoints.loop.cycles.map(c=>c<0?"—":`${(c/1400).toFixed(4)} s`).join(", ")}</>}</p>}
       {waypoints&&<div className={`ftFocus ${focus?"on":""}`}>
         {focus
           ? <><span>Improve selected: <b>{waypointSpan(focus)}</b>{focusTicks!=null?` (${focusTicks} ticks, ${(focusTicks*TICK_SECONDS).toFixed(2)} s on this route)`:""}</span><button className="secondary" onClick={()=>setPicked(null)}>Clear selection</button></>
@@ -395,7 +402,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
         <div className="tableHead"><span>#</span><span>Waypoint</span><span>Split</span><span>From restart</span></div>
         {waypoints.goals.map((label,i)=>{ const at=tickAt(i+1), before=tickAt(i), inPick=focus!=null&&i+1>=focus[0]&&i+1<=focus[1];
           return <div key={i} className={`tableRow ${at<0?"pending":""} ${inPick?"picked":""}`} title={`${label}\nClick to improve from here; shift-click extends`} onClick={e=>pick(i+1,i+1,e.shiftKey)}>
-            <span>{i+1}</span><span>{waypointName(label,waypoints.world?.[i])}</span><span>{at>=0&&before>=0?tickText(at-before):"—"}</span><span>{at>=0?tickText(at):"—"}</span></div>; })}
+            <span>{i+1}</span><span>{waypoints.loop&&i+1<=(waypoints.timerGoal??0)?`Lead lap ${i+1} finish`:waypointName(label,waypoints.world?.[i])}</span><span>{at>=0&&before>=0?tickText(at-before):"—"}</span><span>{at>=0?tickText(at):"—"}</span></div>; })}
       </div>}
     </div>
     <div className="ftImprove">{solver.running
@@ -403,7 +410,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
       : <button className="primary" title={!improvable?"Finds a first finish (the plain solve).":focus?`Searches only stretches starting in ${waypointSpan(focus)}; known faster pieces still join anywhere.`:`Searches the whole course from its ${farm?"farm route":"record"} until its minutes run out or Stop.`}
         onClick={()=>onCommand("/solver/start",focus?{...job,focus}:job)}>{!improvable?"Solve":focus?`Improve ${waypointSpan(focus)}`:farm?"Improve farm":"Improve record"}</button>}</div>
     <div className="buttonRow"><button className="secondary" onClick={()=>onMap({course:chosen,capabilities:chosenCaps,optional:chosenOptional,waypoints:mapWaypoints,picked:focus})} title="Draws the explored area, saved routes, best, waypoints and forced-path boxes.">Show map</button><button className="secondary" disabled={!route||running||solver.running} onClick={runRoute} title={route?`Run ${route.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Plays this category's newest offline best. Nothing is saved."}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Plays the humanized best for practice. Nothing is saved."}>▶ Play human version</button></div>
-    <div className="offlineSummary"><div><span>{solver.farm?"Best farm":"Best"}</span><strong>{(solver.farm?solver.bestFarm:solver.best)!=null?`${(solver.farm?solver.bestFarm:solver.best)!.toFixed(2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}${solver.focus?` · ${waypointSpan(solver.focus)}`:""}`:"Not started"}</small></div><div><span>{solver.auto?"Pulls":"Runs"}</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.auto?"short searches Improve chose":`${solver.finishes.toLocaleString()} timed finishes`}</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
+    <div className="offlineSummary"><div><span>{solver.farm?"Best farm":"Best"}</span><strong>{(solver.farm?solver.bestFarm:solver.best)!=null?`${(solver.farm?solver.bestFarm:solver.best)!.toFixed(solver.farm?4:2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}${solver.focus?` · ${waypointSpan(solver.focus)}`:""}`:"Not started"}</small></div><div><span>{solver.auto?"Pulls":"Runs"}</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.auto?"short searches Improve chose":`${solver.finishes.toLocaleString()} timed finishes`}</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
     {solver.outlook&&<OutlookCard outlook={solver.outlook} pulls={solver.running?solver.pulls??[]:[]}/>}
@@ -1031,8 +1038,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   </div>;
 }
 
-/** One matrix target: a course and category. Improve checks every candidate for both times, so one job improves the record
- * and (courses only; bonuses and transitions are timed in ticks) the farm time together. */
+/** One matrix target: a course and category, queued as an Improve of its record and (courses only; bonuses and transitions
+ * are timed in ticks) one of its farm loop. */
 type SolveTarget = { key: string; body: CourseTarget; time?: number; farmTime?: number; lapless: boolean };
 
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
@@ -1078,26 +1085,26 @@ function SolveMatrix({routes,courses,categories,solver,open,onOpen,onCommand}:{r
     ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
     ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]] as [string, Course[]][])
     .map(([label, list]): [string, Course[]] => [label, list.filter(c => c.categories.length > 0)]);
-  // Per category the one target: its record, with the farm time shown where it is its own (bonuses and transitions are timed in
-  // ticks, so their record is their farm time).
+  // Per category the one target: its record, with the farm loop's lap shown where it is its own (bonuses and transitions are
+  // timed in ticks, so their record is their farm time).
   const cells = (c: Course): (SolveTarget | null)[] => categories.map(cat => !c.categories.includes(cat.id) ? null
     : { key: `c:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id, farm: false }, time: best.get(`${c.id}:${cat.id}`)?.time,
       farmTime: farm.get(`${c.id}:${cat.id}`)?.time, lapless: !!(c.bonus || c.to) });
   const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter((t): t is SolveTarget => t != null)));
-  const queue = all.filter(t => selected.has(t.key));
+  const queue = all.filter(t => selected.has(t.key)).flatMap(t => t.lapless ? [t.body] : [t.body, { ...t.body, farm: true }]);
   const cell = (t: SolveTarget | null, level: number) => {
     if (!t) return <td key={level} className="na" />;
     const on = selected.has(t.key), opened = open?.course === t.body.course && open.capabilities === t.body.capabilities;
-    const times = `Record ${t.time != null ? `${t.time.toFixed(2)}s` : "none yet"}${t.lapless ? "" : `, farm ${t.farmTime != null ? `${t.farmTime.toFixed(2)}s` : "none yet"}`}`;
+    const times = `Record ${t.time != null ? `${t.time.toFixed(2)}s` : "none yet"}${t.lapless ? "" : `, farm ${t.farmTime != null ? `${t.farmTime.toFixed(4)}s a lap` : "none yet"}`}`;
     return <td key={level} className={`matrixCell ${on ? "on" : ""} ${opened ? "opened" : ""}`} role="button" tabIndex={0} aria-pressed={on}
       title={`${times}. Click to ${on ? "drop it from" : "add it to"} the batch.`} onClick={() => toggle([t.key])}
       onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle([t.key]); } }}>
-      <div className="matrixTimes"><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span>{!t.lapless && <small>farm {t.farmTime != null ? `${t.farmTime.toFixed(2)}s` : "—"}</small>}</div>
+      <div className="matrixTimes"><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span>{!t.lapless && <small>farm {t.farmTime != null ? `${t.farmTime.toFixed(4)}s` : "—"}</small>}</div>
       <button className="matrixOpen" title="Open its route and waypoints in Improve a course" aria-label="Open in Improve a course"
         onClick={e => { e.stopPropagation(); onOpen(t.body); }} onKeyDown={e => e.stopPropagation()}>↗</button></td>; };
   const progress = solver.queue ?? [];
   return <div className="panel offlinePanel solveMatrix"><div className="panelTitle"><div><p className="eyebrow">BATCH</p><h2>Improve many</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{solver.running ? progressText(solver) || "Improving" : "Idle"}</span></div>
-    <p className="lede">Pick cells; each improves its record and farm time together, in turn.</p><details className="howTo"><summary>How it works</summary><ol><li>Click a cell to add it to the batch; click again to drop it.</li><li>Row or column headers pick whole groups.</li><li>↗ opens its route and waypoints.</li><li>Every candidate is judged for both times: the record (game timer) and the farm time (restart to finish).</li><li>A target without a route gets a first solve.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li></ol></details>
+    <p className="lede">Pick cells; each improves its record, then its farm loop, in turn.</p><details className="howTo"><summary>How it works</summary><ol><li>Click a cell to add it to the batch; click again to drop it.</li><li>Row or column headers pick whole groups.</li><li>↗ opens its route and waypoints.</li><li>A course cell runs two jobs: its record (game timer), then its farm loop (finish to finish, a lap&apos;s live time).</li><li>A target without a route gets a first solve.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li></ol></details>
     <div className="matrixTools">
       <button className="secondary" onClick={() => select(new Set(all.map(t => t.key)))}>All</button>
       <button className="secondary" onClick={() => select(new Set(all.filter(t => t.time != null).map(t => t.key)))} title="Only targets that already have a route">With a time</button>
@@ -1118,7 +1125,7 @@ function SolveMatrix({routes,courses,categories,solver,open,onOpen,onCommand}:{r
     </table></div>
     <div className="buttonRow">{solver.running
       ? <><button className="secondary" onClick={() => onCommand("/solver/skip")}>Skip current target</button><button className="danger" onClick={() => onCommand("/solver/stop")}>Stop all</button></>
-      : <button className="primary" disabled={queue.length === 0} onClick={() => onCommand("/solver/start", { queue: queue.map(t => t.body), ...passes })}>Improve {queue.length} selected{queue.length === 0 ? "" : passes.repeat ? " · loop until stopped" : ` · up to ${minutesText(queue.length * passes.minutes)}`}</button>}</div>
+      : <button className="primary" disabled={queue.length === 0} onClick={() => onCommand("/solver/start", { queue, ...passes })}>Improve: {queue.length} job{queue.length === 1 ? "" : "s"}{queue.length === 0 ? "" : passes.repeat ? " · loop until stopped" : ` · up to ${minutesText(queue.length * passes.minutes)}`}</button>}</div>
     {progress.length > 1 && <ol className="matrixQueue">{progress.map((q, i) => <li key={i} className={q.active ? "active" : q.result ? "done" : ""}><strong>{q.label}</strong><span>{q.active ? "Improving…" : q.result ?? "Waiting"}</span></li>)}</ol>}
   </div>;
 }
