@@ -42,7 +42,7 @@ The Player carries two boxes; every start and end gate is a trigger on layer 0 (
 
 | Box | Size | Offset | Excludes | Includes | Touches gates |
 |---|---|---|---|---|---|
-| Body (`normalCollider`, walls and floors) | 41×72 (resized for dashes and jumps) | (5, 2) | Default, Spikes | Ground | no |
+| Body (`normalCollider`, walls and floors) | 41×72; 41×54 at (5, 0) while dashing or after a jump | (5, 2) | Default, Spikes | Ground | no |
 | Hurtbox | 40×54 | (5, 0) | Ground | Default, Spikes | **yes** |
 
 - The offset follows the facing (the scale's sign): turning around moves the hurtbox 10 u.
@@ -58,7 +58,8 @@ The Player carries two boxes; every start and end gate is a trigger on layer 0 (
   moves it back out) enters and exits in that step: an end gate finishes there.
 - A write that takes the hurtbox out before a step, with the step moving it back in, ends the touch and begins a new one
   (Enter again) when the gate sits on a non-static body. The start gates of Courses 1 and 3–10 sit on dynamic bodies
-  (`Start`); Course 2's has none and its touch never lapses. Courses 11–15 use Courses 1–5's gates.
+  (`Start`); Course 2's has none and its touch never lapses (the world of `route-c1-none-1.40`). Courses 11–15 use
+  Courses 1–5's gates.
 - Rendered frames never check gates. A frame matters only through the writes below.
 
 ## Position writes and the interpolation lag
@@ -110,8 +111,9 @@ the right (9.2 u a tick, the 2.50 ms lag: 1.15 u back to the left), positions af
 
 - A neutral dash goes the way the player faces, so its 20 u go behind; without `OM`, a stick held only up or down is
   neutral. A turn in the frames after the press redirects the velocity, not the 20 u already written.
-- Without `OM` the dash's vertical part is zeroed; on the ground its down part is.
-- With `OM`, a stick mostly vertical (|y| ≥ 0.4, |x| < 1) zeroes the sideways part.
+- The dash reads the game's normalised stick (`NormaliseInput`), snapped to eight directions. Measured with `OM`: (0.5,
+  0.7), (0.7, 0.7) and (0.9, 0.5) dash diagonally, (0.3, 1) straight up, (1, 0.3) and (0.5, 0.3) sideways.
+- Without `OM` the dash's vertical part is zeroed (a diagonal stick dashes sideways); on the ground its down part is.
 - A dash in full wall coyote flips the facing and dashes away from the wall: the 20 u go toward it.
 - An up dash is 20 u down at the step's start (plus the lag's pull down if rising), then about 13 u up net over the
   tick: an end gate up to ~20 u under the hurtbox finishes on that tick (the start-of-step touch above). It starts no
