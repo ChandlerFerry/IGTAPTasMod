@@ -14,9 +14,10 @@ namespace IGTAP.EngineSim.Cli
     /// <summary>
     /// <c>difficulty &lt;trace.json&gt; &lt;route.json&gt; [--json] [--samples N] [--sigma S] [--chain G] [--pos U] [--vel F] [--raw] [--open] [--threads T]</c>:
     /// the chance one human attempt at a route works (docs/fulltas.md "Difficulty"). The route played is humanize's version of it
-    /// (<see cref="Humanizer.Simplified"/>: a search's stray inputs are no part of it; <c>--raw</c>, or a route that doesn't finish
-    /// offline: its own inputs). It is cut at its anchors (<see cref="Anchors(List{TechStep}, int[], int, bool)"/>), where a
-    /// player re-syncs (the start, standing, a wall cling, a respawn, a goal, a dash's freeze); each segment is played
+    /// cut to its end (<see cref="Canonical"/>, then <see cref="Humanizer.Simplified"/>: a search's stray inputs are no part of it;
+    /// <c>--raw</c>, or a route that doesn't finish offline: its own inputs, cut alike). It is cut at its anchors
+    /// (<see cref="Anchors(List{TechStep}, int[], int, bool)"/>), where a player re-syncs (the start, standing, a wall cling, a
+    /// respawn, a goal, a dash's freeze); each segment is played
     /// <c>--samples</c> times (more while few work) from the route's own state at its first anchor, every input event in it moved by
     /// a rounded normal of <c>--sigma</c> input ticks and a partial stick a controller step off half the time. A sample works when it
     /// re-syncs at each anchor it reaches in the anchor's state and otherwise needs a small correction of the next segment to reach
@@ -156,7 +157,7 @@ namespace IGTAP.EngineSim.Cli
             public object Json => new { P = G4(P), attempts = P > 0 ? Math.Round(1 / P, 1) : (double?)null, priced = Priced };
         }
 
-        /// <summary>Measures whole routes as <c>difficulty</c> does with its defaults (humanize's version, closed loop), seeded by
+        /// <summary>Measures whole routes as <c>difficulty</c> does with its defaults (cut to their end, humanize's version, closed loop), seeded by
         /// their inputs, on threads of its own: what <c>techs-used</c> and a human class's whole-route judging price. One trace and
         /// goal list per meter.</summary>
         internal sealed class Meter : IDisposable
@@ -173,8 +174,8 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>The route's odds; <paramref name="name"/> names it on stderr only.</summary>
             public Odds Measure(string name, List<InputTick> inputs)
             {
-                List<InputTick> human = _pool.Human(new List<string> { name }, new List<List<InputTick>> { inputs })[0];
-                Result r = Difficulty.Measure(_pool, name, inputs, human, _settings);
+                var (own, human) = _pool.Routes(new List<string> { name }, new List<List<InputTick>> { inputs }, false)[0];
+                Result r = Difficulty.Measure(_pool, name, own, human, _settings);
                 return new Odds(r.P, r.Priced);
             }
 
@@ -201,8 +202,8 @@ namespace IGTAP.EngineSim.Cli
             var (header, labels, inputs) = TechsUsed.Load(tracePath, routePath, "difficulty");
             using var pool = new Pool(tracePath, header, labels, s.Threads);
             string name = Path.GetFileName(routePath);
-            List<InputTick> human = s.Raw ? null : pool.Human(new List<string> { name }, new List<List<InputTick>> { inputs })[0];
-            Result r = Measure(pool, name, inputs, human, s);
+            var (own, human) = pool.Routes(new List<string> { name }, new List<List<InputTick>> { inputs }, s.Raw)[0];
+            Result r = Measure(pool, name, own, human, s);
             Console.WriteLine(json ? JsonSerializer.Serialize(Json(r)) : Table(r));
             return 0;
         }
@@ -242,19 +243,18 @@ namespace IGTAP.EngineSim.Cli
                 }
                 catch (Exception ex) when (Expected(ex)) { Failed(name, ex); }
             }
-            // One pool per goal list (a route's own adopted goals play on a simulation of their own); humanize's versions first, a
-            // route a lane, then each route's samples on every lane.
+            // One pool per goal list (a route's own adopted goals play on a simulation of their own); each route cut to its end and
+            // humanize's version of it first, a route a lane, then each route's samples on every lane.
             foreach (var group in routes.GroupBy(r => r.labels == null ? "" : string.Join("\n", r.labels)))
             {
                 var list = group.ToList();
                 using var pool = new Pool(tracePath, list[0].header, list[0].labels, s.Threads);
-                List<List<InputTick>> human = s.Raw ? list.Select(_ => (List<InputTick>)null).ToList()
-                    : pool.Human(list.Select(r => r.name).ToList(), list.Select(r => r.inputs).ToList());
+                var played = pool.Routes(list.Select(r => r.name).ToList(), list.Select(r => r.inputs).ToList(), s.Raw);
                 for (int i = 0; i < list.Count; i++)
                 {
                     try
                     {
-                        Result r = Measure(pool, list[i].name, list[i].inputs, human[i], s);
+                        Result r = Measure(pool, list[i].name, played[i].own, played[i].human, s);
                         Solve.WriteShared(Path.Combine(outDir, list[i].name), JsonSerializer.Serialize(Json(r)));
                         Console.WriteLine($"{list[i].name}: P {G4(r.P).ToString(CultureInfo.InvariantCulture)}, {Attempts(r.P)} attempts, "
                             + $"{r.Segments.Count(x => x.P < Bottleneck)} bottlenecks, {r.Chains.Count} chains ({r.Seconds:0.0} s)");
@@ -729,6 +729,41 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly Humanizer.Kind[] Kinds = (Humanizer.Kind[])Enum.GetValues(typeof(Humanizer.Kind));
 
+        /// <summary>
+        /// The route up to its end, so it measures alike whatever follows it (the plugin's gate saves a route cut at its finish, a
+        /// search hands on its inputs past it): its inputs before its last goal's input tick (a course: its finish's), less every
+        /// trailing input it plays alike without (<see cref="Alike"/>: the engine's idle step after a route's inputs, stick at
+        /// rest, can play the last goal's step). Kept whole where it reaches no goal and doesn't finish.
+        /// </summary>
+        static List<InputTick> Canonical(Simulation sim, List<InputTick> route)
+        {
+            bool fullTas = sim.Goals != null;
+            int extra = fullTas ? 1000000 : 400;
+            RunResult run = sim.Run(route, null, null, extra);
+            int end = fullTas ? run.Progress > 0 ? (int)(run.GoalInputTicks[run.Progress - 1] - sim.InputBase) : -1
+                : run.Finished ? run.FinishTick + 1 : -1;
+            if (end < 1) return route;
+            List<InputTick> cut = route.Take(end).ToList();
+            while (cut.Count > 1)
+            {
+                List<InputTick> shorter = cut.GetRange(0, cut.Count - 1);
+                if (!Alike(sim.Run(shorter, null, null, extra), run, fullTas)) break;
+                cut = shorter;
+            }
+            return cut;
+        }
+
+        /// <summary>The same goals at the same input and physics ticks and held frames (a Full-TAS run: nothing after its last goal
+        /// counts, its strict finish included); a course: the same finish, time and physics ticks.</summary>
+        static bool Alike(RunResult a, RunResult b, bool fullTas)
+        {
+            if (!fullTas) return a.Finished == b.Finished && a.Time == b.Time && a.PhysicsTicks == b.PhysicsTicks;
+            if (a.Progress != b.Progress) return false;
+            for (int g = 0; g < a.Progress; g++)
+                if (a.GoalInputTicks[g] != b.GoalInputTicks[g] || a.GoalPhysicsTicks[g] != b.GoalPhysicsTicks[g] || a.GoalHeldFrames[g] != b.GoalHeldFrames[g]) return false;
+            return true;
+        }
+
         /// <summary>The route replayed for its anchors, techs and goals
         /// (<see cref="Anchors(Simulation, List{InputTick}, SimSnapshot, bool, out TechSteps, out RunResult, out int[])"/>).</summary>
         static Line Trace(Simulation sim, string name, List<InputTick> inputs)
@@ -883,22 +918,26 @@ namespace IGTAP.EngineSim.Cli
                 return line;
             }
 
-            /// <summary>Humanize's version of each route (its greedy passes, no slack report), a route a lane, played as the
-            /// <c>humanize</c> command plays it (a Full-TAS run without strict buys: it finishes at its last goal, not the strict
-            /// finish's 12 ticks later, which a run touching its last goal after its last input never reaches: it stops 20 idle
-            /// steps after that input); null, said on stderr, where it doesn't finish.</summary>
-            public List<List<InputTick>> Human(List<string> names, List<List<InputTick>> routes)
+            /// <summary>Each route as measured, a route a lane: cut to its end (<see cref="Canonical"/>), and humanize's version of
+            /// that unless <paramref name="raw"/> (its greedy passes, no slack report), played as the <c>humanize</c> command plays it
+            /// (a Full-TAS run without strict buys: it finishes at its last goal, not the strict finish's 12 ticks later, which a run
+            /// touching its last goal after its last input never reaches: it stops 20 idle steps after that input); human null, said
+            /// on stderr, where it doesn't finish.</summary>
+            public List<(List<InputTick> own, List<InputTick> human)> Routes(List<string> names, List<List<InputTick>> routes, bool raw)
             {
-                var human = new List<InputTick>[routes.Count];
+                var played = new (List<InputTick> own, List<InputTick> human)[routes.Count];
                 Each(routes.Count, (lane, i) =>
                 {
+                    List<InputTick> own = Canonical(lane.Sim, routes[i]);
+                    played[i] = (own, null);
+                    if (raw) return;
                     bool strict = lane.Sim.StrictBuys;
                     lane.Sim.StrictBuys = false;
-                    try { human[i] = new Humanizer(() => lane.Sim, null, 1).Simplified(routes[i]); }
+                    try { played[i].human = new Humanizer(() => lane.Sim, null, 1).Simplified(own); }
                     catch (InvalidOperationException ex) { Console.Error.WriteLine($"difficulty: {names[i]}: {ex.Message} Measured on its own inputs."); }
                     finally { lane.Sim.StrictBuys = strict; }
                 });
-                return human.ToList();
+                return played.ToList();
             }
 
             public void Run(Line line, List<Job> jobs, Settings s)

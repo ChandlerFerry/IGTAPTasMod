@@ -689,13 +689,19 @@ product of its segments'. The human classes' score adds its weight × ln(attempt
 & $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json --candidates $traces\fulltas\candidates\Test-No-Omni-Skip\
 ```
 
-- **The route played** is humanize's version of it (`Humanizer.Simplified`: the greedy passes that keep its live time,
-  no slack report; played as `humanize` plays a Full-TAS route, without strict buys: its finish is at the last goal, not
-  the strict finish's 12 ticks later, which a run that touches its last goal after its last input never reaches, as it
-  stops 20 idle steps after that input): a search's stray presses, dashes and stick changes are no part of what a player
-  does. It replays as `techs-used` does (strict buys, the route's own adopted goals), on a course trace too. `--raw`, a
-  route humanize can't finish, or a human version that doesn't finish under strict buys where the route does, plays the
-  route's own inputs (said on stderr; `human` false).
+- **The route played** is cut to its end first (`Difficulty.Canonical`): its inputs before its last goal's input tick (a
+  course: its finish's), less every trailing input it plays alike without (the same goals at the same input and physics
+  ticks; a course: the same finish, time and physics ticks), as the engine's idle step after a route's inputs (stick at
+  rest) can play the last goal's step. A route then measures alike whatever follows it: the plugin's gate saves it cut at
+  its turbo finish, a search hands on inputs past it (one Test-No-Omni-Skip route measured 259, 260 and 280 inputs long:
+  P 0.029, 0.07, 0.07 before, 0.029 each now; the 260th, a jump and a dash on the goal's step, rescued the samples
+  that release the down-tilt a tick early). Then humanize's version of it (`Humanizer.Simplified`: the greedy passes that
+  keep its live time, no slack report; played as `humanize` plays a Full-TAS route, without strict buys: its finish is
+  at the last goal, not the strict finish's 12 ticks later, which a run that touches its last goal after its last input
+  never reaches, as it stops 20 idle steps after that input): a search's stray presses, dashes and stick changes are no
+  part of what a player does. It replays as `techs-used` does (strict buys, the route's own adopted goals), on a course
+  trace too. `--raw`, a route humanize can't finish, or a human version that doesn't finish under strict buys where the
+  route does, plays the route's own inputs, cut alike (said on stderr; `human` false).
 - **Anchors** are where a player re-syncs: the start, standing (the second step on the ground), a wall cling (the second
   step on a wall off the ground), a respawn, a goal, a dash's freeze starting (`TechSteps`); anchors fewer than 3 input
   ticks apart are one, and the last is the last goal (a course: its finish). A segment is the inputs between two.
