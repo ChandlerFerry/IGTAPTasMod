@@ -36,6 +36,8 @@ namespace IGTAP.EngineSim.Cli
                     case "suggest": return Suggest.Run(args.Skip(1).ToArray());
                     case "techs": return Techs.Run(args.Skip(1).ToArray());
                     case "techs-used": return TechsUsed.Run(args.Skip(1).ToArray());
+                    case "difficulty": return Difficulty.Run(args.Skip(1).ToArray());
+                    case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
@@ -170,6 +172,23 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         ticks and human scores (course or Full-TAS trace; a route's \"goals\" are\n"
                             + "                                         judged instead of the trace's); --json: one line for the gate;\n"
                             + "                                         --demos: every tech demo, its own tech and no stray glitch\n"
+                            + "  difficulty <trace.json> <route.json> [--json] [--samples N] [--sigma S] [--chain G] [--pos U] [--vel F] [--raw] [--threads T]\n"
+                            + "  difficulty <trace.json> --candidates <dir> [same options]\n"
+                            + "                                         the chance one human attempt works: humanize's version of the route\n"
+                            + "                                         (--raw: its own inputs) cut at its anchors (start, standing, wall cling,\n"
+                            + "                                         respawn, goal, dash freeze), each segment sampled with every input moved\n"
+                            + "                                         by a normal of S ticks, bottlenecks (p < 0.9) under G ticks apart\n"
+                            + "                                         measured as one chain; --candidates: every *.json of dir into\n"
+                            + "                                         dir/difficulty/<name>\n"
+                            + "  timeloss split <trace.json> <route.json> --ref <route.json | captured trace.json> [--within U] [--json]\n"
+                            + "  timeloss search <trace.json> <route.json> [--segment k | --window a-b] [--depth 1|2|3] [--radius R] [--beam B] [--threads T]\n"
+                            + "  timeloss floor <trace.json> <route.json> [--json]\n"
+                            + "  timeloss report <trace.json> <route.json> [--ref <route.json | captured trace.json>] [--threads T] [--depth D] [--json]\n"
+                            + "                                         where a course route loses time, per segment between its anchors\n"
+                            + "                                         (difficulty's, on its own inputs): split: its ticks and the timer's\n"
+                            + "                                         against a reference's; search: the best small input change in it, by\n"
+                            + "                                         ticks saved at the finish; floor: its ticks over the walkable distance\n"
+                            + "                                         to the next anchor / the top path speed (slack); report: all three\n"
                             + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] [--no-tech-grafts] [--graft-rate r]\n"

@@ -211,6 +211,15 @@ namespace IGTAPTasMod
         /// <summary>Events the capped list keeps when it trims: the session, what a solve found, and the game's checks of it.</summary>
         static readonly HashSet<string> FullTasKeptEvents = new HashSet<string> { "session", "autoStart", "record", "gate" };
 
+        /// <summary>The difficulty batch (`/api/fulltas/difficulty`): the engine's `difficulty --candidates` over a run's candidate
+        /// folder, a process of its own beside any solve; <c>done</c> / <c>of</c> from its `@difficulty` progress lines (<c>of</c>
+        /// null until the first). The run stays named after the batch ends, for the studio's last count.</summary>
+        Process _fullTasDifficultyProcess;
+        readonly ConcurrentQueue<string> _fullTasDifficultyOutput = new ConcurrentQueue<string>();
+        string _fullTasDifficultyRun;
+        int _fullTasDifficultyDone;
+        int? _fullTasDifficultyOf;
+
         static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
         /// <summary>A saved Full-TAS route of any class (README "Route names"): `fulltas/&lt;run&gt;_NONE [&lt;class&gt; ]&lt;time&gt;`, no class for major.</summary>

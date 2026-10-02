@@ -92,12 +92,8 @@ namespace IGTAP.EngineSim.Cli
 
         public Result Humanize(List<InputTick> best)
         {
-            RunResult start = _main.Record(best);
-            if (!_main.Valid) throw new InvalidOperationException("The best does not finish offline (" + (start.EndReason ?? "forced path") + ").");
-            _time = start.Time;
-            _runTicks = start.PhysicsTicks;
+            List<InputTick> original = Start(best);
             var result = new Result { Time = _time, RunTicks = _runTicks };
-            List<InputTick> original = best.Take(start.FinishTick + 1).ToList();
             List<InputTick> route = Simplify(original, result.Changes);
             RunResult end = _main.Record(route);
             result.Inputs = route;
@@ -105,6 +101,19 @@ namespace IGTAP.EngineSim.Cli
             result.Before = Tolerance(original, original);
             result.After = Tolerance(route, original);
             return result;
+        }
+
+        /// <summary>The human version alone, without the slack report (<c>difficulty</c> measures it).</summary>
+        public List<InputTick> Simplified(List<InputTick> best) => Simplify(Start(best), new List<string>());
+
+        /// <summary>The best up to its finish, its time and physics ticks the ones every change must keep.</summary>
+        List<InputTick> Start(List<InputTick> best)
+        {
+            RunResult start = _main.Record(best);
+            if (!_main.Valid) throw new InvalidOperationException("The best does not finish offline (" + (start.EndReason ?? "forced path") + ").");
+            _time = start.Time;
+            _runTicks = start.PhysicsTicks;
+            return best.Take(start.FinishTick + 1).ToList();
         }
 
         List<InputTick> Simplify(List<InputTick> route, List<string> changes)

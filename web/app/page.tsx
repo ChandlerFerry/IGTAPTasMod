@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import "./route-sidebar.css";
 import "./fulltas.css";
 import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, liveSeconds, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
-import { FullTasClasses, type FullTasClassRun, type FullTasQueue } from "./fulltas-classes";
+import { FullTasClasses, type FullTasClassRun, type FullTasDifficultyJob, type FullTasQueue } from "./fulltas-classes";
 import { TechPanel, type TechState } from "./techs";
 import { PlaceLoadstate, TasEditor, type PlacePrefill, type TasLive } from "./tas-editor";
 import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
@@ -49,7 +49,7 @@ type CourseTarget = { course: number; capabilities: string; farm: boolean };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
   & Partial<Omit<FullTasClassRun, "name">>;
-type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null };
+type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
   connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean;
   saveUnlocks?: Caps | null;
@@ -380,6 +380,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
         <option value="record">Record{solo?` · ${solo.time.toFixed(2)}s`:""}</option><option value="farm">Farm{lap&&!lapless?` · ${lap.time.toFixed(2)}s`:""}</option></select></Field>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
+    <TimeToBeat key={`${chosen}:${chosenCaps}:${farm}`} time={route?.time} farm={farm}/>
     <div className="courseWaypoints">
       <p className="eyebrow">WAYPOINTS · {farm?"FARM":"RECORD"}{waypoints?` · ON ${waypoints.route}`:""}</p>
       {note&&<p className="waypointNote">{note}</p>}
@@ -405,6 +406,34 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
     {solver.running&&solver.speed&&<p className="offlineConfirmation">{solver.speed}</p>}
     {solver.outlook&&<OutlookCard outlook={solver.outlook} pulls={solver.running?solver.pulls??[]:[]}/>}
     {solver.log.length>0&&<details className="solverLogBox" open={!solver.auto}><summary>Engine log (latest {solver.log.length} lines)</summary><ul className="solverLog">{solver.log.map((line,i)=><li key={i}>{line}</li>)}</ul></details>}
+  </div>;
+}
+
+/**
+ * How many physics ticks the open target's time is from a faster one. Both clocks count 0.02 s ticks (the game timer
+ * from the start gate, the farm from the quick restart), so a time `t` means finishing in at most floor(t / 0.02) ticks.
+ */
+function TimeToBeat({time,farm}:{time?:number;farm:boolean}) {
+  const [typed,setTyped]=useState("");
+  if(time==null) return null;
+  const ticks=Math.round(time/TICK_SECONDS);
+  const timeOf=(k:number)=>`${(k*TICK_SECONDS).toFixed(2)}s`;
+  const away=(k:number)=>{ const n=ticks-k; return `${n} tick${n===1?"":"s"}`; };
+  // The next time down, the next round tenth and the next round second, each strictly under the current time.
+  const steps=[["Next time",ticks-1],["Next 0.1 s",Math.floor((ticks-1)/5)*5],["Next second",Math.floor((ticks-1)/50)*50]] as const;
+  const quick=steps.filter(([,k],i)=>k>0&&steps.findIndex(s=>s[1]===k)===i);
+  const target=typed.trim()===""?NaN:Number(typed);
+  // The epsilon keeps a grid time typed as 1.40 at 70 ticks despite 1.40 * 50 landing a hair under 70.
+  const want=Number.isFinite(target)&&target>0?Math.floor(target/TICK_SECONDS+1e-6):null;
+  return <div className="timeToBeat">
+    <p className="eyebrow">TIME TO BEAT · {farm?"FARM":"RECORD"} {time.toFixed(2)}s · {ticks} TICKS</p>
+    <div className="timeToBeatRow">
+      {quick.map(([label,k])=><button key={label} className="secondary" title={`Finish in ${k} ticks or fewer`} onClick={()=>setTyped((k*TICK_SECONDS).toFixed(2))}><span>{label}</span><b>{timeOf(k)}</b><small>{away(k)}</small></button>)}
+      <Field label="Target time (s)"><input type="number" min={0} step={0.01} value={typed} placeholder={quick.length?(quick[quick.length>1?1:0][1]*TICK_SECONDS).toFixed(2):""} onChange={e=>setTyped(e.target.value)}/></Field>
+    </div>
+    {want!=null&&<p className="waypointNote">{want>=ticks
+      ? `${typed}s is not faster than ${time.toFixed(2)}s: the time only saves when it drops a tick.`
+      : <><b>{away(want)}</b> ({((ticks-want)*TICK_SECONDS).toFixed(2)} s) to fix: finish in {want} ticks, {timeOf(want)}{Math.abs(want*TICK_SECONDS-target)>1e-6?` (the timer counts 0.02 s ticks; ${timeOf(want)} is the fastest time at or under ${typed}s)`:""}.</>}</p>}
   </div>;
 }
 
@@ -1208,7 +1237,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <button className="secondary" disabled={draft === savedGoals} onClick={() => setDraft(savedGoals)}>Revert</button></div>
       </div>
     </div>}
-    {run?.classes && run.human && run.candidates && <FullTasClasses key={name} run={{ name, classes: run.classes, human: run.human, candidates: run.candidates }} queue={fullTas.queue ?? null} busy={busy} complete={complete} onCommand={onCommand}/>}
+    {run?.classes && run.human && run.candidates && <FullTasClasses key={name} run={{ name, classes: run.classes, human: run.human, candidates: run.candidates }} queue={fullTas.queue ?? null} difficulty={fullTas.difficulty ?? null} busy={busy} complete={complete} onCommand={onCommand}/>}
     <div className="fullTasSearch">
       <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Improve · ${solve.name}` : "Improve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
       <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}

@@ -1028,16 +1028,20 @@ namespace IGTAP.EngineSim
                         }
                         case "gatetap":
                         {
+                            // The timer starts on the second tick in a row the hitbox overlaps the gate (startGate's Stay): a
+                            // one-tick tap from a stand behind it starts none, so the tap holds full tilt for 2 or 4 ticks (the
+                            // gate 0.5-16 u away, standing or jumping: 34 of 48 start it, the old one-tick 0.5 tap none).
                             float gate = contact == Contact.NearGateLeft ? -1f : 1f;
                             foreach (int delay in new[] { 0, 8 })
-                            {
-                                var t = new List<InputTick>();
-                                for (int i = 0; i < delay; i++) t.Add(Stick(0f, 0f, down));
-                                t.Add(Stick(gate * .5f, 0f, down));
-                                t.Add(Stick(-gate * .5f, 0f, down));
-                                for (int i = 0; i < 6; i++) t.Add(Stick(0f, 0f, down));
-                                yield return (t.ToArray(), "gate tap" + suffix);
-                            }
+                                foreach (int tap in new[] { 2, 4 })
+                                {
+                                    var t = new List<InputTick>();
+                                    for (int i = 0; i < delay; i++) t.Add(Stick(0f, 0f, down));
+                                    for (int i = 0; i < tap; i++) t.Add(Stick(gate, 0f, down));
+                                    t.Add(Stick(-gate * .5f, 0f, down));
+                                    for (int i = 0; i < 6; i++) t.Add(Stick(0f, 0f, down));
+                                    yield return (t.ToArray(), "gate tap" + suffix);
+                                }
                             break;
                         }
                         case "aim":

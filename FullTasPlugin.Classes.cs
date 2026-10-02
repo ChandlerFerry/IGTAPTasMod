@@ -28,6 +28,8 @@ namespace IGTAPTasMod
             public List<string> goals;
         }
         readonly CachedFiles<FullTasCandidate> _fullTasCandidates = new CachedFiles<FullTasCandidate>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>The candidates' difficulty sidecars (`fulltas/candidates/&lt;run&gt;/difficulty/&lt;file&gt;`), as the engine wrote them.</summary>
+        readonly CachedFiles<JObject> _fullTasDifficulties = new CachedFiles<JObject>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>A route name's Full-TAS run, class and live time, when it's a saved Full-TAS route (not stale).</summary>
         static bool FullTasRouteOf(string name, out string run, out string cls, out float time)
@@ -202,18 +204,108 @@ namespace IGTAPTasMod
             return classes;
         }
 
-        /// <summary>The human candidates of the run's current goals (studio static state `candidates`), by score.</summary>
+        /// <summary>The human candidates of the run's current goals (studio static state `candidates`), by score, each with its
+        /// difficulty sidecar (null until measured).</summary>
         object[] FullTasCandidatesWebState(string run, string[] labels)
         {
             string dir = FullTasCandidatesDir(run);
             if (!Directory.Exists(dir)) return new object[0];
+            string difficulty = Path.Combine(dir, "difficulty");
             return Directory.GetFiles(dir, "*.json").Select(p => new { file = Path.GetFileName(p), c = ReadFullTasCandidate(p) })
                 .Where(x => x.c != null && x.c.goals.SequenceEqual(labels))
                 .OrderBy(x => x.c.score ?? float.PositiveInfinity).ThenBy(x => x.file, StringComparer.Ordinal)
                 .Select(x => (object)new { file = x.file, @class = x.c.cls, score = x.c.score, time = x.c.time, major = x.c.major, nmg = x.c.nmg,
-                    graceTicks = x.c.graceTicks, spans = x.c.spans, reached = x.c.reached, goals = x.c.goals.Count })
+                    graceTicks = x.c.graceTicks, spans = x.c.spans, reached = x.c.reached, goals = x.c.goals.Count,
+                    difficulty = ReadFullTasDifficulty(Path.Combine(difficulty, x.file)) })
                 .ToArray();
         }
+
+        /// <summary>A candidate's difficulty sidecar (the engine's `difficulty` JSON); null with none or when it can't be read.</summary>
+        JObject ReadFullTasDifficulty(string path)
+        {
+            if (!File.Exists(path)) return null;
+            try { return _fullTasDifficulties.Get(path, p => JObject.Parse(File.ReadAllText(p))); }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("Full-TAS difficulty " + path + " unreadable: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Measure difficulty (`/api/fulltas/difficulty {name}`): the engine's `difficulty &lt;trace&gt; --candidates &lt;dir&gt;` over
+        /// the run's candidate folder, on cores - 4 threads, from its current trace (the routes replay from it, as techs-used's
+        /// do). It writes each candidate's sidecar to the folder's `difficulty\` and skips those already measured alike.
+        /// </summary>
+        object StartFullTasDifficulty(JObject body)
+        {
+            if (_fullTasDifficultyProcess != null) throw new InvalidOperationException("A difficulty batch is already running (" + _fullTasDifficultyRun + ").");
+            FullTasRunDef run = FindFullTasRun(Text(body, "name"));
+            string trace = FullTasTracePath(run.name), dir = FullTasCandidatesDir(run.name), exe = EngineSimExe;
+            if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+                throw new InvalidOperationException("The offline solver is not built (" + exe + "): dotnet build enginesim\\Cli\\IGTAP.EngineSim.csproj -c Release");
+            if (!FullTasTraceCurrent(run, trace, false)) throw new InvalidOperationException("Need a current trace of " + run.name + " (Capture start).");
+            if (!Directory.Exists(dir) || Directory.GetFiles(dir, "*.json").Length == 0) throw new InvalidOperationException("No candidates of " + run.name + " in " + dir + ".");
+            int threads = Math.Max(1, Environment.ProcessorCount - 4);
+            string args = "difficulty " + Quote(trace) + " --candidates " + Quote(dir) + " --threads " + threads;
+            while (_fullTasDifficultyOutput.TryDequeue(out _)) { }
+            _fullTasDifficultyProcess = StartEngineSim(args, _fullTasDifficultyOutput);
+            _fullTasDifficultyRun = run.name;
+            _fullTasDifficultyDone = 0;
+            _fullTasDifficultyOf = null;
+            FullTasLog("Measuring the difficulty of " + run.name + "'s candidates on " + threads + " threads");
+            return new { ok = true, command = exe + " " + args };
+        }
+
+        /// <summary>A line of the batch: `@difficulty {"type": "progress", "done", "of", "file"?}` moves the count, the rest goes to
+        /// the log.</summary>
+        void FullTasDifficultyLine(string line)
+        {
+            if (line.StartsWith("@difficulty ", StringComparison.Ordinal))
+            {
+                JObject e = null;
+                try { e = JObject.Parse(line.Substring("@difficulty ".Length)); }
+                catch (JsonException) { }
+                if (e != null)
+                {
+                    _fullTasDifficultyDone = (int?)e["done"] ?? _fullTasDifficultyDone;
+                    _fullTasDifficultyOf = (int?)e["of"] ?? _fullTasDifficultyOf;
+                    return;
+                }
+            }
+            FullTasLog("difficulty: " + line);
+        }
+
+        void PumpFullTasDifficulty()
+        {
+            if (_fullTasDifficultyProcess == null) return;
+            try
+            {
+                while (_fullTasDifficultyOutput.TryDequeue(out string line)) FullTasDifficultyLine(line);
+                if (!_fullTasDifficultyProcess.HasExited) return;
+                // WaitForExit waits for the last stdout and stderr lines: EndFullTasDifficulty reads them.
+                _fullTasDifficultyProcess.WaitForExit();
+                int code = _fullTasDifficultyProcess.ExitCode;
+                if (code == 0) EndFullTasDifficulty("Measured the difficulty of " + _fullTasDifficultyRun + "'s candidates (" + FullTasDifficultyCount() + ")");
+                else EndFullTasDifficulty("The difficulty batch of " + _fullTasDifficultyRun + " exited with code " + code + " (" + FullTasDifficultyCount() + "): the log has its last words", true);
+            }
+            catch (Exception ex) { Logger.LogError(ex); EndFullTasDifficulty("Difficulty batch error: " + ex.Message, true); }
+        }
+
+        /// <summary>Stops the batch (any Full-TAS Stop): killed, the sidecars it wrote stay.</summary>
+        void StopFullTasDifficulty()
+        {
+            if (_fullTasDifficultyProcess != null) EndFullTasDifficulty("Stopped measuring the difficulty of " + _fullTasDifficultyRun + "'s candidates (" + FullTasDifficultyCount() + ")");
+        }
+
+        void EndFullTasDifficulty(string result, bool error = false)
+        {
+            KillEngineSim(ref _fullTasDifficultyProcess, "difficulty batch");
+            while (_fullTasDifficultyOutput.TryDequeue(out string line)) FullTasDifficultyLine(line);
+            SetFullTasResult(result, error: error);
+        }
+
+        string FullTasDifficultyCount() { return _fullTasDifficultyDone + " of " + (_fullTasDifficultyOf?.ToString(CultureInfo.InvariantCulture) ?? "?") + " done"; }
 
         /// <summary>A candidate file's summary, its inputs skipped (a whole run's each); null when it can't be read.</summary>
         FullTasCandidate ReadFullTasCandidate(string path)

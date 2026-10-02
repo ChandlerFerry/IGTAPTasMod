@@ -178,12 +178,15 @@ the player drifts to a stop with the wall at its back (under an overhang's corne
 left face); the chain then clips off it. A wall above the back gets the same rest with no turn, so the player rises up to
 it clip-ready.
 
-The start-gate contact is the late gate touch (Tech tab): the timer starts on the first tick the player overlaps the
-start gate, so a route can reach the far side of it untimed and brush it at the last moment. Its demos rest from the
-contact for 0–20 ticks (the `.jump` demo presses the jump at the contact, for a player standing by the gate), tap toward
-the gate for 1–2 ticks (0.3–1) and back for 1–2, then rest with the jump as it was; one contact tries 8 of these, each
-chaining clips. The progress line counts `tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed
-the demo's contact after it: a clip that landed), and `at step contacts` (grafts at a per-step kind).
+The start-gate contact is the late gate touch (Tech tab): the timer starts on the second tick in a row the player
+overlaps the start gate (`startGate` starts it on `OnTriggerStay2D`; the first tick is the Enter), so a route can reach
+the far side of it untimed and brush it at the last moment, for two ticks: a one-tick brush starts no timer. Its demos
+rest from the contact for 0–20 ticks (the `.jump` demo presses the jump at the contact, for a player standing by the
+gate), tap toward the gate for 2–6 ticks (0.5–1: a one-tick tap from a stand behind the gate seldom overlaps it two ticks
+running) and back for 1–2, then rest with the jump as it was; one contact tries 8 of these, each chaining clips. The
+planner's gate tap holds full tilt toward the gate for 2 or 4 ticks, then half back for one. The progress line counts
+`tech grafts`, `chained` and `expected contacts` (chain grafts whose run showed the demo's contact after it: a clip that
+landed), and `at step contacts` (grafts at a per-step kind).
 
 The graft library is the Tech tab's demos (techs.json), mined into graft patterns
 (`Runtime\TechGrafts.cs`). Each demo replays offline from its start (its category's start trace, its own savestate, a
@@ -228,7 +231,7 @@ The spec'd demos that carry the old hand-written grafts' spread (labmaps, all ha
 `wall-clip.graft` (the clip at `WallBehind*`: flick 0.3–0.55, flick back 0.3–1, hold 0–26, 0–24 after the contact, chain 4
 deep expecting its `Landed`; the rest at `WallAbove*`, 3–30 ticks; the turn away at `WallAhead*`, 1–4 ticks 0.3–1 then
 3–30 at rest, each chaining clips), `late-gate-touch` (new lab by Course 1's start gate; its default and `.jump` demos: rest
-0–20, tap 1–2 ticks 0.3–1, back 1–2, rest 5–30, 8 tries, chaining clips), `coyote-ledge.graft` (the jump at a ledge −4..+3,
+0–20, tap 2–6 ticks 0.5–1, back 1–2, rest 5–30, 8 tries, chaining clips), `coyote-ledge.graft` (the jump at a ledge −4..+3,
 hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing), `wall-coyote-window.graft` (the wall jump:
 0..+4 after leaving a wall, −3..+3 of a touch), `spike-grace.graft` (the jump 1–7 ticks before a death), `coyote-ledge.super`
 (tech `super`: the dash with its jump on frame 1–4, or none, at a ledge, landing, wall or death), `coyote-ledge.primed`
@@ -505,7 +508,9 @@ momentum carries through them, and a window is scored on its arrival.
   category each (a picked cell is highlighted): each runs Improve on the record, and every candidate is judged for the
   farm time too, so one job improves both. A cell's ↗ opens that target: the panel lists its waypoints (`POST /api/solver/waypoints {course,
   capabilities, optional?, farm?}`, the engine's `--waypoints-out` on the library's routes; live from `waypoints {json}`
-  while that target improves) with each one's split, and **Show map** draws them numbered. Click a waypoint
+  while that target improves) with each one's split, and **Show map** draws them numbered. Above them, **Time to beat**
+  counts the physics ticks from the target's saved time (record or farm) to a faster one: the next time down, the next
+  round 0.1 s and second, or a typed target (both clocks count 0.02 s ticks, so 1.42 → 1.40 is one tick). Click a waypoint
   (shift-click extends) and Improve sends `focus: [a, b]` (`--focus a-b`). A target without a category route of its
   category or a narrower one runs the plain `solve` first (**Solve**); so does an Improve whose routes all come from a
   narrower category and none finishes this one (an added `OM` or `ORB` changes what the same inputs do: Course 10's
@@ -702,7 +707,8 @@ frames (rows have `paused`): `timeScale` is 0 and no FixedUpdate runs, but Updat
 A probe's ticks can also carry a route's own pause (`pause`, `pauseTick`, `pauseFrame`: `MacroStep.pauseFrames`), which turbo
 and enginesim model too (`MacroEngine.FrameRepeats`, `Simulation.InterpolatedFrames`); `pauseAt`/`pauseOffset` are 1x only. Offline
 `probe` takes `base` (inputs played once, unlogged, as every branch's start) and `frames: true` (a row per rendered frame:
-`kind` `frame`, its `alpha`, `still` in a freeze or pause). Playback runs on a fixed clock at 280 fps with
+`kind` `frame`, its `alpha`, `still` in a freeze or pause); its tick rows carry the course timer (`courseTime`, null while
+no course is timing). Playback runs on a fixed clock at 280 fps with
 vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
@@ -1206,6 +1212,67 @@ player, not the world: a swapped block, a used orb or a mover can be in another 
 `WJ_DS_DJ_BS_ORB_ZIP_OM` 8.10 at N = 250: 2314 edits, 2.3 s on 8 threads, 5.9 s on 1 (none arrive sooner: a solved
 route).
 
+## Time loss
+
+Where a course route loses its time, and what small change gains a tick: `timeloss split|search|floor|report`
+(`Cli\TimeLoss.cs`). Each cuts the route, its own inputs, at `difficulty`'s anchors (`Difficulty.Anchors`: the start, the
+second tick standing or on a wall, a respawn, a dash's freeze, a goal, the finish), so the segments line up across the four.
+A course's timer starts where the player crosses its start gate, not at the route's start: the ticks before it are
+untimed, and "timed" is the timer's share (`max(0, P − T)`, T the physics tick of the last step the timer turns on in).
+
+```powershell
+& $exe timeloss split  $traces\start-c1-none.json route.json --ref ref.json   # --ref a route or a captured trace; --within U, --json
+& $exe timeloss search $traces\start-c1-none.json route.json                  # --segment k | --window a-b, --depth 1|2|3 (2), --radius R (6), --beam B (8), --threads T
+& $exe timeloss floor  $traces\start-c1-none.json route.json                  # --json
+& $exe timeloss report $traces\start-c1-none.json route.json --ref ref.json   # --threads T, --depth D, --json
+```
+
+- `split` (`TimeLossSplit.cs`): the route against a reference run of the same target, anchor by anchor. A reference that is
+  a turbo capture (its `start` and per-tick `ticks` states) is cut from its captured states, as it played then, and what
+  its inputs do on today's engine is printed beside it. Each route anchor takes the nearest reference anchor of its kind
+  within `--within` u (default 100) after the last one taken (the starts match; the ends when of a kind). Per anchor:
+  both runs' physics ticks, their difference and the timed difference; a `timer` row says where each run's timer starts.
+  The losing segment is the first between matched anchors where the timed difference grows, with both players' place and
+  velocity at its ends and at the timer's start.
+- `search` (`TimeLossSearch.cs`): per segment, from the route's state at its first anchor, every single edit of its input
+  events (`Polish.Candidates`: shifted ±R alone and with the route after, the other stick values, a dash's other jump
+  frames, a press or dash dropped; a release moved anywhere in its hold or on towards the next press; a press added, held
+  1-15 ticks), then the best B by arrival edited again, up to `--depth` edits. A candidate arrives on the first physics
+  tick its player is at the next anchor in the same state (`Difficulty.SameState`: 4 u, 5 % of the speed, the same goals;
+  a course's finish: finishing), scored by the course timer while it runs, else physics ticks; end-anchor-free, at the
+  anchor after next with the next segment's events edited too. On a course that finishes it adds an anchor of its own,
+  `timer`, the input tick after the step its timer last starts on; a start's tick is gained by starting it later in
+  another state, so a leg to it goes on to the anchor after it. `--window a-b` edits only input ticks a..b−1, from the
+  route's state at a, to the first anchor at or after b. Up to 64 gaining candidates a segment are played whole from
+  the start: a segment's gain counts once it survives to the finish, and the best that beats the route goes to
+  `<route>-timeloss.json`.
+- `floor` (`TimeLossFloor.cs`): per segment, a floor on its ticks as `fulltas --auto`'s per-goal model bounds a goal
+  ([`docs/fulltas.md`](../docs/fulltas.md#auto), the gap model; the same `FullTas.Sustained` and speed probes): the
+  walkable distance (`DistanceField`, 8 u cells) from where the segment starts, or lands after a teleport in it (a tick
+  more), to the next anchor's place (a finished route's last segment: the course's end gate; while the timer is off, by a
+  start gate and on from where the route crossed it) over the top path speed with the segment's unlocks (the fastest
+  10-tick mean of the route's path and of the speed probes from every anchor). Slack = ticks − floor, and the timed slack
+  from where the timer starts in the segment; timed segments by timed slack first. The field walks through the air like a
+  corridor, so on a climb it is far under what gravity allows: a large slack says the model is loose there as much as
+  that the route is. A course trace only (a Full-TAS run's bounds are `fulltas --auto --minutes 0`'s).
+- `report`: one row per segment joining the three, split's by the segment's first input tick and search's best leg that
+  starts in it (search's `timer` cuts a segment in two): ticks, timed, `ref` (split's
+  difference, without `--ref` none), the best search gain at the finish and at the next anchor with its change, floor,
+  slack and timed slack, then a line each for the segment split says loses most, the best gain and the most slack;
+  `--json` the same as one object (`segments[]` of `floor`, `split`, `search`). Search runs at `--depth` (default 2).
+
+Course 1 `NONE` (2026-10-01, `start-c1-none.json`). On today's engine (the continuous frame grid) the judged
+`1_none-1.40.json` dies at action 52 (115 ticks) and its human versions don't finish; `1_none-1.42.json` finishes in 1.42 s
+(203 physics ticks), `1_none-1.44.json` in 1.44 s. The 1.42 has three anchors: the start, a landing at input 43 and the
+finish at 203, so two segments. Against the captured 1.40 (`route-c1-none-1.40.json`, its states as turbo played it;
+its inputs no longer finish here) `split` puts the lost tick in segment 1 (land at 43 → finish), and at its timer start:
+both land at 43 in the same state and cross the start trigger at x 2542 on the way up, the 1.42 at physics tick 132 (y
+−121.8, vy 454), the 1.40 at 140 (y −116.3, vy 427). The 1.42 finishes 7 physics ticks sooner (203 against 210) but
+starts its timer 8 sooner: gate to finish 71 ticks against 70. `search` at depth 2 (40.7k runs, 18 s on 16 threads)
+finds no edit of up to two inputs that finishes sooner. `floor`: 51 of segment 1's 71 timed ticks are slack over a
+20-tick floor, the climb's looseness (above); segment 0 is untimed. So the tick is lost after the trigger: from nearly the
+same point the 1.40 goes on to the finish in 70 timed ticks and the 1.42 in 71.
+
 ## Techs
 
 The TAS editor's **Techs here** (docs/superpowers/specs/2026-09-30-techs-here-design.md): `techs <start-trace> <route.json>
@@ -1260,6 +1327,14 @@ over its recorded steps: a tech's own check asked again after each hit, else eve
 spike-grace ticks and its human scores, for a course or a Full-TAS trace; `--json` is the one line the plugin's gate reads
 for the Full-TAS classes. `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
 tech, a glitchless tech's no nmg or major span ([docs/fulltas.md](../docs/fulltas.md#classes)).
+
+`difficulty <trace.json> <route.json> [--json]` measures how likely one human attempt at a route works: humanize's
+version of it cut at its anchors (where a player re-syncs: the start, standing, a wall cling, a respawn, a goal, a
+dash's freeze), each segment played from the route's own state at its first anchor (every worker's snapshots from one
+straight replay) with its input events moved by a rounded normal (`--sigma`, input ticks), the bottlenecks close together
+sampled again as one chain; `--candidates <dir>` writes every candidate's sidecar. The model, options and JSON:
+[docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.Anchors` and `Difficulty.SameState` are its anchors and its
+same-state test for other commands.
 
 ## Rules
 

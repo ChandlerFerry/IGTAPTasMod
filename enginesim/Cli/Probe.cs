@@ -77,7 +77,8 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly FieldInfo Dir = typeof(Movement).GetField("dashDirection", Fields);
 
-        /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, extra fields.</summary>
+        /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, the
+        /// course timer (null while no course is timing), extra fields.</summary>
         internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
             WorldPos p = sim.PlayerWorld;
@@ -92,6 +93,7 @@ namespace IGTAP.EngineSim.Cli
                 ["ground"] = pl.onGround, ["wall"] = pl.OnWall, ["mode"] = pl.cutsceneMode.ToString(),
                 ["dash"] = pl.dashActive, ["f"] = pl.framesSinceLastDash, ["facingRight"] = pl.facingRight,
                 ["dashDir"] = new[] { Round(d.x), Round(d.y) },
+                ["courseTime"] = sim.TimingCourse() is courseScript timing ? (object)Round(Simulation.CourseTime(timing)) : null,
             };
             for (int i = 0; i < extraFields.Length; i++) row[extraFields[i]] = Plain(extraInfos[i].GetValue(sim.Player));
             return row;

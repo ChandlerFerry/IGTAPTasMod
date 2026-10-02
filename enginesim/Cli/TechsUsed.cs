@@ -26,28 +26,11 @@ namespace IGTAP.EngineSim.Cli
             if (args.Length < 2 || args[0].StartsWith("--", StringComparison.Ordinal) || args[1].StartsWith("--", StringComparison.Ordinal))
                 throw new ArgumentException("usage: techs-used <trace.json> <route.json> [--json] | techs-used --demos [tech ...] [--tech-dir D]");
             string tracePath = args[0], routePath = args[1];
-            JsonElement header = Solve.ReadHeader(tracePath);
-            string[] goals = null;
-            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routePath), new JsonDocumentOptions { MaxDepth = 256 }))
-                if (doc.RootElement.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array)
-                    goals = g.EnumerateArray().Select(e => e.GetString()).ToArray();
-            List<InputTick> inputs = Plan.ReadRoute(routePath);
-            bool fullTas = header.TryGetProperty("fulltas", out JsonElement fulltas);
-            string[] labels = fullTas ? fulltas.GetProperty("goals").EnumerateArray().Select(e => e.GetProperty("label").GetString()).ToArray() : null;
-            if (fullTas && goals != null && !goals.SequenceEqual(labels))
-            {
-                // A goal list made of the trace's goals (an adopted one) is judged; a run file's stale list (the goals edited since) isn't.
-                try { header = FullTas.GoalsHeader(header, goals); labels = goals; }
-                catch (KeyNotFoundException) { Console.Error.WriteLine($"techs-used: the route's goals aren't made of the trace's ({goals.FirstOrDefault(l => !labels.Contains(l))}): judged under the trace's"); }
-            }
-            HumanWeights weights = HumanWeights.Of(fulltas);
+            var (header, labels, inputs) = Load(tracePath, routePath, "techs-used");
+            bool fullTas = labels != null;
+            HumanWeights weights = HumanWeights.Of(fullTas ? header.GetProperty("fulltas") : default);
 
-            Simulation sim = Solve.Creator(tracePath, header)();
-            if (fullTas)
-            {
-                sim.StrictBuys = true;
-                sim.Goals.Limit = labels.Length;
-            }
+            Simulation sim = Create(tracePath, header, labels);
             var record = new TechSteps(sim);
             record.Attach();
             record.Clear();
@@ -89,6 +72,40 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"score (weights major {weights.Major}, nmg {weights.Nmg}, grace {weights.Grace}): human-major {S(humanMajor)} s, human-nmg "
                 + (humanNmg == null ? "- (a major span)" : S(humanNmg.Value) + " s"));
             return 0;
+        }
+
+        /// <summary>A route as techs-used judges it: its inputs (a run file's "inputs", an offline best's "ticks"), the trace's
+        /// header, under the route's own "goals" when they are made of the trace's goals (an adopted goal list; a stale list is
+        /// judged under the trace's, said on stderr by <paramref name="tool"/>), and the goal labels (null on a course trace).</summary>
+        internal static (JsonElement header, string[] labels, List<InputTick> inputs) Load(string tracePath, string routePath, string tool)
+        {
+            JsonElement header = Solve.ReadHeader(tracePath);
+            string[] goals = null;
+            using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routePath), new JsonDocumentOptions { MaxDepth = 256 }))
+                if (doc.RootElement.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array)
+                    goals = g.EnumerateArray().Select(e => e.GetString()).ToArray();
+            List<InputTick> inputs = Plan.ReadRoute(routePath);
+            if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) return (header, null, inputs);
+            string[] labels = fulltas.GetProperty("goals").EnumerateArray().Select(e => e.GetProperty("label").GetString()).ToArray();
+            if (goals != null && !goals.SequenceEqual(labels))
+            {
+                try { header = FullTas.GoalsHeader(header, goals); labels = goals; }
+                catch (KeyNotFoundException) { Console.Error.WriteLine($"{tool}: the route's goals aren't made of the trace's ({goals.FirstOrDefault(l => !labels.Contains(l))}): judged under the trace's"); }
+            }
+            return (header, labels, inputs);
+        }
+
+        /// <summary>The simulation a route of <see cref="Load"/> replays on: a Full-TAS run's under its goals with strict buys (as
+        /// <c>fulltas --check</c>).</summary>
+        internal static Simulation Create(string tracePath, JsonElement header, string[] labels)
+        {
+            Simulation sim = Solve.Creator(tracePath, header)();
+            if (labels != null)
+            {
+                sim.StrictBuys = true;
+                sim.Goals.Limit = labels.Length;
+            }
+            return sim;
         }
 
         static int Demos(string[] args)

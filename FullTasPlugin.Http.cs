@@ -131,6 +131,7 @@ namespace IGTAPTasMod
             }
             PumpFullTasPending();
             PumpFullTasSolve();
+            PumpFullTasDifficulty();
             PumpFullTasQueue();
         }
 
@@ -194,6 +195,7 @@ namespace IGTAPTasMod
                         CompleteFullTasPending(409, new { ok = false, error = _fullTasPending.what + ": stopped." });
                     }
                     StopFullTasQueue();
+                    StopFullTasDifficulty();
                     if (_fullTasPlay != null) StopPlayback("Stopped from Web Studio");
                     return new { ok = true };
                 }
@@ -235,6 +237,8 @@ namespace IGTAPTasMod
                     FullTasLog("Moved " + run.name + " goal " + (index + 1) + " from " + label + " to " + moved.goals[index]);
                     return new { ok = true, index, from = label, to = moved.goals[index] };
                 }
+                case "/api/fulltas/difficulty":
+                    return StartFullTasDifficulty(body);
                 case "/api/fulltas/map":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
@@ -283,7 +287,7 @@ namespace IGTAPTasMod
             }).ToArray();
         }
 
-        /// <summary>The solve, the last result, the playback and the candidate queue (studio live state).</summary>
+        /// <summary>The solve, the last result, the playback, the candidate queue and the difficulty batch (studio live state).</summary>
         object BuildFullTasLiveWebState()
         {
             FullTasPlay play = _fullTasPlay;
@@ -296,6 +300,8 @@ namespace IGTAPTasMod
                 goalsOverlay = _settings.fullTasGoalsRun,
                 pending = _fullTasPending?.what,
                 queue = FullTasQueueWebState(),
+                difficulty = _fullTasDifficultyRun == null ? null : new { name = _fullTasDifficultyRun, running = _fullTasDifficultyProcess != null,
+                    done = _fullTasDifficultyDone, of = _fullTasDifficultyOf },
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
                     next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks,
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };

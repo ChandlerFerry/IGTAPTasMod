@@ -45,13 +45,31 @@
 .ftCandidatesTitle { margin-top: 18px; }
 .ftCandidates { max-height: 50vh; overflow-y: auto; }
 .ftCandidates > .tableHead { position: sticky; top: 0; z-index: 1; background: #0b1829; }
-.ftCandidates .tableHead, .ftCandidates .tableRow { grid-template-columns: 24px 70px 80px minmax(0,1fr) 52px 52px 52px 110px; align-items: center; }
-.ftCandidates .tableRow { cursor: pointer; user-select: none; }
+.ftCandidates .tableHead, .ftCandidates .tableRow { grid-template-columns: 24px 62px 72px minmax(0,1fr) 46px 46px 46px 52px 70px 46px 46px 104px; align-items: center; }
+.ftCandidates .tableRow { row-gap: 6px; cursor: pointer; user-select: none; }
 .ftCandidates .tableRow:hover { background: #10263d; }
 .ftCandidates .tableRow.picked { background: #1d1430; }
 .ftCandidates .tableRow.playing { box-shadow: inset 3px 0 0 var(--human); }
 .ftCandidates .good { color: var(--green); }
 .ftCandidates .bad { color: var(--red); }
+.ftSort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
+.ftSort::after { content: " \2195"; opacity: .45; }
+.ftSort.on { color: var(--text); }
+.ftSort.on::after { content: " \25B2"; opacity: 1; }
+.ftDifficulty { background: #2a2214; box-shadow: inset 3px 0 0 var(--amber); }
+.ftDifficulty .ftMeter i { background: var(--amber); }
+/* A candidate's difficulty along its input ticks: segments shaded by p (bottlenecks underlined), chains bracketed below,
+ * nmg (amber) and major (violet) spans marked across. */
+.ftStrip { grid-column: 1 / -1; position: relative; z-index: 0; height: 17px; background: linear-gradient(#15283f, #15283f) top / 100% 10px no-repeat; }
+.ftStrip i { position: absolute; display: block; }
+.ftSeg { top: 0; height: 10px; min-width: 2px; box-shadow: inset 1px 0 0 #294563; }
+.ftSeg.neck { box-shadow: inset 1px 0 0 #294563, inset 0 -2px 0 var(--red); }
+.ftSeg:hover { outline: 1px solid var(--text); z-index: 2; }
+.ftChain { top: 11px; height: 6px; min-width: 4px; border: 2px solid #e9dcff; border-top: 0; border-radius: 0 0 3px 3px; }
+.ftChain:hover { border-color: var(--text); }
+.ftGlitch { top: -2px; width: 3px; height: 14px; margin-left: -1px; border-radius: 1px; background: var(--amber); z-index: 1; }
+.ftGlitch.major { background: var(--human); }
+.ftGlitch:hover { outline: 1px solid var(--text); }
 
 .ftSolve { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .ftProblem { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--red); border-radius: 10px; background: #3a1420; }

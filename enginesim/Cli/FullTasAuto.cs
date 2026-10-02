@@ -94,7 +94,7 @@ namespace IGTAP.EngineSim.Cli
             public long SplitLead => RefSplit >= 0 ? Math.Max(0, Split - RefSplit) : 0;
         }
 
-        struct Sample
+        internal struct Sample
         {
             public long Tick;
             public int Input, Progress;
@@ -122,7 +122,8 @@ namespace IGTAP.EngineSim.Cli
         // A tick's move longer than twice what the player's speed (|Velocity + momentum|) covers in it, plus this slack, is a quick
         // restart's or a respawn's teleport, not movement.
         const float TeleportSlack = 20f;
-        const int SpeedWindow = 10, SlowStretch = 6, MaxRefs = 400;
+        internal const int SpeedWindow = 10;
+        const int SlowStretch = 6, MaxRefs = 400;
         const float SlowShare = .35f;
 
         readonly List<AutoRef> _refs = new List<AutoRef>();
@@ -1318,28 +1319,33 @@ namespace IGTAP.EngineSim.Cli
             return s;
         }
 
-        /// <summary>The fastest path speed (units per physics tick over SpeedWindow ticks, teleports excluded) per unlock set.</summary>
-        void Sustained(List<Sample> s, string how)
+        void Sustained(List<Sample> s, string how) => Sustained(s, _dt, _vtop, how);
+
+        /// <summary>The fastest path speed (units per physics tick over SpeedWindow ticks, teleports excluded) per unlock set, into
+        /// <paramref name="top"/> where it beats what is there (also <c>timeloss floor</c>'s, TimeLossFloor.cs).</summary>
+        internal static void Sustained(List<Sample> s, float dt, Dictionary<string, (float speed, string how)> top, string how)
         {
             float sum = 0f;
             var steps = new Queue<float>();
             for (int i = 1; i < s.Count; i++)
             {
                 float dx = s[i].X - s[i - 1].X, dy = s[i].Y - s[i - 1].Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
-                if (Jumped(s[i - 1], s[i]) || s[i].Caps != s[i - 1].Caps) { steps.Clear(); sum = 0f; continue; }
+                if (Jumped(s[i - 1], s[i], dt) || s[i].Caps != s[i - 1].Caps) { steps.Clear(); sum = 0f; continue; }
                 steps.Enqueue(step);
                 sum += step;
                 if (steps.Count > SpeedWindow) sum -= steps.Dequeue();
                 if (steps.Count < SpeedWindow) continue;
                 float v = sum / SpeedWindow;
-                if (!_vtop.TryGetValue(s[i].Caps, out var known) || v > known.speed) _vtop[s[i].Caps] = (v, $"{how}, tick {s[i].Tick}");
+                if (!top.TryGetValue(s[i].Caps, out var known) || v > known.speed) top[s[i].Caps] = (v, $"{how}, tick {s[i].Tick}");
             }
         }
 
-        bool Jumped(Sample a, Sample b)
+        bool Jumped(Sample a, Sample b) => Jumped(a, b, _dt);
+
+        internal static bool Jumped(Sample a, Sample b, float dt)
         {
             float dx = b.X - a.X, dy = b.Y - a.Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
-            return step > 2f * Math.Max(a.Speed, b.Speed) * _dt + TeleportSlack;
+            return step > 2f * Math.Max(a.Speed, b.Speed) * dt + TeleportSlack;
         }
 
         /// <summary>
@@ -1393,7 +1399,7 @@ namespace IGTAP.EngineSim.Cli
             return new InputTick { x = x, y = y, held = held || press, press = press, release = release && !held && !press };
         }
 
-        static IEnumerable<(List<InputTick> moves, int links)> SpeedMoves(bool omni)
+        internal static IEnumerable<(List<InputTick> moves, int links)> SpeedMoves(bool omni)
         {
             foreach (float side in new[] { -1f, 1f })
             {

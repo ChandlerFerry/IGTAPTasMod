@@ -377,9 +377,9 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
-        /// lab tools write (Full-TAS bests, closest attempts, human candidates, faster ways, traces, lab maps and demos,
-        /// forced-paths.json), fulltas.json edited by hand, the lists' sizes, playback, recording and solving starting or
-        /// ending, the scene, and the bonus reward boxes' purchases (the courses' hints). The files come as
+        /// lab tools write (Full-TAS bests, closest attempts, human candidates and their difficulty, faster ways, traces, lab
+        /// maps and demos, forced-paths.json), fulltas.json edited by hand, the lists' sizes, playback, recording and solving
+        /// starting or ending, the scene, and the bonus reward boxes' purchases (the courses' hints). The files come as
         /// <paramref name="files"/>, the last <see cref="StartWebStateFileScan"/>'s hash.
         /// </summary>
         long WebStateStamp(long files)
@@ -446,7 +446,11 @@ namespace IGTAPTasMod
                     AddFile(classes);
                     AddDirectory(fullTasDir);
                     foreach (string trace in traces) Add(File.Exists(trace) ? 1 : 0);
-                    foreach (string dir in candidates) AddDirectory(dir);
+                    foreach (string dir in candidates)
+                    {
+                        AddDirectory(dir);
+                        AddDirectory(Path.Combine(dir, "difficulty"));
+                    }
                     AddDirectory(labs);
                     if (forced != null) AddFile(forced);
                     System.Threading.Interlocked.Exchange(ref _webStateFiles, h);

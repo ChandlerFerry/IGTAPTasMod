@@ -151,7 +151,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         Humanizer.Event e = events[i];
                         if (e.Tick < from || e.Tick >= to) continue;
-                        if (!Keep(Candidates(_route, e))) continue;
+                        if (!Keep(Candidates(_route, e, _radius))) continue;
                         events = Humanizer.Events(_route, _route);
                         i = events.FindIndex(x => x.Tick >= e.Tick) - 1;
                         if (i < -1) i = events.Count;
@@ -206,12 +206,13 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>One input's candidates: shifted alone, shifted with the rest of the route, other stick values, other jump frames, dropped.</summary>
-        List<(List<InputTick> inputs, int first, string what)> Candidates(List<InputTick> route, Humanizer.Event e)
+        /// <summary>One input's candidates: shifted up to <paramref name="radius"/> ticks alone and with the rest of the route, other
+        /// stick values, other jump frames, dropped (<c>timeloss search</c> plays them too).</summary>
+        internal static List<(List<InputTick> inputs, int first, string what)> Candidates(List<InputTick> route, Humanizer.Event e, int radius)
         {
             var c = new List<(List<InputTick>, int, string)>();
             string name = $"{e.Kind} {e.Tick}";
-            Shifts(route, e, 1, _radius, c);
+            Shifts(route, e, 1, radius, c);
             switch (e.Kind)
             {
                 case Humanizer.Kind.StickX:

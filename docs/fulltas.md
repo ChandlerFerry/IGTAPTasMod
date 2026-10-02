@@ -555,6 +555,24 @@ inputs past the last unchanged goal the same way.
   1x result in the table (finished time, or the goal it got to and why in its tooltip); it stays once done (`index >=
   of`) until the next queue. **Stop** (`/api/fulltas/queue/stop`, or any Full-TAS Stop) ends it; the one playing still
   gets its result.
+- **Measure difficulty** (`POST /api/fulltas/difficulty {name}`) runs the engine's `difficulty <trace> --candidates
+  <traces>\fulltas\candidates\<run>\ --threads <cores − 4>` from the run's current trace (refused without one: Capture
+  start), a process of its own beside any solve. Each candidate's measurement goes to the folder's `difficulty\<file>`
+  (one already measured with the same parameters is skipped) and shows as its row's `difficulty` (static
+  `fullTas.runs[].candidates[].difficulty`, the sidecar as written, null until measured; the static state follows the
+  folder). The live `fullTas.difficulty` is `{name, running, done, of}` from the engine's `@difficulty {"type":
+  "progress", "done", "of", "file"}` lines (`of` null until the first; the rest goes to the log); it stays after the
+  batch until the next, whose end or failure is also `lastResult`. Any Full-TAS **Stop** kills it; the sidecars written
+  so far stay.
+- A measured candidate's row shows **P %** (one human attempt's chance), **Attempts** (1/P, ∞ at P 0), **Necks**
+  (bottlenecks, p < 0.9; their spacing in its tooltip) and **Chains**; P's tooltip adds the tightest segment, the spacing
+  and the parameters it was measured with. The **Score** and **Attempts** headers sort the table (attempts: fewest
+  first, P 0 after the rest, unmeasured last; a tie keeps score order); **Play selected back to back** still plays in
+  score order. Under the row a strip spans its input ticks (0 to the last segment's end): each segment a block shaded by
+  its p (clear at 1, amber to solid red as it falls, a bottleneck underlined red), each chain a bracket below its span,
+  each nmg span an amber mark and each major span a violet one at its tick; hovering one gives its p, anchors, input and
+  physics ticks, events, techs and spike-grace ticks. The amber bar above the table follows `fullTas.difficulty` (done
+  of `of`, with its own **Stop**).
 
 ## Classes
 
@@ -631,6 +649,54 @@ it lasts; a spike-grace tick is a step whose hurtbox touches a spike the run liv
   from when that isn't its own.
 - A class keeps the run's goals: `--auto`'s goals part is off, a goals edit isn't adopted (the gate refuses a class route
   with other goals; only the major record adopts them).
+
+### Difficulty
+
+How likely one human attempt at a route works, and where it fails (`enginesim\Cli\Difficulty.cs`; a measurement, no
+class ranks by it yet). A route is a chain of bottlenecks: the width of a segment is the share of human-like plays of it
+that still work, the route's chance P the product of its segments'.
+
+```powershell
+& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json route.json   # --json, --samples 300, --sigma 1, --chain 15, --pos 4, --vel 0.05, --raw, --threads N
+& $exe difficulty $traces\fulltas-Test-No-Omni-Skip.json --candidates $traces\fulltas\candidates\Test-No-Omni-Skip\
+```
+
+- **The route played** is humanize's version of it (`Humanizer.Simplified`: the greedy passes that keep its live time,
+  no slack report; played as `humanize` plays a Full-TAS route, without strict buys: its finish is at the last goal, not
+  the strict finish's 12 ticks later, which a run that touches its last goal after its last input never reaches, as it
+  stops 20 idle steps after that input): a search's stray presses, dashes and stick changes are no part of what a player
+  does. It replays as `techs-used` does (strict buys, the route's own adopted goals), on a course trace too. `--raw`, a
+  route humanize can't finish, or a human version that doesn't finish under strict buys where the route does, plays the
+  route's own inputs (said on stderr; `human` false).
+- **Anchors** are where a player re-syncs: the start, standing (the second step on the ground), a wall cling (the second
+  step on a wall off the ground), a respawn, a goal, a dash's freeze starting (`TechSteps`); anchors fewer than 3 input
+  ticks apart are one, and the last is the last goal (a course: its finish). A segment is the inputs between two.
+- **A sample** plays a segment from the route's own state at its first anchor (each worker's snapshots from one straight
+  replay): every input event in it (`Humanizer.Events`: a press, a release, a dash, a stick change) moved by a normal of
+  `--sigma` input ticks rounded, kept from the anchor to 2 ticks past the segment's end and moved no further than
+  humanize's moves allow (no event crosses another input, a press keeps its hold, a dash its freeze stick); a partial x
+  goes a controller step up or down (0.05; under 0.3 rest, over 0.8 full tilt) half the time. Sigma 0 is the route itself.
+  Seeded by the route's file name and the segment's ticks: a measure repeats exactly, on any thread count.
+- **It works** when, 3 input ticks either way of the route's next anchor, the player has its goals, air jumps, air dashes
+  and wall jumps, is within `--pos` u of its position and within `--vel` of its velocity (at least 1 u/s), or when the
+  route's own inputs from there still reach the next goal (a course: the finish) at most 25 input ticks after the route
+  does. At the route's last goal reaching it is all. A death ends the sample.
+- **p** = working samples / samples, `--samples` (300) at a time while fewer than 20 work, up to 16 times as many. A
+  segment under 0.9 is a bottleneck; bottlenecks less than `--chain` input ticks apart (one's end to the next's start)
+  leave no time to reset and are sampled again as one span, every event of it at once from the first one's anchor: a
+  chain, whose p replaces its segments'. P = the chains' p times the other segments', attempts = 1/P.
+- **JSON** (`--json` one line; `--candidates` writes it to `<dir>\difficulty\<file>`, kept while newer than its candidate
+  and made with the same parameters, with an `@difficulty {"type": "progress", "done", "of", "file"}` line after each and
+  a failed candidate on stderr): `{route, finished, goals (reached), live, human (humanize's version played), params:
+  {samples, sigma, chain, pos, vel, raw}, P, attempts (null at P 0), bottlenecks, chains, tightest: {segment, p},
+  spacing (input ticks between consecutive bottlenecks), segments: [{index, from, to, fromPhysics, toPhysics, anchor,
+  next, events, samples, p, bottleneck, chain (its chainList index or null), techs (nmg and major techs seen there),
+  grace (spike-grace ticks there)}], chainList: [{index, segments, from, to, events, samples, p}]}`; `from`/`to` input
+  ticks, the physics ones the run's physics ticks there. The anchor kinds: `start`, `land`, `wall`, `freeze`, `respawn`,
+  `goal`, `finish`, `end` (a route that reaches no goal).
+- **The anchors as an API**: `Difficulty.Anchors(sim, route, from, states)` gives each anchor's kind, input and physics
+  ticks, snapshot, `MoveState` and goals reached; `Difficulty.Anchors(steps, goalTicks, first, fullTas)` the kinds from a
+  recorded run; `Difficulty.SameState` is a sample's test.
 
 ## Offline search
 
@@ -841,7 +907,8 @@ without it). On `FalseEnding-Any%` with `--focus 181-186` every pull of a 2-minu
   it) from where the best starts goal k, or from where a teleport in it (a quick restart) lands plus a tick, over the top
   speed for the goal's unlocks. It's an empirical bound (no route has shown a faster speed with those unlocks), not a
   proof; `gap` = split − bound. A first replay grows the field's grid over the whole route, so one measured pass reads
-  one grid (the grid coarsens as it grows).
+  one grid (the grid coarsens as it grows). `timeloss floor` uses the same top speed and bound per segment of a course
+  route ([`enginesim/README.md`](../enginesim/README.md#time-loss)).
 - *Speed deficit*: along the best, the progress toward the goal's target each tick against the 80th percentile of what it
   makes in that goal; a stretch of 6 or more ticks under 35% of that is flagged, with the ticks it would save, as
   `reset`, `loops back`, `standing/wait` or `slow`.
