@@ -1344,7 +1344,14 @@ namespace IGTAP.EngineSim
                 PlayerStepFrom = PlayerWorld;
                 // A start inside a tick: the game started the engine in Movement.FixedUpdate's prefix after BeforeTick had run
                 // idle, so that tick's pre-hook stick read is at rest and its step is pressed at the input hook (FixedTick).
-                if (!(StartsInsideTick && from.Tick == 0 && Scheduler.Tick == 0)) Engine.BeforeTick(Player);
+                // globalStats.FixedUpdate's NP (Economy.FixedStep) runs before every other FixedUpdate: globalStats inherits
+                // [DefaultExecutionOrder(-50)] from Singleton<T> (Singleton.cs:3), Movement and courseScript run at 0. A start
+                // inside a tick comes after it: that tick's NP was paid before the start.
+                if (!(StartsInsideTick && from.Tick == 0 && Scheduler.Tick == 0))
+                {
+                    Shop.Economy?.FixedStep();
+                    Engine.BeforeTick(Player);
+                }
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
                 Engine.AfterFixedTick(Player);

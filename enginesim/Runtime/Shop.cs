@@ -151,7 +151,6 @@ namespace IGTAP.EngineSim
 
         internal void FixedStep()
         {
-            Economy?.FixedStep();
             _continuing = true;
             for (int i = 0; i < _buyMax.Count; i++)
             {

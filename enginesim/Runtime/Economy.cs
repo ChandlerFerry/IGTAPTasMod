@@ -768,6 +768,8 @@ namespace IGTAP.EngineSim
         /// globalStats.FixedUpdate's DoConstantCurrency (globalStats.cs:1100-1124), once a physics step: NP a tick below the cap,
         /// past it nothing or, with NpCapIsSoftcap, the rate times (cap / NP)³; doubled per running comp boost with
         /// compBoostDoublesNP. lastAppliedNpRewardPerTick is only the readout's. No globalStats, no FixedUpdate: nothing.
+        /// Simulation runs it before every other FixedUpdate: globalStats inherits [DefaultExecutionOrder(-50)] from Singleton&lt;T&gt;
+        /// (Singleton.cs:3), so it pays before courseScript.FixedUpdate halves EffectOfNpCompBoost (courseScript.cs:307).
         /// </summary>
         internal void FixedStep()
         {
