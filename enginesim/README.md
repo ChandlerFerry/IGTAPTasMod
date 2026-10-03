@@ -1746,7 +1746,10 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
     colour counter passes 100 (green each spawn by `greenCloneClance`, red by `redCloneChance` on a green pass off
     Area 2) — modeled in `Runtime/Economy.cs` (`ColourCheck`): an on-screen clone keeps its colours and pays them at
     its path's end, an off-screen spawn pays them at once (red power capped at `globalStats.rpCap`, green power and
-    clone dust times `CloneDustGpCdMult`, recomputed after each clone dust payout).
+    clone dust times `CloneDustGpCdMult`, recomputed after each clone dust payout; a start takes the stored value, not one
+    recomputed from the clone dust held: the game recomputes it only after a payout and in `RubbleDisplayScript`'s
+    readout, which the engine doesn't run, so it can be stale, as a 1x probe with clone dust set found it,
+    [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Clone dust multiplier at a start*).
   - `Movement.playSFX` (Movement.cs:1869-1919): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
     of the `Audio.PlayAudio` its land/grassLand cases make. `cuts.txt` empties it; `hooks.txt`'s `OnPlaySfx` keeps the
     draws (`Movement::PlayFootstep` and `Movement::PlayWallSlideSfx` run un-cut: their bodies only dispatch here).

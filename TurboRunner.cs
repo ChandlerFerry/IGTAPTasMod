@@ -707,10 +707,13 @@ namespace IGTAPTasMod
         static readonly HashSet<Transform> HeldClones = new HashSet<Transform>();
 
         /// <summary>globalStats' atom counts and NP rates: what AddNewAtom, FinishCrafting and ClearAtoms write
-        /// (AtomColliderSystem.cs:202-209, 300-325, 153-156), and the course finishes' NP comp boost (courseScript.cs:307, 447).</summary>
+        /// (AtomColliderSystem.cs:202-209, 300-325, 153-156), the course finishes' NP comp boost (courseScript.cs:307, 447), the
+        /// clone dust multiplier a clone dust payout recomputes (RecalcCloneDustMult, clonesScript.cs:282, courseScript.cs:407)
+        /// and the RP cap its boxes set (UpdateRpCap, upgradeBox.cs:712-716): the engine's snapshots hold all of them.</summary>
         static double[] AtomStats(globalStats g)
         {
-            return new[] { g.effectiveAtomCount, g.grossAtomCount, g.AtomCountInTermsOfWhiteAtoms, g.NPrewardPerTick, g.NPrewardCap, g.EffectOfNpCompBoost };
+            return new[] { g.effectiveAtomCount, g.grossAtomCount, g.AtomCountInTermsOfWhiteAtoms, g.NPrewardPerTick, g.NPrewardCap, g.EffectOfNpCompBoost,
+                g.CloneDustGpCdMult, g.rpCap };
         }
 
         static void RestoreAtomStats(globalStats g, double[] v)
@@ -721,6 +724,8 @@ namespace IGTAPTasMod
             g.NPrewardPerTick = v[3];
             g.NPrewardCap = v[4];
             g.EffectOfNpCompBoost = v[5];
+            g.CloneDustGpCdMult = v[6];
+            g.rpCap = v[7];
         }
 
         /// <summary>The collider's per-tier lists of lists (contents, contentsTargetLocs) copied to the inner list: EconomyFields' copy is one level deep.</summary>

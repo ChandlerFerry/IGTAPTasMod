@@ -181,7 +181,10 @@ namespace IGTAP.EngineSim
                 _byScript[script] = clones;
             }
             _stepped = _clones.Where(c => c.Script.gameObject.activeInHierarchy).ToArray();
-            RecalcCdMult();
+            // globalStats.CloneDustGpCdMult as the start holds it, not recomputed: the game recomputes it only after a clone dust
+            // payout and in RubbleDisplayScript's readout (its Start when clone dust is held, then every 0.2 s while on screen,
+            // RubbleDisplayScript.cs:28-55), so clone dust set or spent since leaves it stale (a 1x probe: 1 with 1e4 held).
+            if ((object)own != null) _cdMult = own.CloneDustGpCdMult; else RecalcCdMult();
 
             _atomCollider = world.All<AtomColliderSystem>().FirstOrDefault();
             if ((object)_atomCollider != null)
@@ -219,7 +222,7 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>globalStats.RecalcCloneDustMult (globalStats.cs:1126-1140) on the clone dust the run holds: the game runs it
-        /// after every clone dust payout (and RubbleDisplayScript's readout), so at a start it is the held clone dust's.</summary>
+        /// after every clone dust payout (and RubbleDisplayScript's readout, which the engine doesn't run).</summary>
         void RecalcCdMult()
         {
             double cd = _sim.Shop.Holds(globalStats.Currencies.CloneDust);

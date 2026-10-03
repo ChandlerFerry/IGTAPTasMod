@@ -960,3 +960,19 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Where:** `TurboRunner` (`Run`, `BeforeInvokeRepeating`, `BeforeCancelInvoke`, `BeforeStartCoroutine`, `Resume`,
   `HandAtomGrid`, `AtomGridTicks`, `CaptureEconomy`, `RestoreAtoms`, `CaptureScene`, `RestoreScene`), `EngineSimBridge`
   (trace start).
+
+## Clone dust multiplier at a start
+
+- **Symptom:** (2026-10-03, Task 7's Area 2 probe: a new game with 1e4 clone dust set, Course 6's start) the engine
+  started `CloneDustGpCdMult` at 12.08, while 1x and turbo had 1. Every green power and clone dust payout before the
+  first clone dust payout would have paid 12 times as much offline.
+- **Cause:** `Economy` computed it from the held clone dust (`RecalcCloneDustMult`). The game recomputes it only after a
+  clone dust payout and in `RubbleDisplayScript`'s readout (its `Start` when clone dust is held, then every 0.2 s while
+  on screen, RubbleDisplayScript.cs:28-55). So clone dust set or spent since (a box bought with it) leaves the stored
+  value stale. A turbo restore also left it, and `rpCap`, as the last run had them.
+- **Fix:** the engine starts from the world's `globalStats.CloneDustGpCdMult`. Turbo's snapshot keeps it and `rpCap`
+  with `globalStats`' atom and NP fields. The probe's `cdMult` is now equal in all three legs (1). FalseEnding%-280 and
+  TouchGrass-ANY% replay unchanged (their worlds hold 1, which 0 clone dust recomputes to).
+- **Residual risk:** the engine doesn't run `RubbleDisplayScript` (Course 8's rubble display). While it is on screen at
+  1x it recomputes the multiplier every 0.2 s.
+- **Where:** `Economy` (constructor), `TurboRunner.AtomStats`.
