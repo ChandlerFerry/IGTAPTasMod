@@ -815,6 +815,28 @@ atoms waiting). `replay <trace> --ticks-out FILE` writes the offline rows for a 
 `python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
 as the sequence of values it takes, and names the first value where they part.
 
+The economy runs without the player too (`Runtime/EconomyDrive.cs`, the economy planner's Cash model):
+`Simulation.EconomyIdle(ticks, at)` plays physics ticks with the player standing at `at` (scene frame), `EconomyBuy(box,
+at)` one tick in which it touches a box (the box's own `OnTriggerStay2D`, at the physics step's place in the tick) and
+`EconomyFinish(course, time)` one tick in which a course finishes (`Shop.CourseFinished`, stopTracking's economy). They
+play the same pieces of the tick `Simulation.Run` plays (`EconomyTickStart`: Invokes and Seconds waits; the NP step;
+`EconomyFixedUpdates`: courses, Vman clock, refill orbs, box cooldowns; `EconomyAfterStep`: buy-max steps and FixedUpdate
+waits; `InterpolatedFrames` without the player: each frame's Start pass, clone and atom steps, atom grid and end-of-frame
+resumes; `EconomyTickEnd`: frame waits) with the player's half left out: no input, no `Movement` FixedUpdate or Update,
+no physics step, no rebase. The clones of a course are on screen where `at` lies inside one of their `clonesLoD`
+triggers (`PhysicsWorld.OverlapPoint`; the trigger's own enter or exit runs where that changes them), the place, not the
+player's boxes. A drive starts from `RestoreForDrive(snapshot)`, which keeps the run's engine counts going (the frame
+grid's phase, the Full-TAS reward refresh); an unmodeled economy event or a purchase the run would stop on throws.
+`plan-check <trace> <route> --at N [--ticks T] [--buy | --finish]` checks it against the full simulation from the same
+state: the route to goal N of a Full-TAS trace (else input N), no input until the player rests, then T (2000) idle ticks
+through `Run` against `EconomyIdle`; or the tick before goal N's buy (`--buy`: the first buy from there) or finish, its
+full tick against `EconomyBuy`/`EconomyFinish`. Every currency, clone, upgrade, atom, buy-max, scheduler, course reward,
+box and the RNG state must match (the RNG is skipped where the full tick's player made sound draws the drive has no
+player for); it exits 1 on a mismatch. Checked: FalseEnding%-280 idle after goals 55 (Course 1), 120 (Course 2's clones
+on screen) and 170 (`buy:buyds`), buys at goals 3, 24, 120, 170, finishes at goals 2, 55, 88; the Area 2 stretches
+`t7-c6-area2` (idle after the tree's buy, while it grows; its four buys), `t7-atoms` (idle with atoms landing and
+crafting; the first atom box's buy) and `t7-c10-afterA` (idle; the NP box).
+
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
 body back by that frame's lag. On the wall clock the lag changes from run to run, and so does the route; playback's

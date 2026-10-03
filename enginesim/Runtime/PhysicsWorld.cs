@@ -1093,6 +1093,21 @@ namespace IGTAP.EngineSim
                 _ray.Fraction * distance, _ray.Fraction);
         }
 
+        /// <summary>
+        /// Collider2D.OverlapPoint: whether the point lies in one of the collider's shapes as the world stands now (a chain or an
+        /// edge holds none; a collider off holds none). The economy drive's clonesLoD test (Simulation.EconomyIdle).
+        /// </summary>
+        public bool OverlapPoint(Collider2D collider, Vector2 point)
+        {
+            Settle();
+            SyncMovedWorld();
+            if (!_colliders.TryGetValue(collider, out ColliderState s)) return false;
+            var p = new b2Vec2(point.x, point.y);
+            foreach (b2Fixture f in s.Fixtures)
+                if (f.m_proxyCount > 0 && f.TestPoint(p)) return true;
+            return false;
+        }
+
         readonly InsideQuery _inside;
         readonly ClosestRay _ray;
 

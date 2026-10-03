@@ -408,6 +408,12 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        /// <summary>Whether the course's clones are on screen (clonesScript.isOnScreen's last call); null for clones the economy doesn't keep.</summary>
+        internal bool? OnScreenOf(clonesScript script)
+        {
+            return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? c.V.OnScreen : null;
+        }
+
         internal (int count, float pathLength)? ClonesOf(clonesScript script)
         {
             return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? (c.V.Count, c.V.PathLength) : null;

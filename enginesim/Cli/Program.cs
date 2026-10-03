@@ -45,6 +45,7 @@ namespace IGTAP.EngineSim.Cli
                     case "fulltas-plan": return FullTas.Plan(args.Skip(1).ToArray());
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
+                    case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
                     case "oneway": return OneWay();
@@ -237,6 +238,10 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         to the zip movers (buytree16), on a model of Area 2's economy; laps from\n"
                             + "                                         the saved routes, else zip-plan.json's estimates; --plan buy:<token>,all:<token>,\n"
                             + "                                         lap:<N>,atoms:<k> starts from those steps; prints the Full-TAS goals\n"
+                            + "  plan-check <trace.json> <route.json> --at N [--ticks T] [--buy | --finish]\n"
+                            + "                                         the economy drive (Simulation.EconomyIdle/Buy/Finish) against the full\n"
+                            + "                                         simulation: T (2000) idle ticks where the player rests after goal N of a\n"
+                            + "                                         Full-TAS trace (else input N), or goal N's buy or finish tick; PASS/FAIL\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
@@ -543,6 +548,175 @@ namespace IGTAP.EngineSim.Cli
         }
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
+
+        /// <summary>
+        /// plan-check &lt;trace&gt; &lt;route&gt; --at N [--ticks T] [--buy | --finish]: the economy drive (Simulation.EconomyIdle,
+        /// EconomyBuy, EconomyFinish: Runtime\EconomyDrive.cs) against the full simulation from the same state. N is a goal of a
+        /// Full-TAS trace (1-based, as `fulltas --check` numbers them), else an input tick. Idle: the route to N, then no input
+        /// until the player rests (3 still ticks) and a snapshot there; T (2000) more idle ticks of the full simulation against
+        /// EconomyIdle(T) where the player stands. --buy / --finish: the state a physics tick before goal N's purchase or course
+        /// finish, the full simulation's next tick against EconomyBuy / EconomyFinish of it. Prints each economy field PASS or
+        /// FAIL (the random state: skipped where the full ticks' player drew, its sounds, which the drive has no player for);
+        /// exits 1 on a FAIL.
+        /// </summary>
+        static int PlanCheck(string[] args)
+        {
+            string tracePath = args[0];
+            List<InputTick> route = Plan.ReadRoute(args[1]);
+            int at = Solve.Option(args, "--at", -1), idle = Solve.Option(args, "--ticks", 2000);
+            bool buy = args.Contains("--buy"), finish = args.Contains("--finish");
+            if (at < 1) throw new ArgumentException("--at N: a goal (Full-TAS trace) or an input tick");
+            Simulation sim = Solve.Creator(tracePath, Solve.ReadHeader(tracePath))();
+            bool goals = sim.Goals != null;
+            string where = goals ? "goal " + at + " " + sim.Goals.Goals[at - 1].label : "input " + at;
+            // The physics step goal N is reached on (or input tick N played on; --buy: the first from there that buys), the inputs
+            // played by then and the boxes bought on it.
+            int reached = -1, played = 0;
+            upgradeBox[] boxes = sim.World.All<upgradeBox>();
+            int[] used = boxes.Select(b => b.TimesUsed).ToArray();
+            var bought = new List<string>();
+            sim.Run(route, extraTicks: 1000000, afterTick: _ => reached < 0, onStep: s =>
+            {
+                if (reached >= 0) return;
+                bool there = goals ? sim.Progress >= at : sim.Engine.RunTicks >= at;
+                for (int i = 0; i < boxes.Length; i++)
+                    if (boxes[i].TimesUsed != used[i])
+                    {
+                        if (there) bought.Add(sim.Shop.Id(boxes[i]));
+                        used[i] = boxes[i].TimesUsed;
+                    }
+                if (!there || buy && bought.Count == 0) return;
+                reached = s;
+                played = (int)sim.Engine.RunTicks;
+            });
+            if (reached < 0) { Console.WriteLine($"FAIL: the route never reaches {where}" + (buy ? " and buys" : "")); return 1; }
+            SimSnapshot snap = null;
+            Vector2 place = default;
+            SortedDictionary<string, string> full = null;
+            var fullDraws = new List<string>();
+            string box = null;
+            float time = 0f;
+            int course = 0;
+            if (!buy && !finish)
+            {
+                var inputs = route.Take(played).Concat(Enumerable.Repeat(new InputTick(), idle + 1000)).ToList();
+                int still = 0, from = -1;
+                UnityEngine.Random.Drawn = caller => { if (snap != null) fullDraws.Add(caller); };
+                sim.Run(inputs, extraTicks: 0, afterTick: _ => full == null, onStep: s =>
+                {
+                    if (snap != null)
+                    {
+                        if (s == from + idle) full = DriveFields(sim);
+                        return;
+                    }
+                    if (s < reached) return;
+                    bool rest = sim.Player.onGround && sim.Player.Velocity.sqrMagnitude < 1e-4f && sim.Player.momentum.sqrMagnitude < 1e-4f;
+                    still = rest ? still + 1 : 0;
+                    if (still < 3) return;
+                    snap = sim.Capture((int)sim.Engine.RunTicks);
+                    place = sim.Player.transform.position;
+                    from = s;
+                });
+                UnityEngine.Random.Drawn = null;
+                if (full == null) { Console.WriteLine($"FAIL: the player doesn't rest for {idle} ticks after {where}"); return 1; }
+                Console.WriteLine($"idle: {idle} ticks from physics step {from} at ({place.x:0.0}, {place.y:0.0}), {where}");
+            }
+            else
+            {
+                int step = -1;
+                UnityEngine.Random.Drawn = caller => { if (step == reached) fullDraws.Add(caller); };
+                sim.Run(route, extraTicks: 1000000, afterTick: _ => full == null, onStep: s =>
+                {
+                    step = s + 1;
+                    if (s == reached - 1)
+                    {
+                        snap = sim.Capture((int)sim.Engine.RunTicks);
+                        place = sim.Player.transform.position;
+                        course = goals ? sim.Goals.Current.course : sim.TargetCourse;
+                    }
+                    else if (s == reached)
+                    {
+                        full = DriveFields(sim);
+                        time = sim.LastCourseTime;
+                    }
+                });
+                UnityEngine.Random.Drawn = null;
+                if (snap == null || full == null) { Console.WriteLine($"FAIL: no physics step before {where}"); return 1; }
+                if (buy && bought.Count != 1) { Console.WriteLine($"FAIL: {bought.Count} purchases on {where}'s step ({string.Join(", ", bought)}): EconomyBuy is one touch"); return 1; }
+                if (buy) box = bought[0];
+                Console.WriteLine((buy ? "buy " + box : "finish of course " + course + " in " + time.ToString("R", CultureInfo.InvariantCulture) + " s")
+                    + $" on physics step {reached} from ({place.x:0.0}, {place.y:0.0}), {where}");
+            }
+            sim.RestoreForDrive(snap);
+            IEnumerable<object[]> clones = sim.Shop.Economy?.CloneStates() ?? Enumerable.Empty<object[]>();
+            Console.WriteLine("clones: " + string.Join(", ", clones.Select(c => "course " + c[0] + " " + c[1] + ((bool)c[3] ? " on screen" : " off screen"))));
+            var driveDraws = new List<string>();
+            UnityEngine.Random.Drawn = driveDraws.Add;
+            if (buy) Console.WriteLine("EconomyBuy: " + (sim.EconomyBuy(box, place) ? "bought" : "didn't buy"));
+            else if (finish) sim.EconomyFinish(course, time);
+            else sim.EconomyIdle(idle, place);
+            UnityEngine.Random.Drawn = null;
+            SortedDictionary<string, string> drive = DriveFields(sim);
+            // The player's own draws (its sounds) in the full ticks: the drive has no player to make them.
+            var extra = fullDraws.GroupBy(c => c).ToDictionary(g => g.Key, g => g.Count());
+            foreach (string c in driveDraws) extra[c] = (extra.TryGetValue(c, out int n) ? n : 0) - 1;
+            string playerDraws = string.Join(", ", extra.Where(x => x.Value != 0).Select(x => x.Key + " " + x.Value.ToString("+0;-0")));
+            Console.WriteLine($"draws: full {fullDraws.Count}, drive {driveDraws.Count}" + (playerDraws.Length == 0 ? "" : "; full minus drive by caller: " + playerDraws));
+            int failed = 0;
+            foreach (string key in full.Keys.Union(drive.Keys))
+            {
+                full.TryGetValue(key, out string a);
+                drive.TryGetValue(key, out string b);
+                if (a == b) { Console.WriteLine($"PASS {key}"); continue; }
+                if (key == "random" && playerDraws.Length > 0 && extra.All(x => x.Value >= 0)) { Console.WriteLine($"SKIP {key} (the full ticks' player drew)"); continue; }
+                failed++;
+                Console.WriteLine($"FAIL {key}\n  full:  {Clip(a)}\n  drive: {Clip(b)}");
+            }
+            Console.WriteLine(failed == 0 ? "PASS" : $"FAIL ({failed} fields)");
+            return failed == 0 ? 0 : 1;
+        }
+
+        static string Clip(string s) { return s == null ? "(none)" : s.Length <= 3000 ? s : s.Substring(0, 3000) + "..."; }
+
+        static readonly FieldInfo BoxCooldown = typeof(upgradeBox).GetField("boxCooldown", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        /// <summary>plan-check's fields: each currency held, the economy's clones, upgrades and atoms (Economy.State), the shop's
+        /// spends and buy-max routines, the random state, the scheduler's Invokes and parked coroutines, the courses' rewards and
+        /// comp boosts, globalStats' NP and clone dust readouts, the boxes and trees, and the run's physics ticks.</summary>
+        static SortedDictionary<string, string> DriveFields(Simulation sim)
+        {
+            var options = new JsonSerializerOptions { IncludeFields = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
+            string J(object v) => JsonSerializer.Serialize(v, options);
+            var f = new SortedDictionary<string, string>();
+            f["currencies"] = J(Enumerable.Range(0, 7).Select(c => sim.Shop.Holds((globalStats.Currencies)c)).ToArray());
+            Economy.State e = sim.Shop.Economy?.Capture();
+            if (e != null)
+            {
+                f["clones"] = J(e.Values);
+                f["clones.active"] = J(e.Active);
+                f["income"] = J(e.Income);
+                f["upgrades"] = J(new { e.Locals, e.Global });
+                f["atoms"] = J(new { e.Atoms, e.Crafting, e.CraftProgress, e.WaitingAtoms, e.HandledTier, e.TierUpCounter, e.IsCrafting, e.GridDue, e.OpenA2Door });
+                f["economy"] = J(new { e.TripBroken, e.TransitionOpensIn, e.CdMult, woken = e.Woken.Length, starting = e.Starting.Length });
+            }
+            Shop.State shop = sim.Shop.Capture();
+            f["shop"] = J(new { shop.Spent, shop.Awarded, buyMax = shop.BuyMax.Select(r => sim.Shop.Id(r.Box) + " " + r.Left).ToArray() });
+            UnityEngine.Random.State rng = UnityEngine.Random.state;
+            f["random"] = J(new[] { rng.s0, rng.s1, rng.s2, rng.s3 });
+            Scheduler q = sim.Scheduler;
+            f["scheduler"] = J(new
+            {
+                invokes = q.Queue.Select(p => p.Target.name + "." + p.Method + " in " + (p.Due - q.Tick) + " every " + p.Repeat).ToArray(),
+                routines = q.Routines.Select(r => r.Target.name + " " + r.Wait + (r.Wait == Scheduler.Wait.Seconds ? " in " + (r.Due - q.Tick) : "")).ToArray(),
+            });
+            f["courses"] = J(sim.Courses.Select(c => new object[] { c.courseNumber, c.reward, c.gpReward, c.rpReward, c.CdReward, c.compBoostTimeLeft, c.compBoostBonus, c.rewardTier }).ToArray());
+            Dictionary<string, object> row = FullTas.EconomyRow(sim);
+            row.Remove("gridCalls");   // a diagnostic count, not in snapshots
+            f["globalStats"] = J(row);
+            f["boxes"] = J(sim.World.All<upgradeBox>().Select(b => new object[] { b.TimesUsed, b.upgradeCost, b.isActive, (float)BoxCooldown.GetValue(b) }).ToArray());
+            f["physicsTicks"] = J(new { sim.Engine.PhysicsTicks, sim.Engine.HeldFrames });
+            return f;
+        }
 
         static int Bench(string[] args)
         {

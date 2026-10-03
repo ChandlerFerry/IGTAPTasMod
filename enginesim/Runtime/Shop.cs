@@ -407,7 +407,7 @@ namespace IGTAP.EngineSim
 
         internal bool HasBox(string box) { return _ids.ContainsValue(box) || _paths.ContainsValue(box); }
 
-        upgradeBox Box(string box)
+        internal upgradeBox Box(string box)
         {
             foreach (upgradeBox b in _boxes)
                 if (_ids[b] == box || _paths[b] == box) return b;

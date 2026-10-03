@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim
         }
     }
 
-    public sealed class Simulation
+    public sealed partial class Simulation
     {
         // Read every tick: field references, as FieldInfo.GetValue boxes each read.
         static readonly AccessTools.FieldRef<courseScript, bool> Tracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
@@ -995,9 +995,10 @@ namespace IGTAP.EngineSim
         /// repeating the frame it holds (MacroEngine.FrameRepeats). A step-up write moves the body at once and later frames
         /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
         /// which a rebase this tick has moved with the world (the body itself follows at the next sync), as turbo's
-        /// Place(player, _stepTo).
+        /// Place(player, _stepTo). Without the <paramref name="player"/> (the economy drive, EconomyDrive.cs) only the frames'
+        /// economy runs: the Start pass, the clone and atom steps, the atom grid and the end-of-frame resumes.
         /// </summary>
-        void InterpolatedFrames()
+        void InterpolatedFrames(bool player = true)
         {
             long ticks = Engine.GridTicks;
             float[] alphas = Frames.Frames(ticks).Alphas;
@@ -1012,9 +1013,12 @@ namespace IGTAP.EngineSim
                 {
                     // The frame's Start pass comes before its Updates (README ### Rules, exception 12).
                     Shop.Economy?.StartPass();
-                    Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, alphas[k]));
-                    _update();
-                    if (Physics.PlayerTransformDirty)
+                    if (player)
+                    {
+                        Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, alphas[k]));
+                        _update();
+                    }
+                    if (player && Physics.PlayerTransformDirty)
                     {
                         // At 1x the write reaches the body at the next frame's start. After the tick's last frame that is the
                         // next tick's step, so its FixedUpdate still queries the body where it was (the squish check's
@@ -1025,12 +1029,12 @@ namespace IGTAP.EngineSim
                     float dt = repeat == repeats ? Frames.Step(ticks, k) : 0f;
                     Shop.StepClones(dt);
                     if (k == 0 && repeat == repeats) Shop.Economy?.GridFrame();
-                    OnFrame?.Invoke(alphas[k], repeat > 0);
+                    if (player) OnFrame?.Invoke(alphas[k], repeat > 0);
                     Scheduler.FrameDeltaTime = dt;
                     Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 }
             }
-            Player.transform.StoreWorldPosition(_stepTo);
+            if (player) Player.transform.StoreWorldPosition(_stepTo);
         }
 
         public SimSnapshot Capture(int tick)
@@ -1255,6 +1259,7 @@ namespace IGTAP.EngineSim
             RestorePose(s);
             Scheduler.Queue.Clear();
             Scheduler.Tick = 0;
+            _driven = false;
             foreach (var (due, target, method, repeat) in s.Pending)
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
             Scheduler.Routines.Clear();
@@ -1386,10 +1391,7 @@ namespace IGTAP.EngineSim
                 FullTasGoal goal = Goals?.Current;
                 courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Course(goal.course) : null;
                 bool startWasTracking = startGoal != null && Tracking(startGoal);
-                Scheduler.FireDue();
-                // Seconds waits resume here before the tick, in the frame that will cross it.
-                Scheduler.FrameDeltaTime = Frames.Step(MacroEngine.FrameGrid.NextTicks(Engine.GridTicks), 0);
-                Scheduler.Resume(Scheduler.Wait.Seconds);
+                EconomyTickStart();
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;
                 int rebasesBefore = _rebases.Length;
                 Vector3 lag = LagForFixedUpdate();
@@ -1423,11 +1425,7 @@ namespace IGTAP.EngineSim
                 Engine.AfterFixedTick(Player);
                 _pauseFrames = Engine.TakePause(out _pauseAfter);
                 if (_pauseFrames > 0) Events |= StepEvents.Paused;
-                for (int i = 0; i < Courses.Length; i++)
-                    if (Courses[i].isActiveAndEnabled) _courseFixedUpdates[i]();
-                VmanClock();
-                StepOrbs();
-                Shop.TickCooldowns(World.FixedDeltaTime);
+                EconomyFixedUpdates();
                 // No write: the blend was never the body's, so the sync leaves the body where the step put it (turbo's too). After a
                 // rebase every body syncs to its transform, and the blend there pulled the player back by the frame's lag.
                 // Once a rebase has run in this run, turbo's step-end transform write (Place(player, _stepTo)) moves the body on
@@ -1449,10 +1447,7 @@ namespace IGTAP.EngineSim
                     _stepFrom = BodyPosition();
                 }
                 _stepTo = BodyPosition();
-                // A buy-max box's IE_BuyMax yields WaitForFixedUpdate (build 25630570; WaitForEndOfFrame before): one level per
-                // physics step, the touch's step included (its coroutine starts in the step's trigger callback).
-                Shop.FixedStep();
-                Scheduler.Resume(Scheduler.Wait.FixedUpdate);
+                EconomyAfterStep();
                 int rebasesBeforeResume = _rebases.Length;
                 ResumeRebase();
                 if (_rebases.Length != rebasesBeforeResume)
@@ -1462,8 +1457,7 @@ namespace IGTAP.EngineSim
                     _stepTo -= by;
                 }
                 InterpolatedFrames();
-                Scheduler.FrameDeltaTime = Frames.Step(Engine.GridTicks, 0);
-                Scheduler.Resume(Scheduler.Wait.Frame);
+                EconomyTickEnd();
                 FloatingOriginFrame();
                 // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
                 Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;
