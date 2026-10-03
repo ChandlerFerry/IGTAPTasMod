@@ -891,6 +891,10 @@ namespace IGTAPTasMod
                 w.WriteEndArray();
                 if (s.economy.globalUpgrades != null) { w.WritePropertyName("globalUpgrades"); json.Value(s.economy.globalUpgrades, 0); }
                 if (s.economy.atomGridDueIn is float atomDue) { w.WritePropertyName("atomGridDueIn"); json.Float(atomDue); }
+                // The game times a 1x capture's atomGridDueIn came from (TurboRunner.Economy), for a probe to check its formula.
+                if (s.economy.atomEnabledAt is float enabledAt) { w.WritePropertyName("atomEnabledAt"); json.Float(enabledAt); }
+                if (s.economy.atomLastCall is float lastCall) { w.WritePropertyName("atomLastCall"); json.Float(lastCall); }
+                if (s.economy.atomTimeNow is float timeNow) { w.WritePropertyName("atomTimeNow"); json.Float(timeNow); }
                 globalStats stats = Singleton<globalStats>.Instance;
                 if (stats != null)
                 {

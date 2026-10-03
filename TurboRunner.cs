@@ -25,6 +25,8 @@ namespace IGTAPTasMod
         static Action<VmanScript> _vmanFixedUpdate;
         static Action<JiggleDropScript> _orbFixedUpdate;
         static Action<FloatingOrigin> _originLateUpdate;
+        static Action<globalStats> _statsFixedUpdate;
+        static Action<AtomColliderSystem> _atomUpdate;
         // Invoke(name) targets' methods by type and name, for the pending ones turbo runs itself.
         static readonly Dictionary<(Type, string), MethodInfo> InvokedMethods = new Dictionary<(Type, string), MethodInfo>();
 
@@ -37,6 +39,8 @@ namespace IGTAPTasMod
             _vmanFixedUpdate = AccessTools.MethodDelegate<Action<VmanScript>>(VmanFixedUpdate);
             _orbFixedUpdate = AccessTools.MethodDelegate<Action<JiggleDropScript>>(OrbFixedUpdate);
             _originLateUpdate = AccessTools.MethodDelegate<Action<FloatingOrigin>>(OriginLateUpdate);
+            _statsFixedUpdate = AccessTools.MethodDelegate<Action<globalStats>>(AccessTools.Method(typeof(globalStats), "FixedUpdate"));
+            _atomUpdate = AccessTools.MethodDelegate<Action<AtomColliderSystem>>(AccessTools.Method(typeof(AtomColliderSystem), "Update"));
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -113,12 +117,20 @@ namespace IGTAPTasMod
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(AfterAtomEnable))));
             harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "callAddNewAtom"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeAtomCall))));
+            harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "InvokeRepeating", new[] { typeof(string), typeof(float), typeof(float) }),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeInvokeRepeating))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "StartCoroutine", new[] { typeof(IEnumerator) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "TimeStop"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
-            harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")),
-                transpiler: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseCoroutineDeltaTime))));
+            var modelDeltaTime = new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseModelDeltaTime)));
+            harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")), transpiler: modelDeltaTime);
+            // TreeSegmentActivationComponent.growTreePart's local IE_Grow (TreeSegmentActivationComponent.cs:32-125).
+            harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.FirstMethod(typeof(TreeSegmentActivationComponent), m => m.Name.Contains("IE_Grow"))),
+                transpiler: modelDeltaTime);
+            harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "HandleTierLogic"), transpiler: modelDeltaTime);
+            harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "HandleMovement"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "HandleAfterimages"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
         }
@@ -126,7 +138,9 @@ namespace IGTAPTasMod
         /// <summary>
         /// Movement.Update's afterimages are presentation only (the offline engine cuts them, enginesim/cuts.txt), but in turbo
         /// they ran on the real frame's Time.deltaTime, held for the whole run: a fast stretch could take all 21 pooled
-        /// sprites, and the next <c>inactiveAfterimages.Pop()</c> threw "Stack empty." out of the run. Turbo skips them.
+        /// sprites, and the next <c>inactiveAfterimages.Pop()</c> threw "Stack empty." out of the run. Turbo skips them, and
+        /// AtomColliderSystem.HandleMovement too (the atom sprites' easing, AtomColliderSystem.cs:251-262: presentation, which
+        /// the engine skips).
         /// </summary>
         static bool BeforeHandleAfterimages() { return !Active; }
 
@@ -149,24 +163,99 @@ namespace IGTAPTasMod
         // AtomColliderSystem's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4) (AtomColliderSystem.cs:111-115).
         // Unity has no API for an Invoke's time left, so the game time (Time.time, the clock Invokes run on) of the grid's
         // start and of its last call are kept: the next call is 0.4 s after the last, or at the start before any.
+        // Only Unity's own calls count (outside a run); turbo keeps the grid itself in a run (_atomDue).
         static float _atomEnabledAt = float.NegativeInfinity, _atomLastCall = float.NegativeInfinity;
 
-        static void AfterAtomEnable() { _atomEnabledAt = Time.time; }
-
-        static void BeforeAtomCall() { _atomLastCall = Time.time; }
-
-        /// <summary>Seconds until the collider's next callAddNewAtom, or null when none is pending (or its start wasn't seen).</summary>
-        static float? AtomGridDueIn()
+        static void AfterAtomEnable()
         {
-            AtomColliderSystem collider = UnityEngine.Object.FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
-            if (collider == null || float.IsNegativeInfinity(_atomEnabledAt) || !collider.IsInvoking("callAddNewAtom")) return null;
-            float next = _atomLastCall >= _atomEnabledAt ? _atomLastCall + 0.4f : _atomEnabledAt;
+            if (Active) return;
+            _atomEnabledAt = Time.time;
+            _atomHeldAt = float.NaN;
+        }
+
+        static void BeforeAtomCall()
+        {
+            if (Active) return;
+            _atomLastCall = Time.time;
+            _atomHeldAt = float.NaN;
+        }
+
+        const string AtomCall = "callAddNewAtom";
+        // OnEnable's repeat rate (AtomColliderSystem.cs:114).
+        const float AtomRepeat = 0.4f;
+
+        static AtomColliderSystem FindAtomCollider()
+        {
+            return UnityEngine.Object.FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
+        }
+
+        /// <summary>Seconds until the collider's Unity-run next callAddNewAtom, or null when none is pending (or its start wasn't seen).</summary>
+        static float? AtomGridDueIn(AtomColliderSystem collider)
+        {
+            if (collider == null || float.IsNegativeInfinity(_atomEnabledAt) || !collider.IsInvoking(AtomCall)) return null;
+            float next = _atomLastCall >= _atomEnabledAt ? _atomLastCall + AtomRepeat : _atomEnabledAt;
             return Mathf.Max(0f, next - Time.time);
+        }
+
+        /// <summary>
+        /// The grid in a run, as the engine's Scheduler has it: the run tick its next callAddNewAtom is due at (-1: none),
+        /// fired at that tick's start with the other Invokes, then every 0.4 s (20 ticks). Unity's own InvokeRepeating runs on
+        /// Time.time, which stands still through a run (one Unity frame), so turbo takes the grid over: at the run's start
+        /// from a restore or the last run (<see cref="_atomHeldDue"/>) or else from Unity's (<see cref="AtomGridDueIn"/>),
+        /// and hands it back to Unity at the end (<see cref="HandAtomGrid"/>).
+        /// </summary>
+        static int _atomDue = -1;
+        static AtomColliderSystem _atomCollider;
+        /// <summary>
+        /// The grid a restore or a run's end left, in ticks from the next tick (-1: none, null: Unity's, its start unseen),
+        /// exact while no game time has passed since (<see cref="_atomHeldAt"/>, Time.time then) and Unity hasn't called it.
+        /// </summary>
+        static int? _atomHeldDue;
+        static float _atomHeldAt = float.NaN;
+
+        /// <summary>The grid now, in ticks from the next tick, as <see cref="_atomHeldDue"/> counts it; outside a run read
+        /// from Unity's as the engine reads a trace start's (floor(dueIn / fixedDeltaTime)).</summary>
+        static int? AtomGridTicks(AtomColliderSystem collider, int next, out float? dueIn)
+        {
+            dueIn = null;
+            if (Active) return _atomDue < 0 ? -1 : _atomDue - next;
+            if (Time.time == _atomHeldAt) return _atomHeldDue;
+            if (collider == null || !collider.IsInvoking(AtomCall)) return -1;
+            dueIn = AtomGridDueIn(collider);
+            return dueIn is float s ? Mathf.FloorToInt(s / Time.fixedDeltaTime) : (int?)null;
+        }
+
+        /// <summary>
+        /// Turbo's grid back to Unity (a restore, a run's end), so 1x goes on from it: CancelInvoke and InvokeRepeating at the
+        /// due tick's game time. A grid whose start wasn't seen (null) stays Unity's.
+        /// </summary>
+        static void HandAtomGrid(int? due)
+        {
+            _atomHeldDue = due;
+            _atomHeldAt = Time.time;
+            AtomColliderSystem collider = FindAtomCollider();
+            if (collider == null || due == null) return;
+            collider.CancelInvoke(AtomCall);
+            if (due < 0) return;
+            float delay = due.Value * Time.fixedDeltaTime;
+            collider.InvokeRepeating(AtomCall, delay, AtomRepeat);
+            _atomEnabledAt = Time.time + delay;
+            _atomLastCall = float.NegativeInfinity;
+        }
+
+        /// <summary>The collider's OnEnable in a run (AtomColliderSystem.cs:111-115): its InvokeRepeating on the run's ticks, as an Invoke.</summary>
+        static bool BeforeInvokeRepeating(MonoBehaviour __instance, string methodName, float time)
+        {
+            if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
+            _atomCollider = collider;
+            _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1;
+            return false;
         }
 
         static bool BeforeCancelInvoke(MonoBehaviour __instance, string methodName)
         {
             if (!Active) return true;
+            if (__instance is AtomColliderSystem && methodName == AtomCall) _atomDue = -1;
             Pending.RemoveAll(p => p.target == __instance && p.method == methodName);
             return false;
         }
@@ -199,13 +288,21 @@ namespace IGTAPTasMod
                 if (routine.MoveNext()) _rebase = routine;
                 return false;
             }
-            // IE_BuyMax yields WaitForFixedUpdate (build 25630570): one level per physics step, from the touch's step on.
-            if (__instance is PlatformMover || __instance is upgradeBox && routine.GetType().Name.Contains("IE_BuyMax"))
+            // IE_BuyMax yields WaitForFixedUpdate (build 25630570): one level per physics step, from the touch's step on. A tree
+            // segment's IE_Grow (its ground off while its trunks grow, its box falling in) yields WaitForEndOfFrame: once a
+            // modelled frame. One on an object off in the hierarchy is Unity's to refuse.
+            if (__instance is PlatformMover || __instance is upgradeBox && routine.GetType().Name.Contains("IE_BuyMax")
+                || __instance is TreeSegmentActivationComponent && __instance.gameObject.activeInHierarchy)
             {
                 // A zip mover's coroutines are gameplay (MakeIntangible's 0.15 s off the Ground layer, PlayerExit's contact
                 // clear, the move itself once unlocked): they step on the run's ticks, as enginesim's Scheduler does.
                 __result = null;
-                if (routine.MoveNext()) Park(new Routine { target = __instance, body = routine }, routine.Current);
+                // Its first step runs now: outside a resume that is the run's physics step (a buy's trigger callback), whose
+                // Time.deltaTime is the fixed step (IE_Grow's first trunk step reads it), as the engine's Time.deltaTime there.
+                float? deltaTime = _modelDeltaTime;
+                _modelDeltaTime = deltaTime ?? Time.fixedDeltaTime;
+                try { if (routine.MoveNext()) Park(new Routine { target = __instance, body = routine }, routine.Current); }
+                finally { _modelDeltaTime = deltaTime; }
                 return false;
             }
             return true;
@@ -244,7 +341,8 @@ namespace IGTAPTasMod
             Routines.Add(r);
         }
 
-        static void Resume(Wait wait)
+        /// <param name="frameDeltaTime">An end-of-frame wait's frame's Time.deltaTime (0 in a freeze's or pause's repeats).</param>
+        static void Resume(Wait wait, float? frameDeltaTime = null)
         {
             if (Routines.Count == 0) return;
             Routine[] parked = Routines.ToArray();
@@ -252,7 +350,7 @@ namespace IGTAPTasMod
             // others in the rendered frame that crosses the tick (a zip mover's first tween step after its WaitForSeconds).
             // Seconds waits resume here before the tick, in the frame that will cross it.
             long ticks = wait == Wait.Seconds ? MacroEngine.FrameGrid.NextTicks(TasPlugin.GridTicks) : TasPlugin.GridTicks;
-            _resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.Step(ticks, 0);
+            _modelDeltaTime = frameDeltaTime ?? (wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.Step(ticks, 0));
             try
             {
                 foreach (Routine r in parked)
@@ -264,20 +362,20 @@ namespace IGTAPTasMod
                     if (r.body.MoveNext()) Park(r, r.body.Current);
                 }
             }
-            finally { _resumeDeltaTime = 0f; }
+            finally { _modelDeltaTime = null; }
         }
 
-        // Time.deltaTime inside a parked coroutine's step: turbo resumes it from its own loop in one Unity frame, whose real
-        // deltaTime is that frame's, not the step the game's player loop would resume it in. The enginesim host does the same
-        // (Scheduler.Resume, Time.resumeDeltaTime).
-        static float _resumeDeltaTime;
+        // Time.deltaTime inside a parked coroutine's step or a modelled frame's AtomColliderSystem.Update: turbo runs them from
+        // its own loop in one Unity frame, whose real deltaTime is that frame's, not the step the game's player loop would run
+        // them in (a held frame's is 0). The enginesim host does the same (Scheduler.Resume, Time.resumeDeltaTime).
+        static float? _modelDeltaTime;
 
-        static float CoroutineDeltaTime() { return _resumeDeltaTime > 0f ? _resumeDeltaTime : Time.deltaTime; }
+        static float ModelDeltaTime() { return _modelDeltaTime ?? Time.deltaTime; }
 
-        static IEnumerable<CodeInstruction> UseCoroutineDeltaTime(IEnumerable<CodeInstruction> instructions)
+        static IEnumerable<CodeInstruction> UseModelDeltaTime(IEnumerable<CodeInstruction> instructions)
         {
             MethodInfo deltaTime = AccessTools.PropertyGetter(typeof(Time), nameof(Time.deltaTime));
-            MethodInfo replacement = AccessTools.Method(typeof(TurboRunner), nameof(CoroutineDeltaTime));
+            MethodInfo replacement = AccessTools.Method(typeof(TurboRunner), nameof(ModelDeltaTime));
             foreach (CodeInstruction i in instructions)
             {
                 if (i.Calls(deltaTime)) i.operand = replacement;
@@ -425,8 +523,21 @@ namespace IGTAPTasMod
             public (clonesScript clones, Vector2[] path, Sprite[] sprites, Vector2[] scales)[] paths;
             public List<int> visitedTeleporters;
             public Scene scene;
-            /// <summary>Seconds until AtomColliderSystem's next callAddNewAtom (<see cref="AtomGridDueIn"/>), null if none is pending.</summary>
-            public float? atomGridDueIn;
+            /// <summary>
+            /// AtomColliderSystem's state (its atoms per tier, the sprite pool, crafting, waiting atoms, the tier counter) and
+            /// its children then (an atom sprite instantiated after goes back to the pool on a restore).
+            /// </summary>
+            public (AtomColliderSystem collider, object[] fields, HashSet<Transform> children) atoms;
+            /// <summary>globalStats' atom counts and NP rates (<see cref="AtomStats"/>).</summary>
+            public double[] atomStats;
+            /// <summary>The grid: ticks from the snapshot's next tick to the next callAddNewAtom (-1: none; null: Unity's, its start unseen).</summary>
+            public int? atomDue;
+            /// <summary>
+            /// For the trace start: seconds until the next callAddNewAtom, null if none is pending. Read from Unity's grid (with the
+            /// raw game times it came from: the grid's start, its last call, Time.time), or a quarter tick past turbo's due tick
+            /// (floor(dueIn / fixedDeltaTime) is that tick; whole ticks don't all survive the float round trip).
+            /// </summary>
+            public float? atomGridDueIn, atomEnabledAt, atomLastCall, atomTimeNow;
         }
 
         internal sealed class Scene
@@ -443,6 +554,13 @@ namespace IGTAPTasMod
             /// roll after it shifted.
             /// </summary>
             public (GameObject obj, bool active)[] objects;
+            /// <summary>
+            /// The upgrade trees (TreeController's grown segments and audio cooldown) and what IE_Grow moves of each segment: its
+            /// trunks' and box's local pose and its ground collider (the objects' on/off is in <see cref="objects"/>).
+            /// </summary>
+            public (TreeController tree, object[] fields)[] trees;
+            public (Transform part, Vector3 local, Vector3 scale)[] treeParts;
+            public (Collider2D ground, bool enabled)[] treeGrounds;
         }
 
         static readonly FieldInfo BreakerPlayerLight = AccessTools.Field(typeof(tripBreakerScript), "playerLight");
@@ -466,8 +584,20 @@ namespace IGTAPTasMod
                     if (o != null) foreach (Collider2D c in o.GetComponents<Collider2D>()) blocks.Add((c, c.enabled));
             UnityEngine.SceneManagement.Scene scene = SceneManager.GetActiveScene();
             Transform[] all = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var treeParts = new List<(Transform, Vector3, Vector3)>();
+            var treeGrounds = new List<(Collider2D, bool)>();
+            foreach (TreeSegmentActivationComponent segment in UnityEngine.Object.FindObjectsByType<TreeSegmentActivationComponent>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                foreach (GameObject part in (SegmentTrunks(segment) ?? new GameObject[0]).Append(segment.box))
+                    if (part != null) treeParts.Add((part.transform, part.transform.localPosition, part.transform.localScale));
+                Collider2D ground = SegmentLand(segment) != null ? SegmentLand(segment).GetComponent<Collider2D>() : null;
+                if (ground != null) treeGrounds.Add((ground, ground.enabled));
+            }
             return new Scene {
                 objects = all.Where(t => t.gameObject.scene == scene).Select(t => (t.gameObject, t.gameObject.activeSelf)).ToArray(),
+                trees = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<TreeController>(FindObjectsInactive.Include, FindObjectsSortMode.None),
+                    t => (t, CaptureFields(t))),
+                treeParts = treeParts.ToArray(), treeGrounds = treeGrounds.ToArray(),
                 boxes = Array.ConvertAll(boxes, b => (b, b.gameObject.activeSelf, b.enabled)),
                 a1State = Singleton<globalStats>.Instance.currentA1State,
                 breakers = breakers.ToArray(), blocks = blocks.ToArray(), blueActive = swapper != null && swapper.isBlueActive };
@@ -505,7 +635,21 @@ namespace IGTAPTasMod
             colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
             if (swapper != null) swapper.swapBlocks(s.blueActive);
             foreach (var (collider, enabled) in s.blocks) if (collider != null) collider.enabled = enabled;
+            // A growth Unity runs (1x, or one a run handed back) would go on changing what the snapshot puts back; turbo's own
+            // are the snapshot's parked routines (RestoreRoutines).
+            foreach (TreeSegmentActivationComponent segment in UnityEngine.Object.FindObjectsByType<TreeSegmentActivationComponent>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                segment.StopAllCoroutines();
+            if (s.trees == null) return;
+            foreach (var (tree, fields) in s.trees) if (tree != null) RestoreFields(tree, fields);
+            foreach (var (part, local, scale) in s.treeParts)
+                if (part != null && !(part.localPosition.Equals(local) && part.localScale.Equals(scale))) { part.localPosition = local; part.localScale = scale; }
+            foreach (var (ground, enabled) in s.treeGrounds) if (ground != null) ground.enabled = enabled;
         }
+
+        static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, GameObject[]> SegmentTrunks =
+            AccessTools.FieldRefAccess<TreeSegmentActivationComponent, GameObject[]>("trunks");
+        static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, GameObject> SegmentLand =
+            AccessTools.FieldRefAccess<TreeSegmentActivationComponent, GameObject>("landPart");
 
         static readonly AccessTools.FieldRef<upgradeBox, float> BoxCooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
         static readonly AccessTools.FieldRef<clonesScript, float> CloneTimeSinceLast = AccessTools.FieldRefAccess<clonesScript, float>("timeSinceLastClone");
@@ -555,18 +699,58 @@ namespace IGTAPTasMod
 
         static readonly HashSet<Transform> HeldClones = new HashSet<Transform>();
 
-        static Economy CaptureEconomy()
+        /// <summary>globalStats' atom counts and NP rates: what AddNewAtom, FinishCrafting and ClearAtoms write
+        /// (AtomColliderSystem.cs:202-209, 300-325, 153-156), and the course finishes' NP comp boost (courseScript.cs:307, 447).</summary>
+        static double[] AtomStats(globalStats g)
+        {
+            return new[] { g.effectiveAtomCount, g.grossAtomCount, g.AtomCountInTermsOfWhiteAtoms, g.NPrewardPerTick, g.NPrewardCap, g.EffectOfNpCompBoost };
+        }
+
+        static void RestoreAtomStats(globalStats g, double[] v)
+        {
+            g.effectiveAtomCount = v[0];
+            g.grossAtomCount = v[1];
+            g.AtomCountInTermsOfWhiteAtoms = v[2];
+            g.NPrewardPerTick = v[3];
+            g.NPrewardCap = v[4];
+            g.EffectOfNpCompBoost = v[5];
+        }
+
+        /// <summary>The collider's per-tier lists of lists (contents, contentsTargetLocs) copied to the inner list: EconomyFields' copy is one level deep.</summary>
+        static object[] DeepAtomLists(object[] values)
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] is List<List<GameObject>> sprites) values[i] = sprites.ConvertAll(l => new List<GameObject>(l));
+                else if (values[i] is List<List<Vector2>> targets) values[i] = targets.ConvertAll(l => new List<Vector2>(l));
+            }
+            return values;
+        }
+
+        static readonly AccessTools.FieldRef<AtomColliderSystem, Stack<GameObject>> AtomPool = AccessTools.FieldRefAccess<AtomColliderSystem, Stack<GameObject>>("inactiveGameObjects");
+
+        static Economy CaptureEconomy(int next)
         {
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             localUpgrades[] locals = UnityEngine.Object.FindObjectsByType<localUpgrades>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            AtomColliderSystem collider = FindAtomCollider();
+            globalStats stats = Singleton<globalStats>.Instance;
+            int? atomDue = AtomGridTicks(collider, next, out float? dueIn);
+            bool raw = !Active && Time.time != _atomHeldAt;
             return new Economy {
                 currencies = globalStats.currencyLookup == null ? null : new Dictionary<globalStats.Currencies, double>(globalStats.currencyLookup),
                 globalUpgrades = globalStats.globalUpgradeDict == null ? null : new Dictionary<globalStats.globalUpgradeSet, double>(globalStats.globalUpgradeDict),
                 boxes = Array.ConvertAll(boxes, b => (b, CaptureFields(b))),
                 scene = CaptureScene(boxes),
                 paths = Array.ConvertAll(clones, c => (c, c.clonePath, c.cloneSprites, c.cloneScales)),
-                atomGridDueIn = AtomGridDueIn(),
+                atoms = collider == null ? default : (collider, DeepAtomLists(CaptureFields(collider)), new HashSet<Transform>(collider.transform.Cast<Transform>())),
+                atomStats = stats == null ? null : AtomStats(stats),
+                atomDue = atomDue,
+                atomGridDueIn = raw ? dueIn : atomDue >= 0 ? (atomDue.Value + 0.25f) * Time.fixedDeltaTime : (float?)null,
+                atomEnabledAt = raw && !float.IsNegativeInfinity(_atomEnabledAt) ? _atomEnabledAt : (float?)null,
+                atomLastCall = raw && !float.IsNegativeInfinity(_atomLastCall) ? _atomLastCall : (float?)null,
+                atomTimeNow = raw ? Time.time : (float?)null,
                 visitedTeleporters = Singleton<globalStats>.Instance.visitedTeleporters == null ? null : new List<int>(Singleton<globalStats>.Instance.visitedTeleporters),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
@@ -607,6 +791,33 @@ namespace IGTAPTasMod
                     else if (pooled.Contains(child.gameObject)) child.gameObject.SetActive(false);
                 }
             }
+            RestoreAtoms(e);
+        }
+
+        /// <summary>
+        /// The collider's state, globalStats' atom counts and the grid as the snapshot had them. The snapshot's sprites are on
+        /// or off as it had them (<see cref="Scene.objects"/>); one AddNewAtom instantiated since goes off into the pool, so
+        /// the sprites stay as many as the most atoms held (presentation: the counts are the lists').
+        /// </summary>
+        static void RestoreAtoms(Economy e)
+        {
+            var (collider, fields, children) = e.atoms;
+            if (collider != null)
+            {
+                RestoreFields(collider, DeepAtomLists((object[])fields.Clone()));
+                Stack<GameObject> pool = AtomPool(collider);
+                var now = new List<Transform>();
+                foreach (Transform child in collider.transform) now.Add(child);
+                foreach (Transform child in now)
+                {
+                    if (children.Contains(child)) continue;
+                    child.gameObject.SetActive(false);
+                    if (pool != null && !pool.Contains(child.gameObject)) pool.Push(child.gameObject);
+                }
+            }
+            globalStats stats = Singleton<globalStats>.Instance;
+            if (stats != null && e.atomStats != null) RestoreAtomStats(stats, e.atomStats);
+            HandAtomGrid(e.atomDue);
         }
 
         static void StepClones(clonesScript clones, float dt)
@@ -640,7 +851,7 @@ namespace IGTAPTasMod
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
-                pending = pending, economy = economy ? CaptureEconomy() : null, vman = Vman.Capture(),
+                pending = pending, economy = economy ? CaptureEconomy(next) : null, vman = Vman.Capture(),
                 camera = movement.cam != null ? FieldState.Capture(movement.cam) : null,
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
                 stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
@@ -925,6 +1136,13 @@ namespace IGTAPTasMod
             MacroEngine.FrameGrid frames = MacroEngine.FrameGrid.Playback;
             _stepFrom = resume != null ? resume.stepFrom : body.position;
             _stepTo = resume != null ? resume.stepTo : body.position;
+            // globalStats.FixedUpdate pays NP (DoConstantCurrency, globalStats.cs:1100-1124) before every other FixedUpdate:
+            // Singleton<T>'s DefaultExecutionOrder(-50) (the engine's Economy.FixedStep, Simulation.Run).
+            globalStats stats = Singleton<globalStats>.Instance;
+            _atomCollider = FindAtomCollider();
+            int? atomStart = AtomGridTicks(_atomCollider, 0, out _);
+            _atomDue = atomStart ?? -1;
+            int atomRepeat = Math.Max(1, Mathf.FloorToInt(AtomRepeat / dt));
             Active = true;
             if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
@@ -943,7 +1161,13 @@ namespace IGTAPTasMod
                         Pending.RemoveAt(i--);
                         if (target != null) CallInvoked(target, method);
                     }
+                    if (_atomDue >= 0 && _atomDue <= _tick)
+                    {
+                        _atomDue = _tick + atomRepeat;
+                        if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
+                    }
                     Resume(Wait.Seconds);
+                    if (stats != null && stats.isActiveAndEnabled) _statsFixedUpdate(stats);
                     // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
                     Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Frames(TasPlugin.GridTicks).LastAlpha));
                     _freezeFor = -1f;
@@ -992,7 +1216,9 @@ namespace IGTAPTasMod
                     long ticks = TasPlugin.GridTicks;
                     float[] alphas = frames.Frames(ticks).Alphas;
                     int frozen = _freezeFor >= 0f ? frames.FrozenFrames(ticks, _freezeFor) : 0;
-                    // clonesScript.Update runs in every frame too, on that frame's Time.deltaTime (0 in a freeze's or pause's repeats).
+                    // clonesScript.Update and AtomColliderSystem.Update run in every frame too, on that frame's Time.deltaTime (0 in a
+                    // freeze's or pause's repeats), then the frame's WaitForEndOfFrame resumes (a tree's IE_Grow), as the engine's
+                    // Simulation.InterpolatedFrames.
                     for (int k = 0; k < alphas.Length; k++)
                     {
                         int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
@@ -1013,12 +1239,18 @@ namespace IGTAPTasMod
                             float frameDt = repeat == repeats ? frames.Step(ticks, k) : 0f;
                             foreach (clonesScript c in clones)
                                 if (c != null && c.isActiveAndEnabled) StepClones(c, frameDt);
+                            if (_atomCollider != null && _atomCollider.isActiveAndEnabled)
+                            {
+                                _modelDeltaTime = frameDt;
+                                try { _atomUpdate(_atomCollider); }
+                                finally { _modelDeltaTime = null; }
+                            }
+                            Resume(Wait.EndOfFrame, frameDt);
                         }
                     }
                     Place(player, _stepTo);
                     Resume(Wait.Frame);
                     OriginFrame();
-                    Resume(Wait.EndOfFrame);
                     afterTick?.Invoke();
                 }
                 return _tick;
@@ -1042,6 +1274,7 @@ namespace IGTAPTasMod
                     r.target.StartCoroutine(Continue(r.body, wait));
                 }
                 Routines.Clear();
+                HandAtomGrid(_atomDue >= 0 ? _atomDue - _tick : atomStart == null ? (int?)null : -1);
                 if (_rebase != null)
                 {
                     FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();

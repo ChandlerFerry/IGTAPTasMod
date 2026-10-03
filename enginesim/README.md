@@ -1660,7 +1660,15 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   zone 2 never starts the grid; a waiting atom without it (that, or a start captured before the field) ends the run
   (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). Open for Task 7's 1x probe: whether the grid keeps
   firing after zone 1 loads again (Unity is said to keep an inactive object's Invokes), and the grid's sub-tick timing
-  (1x calls it in a rendered frame; the engine at a tick's start). Snapshots
+  (1x calls it in a rendered frame; the engine at a tick's start). Turbo models the same (`TurboRunner`): it runs
+  `AtomColliderSystem.Update` in each modelled frame on that frame's `Time.deltaTime` (the sprites' `HandleMovement`
+  skipped), and takes the grid over for a run, since Unity's `InvokeRepeating` runs on `Time.time`, which a run holds
+  still: from the grid a restore or the last run left, else from Unity's as above, fired at a tick's start every 20
+  ticks (an `OnEnable` in the run intercepted), and handed back to Unity at the run's end. It pays NP
+  (`globalStats.FixedUpdate`) at each tick before Movement's, and its snapshot keeps the collider's state, `globalStats`'
+  atom counts and NP rates (`EffectOfNpCompBoost` too) and the grid. A 1x capture's start also carries the game times
+  `atomGridDueIn` came from (`atomEnabledAt`, `atomLastCall`, `atomTimeNow`); a turbo capture's `atomGridDueIn` is a
+  quarter tick past its due tick (whole ticks don't all survive `floor(dueIn / fixedDeltaTime)`). Snapshots
   carry what these change: the touched boxes, `globalStats`, a course outside `Simulation.Courses`, the economy's
   globals and atoms and the transition's countdown. A Full-TAS window's unlocks (`FullTas.WindowCaps`: `PlayerCaps.Of` the run, then
   `Shop.AfterBuys` for its goals' boxes) follow the same rules: an Omni Dash buy goal turns the omnidash on or off, its
@@ -1686,6 +1694,9 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   IE_Grow's collider write (frame 600 above) and not during the fade. A dynamic or kinematic body off at the export
   still isn't built: a step with one of its colliders on ends the run (`PhysicsWorld.Unbodied`). A coroutine on an
   object off in the hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
+  Turbo parks `IE_Grow` as the engine does and resumes it after each modelled frame (its first step, in the buy's
+  physics step, on the fixed step); its snapshot keeps the trees' fields (grown segments, audio cooldown), each
+  segment's trunks' and box's local pose and its ground's collider, and a restore stops a growth Unity runs.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,

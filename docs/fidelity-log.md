@@ -923,3 +923,40 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Where:** `Shop.GrowTree`, `Simulation` (`InterpolatedFrames`, `Continues`, `RestoreTransforms`), `Scheduler`,
   `PhysicsWorld` (`TransformChanged`, `SyncMoved`, `Unbodied`), `Economy` (`WriteStatic`, `Activate`, `BoughtGlobal`),
   `Shim/Engine` (`Time`, `Transform`, `GameObject`, `Renderer.bounds`).
+
+## Turbo ran no atoms, NP or tree growth
+
+- **Symptom:** (2026-10-03, by reading the code; no route reaches Area 2, and this is not yet checked in game) turbo
+  would play Area 2's economy differently from 1x and the engine: no atom would land and none would craft, no NP would be
+  paid, and a tree segment would not grow within a run.
+- **Cause:** a turbo run is one Unity frame, and it steps only what it calls itself.
+  - `AtomColliderSystem`'s `InvokeRepeating("callAddNewAtom", 0, 0.4)` runs on `Time.time`, which stands still through
+    the run.
+  - Its `Update` (one tier's crafting a frame) wasn't stepped per modelled frame, as `clonesScript` is.
+  - `globalStats.FixedUpdate` (the NP payout) wasn't called at all.
+  - `TreeSegmentActivationComponent.IE_Grow` ran on Unity's loop, so it resumed only after the run. Turbo's
+    `WaitForEndOfFrame` resumed once a tick, not once a frame.
+  - The snapshot kept none of the collider's state, `globalStats`' atom counts and NP rates, or the trees.
+- **Fix:** turbo now does the following, matching the engine.
+  - **Atoms.** Turbo runs `AtomColliderSystem.Update` in each modelled frame, with `HandleTierLogic`'s `Time.deltaTime`
+    set to the frame's (0 in a held frame). The sprites' `HandleMovement` is skipped as presentation.
+  - **The grid.** Turbo keeps the grid in run ticks: it fires at the due tick's start, then every 20 ticks. It takes the
+    grid from a restore or the last run, or else from Unity's (`floor(dueIn / fixedDeltaTime)`, as the engine reads a
+    trace start). An `OnEnable` inside the run is intercepted (`InvokeRepeating`, `CancelInvoke`). At the run's end the
+    grid goes back to Unity.
+  - **NP.** Turbo pays NP at each tick's start, before Movement's FixedUpdate.
+  - **Trees.** Turbo parks `IE_Grow` and resumes its end-of-frame waits after each modelled frame. Its first step runs
+    on the fixed step.
+  - **Snapshots.** The snapshot now holds the collider's fields, with its lists of lists copied. A sprite instantiated
+    after the snapshot goes back to the pool on a restore.
+
+    It also holds `globalStats`' six atom and NP fields, the grid, the trees' fields, the trunk and box local poses and
+    the ground colliders. A restore stops any growth Unity is running.
+  - **Trace start.** A 1x capture's trace start now carries the raw game times behind `atomGridDueIn`:
+    `atomEnabledAt`, `atomLastCall` and `atomTimeNow`.
+
+  FalseEnding%-280 and TouchGrass-ANY% replay unchanged offline (no engine file changed). The turbo side waits for
+  Task 7's turbo-vs-engine-vs-1x check.
+- **Where:** `TurboRunner` (`Run`, `BeforeInvokeRepeating`, `BeforeCancelInvoke`, `BeforeStartCoroutine`, `Resume`,
+  `HandAtomGrid`, `AtomGridTicks`, `CaptureEconomy`, `RestoreAtoms`, `CaptureScene`, `RestoreScene`), `EngineSimBridge`
+  (trace start).
