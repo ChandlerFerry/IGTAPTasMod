@@ -1617,8 +1617,8 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   game's `globalStats.FixedUpdate` runs first (`[DefaultExecutionOrder(-50)]` from `Singleton<T>`, Singleton.cs:3), so
   a box touched in the step's triggers sees it. The NP boxes recompute them (`Economy.RecalcNp`); the RP cap boxes
   rewrite `globalStats.rpCap` (`UpdateRpCap`). `Economy.BoughtGlobal` follows `DoBuyUpgrade`'s switch and refuses
-  (`Unmodeled economy`) what it can't follow: atoms, the gate, Area 2 door, teleporter and Vman start boxes, and the
-  zip mover, refill orb and tree-planting boxes, which native code reads from the static `globalUpgradeDict`.
+  (`Unmodeled economy`) what it can't follow: an atom while their grid doesn't run (below), the gate, Area 2 door,
+  teleporter and Vman start boxes, and the zip mover, refill orb and tree-planting boxes, which native code reads from the static `globalUpgradeDict`.
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
   dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (the root
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
@@ -1635,11 +1635,22 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   dashes from `globalStats`' tree box counts, which a tree's dash and double-jump boxes raise) and leaves the box
   free. `setA1CoursePowMults` only runs on a zone load, which never happens in a run. An atom box touch
   (upgradeBox.cs:641-654, `Economy.AtomPrestige`) resets every `coursesToReset` course not `exemptFromAtomPrestige` at its
-  own tiers and zeroes Cash, except a Green Power box once `GPAtomsDontResetCourses` is bought; then each of its buys
-  ends the run (`Unmodeled economy: an atom`: the engine doesn't step `AtomColliderSystem`'s 0.4 s `callAddNewAtom`), as
-  does the Green Power box's first buy (its door opens unless the machine's PlayerPrefs hold `OpenA2Door`). Snapshots
+  own tiers and zeroes Cash, except a Green Power box once `GPAtomsDontResetCourses` is bought; the Green Power box's
+  first buy ends the run (its door opens unless the machine's PlayerPrefs hold `OpenA2Door`).
+- Atoms (`AtomColliderSystem`, `Economy`'s atoms region): the collider's state (atoms per tier, waiting atoms, the tier
+  counter, crafting) is the economy's; the counts it keeps on `globalStats` (`effectiveAtomCount`, `grossAtomCount`,
+  `AtomCountInTermsOfWhiteAtoms`) stay there, touched. A buy queues an atom (`BuyNewAtom`); `callAddNewAtom` (`hooks.txt`
+  replaces it: `Economy.AtomTick`) lands one, +1 NP, its tier from `determineAtomTier`, and recomputes NP. Every rendered
+  frame (the dash freeze's too, on 0) while the collider is on, `Update`'s round robin crafts one tier (`AtomFrame`, from
+  `Shop.StepClones`): 3 + t atoms of tier t make one of t + 1, `FinishCrafting`'s counts as the game has them, and a tier
+  made for the first time pays 1000 ticks of NP. The atom level box clears them (`ClearAtoms`, the atom box's
+  `onPrestige(force: true)` as `Economy.BoxPrestige`, then one more use). The grid is the collider's
+  `InvokeRepeating("callAddNewAtom", 0, 0.4)` from `OnEnable`, which 1x runs when `ZoneLoader._LoadZone(2)` turns zone 2
+  on; the engine runs no `OnEnable` and loads no zone in a run, and a start doesn't carry the grid's phase, so a waiting
+  atom ends the run (`Unmodeled economy: a waiting atom`) until the scheduler holds that invoke
+  ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Atoms' 0.4 s grid*). Snapshots
   carry what these change: the touched boxes, `globalStats`, a course outside `Simulation.Courses`, the economy's
-  globals and the transition's countdown. A Full-TAS window's unlocks (`FullTas.WindowCaps`: `PlayerCaps.Of` the run, then
+  globals and atoms and the transition's countdown. A Full-TAS window's unlocks (`FullTas.WindowCaps`: `PlayerCaps.Of` the run, then
   `Shop.AfterBuys` for its goals' boxes) follow the same rules: an Omni Dash buy goal turns the omnidash on or off, its
   air jumps and dashes and, on the first, the refill orbs, so the search after it presses what the player then has.
   `PlayerCaps.Of` reads the orbs and zip movers from the run's own global upgrades, not the trace's start.

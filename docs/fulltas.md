@@ -2039,8 +2039,8 @@ earlier. The model's income needs calibrating against the trace's Cash before a 
 
 `zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
 NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
-(the atoms' collider and the tree are unmodeled, below: an atom box's course reset is
-modeled, its atom ends the run). The start is the trace's start, or `--route FILE`
+(the tree is unmodeled, and an atom ends the run: the engine models the atoms but not when their 0.4 s grid starts,
+`enginesim/README.md`). The start is the trace's start, or `--route FILE`
 (a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
 global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
 engine holds them there.
@@ -2161,7 +2161,8 @@ buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with 
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
-...`): clone speed/size rolls, the atom boxes and the atom level box (atoms), the gate, Area 2 door, teleporter,
+...`): clone speed/size rolls, a waiting atom (the atoms are modeled, `Economy`'s atoms region, but not when their
+0.4 s grid starts: `enginesim/README.md`), the gate, Area 2 door, teleporter,
 Vman start, zip mover, refill orb and tree-planting boxes (`Economy.BoughtGlobal`) and a prestige buy while Vman is active. A Vman
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
 

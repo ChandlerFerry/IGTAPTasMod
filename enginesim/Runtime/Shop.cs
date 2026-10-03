@@ -58,6 +58,7 @@ namespace IGTAP.EngineSim
                     if ((int)c.Key >= 0 && (int)c.Key < CurrencyCount) _start[(int)c.Key] = c.Value;
             Hooks.ClonesOnScreen = (clones, onScreen) => Economy?.OnScreen((clonesScript)clones, onScreen);
             Hooks.CourseReward = course => Economy?.UpdateReward((courseScript)course);
+            Hooks.AtomTick = collider => Economy?.AtomTick((AtomColliderSystem)collider);
         }
 
         internal void LoadStart(JsonElement economy, Action<object, JsonElement> applyFields)
@@ -147,7 +148,12 @@ namespace IGTAP.EngineSim
             return string.Join("; ", parts);
         }
 
-        internal void StepClones(float dt) { Economy?.Step(dt); }
+        /// <summary>A rendered frame's clonesScript and AtomColliderSystem Updates (Time.deltaTime <paramref name="dt"/>).</summary>
+        internal void StepClones(float dt)
+        {
+            Economy?.Step(dt);
+            Economy?.AtomFrame(dt);
+        }
 
         internal void FixedStep()
         {

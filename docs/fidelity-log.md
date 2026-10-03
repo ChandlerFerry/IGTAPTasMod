@@ -862,3 +862,28 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   turbo traces in the traces folder (bonuses, transitions, courses, techs, Full-TAS runs) replay the same before and after,
   and so do the 158 lab demos.
 - **Where:** `Simulation.BoundsPose`, `Simulation.TouchesReward`, `Simulation.PlayerBounds`, `Simulation.Run`.
+
+## Atoms' 0.4 s grid
+
+- **Symptom:** (2026-10-03, by reading the code; no route reaches Area 2) the engine models the atoms (`Economy`'s atoms
+  region) but has nothing to start their grid. An atom would never land offline, while at 1x one lands every 0.4 s.
+- **Cause:** at 1x the grid is `AtomColliderSystem.OnEnable`'s `InvokeRepeating("callAddNewAtom", 0, 0.4)`
+  (AtomColliderSystem.cs:111-115). The collider sits under `zone 2/area2`, so it is enabled when
+  `ZoneLoader._LoadZone(2)` turns zone 2 on. That happens two rendered frames after a zone 2 activator's
+  `zoneChanger.OnTriggerEnter2D` (`Zone 1-2 transition/zone 2 activator` at (14436, 3552) in a new game's frame, and
+  `Zone 2-1 transition/zone 2 activator 2`). The engine runs neither:
+  - `cuts.txt` empties `zoneChanger.OnTriggerEnter2D`. A run loads no zone, so zone 2's geometry stays as the start had it.
+  - The shim's `SetActive` runs no `OnEnable`.
+  - A trace's start carries only the player's pending invokes.
+
+  So a start with zone 2 loaded has the grid running at a phase the engine doesn't know. Unity is said not to cancel
+  invokes when their object goes inactive; the game's own `CancelInvoke` before the `InvokeRepeating` suggests the same.
+  If so, the grid keeps landing atoms (not crafting: that is `Update`) after zone 1 loads again. This is not verified at 1x.
+- **Fix (partial):** a waiting atom ends the run (`Unmodeled economy: a waiting atom`, `Economy.AtomsLand`, checked at an
+  atom box's buy and every physics step) unless the scheduler holds the collider's `callAddNewAtom` invoke.
+  `hooks.txt` routes that invoke to `Economy.AtomTick` once one is queued. Two ways to queue it are open:
+  - the plugin exports the grid's phase in the trace start (for example from an `OnEnable`/`callAddNewAtom` patch), or
+  - the engine loads zones as 1x does.
+
+  Crafting (`Update`) is modeled per rendered frame while the collider is on, whatever the grid.
+- **Where:** `Economy.AtomsLand`, `Economy.AtomTick`, `Economy.AtomFrame`, `hooks.txt`.

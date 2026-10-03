@@ -51,3 +51,6 @@ prefix StepUpAnimationScript::onSteppedUp OnSteppedUp
 prefix Movement::CheckForSuperJump OnCheckForSuperJump
 prefix Movement::determineSpriteDirection OnDetermineSpriteDirection
 prefix PlatformMover::MakeIntangible OnMakeIntangible
+# AtomColliderSystem's 0.4 s grid (OnEnable's InvokeRepeating) lands a waiting atom: the host economy keeps the atoms
+# (Economy.AtomTick), the counts on globalStats.
+replace AtomColliderSystem::callAddNewAtom OnAtomTick

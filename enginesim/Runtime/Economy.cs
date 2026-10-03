@@ -46,6 +46,7 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo A1CoursesField = typeof(OvergrowthLoadScript).GetField("courses", Fields);
         static readonly FieldInfo BoxesToEnableField = typeof(OvergrowthLoadScript).GetField("boxesToEnable", Fields);
         static readonly FieldInfo TrunksField = typeof(Zone2to1TransitionController).GetField("trunks", Fields);
+        static readonly FieldInfo BoxAtomColliderField = typeof(upgradeBox).GetField("atomColliderScript", Fields);
         /// <summary>
         /// The earliest the Omni Dash buy's Area 2 → 1 transition can open at 1x, in seconds after the buy
         /// (Zone2to1TransitionController.cs:46-81): the first trunk grows 0.6 a frame-second from the buy's own physics step
@@ -91,6 +92,12 @@ namespace IGTAP.EngineSim
             public bool TripBroken;
             public float TransitionOpensIn;
             public double CdMult;
+            public int[] Atoms;
+            public bool[] Crafting;
+            public float[] CraftProgress;
+            public int WaitingAtoms, HandledTier;
+            public double TierUpCounter;
+            public bool IsCrafting;
         }
 
         readonly Simulation _sim;
@@ -107,6 +114,19 @@ namespace IGTAP.EngineSim
         float _transitionOpensIn;
         // globalStats.CloneDustGpCdMult: green power and clone dust payouts are multiplied by it (RecalcCdMult).
         double _cdMult;
+
+        // Atoms (AtomColliderSystem): the collider's own state, each tier's sprites (contents) as a count; the counts the game
+        // keeps on globalStats (effectiveAtomCount, grossAtomCount, AtomCountInTermsOfWhiteAtoms) stay there, touched.
+        readonly AtomColliderSystem _atomCollider;
+        readonly upgradeBox _newAtomBox;
+        readonly float _craftStep, _craftStepPerTier, _craftStart, _craftStartPerTier, _craftEnd;
+        readonly int _atomEffectiveness, _tierColors;
+        int[] _atoms = Array.Empty<int>();              // contents[tier].Count; the length is contents.Count
+        bool[] _crafting = Array.Empty<bool>();         // craftingInProgress
+        float[] _craftProgress = Array.Empty<float>();  // craftingProgress
+        int _waitingAtoms, _handledTier;                // waitingAtoms, currentlyHandledTier
+        double _tierUpCounter;                          // atomTierUpCounter
+        bool _isCrafting;
 
         internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
         public double Earned => Income[(int)globalStats.Currencies.Cash];
@@ -161,6 +181,35 @@ namespace IGTAP.EngineSim
             }
             _stepped = _clones.Where(c => c.Script.gameObject.activeInHierarchy).ToArray();
             RecalcCdMult();
+
+            _atomCollider = world.All<AtomColliderSystem>().FirstOrDefault();
+            if ((object)_atomCollider != null)
+            {
+                T A<T>(string name) => (T)typeof(AtomColliderSystem).GetField(name, Fields).GetValue(_atomCollider);
+                _craftStep = A<float>("craftingProgressPerStep");
+                _craftStepPerTier = A<float>("craftingProgressPerStepPerTier");
+                _craftStart = A<float>("craftingStartPoint");
+                _craftStartPerTier = A<float>("startPointPerTier");
+                _craftEnd = A<float>("craftingEndValue");
+                _atomEffectiveness = A<int>("atomTierEffectiveness");
+                _tierColors = A<Array>("tierColors")?.Length ?? 0;
+                _newAtomBox = A<upgradeBox>("newAtomUpgradeBox");
+                var contents = A<System.Collections.IList>("contents");
+                List<bool> crafting = A<List<bool>>("craftingInProgress");
+                List<float> progress = A<List<float>>("craftingProgress");
+                int tiers = contents?.Count ?? 0;
+                GrowTiers(tiers);
+                for (int i = 0; i < tiers; i++)
+                {
+                    _atoms[i] = ((System.Collections.ICollection)contents[i]).Count;
+                    _crafting[i] = crafting[i];
+                    _craftProgress[i] = progress[i];
+                }
+                _waitingAtoms = A<int>("waitingAtoms");
+                _handledTier = A<int>("currentlyHandledTier");
+                _isCrafting = A<bool>("isCrafting");
+                _tierUpCounter = _atomCollider.atomTierUpCounter;
+            }
         }
 
         /// <summary>globalStats.RecalcCloneDustMult (globalStats.cs:1126-1140) on the clone dust the run holds: the game runs it
@@ -645,11 +694,14 @@ namespace IGTAP.EngineSim
         internal bool BoughtGlobal(upgradeBox box)
         {
             G upgrade = box.globalUpgrade;
-            // DoBuyUpgrade's spawnNewAtom (upgradeBox.cs:752-754): BuyNewAtom queues an atom (waitingAtoms++) that
-            // AtomColliderSystem.callAddNewAtom, its 0.4 s InvokeRepeating, turns into AtomicPower and an atom (crafting, NP).
-            // The engine doesn't step the collider. The touch's course reset ran first (AtomPrestige).
+            // DoBuyUpgrade's spawnNewAtom (upgradeBox.cs:752-754): BuyNewAtom queues an atom (AtomColliderSystem.cs:174-177)
+            // that the collider's 0.4 s grid lands (AtomTick). The touch's course reset ran first (AtomPrestige).
             if (upgrade == G.spawnNewAtom)
-                return Unmodeled("an atom (AtomColliderSystem.BuyNewAtom: the collider that lands it, +1 AtomicPower every 0.4 s, isn't stepped)");
+            {
+                if (!OwnCollider(box)) return false;
+                _waitingAtoms++;
+                return AtomsLand();
+            }
             switch (upgrade)
             {
                 case G.startVmanSpeedrun: return Unmodeled("a Vman speedrun's start (VmanScript.SetupVmanSpeedrun, upgradeBox.cs:710)");
@@ -684,7 +736,7 @@ namespace IGTAP.EngineSim
             {
                 case G.atomLevelChance:
                     _global[(int)upgrade] += 1.0 * effectMult;
-                    return ClearAtoms();
+                    return OwnCollider(box) && ClearAtoms();
                 case G.increasedNuclearPower:
                 case G.tripleThreatIncrease:
                     _global[(int)upgrade] += 1.0 * effectMult;
@@ -730,8 +782,186 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>AtomColliderSystem.ClearAtoms (AtomColliderSystem.cs:140-172), the atom level box's: Task 5 models the atoms.</summary>
-        bool ClearAtoms() { return Unmodeled("atoms (AtomColliderSystem.ClearAtoms): Task 5"); }
+        // Atoms (AtomColliderSystem)
+
+        /// <summary>The box's atomColliderScript is the world's collider, whose state this economy keeps (the game throws on none).</summary>
+        bool OwnCollider(upgradeBox box)
+        {
+            var collider = BoxAtomColliderField.GetValue(box) as AtomColliderSystem;
+            if ((object)collider == null) return Unmodeled("an atom box without its atomColliderScript (the game throws)");
+            return ReferenceEquals(collider, _atomCollider) || Unmodeled("an atom box whose collider isn't the world's AtomColliderSystem");
+        }
+
+        /// <summary>
+        /// Waiting atoms land only on the collider's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4)
+        /// (AtomColliderSystem.cs:111-115), which 1x starts when ZoneLoader._LoadZone(2) turns zone 2 on. The engine runs no
+        /// OnEnable and loads no zone within a run (cuts.txt: zoneChanger), and a start doesn't carry the grid's phase: until the
+        /// scheduler holds that invoke, a waiting atom ends the run.
+        /// </summary>
+        bool AtomsLand()
+        {
+            if (_waitingAtoms <= 0) return true;
+            foreach (Scheduler.Pending p in _sim.Scheduler.Queue)
+                if (ReferenceEquals(p.Target, _atomCollider) && p.Method == "callAddNewAtom") return true;
+            return Unmodeled("a waiting atom (AtomColliderSystem.callAddNewAtom's 0.4 s grid: the engine doesn't know its phase, set when zone 2 loads at 1x)");
+        }
+
+        /// <summary>AtomColliderSystem.callAddNewAtom (AtomColliderSystem.cs:117-126), the 0.4 s grid's call (hooks.txt replaces
+        /// it): a waiting atom lands, +1 AtomicPower, at the tier determineAtomTier rolls.</summary>
+        internal void AtomTick(AtomColliderSystem collider)
+        {
+            if (!ReferenceEquals(collider, _atomCollider)) { Unmodeled("callAddNewAtom on a collider that isn't the world's AtomColliderSystem"); return; }
+            if (_waitingAtoms <= 0) return;
+            Add(globalStats.Currencies.AtomicPower, 1.0);
+            if (!AtomTier(out int tier) || !AddAtom(tier)) return;
+            _waitingAtoms--;
+        }
+
+        /// <summary>determineAtomTier (AtomColliderSystem.cs:128-138): the counter grows by the atom level chance; each 100 is a tier up.</summary>
+        bool AtomTier(out int tier)
+        {
+            tier = 0;
+            if (!Effect(globalStats.globalUpgradeEffectDict, G.atomLevelChance, out double chance)) return false;
+            _tierUpCounter += Global(G.atomLevelChance) * chance;
+            while (_tierUpCounter >= 100.0)
+            {
+                _tierUpCounter -= 100.0;
+                tier++;
+            }
+            return true;
+        }
+
+        /// <summary>AddNewAtom's counts (AtomColliderSystem.cs:179-211); its sprite and npDisplay are presentation, and its
+        /// tierColors[Tier] throws past the array.</summary>
+        bool AddAtom(int tier)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return Unmodeled("an atom without globalStats (the game throws)");
+            if (tier >= _tierColors) return Unmodeled("a tier " + tier + " atom (AtomColliderSystem.tierColors has " + _tierColors + ": the game throws)");
+            GrowTiers(tier + 1);
+            _atoms[tier]++;
+            _sim.Touch(stats);
+            stats.grossAtomCount += 1 + tier * (tier - 1);
+            stats.effectiveAtomCount += Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * 0.001f;
+            stats.AtomCountInTermsOfWhiteAtoms += Factorial(2 + tier) / 2.0;
+            return RecalcNp();
+        }
+
+        /// <summary>The tiers AddNewAtom and FinishCrafting add (AtomColliderSystem.cs:189-195, 292-299): not crafting, progress 1.</summary>
+        void GrowTiers(int count)
+        {
+            int n = _atoms.Length;
+            if (count <= n) return;
+            Array.Resize(ref _atoms, count);
+            Array.Resize(ref _crafting, count);
+            Array.Resize(ref _craftProgress, count);
+            for (int i = n; i < count; i++) _craftProgress[i] = 1f;
+        }
+
+        /// <summary>Utilities.Factorial (Utilities.cs:22-29).</summary>
+        static double Factorial(int f) { return f == 0 ? 1.0 : (double)f * Factorial(f - 1); }
+
+        /// <summary>
+        /// AtomColliderSystem.Update (AtomColliderSystem.cs:213-232) in a rendered frame on its Time.deltaTime (0 in a dash freeze's
+        /// and a pause's held frames), while the collider is on: one tier's crafting a frame, round robin. The sprites' movement
+        /// is presentation.
+        /// </summary>
+        internal void AtomFrame(float dt)
+        {
+            if ((object)_atomCollider == null || !_atomCollider.isActiveAndEnabled || _atoms.Length <= 0) return;
+            if (!HandleTier(_handledTier, dt)) return;
+            _handledTier++;
+            if (_handledTier >= _atoms.Length) _handledTier = 0;
+        }
+
+        /// <summary>HandleTierLogic's crafting (AtomColliderSystem.cs:234-247): a crafting tier's progress grows, finishing past
+        /// craftingEndValue; an idle tier with 3 + tier atoms starts while no tier crafts.</summary>
+        bool HandleTier(int tier, float dt)
+        {
+            if (_crafting[tier])
+            {
+                _craftProgress[tier] *= 1f + Mathf.Max(_craftStep + _craftStepPerTier * (float)tier, 5f) * (dt * (float)_atoms.Length);
+                if (_craftProgress[tier] > _craftEnd) return FinishCrafting(tier);
+            }
+            else if (_atoms[tier] >= 3 + tier && !_isCrafting) StartCrafting(tier);
+            return true;
+        }
+
+        /// <summary>startCrafting (AtomColliderSystem.cs:278-283).</summary>
+        void StartCrafting(int tier)
+        {
+            _isCrafting = true;
+            _crafting[tier] = true;
+            _craftProgress[tier] = _craftStart + _craftStartPerTier * (float)tier;
+        }
+
+        /// <summary>
+        /// FinishCrafting (AtomColliderSystem.cs:285-332), its counts as the game has them: 2 + tier atoms of the tier off
+        /// (effective, gross, white each), the third's effective and white once more but not its gross, the next tier's
+        /// effective and white on, and gross += the tier's 1 + tier (tier - 1), not the next tier's. 3 + tier atoms leave the
+        /// tier, one joins the next; a tier made for the first time pays 1000 ticks of NP at the new rate. Its tierColors[tier + 1]
+        /// throws past the array.
+        /// </summary>
+        bool FinishCrafting(int tier)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return Unmodeled("crafting without globalStats (the game throws)");
+            if (tier + 1 >= _tierColors) return Unmodeled("crafting a tier " + (tier + 1) + " atom (AtomColliderSystem.tierColors has " + _tierColors + ": the game throws)");
+            bool first = false;
+            _isCrafting = false;
+            _crafting[tier] = false;
+            _craftProgress[tier] = 1f;
+            if (_atoms.Length <= tier + 1)
+            {
+                first = true;
+                GrowTiers(tier + 2);
+            }
+            _sim.Touch(stats);
+            for (int i = 0; i < 2 + tier; i++)
+            {
+                stats.effectiveAtomCount -= Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * 0.001f;
+                stats.grossAtomCount -= 1 + tier * (tier - 1);
+                stats.AtomCountInTermsOfWhiteAtoms -= Factorial(2 + tier) / 2.0;
+            }
+            stats.effectiveAtomCount -= Mathf.Pow((float)_atomEffectiveness + 10f * (float)tier, tier) * 0.001f;
+            stats.AtomCountInTermsOfWhiteAtoms -= Factorial(2 + tier) / 2.0;
+            stats.effectiveAtomCount += Mathf.Pow(_atomEffectiveness + 10 * (tier + 1), tier + 1) * 0.001f;
+            stats.AtomCountInTermsOfWhiteAtoms += Factorial(2 + tier + 1) / 2.0;
+            stats.grossAtomCount += 1 + tier * (tier - 1);
+            _atoms[tier + 1]++;
+            _atoms[tier] -= 3 + tier;
+            if (!RecalcNp()) return false;
+            if (first) Add(globalStats.Currencies.AtomicPower, stats.NPrewardPerTick * 1000.0);
+            return true;
+        }
+
+        /// <summary>
+        /// AtomColliderSystem.ClearAtoms (AtomColliderSystem.cs:140-172), the atom level box's: every atom, crafting and waiting
+        /// atom gone, the counts 0 and NP recalculated, then the atom box's onPrestige(force: true) and one more use. onPrestige
+        /// (upgradeBox.cs:966-994) is <see cref="BoxPrestige"/> forced: the game's own would write an exempt box's native
+        /// localUpgradeDict, which the economy doesn't read (it keeps its own), and draw texts and sprites.
+        /// </summary>
+        bool ClearAtoms()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null || (object)_newAtomBox == null) return Unmodeled("ClearAtoms without globalStats or its newAtomUpgradeBox (the game throws)");
+            _atoms = Array.Empty<int>();
+            _crafting = Array.Empty<bool>();
+            _craftProgress = Array.Empty<float>();
+            _tierUpCounter = 0.0;
+            _sim.Touch(stats);
+            stats.effectiveAtomCount = 0.0;
+            stats.grossAtomCount = 0.0;
+            stats.AtomCountInTermsOfWhiteAtoms = 0.0;
+            if (!RecalcNp()) return false;
+            _isCrafting = false;
+            _handledTier = 0;
+            _waitingAtoms = 0;
+            if (!BoxPrestige(_newAtomBox, force: true)) return false;
+            _sim.Touch(_newAtomBox);
+            _newAtomBox.TimesUsed++;
+            return true;
+        }
 
         /// <summary>globalStats.UpdateRpCap (globalStats.cs:1142-1147) into the world's globalStats, which PayRed caps at.</summary>
         bool UpdateRpCap()
@@ -773,6 +1003,7 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal void FixedStep()
         {
+            if (!AtomsLand()) return;
             globalStats stats = Singleton<globalStats>.Instance;
             if ((object)stats == null) return;
             double np = _sim.Shop.Holds(globalStats.Currencies.AtomicPower), add;
@@ -1020,11 +1251,12 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        bool BoxPrestige(upgradeBox box)
+        /// <summary>upgradeBox.onPrestige (upgradeBox.cs:966-994) without its texts and sprites.</summary>
+        bool BoxPrestige(upgradeBox box, bool force = false)
         {
             if ((object)box == null) return Unmodeled("a null child box (the game throws)");
-            if (box.upgrade == localUpgrades.localUpgradeSet.prestige || box.upgrade == localUpgrades.localUpgradeSet.GLOBAL
-                || box.upgrade == localUpgrades.localUpgradeSet.Movement)
+            if (!force && (box.upgrade == localUpgrades.localUpgradeSet.prestige || box.upgrade == localUpgrades.localUpgradeSet.GLOBAL
+                || box.upgrade == localUpgrades.localUpgradeSet.Movement))
                 return true;
             var own = BoxLocalUpgradeScriptField.GetValue(box) as localUpgrades;
             if (box.ExemptFromPrestige && (object)own != null)
@@ -1115,7 +1347,9 @@ namespace IGTAP.EngineSim
         {
             var s = new State { Income = (double[])Income.Clone(), Values = new CloneValues[_clones.Length], Active = new Clone[_clones.Length][],
                 Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken,
-                TransitionOpensIn = _transitionOpensIn, CdMult = _cdMult };
+                TransitionOpensIn = _transitionOpensIn, CdMult = _cdMult, Atoms = (int[])_atoms.Clone(), Crafting = (bool[])_crafting.Clone(),
+                CraftProgress = (float[])_craftProgress.Clone(), WaitingAtoms = _waitingAtoms, HandledTier = _handledTier,
+                TierUpCounter = _tierUpCounter, IsCrafting = _isCrafting };
             for (int i = 0; i < _clones.Length; i++)
             {
                 s.Values[i] = _clones[i].V;
@@ -1139,6 +1373,13 @@ namespace IGTAP.EngineSim
             _tripBroken = s.TripBroken;
             _transitionOpensIn = s.TransitionOpensIn;
             _cdMult = s.CdMult;
+            _atoms = (int[])s.Atoms.Clone();
+            _crafting = (bool[])s.Crafting.Clone();
+            _craftProgress = (float[])s.CraftProgress.Clone();
+            _waitingAtoms = s.WaitingAtoms;
+            _handledTier = s.HandledTier;
+            _tierUpCounter = s.TierUpCounter;
+            _isCrafting = s.IsCrafting;
         }
 
         internal void AddTo(ref HashCode h)
@@ -1158,6 +1399,8 @@ namespace IGTAP.EngineSim
             h.Add(_tripBroken);
             h.Add(_transitionOpensIn);
             h.Add(_cdMult);
+            for (int i = 0; i < _atoms.Length; i++) { h.Add(_atoms[i]); h.Add(_crafting[i]); h.Add(_craftProgress[i]); }
+            h.Add(_waitingAtoms); h.Add(_handledTier); h.Add(_tierUpCounter); h.Add(_isCrafting);
         }
 
         int HashLocals()

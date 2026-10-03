@@ -53,6 +53,7 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, bool> SwapBlocks;
         [ThreadStatic] public static Action<object, float> TimeStop;
         [ThreadStatic] public static Action<object> RefillOrbState;
+        [ThreadStatic] public static Action<object> AtomTick;
         [ThreadStatic] public static Action<object, Vector2> HitSpring;
         [ThreadStatic] public static Action<object> SteppedUp;
         [ThreadStatic] public static Action<object, float> SpecialWallJump;
@@ -74,6 +75,7 @@ namespace IGTAP.EngineSim
         public static void OnSwapBlocks(object swapper, bool blueActive) { SwapBlocks?.Invoke(swapper, blueActive); }
         public static void OnTimeStop(object movement, float duration) { TimeStop?.Invoke(movement, duration); }
         public static void OnRefillOrbState(object orb, bool regrow) { RefillOrbState?.Invoke(orb); }
+        public static void OnAtomTick(object collider) { AtomTick?.Invoke(collider); }
         public static void OnHitSpring(object movement, float upForce, float strength, float movementLock, Vector2 up) { HitSpring?.Invoke(movement, up); }
         public static void OnSpecialWallJump(object movement, float directionMagnitudeMod, float durationMult, Vector2 momentumToAdd) { SpecialWallJump?.Invoke(movement, directionMagnitudeMod); }
         public static void OnSteppedUp(object anim, Vector3 stepUpAmount) { SteppedUp?.Invoke(anim); }
