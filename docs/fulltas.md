@@ -2142,7 +2142,7 @@ economy natively (`enginesim/Runtime/Economy.cs`): course-finish rewards, comp b
 and payouts on and off screen (the clonesLoD trigger; the current build's rule:
 [Clones and buy-max](#clones-and-buy-max-build-25630570)), what the courses' local boxes change (reward, clone count, clone
 multiplier), colour clones (`checkIfColourClone`: red power to `rpCap`, green power) and clone dust (clone and finish
-payouts, `CloneDustGpCdMult` recomputed after each) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
+payouts, `CloneDustGpCdMult` recomputed after each, a start's as stored) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
 5 s phase), the global clone speed and size caps (`maxCloneFastness`, `maxCloneBigness`: dictionary only while both
 clone chances are 0), the statue (`unlockPrestige`: a global clone multiplier instead of its own entry), NP
 (`globalStats.DoConstantCurrency` once a physics step, `Economy.FixedStep`: `NPrewardPerTick` under `NPrewardCap`, past it
@@ -2161,9 +2161,14 @@ statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the p
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
 ...`): clone speed/size rolls, a waiting atom (the atoms are modeled, `Economy`'s atoms region, but not when their
-0.4 s grid starts: `enginesim/README.md`), the gate, Area 2 door, teleporter,
-Vman start, zip mover, refill orb and tree-planting boxes (`Economy.BoughtGlobal`) and a prestige buy while Vman is active. A Vman
-course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
+0.4 s grid starts: `enginesim/README.md`), the gate, Area 2 door, teleporter and
+Vman start boxes (`Economy.BoughtGlobal`) and a prestige buy while Vman is active. The upgrade trees grow as the game
+grows them, and the zip mover and refill orb boxes write the game's static dictionary (`enginesim/README.md`). A Vman
+course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run. Checked against
+1x and turbo on an Area 2 stretch (2026-10-03, `tools/economy-diff.py`: Course 6's start in a new game with currencies set,
+a tree planted, its moss ground stood on, its first box bought three times): every economy field equal, on the same ticks.
+Atoms, NP income, comp boost and Area 2 clones aren't checked yet, and a tree's growth leaves the RNG off 1x's (its lights'
+`Start` draws): [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x*.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
 `localUpgrades.OnPrestige` (local upgrades and clones reset, the best path on Courses 4–5 only; Courses 1–3 get the breaker layer's tier mods,

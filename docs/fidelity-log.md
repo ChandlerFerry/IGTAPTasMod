@@ -976,3 +976,44 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Residual risk:** the engine doesn't run `RubbleDisplayScript` (Course 8's rubble display). While it is on screen at
   1x it recomputes the multiplier every 0.2 s.
 - **Where:** `Economy` (constructor), `TurboRunner.AtomStats`.
+
+## Area 2 economy checked against 1x
+
+- **Symptom:** (2026-10-03) Area 2's economy (atoms, NP, the trees, colour clones, clone dust) had been ported to the
+  engine and turbo by reading the code. No saved route reaches Area 2, so none of it had been compared with 1x.
+- **Check:** a stretch built for it (Task 7).
+  - Start: a new game, currencies set by `/api/session/setup` (1e6 Cash and NP, 1e9 GP, 1e4 RP and clone dust), then
+    Course 6's WJ_DS_DJ_BS start.
+  - Inputs (1129): walk to The Tree and buy its PlantTreeBox from below (0.1 NP). Climb onto the box with two wall
+    jumps and wait there for TreePart0. Jump onto its ground (`Tree1Ground`: Moss, a closed chain offline) and buy its
+    GreenCloneChanceBox three times from below (1, 5 and 17 NP; it grows TreeParts 1 and 2). Then wait.
+  - Legs: a 1x probe from one fresh new game, a turbo trace from another, and `replay --ticks-out` on the trace,
+    compared with `tools/economy-diff.py`.
+- **Result:** every `econ` field is equal in all three legs, and changes on the same physics tick.
+  - NP is spent at ticks 416, 703, 748 and 793. Segments go 0, 1, 3 at 416 and 703.
+  - The player stands on the box and on the grown ground at the same height in all three (y 67.515 and 244.015).
+  - `determinism` on the stretch is DETERMINISTIC. Two of its ten snapshots can't be stored (a collider's shapes can't be
+    rebuilt), so they replay instead.
+  - The atom grid fires on the same ticks in turbo and the engine from the trace start (16, 36, ...). At 1x, Unity calls
+    `callAddNewAtom` in the first rendered frame after a physics tick, every 20 ticks.
+- **Differences found:**
+  - The clone dust multiplier at a start: fixed (above, *Clone dust multiplier at a start*).
+  - **The `Start` draws of what a segment wakes.** At 1x a segment woken by a buy runs `RandomAnimSpeedComponent.Start`
+    on each trunk light in the buy's own frame (2 draws each, 3 when broken: TreePart0 has 3 lights, TreeParts 1 and 2
+    have 3 between them). The box's `LightFlicker.Start` (1 draw) runs the frame after `IE_Grow` turns the box on. Turbo makes these draws after
+    its run, in Unity's next Start pass. The engine makes none. So after a growth the RNG is off 1x's in both, and every
+    later roll (clone speed and size, colour clones) differs. Not ported, because turbo can only match by putting the RNG
+    back around the real `Start` (as exception 11 does for presentation draws), which needs a ruling.
+  - **Turbo's position from a category start** is off the engine's and 1x's from the first tick: 0.0005 u on Courses 4,
+    6 and 7, 1e-5 u on Course 1. On Course 6 it grew to 0.15 u by tick 400. Standing positions in the engine match 1x
+    (22602.555, 22692.197, 22956.951); turbo's don't (22602.701, 22692.201, 22956.941). It is the same at 0804c9b, and
+    record routes still finish at their times. Cause not found.
+- **Not checked yet:**
+  - Atoms landing and crafting, NP income, the atom level box and the comp boost: every atom box buy writes PlayerPrefs
+    `OpenA2Door` on the machine (upgradeBox.cs:648). The engine also ends the run at a first buy, because it can't read
+    that key. This needs a ruling.
+  - Clones, green power and clone dust on an Area 2 course: a new game's Area 2 courses have no clone path, and a
+    category run ends at its course's finish.
+  - Whether the grid keeps firing after zone 1 loads again.
+- **Where:** `tools/economy-diff.py`, `TasPlugin.EconomyNow` (probe rows, trace ticks, `atom` rows), `FullTas.EconomyRow`,
+  `replay --ticks-out`.

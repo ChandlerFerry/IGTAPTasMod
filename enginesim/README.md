@@ -1669,9 +1669,13 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   any (`TurboRunner.AtomGridDueIn`). The engine queues the invoke there (`floor(dueIn / fixedDeltaTime)` ticks, as the
   start's other pending Invokes, then every 20 ticks). The engine loads no zone within a run, so a run that drops into
   zone 2 never starts the grid; a waiting atom without it (that, or a start captured before the field) ends the run
-  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). Open for Task 7's 1x probe: whether the grid keeps
-  firing after zone 1 loads again (Unity is said to keep an inactive object's Invokes), and the grid's sub-tick timing
-  (1x calls it in a rendered frame; the engine at a tick's start). Turbo models the same (`TurboRunner`): it runs
+  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). At 1x (a probe from Course 6's start, 69 calls) Unity
+  calls it in the first rendered frame after a physics tick (that tick's `fixedTime` + 0.0025 s), every 20 ticks on the
+  280 fps clock, so an atom it lands is first paid for by the next tick's NP. The engine and turbo fire it at a tick's
+  start, before NP, on the same ticks as each other from a trace start (`gridCalls`). Not checked at 1x (an atom box buy
+  writes PlayerPrefs `OpenA2Door`, upgradeBox.cs:648): whether that start is the tick after 1x's call, an atom landing,
+  crafting (1x's call lands within a rendered frame; the engine's atom first crafts in the frames of the tick it fires on) and NP
+  income, and whether the grid keeps firing after zone 1 loads again. Turbo models the same (`TurboRunner`): it runs
   `AtomColliderSystem.Update` in each modelled frame on that frame's `Time.deltaTime` (the sprites' `HandleMovement`
   skipped), and takes the grid over for a run, since Unity's `InvokeRepeating` runs on `Time.time`, which a run holds
   still: from the grid a restore or the last run left, else from Unity's as above, fired at a tick's start every 20
@@ -1707,7 +1711,13 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   object off in the hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
   Turbo parks `IE_Grow` as the engine does and resumes it after each modelled frame (its first step, in the buy's
   physics step, on the fixed step); its snapshot keeps the trees' fields (grown segments, audio cooldown), each
-  segment's trunks' and box's local pose and its ground's collider, and a restore stops a growth Unity runs.
+  segment's trunks' and box's local pose and its ground's collider, and a restore stops a growth Unity runs. Checked
+  against 1x (Course 6's start, The Tree's PlantTreeBox and its first segment's GreenCloneChanceBox, which grows two
+  more): the segments grow, the box can be hit and NP is spent on the same physics ticks in 1x, turbo and the engine,
+  and the player stands on the grown Moss ground at the same height (`docs/fidelity-log.md`, *Area 2 economy checked
+  against 1x*). Not reproduced: the `Start` of what a segment wakes (`RandomAnimSpeedComponent`, 2 draws a trunk light,
+  3 when broken, in the buy's frame; the box's `LightFlicker`, 1, the frame after `IE_Grow` turns it on). The engine
+  makes none and turbo makes them after its run, so after a growth the RNG differs from 1x in both.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
