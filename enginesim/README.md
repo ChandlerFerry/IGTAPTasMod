@@ -823,19 +823,26 @@ play the same pieces of the tick `Simulation.Run` plays (`EconomyTickStart`: Inv
 `EconomyFixedUpdates`: courses, Vman clock, refill orbs, box cooldowns; `EconomyAfterStep`: buy-max steps and FixedUpdate
 waits; `InterpolatedFrames` without the player: each frame's Start pass, clone and atom steps, atom grid and end-of-frame
 resumes; `EconomyTickEnd`: frame waits) with the player's half left out: no input, no `Movement` FixedUpdate or Update,
-no physics step, no rebase. The clones of a course are on screen where `at` lies inside one of their `clonesLoD`
-triggers (`PhysicsWorld.OverlapPoint`; the trigger's own enter or exit runs where that changes them), the place, not the
-player's boxes. A drive starts from `RestoreForDrive(snapshot)`, which keeps the run's engine counts going (the frame
-grid's phase, the Full-TAS reward refresh); an unmodeled economy event or a purchase the run would stop on throws.
-`plan-check <trace> <route> --at N [--ticks T] [--buy | --finish]` checks it against the full simulation from the same
-state: the route to goal N of a Full-TAS trace (else input N), no input until the player rests, then T (2000) idle ticks
-through `Run` against `EconomyIdle`; or the tick before goal N's buy (`--buy`: the first buy from there) or finish, its
-full tick against `EconomyBuy`/`EconomyFinish`. Every currency, clone, upgrade, atom, buy-max, scheduler, course reward,
-box and the RNG state must match (the RNG is skipped where the full tick's player made sound draws the drive has no
-player for); it exits 1 on a mismatch. Checked: FalseEnding%-280 idle after goals 55 (Course 1), 120 (Course 2's clones
-on screen) and 170 (`buy:buyds`), buys at goals 3, 24, 120, 170, finishes at goals 2, 55, 88; the Area 2 stretches
-`t7-c6-area2` (idle after the tree's buy, while it grows; its four buys), `t7-atoms` (idle with atoms landing and
-crafting; the first atom box's buy) and `t7-c10-afterA` (idle; the NP box).
+no physics step, no rebase. The player arrives at `at` in the first tick's physics step, before a box's touch: a
+course's clones go on screen where the player's boxes standing there overlap one of their `clonesLoD` triggers and off
+where they overlap none (`PhysicsWorld.PlayerOverlaps`, the trigger contact's `b2TestOverlap`; the trigger's own enter or
+exit runs where that changes them). A drive starts from `RestoreForDrive(snapshot)`, which keeps the run's engine counts
+going (the frame grid's phase, the Full-TAS reward refresh), counting from a trace's start too. The run's goal tracker
+sits the drive out (`Simulation.Driving`): a buy neither reaches a goal nor strays from one, the planner owns its
+schedule. An unmodeled economy event throws.
+`plan-check <trace> <route> --at N [--ticks T] [--buy | --finish | --flip on|off | --stray BOX]` checks it against the full
+simulation from the same state (strict buys): the route to goal N of a Full-TAS trace (else input N; 0 the trace's
+start), no input until the player rests, then T (2000) idle ticks through `Run` against `EconomyIdle`; the tick before
+goal N's buy (`--buy`: the first buy from there) or finish, its full tick against `EconomyBuy`/`EconomyFinish`; the first
+step from goal N where the route's player takes a course's clones on or off screen against `EconomyIdle(1)` where that
+step leaves it (`--flip`); a buy of a box that isn't the next goal's after T idle ticks (`--stray`). Every currency,
+clone, upgrade, atom, buy-max, scheduler (but the player's Invokes), course reward, box, draw count and the RNG state must
+match (the RNG is skipped where the full tick drew for the player, its sounds, and made as many other draws as the
+drive), and the drive must leave the goal tracker where it was; it exits 1 on a mismatch. Checked: FalseEnding%-280
+from its start, idle after goals 55 (Course 1), 120 (Course 2's clones on screen) and 170 (`buy:buyds`), buys at goals 3,
+24, 120, 170, finishes at goals 2, 55, 88, both flips after goals 1 and 100, a stray `buyreward2` after goal 120; the Area
+2 stretches `t7-c6-area2` (idle after the tree's buy, while it grows; its four buys), `t7-atoms` (from its start; idle
+with atoms landing and crafting; the first atom box's buy) and `t7-c10-afterA` (idle; the NP box).
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

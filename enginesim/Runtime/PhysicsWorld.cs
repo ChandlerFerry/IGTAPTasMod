@@ -1094,17 +1094,33 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>
-        /// Collider2D.OverlapPoint: whether the point lies in one of the collider's shapes as the world stands now (a chain or an
-        /// edge holds none; a collider off holds none). The economy drive's clonesLoD test (Simulation.EconomyIdle).
+        /// Whether the player's colliders that can touch <paramref name="collider"/>, its body standing at <paramref name="at"/>,
+        /// overlap the collider's shapes as the world stands now (b2TestOverlap, a trigger contact's test; colliders off touch
+        /// nothing). The economy drive's clonesLoD test (Simulation.Arrive).
         /// </summary>
-        public bool OverlapPoint(Collider2D collider, Vector2 point)
+        public bool PlayerOverlaps(Collider2D collider, Vector2 at)
         {
             Settle();
             SyncMovedWorld();
             if (!_colliders.TryGetValue(collider, out ColliderState s)) return false;
-            var p = new b2Vec2(point.x, point.y);
-            foreach (b2Fixture f in s.Fixtures)
-                if (f.m_proxyCount > 0 && f.TestPoint(p)) return true;
+            b2Transform xfPlayer = _player.Body.GetTransform();
+            xfPlayer.p = new b2Vec2(at.x, at.y);
+            foreach (ColliderState player in _player.Colliders)
+            {
+                if (!CanTouch(player.Collider, collider)) continue;
+                foreach (b2Fixture fp in player.Fixtures)
+                {
+                    if (fp.m_proxyCount <= 0) continue;
+                    foreach (b2Fixture f in s.Fixtures)
+                    {
+                        if (f.m_proxyCount <= 0) continue;
+                        b2Transform xf = f.GetBody().GetTransform();
+                        for (int ip = 0; ip < fp.GetShape().GetChildCount(); ip++)
+                            for (int i = 0; i < f.GetShape().GetChildCount(); i++)
+                                if (b2TestOverlap(fp.GetShape(), ip, f.GetShape(), i, xfPlayer, xf, _proxyBufferA, _proxyBufferB)) return true;
+                    }
+                }
+            }
             return false;
         }
 

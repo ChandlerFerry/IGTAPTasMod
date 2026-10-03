@@ -16,12 +16,15 @@ namespace IGTAP.EngineSim
     /// and end-of-frame resumes (<see cref="InterpolatedFrames"/> without the player) and the frame waits
     /// (<see cref="EconomyTickEnd"/>). The drive plays the same pieces in the same order with the player's half left out: no
     /// input, no Movement FixedUpdate or Update, no physics step, no FloatingOrigin rebase. What the physics step's callbacks
-    /// do for the economy it does as they do it, at the step's place in the tick: a clonesLoD trigger's enter or exit for the
-    /// place the player stands at, a box's OnTriggerStay2D, a course's stopTracking economy.
+    /// do for the economy it does as they do it, at the step's place in the tick: a clonesLoD trigger's enter or exit where
+    /// the player arrives (its boxes standing there, the first tick's step), a box's OnTriggerStay2D, a course's stopTracking
+    /// economy.
     /// A drive starts from <see cref="RestoreForDrive"/>, and the run's engine counts go on through it (its physics ticks: the
-    /// frame grid's phase and the Full-TAS reward refresh, MacroEngine.RefreshRewards). What the run would refuse the drive
-    /// refuses: an unmodeled economy event, or a purchase the run stops on (a strict run's stray buy), throws. The physics
-    /// world's contacts stay where the snapshot's player left them: a drive's state is for more drives, not for a Run.
+    /// frame grid's phase and the Full-TAS reward refresh, MacroEngine.RefreshRewards). The run's goal tracker sits the drive
+    /// out (<see cref="Driving"/>): a buy neither reaches nor strays from a goal, a short touch isn't logged, a reward box
+    /// doesn't finish the run. The planner owns its schedule. An unmodeled economy event still stops the engine, and the
+    /// drive throws. The physics world's contacts stay where the snapshot's player left them: a drive's state is for more
+    /// drives, not for a Run.
     /// </summary>
     public sealed partial class Simulation
     {
@@ -33,22 +36,30 @@ namespace IGTAP.EngineSim
         /// <summary>Scheduler.Tick is the drive's last tick (as in a Run's afterTick, where Capture counts from), not the next one (as
         /// after a Restore).</summary>
         bool _driven;
-        /// <summary>Each course's clones' LoD triggers (on in the hierarchy at load).</summary>
+        /// <summary>Each course's clones' LoD triggers, on or off.</summary>
         (clonesScript clones, Collider2D[] lods)[] _lods;
+        static readonly FieldInfo OverrideLod = typeof(clonesLoD).GetField("overrideLOD", Instance);
 
-        /// <summary>The snapshot's state, its engine counts going on (Run resumes them itself): a drive's start.</summary>
+        /// <summary>A drive's tick is playing: the goal tracker (Bought, Shop.Stay's short touch, RewardHit) sits it out.</summary>
+        internal bool Driving;
+
+        /// <summary>
+        /// The snapshot's state, its engine counts going on (Run resumes them itself): a drive's start. A snapshot before the
+        /// run's first input (a trace's start) counts every physics tick from here as the run would from its first input tick
+        /// (MacroEngine.RebaseInputs, as Advance's states do).
+        /// </summary>
         public void RestoreForDrive(SimSnapshot s)
         {
             Restore(s);
             Engine.ResumeOwned(s.Engine, new List<MacroStep>(), 0);
+            if (Engine.RunTicks == 0) Engine.RebaseInputs();
         }
 
         /// <summary><paramref name="ticks"/> physics ticks with the player standing at <paramref name="at"/> (the scene frame
-        /// now), its clones on screen where <paramref name="at"/> is inside their clonesLoD trigger.</summary>
+        /// now; it arrives in the first tick's physics step, <see cref="Arrive"/>).</summary>
         public void EconomyIdle(int ticks, Vector2 at)
         {
-            Arrive(at);
-            for (int i = 0; i < ticks; i++) EconomyTick(null);
+            for (int i = 0; i < ticks; i++) EconomyTick(i == 0 ? () => Arrive(at) : null);
         }
 
         /// <summary>
@@ -59,10 +70,10 @@ namespace IGTAP.EngineSim
         public bool EconomyBuy(string boxId, Vector2 at)
         {
             upgradeBox box = Shop.Box(boxId) ?? throw new ArgumentException("No upgrade box " + boxId + " in this world export.");
-            Arrive(at);
             int used = box.TimesUsed;
             EconomyTick(() =>
             {
+                Arrive(at);
                 Touch(box);
                 BoxStay.Invoke(box, new object[] { _playerColliders[0] });
             });
@@ -123,39 +134,58 @@ namespace IGTAP.EngineSim
             _driven = true;
             _freezeFor = -1f;
             _pauseFrames = _pauseAfter = 0;
-            EconomyTickStart();
-            Shop.Economy?.FixedStep();
-            Engine.CountPhysicsTick();
-            EconomyFixedUpdates();
-            physicsStep?.Invoke();
-            EconomyAfterStep();
-            InterpolatedFrames(player: false);
-            EconomyTickEnd();
+            Driving = true;
+            try
+            {
+                EconomyTickStart();
+                Shop.Economy?.FixedStep();
+                Engine.CountPhysicsTick();
+                EconomyFixedUpdates();
+                physicsStep?.Invoke();
+                EconomyAfterStep();
+                InterpolatedFrames(player: false);
+                EconomyTickEnd();
+            }
+            finally { Driving = false; }
             if (!Engine.IsRunning) throw new InvalidOperationException("The economy drive stopped: " + Engine.Status);
         }
 
         /// <summary>
-        /// The player now stands at <paramref name="at"/>: each course's clones go on screen if it is inside one of their clonesLoD
-        /// triggers and off if it isn't (the trigger's own OnTriggerEnter2D, its course's fullUpdate included, or
-        /// OnTriggerExit2D), where that changes them. The test is the place, not the player's boxes.
+        /// The player arrives at <paramref name="at"/>, in a physics step: each course's clones go on screen where its boxes
+        /// standing there overlap one of their clonesLoD triggers and off where they overlap none (<see cref="InsideLod"/>), by
+        /// the trigger's own OnTriggerEnter2D (its course's fullUpdate included) or OnTriggerExit2D, where that changes them,
+        /// before the step's other callbacks (a box's touch). No scene's clonesLoD overrides its LoD (clonesLoD.Start keeps
+        /// those on screen until an exit): one that does is refused.
         /// </summary>
         void Arrive(Vector2 at)
         {
             Economy economy = Shop.Economy;
             if (economy == null) return;
-            _lods ??= World.All<clonesLoD>().Where(l => l.gameObject.activeInHierarchy && l.GetComponent<Collider2D>() != null)
+            _lods ??= World.All<clonesLoD>().Where(l => l.GetComponent<Collider2D>() != null)
                 .GroupBy(l => l.GetComponentInParent<clonesScript>()).Where(g => (object)g.Key != null)
                 .Select(g => (g.Key, g.Select(l => l.GetComponent<Collider2D>()).ToArray())).ToArray();
             foreach (var (clones, lods) in _lods)
             {
                 bool? onScreen = economy.OnScreenOf(clones);
                 if (onScreen == null) continue;
-                Collider2D inside = lods.FirstOrDefault(c => c.gameObject.activeInHierarchy && Physics.OverlapPoint(c, at));
-                if ((inside != null) == onScreen.Value) continue;
-                clonesLoD lod = (inside ?? lods[0]).GetComponent<clonesLoD>();
+                Collider2D on = lods.FirstOrDefault(c => c.gameObject.activeInHierarchy && Physics.PlayerOverlaps(c, at));
+                if ((on != null) == onScreen.Value) continue;
+                Collider2D trigger = on ?? lods.FirstOrDefault(c => c.gameObject.activeInHierarchy);
+                if (trigger == null) continue;
+                clonesLoD lod = trigger.GetComponent<clonesLoD>();
+                if ((bool)OverrideLod.GetValue(lod))
+                    throw new InvalidOperationException("Unmodeled: a clonesLoD with overrideLOD (" + lod.name + ") in the economy drive");
                 Touch(lod);
-                (inside != null ? LodEnter : LodExit).Invoke(lod, new object[] { _playerColliders[0] });
+                (on != null ? LodEnter : LodExit).Invoke(lod, new object[] { _playerColliders[0] });
             }
+        }
+
+        /// <summary>Whether the player's boxes, its body standing at <paramref name="at"/>, overlap one of the clones' clonesLoD
+        /// triggers that are on (PhysicsWorld.PlayerOverlaps).</summary>
+        internal bool InsideLod(clonesScript clones, Vector2 at)
+        {
+            return World.All<clonesLoD>().Any(l => l.gameObject.activeInHierarchy && ReferenceEquals(l.GetComponentInParent<clonesScript>(), clones)
+                && l.GetComponent<Collider2D>() is Collider2D c && Physics.PlayerOverlaps(c, at));
         }
     }
 }

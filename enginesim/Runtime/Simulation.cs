@@ -358,7 +358,7 @@ namespace IGTAP.EngineSim
         /// per touch of such a box.</param>
         internal void Bought(string path, string id, bool continuing)
         {
-            if (Goals == null || !Engine.IsRunning || continuing) return;
+            if (Goals == null || Driving || !Engine.IsRunning || continuing) return;
             Purchased?.Invoke(path);
             FullTasGoal next = Goals.Current;
             if (StrictBuys && !Goals.Loose && (next?.boxes == null || Array.IndexOf(next.boxes, id) < 0 && Array.IndexOf(next.boxes, path) < 0))
@@ -419,7 +419,7 @@ namespace IGTAP.EngineSim
 
         internal bool RewardHit(upgradeBox box, Collider2D collision)
         {
-            if (!Engine.IsRunning || _rewardBox == null || Shop.Id(box) != _rewardBox || collision.GetComponent<Movement>() == null) return false;
+            if (Driving || !Engine.IsRunning || _rewardBox == null || Shop.Id(box) != _rewardBox || collision.GetComponent<Movement>() == null) return false;
             Engine.CompleteFromGame(MacroEngine.RewardFinishReason, Engine.PhysicsTicks * World.FixedDeltaTime);
             return true;
         }
