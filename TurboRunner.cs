@@ -125,9 +125,12 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
             var modelDeltaTime = new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseModelDeltaTime)));
             harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")), transpiler: modelDeltaTime);
-            // TreeSegmentActivationComponent.growTreePart's local IE_Grow (TreeSegmentActivationComponent.cs:32-125).
-            harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.FirstMethod(typeof(TreeSegmentActivationComponent), m => m.Name.Contains("IE_Grow"))),
-                transpiler: modelDeltaTime);
+            // TreeSegmentActivationComponent.growTreePart's local IE_Grow (TreeSegmentActivationComponent.cs:32-125). Found by the
+            // compiler's local-function name: a build that names it otherwise loses only this patch, not the ones after it.
+            MethodInfo grow = AccessTools.FirstMethod(typeof(TreeSegmentActivationComponent), m => m.Name.Contains("IE_Grow"));
+            MethodInfo growStep = grow == null ? null : AccessTools.EnumeratorMoveNext(grow);
+            if (growStep != null) harmony.Patch(growStep, transpiler: modelDeltaTime);
+            else TasPlugin.Log?.LogWarning("Turbo: TreeSegmentActivationComponent has no IE_Grow iterator; a tree grown in turbo reads the frame's Time.deltaTime.");
             harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "HandleTierLogic"), transpiler: modelDeltaTime);
             harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "HandleMovement"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
@@ -205,6 +208,9 @@ namespace IGTAPTasMod
         /// and hands it back to Unity at the end (<see cref="HandAtomGrid"/>).
         /// </summary>
         static int _atomDue = -1;
+        /// <summary>The run started on a grid Unity ran but whose start wasn't seen (<see cref="AtomGridTicks"/> null) and nothing
+        /// in it has set or cancelled the grid since: a capture or the run's end leaves it Unity's (null), not cancelled (-1).</summary>
+        static bool _atomUnseen;
         static AtomColliderSystem _atomCollider;
         /// <summary>
         /// The grid a restore or a run's end left, in ticks from the next tick (-1: none, null: Unity's, its start unseen),
@@ -218,7 +224,7 @@ namespace IGTAPTasMod
         static int? AtomGridTicks(AtomColliderSystem collider, int next, out float? dueIn)
         {
             dueIn = null;
-            if (Active) return _atomDue < 0 ? -1 : _atomDue - next;
+            if (Active) return _atomDue >= 0 ? _atomDue - next : _atomUnseen ? (int?)null : -1;
             if (Time.time == _atomHeldAt) return _atomHeldDue;
             if (collider == null || !collider.IsInvoking(AtomCall)) return -1;
             dueIn = AtomGridDueIn(collider);
@@ -249,13 +255,14 @@ namespace IGTAPTasMod
             if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
             _atomCollider = collider;
             _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1;
+            _atomUnseen = false;
             return false;
         }
 
         static bool BeforeCancelInvoke(MonoBehaviour __instance, string methodName)
         {
             if (!Active) return true;
-            if (__instance is AtomColliderSystem && methodName == AtomCall) _atomDue = -1;
+            if (__instance is AtomColliderSystem && methodName == AtomCall) { _atomDue = -1; _atomUnseen = false; }
             Pending.RemoveAll(p => p.target == __instance && p.method == methodName);
             return false;
         }
@@ -1142,6 +1149,7 @@ namespace IGTAPTasMod
             _atomCollider = FindAtomCollider();
             int? atomStart = AtomGridTicks(_atomCollider, 0, out _);
             _atomDue = atomStart ?? -1;
+            _atomUnseen = atomStart == null;
             int atomRepeat = Math.Max(1, Mathf.FloorToInt(AtomRepeat / dt));
             Active = true;
             if (resume != null && resume.rebasing) OriginFrame();
@@ -1274,7 +1282,7 @@ namespace IGTAPTasMod
                     r.target.StartCoroutine(Continue(r.body, wait));
                 }
                 Routines.Clear();
-                HandAtomGrid(_atomDue >= 0 ? _atomDue - _tick : atomStart == null ? (int?)null : -1);
+                HandAtomGrid(_atomDue >= 0 ? _atomDue - _tick : _atomUnseen ? (int?)null : -1);
                 if (_rebase != null)
                 {
                     FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
