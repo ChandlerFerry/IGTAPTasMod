@@ -46,7 +46,9 @@ namespace IGTAPTasMod
         /// <summary>
         /// A run's saved best of a class and what ranks it: live time for major and nmg, the score (fulltas-classes.json) for a
         /// human class. A human route with no class result ranks at its live time, its score's floor, so a route beating less
-        /// never replaces it.
+        /// never replaces it. The live time is the route's exact one from its splits (fulltas-splits.json: its last split's ticks
+        /// and held frames) when it has them, not its name's, which rounds: a re-judge of the same route (704.665 against the
+        /// name's 704.67) is not faster (README ### Rules 52).
         /// </summary>
         MacroDefinition FullTasClassBest(string run, string cls, out float rank)
         {
@@ -55,7 +57,9 @@ namespace IGTAPTasMod
             foreach (MacroDefinition m in _library.macros)
             {
                 if (!FullTasRouteOf(m.name, out string r, out string c, out float time) || c != cls || !string.Equals(r, run, StringComparison.OrdinalIgnoreCase)) continue;
-                float value = HumanClass(cls) && _fullTasClasses.TryGetValue(m.id, out FullTasClassRecord record) ? record.score : time;
+                float value = HumanClass(cls) && _fullTasClasses.TryGetValue(m.id, out FullTasClassRecord record) ? record.score
+                    : !HumanClass(cls) && _fullTasSplits.TryGetValue(m.id, out List<FullTasSplit> splits) && splits.Count > 0 ? Math.Min(time, splits[splits.Count - 1].Live)
+                    : time;
                 if (value < rank) { best = m; rank = value; }
             }
             return best;

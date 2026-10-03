@@ -335,7 +335,8 @@ namespace IGTAPTasMod
             double farmBest = FarmTracked ? FarmBest(SolverCategory) : double.NegativeInfinity;
             ParkAtStart();
             var result = new JudgeResult { finished = loop.steady, loop = loop, previousFarm = double.IsInfinity(farmBest) ? (double?)null : farmBest };
-            if (!loop.steady || loop.lap >= farmBest - 1e-6) return result;
+            // The record is known to its name's 4 places only: a lap that would get the same name isn't faster (README ### Rules 52).
+            if (!loop.steady || FarmName(loop.lap) >= farmBest) return result;
             if (!_startFresh)
             {
                 _startStates.Remove(_startKey);
@@ -534,7 +535,7 @@ namespace IGTAPTasMod
                         OfflineBest d = files.FirstOrDefault(f => !f.loop && f.directions.Contains(direction));
                         if (d != null) candidates.Add((d, d.time <= DirectionBest(any.judgings[0].category, direction) + .0001f));
                     }
-                candidates.Add((fewest, fewest != null && fewest.time < farmBest - 1e-6));
+                candidates.Add((fewest, fewest != null && FarmName(fewest.time) < farmBest));
                 foreach (var (file, worth) in candidates)
                 {
                     if (file == null || !worth && !_offlineJudgedPaths.Contains(file.path)) continue;
@@ -595,6 +596,9 @@ namespace IGTAPTasMod
             }
             return best;
         }
+
+        /// <summary>A lap as a farm route's name has it (seconds to 4 places).</summary>
+        static double FarmName(double lap) { return double.Parse(lap.ToString("0.0000", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture); }
 
         /// <summary>The category's farm route's lap time in live seconds (+infinity: none yet).</summary>
         double FarmBest(string category)
