@@ -879,11 +879,12 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   So a start with zone 2 loaded has the grid running at a phase the engine doesn't know. Unity is said not to cancel
   invokes when their object goes inactive; the game's own `CancelInvoke` before the `InvokeRepeating` suggests the same.
   If so, the grid keeps landing atoms (not crafting: that is `Update`) after zone 1 loads again. This is not verified at 1x.
-- **Fix (partial):** a waiting atom ends the run (`Unmodeled economy: a waiting atom`, `Economy.AtomsLand`, checked at an
-  atom box's buy and every physics step) unless the scheduler holds the collider's `callAddNewAtom` invoke.
-  `hooks.txt` routes that invoke to `Economy.AtomTick` once one is queued. Two ways to queue it are open:
-  - the plugin exports the grid's phase in the trace start (for example from an `OnEnable`/`callAddNewAtom` patch), or
-  - the engine loads zones as 1x does.
-
-  Crafting (`Update`) is modeled per rendered frame while the collider is on, whatever the grid.
-- **Where:** `Economy.AtomsLand`, `Economy.AtomTick`, `Economy.AtomFrame`, `hooks.txt`.
+- **Fix:** the plugin keeps the game time of the grid's start (an `OnEnable` postfix) and of its last call (a
+  `callAddNewAtom` prefix), and a trace start with the invoke pending carries the seconds to its next call
+  (`economy.atomGridDueIn`). The engine queues the invoke there, and `hooks.txt` routes it to `Economy.AtomTick`.
+  A run that drops into zone 2 still never starts the grid, because the engine loads no zone mid-run. A start captured
+  before this field has no grid either. In both cases a waiting atom ends the run (`Economy.AtomsLand`). Whether the
+  grid keeps firing after zone 1 reloads is left to Task 7's probe. Crafting (`Update`) is modeled per rendered frame
+  while the collider is on.
+- **Where:** `TurboRunner.AtomGridDueIn`, `EngineSimBridge` (trace start), `Economy` (constructor, `AtomsLand`, `AtomTick`,
+  `AtomFrame`), `hooks.txt`.

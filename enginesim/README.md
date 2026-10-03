@@ -1646,9 +1646,15 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   made for the first time pays 1000 ticks of NP. The atom level box clears them (`ClearAtoms`, the atom box's
   `onPrestige(force: true)` as `Economy.BoxPrestige`, then one more use). The grid is the collider's
   `InvokeRepeating("callAddNewAtom", 0, 0.4)` from `OnEnable`, which 1x runs when `ZoneLoader._LoadZone(2)` turns zone 2
-  on; the engine runs no `OnEnable` and loads no zone in a run, and a start doesn't carry the grid's phase, so a waiting
-  atom ends the run (`Unmodeled economy: a waiting atom`) until the scheduler holds that invoke
-  ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Atoms' 0.4 s grid*). Snapshots
+  on. Unity has no API for an Invoke's time left, so the plugin keeps the game time (`Time.time`) of the grid's start
+  (an `OnEnable` postfix) and of its last call (a `callAddNewAtom` prefix), and a trace start whose collider
+  `IsInvoking` it carries `economy.atomGridDueIn`: seconds to the next call, 0.4 s after the last or at the start before
+  any (`TurboRunner.AtomGridDueIn`). The engine queues the invoke there (`floor(dueIn / fixedDeltaTime)` ticks, as the
+  start's other pending Invokes, then every 20 ticks). The engine loads no zone within a run, so a run that drops into
+  zone 2 never starts the grid; a waiting atom without it (that, or a start captured before the field) ends the run
+  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). Open for Task 7's 1x probe: whether the grid keeps
+  firing after zone 1 loads again (Unity is said to keep an inactive object's Invokes), and the grid's sub-tick timing
+  (1x calls it in a rendered frame; the engine at a tick's start). Snapshots
   carry what these change: the touched boxes, `globalStats`, a course outside `Simulation.Courses`, the economy's
   globals and atoms and the transition's countdown. A Full-TAS window's unlocks (`FullTas.WindowCaps`: `PlayerCaps.Of` the run, then
   `Shop.AfterBuys` for its goals' boxes) follow the same rules: an Omni Dash buy goal turns the omnidash on or off, its

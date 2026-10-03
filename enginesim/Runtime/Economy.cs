@@ -209,6 +209,11 @@ namespace IGTAP.EngineSim
                 _handledTier = A<int>("currentlyHandledTier");
                 _isCrafting = A<bool>("isCrafting");
                 _tierUpCounter = _atomCollider.atomTierUpCounter;
+                // The grid as 1x had it at the start (the plugin's TurboRunner.AtomGridDueIn): its next call counted in ticks as
+                // the start's other pending Invokes are (Simulation.LoadStart), every 0.4 s after. A start without it has none.
+                if (economy.TryGetProperty("atomGridDueIn", out JsonElement due))
+                    sim.Scheduler.Queue.Add(new Scheduler.Pending { Due = Mathf.FloorToInt(World.ReadFloat(due) / Time.fixedDeltaTime),
+                        Target = _atomCollider, Method = "callAddNewAtom", Repeat = 0.4f });
             }
         }
 
@@ -795,15 +800,16 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// Waiting atoms land only on the collider's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4)
         /// (AtomColliderSystem.cs:111-115), which 1x starts when ZoneLoader._LoadZone(2) turns zone 2 on. The engine runs no
-        /// OnEnable and loads no zone within a run (cuts.txt: zoneChanger), and a start doesn't carry the grid's phase: until the
-        /// scheduler holds that invoke, a waiting atom ends the run.
+        /// OnEnable and loads no zone within a run (cuts.txt: zoneChanger): the grid runs only if the start had it (the trace's
+        /// atomGridDueIn), and otherwise a waiting atom ends the run.
         /// </summary>
         bool AtomsLand()
         {
             if (_waitingAtoms <= 0) return true;
             foreach (Scheduler.Pending p in _sim.Scheduler.Queue)
                 if (ReferenceEquals(p.Target, _atomCollider) && p.Method == "callAddNewAtom") return true;
-            return Unmodeled("a waiting atom (AtomColliderSystem.callAddNewAtom's 0.4 s grid: the engine doesn't know its phase, set when zone 2 loads at 1x)");
+            return Unmodeled("a waiting atom with AtomColliderSystem's 0.4 s grid not running: it starts when zone 2 loads, which the engine "
+                + "doesn't do within a run, and this trace's start had no grid (atomGridDueIn)");
         }
 
         /// <summary>AtomColliderSystem.callAddNewAtom (AtomColliderSystem.cs:117-126), the 0.4 s grid's call (hooks.txt replaces

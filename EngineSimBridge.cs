@@ -890,6 +890,7 @@ namespace IGTAPTasMod
                 }
                 w.WriteEndArray();
                 if (s.economy.globalUpgrades != null) { w.WritePropertyName("globalUpgrades"); json.Value(s.economy.globalUpgrades, 0); }
+                if (s.economy.atomGridDueIn is float atomDue) { w.WritePropertyName("atomGridDueIn"); json.Float(atomDue); }
                 globalStats stats = Singleton<globalStats>.Instance;
                 if (stats != null)
                 {

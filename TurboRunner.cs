@@ -109,6 +109,10 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeInvoke))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "CancelInvoke", new[] { typeof(string) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeCancelInvoke))));
+            harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "OnEnable"),
+                postfix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(AfterAtomEnable))));
+            harmony.Patch(AccessTools.Method(typeof(AtomColliderSystem), "callAddNewAtom"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeAtomCall))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "StartCoroutine", new[] { typeof(IEnumerator) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "TimeStop"),
@@ -140,6 +144,24 @@ namespace IGTAPTasMod
             if (!Active) return true;
             Pending.Add((_tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1, __instance, methodName));
             return false;
+        }
+
+        // AtomColliderSystem's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4) (AtomColliderSystem.cs:111-115).
+        // Unity has no API for an Invoke's time left, so the game time (Time.time, the clock Invokes run on) of the grid's
+        // start and of its last call are kept: the next call is 0.4 s after the last, or at the start before any.
+        static float _atomEnabledAt = float.NegativeInfinity, _atomLastCall = float.NegativeInfinity;
+
+        static void AfterAtomEnable() { _atomEnabledAt = Time.time; }
+
+        static void BeforeAtomCall() { _atomLastCall = Time.time; }
+
+        /// <summary>Seconds until the collider's next callAddNewAtom, or null when none is pending (or its start wasn't seen).</summary>
+        static float? AtomGridDueIn()
+        {
+            AtomColliderSystem collider = UnityEngine.Object.FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
+            if (collider == null || float.IsNegativeInfinity(_atomEnabledAt) || !collider.IsInvoking("callAddNewAtom")) return null;
+            float next = _atomLastCall >= _atomEnabledAt ? _atomLastCall + 0.4f : _atomEnabledAt;
+            return Mathf.Max(0f, next - Time.time);
         }
 
         static bool BeforeCancelInvoke(MonoBehaviour __instance, string methodName)
@@ -403,6 +425,8 @@ namespace IGTAPTasMod
             public (clonesScript clones, Vector2[] path, Sprite[] sprites, Vector2[] scales)[] paths;
             public List<int> visitedTeleporters;
             public Scene scene;
+            /// <summary>Seconds until AtomColliderSystem's next callAddNewAtom (<see cref="AtomGridDueIn"/>), null if none is pending.</summary>
+            public float? atomGridDueIn;
         }
 
         internal sealed class Scene
@@ -542,6 +566,7 @@ namespace IGTAPTasMod
                 boxes = Array.ConvertAll(boxes, b => (b, CaptureFields(b))),
                 scene = CaptureScene(boxes),
                 paths = Array.ConvertAll(clones, c => (c, c.clonePath, c.cloneSprites, c.cloneScales)),
+                atomGridDueIn = AtomGridDueIn(),
                 visitedTeleporters = Singleton<globalStats>.Instance.visitedTeleporters == null ? null : new List<int>(Singleton<globalStats>.Instance.visitedTeleporters),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
