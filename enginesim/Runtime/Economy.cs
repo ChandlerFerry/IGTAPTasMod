@@ -522,6 +522,14 @@ namespace IGTAP.EngineSim
                 || !Effect(baseEffect, globalStats.globalUpgradeSet.compBoostStrength, out double strengthBase)
                 || !Effect(effect, globalStats.globalUpgradeSet.compBoostStrength, out double strength))
                 return false;
+            // courseScript.cs:446-449: a boost that isn't running doubles NP's effect; the course's FixedUpdate halves it (:307-311, native).
+            if (course.compBoostTimeLeft <= 0.0)
+            {
+                globalStats stats = Singleton<globalStats>.Instance;
+                if ((object)stats == null) return Unmodeled("the comp boost without globalStats (the game throws)");
+                _sim.Touch(stats);
+                stats.EffectOfNpCompBoost *= 2.0;
+            }
             course.compBoostTimeLeft = timeBase + time * Global(globalStats.globalUpgradeSet.compBoostTime);
             course.compBoostTimeLeft += (double)0f;
             course.compBoostBonus = strengthBase + strength * Global(globalStats.globalUpgradeSet.compBoostStrength);

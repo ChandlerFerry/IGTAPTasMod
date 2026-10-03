@@ -236,7 +236,7 @@ namespace IGTAP.EngineSim.Cli
                     w.WriteLine(JsonSerializer.Serialize(new { physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, goal = _eval.Progress, x = p.x, y = p.y,
                         vx = _eval.Player.Velocity.x, vy = _eval.Player.Velocity.y, mx = _eval.Player.momentum.x, my = _eval.Player.momentum.y,
                         held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
-                        cash = _eval.Shop.CashNow,
+                        cash = _eval.Shop.CashNow, npBoost = Singleton<globalStats>.Instance?.EffectOfNpCompBoost ?? 1.0,
                         rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
                         clones = _eval.Shop.Economy?.CloneStates(),
                         random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
