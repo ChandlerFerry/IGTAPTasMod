@@ -77,7 +77,7 @@ namespace IGTAP.EngineSim
 
         internal sealed class State
         {
-            public double Earned;
+            public double[] Income;
             public CloneValues[] Values;
             public Clone[][] Active;
             public double[][] Locals;
@@ -100,7 +100,9 @@ namespace IGTAP.EngineSim
         // Seconds of run time until the Omni Dash buy's Area 2 → 1 transition can open at 1x (0: none under way).
         float _transitionOpensIn;
 
-        public double Earned { get; private set; }
+        internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
+        public double Earned => Income[(int)globalStats.Currencies.Cash];
+        internal void Add(globalStats.Currencies c, double v) { Income[(int)c] += v; }
 
         internal Economy(Simulation sim, JsonElement economy)
         {
@@ -347,7 +349,7 @@ namespace IGTAP.EngineSim
             if (c.V.Count <= 0) return true;
             if ((object)c.Course == null) return Unmodeled("clones without a course");
             double pay = Math.Ceiling(Pay(c, j) / (double)c.V.OffscreenDivisor);
-            Earned += pay;
+            Add(globalStats.Currencies.Cash, pay);
             Spawned?.Invoke(c.Course.courseNumber, c.Script.GetInstanceID(), false, divisorBefore, i, j, pay);
             if (!ColourCheck(c)) return false;
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
@@ -381,7 +383,7 @@ namespace IGTAP.EngineSim
             Clone clone = c.Active[index];
             if (clone.Coloured) return Unmodeled("colour clone");
             if ((object)c.Course == null || c.Local < 0) return Unmodeled("clones without a course");
-            Earned += Math.Ceiling(Pay(c, clone.Bigness));
+            Add(globalStats.Currencies.Cash, Math.Ceiling(Pay(c, clone.Bigness)));
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
             c.V.Pooled++;
             c.Active.RemoveAt(index);
@@ -446,7 +448,7 @@ namespace IGTAP.EngineSim
         {
             double reward = course.reward;
             if (course.compBoostTimeLeft > 0.0) reward *= course.compBoostBonus;
-            Earned += Math.Ceiling(reward);
+            Add(globalStats.Currencies.Cash, Math.Ceiling(reward));
             int local = LocalIndex(course.localUpgradesScript);
             if (local < 0) { Unmodeled("course " + course.courseNumber + " without local upgrades"); return; }
             if (Local(local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) { Unmodeled("clone dust"); return; }
@@ -577,7 +579,7 @@ namespace IGTAP.EngineSim
                     return Unmodeled("an atom reset of a course without local upgrades (the game throws)");
                 if (!LocalPrestige(course.localUpgradesScript, false, course.tier, course.rewardTier, false, true, false)) return false;
             }
-            Earned = 0.0;
+            Income[(int)globalStats.Currencies.Cash] = 0.0;
             _sim.Shop.ZeroCash();
             return true;
         }
@@ -851,7 +853,7 @@ namespace IGTAP.EngineSim
             _tripBroken = true;
             if (!VmanScript.isCurrentlyVman)
             {
-                Earned = 0.0;
+                Income[(int)globalStats.Currencies.Cash] = 0.0;
                 _sim.Shop.ZeroCash();
             }
             _sim.Touch(breaker);
@@ -887,7 +889,7 @@ namespace IGTAP.EngineSim
 
         internal State Capture()
         {
-            var s = new State { Earned = Earned, Values = new CloneValues[_clones.Length], Active = new Clone[_clones.Length][],
+            var s = new State { Income = (double[])Income.Clone(), Values = new CloneValues[_clones.Length], Active = new Clone[_clones.Length][],
                 Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken,
                 TransitionOpensIn = _transitionOpensIn };
             for (int i = 0; i < _clones.Length; i++)
@@ -900,7 +902,7 @@ namespace IGTAP.EngineSim
 
         internal void Restore(State s)
         {
-            Earned = s.Earned;
+            Array.Copy(s.Income, Income, Income.Length);
             for (int i = 0; i < _clones.Length; i++)
             {
                 _clones[i].V = s.Values[i];
@@ -916,7 +918,7 @@ namespace IGTAP.EngineSim
 
         internal void AddTo(ref HashCode h)
         {
-            h.Add(Earned);
+            foreach (double v in Income) h.Add(v);
             foreach (Clones c in _clones)
             {
                 CloneValues v = c.V;

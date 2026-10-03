@@ -90,7 +90,7 @@ namespace IGTAP.EngineSim
 
         double Available(int currency)
         {
-            return _start[currency] - _spent[currency] + _awarded[currency] + (currency == Cash ? Economy?.Earned ?? 0.0 : 0.0);
+            return _start[currency] - _spent[currency] + _awarded[currency] + (Economy?.Income[currency] ?? 0.0);
         }
 
         public double CashNow => Available(Cash);
