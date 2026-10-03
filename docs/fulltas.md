@@ -1977,6 +1977,33 @@ so a table fills in across runs (an entry measured before is skipped). The boxes
 its own entry, and the buy planner (which prefers the cheapest technique per set and emits `buy:a+b` goals where one walk
 buys several) chains single buys at places a set has no entry from.
 
+### Movement table
+
+`MoveTable` (`enginesim/Cli/EconomyMoves.cs`) is the economy planner's movement model: physics ticks between places, per
+unlock set (the caps id, such as `wjds`). A place is the goal the run stands at (`start:N` a course's gate, `finish:N` its
+finish, a `buy:` or `reward:` box, an `at:` area goal), `start` the run's start, or `restart@x,y` a quick restart's landing
+(the checkpoint decides where it lands: one id per spot, within 48 u), in the world frame. A move goes to a place, to a box
+set (its labels in the order bought, joined by ` + `), to `lap:N` (Course N's gate then its finish; it ends at
+`finish:N`) or to `record:N` (from Course N's gate, a lap on its saved record's path, the clones' path; it ends at
+`finish:N`). Its sources, in this order of trust (`Best` takes the most trusted a pair has, the fewest ticks within it):
+
+- `measured`: realize's real ticks (`Measured`), the latest measurement of a pair replacing the one before;
+- `buytable`: the [buy table](#buy-table)'s walk, jump-through and dash-through entries, the cheapest per box set;
+- `best`: the best replayed (`Profile`): each goal-to-goal split, each stretch to and from a quick restart's landing, and a
+  lap from each place the best walks from to a gate and then that course's finish;
+- `farm` and `record`: the saved course routes (`routes.json`, the fastest in any category the unlocks cover): a farm
+  route's lap from the course's finish, a record as `record:N` from its gate (its own key, so the best's run of the course
+  doesn't hide it; seconds over 0.02); the one derived from the other (0.4 s apart) is marked estimated;
+- `estimate` (only where none of those has the pair, always marked): the straight line at the unlocks' top path speed (the
+  best's path and the speed probes `--auto` cached, `fulltas/<run>.auto-speeds.json`), a box set as its boxes one after
+  another, a lap as the walk to its gate plus the course's known run, a restart as the fewest ticks a restart took.
+
+A place is the goal it stands at, so the several spots the run stood at one box (a wide box, a gate crossed high or low)
+share an id and the cheapest way from any of them stands for all. `Save` writes `fulltas/<run>.moves.json` (places, top
+speeds, the restart's ticks and every move) and keeps the measured moves the file had; `Load` reads those back on top of
+what it builds from the best, the buy table and the routes. `plan-check --moves <trace> [--buytable FILE]` checks a
+table against the best it is built from ([`enginesim/README.md`](../enginesim/README.md)).
+
 ### Buy planner
 
 ```powershell

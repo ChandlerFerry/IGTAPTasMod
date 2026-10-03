@@ -17,7 +17,7 @@ namespace IGTAP.EngineSim.Cli
 {
     sealed partial class FullTas
     {
-        sealed class Route
+        internal sealed class Route
         {
             public List<InputTick> Inputs;
             public int Progress;

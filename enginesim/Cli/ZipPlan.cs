@@ -1264,39 +1264,6 @@ namespace IGTAP.EngineSim.Cli
             G.makeCourseBuyMax, G.moreWatts, G.moreGP, G.NpCapIsSoftcap, G.compBoostDoublesNP, G.GPAtomsDontResetCourses,
             G.NpGenerationSpeed, G.wattPower, G.moreRefreshOrbs, G.unlockJiggleDrops };
 
-        static readonly Regex RouteName = new Regex(@"^(\d+)_(" + Caps.LabelPattern + @") (farm )?(\d+(?:\.\d+)?)( stale)?$");
-
-        /// <summary>
-        /// Lap times per course from the saved routes (routes.json in the config folder): the record (the game timer, the clones'
-        /// path) and the farm route (a lap of the course's steady loop, finish to finish in live time, README ### Rules 30; a stale
-        /// one from before farms were loops: one lap from the quick restart), fastest in any category up to `caps`, non-stale first.
-        /// </summary>
-        static Dictionary<int, (double game, double farm, string source)> SavedLaps(string routesFile, string[] caps)
-        {
-            var result = new Dictionary<int, (double, double, string)>();
-            if (!File.Exists(routesFile)) return result;
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routesFile));
-            var found = new Dictionary<(int, bool), (double time, bool stale, string name)>();
-            foreach (JsonElement m in doc.RootElement.GetProperty("macros").EnumerateArray())
-            {
-                string name = m.TryGetProperty("name", out JsonElement n) ? n.GetString() : null;
-                Match r = name == null ? null : RouteName.Match(name);
-                if (r == null || !r.Success || !Categories.IsCategory(r.Groups[2].Value) || !caps.Contains(r.Groups[2].Value)) continue;
-                int course = int.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
-                bool farm = r.Groups[3].Success, stale = r.Groups[5].Success;
-                double time = double.Parse(r.Groups[4].Value, CultureInfo.InvariantCulture);
-                var key = (course, farm);
-                if (!found.TryGetValue(key, out var old) || (old.stale && !stale) || (old.stale == stale && time < old.time)) found[key] = (time, stale, name);
-            }
-            foreach (int course in found.Keys.Select(k => k.Item1).Distinct())
-            {
-                bool hasGame = found.TryGetValue((course, false), out var g), hasFarm = found.TryGetValue((course, true), out var f);
-                double game = hasGame ? g.time : f.time - 0.4, farm = hasFarm ? f.time : g.time + 0.4;
-                result[course] = (game, farm, string.Join(", ", new[] { hasGame ? g.name : null, hasFarm ? f.name : null }.Where(x => x != null)));
-            }
-            return result;
-        }
-
         static (Data, State) Load(Simulation sim, JsonElement config, string routesFile, TextWriter log)
         {
             World world = sim.World;
@@ -1321,7 +1288,7 @@ namespace IGTAP.EngineSim.Cli
             if ((object)stats != null) { d.GameSpeed = stats.GameSpeed == 0 ? 1 : stats.GameSpeed; d.VmanMult = stats.vmanMult == 0 ? 1 : stats.vmanMult; d.WayBack |= stats.Zone2toZone1PathOpen; }
 
             // Courses
-            Dictionary<int, (double game, double farm, string source)> saved = SavedLaps(routesFile, caps);
+            Dictionary<int, (double game, double farm, string source)> saved = MoveTable.SavedLaps(routesFile, caps);
             JsonElement estimates = config.TryGetProperty("laps", out JsonElement lapsJson) ? lapsJson : default;
             courseScript[] scripts = world.All<courseScript>().Where(c => c.courseNumber >= 1 && c.courseNumber <= 10).OrderBy(c => c.courseNumber).ToArray();
             var courses = new List<Course>();

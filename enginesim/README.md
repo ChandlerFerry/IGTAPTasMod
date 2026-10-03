@@ -844,6 +844,15 @@ from its start, idle after goals 55 (Course 1), 120 (Course 2's clones on screen
 2 stretches `t7-c6-area2` (idle after the tree's buy, while it grows; its four buys), `t7-atoms` (from its start; idle
 with atoms landing and crafting; the first atom box's buy) and `t7-c10-afterA` (idle; the NP box).
 
+`plan-check --moves <trace> [--buytable FILE]` checks the economy planner's movement table (`MoveTable`,
+`Cli/EconomyMoves.cs`, [docs/fulltas.md](../docs/fulltas.md#movement-table)) against the best it is built from: each of
+the best's goal-to-goal splits from `reward:bonus1` to the first `buy:buyclone2` after it is a move of source `best`
+with the fewest ticks the best took between those two goals with those unlocks; a pair nothing measured comes back
+estimated, the straight line at the unlocks' top path speed; a buy table entry outranks the best's split of the same
+pair; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same table, and a second
+`Save` into the file keeps the first's measured moves. Checked: FalseEnding%-280 (its splits, goals 89-97) with a buy
+table of bonus 1 to `buy:buyds`, single boxes.
+
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
 body back by that frame's lag. On the wall clock the lag changes from run to run, and so does the route; playback's
