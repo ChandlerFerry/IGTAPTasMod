@@ -2039,8 +2039,8 @@ earlier. The model's income needs calibrating against the trace's Cash before a 
 
 `zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
 NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
-(the tree is unmodeled, and an atom ends the run: the engine models the atoms but not when their 0.4 s grid starts,
-`enginesim/README.md`). The start is the trace's start, or `--route FILE`
+(a tree segment's ground ends the run: its body and geometry aren't in the world export; and an atom ends the run: the
+engine models the atoms but not when their 0.4 s grid starts, `enginesim/README.md`). The start is the trace's start, or `--route FILE`
 (a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
 global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
 engine holds them there.

@@ -12,12 +12,13 @@ namespace UnityEngine
         [ThreadStatic] static float _fixedDeltaTime = 0.0199999921f;
         [ThreadStatic] static float _timeScale = 1f;
         // Time.deltaTime while the host resumes coroutines: a physics step's (WaitForFixedUpdate) or a rendered frame's
-        // (WaitForSeconds, null), as the game's player loop has it there. 0 outside a resume: the fixed step.
-        [ThreadStatic] static float _resumeDeltaTime;
+        // (WaitForSeconds, null, WaitForEndOfFrame; 0 in a dash freeze's or pause's held frames, timeScale 0), as the game's
+        // player loop has it there. null outside a resume: the fixed step.
+        [ThreadStatic] static float? _resumeDeltaTime;
 
         public static float fixedDeltaTime { get { return _fixedDeltaTime; } set { _fixedDeltaTime = value; } }
-        public static float deltaTime { get { return _resumeDeltaTime > 0f ? _resumeDeltaTime : fixedDeltaTime; } }
-        public static float resumeDeltaTime { get { return _resumeDeltaTime; } set { _resumeDeltaTime = value; } }
+        public static float deltaTime { get { return _resumeDeltaTime ?? fixedDeltaTime; } }
+        public static float? resumeDeltaTime { get { return _resumeDeltaTime; } set { _resumeDeltaTime = value; } }
         public static float time { get; set; }
         public static float unscaledDeltaTime { get { return fixedDeltaTime; } }
         public static float timeScale { get { return _timeScale; } set { _timeScale = value; } }
@@ -208,6 +209,9 @@ namespace UnityEngine
     {
         public bool enabled { get; set; } = true;
         public Material material { get; set; } = new Material();
+        /// <summary>Presentation: no sprite geometry here. Only TreeSegmentActivationComponent.IE_Grow reads it, for a trunk's
+        /// grow offset (trunks have no colliders).</summary>
+        public Bounds bounds { get { return default; } }
         public int sortingOrder { get; set; }
         public void SetPropertyBlock(MaterialPropertyBlock properties) { }
     }
@@ -219,6 +223,7 @@ namespace UnityEngine
     }
 
     public sealed class Sprite : Object { }
+    public struct Bounds { public Vector3 size { get; set; } }
     public sealed class Material : Object { public void SetFloat(string name, float value) { } public void SetColor(string name, Color value) { } }
     public sealed class MaterialPropertyBlock { public void SetFloat(string name, float value) { } public void SetColor(string name, Color value) { } }
     public sealed class Canvas : Behaviour { public static void ForceUpdateCanvases() { } }

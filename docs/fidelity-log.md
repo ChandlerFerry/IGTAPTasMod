@@ -888,3 +888,27 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   while the collider is on.
 - **Where:** `TurboRunner.AtomGridDueIn`, `EngineSimBridge` (trace start), `Economy` (constructor, `AtomsLand`, `AtomTick`,
   `AtomFrame`), `hooks.txt`.
+
+## Upgrade trees grown by hand
+
+- **Symptom:** (2026-10-03, by reading the code; no route reaches Area 2) a tree box's buy only drew the growth sound and
+  noted the segments (`Shop.GrowTree`), and the tree-planting, zip mover and refill orb boxes ended the run. At 1x a
+  segment turns on, its ground goes off for its trunks' growth (462 rendered frames) and comes back, and its box falls
+  2000 units into place over 557 more; the box can't be hit before. The zip movers and refill orbs read the static
+  `globalUpgradeDict`, which the engine's buys didn't write.
+- **Cause:** the engine ran other scripts' coroutines to their first yield only, resumed `WaitForEndOfFrame` once a
+  tick, ran no `OnEnable` for a stepped script's `SetActive`, didn't move a body-less collider whose transform a script
+  wrote, and kept no such transform in snapshots.
+- **Fix:** `GrowTree` calls the game's `growSegments`; `IE_Grow` runs on (`Simulation`'s `Continues`). End-of-frame
+  waits resume after each rendered frame on its `Time.deltaTime` (a held frame's 0: the shim's `Time.resumeDeltaTime` is
+  null outside a resume now, so a 0 is a 0). Every `SetActive(true)` makes its woken objects' `OnEnable` draws (the
+  shim's `Activated` hook, `Economy.Activate`). A body-less collider a script moves is rebuilt from its geometry at the
+  next sync (`PhysicsWorld.SyncMoved`, pending moves in the physics snapshot), and the transforms a script moves are in
+  snapshots (`SimSnapshot.Transforms`, `SnapshotStore` format 5). The zip mover and refill orb buys write through to the
+  static dictionary (`Economy.WriteStatic`). A coroutine on an object off in the hierarchy doesn't start, as in Unity.
+  Still open: a segment's ground (its `Rigidbody2D` was off at every export, so no body or geometry: a step with it on
+  ends the run, `PhysicsWorld.Unbodied`), and the `Start` draws of what a segment wakes the first time (1x only).
+  FalseEnding%-280 and TouchGrass-ANY% replay unchanged; `determinism` on FalseEnding%-280 is DETERMINISTIC.
+- **Where:** `Shop.GrowTree`, `Simulation` (`InterpolatedFrames`, `Continues`, `RestoreTransforms`), `Scheduler`,
+  `PhysicsWorld` (`TransformChanged`, `SyncMoved`, `Unbodied`), `Economy` (`WriteStatic`, `Activate`, `BoughtGlobal`),
+  `Shim/Engine` (`Time`, `Transform`, `GameObject`, `Renderer.bounds`).

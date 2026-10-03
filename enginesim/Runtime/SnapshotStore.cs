@@ -30,7 +30,8 @@ namespace IGTAP.EngineSim
         // not misread (a field that became a tuple array read as a bool crashed the solve after a redeploy).
         // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
         // 4: Feed hashes turnY (a steep dash turn), so prefixes differing only in it no longer share a stored state.
-        public const int Format = 4;
+        // 5: the transforms a script moved (SimSnapshot.Transforms).
+        public const int Format = 5;
 
         /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)
@@ -112,6 +113,7 @@ namespace IGTAP.EngineSim
                     case "Rebases": _sim.PutRebases(s.Rebases); break;
                     case "Colliders": _sim.RestorePose(s); break;
                     case "Layers": _sim.TrackToggles(s); _sim.RestoreToggles(s); break;
+                    case "Transforms": _sim.TrackToggles(s); _sim.RestoreTransforms(s); break;
                 }
             }
             i.Adopt(s.Physics);
@@ -122,7 +124,7 @@ namespace IGTAP.EngineSim
         static readonly string[] RootOrder =
         {
             "Tick", "Rebases", "RebasePending", "RebaseDue", "Position", "LocalScale", "Rotation", "Colliders",
-            "Active", "Enabled", "Layers", "Physics", "Movement", "Engine", "Courses", "Pending", "Touched",
+            "Active", "Enabled", "Layers", "Transforms", "Physics", "Movement", "Engine", "Courses", "Pending", "Touched",
             "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation",
         };
 

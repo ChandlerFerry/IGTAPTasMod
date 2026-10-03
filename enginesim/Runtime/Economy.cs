@@ -139,6 +139,7 @@ namespace IGTAP.EngineSim
             if (economy.TryGetProperty("globalUpgrades", out JsonElement global))
                 SetGlobal((Dictionary<globalStats.globalUpgradeSet, double>)world.Read(global, typeof(Dictionary<globalStats.globalUpgradeSet, double>)));
             else SetGlobal(globalStats.globalUpgradeDict);
+            WriteStatic();
             globalStats stats = Singleton<globalStats>.Instance;
             _gameSpeed = economy.TryGetProperty("gameSpeed", out JsonElement speed) ? speed.GetDouble() : (object)stats == null ? 1.0 : stats.GameSpeed;
             _vmanMult = economy.TryGetProperty("vmanMult", out JsonElement vman) ? vman.GetDouble() : (object)stats == null ? 1.0 : stats.vmanMult;
@@ -225,6 +226,19 @@ namespace IGTAP.EngineSim
             double m = cd == 0.0 ? 0.0 : Math.Log10(cd);   // math.log10: Unity.Mathematics, double
             m += Global(globalStats.globalUpgradeSet.additionalCDdigits);
             _cdMult = Math.Pow(m, 1.7) * 1.05 + 1.0;
+        }
+
+        /// <summary>The global upgrades native code the engine steps reads from globalStats' static dictionary:
+        /// PlatformMover.IE_AdvanceToNextState (PlatformMover.cs:134) and JiggleDropScript.FixedUpdate (JiggleDropScript.cs:88).</summary>
+        static readonly G[] StaticReads = { G.zipMoversUnlocked, G.unlockJiggleDrops };
+
+        /// <summary>The run's values of <see cref="StaticReads"/> into the static dictionary (a buy, a restore, the start): _global
+        /// stays the run's own.</summary>
+        void WriteStatic()
+        {
+            Dictionary<G, double> dict = globalStats.globalUpgradeDict;
+            if (dict == null) return;
+            foreach (G g in StaticReads) dict[g] = _global[(int)g];
         }
 
         void SetGlobal(Dictionary<globalStats.globalUpgradeSet, double> dict)
@@ -713,11 +727,6 @@ namespace IGTAP.EngineSim
                 case G.openGate: return Unmodeled("the gate box (gateAnim's \"open\" trigger and deactivate, upgradeBox.cs:731-732: the gate's collider)");
                 case G.area2DoorOpen: return Unmodeled("the Area 2 door box (doorToOpen.ForceNextPhase, upgradeBox.cs:756: the door's collider)");
                 case G.unlockTeleporters: return Unmodeled("teleporters (TeleporterScript.updateVisuals, upgradeBox.cs:767-769: TeleporterScript reads the static dictionary)");
-                // Native code the engine steps reads these from globalStats' static dictionary, which a buy here doesn't write
-                // and snapshots don't carry.
-                case G.zipMoversUnlocked: return Unmodeled("zip movers (PlatformMover.cs:134 reads the static globalUpgradeDict)");
-                case G.unlockJiggleDrops: return Unmodeled("refill orbs (JiggleDropScript.FixedUpdate, JiggleDropScript.cs:88, reads the static globalUpgradeDict)");
-                case G.treeGrowth: return Unmodeled("the upgrade tree's growth (TreeSegmentActivationComponent.IE_Grow turns its boxes and ground on; Shop.GrowTree only draws its sound)");
             }
             _global = (double[])_global.Clone();
             double effectMult = (double)BoxEffectMultField.GetValue(box);
@@ -751,7 +760,7 @@ namespace IGTAP.EngineSim
                     _global[(int)G.cloneMult] += 1.0 * effectMult;
                     var text = BoxStatuePrestigeTextField.GetValue(box) as GameObject;
                     if ((object)text == null) return Unmodeled("unlock prestige box without its statue text (the game throws)");
-                    Activate(text);
+                    text.SetActive(true);
                     return BoostOldCourses(box);
                 }
                 case G.cashPerLoop:
@@ -781,7 +790,13 @@ namespace IGTAP.EngineSim
                     }
                     return true;
                 }
-                default:   // IncreasedCloneDust (its own case, the same) and every other global
+                case G.zipMoversUnlocked:
+                case G.unlockJiggleDrops:
+                    _global[(int)upgrade] += 1.0 * effectMult;
+                    WriteStatic();
+                    return true;
+                default:   // IncreasedCloneDust (its own case, the same), treeGrowth (nothing reads it: the box's tree grows,
+                           // Shop.GrowTree) and every other global
                     _global[(int)upgrade] += 1.0 * effectMult;
                     return true;
             }
@@ -1080,7 +1095,7 @@ namespace IGTAP.EngineSim
                 return Unmodeled("the Area 2 → 1 transition without its trunks (the game throws)");
             UnityEngine.Random.Draw();
             foreach (GameObject trunk in trunks) trunk.SetActive(false);
-            Activate(trunks[0]);
+            trunks[0].SetActive(true);
             _transitionOpensIn = TransitionOpensAfter;
             return true;
         }
@@ -1137,7 +1152,7 @@ namespace IGTAP.EngineSim
         {
             _sim.Touch(box);
             box.visible = true;
-            Activate(box.gameObject);
+            box.gameObject.SetActive(true);
         }
 
         bool BoostOldCourses(upgradeBox box)
@@ -1305,7 +1320,7 @@ namespace IGTAP.EngineSim
             off.isActive = false;
             _sim.Touch(on);
             on.visible = true;
-            Activate(on.gameObject);
+            on.gameObject.SetActive(true);
             on.isActive = true;
             on.upgradeCost = on.baseUpgradeCost;
             var onCourse = BoxCourseField.GetValue(on) as courseScript;
@@ -1323,30 +1338,28 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        /// <summary>
+        /// SetActive(true) as the game runs it (Simulation's Activated hook, on every SetActive that turns an object on, not a
+        /// restore's): the OnEnable of every behaviour it wakes runs at once, and two of them draw UnityEngine.Random:
+        /// upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay), ObjectBobber.OnEnable
+        /// once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (README exception 11: a buy-max box's
+        /// "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker, RandomAnimSpeedComponent,
+        /// JiggleDropScript, upgradeBox) waits for the next frame's Start pass, which a turbo run never reaches, so its draws
+        /// are not made here.
+        /// </summary>
+        internal static void Activate(GameObject g, bool fullTas)
+        {
+            foreach (upgradeBox b in g.GetComponentsInChildren<upgradeBox>(false))
+                if (b.enabled) { UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); }
+            if (fullTas) return;
+            foreach (ObjectBobber b in g.GetComponentsInChildren<ObjectBobber>(false))
+                if (b.enabled) UnityEngine.Random.Draw();
+        }
+
         static bool Under(Transform t, Transform root)
         {
             for (Transform p = t; p != null; p = p.parent) if (p == root) return true;
             return false;
-        }
-
-        /// <summary>
-        /// SetActive(true) as the game runs it: the OnEnable of every behaviour it wakes runs at once, and two of them draw
-        /// UnityEngine.Random: upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay),
-        /// ObjectBobber.OnEnable once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (README exception
-        /// 11: a buy-max box's "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker,
-        /// RandomAnimSpeedComponent, JiggleDropScript) waits for the next frame's Start pass, which a turbo run never reaches,
-        /// so its draws are not made here.
-        /// </summary>
-        void Activate(GameObject g)
-        {
-            bool was = g.activeInHierarchy;
-            g.SetActive(true);
-            if (was || !g.activeInHierarchy) return;
-            foreach (upgradeBox b in g.GetComponentsInChildren<upgradeBox>(false))
-                if (b.enabled) { UnityEngine.Random.Draw(); UnityEngine.Random.Draw(); }
-            if (_sim.Goals != null) return;
-            foreach (ObjectBobber b in g.GetComponentsInChildren<ObjectBobber>(false))
-                if (b.enabled) UnityEngine.Random.Draw();
         }
 
         internal State Capture()
@@ -1376,6 +1389,7 @@ namespace IGTAP.EngineSim
             Array.Copy(s.Locals, _locals, _locals.Length);
             _localsHash = s.LocalsHash;
             _global = s.Global;
+            WriteStatic();
             _tripBroken = s.TripBroken;
             _transitionOpensIn = s.TransitionOpensIn;
             _cdMult = s.CdMult;

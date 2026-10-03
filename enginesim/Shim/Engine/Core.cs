@@ -135,8 +135,10 @@ namespace UnityEngine
         {
             if (m_ActiveSelf == value) return;
             IGTAP.EngineSim.Engine.ActiveChanging?.Invoke(this);
+            bool was = m_ActiveInHierarchy;
             m_ActiveSelf = value;
             RecomputeActive(m_Transform.m_Parent == null || m_Transform.m_Parent.m_GameObject.m_ActiveInHierarchy);
+            if (!was && m_ActiveInHierarchy) IGTAP.EngineSim.Engine.Activated?.Invoke(this);
         }
 
         public void RecomputeActive(bool parentActive)
@@ -185,6 +187,9 @@ namespace UnityEngine
             }
             return default;
         }
+
+        public T GetComponentInChildren<T>() { return GetComponentInChildren<T>(false); }
+        public T[] GetComponentsInChildren<T>() { return GetComponentsInChildren<T>(false); }
 
         public T GetComponentInChildren<T>(bool includeInactive)
         {
@@ -250,7 +255,7 @@ namespace UnityEngine
         public Vector3 position
         {
             get { return m_Position; }
-            set { StoreWorldPosition(value); Changed(true); }
+            set { Changing(); StoreWorldPosition(value); Changed(true); }
         }
 
         internal void StoreWorldPosition(Vector3 value)
@@ -265,6 +270,7 @@ namespace UnityEngine
             get { return m_LocalPosition; }
             set
             {
+                Changing();
                 m_LocalPosition = value;
                 m_Position = m_Parent == null ? value : m_Parent.m_Position + value;
                 Changed(true);
@@ -274,13 +280,13 @@ namespace UnityEngine
         public Quaternion rotation
         {
             get { return m_Rotation; }
-            set { m_Rotation = value; m_LocalRotation = value; Changed(true); }
+            set { Changing(); m_Rotation = value; m_LocalRotation = value; Changed(true); }
         }
 
         public Quaternion localRotation
         {
             get { return m_LocalRotation; }
-            set { m_LocalRotation = value; m_Rotation = value; Changed(true); }
+            set { Changing(); m_LocalRotation = value; m_Rotation = value; Changed(true); }
         }
 
         public Vector3 eulerAngles { get { return m_Rotation.eulerAngles; } set { rotation = Quaternion.Euler(value); } }
@@ -290,6 +296,7 @@ namespace UnityEngine
             get { return m_LocalScale; }
             set
             {
+                Changing();
                 m_LocalScale = value;
                 m_LossyScale = m_Parent == null ? value : Vector3.Scale(m_Parent.m_LossyScale, value);
                 Changed(false);
@@ -299,6 +306,7 @@ namespace UnityEngine
         public Vector3 lossyScale { get { return m_LossyScale; } }
         public Vector3 up { get { return m_Rotation * Vector3.up; } }
 
+        void Changing() { IGTAP.EngineSim.Engine.TransformChanging?.Invoke(this); }
         void Changed(bool pose) { Engine.Physics?.TransformChanged(this, pose); }
 
         public void InitPose(Vector3 position, Quaternion rotation, Vector3 lossyScale, Vector3 localPosition, Quaternion localRotation, Vector3 localScale)

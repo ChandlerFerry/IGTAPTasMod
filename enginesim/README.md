@@ -1591,9 +1591,11 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   physics steps after the player leaves, the move once `zipMoversUnlocked`) are gameplay too. Turbo and the engine step
   them on the run's ticks (`TurboRunner` and `Scheduler`: `WaitForSeconds` at the start of the tick an Invoke of that
   delay fires, `WaitForFixedUpdate` right after the next physics step, `null` after `Update`, `WaitForEndOfFrame` at the
-  tick's end); snapshots keep the parked iterators, the movers' fields and layers. A layer write rebuilds that object's
+  end of each rendered frame, a dash freeze's and a pause's held frames included on `Time.deltaTime` 0); snapshots keep
+  the parked iterators, the movers' fields and layers. A layer write rebuilds that object's
   colliders (`PhysicsWorld.LayerChanged`) (before, layers were read once at load and the coroutine never resumed within
-  a run: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Layers read once at load*). Other scripts' coroutines still run to their first yield only. At 1x the Ground layer comes back
+  a run: [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Layers read once at load*). The upgrade trees' `IE_Grow` runs on
+too (below). Other scripts' coroutines still run to their first yield only. At 1x the Ground layer comes back
   on the first rendered frame 0.15 s after the jump's frame, 0.01 s before the 8th tick after it: in 1x probes on Course
   9's pillar it was back for that tick 8 times in 12 and a tick later the other 4 (frame pacing, a dash freeze right
   after the jump). Turbo and the engine take the 8th tick; a route that needs the block back on exactly that tick can
@@ -1618,7 +1620,11 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   a box touched in the step's triggers sees it. The NP boxes recompute them (`Economy.RecalcNp`); the RP cap boxes
   rewrite `globalStats.rpCap` (`UpdateRpCap`). `Economy.BoughtGlobal` follows `DoBuyUpgrade`'s switch and refuses
   (`Unmodeled economy`) what it can't follow: an atom while their grid doesn't run (below), the gate, Area 2 door,
-  teleporter and Vman start boxes, and the zip mover, refill orb and tree-planting boxes, which native code reads from the static `globalUpgradeDict`.
+  teleporter and Vman start boxes. The zip mover and refill orb boxes take the game's default branch; native code the
+  engine steps reads those two from the static `globalUpgradeDict` (PlatformMover.cs:134, JiggleDropScript.cs:88), so
+  the economy writes the run's values of them through to it at its start, on a buy and on a restore
+  (`Economy.WriteStatic`); its own `_global` stays the run's. Nothing reads `treeGrowth`: the tree-planting box grows its
+  tree as any tree box does (below).
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
   dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (the root
   `README.md` rules: *Unlocks match the category exactly, on every tick*),
@@ -1660,6 +1666,20 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   `Shop.AfterBuys` for its goals' boxes) follow the same rules: an Omni Dash buy goal turns the omnidash on or off, its
   air jumps and dashes and, on the first, the refill orbs, so the search after it presses what the player then has.
   `PlayerCaps.Of` reads the orbs and zip movers from the run's own global upgrades, not the trace's start.
+- Upgrade trees (`TreeController`, `TreeSegmentActivationComponent`): a box with an `upgradeTree` grows its
+  `SegmentsToTrigger` after its buy (`Shop.GrowTree` calls the game's `growSegments`, upgradeBox.cs:668-671). Each segment
+  not grown yet plays the growth sound (an RNG draw pair, once per 0.3 s `Invoke`'d audio cooldown), turns on (its box's
+  and `ObjectBobber`'s `OnEnable` draws) and starts `IE_Grow`, which the Scheduler runs on (`Simulation`'s `Continues`):
+  the segment's ground collider and object off, then each trunk grown on `WaitForEndOfFrame` at 0.6 a second (four times
+  that in a Vman speedrun), the ground on and faded in at 3.5 a second, its collider back on, the next segment
+  (`autoTriggerNext`), and the box 2000 units up lerping home at 3 a second until within 5. From the growth's physics
+  step that is 462 rendered frames for a trunk, 81 for the ground and 557 for the box (`b640-world-c1`, The Tree 2's
+  first segment). The box's colliders move with it (a body-less collider a script moves is rebuilt from its geometry at
+  the next sync, `PhysicsWorld.SyncMoved`), and the transforms a script moves are in snapshots
+  (`SimSnapshot.Transforms`). A segment's ground can't be modeled yet: its `Rigidbody2D` was off at every world export,
+  so neither its body nor its tilemap's geometry is in the export, and a step with it on ends the run (`Unmodeled
+  physics: Tree*Ground's TilemapCollider2D is on ...`, `PhysicsWorld.Unbodied`). A coroutine on an object off in the
+  hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
@@ -1711,24 +1731,27 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
     no caller; `PlayAudioAtPoint` (the zip movers' end boom, PlatformMover.cs:165) draws the same way, cut with its
     draws kept by `OnPlayAudioAtPoint`.
   - `upgradeBox.buyUpgrade` and its trigger (upgradeBox.cs:662,344): the buy's particle Emit (non-buy-max), the growth
-    sound of the tree a bought segment grows (upgradeTree.growSegments, once per 0.3 s audio cooldown) and BoxHit's
-    clip and pitch. `hooks.txt` replaces the trigger with `Runtime/Shop.cs`, which keeps the draws.
-  - `OnEnable` of what a modeled purchase turns on (`Economy.Activate`: two per woken `upgradeBox`, upgradeBox.cs:319,323,
-    one per woken `ObjectBobber`, ObjectBobber.cs:33): the trip breaker's `boxToActivate`, the statue's
-    `StatuePrestigeText` (an ObjectBobber) that `unlockPrestige` (Course 3's `enablePrestige`) turns on
-    (upgradeBox.cs:741), and the Omni Dash buy's first trunk, RP atom box and `boxesToEnable` (OvergrowthLoadScript.cs:31-32,59-60).
+    sound of the tree a bought segment grows (the game's own `upgradeTree.growSegments`, its `Audio.PlayAudio` draws
+    kept by `OnPlayAudio`, once per 0.3 s audio cooldown) and BoxHit's clip and pitch. `hooks.txt` replaces the trigger
+    with `Runtime/Shop.cs`, which keeps the draws.
+  - `OnEnable` of what a `SetActive(true)` turns on, a modeled purchase's or a stepped script's (the shim's `Activated`
+    hook, `Economy.Activate`, not a restore's: two per woken `upgradeBox`, upgradeBox.cs:319,323, one per woken
+    `ObjectBobber`, ObjectBobber.cs:33): the trip breaker's `boxToActivate`, the statue's `StatuePrestigeText` (an
+    ObjectBobber) that `unlockPrestige` (Course 3's `enablePrestige`) turns on (upgradeBox.cs:741), the Omni Dash buy's
+    first trunk, RP atom box and `boxesToEnable` (OvergrowthLoadScript.cs:31-32,59-60), and a tree segment and its box
+    (TreeController.cs:104, TreeSegmentActivationComponent.cs:111).
   - Before the start snapshot, so already in its state, never in a run: `courseScript.Start`'s UpdateReward phase
     (courseScript.cs:268), LightFlicker.cs:26, playerLightFlickerVariant.cs:26, RandomAnimSpeedComponent.cs:16-20,
     JiggleDropScript.cs:41, and the OnEnable of what the world loads with on (the pooled clone prefab is Transform +
     SpriteRenderer + ParticleSystem only: activating one draws nothing).
   - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off). PlatformMover.cs:154,165
-    only run once zip movers are unlocked (`zipMoversUnlocked`, a global box the engine doesn't model: buying it ends
-    the run), and then in turbo and here alike. Zone loads (`zoneChanger` → `ZoneLoader.LoadZone`) turn a zone on only
-    after two `yield return null`, a Unity-run coroutine, so never inside a turbo run; `cuts.txt` drops them.
-  - Not reproduced, each behind a purchase that ends the run: a block swap's re-activated boxes (upgradeBox.cs:804)
-    and a tree segment's `SetActive` (TreeController.cs:104: its box and ObjectBobber's OnEnable; tree boxes are all
-    global upgrades behind a `PlantTreeBox` (`treeGrowth`), which the engine doesn't model). The tree's own growth sound
-    draws are kept (Shop.GrowTree) but its collider changes are not modeled. The Omni Dash buy's Area 2 → 1 transition
+    only run once zip movers are unlocked (`zipMoversUnlocked`), and then in turbo and here alike. Zone loads
+    (`zoneChanger` → `ZoneLoader.LoadZone`) turn a zone on only after two `yield return null`, a Unity-run coroutine, so
+    never inside a turbo run; `cuts.txt` drops them.
+  - Not reproduced: a block swap's re-activated boxes (upgradeBox.cs:804, behind a purchase that ends the run), and the
+    `Start` of what a tree segment wakes the first time (its box's `LightFlicker` and `upgradeBox.Start`, its trunks' and
+    lights' `RandomAnimSpeedComponent`), which 1x runs in the next frame's Start pass and turbo never reaches. The Omni
+    Dash buy's Area 2 → 1 transition
     (`Zone2to1TransitionController.doStateVisuals`) runs to its first yield, as in turbo; at 1x its later frames turn
     `closedObject` off (the "Transition ground" collider over the box) 4.31 s after the buy at the earliest, so a run
     still going then ends (`Economy.TransitionOpensAfter`).

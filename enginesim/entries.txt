@@ -44,3 +44,8 @@ LoadingPopupScript::OnTriggerEnter2D
 LoadingPopupScript::OnTriggerExit2D
 zoneChanger::OnTriggerEnter2D
 upgradeBox::OnTriggerStay2D
+# A tree box's buy (Shop.GrowTree), the growth sound's Invoke'd cooldown, and the growth coroutine the Scheduler runs on
+# (its compiler-generated iterator, as build 25640326 names it).
+TreeController::growSegments
+TreeController::EndAudioCooldown
+TreeSegmentActivationComponent/<<growTreePart>g__IE_Grow|7_0>d::MoveNext

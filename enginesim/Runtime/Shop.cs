@@ -222,29 +222,24 @@ namespace IGTAP.EngineSim
 
         static readonly AccessTools.FieldRef<upgradeBox, TreeController> UpgradeTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
         static readonly AccessTools.FieldRef<upgradeBox, int[]> SegmentsToTrigger = AccessTools.FieldRefAccess<upgradeBox, int[]>("SegmentsToTrigger");
-        static readonly AccessTools.FieldRef<TreeController, TreeSegmentActivationComponent[]> TreeSegments =
-            AccessTools.FieldRefAccess<TreeController, TreeSegmentActivationComponent[]>("TreeSegments");
-        static readonly AccessTools.FieldRef<TreeController, bool> AudioCooldown = AccessTools.FieldRefAccess<TreeController, bool>("audioCooldown");
 
+        /// <summary>
+        /// buyUpgrade's upgradeTree.growSegments(SegmentsToTrigger) (upgradeBox.cs:668-671), the game's own: each segment not
+        /// grown yet grows (TreeController.onNewGrowCommandRecieved: the growth sound, its Invoke'd cooldown, the segment on and
+        /// TreeSegmentActivationComponent.IE_Grow started, which the Scheduler runs on: Simulation's Continues).
+        /// </summary>
         void GrowTree(upgradeBox box)
         {
             TreeController tree = UpgradeTree(box);
+            if (tree == null) return;
             int[] segments = SegmentsToTrigger(box);
-            if (tree == null || segments == null || segments.Length == 0 || tree.GrownSegments.Contains(segments[0])) return;
-            TreeSegmentActivationComponent[] lengths = TreeSegments(tree);
-            _sim.Touch(tree);
-            foreach (int segment in segments)
+            if (segments == null)
             {
-                if (lengths == null || segment >= lengths.Length) continue;
-                if (!AudioCooldown(tree))
-                {
-                    UnityEngine.Random.Draw();
-                    UnityEngine.Random.Draw();
-                    AudioCooldown(tree) = true;
-                    tree.Invoke("EndAudioCooldown", 0.3f);
-                }
-                tree.GrownSegments.Add(segment);
+                if (_sim.Engine.IsRunning) _sim.Engine.Abort("Unmodeled purchase: " + _paths[box] + " (a tree box without SegmentsToTrigger: the game throws)");
+                return;
             }
+            _sim.Touch(tree);
+            tree.growSegments(segments);
         }
 
         bool BuyMaxStep(ref BuyMaxRoutine r)

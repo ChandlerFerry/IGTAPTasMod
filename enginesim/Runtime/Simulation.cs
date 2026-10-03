@@ -110,6 +110,8 @@ namespace IGTAP.EngineSim
         public (Behaviour target, bool enabled)[] Enabled;
         /// <summary>Layers changed since load (PlatformMover.MakeIntangible), and the coroutines parked on a yield.</summary>
         public (GameObject target, int layer)[] Layers;
+        /// <summary>Transforms a script moved since load (a tree segment's trunks and box, IE_Grow), their pose now.</summary>
+        internal (Transform target, PhysicsWorld.Pose pose)[] Transforms;
         public (MonoBehaviour target, System.Collections.IEnumerator body, Coroutine handle, Scheduler.Wait wait, int due)[] Routines;
         internal Shop.State Economy;
         internal FullTasTracker.State Goal;
@@ -178,6 +180,10 @@ namespace IGTAP.EngineSim
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
         readonly Dictionary<GameObject, int> _layerAsLoaded = new Dictionary<GameObject, int>();
+        // Transforms a script moved since load, each with its pose as loaded and its index in _moved (-1: a rebase doesn't move
+        // it). The player's is RestorePose's, a body's the physics snapshot's, and a root's position is the rebases' (no script
+        // the engine runs moves a root), so none of those is tracked.
+        readonly Dictionary<Transform, (PhysicsWorld.Pose loaded, int moved)> _poseAsLoaded = new Dictionary<Transform, (PhysicsWorld.Pose, int)>();
         double _vmanTimeLeft;
         bool _vmanBlockEnding;
 
@@ -206,9 +212,17 @@ namespace IGTAP.EngineSim
             IGTAP.EngineSim.Engine.ActiveChanging = g => _activeAsLoaded.TryAdd(g, g.activeSelf);
             IGTAP.EngineSim.Engine.EnabledChanging = b => _enabledAsLoaded.TryAdd(b, b.enabled);
             IGTAP.EngineSim.Engine.LayerChanging = g => _layerAsLoaded.TryAdd(g, g.layer);
+            IGTAP.EngineSim.Engine.TransformChanging = t =>
+            {
+                if (t.m_Parent != null && t != Player.transform && !_poseAsLoaded.ContainsKey(t) && t.m_GameObject.GetComponent<Rigidbody2D>() == null)
+                    TrackTransform(t);
+            };
+            IGTAP.EngineSim.Engine.Activated = g => { if (!Physics.Suspended) Economy.Activate(g, Goals != null); };
             // PlatformMover's coroutines are gameplay: MakeIntangible's 0.15 s off the Ground layer after a jump off a zip mover,
             // PlayerExit's contact clear two physics steps after the player leaves it, a zip mover's move once unlocked.
-            Scheduler.Continues = t => t is PlatformMover;
+            // TreeSegmentActivationComponent.IE_Grow (Shop.GrowTree): the segment's ground off until its trunks have grown, its box
+            // falling into place.
+            Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent;
             Scheduler.Stepping = Touch;
             Scheduler.Unmodeled = what => { if (Engine.IsRunning) Engine.Abort("Unmodeled: " + what); };
             Shop = new Shop(this, world);
@@ -659,6 +673,7 @@ namespace IGTAP.EngineSim
             foreach (var (g, _) in s.Active) _activeAsLoaded.TryAdd(g, g.activeSelf);
             foreach (var (b, _) in s.Enabled) _enabledAsLoaded.TryAdd(b, b.enabled);
             foreach (var (g, _) in s.Layers) _layerAsLoaded.TryAdd(g, g.layer);
+            foreach (var (t, _) in s.Transforms ?? Array.Empty<(Transform, PhysicsWorld.Pose)>()) if (!_poseAsLoaded.ContainsKey(t)) TrackTransform(t);
         }
 
         public float Elapsed(courseScript active)
@@ -969,7 +984,8 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// The tick's rendered frames: one Movement.Update and one clonesScript.Update per frame (on the frame's Time.deltaTime,
-        /// 0 in a freeze's or pause's repeats) at its blend, the first frame repeated for a dash freeze's
+        /// 0 in a freeze's or pause's repeats) at its blend, then the frame's WaitForEndOfFrame resumes (on the same
+        /// deltaTime: TreeSegmentActivationComponent.IE_Grow), the first frame repeated for a dash freeze's
         /// frames (time stands still, TimeStop), and a route's pause (the menu held open for MacroStep.pauseFrames frames)
         /// repeating the frame it holds (MacroEngine.FrameRepeats). A step-up write moves the body at once and later frames
         /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
@@ -999,8 +1015,11 @@ namespace IGTAP.EngineSim
                         if (k < alphas.Length - 1 || repeat > 0) Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
-                    Shop.StepClones(repeat == repeats ? Frames.Step(ticks, k) : 0f);
+                    float dt = repeat == repeats ? Frames.Step(ticks, k) : 0f;
+                    Shop.StepClones(dt);
                     OnFrame?.Invoke(alphas[k], repeat > 0);
+                    Scheduler.FrameDeltaTime = dt;
+                    Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 }
             }
             Player.transform.StoreWorldPosition(_stepTo);
@@ -1030,6 +1049,7 @@ namespace IGTAP.EngineSim
                 Active = Now(_activeAsLoaded, g => g.activeSelf),
                 Enabled = Now(_enabledAsLoaded, b => b.enabled),
                 Layers = Now(_layerAsLoaded, g => g.layer),
+                Transforms = Now(_poseAsLoaded, t => new PhysicsWorld.Pose(t)),
                 Routines = CaptureRoutines(),
                 Economy = Shop.Capture(),
                 Goal = Goals?.Capture(),
@@ -1074,7 +1094,7 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>Each object tracked since load with its value now, in the tracking dictionary's order.</summary>
-        static (TKey, TValue)[] Now<TKey, TValue>(Dictionary<TKey, TValue> tracked, Func<TKey, TValue> now)
+        static (TKey, TValue)[] Now<TKey, TLoaded, TValue>(Dictionary<TKey, TLoaded> tracked, Func<TKey, TValue> now)
         {
             if (tracked.Count == 0) return Array.Empty<(TKey, TValue)>();
             var values = new (TKey, TValue)[tracked.Count];
@@ -1121,6 +1141,10 @@ namespace IGTAP.EngineSim
             foreach (var (g, loaded) in _activeAsLoaded) if (g.activeSelf != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
             foreach (var (b, loaded) in _enabledAsLoaded) if (b.enabled != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
             foreach (var (g, loaded) in _layerAsLoaded) if (g.layer != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.layer);
+            // Local poses: a rebase moves none of these (none is a root).
+            foreach (var (t, (loaded, _)) in _poseAsLoaded)
+                if (t.m_LocalPosition != loaded.LocalPosition || t.m_LocalRotation != loaded.LocalRotation || t.m_LocalScale != loaded.LocalScale)
+                    toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(t), t.m_LocalPosition, t.m_LocalRotation, t.m_LocalScale);
             h.Add(toggled);
             foreach (Scheduler.Routine r in Scheduler.Routines)
             {
@@ -1193,6 +1217,7 @@ namespace IGTAP.EngineSim
         {
             MaterializeRebases(s.Rebases);
             RestoreToggles(s);
+            RestoreTransforms(s);
             // A script the snapshot lists is written whole below: its pristine write would be overwritten field for field.
             foreach (var (target, _) in s.Touched) _restoring.Add(target);
             foreach (MonoBehaviour script in _touched)
@@ -1286,10 +1311,43 @@ namespace IGTAP.EngineSim
         /// </summary>
         static TValue Saved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, TValue loaded) where TKey : class
         {
-            if (index >= saved.Length) return loaded;
-            if (ReferenceEquals(saved[index].target, key)) return saved[index].value;
-            foreach (var (target, value) in saved) if (ReferenceEquals(target, key)) return value;
-            return loaded;
+            return TrySaved(saved, index, key, out TValue value) ? value : loaded;
+        }
+
+        static bool TrySaved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, out TValue value) where TKey : class
+        {
+            value = default;
+            if (index >= saved.Length) return false;
+            if (ReferenceEquals(saved[index].target, key)) { value = saved[index].value; return true; }
+            foreach (var (target, v) in saved) if (ReferenceEquals(target, key)) { value = v; return true; }
+            return false;
+        }
+
+        void TrackTransform(Transform t)
+        {
+            var loaded = new PhysicsWorld.Pose(t);
+            int moved = Array.IndexOf(_moved, t);
+            if (moved >= 0) (loaded.Position, loaded.LocalPosition) = _movedPristine[moved];
+            _poseAsLoaded.Add(t, (loaded, moved));
+        }
+
+        /// <summary>The transforms moved since load as the snapshot has them, written without the change hooks (the physics
+        /// restore puts back what their colliders were built at). One the snapshot doesn't list wasn't moved yet: its loaded
+        /// pose, moved by the snapshot's rebases as MoveWorld moves it. Runs after MaterializeRebases.</summary>
+        internal void RestoreTransforms(SimSnapshot s)
+        {
+            var saved = s.Transforms ?? Array.Empty<(Transform, PhysicsWorld.Pose)>();
+            int k = 0;
+            foreach (var (t, (loaded, moved)) in _poseAsLoaded)
+            {
+                if (TrySaved(saved, k++, t, out PhysicsWorld.Pose pose))
+                {
+                    pose.WriteTo(t);
+                    continue;
+                }
+                loaded.WriteTo(t);
+                if (moved >= 0) foreach (Vector3 by in s.Rebases) t.m_Position -= by;
+            }
         }
 
         int Animation { get { return Player.animator?.GetInteger("Animation") ?? 0; } }
@@ -1398,7 +1456,6 @@ namespace IGTAP.EngineSim
                 InterpolatedFrames();
                 Scheduler.FrameDeltaTime = Frames.Step(Engine.GridTicks, 0);
                 Scheduler.Resume(Scheduler.Wait.Frame);
-                Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 FloatingOriginFrame();
                 // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
                 Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;

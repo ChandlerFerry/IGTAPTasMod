@@ -26,7 +26,8 @@ namespace IGTAP.EngineSim
             FixedUpdate,
             /// <summary><c>yield return null</c>: after the next <c>Update</c>.</summary>
             Frame,
-            /// <summary><c>WaitForEndOfFrame</c>: at the tick's end of frame.</summary>
+            /// <summary><c>WaitForEndOfFrame</c>: at the end of each rendered frame (a dash freeze's and a pause's held frames
+            /// included, on Time.deltaTime 0), Simulation.InterpolatedFrames.</summary>
             EndOfFrame,
         }
 
@@ -108,6 +109,9 @@ namespace IGTAP.EngineSim
 
         public Coroutine StartCoroutine(MonoBehaviour target, IEnumerator routine)
         {
+            // Unity refuses a coroutine on an object that is off in the hierarchy (it logs an error and returns null): a tree
+            // segment whose tree is in an unloaded zone (TreeController.onNewGrowCommandRecieved) never grows.
+            if (!target.gameObject.activeInHierarchy) return null;
             var handle = new Coroutine { routine = routine };
             bool continues = Continues != null && Continues(target);
             if (continues) Stepping?.Invoke(target);
@@ -139,7 +143,8 @@ namespace IGTAP.EngineSim
             Routines.Add(r);
         }
 
-        /// <summary>Time.deltaTime of the rendered frame that resumes WaitForSeconds and frame waits (the playback clock's crossing frame).</summary>
+        /// <summary>Time.deltaTime of the rendered frame that resumes WaitForSeconds, frame and end-of-frame waits (the playback
+        /// clock's crossing frame; for end of frame, each frame's own).</summary>
         public float FrameDeltaTime;
 
         // Resume's due routines, reused call to call.
@@ -175,7 +180,7 @@ namespace IGTAP.EngineSim
             }
             finally
             {
-                Time.resumeDeltaTime = 0f;
+                Time.resumeDeltaTime = null;
                 // Each resumed routine leaves its place in one pass (nothing reads the list while they step): the due ones sit
                 // in Routines[0..count) in _due's order, and one parked again, or a routine one of them started, past count.
                 int kept = 0, left = 0;

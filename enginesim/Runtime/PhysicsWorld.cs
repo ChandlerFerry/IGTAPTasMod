@@ -23,6 +23,12 @@ namespace IGTAP.EngineSim
             /// <summary>What the world loaded it as (with <see cref="Pristine"/>): a restore to a snapshot that doesn't list it.</summary>
             public Vector3 PristineScale;
             public int PristineLayer, PristineMask;
+            /// <summary>Its transform as loaded: a body-less collider a script moved off it is built from its geometry (MovedShapes).</summary>
+            public Vector3 LoadedPosition, LoadedScale;
+            public Quaternion LoadedRotation;
+            /// <summary>A body-less collider whose transform a script wrote since the last sync (in _movedByScript): rebuilt there, as Unity
+            /// moves a static collider at its next transform sync.</summary>
+            public bool Moved;
             public (MonoBehaviour script, Action<object> call)[][] Handlers;
             public bool Listens;
             public ColliderState Composite;
@@ -172,7 +178,8 @@ namespace IGTAP.EngineSim
             foreach (ColliderData data in world.Colliders)
             {
                 Collider2D c = data.Collider;
-                var state = new ColliderState { Data = data, Collider = c, Layer = c.gameObject.layer, Id = _colliders.Count };
+                var state = new ColliderState { Data = data, Collider = c, Layer = c.gameObject.layer, Id = _colliders.Count,
+                    LoadedPosition = c.transform.m_Position, LoadedScale = c.transform.m_LossyScale, LoadedRotation = c.transform.m_Rotation };
                 Rigidbody2D rb = c.attachedRigidbody;
                 state.Body = rb != null && _bodies.TryGetValue(rb, out BodyState b) ? b : null;
                 state.Body?.Colliders.Add(state);
@@ -285,7 +292,11 @@ namespace IGTAP.EngineSim
             b2Body body = s.Body?.Body ?? _ground;
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
             s.Fixtures.Clear();
-            if (!Live(s)) return;
+            if (!Live(s))
+            {
+                if (_loaded && Unbodied(s)) _unbodied.Add(s);
+                return;
+            }
             float friction = s.Data.Friction, restitution = s.Data.Bounciness;
             if (s.Collider is BoxCollider2D box && s.Body != null && s.Body.Rigidbody.bodyType == RigidbodyType2D.Dynamic)
             {
@@ -343,12 +354,29 @@ namespace IGTAP.EngineSim
             }
         }
 
+        // Colliders that were on without their body at a rebuild (Unbodied): the next step ends the run if one still is.
+        readonly HashSet<ColliderState> _unbodied = new HashSet<ColliderState>();
+
+        /// <summary>
+        /// On, its Rigidbody2D on too, but that body was off at the world export, so neither it nor (with it off) the collider's
+        /// geometry is in the export: a tree segment's ground (TreeSegmentActivationComponent.IE_Grow turns it on). A composite
+        /// has nothing without its sources. On only between two steps (the segment's activation before IE_Grow turns its
+        /// ground off again), it is never seen.
+        /// </summary>
+        static bool Unbodied(ColliderState s)
+        {
+            Collider2D c = s.Collider;
+            Rigidbody2D rb = c.attachedRigidbody;
+            return s.Body == null && rb != null && rb.simulated && c.m_Enabled && c.gameObject.m_ActiveInHierarchy
+                && rb.gameObject.m_ActiveInHierarchy && c is not CompositeCollider2D;
+        }
+
         // A dynamic box's corners (b2PolygonShape.Set copies them).
         readonly b2Vec2[] _box = new b2Vec2[4];
 
         ShapeData[] Shapes(ColliderState s)
         {
-            if (s.Body == null && _sim.Rebased) return MovedShapes(s);
+            if (s.Body == null && (_sim.Rebased || OffLoaded(s))) return MovedShapes(s);
             if (s.Sources == null) return s.Data.Shapes;
             int live = 0;
             bool atLoad = true;
@@ -366,10 +394,18 @@ namespace IGTAP.EngineSim
             return Array.Empty<ShapeData>();
         }
 
+        /// <summary>A script moved the collider's transform off its loaded pose (a tree box falling into place, IE_Grow).</summary>
+        static bool OffLoaded(ColliderState s)
+        {
+            Transform t = s.Collider.transform;
+            return !SameBits(t.m_Position, s.LoadedPosition) || !SameBits(t.m_LossyScale, s.LoadedScale) || !SameBits(t.m_Rotation, s.LoadedRotation);
+        }
+
         /// <summary>
-        /// A body-less collider's shapes after a rebase moved its transform: Unity builds them again from the collider's own
-        /// geometry and the transform (world-space vertices, float math); the export's shapes are the capture pose's.
-        /// Boxes and capsules from their geometry; other shapes (the polygon camera zones) move with the origin.
+        /// A body-less collider's shapes after a rebase or a script moved its transform: Unity builds them again from the
+        /// collider's own geometry and the transform (world-space vertices, float math); the export's shapes are the capture
+        /// pose's. Boxes and capsules from their geometry; other shapes (the polygon camera zones) move with the origin, and one
+        /// a script moved (before any rebase) ends the run.
         /// </summary>
         ShapeData[] MovedShapes(ColliderState s)
         {
@@ -406,6 +442,9 @@ namespace IGTAP.EngineSim
                     return new[] { Moved(captured[0], Point(o.x - along, o.y), Point(o.x + along, o.y)) };
                 }
             }
+            // ponytail: a rebase moves every transform off its loaded pose, so only a script's move before any rebase is caught.
+            if (!_sim.Rebased && OffLoaded(s) && _sim.Engine.IsRunning)
+                _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s " + s.Collider.GetType().Name + " moved by a script (only boxes and capsules are rebuilt)");
             ScenePos by = _sim.FromCapture(new CapturePos(0f, 0f));
             return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
         }
@@ -536,10 +575,20 @@ namespace IGTAP.EngineSim
             _unbuilt.Clear();
         }
 
+        // Body-less colliders whose transforms a script wrote since the last sync (ColliderState.Moved).
+        readonly List<ColliderState> _movedByScript = new List<ColliderState>();
+
         public void TransformChanged(Transform transform, bool pose)
         {
             Rigidbody2D rb = transform.m_GameObject.GetComponent<Rigidbody2D>();
-            if (rb == null || !_bodies.TryGetValue(rb, out BodyState b)) return;
+            if (rb == null)
+            {
+                if (_byObject.TryGetValue(transform.m_GameObject, out var list))
+                    foreach (ColliderState c in list)
+                        if (c.Body == null && c.Collider.attachedRigidbody == null && !c.Moved) { c.Moved = true; _movedByScript.Add(c); }
+                return;
+            }
+            if (!_bodies.TryGetValue(rb, out BodyState b)) return;
             if (pose) b.TransformDirty = true;
             else b.ScaleDirty = true;
         }
@@ -568,11 +617,33 @@ namespace IGTAP.EngineSim
                 foreach (ColliderState s in b.Colliders)
                     if (s.BuiltScale != t.m_LossyScale) { Rebuild(s); s.Rescaled = true; _rescaled.Add(s); }
             }
+            if (_movedByScript.Count != 0) SyncMoved();
+        }
+
+        /// <summary>The body-less colliders a script moved, rebuilt where their transforms are now, by collider id (the order the
+        /// writes came in depends on what ran before a restore).</summary>
+        void SyncMoved()
+        {
+            _movedByScript.Sort((a, b) => a.Id.CompareTo(b.Id));
+            foreach (ColliderState s in _movedByScript)
+            {
+                s.Moved = false;
+                Rebuild(s);
+            }
+            _movedByScript.Clear();
         }
 
         public void Simulate(float deltaTime)
         {
             SyncTransforms();
+            if (_unbodied.Count != 0 && _sim.Engine.IsRunning)
+                foreach (ColliderState s in _unbodied)
+                    if (Unbodied(s))
+                    {
+                        _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s " + s.Collider.GetType().Name
+                            + " is on, its Rigidbody2D off at the world export (no body or geometry for it)");
+                        break;
+                    }
             FindLapsedTouches();
             _b2.Step(deltaTime, _velocityIterations, _positionIterations);
             for (int bi = 0; bi < _bodyList.Length; bi++)
@@ -1722,8 +1793,9 @@ namespace IGTAP.EngineSim
             public Pose[] Poses;
         }
 
-        /// <summary>A body's transform as a snapshot holds it (<see cref="PhysicsSnapshot.Poses"/>).</summary>
-        struct Pose
+        /// <summary>A body's transform as a snapshot holds it (<see cref="PhysicsSnapshot.Poses"/>), and a transform a script moved
+        /// (<see cref="SimSnapshot.Transforms"/>).</summary>
+        internal struct Pose
         {
             public Vector3 Position, LocalPosition, LocalScale, LossyScale;
             public Quaternion Rotation, LocalRotation;
@@ -1762,7 +1834,7 @@ namespace IGTAP.EngineSim
         enum BodyFlag { TransformDirty = 1, ScaleDirty = 2, Shifted = 4 }
 
         [Flags]
-        enum ColliderFlag { Reshaped = 1, Rescaled = 2 }
+        enum ColliderFlag { Reshaped = 1, Rescaled = 2, Moved = 4 }
         const int FlagBits = 3;
 
         // The rebuilt colliders as a snapshot holds them; null once one is rebuilt again. Shared by every snapshot taken
@@ -1828,10 +1900,12 @@ namespace IGTAP.EngineSim
 
         int[] PendingColliders()
         {
-            if (_reshaped.Count == 0 && _rescaled.Count == 0) return Array.Empty<int>();
-            var pending = new List<int>(_reshaped.Count + _rescaled.Count);
-            foreach (ColliderState c in _reshaped) pending.Add(c.Id << FlagBits | (int)(ColliderFlag.Reshaped | (c.Rescaled ? ColliderFlag.Rescaled : 0)));
-            foreach (ColliderState c in _rescaled) if (!c.Reshaped) pending.Add(c.Id << FlagBits | (int)ColliderFlag.Rescaled);
+            if (_reshaped.Count == 0 && _rescaled.Count == 0 && _movedByScript.Count == 0) return Array.Empty<int>();
+            var pending = new List<int>(_reshaped.Count + _rescaled.Count + _movedByScript.Count);
+            ColliderFlag Moved(ColliderState c) => c.Moved ? ColliderFlag.Moved : 0;
+            foreach (ColliderState c in _reshaped) pending.Add(c.Id << FlagBits | (int)(ColliderFlag.Reshaped | (c.Rescaled ? ColliderFlag.Rescaled : 0) | Moved(c)));
+            foreach (ColliderState c in _rescaled) if (!c.Reshaped) pending.Add(c.Id << FlagBits | (int)(ColliderFlag.Rescaled | Moved(c)));
+            foreach (ColliderState c in _movedByScript) if (!c.Reshaped && !c.Rescaled) pending.Add(c.Id << FlagBits | (int)ColliderFlag.Moved);
             return pending.ToArray();
         }
 
@@ -1886,6 +1960,8 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _rescaled.Count; i++) _rescaled[i].Rescaled = false;
             _rescaled.Clear();
             foreach (BodyState b in _bodyList) b.TransformDirty = b.ScaleDirty = false;
+            foreach (ColliderState c in _movedByScript) c.Moved = false;
+            _movedByScript.Clear();
             foreach (int pending in s.Bodies)
             {
                 BodyState b = _bodyList[pending >> FlagBits];
@@ -1900,6 +1976,7 @@ namespace IGTAP.EngineSim
                 var flag = (ColliderFlag)(pending & ((1 << FlagBits) - 1));
                 if ((flag & ColliderFlag.Reshaped) != 0) { c.Reshaped = true; _reshaped.Add(c); }
                 if ((flag & ColliderFlag.Rescaled) != 0) { c.Rescaled = true; _rescaled.Add(c); }
+                if ((flag & ColliderFlag.Moved) != 0) { c.Moved = true; _movedByScript.Add(c); }
             }
         }
 
