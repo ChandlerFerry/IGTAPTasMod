@@ -5,7 +5,10 @@ physics count runs ahead through dash freezes, so ticks don't line up; enginesim
 
 Each side is a 1x probe log (probes/<name>.json: its `kind: "tick"` rows), enginesim's `fulltas --check --ticks-out` or
 `replay --ticks-out` lines, or a trace (`/api/enginesim/trace`: its ticks, turbo's); every row's economy is its `econ`
-object (TasPlugin.EconomyNow, FullTas.EconomyRow). Exits 1 when a field differs.
+object (TasPlugin.EconomyNow, FullTas.EconomyRow). A probe row's `econPre` (taken at its tick's globalStats.FixedUpdate,
+before the NP payout) is used when it has one: it is the point the others' rows are taken at, after the last tick's
+rendered frames, so two changes in one tick (a merge's NP in a frame, the next tick's payout) group the same way. Both
+sides are cut at the last physics tick they share (a 1x probe runs on past its inputs). Exits 1 when a field differs.
 """
 import argparse
 import json
@@ -26,8 +29,20 @@ def rows(path):
             f.seek(0)
             return [json.loads(line) for line in f if line.strip()]
     if "rows" in doc:
-        return [r for r in doc["rows"] if r.get("kind") == "tick"]
-    return doc.get("ticks", [])
+        out = []
+        for r in doc["rows"]:
+            if r.get("kind") != "tick" or "econPre" in r and not r["econPre"]:
+                continue
+            # econPre at physics tick P is what tick P - 1's frames left.
+            out.append(dict(r, econ=r["econPre"], physics=r["physics"] - 1) if r.get("econPre") else r)
+        return out
+    return [dict(t, physics=i + 1) for i, t in enumerate(doc.get("ticks", []))]
+
+
+def common(a, b):
+    """Both tables cut at the last physics tick they share."""
+    last = min(max((r.get("physics", 0) for r in a), default=0), max((r.get("physics", 0) for r in b), default=0))
+    return [r for r in a if r.get("physics", 0) <= last], [r for r in b if r.get("physics", 0) <= last]
 
 
 def seq(table, field):
@@ -54,7 +69,7 @@ def main():
     ap.add_argument("b")
     ap.add_argument("--fields", default=FIELDS)
     args = ap.parse_args()
-    a, b = rows(args.a), rows(args.b)
+    a, b = common(rows(args.a), rows(args.b))
     bad = 0
     for f in args.fields.split(","):
         p, o = seq(a, f), seq(b, f)

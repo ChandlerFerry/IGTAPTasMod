@@ -128,6 +128,7 @@ namespace IGTAPTasMod
             PatchOptional(typeof(clonesScript), "SpawnClone", nameof(BeforeProbeSpawn), nameof(AfterProbeSpawn));
             PatchProbeRng();
             PatchOptional(typeof(AtomColliderSystem), "callAddNewAtom", nameof(BeforeProbeAtomCall), null);
+            PatchOptional(typeof(globalStats), "FixedUpdate", nameof(BeforeProbeStatsFixedUpdate), null);
             PatchOptional(typeof(FloatingOrigin), "MoveRootTransforms", nameof(BeforeMoveRootTransforms), nameof(AfterMoveRootTransforms));
             PatchTechHooks();
             PatchVmanCreditsCrash();

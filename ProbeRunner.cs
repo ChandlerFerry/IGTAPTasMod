@@ -149,7 +149,7 @@ namespace IGTAPTasMod
                 dash = ProbeDashActive.GetValue(movement), f = ProbeSinceDash.GetValue(movement), facingRight = ProbeFacing.GetValue(movement),
                 dashDir = new[] { d.x, d.y }, originX = origin.x, originY = origin.y,
                 lastHyperY = TechLastHyperYField == null ? (float?)null : (float)TechLastHyperYField.GetValue(movement),
-                fields, movers, econ = EconomyNow(),
+                fields, movers, econ = EconomyNow(), econPre = kind == "tick" ? _econPre : null,
             });
         }
 
@@ -157,6 +157,14 @@ namespace IGTAPTasMod
             AccessTools.FieldRefAccess<AtomColliderSystem, List<List<GameObject>>>("contents");
         static readonly AccessTools.FieldRef<AtomColliderSystem, int> AtomWaiting = AccessTools.FieldRefAccess<AtomColliderSystem, int>("waitingAtoms");
         static AtomColliderSystem _econAtoms;
+        /// <summary>The economy at this tick's globalStats.FixedUpdate, before its NP payout: what the last tick's rendered frames
+        /// left, the point turbo's and the engine's rows are taken at (after the tick's frames).</summary>
+        static Dictionary<string, object> _econPre;
+
+        private static void BeforeProbeStatsFixedUpdate()
+        {
+            if (Instance != null && Instance.ProbeLogsClones) _econPre = EconomyNow();
+        }
         /// <summary>Every callAddNewAtom Unity or turbo has run in this session (<see cref="BeforeProbeAtomCall"/>): rows compare its
         /// steps, not its value.</summary>
         static int _gridCalls;
